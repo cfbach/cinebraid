@@ -1043,6 +1043,142 @@ mustFailAsync("NC-34 the frames handoff counts frame records rather than require
     `an undeclared shot carries frame records but owes none, so nothing may recommend a stage on the strength of the record — ${recommendedBy(seen).join(", ")} did`);
 });
 
+
+/* ===========================================================================
+   NC-35 / NC-36 — THE FRAMES STAGE'S OWN WORDS.
+
+   Section M8's guarantee. framesState() and shotStageState() both used to gate frame
+   optionality on whether a ROUTE HAD BEEN DECLARED rather than on whether a frame is
+   owed, so the repair that removed "a fraction of a requirement that does not exist"
+   reached declared routes only and stepped over the one shot that has declared nothing.
+
+   Both anchors are single lines, deliberately: this repository checks out CRLF, and a
+   multi-line anchor is the one shape that silently matches nothing.
+   =========================================================================== */
+
+/* What the persistent stage bar says about one stage, in the words a filmmaker reads,
+   taken from the shipped formatter in the rendered page. */
+async function stageBarStatus(stageId, mutateSource) {
+  const project = projectWith(newShotRecord());
+  const page = await render("#/shot/SC-01-01", project, { scan: scanFor(project), mutateSource });
+  return run(page.context, `
+    const s = P.shots.find((row) => row.id === "SC-01-01");
+    const takes = takesFor("SC-01-01");
+    const facts = shotStageModelFacts(s, takes);
+    return {
+      requiredFrameCount: facts.requiredFrameCount,
+      status: boundedShotTaskStatus(s, takes, ${JSON.stringify(stageId)}),
+      optional: shotStageState(${JSON.stringify(stageId)}, facts).optional,
+      tile: (String(document.getElementById("main").innerHTML || "").match(/Required frames<\\/span>/) || [""])[0],
+    };`);
+}
+
+/* ---------------------------------------------------------------------------
+   NC-35 — THE BAR COUNTS A REQUIREMENT THE SHOT DOES NOT HAVE.
+
+   The shipped defect, restored exactly: ask whether a route was declared instead of
+   whether a frame is owed. The undeclared shot falls past the no-frames-required
+   branch and the bar prints "0 of 1 frame approved" beside a command summary reading
+   "0/0" in the same viewport.
+   --------------------------------------------------------------------------- */
+mustFailAsync("NC-35 the frames stage counts a requirement the shot does not have",
+  "must not print a fraction of a requirement", async () => {
+    const seen = await stageBarStatus("frames", pageMutation("shared-stage-model.js",
+      "    const noFramesRequired = facts.requiredFrameCount === 0;",
+      "    const noFramesRequired = facts.routeRequirementsKnown && facts.requiredFrameCount === 0;",
+      "NC-35"));
+    assert.strictEqual(seen.requiredFrameCount, 0, "precondition: the shot owes no frame");
+    assert(!/\bof\b.*\bapproved\b/.test(seen.status.note || ""),
+      `the bar must not print a fraction of a requirement the shot does not have, got ${JSON.stringify(seen.status)}`);
+  });
+
+/* ---------------------------------------------------------------------------
+   NC-36 — THE STATUS WORD AND THE SKIPPABILITY FLAG DISAGREE.
+
+   The other half, and the reason it could not be left alone: with only framesState
+   generalised, the bar would say "Not required" while the model went on reporting the
+   stage as one that may NOT be skipped — two answers to one question on one screen,
+   which is the shape of defect this whole slice exists to remove.
+   --------------------------------------------------------------------------- */
+mustFailAsync("NC-36 a stage reported not required is still reported unskippable",
+  "cannot be reported", async () => {
+    const seen = await stageBarStatus("frames", pageMutation("shared-stage-model.js",
+      '    if (stage.id === "frames") state.optional = resolved.requiredFrameCount === 0;',
+      '    if (stage.id === "frames" && resolved.routeRequirementsKnown) state.optional = resolved.requiredFrameCount === 0;',
+      "NC-36"));
+    assert.strictEqual(seen.status.label, "Not required", "precondition: the bar still says the stage is not required");
+    assert.strictEqual(seen.optional, true,
+      `a stage cannot be reported "${seen.status.label}" and unskippable at the same time`);
+  });
+
+
+/* ===========================================================================
+   NC-37 / NC-38 — SECTION N'S FENCE, AND WHY THE OBVIOUS REPAIR IS NOT ONE.
+
+   Section N leaves public/automation.js's route-blind required-frame count where it
+   is. A deferral is only honest if BOTH halves are demonstrated: that the fence
+   actually holds something in, and that the one-line repair really is worse than
+   leaving it. These are those two halves.
+   =========================================================================== */
+
+/* The Look stage of an undeclared shot, where the automation hub is mounted. */
+async function lookStageHtml(mutateSource) {
+  const project = projectWith(newShotRecord());
+  const page = await render("#/shot/SC-01-01", project, {
+    scan: scanFor(project),
+    storage: { "cinebraid-focused:fixture:shot-task:SC-01-01": "look" },
+    mutateSource,
+  });
+  return String(page.map.get("main").innerHTML || "");
+}
+const requiredFramesCards = (html) => [...html.matchAll(/REQUIRED FRAMES<\/span><b>([^<]*)<\/b>/g)].map((row) => row[1]);
+
+/* ---------------------------------------------------------------------------
+   NC-37 — THE FENCE IS LOAD-BEARING.
+
+   The hub's route-blind count is given a second home OUTSIDE the collapsed automation
+   tooling, which is precisely the leak section N exists to prevent. If N's containment
+   assertion could not see that, the deferral would be an unwatched defect rather than
+   a bounded one.
+   --------------------------------------------------------------------------- */
+mustFailAsync("NC-37 the route-blind count escapes the automation hub",
+  "outside the automation hub", async () => {
+    const html = await lookStageHtml(pageMutation("creation-studio.js",
+      '<section class="shot-command-summary"',
+      '<section class="shot-command-summary" data-leak="<article><span>REQUIRED FRAMES</span><b>0/1 approved</b></article>"',
+      "NC-37"));
+    const hubAt = html.indexOf('<details class="shot-automation-hub"');
+    assert(hubAt >= 0, "precondition: the hub must still be rendered");
+    const outside = requiredFramesCards(html.slice(0, hubAt));
+    assert.deepStrictEqual(outside, [],
+      `no REQUIRED FRAMES card outside the automation hub may count the stored flag, found ${JSON.stringify(outside)}`);
+  });
+
+/* ---------------------------------------------------------------------------
+   NC-38 — THE ONE-LINE REPAIR CLAIMS THE PACKAGE IS READY.
+
+   Section N's second reason, demonstrated rather than asserted. Point the hub's
+   `required` list at the canonical answer and nothing else: the count becomes an
+   honest 0/0, and the card's own note — `approved === required.length` — then tells a
+   filmmaker with no images at all that the still package is ready. Fixing this surface
+   means deciding what the card MEANS first, which is the automation work being
+   deferred, not a line edit this slice can smuggle in.
+   --------------------------------------------------------------------------- */
+mustFailAsync("NC-38 the naive canonical repair announces a ready package on an empty shot",
+  "must not tell a shot with nothing approved", async () => {
+    const html = await lookStageHtml(pageMutation("automation.js",
+      "const frames = guidedFrames(shot), required = frames.filter((frame) => frame.required !== false), approved = required.filter((frame) => guidedFrameApproved(shot, frame, takesFor(shot.id), frames.indexOf(frame))).length;",
+      "const frames = guidedFrames(shot), required = frames.filter((frame) => frame.required !== false).slice(0, shotStageModelFacts(shot, takesFor(shot.id)).requiredFrameCount), approved = required.filter((frame) => guidedFrameApproved(shot, frame, takesFor(shot.id), frames.indexOf(frame))).length;",
+      "NC-38"));
+    const hubAt = html.indexOf('<details class="shot-automation-hub"');
+    assert(hubAt >= 0, "precondition: the hub must still be rendered");
+    const hub = html.slice(hubAt);
+    assert.deepStrictEqual(requiredFramesCards(hub), ["0/0 approved"],
+      "precondition: the canonical count must actually reach the card, or this proves nothing");
+    assert(!/Still package ready/.test(hub),
+      "must not tell a shot with nothing approved that its still package is ready");
+  });
+
 async function main() {
   for (const control of QUEUE) await control();
   console.log("Shot intent at the front negative controls passed:");

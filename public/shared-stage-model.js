@@ -606,7 +606,24 @@
        machine is doing is not how far the work has got. The projection below then
        prefers the run for the status slot, which is what the shipped taskbar does. */
     const note = { key: "frames-approved", count: facts.frameApprovedCount, total: facts.frameTotal };
-    const noFramesRequired = facts.routeRequirementsKnown && facts.requiredFrameCount === 0;
+    /* NOTHING HAS ASKED FOR A FRAME — asked of the count, not of whether a route
+       happens to be declared.
+
+       This was `routeRequirementsKnown && requiredFrameCount === 0`, so the repair
+       below reached declared routes only. An UNDECLARED shot fell past it to the last
+       branch and printed "Not started · 0 of 1 frame approved" on the persistent stage
+       bar — the same fraction of a non-existent requirement that branch exists to
+       remove, on the one shot that has declared nothing at all, and beside a command
+       summary in `#main` reading "Required frames 0/0 · none until you say how this
+       shot is made". Two surfaces, one screen, opposite answers.
+
+       `requiredFrameCount` is the canonical answer under BOTH readings: the route
+       owner's frame roles where a route is declared, and shared-shot-readiness.js's
+       required frame units where one is not. Only in the degenerate case where
+       readiness cannot answer at all does it fall back to the stored flag — and there
+       it counts at least one, so this branch is not taken and the old, deliberately
+       overclaiming, behaviour is preserved exactly. */
+    const noFramesRequired = facts.requiredFrameCount === 0;
     const retainedFramesComplete = noFramesRequired && !!facts.frameTotal && facts.frameApprovedCount >= facts.frameTotal;
     const completion = facts.frameNeedsReview
       ? "needs-review"
@@ -828,11 +845,18 @@
     if (!stage) return null;
     const resolved = normaliseShotStageFacts(facts);
     const state = DERIVATIONS[stage.id](stage, resolved);
-    /* Frames remain selectable so retained work is always reachable, but a declared
-       route that needs no frame makes the stage optional. With no declared route the
-       stage declaration's legacy default is preserved. */
-    if (stage.id === "frames" && resolved.routeRequirementsKnown)
-      state.optional = resolved.requiredFrameCount === 0;
+    /* Frames remain selectable so retained work is always reachable, but a shot that
+       owes no frame may skip the stage.
+
+       THE PREDICATE IS THE COUNT, for the reason framesState states. It was
+       `routeRequirementsKnown && requiredFrameCount === 0`, which left an undeclared
+       shot on the declaration's legacy default of NOT skippable while framesState —
+       now reading the same count — reported its status as "not required". One screen
+       cannot answer "is this stage owed" twice, and "with no declared route the legacy
+       default is preserved" is the same shape of default-making-a-statement the shot
+       intent work exists to remove. Where readiness cannot answer at all the count
+       falls back to the stored flag and this stays false, exactly as before. */
+    if (stage.id === "frames") state.optional = resolved.requiredFrameCount === 0;
     const recommended = state.recommendedNext || recommendedNextFor(stage.id, resolved);
     /* A recommendation that is not a declared successor is a bug, not a shortcut. */
     return { ...state, recommendedNext: stage.next.includes(recommended) ? recommended : "" };

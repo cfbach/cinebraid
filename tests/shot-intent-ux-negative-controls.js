@@ -236,15 +236,31 @@ async function surfaceControls() {
     },
   );
 
-  /* NC-7 - ROUTE FACTS ARE WITHHELD FROM THE STAGE MODEL. */
+  /* NC-7 - THE CANONICAL REQUIRED-FRAME COUNT IS WITHHELD FROM THE STAGE MODEL.
+
+     REWRITTEN, not deleted. This control used to withhold `routeRequirementsKnown`,
+     because the stage model gated frame optionality on it: known route AND zero
+     required frames. The shot-intent closure pass made the gate the COUNT alone --
+     an undeclared shot that owes no frame may skip the stage too, and gating on the
+     declaration left it reported as not-skippable while its own status word said
+     "not required". So withholding `routeRequirementsKnown` no longer breaks
+     anything, and left as it was this control would have gone on passing against a
+     mechanism it had stopped touching.
+
+     It now corrupts the fact that actually carries the answer, at its source: the
+     route's own frame-role count, replaced by how many frame RECORDS the shot happens
+     to carry. A description-only shot then reports a required frame it never asked
+     for and its Frames stage stops being skippable. The guarantee is unchanged --
+     the canonical route answer, and nothing else, decides frame optionality -- and
+     the control is aimed at the live path again. */
   await mustFail(
     "NC-7 canonical frame optionality is hidden from the stage model",
     "must project canonical frame optionality",
     async () => {
       const page = await renderShot("t2v", {
         mutateSource: replacing("creation-studio.js",
-          "    routeRequirementsKnown: routeNeeds.known === true,",
-          "    routeRequirementsKnown: false,",
+          "  const routeRequiredFrameCount = routeNeeds.known ? routeNeeds.frameNeeds.length : 0;",
+          "  const routeRequiredFrameCount = routeNeeds.known ? progress.frames.length : 0;",
           "NC-7"),
       });
       const folded = framesFor(page.context);

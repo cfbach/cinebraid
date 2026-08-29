@@ -36,6 +36,9 @@
  *   M  the shell around #main agrees: the persistent stage bar offers no Continue and
  *      the Assistant rail names no next stage unless the destination is genuinely owed,
  *      and the declared-optional Look & blocking stage is never one
+ *   N  the one route-blind reader of `frame.required` still standing is fenced where
+ *      it is -- inside the automation hub, reaching no readiness, next action,
+ *      command summary or stage bar. Deferred deliberately; see the section header
  *
  * NO PROVIDER, NO PAID ROUTE, NO NETWORK, NO PROJECT DATA. Every fixture is built in
  * memory and the repository's own projects/ directory is never opened.
@@ -50,6 +53,9 @@ const ROOT = path.join(__dirname, "..");
 /* core.autocrlf=true here, so an anchor written with \n matches nothing unless the
    source is normalised on read. */
 const readLF = (file) => fs.readFileSync(path.join(ROOT, file), "utf8").replace(/\r\n/g, "\n");
+/* Strips comments so a check about CODE cannot be satisfied -- or broken -- by prose.
+   Same shape as tests/stage-surfaces.js's, and needed for the same reason. */
+const codeOnly = (source) => String(source).replace(/\/\*[\s\S]*?\*\//g, " ").replace(/(^|[^:])\/\/[^\n]*/g, "$1 ");
 
 const Route = require("../public/shared-shot-route.js");
 const Intent = require("../public/shared-shot-intent.js");
@@ -1649,7 +1655,18 @@ async function shellNextActions(project, shotId, { takes = [], anchorsOnDisk = t
         .map((action) => ({ label: action.label, target: action.invoke.stageId })),
       /* THE RAIL. Its four-answer recommendation for this stage. */
       rail: CreatorState.creatorRecommendation(CreatorState.creatorStageBlock(stage), labels),
+      /* WHAT THE BAR SAYS ABOUT THIS STAGE, in the words a filmmaker reads, taken
+         from the shipped formatter rather than composed here. */
+      status: run(page.context, `
+        const s = P.shots.find((row) => row.id === ${JSON.stringify(shotId)});
+        return boundedShotTaskStatus(s, takesFor(${JSON.stringify(shotId)}), ${JSON.stringify(stage.id)});`),
     })),
+    /* And what the command summary inside #main says, so the two can be compared. */
+    requiredFramesTile: run(page.context, `
+      const summary = (String(document.getElementById("main").innerHTML || "")
+        .match(/<section class="shot-command-summary"[^]*?<\\/section>/) || [""])[0];
+      const card = (summary.match(/<article[^>]*>(?:(?!<\\/article>)[^])*?Required frames(?:(?!<\\/article>)[^])*?<\\/article>/) || [""])[0];
+      return { value: (card.match(/<b>([^<]*)<\\/b>/) || [, ""])[1], note: (card.match(/<small>([^<]*)<\\/small>/) || [, ""])[1] };`),
   };
 }
 const stageOf = (shell, id) => shell.stages.find((stage) => stage.id === id);
@@ -1791,8 +1808,172 @@ async function checkShellNextAction() {
   assert.strictEqual(stageOf(still, "inputs").rail.stageId, "frames", "M7: which is Frames");
   observed.push("a declared still delivery keeps its Frames handoff on both surfaces");
 
-  note("M. the shell's next action: " + observed.join("; ")
+  /* M8 — AND WHAT THE SHELL SAYS ABOUT THE FRAMES STAGE.
+
+     Found by this slice's closure sweep, on the whole screen at once rather than one
+     surface at a time. The persistent stage bar read
+
+         Frames · 0 of 1 frame approved · NOT STARTED
+
+     on a brand-new shot, beside a command summary in the same viewport reading
+     "Required frames 0/0 · none until you say how this shot is made". A fraction of a
+     requirement that does not exist — which is exactly the defect framesState's
+     no-frames-required branch was written to remove, except that branch asked whether
+     a ROUTE was declared, so it reached declared routes only and stepped over the one
+     shot that has declared nothing.
+
+     The two surfaces must give one answer, so both are read and compared. */
+  const framesStatusOf = (shell) => stageOf(shell, "frames").status;
+  const freshFrames = framesStatusOf(fresh);
+  assert.strictEqual(fresh.requiredFramesTile.value, "0/0",
+    "M8 fixture check: #main counts no required frame on the fresh shot");
+  assert(!/\bof\b.*\bapproved\b/.test(freshFrames.note || ""),
+    `M8: the bar must not print a fraction of a requirement the shot does not have, got ${JSON.stringify(freshFrames)}`);
+  assert.strictEqual(freshFrames.label, "Not required",
+    `M8: it says what the stage is instead, got ${JSON.stringify(freshFrames)}`);
+  assert.strictEqual(stageOf(fresh, "frames").optional, true,
+    "M8: and the stage is skippable, so the status word and the optionality flag do not disagree on one screen");
+  assert.strictEqual(freshFrames.note, "1 frame retained",
+    `M8: while still reporting what the shot is CARRYING — the frame record is not hidden to achieve any of this, got ${JSON.stringify(freshFrames)}`);
+  observed.push(`the bar reads ${JSON.stringify(freshFrames.label + " · " + freshFrames.note)} beside #main's "${fresh.requiredFramesTile.value} ${fresh.requiredFramesTile.note}"`);
+
+  /* NOTHING TRUTHFUL WAS TAKEN AWAY WITH IT. A route that really does owe a frame
+     still counts it, and a legacy shot's retained approvals are still reported. */
+  const owedShell = await shellNextActions(projectWith(newShotRecord("SC-01-01", "SC-01", { deliveryRoute: owedRoute })), "SC-01-01");
+  assert.strictEqual(framesStatusOf(owedShell).note, "0 of 1 frame approved",
+    `M8: a route that owes a frame still counts it, got ${JSON.stringify(framesStatusOf(owedShell))}`);
+  assert.strictEqual(owedShell.requiredFramesTile.value, "0/1", "M8: and #main agrees with it");
+  assert.strictEqual(framesStatusOf(legacy).note, "1 of 2 frames approved",
+    `M8: and a legacy shot's retained approvals are still reported, got ${JSON.stringify(framesStatusOf(legacy))}`);
+  observed.push(`${owedRoute} still reads ${JSON.stringify(framesStatusOf(owedShell).note)} and the legacy shot ${JSON.stringify(framesStatusOf(legacy).note)}`);
+
+  note("M. the shell's next action and its frame reading: " + observed.join("; ")
     + " — so the persistent bar and the Assistant rail agree with the frame truth inside #main instead of contradicting it");
+}
+
+
+/* ===========================================================================
+   N — THE LAST ROUTE-BLIND READER OF `frame.required`, PINNED WHERE IT IS.
+
+   Found by this slice's closure sweep and DELIBERATELY NOT REPAIRED HERE. It is
+   recorded the way section I records the shotApprovalComplete() boundary: stated,
+   bounded, and fenced, so it cannot spread while it waits for the slice that owns it.
+
+   WHAT IT IS. public/automation.js's shot automation hub computes
+
+       const required = frames.filter((frame) => frame.required !== false);
+
+   and renders a card labelled REQUIRED FRAMES reading "0/1 approved" on a shot that
+   has declared nothing — the discredited default making a statement, in the one place
+   the shot-intent work has not reached. `frame.required` is written `true` by
+   newKeyframe() on every frame of every project and no filmmaker-facing control writes
+   it, which is the whole reason section C exists.
+
+   WHY IT IS NOT FIXED IN THIS SLICE, and the reason is not squeamishness:
+
+   1. The same expression is computed three more times in the same file — the plan
+      modal's frame picker and a run-progress label — where it is the AUTOMATION PLAN:
+      which frames a full-shot run would produce. Converging the card onto canonical
+      route truth without the picker makes the two disagree; converging both changes
+      what automation produces. That is an automation decision, and this brief says in
+      terms not to redesign automation and to report a second owner rather than add a
+      third.
+
+   2. The one-line version is WORSE, and NC-37 proves it rather than asserting it. The
+      card's own note reads `approved === required.length ? "Still package ready" : ...`
+      — so a required count of zero makes a shot with no images at all announce that
+      its still package is ready. A truthful repair has to decide what the card means
+      first, which is exactly the work being deferred.
+
+   WHAT THIS SECTION GUARANTEES INSTEAD: that it stays exactly where it is. The count
+   reaches no readiness answer, no next action, no command summary, no stage bar, and
+   no surface outside the collapsed automation tooling it belongs to. If it ever leaks,
+   this fails.
+   =========================================================================== */
+const AUTOMATION_REQUIRED_ANCHOR =
+  'const frames = guidedFrames(shot), required = frames.filter((frame) => frame.required !== false)';
+
+function checkAutomationHubBoundary() {
+  const source = readLF("public/automation.js");
+  assert(source.includes(AUTOMATION_REQUIRED_ANCHOR),
+    "N: the reader this section fences must still be where it is described, or the fence is around nothing");
+  return source;
+}
+
+async function checkRouteBlindReaderIsFenced() {
+  const source = checkAutomationHubBoundary();
+  const project = projectWith(newShotRecord("SC-01-01", "SC-01"));
+  /* The Look stage, because that is where the hub is mounted — inside the collapsed
+     OPTIONAL ASSISTED BLOCKING tools, two disclosures deep. */
+  const page = await render("#/shot/SC-01-01", project, {
+    scan: scanFor(project),
+    storage: { "cinebraid-focused:fixture:shot-task:SC-01-01": "look" },
+  });
+  const html = String(page.map.get("main").innerHTML || "");
+  const HUB = '<details class="shot-automation-hub"';
+  const hubAt = html.indexOf(HUB);
+  const assistedAt = html.indexOf("blocking-assisted-tools");
+  const cardsIn = (text) => [...text.matchAll(/REQUIRED FRAMES<\/span><b>([^<]*)<\/b>/g)].map((row) => row[1]);
+
+  /* N1 — the fabrication is real, and it is where this section says it is. */
+  assert(hubAt >= 0, "N1 fixture check: the automation hub must be rendered for this to be about anything");
+  assert(assistedAt >= 0 && hubAt > assistedAt,
+    "N1: the hub must remain inside the optional assisted-blocking tools");
+  const inside = cardsIn(html.slice(hubAt));
+  assert.deepStrictEqual(inside, ["0/1 approved"],
+    `N1 fixture check: the known fabrication must still read 0/1, got ${JSON.stringify(inside)}`);
+
+  /* N2 — AND NOWHERE ELSE. This is the guarantee. */
+  assert.deepStrictEqual(cardsIn(html.slice(0, hubAt)), [],
+    "N2: no REQUIRED FRAMES card outside the automation hub may count the stored flag");
+
+  /* N3 — it reaches no truth. Every canonical answer on the same screen still says
+     the shot owes nothing and the question is the route. */
+  const truth = run(page.context, `
+    const s = P.shots.find((row) => row.id === "SC-01-01");
+    const takes = takesFor("SC-01-01");
+    const readiness = shotReadinessFor(s);
+    const facts = shotStageModelFacts(s, takes);
+    return {
+      requiredUnits: readiness.units.filter((u) => u.kind === "frame" && u.required).map((u) => u.id),
+      nextAction: readiness.nextAction.code,
+      requiredFrameCount: facts.requiredFrameCount,
+      requiredFramesApproved: facts.requiredFramesApproved,
+      barFrames: boundedShotTaskStatus(s, takes, "frames"),
+      stages: shotStageProgress(facts).map((stage) => stage.recommendedNext).filter(Boolean),
+    };`);
+  assert.deepStrictEqual(truth.requiredUnits, [], "N3: readiness still requires no frame");
+  assert.strictEqual(truth.nextAction, "declare-shot-route", "N3: and the current action is still the route question");
+  assert.strictEqual(truth.requiredFrameCount, 0, "N3: the fact projection still counts none");
+  assert.strictEqual(truth.barFrames.label, "Not required", "N3: the stage bar still says the stage is not required");
+  assert.deepStrictEqual(truth.stages, [], "N3: and no stage recommends anything on the strength of it");
+
+  /* N4 — the source-level fence. The stored flag may be read by the automation file
+     and by the two documented fallbacks, and by nothing else that renders a
+     requirement. Stated as a property so a new reader has to come here first. */
+  const readers = [];
+  for (const file of ["app.js", "creation-studio.js", "shared-shot-readiness.js", "shared-stage-model.js", "focused-workspaces.js", "media-results.js", "reports.js"]) {
+    /* Comments stripped first. Every one of these files DISCUSSES the stored flag at
+       length -- that is how the slice documented what it was removing -- and a naive
+       line search would count describing it as doing it. focused-workspaces.js's
+       header, which records a reader it already deleted, is the exact case. */
+    for (const line of codeOnly(readLF(`public/${file}`)).split("\n"))
+      if (line.includes(".required !== false)")) readers.push(`${file}: ${line.trim().slice(0, 90)}`);
+  }
+  /* The three that are allowed, each with a stated reason:
+     app.js's requiredFrames() -- section I proves its only consumer is route-invariant
+     and reaches no persistent surface; creation-studio.js's guidedFrameProgress() and
+     its requiredFrameCount fallback -- the documented answers for the case readiness
+     cannot answer at all. Anything else is a new claim and has to be argued here. */
+  assert.strictEqual(readers.length, 3,
+    `N4: the stored required flag gained or lost a reader outside public/automation.js. Each one is a default making a statement unless it is argued for.\n  ${readers.join("\n  ")}`);
+
+  const automationReaders = codeOnly(readLF("public/automation.js")).split("\n").filter((line) => line.includes(".required !== false)")).length;
+  note(`N. the one route-blind required-frame reader left is public/automation.js (${automationReaders} sites, all the automation PLAN): `
+    + `its hub card reads ${JSON.stringify(inside[0])} two disclosures deep on Look, while readiness requires ${truth.requiredUnits.length} frames, `
+    + `the fact projection counts ${truth.requiredFrameCount}, the stage bar reads ${JSON.stringify(truth.barFrames.label)}, `
+    + `the current action is ${truth.nextAction} and no stage recommends anything. No REQUIRED FRAMES card outside the hub counts the flag, `
+    + `and only ${readers.length} argued readers of it exist elsewhere. DEFERRED, not fixed — see the section header for why the one-line repair is worse`);
 }
 
 /* =========================================================================== */
@@ -1814,6 +1995,7 @@ async function main() {
   checkStillDeliveryMotion();
   await checkRetainedMotionHistory();
   await checkShellNextAction();
+  await checkRouteBlindReaderIsFenced();
 
   /* The action code this slice adds is declared in all three places a readiness action
      has to be declared, or it renders as a bare "Next action" with no destination. */
