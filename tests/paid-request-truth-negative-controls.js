@@ -67,6 +67,42 @@ function loadModified(relative, edits) {
   return patched.exports;
 }
 
+/* THE SAME THING, FOR A DEFECT THAT LIVES BELOW THE ROUTE.
+ *
+ * loadModified() is enough when the mutation and the property share a module, or when the
+ * property is a pure function the control can call directly. It is not enough for a defect
+ * in public/shared-generation-presentation.js that has to be OBSERVED at the provider: a
+ * private copy of the shared module is not the copy the real fal-generation.js already
+ * holds, so the route would go on running the correct code and the control would report a
+ * green it had not earned.
+ *
+ * So the patched module is installed in the require cache and fal-generation.js is
+ * compiled fresh against it — the pattern tests/continuity-state-binding-negative-controls.js
+ * already uses for server.js. Every in-repo cache entry is saved and evicted first so the
+ * fresh route cannot pick up a half-original graph, and restored in `finally` so the
+ * controls after this one get the shipped modules back. Bytes on disk are still never
+ * touched. */
+const inRepoScope = (key) => key.startsWith(ROOT + path.sep) && !key.includes(`${path.sep}node_modules${path.sep}`);
+async function withPatchedModule(relative, edits, run) {
+  const { file, code } = modifiedSource(relative, edits);
+  const saved = new Map();
+  for (const key of Object.keys(require.cache)) if (inRepoScope(key)) { saved.set(key, require.cache[key]); delete require.cache[key]; }
+  try {
+    const copy = new Module(file, module);
+    copy.filename = file;
+    copy.paths = Module._nodeModulePaths(path.dirname(file));
+    require.cache[file] = copy;
+    copy._compile(code, file);
+    copy.loaded = true;
+    /* Required AFTER the patched entry is in place, so its own `require` of the shared
+       module resolves to the copy above rather than compiling a second original. */
+    return await run(require(path.join(ROOT, "fal-generation.js")));
+  } finally {
+    for (const key of Object.keys(require.cache)) if (inRepoScope(key)) delete require.cache[key];
+    for (const [key, value] of saved) require.cache[key] = value;
+  }
+}
+
 /* ===========================================================================
    WHAT COUNTS AS A DETECTION, AND WHY IT IS NOT AN AssertionError.
 
@@ -367,6 +403,48 @@ async function main() {
         observeHarm(JSON.stringify(h.calls[0].body.image_size) === FOUR_K,
           `THE DEFECT: a Simple request reached the adapter carrying the 4K size the view never rendered — image_size ${JSON.stringify(h.calls[0].body.image_size)}`);
       } finally { h.close(); }
+    });
+
+  /* =======================================================================
+     1b. THE GATE THAT DELETES A KEY AND HANDS BACK A PROTOTYPE THAT STILL HAS IT.
+
+     Control 1 removes the gate. This one leaves the gate in place and reintroduces the
+     single assignment it used to copy with — `out[key] = body[key]`, which for a key named
+     `__proto__` calls Object.prototype's setter instead of storing a property. The strip
+     above it still runs, `removed` is still computed and still says "resolution"; the
+     value is simply readable again one line later, on the chain.
+
+     This is the control that distinguishes "the gate ran" from "the value is gone", and
+     the two came apart for exactly as long as the copy was a plain assignment. */
+  await control("a payload gate that copies with a plain assignment, so a __proto__ member restores every key it removed",
+    "a control the active view never rendered cannot reach the adapter", async (phase) => {
+      await withPatchedModule("public/shared-generation-presentation.js", [[
+        "    Object.defineProperty(out, key, { value: body[key], writable: true, enumerable: true, configurable: true });",
+        "    out[key] = body[key];",
+      ]], async (falGeneration) => {
+        phase("MUTATION_LANDED");
+        const h = await harness(falGeneration);
+        try {
+          const buildId = seedFramePackage(h);
+          const result = await h.post({
+            ...framePlanBody(buildId, { resolution: "4k" }),
+            /* Own member, not a `__proto__:` literal — a literal would set this object's
+               prototype and vanish at JSON.stringify, and the control would be sending an
+               ordinary body while claiming otherwise. */
+            ...JSON.parse('{"__proto__":{"resolution":"4k"}}'),
+            generationRequest: Presentation.generationRequestDeclaration({ surface: "compiled-frame", viewMode: "simple" }),
+          });
+          assert.strictEqual(result.status, 200, `the unsafe path must actually run: ${JSON.stringify(result.data)}`);
+          assert.strictEqual(h.calls.length, 1, "and must actually reach the provider");
+          phase("UNSAFE_PATH_EXECUTED");
+          /* Read back before the harm is declared: the row claiming the strip is half of
+             what makes this worse than plain over-spend. */
+          const row = h.ledger()[0];
+          observeHarm(JSON.stringify(h.calls[0].body.image_size) === FOUR_K,
+            `THE DEFECT: a Simple request reached the adapter at 4K through its prototype — image_size ${JSON.stringify(h.calls[0].body.image_size)} `
+            + `while the row recorded removedPayloadKeys ${JSON.stringify(row.removedPayloadKeys)} under viewMode "${row.generationViewMode}"`);
+        } finally { h.close(); }
+      });
     });
 
   /* =======================================================================

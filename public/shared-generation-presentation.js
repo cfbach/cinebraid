@@ -576,7 +576,17 @@ function restrictPayloadToPlan(payload, plan) {
   const removed = [];
   for (const key of Object.keys(body)) {
     if (CINEBRAID_CONTROL_PAYLOAD_KEYS.includes(key) && governed.has(key) && !allowed.has(key)) { removed.push(key); continue; }
-    out[key] = body[key];
+    /* Assigned through defineProperty, for the same reason ofp/ofp-json.js parses that
+       way: a key named `__proto__` must become an own data property rather than reassign
+       the prototype. Plain `out[key] = ...` invokes Object.prototype's setter, and a body
+       is JSON the caller wrote - `{"resolution":"4k","__proto__":{"resolution":"4k"}}`
+       parses to an own `__proto__` member, so `Object.keys` offers it here like any other
+       key. Re-pointing the prototype would hand back every control this loop had just
+       removed: the `continue` above deletes the own property, and the chain answers for
+       it again on the very next read. The gate would report the strip, the ledger row
+       would record `removedPayloadKeys: ["resolution"]` beside `viewMode: "simple"`, and
+       the 4K the filmmaker was never offered would still be what got dispatched. */
+    Object.defineProperty(out, key, { value: body[key], writable: true, enumerable: true, configurable: true });
   }
   /* Named rather than silent. A submission that quietly dropped a value the filmmaker
      set is the mirror image of one that quietly kept it, and a caller that wants to say

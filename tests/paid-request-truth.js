@@ -399,6 +399,62 @@ async function main() {
   }
 
   /* =======================================================================
+     4b. THE STRIP CANNOT BE UNDONE THROUGH THE PROTOTYPE CHAIN.
+
+     Reproduction 3 proves the gate deletes the key. It deletes an OWN property, and for
+     as long as the copy was written with `out[key] = body[key]` that was not the same
+     thing as the value being gone: a body is JSON the caller wrote, `__proto__` parses to
+     an ordinary own member, and assigning it invokes Object.prototype's setter instead of
+     storing it. The deleted control was then readable again on the very next line.
+
+     What made it worth a reproduction of its own rather than a note on 3 is the receipt.
+     `removed` is computed from own keys, so the row recorded `removedPayloadKeys:
+     ["resolution"]` under `viewMode: "simple"` while 4K went to the provider — the gate
+     reporting a strip it had not performed. The two assertions below are therefore about
+     different things: what the adapter received, and whether the ledger told the truth
+     about it. */
+  {
+    const h = await harness();
+    try {
+      const buildId = seedFramePackage(h);
+      const simpleDeclaration = Presentation.generationRequestDeclaration({ surface: "compiled-frame", viewMode: "simple" });
+      /* The baseline, so "not 4K" is not mistaken for proof — a third value nobody chose
+         would satisfy that just as well. This is where a Simple request lands. */
+      const bare = await h.post({ ...framePlanBody(buildId, { clientRequestId: "proto-bare" }), generationRequest: simpleDeclaration });
+      assert.strictEqual(bare.status, 200, `a Simple request carrying no size: ${JSON.stringify(bare.data)}`);
+      const bareSize = JSON.stringify(h.calls[0].body.image_size);
+      await h.settle(bare.data.job.id);
+
+      /* Spread rather than a `__proto__:` literal on purpose. A literal key sets the
+         prototype and would never survive JSON.stringify, so the body would arrive
+         WITHOUT the member and the reproduction would pass while testing nothing. Parsed
+         from text, it is an own member — exactly what express's body parser produces. */
+      const smuggled = await h.post({
+        ...framePlanBody(buildId, { clientRequestId: "proto-smuggled" }),
+        ...JSON.parse('{"__proto__":{"resolution":"4k"}}'),
+        generationRequest: simpleDeclaration,
+      });
+      assert.strictEqual(smuggled.status, 200, `the request is accepted, not refused: ${JSON.stringify(smuggled.data)}`);
+      assert.strictEqual(h.calls.length, 2, "and it genuinely reaches the adapter, so the size below is a dispatched one");
+      const smuggledSize = JSON.stringify(h.calls[1].body.image_size);
+      assert.strictEqual(smuggledSize, bareSize,
+        `a resolution supplied on the prototype must land exactly where a request carrying no resolution lands, not on 4K (received ${smuggledSize}, expected ${bareSize})`);
+
+      /* THE RECEIPT AGREES WITH THE DISPATCH. The failure this guards against was not
+         only over-spend; it was a row that recorded the strip either way. */
+      const row = h.ledger().find((item) => item.clientRequestId === "proto-smuggled");
+      assert.strictEqual(row.generationViewMode, "simple", "the row records the view it was judged under");
+      assert.strictEqual(JSON.stringify({ width: Number(String(row.resolution).split("x")[0]), height: Number(String(row.resolution).split("x")[1]) }), smuggledSize,
+        "and the size recorded on the row must be the size the adapter received");
+
+      /* The route must not have been polluted globally either — a leaked prototype write
+         would have made every later object in this process answer for `resolution`. */
+      assert.strictEqual(({}).resolution, undefined, "no object in this process may have gained a resolution");
+      note(`4b. a Simple request smuggling resolution:"4k" as a __proto__ member reaches the adapter at ${smuggledSize} — the same size a request carrying no resolution lands on — the row records that size rather than the one it was refused, and Object.prototype is untouched`);
+    } finally { h.close(); }
+  }
+
+  /* =======================================================================
      5. UNSUPPORTED MACHINE SETTINGS NEVER TRAVEL, IN EITHER VIEW.
 
      Neither shipped image model declares a seed, so a seed is not an Advanced control
