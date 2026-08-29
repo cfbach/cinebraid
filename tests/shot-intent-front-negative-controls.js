@@ -1113,70 +1113,252 @@ mustFailAsync("NC-36 a stage reported not required is still reported unskippable
 
 
 /* ===========================================================================
-   NC-37 / NC-38 — SECTION N'S FENCE, AND WHY THE OBVIOUS REPAIR IS NOT ONE.
+   NC-37 .. NC-46 — AUTOMATION'S OBLIGATION AND ITS COMPLETION.
 
-   Section N leaves public/automation.js's route-blind required-frame count where it
-   is. A deferral is only honest if BOTH halves are demonstrated: that the fence
-   actually holds something in, and that the one-line repair really is worse than
-   leaving it. These are those two halves.
+   Sections N and O. NC-37 and NC-38 REPLACE two controls whose subject no longer
+   exists: they guarded a fenced residual and demonstrated why its one-line repair
+   was wrong. The residual is gone, so a fence around it is not a guarantee — these
+   watch the convergence itself.
+
+   Every mutation below is applied to public/automation.js as the render harness loads
+   it, so the page under test really runs the broken derivation. Two things are proved
+   for each: that the wrong behaviour is OBSERVABLE, and that the assertion aimed at it
+   fails for its own reason.
+
+   All anchors are single lines. A multi-line anchor is the one shape that silently
+   matches nothing in a CRLF checkout.
    =========================================================================== */
 
-/* The Look stage of an undeclared shot, where the automation hub is mounted. */
-async function lookStageHtml(mutateSource) {
-  const project = projectWith(newShotRecord());
+const OWED_LINE = "  const owed = known ? currentlyRequiredFrames(shot, shotReadinessFor(shot)) : [];";
+const ROUTE_LINE = '  const routeDeclared = typeof readShotRoute === "function" && readShotRoute(shot).reading === "declared";';
+const HUB_LINE = "  const stillObligation = shotStillObligation(shot), stillCard = shotStillObligationCard(stillObligation);";
+const DEFAULTS_LINE = "  const defaultIds = owedFrames";
+const SUMMARY_ZERO_LINE = "  if (obligation.owedFrameCount === 0)";
+const SETTLED_LINE = '  return obligation.stillRequirementState !== "frames-incomplete";';
+
+/* One rendered shot, with every automation surface read out of the page. */
+async function automationView(shotExtra, mutateSource, { takes = [] } = {}) {
+  const project = projectWith(newShotRecord({
+    keyframes: [
+      { id: "frame-a-new", label: "A", title: "Opening frame A", winner: null, required: true, generationPackages: [] },
+      { id: "frame-b-new", label: "B", title: "Closing frame B", winner: null, required: true, generationPackages: [] },
+    ],
+    ...shotExtra,
+  }));
+  if (shotExtra.approveFrameA) {
+    GESTURE.gesture(() => Kernel.approveFrameCanon(project, {
+      shotId: "SC-01-01", frameId: "frame-a-new", value: "LEGACY-A.png", assetId: "", at: AT, via: "automation-control",
+    }));
+  }
+  const scan = scanFor(project);
+  scan.shots["SC-01-01"] = { takes: takes.map((name) => ({ name, url: `/assets/shots/SC-01-01/takes/${name}` })), locked: [] };
   const page = await render("#/shot/SC-01-01", project, {
-    scan: scanFor(project),
+    scan, mutateSource,
     storage: { "cinebraid-focused:fixture:shot-task:SC-01-01": "look" },
-    mutateSource,
   });
-  return String(page.map.get("main").innerHTML || "");
+  return run(page.context, `
+    const s = P.shots.find((row) => row.id === "SC-01-01");
+    const obligation = shotStillObligation(s);
+    openShotAutomationModal("SC-01-01");
+    const modal = String(document.getElementById("modal").innerHTML || "");
+    /* A literal space, not a backslash-s class: this is a template literal, where that
+       escape collapses to a bare "s" and every preselection reads false. */
+    const rows = [...modal.matchAll(/class="v626-auto-frame" value="([^"]*)" (checked)?/g)]
+      .map((row) => ({ id: row[1], preselected: !!row[2] }));
+    closeModal();
+    const html = String(document.getElementById("main").innerHTML || "");
+    return {
+      obligation,
+      card: shotStillObligationCard(obligation),
+      /* new RegExp, not a literal: inside a template literal the escaped slash a
+         regex literal needs is an unrecognised escape, and the pattern ends early. */
+      cards: [...html.matchAll(new RegExp("REQUIRED FRAMES</span><b>([^<]*)</b>", "g"))].map((row) => row[1]),
+      preselectedIds: rows.filter((row) => row.preselected).map((row) => row.id),
+      summary: shotStillAutomationSummary(obligation, 1, obligation.approvedOwedFrameIds.map(() => "A")),
+      settled: stillObligationSettled(obligation),
+    };`);
 }
-const requiredFramesCards = (html) => [...html.matchAll(/REQUIRED FRAMES<\/span><b>([^<]*)<\/b>/g)].map((row) => row[1]);
 
 /* ---------------------------------------------------------------------------
-   NC-37 — THE FENCE IS LOAD-BEARING.
+   NC-37 — AUTOMATION DERIVES ITS OWN REQUIREMENT AGAIN.
 
-   The hub's route-blind count is given a second home OUTSIDE the collapsed automation
-   tooling, which is precisely the leak section N exists to prevent. If N's containment
-   assertion could not see that, the deferral would be an unwatched defect rather than
-   a bounded one.
+   The shipped defect, restored at its source: the hub reads the stored flag instead
+   of the projection, and the undeclared shot's card counts a frame nothing owes.
    --------------------------------------------------------------------------- */
-mustFailAsync("NC-37 the route-blind count escapes the automation hub",
-  "outside the automation hub", async () => {
-    const html = await lookStageHtml(pageMutation("creation-studio.js",
-      '<section class="shot-command-summary"',
-      '<section class="shot-command-summary" data-leak="<article><span>REQUIRED FRAMES</span><b>0/1 approved</b></article>"',
+mustFailAsync("NC-37 the hub derives its own frame requirement from the stored flag",
+  "must not print a fraction of a requirement", async () => {
+    const seen = await automationView({}, pageMutation("automation.js", HUB_LINE,
+      "  const frames = guidedFrames(shot), required = frames.filter((frame) => frame.required !== false), approved = required.filter((frame) => guidedFrameApproved(shot, frame, takesFor(shot.id), frames.indexOf(frame))).length;\n"
+      + "  const stillObligation = shotStillObligation(shot), stillCard = { value: `${approved}/${required.length} approved`, note: approved === required.length ? \"Still package ready\" : \"Full-shot automation can continue the chain\" };",
       "NC-37"));
-    const hubAt = html.indexOf('<details class="shot-automation-hub"');
-    assert(hubAt >= 0, "precondition: the hub must still be rendered");
-    const outside = requiredFramesCards(html.slice(0, hubAt));
-    assert.deepStrictEqual(outside, [],
-      `no REQUIRED FRAMES card outside the automation hub may count the stored flag, found ${JSON.stringify(outside)}`);
+    assert.strictEqual(seen.obligation.owedFrameCount, 0, "precondition: the shot still owes no frame");
+    assert.deepStrictEqual(seen.cards, ["None yet"],
+      `the card must not print a fraction of a requirement the shot does not have, got ${JSON.stringify(seen.cards)}`);
   });
 
 /* ---------------------------------------------------------------------------
-   NC-38 — THE ONE-LINE REPAIR CLAIMS THE PACKAGE IS READY.
+   NC-38 — ZERO OWED BECOMES A READY PACKAGE.
 
-   Section N's second reason, demonstrated rather than asserted. Point the hub's
-   `required` list at the canonical answer and nothing else: the count becomes an
-   honest 0/0, and the card's own note — `approved === required.length` — then tells a
-   filmmaker with no images at all that the still package is ready. Fixing this surface
-   means deciding what the card MEANS first, which is the automation work being
-   deferred, not a line edit this slice can smuggle in.
+   `approved === required.length` is TRUE WHEN BOTH ARE ZERO. That single line is the
+   whole completion defect, and it is restored here on its own so no other correction
+   can be credited with catching it.
    --------------------------------------------------------------------------- */
-mustFailAsync("NC-38 the naive canonical repair announces a ready package on an empty shot",
-  "must not tell a shot with nothing approved", async () => {
-    const html = await lookStageHtml(pageMutation("automation.js",
-      "const frames = guidedFrames(shot), required = frames.filter((frame) => frame.required !== false), approved = required.filter((frame) => guidedFrameApproved(shot, frame, takesFor(shot.id), frames.indexOf(frame))).length;",
-      "const frames = guidedFrames(shot), required = frames.filter((frame) => frame.required !== false).slice(0, shotStageModelFacts(shot, takesFor(shot.id)).requiredFrameCount), approved = required.filter((frame) => guidedFrameApproved(shot, frame, takesFor(shot.id), frames.indexOf(frame))).length;",
+mustFailAsync("NC-38 zero owed frames is read as every owed frame approved",
+  "may claim a ready still package", async () => {
+    const seen = await automationView({}, pageMutation("automation.js", SUMMARY_ZERO_LINE,
+      "  if (obligation.approvedOwedCount === obligation.owedFrameCount)\n"
+      + "    return `${obligation.approvedOwedCount} required frame${obligation.approvedOwedCount === 1 ? \"\" : \"s\"} approved (${names}). The still package is ready for manual motion setup.`;\n"
+      + "  if (false)",
       "NC-38"));
-    const hubAt = html.indexOf('<details class="shot-automation-hub"');
-    assert(hubAt >= 0, "precondition: the hub must still be rendered");
-    const hub = html.slice(hubAt);
-    assert.deepStrictEqual(requiredFramesCards(hub), ["0/0 approved"],
-      "precondition: the canonical count must actually reach the card, or this proves nothing");
-    assert(!/Still package ready/.test(hub),
-      "must not tell a shot with nothing approved that its still package is ready");
+    assert.strictEqual(seen.obligation.owedFrameCount, 0, "precondition: the shot owes no frame");
+    assert(!/still package is ready/i.test(seen.summary),
+      `only a declared route whose owed frames are approved may claim a ready still package, got ${JSON.stringify(seen.summary)}`);
+  });
+
+/* ---------------------------------------------------------------------------
+   NC-39 — A DEFAULT FRAME IS CHOSEN FOR THE FILMMAKER.
+
+   The old preselection, restored: unfinished frames if there are any, otherwise
+   Frame A regardless. On an undeclared shot that ticks a frame nothing asked for, and
+   a run started from it would produce a still the shot never owed.
+   --------------------------------------------------------------------------- */
+mustFailAsync("NC-39 an undeclared shot opens automation with Frame A preselected",
+  "no frame may be preselected", async () => {
+    const seen = await automationView({}, pageMutation("automation.js", DEFAULTS_LINE,
+      "  const defaultIds = (frames.filter((frame) => !guidedFrameApproved(shot, frame, takesFor(shot.id), frames.indexOf(frame))).length ? frames.filter((frame) => !guidedFrameApproved(shot, frame, takesFor(shot.id), frames.indexOf(frame))) : frames.slice(0, 1)).map((frame) => frame.id); void owedFrames",
+      "NC-39"));
+    assert.strictEqual(seen.obligation.owedFrameCount, 0, "precondition: the shot owes no frame");
+    assert.deepStrictEqual(seen.preselectedIds, [],
+      `no frame may be preselected for automation on a shot that owes none, got ${JSON.stringify(seen.preselectedIds)}`);
+  });
+
+/* ---------------------------------------------------------------------------
+   NC-40 — THE CARD IS CANONICAL AND THE PLAN IS NOT.
+
+   The half-converged state the review named explicitly: presentation says zero while
+   the picker still behaves as if Frame A is owed. Only the plan is reverted here, so
+   a control that watched the card alone would pass.
+   --------------------------------------------------------------------------- */
+mustFailAsync("NC-40 the card reports zero while the plan still preselects a frame",
+  "no frame may be preselected", async () => {
+    const seen = await automationView({}, pageMutation("automation.js", DEFAULTS_LINE,
+      "  const defaultIds = frames.filter((frame) => frame.required !== false).slice(0, 1).map((frame) => frame.id); void owedFrames",
+      "NC-40"));
+    assert.deepStrictEqual(seen.cards, ["None yet"],
+      "precondition: the card must still be canonical, or this is not the half-converged case");
+    assert.deepStrictEqual(seen.preselectedIds, [],
+      `no frame may be preselected for automation on a shot that owes none, got ${JSON.stringify(seen.preselectedIds)}`);
+  });
+
+/* ---------------------------------------------------------------------------
+   NC-41 — THE PLAN IS CANONICAL AND THE RUN'S COMPLETION CLAIM IS NOT.
+
+   The other end of the chain, and a DIFFERENT failure from NC-38: there the two zero
+   cases collapsed into "done", here an outstanding obligation does. The plan is
+   untouched and correct — it names the one frame this route owes — and the run would
+   still finish by announcing a ready still package over a frame nobody approved.
+   --------------------------------------------------------------------------- */
+mustFailAsync("NC-41 a run with an owed frame unapproved still claims a ready package",
+  "may claim a ready still package", async () => {
+    const seen = await automationView({ deliveryRoute: "i2v" }, pageMutation("automation.js",
+      '  if (obligation.stillRequirementState === "frames-complete")',
+      "  if (true)",
+      "NC-41"));
+    assert.deepStrictEqual(seen.preselectedIds, ["frame-a-new"],
+      "precondition: the plan must still be canonical, or this is not the half-converged case");
+    assert.strictEqual(seen.obligation.stillRequirementState, "frames-incomplete",
+      "precondition: and the owed frame must still be unapproved");
+    assert(!/still package is ready/i.test(seen.summary),
+      `only a declared route whose owed frames are approved may claim a ready still package, got ${JSON.stringify(seen.summary)}`);
+  });
+
+/* ---------------------------------------------------------------------------
+   NC-42 — A DECLARED ZERO-FRAME ROUTE IS GIVEN A REQUIRED STILL.
+
+   The projection falls back to the stored flag whenever the canonical answer is
+   empty — which is exactly the shape of "0 owed must mean I read it wrong".
+   --------------------------------------------------------------------------- */
+mustFailAsync("NC-42 a route that owes no still is given one anyway",
+  "must owe exactly the frames its canonical needs name", async () => {
+    const seen = await automationView({ deliveryRoute: "r2v" }, pageMutation("automation.js", OWED_LINE,
+      "  const canonical = known ? currentlyRequiredFrames(shot, shotReadinessFor(shot)) : [];\n"
+      + "  const owed = canonical.length ? canonical : frames.filter((frame) => frame.required !== false);",
+      "NC-42"));
+    assert.deepStrictEqual(seen.obligation.owedFrameIds, [],
+      `a reference-driven route must owe exactly the frames its canonical needs name, got ${JSON.stringify(seen.obligation.owedFrameIds)}`);
+  });
+
+/* ---------------------------------------------------------------------------
+   NC-43 — A FRAME-REQUIRING ROUTE LOSES ITS FRAME.
+
+   The other direction, and the reason NC-42 is not enough on its own: a projection
+   that answered "nothing is ever owed" would satisfy every zero assertion above.
+   --------------------------------------------------------------------------- */
+mustFailAsync("NC-43 a route that owes an opening frame stops owing it",
+  "must owe exactly the frames its canonical needs name", async () => {
+    const seen = await automationView({ deliveryRoute: "i2v" }, pageMutation("automation.js", OWED_LINE,
+      "  const owed = [];",
+      "NC-43"));
+    assert.deepStrictEqual(seen.obligation.owedFrameIds, ["frame-a-new"],
+      `an opening-frame route must owe exactly the frames its canonical needs name, got ${JSON.stringify(seen.obligation.owedFrameIds)}`);
+  });
+
+/* ---------------------------------------------------------------------------
+   NC-44 — A TWO-ENDPOINT ROUTE LOSES ONE OF ITS TWO.
+
+   Truncation, not erasure. A count check alone would catch this; an id check is what
+   proves the plan names the RIGHT frames.
+   --------------------------------------------------------------------------- */
+mustFailAsync("NC-44 a two-endpoint route plans only its opening frame",
+  "must owe exactly the frames its canonical needs name", async () => {
+    const seen = await automationView({ deliveryRoute: "flf" }, pageMutation("automation.js", OWED_LINE,
+      "  const owed = (known ? currentlyRequiredFrames(shot, shotReadinessFor(shot)) : []).slice(0, 1);",
+      "NC-44"));
+    assert.deepStrictEqual(seen.obligation.owedFrameIds, ["frame-a-new", "frame-b-new"],
+      `a two-endpoint route must owe exactly the frames its canonical needs name, got ${JSON.stringify(seen.obligation.owedFrameIds)}`);
+    assert.deepStrictEqual(seen.preselectedIds, ["frame-a-new", "frame-b-new"],
+      "and the plan must preselect both");
+  });
+
+/* ---------------------------------------------------------------------------
+   NC-45 — HISTORICAL MEDIA AUTHORS A ROUTE.
+
+   An approved frame makes the projection report a declared route, which turns the
+   undeclared state into "this route needs no still" — a decision nobody took, read
+   off a file on disk.
+   --------------------------------------------------------------------------- */
+mustFailAsync("NC-45 an approved frame makes the shot count as declared",
+  "must not read a declaration out of the media", async () => {
+    const seen = await automationView({ approveFrameA: true,
+      keyframes: [
+        { id: "frame-a-new", label: "A", title: "Opening frame A", winner: "LEGACY-A.png", required: true, generationPackages: [] },
+        { id: "frame-b-new", label: "B", title: "Closing frame B", winner: null, required: true, generationPackages: [] },
+      ],
+      candidateFiles: [{ stored: "LEGACY-A.png", original: "LEGACY-A.png", decision: "approved", mediaType: "image", frameId: "frame-a-new" }],
+    }, pageMutation("automation.js", ROUTE_LINE,
+      '  const routeDeclared = (typeof readShotRoute === "function" && readShotRoute(shot).reading === "declared") || frames.some((frame) => frame.winner);',
+      "NC-45"), { takes: ["LEGACY-A.png"] });
+    assert.strictEqual(seen.obligation.routeDeclared, false,
+      "automation must not read a declaration out of the media a shot happens to carry");
+    assert.strictEqual(seen.obligation.stillRequirementState, "route-undeclared",
+      "and the shot stays undeclared rather than becoming a route that needs no still");
+  });
+
+/* ---------------------------------------------------------------------------
+   NC-46 — THE COMPLETION FLAG IS SET WHATEVER HAPPENED.
+
+   `automationReadyForMotion` drives "STILL AUTOMATION COMPLETE" on the motion
+   workspace. Written unconditionally, it says so while an owed frame is unapproved.
+   --------------------------------------------------------------------------- */
+mustFailAsync("NC-46 an outstanding obligation still settles the completion flag",
+  "is not settled", async () => {
+    const seen = await automationView({ deliveryRoute: "i2v" }, pageMutation("automation.js", SETTLED_LINE,
+      "  return true;",
+      "NC-46"));
+    assert.strictEqual(seen.obligation.stillRequirementState, "frames-incomplete",
+      "precondition: this shot owes a frame it has not approved");
+    assert.strictEqual(seen.settled, false,
+      "an outstanding obligation is not settled, so nothing may claim the still work is complete");
   });
 
 async function main() {

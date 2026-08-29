@@ -36,9 +36,12 @@
  *   M  the shell around #main agrees: the persistent stage bar offers no Continue and
  *      the Assistant rail names no next stage unless the destination is genuinely owed,
  *      and the declared-optional Look & blocking stage is never one
- *   N  the one route-blind reader of `frame.required` still standing is fenced where
- *      it is -- inside the automation hub, reaching no readiness, next action,
- *      command summary or stage bar. Deferred deliberately; see the section header
+ *   N  automation owns no requirement of its own: the stored `frame.required` flag has
+ *      no code-level reader left in public/automation.js, and the three readers that
+ *      remain elsewhere are the three that were already argued for
+ *   O  shot frame OBLIGATION and still/automation COMPLETION are different questions:
+ *      four states, three of which are zero-or-done and only one of which may say a
+ *      still package is ready
  *
  * NO PROVIDER, NO PAID ROUTE, NO NETWORK, NO PROJECT DATA. Every fixture is built in
  * memory and the repository's own projects/ directory is never opened.
@@ -1853,127 +1856,297 @@ async function checkShellNextAction() {
 
 
 /* ===========================================================================
-   N — THE LAST ROUTE-BLIND READER OF `frame.required`, PINNED WHERE IT IS.
+   N — AUTOMATION HAS NO OPINION OF ITS OWN ABOUT WHAT A SHOT OWES.
 
-   Found by this slice's closure sweep and DELIBERATELY NOT REPAIRED HERE. It is
-   recorded the way section I records the shotApprovalComplete() boundary: stated,
-   bounded, and fenced, so it cannot spread while it waits for the slice that owns it.
+   This section used to FENCE a residual. An independent review held the candidate on
+   it, correctly: a fence around a second owner is still a second owner, and the two
+   were free to contradict each other the moment either moved.
 
-   WHAT IT IS. public/automation.js's shot automation hub computes
+   public/automation.js derived its own frame requirement from
 
-       const required = frames.filter((frame) => frame.required !== false);
+       frames.filter((frame) => frame.required !== false)
 
-   and renders a card labelled REQUIRED FRAMES reading "0/1 approved" on a shot that
-   has declared nothing — the discredited default making a statement, in the one place
-   the shot-intent work has not reached. `frame.required` is written `true` by
-   newKeyframe() on every frame of every project and no filmmaker-facing control writes
-   it, which is the whole reason section C exists.
+   at four sites, and reused that answer for the REQUIRED FRAMES card, the picker
+   defaults, the run plan and the completion summary. `frame.required` is written
+   `true` by newKeyframe() on every frame of every project and no filmmaker-facing
+   control writes it, so all four were reading a default that had never been a
+   statement about anything.
 
-   WHY IT IS NOT FIXED IN THIS SLICE, and the reason is not squeamishness:
-
-   1. The same expression is computed three more times in the same file — the plan
-      modal's frame picker and a run-progress label — where it is the AUTOMATION PLAN:
-      which frames a full-shot run would produce. Converging the card onto canonical
-      route truth without the picker makes the two disagree; converging both changes
-      what automation produces. That is an automation decision, and this brief says in
-      terms not to redesign automation and to report a second owner rather than add a
-      third.
-
-   2. The one-line version is WORSE, and NC-37 proves it rather than asserting it. The
-      card's own note reads `approved === required.length ? "Still package ready" : ...`
-      — so a required count of zero makes a shot with no images at all announce that
-      its still package is ready. A truthful repair has to decide what the card means
-      first, which is exactly the work being deferred.
-
-   WHAT THIS SECTION GUARANTEES INSTEAD: that it stays exactly where it is. The count
-   reaches no readiness answer, no next action, no command summary, no stage bar, and
-   no surface outside the collapsed automation tooling it belongs to. If it ever leaks,
-   this fails.
+   The correction consumes the canonical projection instead. This section is now the
+   PROPERTY, not the fence: automation.js contains no code-level reader of the stored
+   flag at all, and the readers that remain elsewhere are the same three that were
+   already argued for. It is stated over stripped source so prose describing the
+   removed reader — this comment included — cannot satisfy or break it.
    =========================================================================== */
-const AUTOMATION_REQUIRED_ANCHOR =
-  'const frames = guidedFrames(shot), required = frames.filter((frame) => frame.required !== false)';
+async function checkAutomationHasNoSecondOwner() {
+  /* N1 — THE STORED FLAG IS GONE FROM AUTOMATION ENTIRELY. */
+  const automationCode = codeOnly(readLF("public/automation.js"));
+  const automationReaders = automationCode.split("\n")
+    .map((line, index) => [index + 1, line])
+    .filter(([, line]) => line.includes(".required !== false)"));
+  assert.deepStrictEqual(automationReaders.map(([line]) => line), [],
+    `N1: public/automation.js reads the stored required flag again at line(s) ${automationReaders.map(([line]) => line).join(", ")}. It is a default that no control writes; automation must consume the canonical obligation instead of deriving one.`);
 
-function checkAutomationHubBoundary() {
-  const source = readLF("public/automation.js");
-  assert(source.includes(AUTOMATION_REQUIRED_ANCHOR),
-    "N: the reader this section fences must still be where it is described, or the fence is around nothing");
-  return source;
-}
+  /* N2 — AND IT CONSUMES THE ONE PROJECTION, AT EVERY SITE THAT USED TO DERIVE. */
+  assert(/function shotStillObligation\(/.test(automationCode),
+    "N2: the composing projection must exist for the surfaces to consume");
+  assert(/currentlyRequiredFrames\(/.test(automationCode),
+    "N2: and it must reach the canonical answer through app.js's existing projection rather than rebuilding it");
+  const consumers = (automationCode.match(/shotStillObligation\(/g) || []).length - 1;
+  assert.strictEqual(consumers, 4,
+    `N2: the four surfaces that used to derive a requirement must all consume the projection, found ${consumers} call sites`);
 
-async function checkRouteBlindReaderIsFenced() {
-  const source = checkAutomationHubBoundary();
+  /* N3 — THE ARGUED READERS ELSEWHERE ARE STILL EXACTLY THE THREE THAT WERE ARGUED.
+     app.js's requiredFrames() — section I proves its only consumer is route-invariant
+     and reaches no persistent surface; creation-studio.js's guidedFrameProgress() and
+     its requiredFrameCount fallback — the documented answers for the case readiness
+     cannot answer at all. A fourth is a new claim and has to be argued here first. */
+  const readers = [];
+  for (const file of ["app.js", "creation-studio.js", "shared-shot-readiness.js", "shared-stage-model.js", "focused-workspaces.js", "media-results.js", "reports.js"]) {
+    for (const line of codeOnly(readLF(`public/${file}`)).split("\n"))
+      if (line.includes(".required !== false)")) readers.push(`${file}: ${line.trim().slice(0, 90)}`);
+  }
+  assert.strictEqual(readers.length, 3,
+    `N3: the stored required flag gained or lost a reader. Each one is a default making a statement unless it is argued for.\n  ${readers.join("\n  ")}`);
+
+  /* N4 — AND THE CARD THAT EXPOSED IT NOW AGREES WITH THE REST OF THE SCREEN. The
+     hub is mounted inside the collapsed assisted-blocking tools on the Look stage. */
   const project = projectWith(newShotRecord("SC-01-01", "SC-01"));
-  /* The Look stage, because that is where the hub is mounted — inside the collapsed
-     OPTIONAL ASSISTED BLOCKING tools, two disclosures deep. */
   const page = await render("#/shot/SC-01-01", project, {
     scan: scanFor(project),
     storage: { "cinebraid-focused:fixture:shot-task:SC-01-01": "look" },
   });
   const html = String(page.map.get("main").innerHTML || "");
-  const HUB = '<details class="shot-automation-hub"';
-  const hubAt = html.indexOf(HUB);
-  const assistedAt = html.indexOf("blocking-assisted-tools");
-  const cardsIn = (text) => [...text.matchAll(/REQUIRED FRAMES<\/span><b>([^<]*)<\/b>/g)].map((row) => row[1]);
+  const cards = [...html.matchAll(/REQUIRED FRAMES<\/span><b>([^<]*)<\/b>/g)].map((row) => row[1]);
+  assert(html.includes('<details class="shot-automation-hub"'),
+    "N4 fixture check: the automation hub must be rendered for this to be about anything");
+  assert.deepStrictEqual(cards, ["None yet"],
+    `N4: every REQUIRED FRAMES card on an undeclared shot must report the obligation, not the stored flag, got ${JSON.stringify(cards)}`);
+  assert(!/0\/1 approved/.test(html), "N4: and nothing on the page may print the fabricated fraction");
 
-  /* N1 — the fabrication is real, and it is where this section says it is. */
-  assert(hubAt >= 0, "N1 fixture check: the automation hub must be rendered for this to be about anything");
-  assert(assistedAt >= 0 && hubAt > assistedAt,
-    "N1: the hub must remain inside the optional assisted-blocking tools");
-  const inside = cardsIn(html.slice(hubAt));
-  assert.deepStrictEqual(inside, ["0/1 approved"],
-    `N1 fixture check: the known fabrication must still read 0/1, got ${JSON.stringify(inside)}`);
+  note(`N. automation owns no requirement of its own: 0 code-level readers of the stored flag in public/automation.js, `
+    + `${consumers} surfaces consuming one composed projection, ${readers.length} argued readers left elsewhere, `
+    + `and the hub card reads ${JSON.stringify(cards[0])} on an undeclared shot`);
+}
 
-  /* N2 — AND NOWHERE ELSE. This is the guarantee. */
-  assert.deepStrictEqual(cardsIn(html.slice(0, hubAt)), [],
-    "N2: no REQUIRED FRAMES card outside the automation hub may count the stored flag");
+/* ===========================================================================
+   O — SHOT FRAME OBLIGATION VS STILL/AUTOMATION COMPLETION.
 
-  /* N3 — it reaches no truth. Every canonical answer on the same screen still says
-     the shot owes nothing and the question is the route. */
-  const truth = run(page.context, `
+   Two questions the automation surfaces used to answer with one boolean.
+
+   "What does the current declared route owe?" is owned by the route/readiness
+   projection and CONSUMED here. "Has the owed work been done?" is a different
+   question, and `approved === required.length` — the old test — is TRUE WHEN BOTH ARE
+   ZERO. So a shot that had declared nothing, owed nothing and produced nothing was
+   told its still package was ready.
+
+   Four states, and the three zero-or-done cases must stay distinguishable:
+
+     route-undeclared     owes nothing because nobody has said how the shot is made
+     frames-not-required  a declared route legitimately owes no still
+     frames-incomplete    owes frames, at least one unsatisfied
+     frames-complete      owes frames, all satisfied — the ONLY ready-package state
+
+   Every expectation below is DERIVED from shotRouteInputNeeds() through the same
+   frameNeedsOf() sections D and M use, so a route whose canonical needs change moves
+   these assertions with it rather than breaking them.
+   =========================================================================== */
+
+/* One shot carrying two frame records, rendered, with every automation surface read
+   out of the page's own functions. Two frame records on purpose: a one-frame fixture
+   cannot tell "owes exactly one" from "owes everything it has". */
+function automationShot(extra = {}) {
+  return newShotRecord("SC-01-01", "SC-01", {
+    keyframes: [
+      { id: "frame-a-new", label: "A", title: "Opening frame A", winner: null, description: "", notes: "", required: true, generationPackages: [] },
+      { id: "frame-b-new", label: "B", title: "Closing frame B", winner: null, description: "", notes: "", required: true, generationPackages: [] },
+    ],
+    ...extra,
+  });
+}
+
+async function automationSurfaces(project, { takes = [] } = {}) {
+  const scan = scanFor(project);
+  for (const shot of project.shots || [])
+    scan.shots[shot.id] = { takes: takes.map((name) => ({ name, url: `/assets/shots/${shot.id}/takes/${name}` })), locked: [] };
+  const page = await render("#/shot/SC-01-01", project, { scan });
+  return run(page.context, `
     const s = P.shots.find((row) => row.id === "SC-01-01");
-    const takes = takesFor("SC-01-01");
-    const readiness = shotReadinessFor(s);
-    const facts = shotStageModelFacts(s, takes);
+    const obligation = shotStillObligation(s);
+    const card = shotStillObligationCard(obligation);
+    /* THE PICKER'S PRESELECTION, read off the rendered markup rather than from the
+       draft object: updateShotAutomationEstimate() re-derives the draft from DOM
+       ":checked", which this harness does not reflect. The rendered attribute is what
+       a filmmaker actually opens the dialog to, and it is what the draft is seeded
+       from in a real browser. */
+    openShotAutomationModal("SC-01-01");
+    const modal = String(document.getElementById("modal").innerHTML || "");
+    /* A LITERAL SPACE, NOT A BACKSLASH-s CLASS. This regex lives inside a template
+       literal, where backslash-s is an unrecognised escape and collapses to a bare
+       "s" -- the id group still matched, so the picker rows looked right while every
+       preselection silently read false. */
+    const rows = [...modal.matchAll(/class="v626-auto-frame" value="([^"]*)" (checked)?/g)]
+      .map((row) => ({ id: row[1], preselected: !!row[2] }));
+    closeModal();
+    const panel = String(shotAutomationPanel(s));
     return {
-      requiredUnits: readiness.units.filter((u) => u.kind === "frame" && u.required).map((u) => u.id),
-      nextAction: readiness.nextAction.code,
-      requiredFrameCount: facts.requiredFrameCount,
-      requiredFramesApproved: facts.requiredFramesApproved,
-      barFrames: boundedShotTaskStatus(s, takes, "frames"),
-      stages: shotStageProgress(facts).map((stage) => stage.recommendedNext).filter(Boolean),
+      obligation,
+      card,
+      pickerRowIds: rows.map((row) => row.id),
+      preselectedIds: rows.filter((row) => row.preselected).map((row) => row.id),
+      /* PREFLIGHT CONSUMES THE PLAN. Asked with the plan the picker preselected, so
+         a plan that owes nothing cannot authorise a run. */
+      preflightOnPlan: v626ShotPreflight(s, rows.filter((row) => row.preselected).map((row) => row.id)).errors,
+      panelSaysNoStill: /requires no still frame|has not said how it is made/.test(panel),
+      panelSaysPipeline: /Run the complete still pipeline/.test(panel),
+      summary: shotStillAutomationSummary(obligation, 1, obligation.approvedOwedFrameIds.map((id) => id === "frame-a-new" ? "A" : "B")),
+      settled: stillObligationSettled(obligation),
+      frames: (s.keyframes || []).map((frame) => frame.id + ":" + (frame.winner || "")),
+      candidates: (s.candidateFiles || []).map((row) => row.stored),
+      storedRoute: Object.prototype.hasOwnProperty.call(s, "deliveryRoute") ? s.deliveryRoute : null,
     };`);
-  assert.deepStrictEqual(truth.requiredUnits, [], "N3: readiness still requires no frame");
-  assert.strictEqual(truth.nextAction, "declare-shot-route", "N3: and the current action is still the route question");
-  assert.strictEqual(truth.requiredFrameCount, 0, "N3: the fact projection still counts none");
-  assert.strictEqual(truth.barFrames.label, "Not required", "N3: the stage bar still says the stage is not required");
-  assert.deepStrictEqual(truth.stages, [], "N3: and no stage recommends anything on the strength of it");
+}
 
-  /* N4 — the source-level fence. The stored flag may be read by the automation file
-     and by the two documented fallbacks, and by nothing else that renders a
-     requirement. Stated as a property so a new reader has to come here first. */
-  const readers = [];
-  for (const file of ["app.js", "creation-studio.js", "shared-shot-readiness.js", "shared-stage-model.js", "focused-workspaces.js", "media-results.js", "reports.js"]) {
-    /* Comments stripped first. Every one of these files DISCUSSES the stored flag at
-       length -- that is how the slice documented what it was removing -- and a naive
-       line search would count describing it as doing it. focused-workspaces.js's
-       header, which records a reader it already deleted, is the exact case. */
-    for (const line of codeOnly(readLF(`public/${file}`)).split("\n"))
-      if (line.includes(".required !== false)")) readers.push(`${file}: ${line.trim().slice(0, 90)}`);
+async function checkAutomationObligation() {
+  const observed = [];
+  const OWED_ID = { "first-frame": "frame-a-new", "last-frame": "frame-b-new" };
+
+  /* O1 — UNDECLARED: no card fraction, no preselection, no plan, no run. */
+  const undeclared = await automationSurfaces(projectWith(automationShot()));
+  assert.strictEqual(undeclared.obligation.stillRequirementState, "route-undeclared",
+    "O1: a shot that has declared nothing is in the undeclared state, not the not-required one");
+  assert.deepStrictEqual(undeclared.obligation.owedFrameIds, [], "O1: and owes no frame");
+  assert.strictEqual(undeclared.card.value, "None yet",
+    `O1: the card must not print a fraction of a requirement that does not exist, got ${JSON.stringify(undeclared.card)}`);
+  assert(!/\d+\/\d+/.test(undeclared.card.value), "O1: nor any fraction at all");
+  assert(/until you say how this shot is made/.test(undeclared.card.note),
+    `O1: it names the missing decision, got ${JSON.stringify(undeclared.card.note)}`);
+  assert.deepStrictEqual(undeclared.preselectedIds, [],
+    `O1: no frame may be preselected for automation on a shot that owes none, got ${JSON.stringify(undeclared.preselectedIds)}`);
+  assert.deepStrictEqual(undeclared.pickerRowIds, ["frame-a-new", "frame-b-new"],
+    "O1: while every frame record stays offerable — choosing to make one is a decision the filmmaker may take");
+  assert(undeclared.preflightOnPlan.some((error) => /Choose at least one frame/.test(error)),
+    `O1: and the preflight refuses to authorise a run from an empty plan, got ${JSON.stringify(undeclared.preflightOnPlan)}`);
+  observed.push("undeclared: card \"None yet\", 0 preselected of 2 offered, preflight refuses");
+
+  /* O2 — THE THREE ZERO-OR-DONE CASES ARE DIFFERENT, and only one may say "ready". */
+  const notRequiredRoute = ROUTES.find((route) => frameNeedsOf(route).length === 0);
+  const owedRoute = ROUTES.find((route) => frameNeedsOf(route).length === 1);
+  assert(notRequiredRoute && owedRoute, "O2 fixture check: the vocabulary must offer a zero-frame and a one-frame route");
+  const notRequired = await automationSurfaces(projectWith(automationShot({ deliveryRoute: notRequiredRoute })));
+
+  const completeProject = projectWith(automationShot({
+    deliveryRoute: owedRoute,
+    keyframes: [
+      { id: "frame-a-new", label: "A", title: "Opening frame A", winner: "FRAME_A.png", description: "", notes: "", required: true, generationPackages: [] },
+      { id: "frame-b-new", label: "B", title: "Closing frame B", winner: null, description: "", notes: "", required: true, generationPackages: [] },
+    ],
+    candidateFiles: [{ stored: "FRAME_A.png", original: "FRAME_A.png", decision: "approved", mediaType: "image", frameId: "frame-a-new" }],
+  }));
+  approveFrame(completeProject, "SC-01-01", "frame-a-new", "FRAME_A.png");
+  const complete = await automationSurfaces(completeProject, { takes: ["FRAME_A.png"] });
+
+  const states = [undeclared, notRequired, complete].map((row) => row.obligation.stillRequirementState);
+  assert.deepStrictEqual(states, ["route-undeclared", "frames-not-required", "frames-complete"],
+    `O2: the three zero-or-done cases must stay three states, got ${JSON.stringify(states)}`);
+  assert.strictEqual(new Set([undeclared.card.note, notRequired.card.note, complete.card.note]).size, 3,
+    "O2: and must say three different things to a filmmaker");
+  const readyClaims = [undeclared, notRequired, complete].map((row) => /still package is ready/i.test(row.summary));
+  assert.deepStrictEqual(readyClaims, [false, false, true],
+    "O2: ONLY a declared route whose owed frames are approved may claim a ready still package — zero owed is not zero outstanding");
+  assert(!/still package ready/i.test(undeclared.card.note) && !/still package ready/i.test(notRequired.card.note),
+    "O2: and neither zero case may claim it on the card either");
+  assert.strictEqual(complete.card.value, "1/1 approved", "O2: the completed case still counts its owed frame");
+  observed.push(`the three zero-or-done cases stay distinct (${states.join(", ")}) and only ${complete.obligation.stillRequirementState} claims a ready package`);
+
+  /* O3 — A DECLARED ZERO-FRAME ROUTE: not required, and nothing planned. */
+  assert.deepStrictEqual(notRequired.obligation.owedFrameIds, [],
+    `O3: ${notRequiredRoute} owes no still frame`);
+  assert.strictEqual(notRequired.card.value, "None", `O3: and says so without a fraction, got ${JSON.stringify(notRequired.card)}`);
+  assert.deepStrictEqual(notRequired.preselectedIds, [], "O3: and plans no still");
+  assert.strictEqual(notRequired.panelSaysNoStill, true, "O3: and the panel does not promise to generate an opening frame");
+  assert.strictEqual(notRequired.panelSaysPipeline, false, "O3: nor the frame pipeline wording");
+
+  /* O4 — EVERY ROUTE PLANS EXACTLY WHAT ITS CANONICAL NEEDS NAME. */
+  const perRoute = [];
+  for (const route of ROUTES) {
+    const surfaces = await automationSurfaces(projectWith(automationShot({ deliveryRoute: route })));
+    const expected = frameNeedsOf(route).map((role) => OWED_ID[role]);
+    assert.deepStrictEqual(surfaces.obligation.owedFrameIds, expected,
+      `O4: ${route} must owe exactly the frames its canonical needs name, got ${JSON.stringify(surfaces.obligation.owedFrameIds)}`);
+    assert.deepStrictEqual(surfaces.preselectedIds, expected,
+      `O4: and the automation plan must preselect exactly those and no more, got ${JSON.stringify(surfaces.preselectedIds)}`);
+    assert.deepStrictEqual(surfaces.pickerRowIds, ["frame-a-new", "frame-b-new"],
+      `O4: while ${route} still offers every frame record`);
+    perRoute.push(`${route}:${expected.length}`);
   }
-  /* The three that are allowed, each with a stated reason:
-     app.js's requiredFrames() -- section I proves its only consumer is route-invariant
-     and reaches no persistent surface; creation-studio.js's guidedFrameProgress() and
-     its requiredFrameCount fallback -- the documented answers for the case readiness
-     cannot answer at all. Anything else is a new claim and has to be argued here. */
-  assert.strictEqual(readers.length, 3,
-    `N4: the stored required flag gained or lost a reader outside public/automation.js. Each one is a default making a statement unless it is argued for.\n  ${readers.join("\n  ")}`);
+  observed.push(`plans per route ${perRoute.join(" ")} — each equal to shotRouteInputNeeds()`);
 
-  const automationReaders = codeOnly(readLF("public/automation.js")).split("\n").filter((line) => line.includes(".required !== false)")).length;
-  note(`N. the one route-blind required-frame reader left is public/automation.js (${automationReaders} sites, all the automation PLAN): `
-    + `its hub card reads ${JSON.stringify(inside[0])} two disclosures deep on Look, while readiness requires ${truth.requiredUnits.length} frames, `
-    + `the fact projection counts ${truth.requiredFrameCount}, the stage bar reads ${JSON.stringify(truth.barFrames.label)}, `
-    + `the current action is ${truth.nextAction} and no stage recommends anything. No REQUIRED FRAMES card outside the hub counts the flag, `
-    + `and only ${readers.length} argued readers of it exist elsewhere. DEFERRED, not fixed — see the section header for why the one-line repair is worse`);
+  /* O5 — ONE PROJECTION, CONSUMED BY ALL OF THEM. Card, plan, preflight, run summary
+     and the completion flag must move together: this walks one shot from owing two
+     frames to owing none and requires every surface to change with it. */
+  const twoFrameRoute = ROUTES.find((route) => frameNeedsOf(route).length === 2);
+  assert(twoFrameRoute, "O5 fixture check: the vocabulary must offer a two-frame route");
+  const owedTwo = await automationSurfaces(projectWith(automationShot({ deliveryRoute: twoFrameRoute })));
+  assert.strictEqual(owedTwo.obligation.stillRequirementState, "frames-incomplete", "O5 fixture check: two owed, none approved");
+  assert.strictEqual(owedTwo.card.value, "0/2 approved", "O5: the card counts the obligation");
+  assert.strictEqual(owedTwo.preselectedIds.length, 2, "O5: the plan matches it");
+  assert.deepStrictEqual(owedTwo.preflightOnPlan.filter((error) => /Choose at least one frame/.test(error)), [],
+    "O5: and the preflight authorises a plan that has something owed in it");
+  assert.strictEqual(owedTwo.settled, false, "O5: an outstanding obligation is not settled, so nothing claims completion");
+  assert(/not complete yet/.test(owedTwo.summary), `O5: and the run summary says so, got ${JSON.stringify(owedTwo.summary)}`);
+  assert.strictEqual(complete.settled, true, "O5: a satisfied obligation is settled");
+  assert.strictEqual(notRequired.settled, true, "O5: and so is one that was never owed — that shot is not waiting on a still");
+  observed.push(`card, plan, preflight, completion flag and run summary all move with the one projection`);
+
+  /* O6 — HISTORICAL MEDIA DOES NOT AUTHOR A ROUTE, and automation is not where it
+     starts to. An approved frame and a returned candidate on an undeclared shot. */
+  const historyProject = projectWith(automationShot({
+    keyframes: [
+      { id: "frame-a-new", label: "A", title: "Opening frame A", winner: "LEGACY-A.png", description: "", notes: "", required: true, generationPackages: [] },
+      { id: "frame-b-new", label: "B", title: "Closing frame B", winner: null, description: "", notes: "", required: true, generationPackages: [] },
+    ],
+    candidateFiles: [{ stored: "LEGACY-A.png", original: "LEGACY-A.png", decision: "approved", mediaType: "image", frameId: "frame-a-new" }],
+    clips: [{ id: "seg-legacy", suffix: "a", label: "A", title: "Primary motion", dur: 5, kind: "i2v", note: "", motionPrompt: "", fromFrame: "frame-a-new", toFrame: "", generationPackages: [], motionPlan: null }],
+  }));
+  approveFrame(historyProject, "SC-01-01", "frame-a-new", "LEGACY-A.png");
+  const history = await automationSurfaces(historyProject, { takes: ["LEGACY-A.png"] });
+  assert.strictEqual(history.storedRoute, null, "O6: an approved frame and a stored clip declare no route");
+  assert.strictEqual(history.obligation.routeDeclared, false, "O6: the projection reads no declaration from them");
+  assert.strictEqual(history.obligation.stillRequirementState, "route-undeclared",
+    "O6: so the shot is undeclared, not complete — history is not a decision");
+  assert.deepStrictEqual(history.obligation.owedFrameIds, [], "O6: and owes nothing on the strength of what it carries");
+  assert.deepStrictEqual(history.preselectedIds, [], "O6: automation plans nothing from it either");
+  assert(!/still package is ready/i.test(history.summary),
+    `O6: and a run on it could not announce a ready package, got ${JSON.stringify(history.summary)}`);
+  assert.deepStrictEqual(history.frames, ["frame-a-new:LEGACY-A.png", "frame-b-new:"], "O6: every frame record survives");
+  assert.deepStrictEqual(history.candidates, ["LEGACY-A.png"], "O6: and so does the candidate");
+  observed.push("an approved frame plus a stored clip: still undeclared, 0 owed, 0 planned, media intact");
+
+  /* O7 — A ROUTE CHANGE MOVES THE PLAN AND MOVES NO MEDIA. */
+  const walk = [];
+  const before = history.frames.join("|") + "::" + history.candidates.join("|");
+  for (const route of [owedRoute, twoFrameRoute, notRequiredRoute, ""]) {
+    const project = projectWith(automationShot({
+      keyframes: [
+        { id: "frame-a-new", label: "A", title: "Opening frame A", winner: "LEGACY-A.png", description: "", notes: "", required: true, generationPackages: [] },
+        { id: "frame-b-new", label: "B", title: "Closing frame B", winner: null, description: "", notes: "", required: true, generationPackages: [] },
+      ],
+      candidateFiles: [{ stored: "LEGACY-A.png", original: "LEGACY-A.png", decision: "approved", mediaType: "image", frameId: "frame-a-new" }],
+      clips: [{ id: "seg-legacy", suffix: "a", label: "A", title: "Primary motion", dur: 5, kind: "i2v", note: "", motionPrompt: "", fromFrame: "frame-a-new", toFrame: "", generationPackages: [], motionPlan: null }],
+    }));
+    approveFrame(project, "SC-01-01", "frame-a-new", "LEGACY-A.png");
+    if (route) assert(Route.declareShotRoute(project.shots[0], route).ok, `O7: ${route} must be declarable`);
+    const surfaces = await automationSurfaces(project, { takes: ["LEGACY-A.png"] });
+    assert.deepStrictEqual(surfaces.obligation.owedFrameIds, frameNeedsOf(route).map((role) => OWED_ID[role]),
+      `O7: ${route || "undeclared"} must owe exactly its canonical frames after the change`);
+    assert.strictEqual(surfaces.frames.join("|") + "::" + surfaces.candidates.join("|"), before,
+      `O7: no frame, winner or candidate may move when the route changes to ${route || "undeclared"}`);
+    walk.push(`${route || "undeclared"}:${surfaces.obligation.owedFrameIds.length}(${surfaces.preselectedIds.length} planned)`);
+  }
+  observed.push(`route changes ${walk.join(" -> ")} with every frame and candidate byte-identical throughout`);
+
+  note("O. automation consumes the obligation and completion is a separate question: " + observed.join("; "));
 }
 
 /* =========================================================================== */
@@ -1995,7 +2168,8 @@ async function main() {
   checkStillDeliveryMotion();
   await checkRetainedMotionHistory();
   await checkShellNextAction();
-  await checkRouteBlindReaderIsFenced();
+  await checkAutomationHasNoSecondOwner();
+  await checkAutomationObligation();
 
   /* The action code this slice adds is declared in all three places a readiness action
      has to be declared, or it renders as a bare "Next action" with no destination. */

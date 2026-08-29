@@ -1001,8 +1001,112 @@ function v664SceneApprovedCount(shot) {
   const sceneId = shot?.scene || "";
   return (P.shots || []).filter((row) => String(row.scene) === String(sceneId) && typeof guidedCurrentShotStill === "function" && guidedCurrentShotStill(row, takesFor(row.id))).length;
 }
+/* WHAT STILL FRAMES THIS SHOT ACTUALLY OWES, AND WHETHER THAT WORK IS DONE.
+   TWO DIFFERENT QUESTIONS, and this file used to answer neither.
+
+   Every automation surface below derived its own frame requirement from
+
+       frames.filter((frame) => frame.required !== false)
+
+   which is not a requirement at all: newKeyframe() writes `required: true` on every
+   frame of every project, normalizeShotV5() back-fills it onto any frame that lacks
+   it, and NO filmmaker-facing control writes it. So automation carried a second,
+   route-blind opinion about what a shot owes — and then reused it for the REQUIRED
+   FRAMES card, the picker defaults, the run plan and the completion summary. A shot
+   whose workspace correctly said "0/0 required" had a hub card reading "0/1 approved",
+   a picker with Frame A preselected, and a run that would finish by announcing that
+   its still package was ready.
+
+   THE OBLIGATION HALF IS CONSUMED, NEVER DERIVED. `currentlyRequiredFrames()`
+   (public/app.js) is the existing projection that maps the canonical readiness units
+   onto this shot's own frame records; readiness in turn asks shotRouteInputNeeds()
+   where a route is declared and the shot's other declarations where one is not. This
+   adds no third opinion — it composes that answer with the route reading and the
+   shipped approval reader, which is exactly what the automation surfaces need and
+   none of them should compute twice.
+
+   THE COMPLETION HALF IS SEPARATE, and collapsing it was the second defect.
+   `approved === required.length` is true when BOTH are zero, so "owes nothing" and
+   "has finished everything it owed" were the same boolean. They are four states:
+
+     route-undeclared     owes nothing because nobody has said how the shot is made.
+                          Not 0/1, not complete, and not a reason to preselect a frame.
+     frames-not-required  a declared route legitimately owes no still. Not missing
+                          work, and not a still package either.
+     frames-incomplete    owed > 0 and at least one owed frame is unsatisfied.
+     frames-complete      owed > 0 and every owed frame is satisfied. The ONLY state
+                          that may say the still package is ready.
+     unknown              the canonical projection could not be reached. Reported as
+                          such rather than guessed, because a guess here is the whole
+                          defect.
+
+   `route-undeclared` is decided LAST, after the owed count, on purpose: a shot with a
+   still delivery and no route legitimately owes its opening frame, and asking the
+   route first would have called that shot undeclared and dropped its debt. */
+function shotStillObligation(shot) {
+  const frames = guidedFrames(shot);
+  const known = typeof currentlyRequiredFrames === "function" && typeof shotReadinessFor === "function";
+  /* No canonical projection, no requirement. The fallback is deliberately NOT the
+     stored flag: reaching for it here is how this file acquired its own opinion in
+     the first place. app.js's own documented fallback still applies inside
+     currentlyRequiredFrames(), which is where it is argued for. */
+  const owed = known ? currentlyRequiredFrames(shot, shotReadinessFor(shot)) : [];
+  const approvedOwed = owed.filter((frame) => guidedFrameApproved(shot, frame, takesFor(shot.id), frames.indexOf(frame)));
+  const routeDeclared = typeof readShotRoute === "function" && readShotRoute(shot).reading === "declared";
+  const stillRequirementState = !known
+    ? "unknown"
+    : owed.length
+      ? approvedOwed.length >= owed.length ? "frames-complete" : "frames-incomplete"
+      : routeDeclared ? "frames-not-required" : "route-undeclared";
+  return {
+    routeDeclared,
+    owedFrameIds: owed.map((frame) => frame.id),
+    owedFrameCount: owed.length,
+    approvedOwedFrameIds: approvedOwed.map((frame) => frame.id),
+    approvedOwedCount: approvedOwed.length,
+    stillRequirementState,
+  };
+}
+
+/* IS THE SHOT STILL WAITING ON A STILL IT OWES. The one question the "STILL
+   AUTOMATION COMPLETE" flag is allowed to ask. Every state except an outstanding
+   obligation settles it — including the two zero states, where the shot is genuinely
+   not waiting on a still — and `unknown` settles nothing it could be wrong about,
+   because it owes nothing this file can name. */
+function stillObligationSettled(obligation) {
+  return obligation.stillRequirementState !== "frames-incomplete";
+}
+
+/* WHAT A COMPLETED STILL RUN MAY CLAIM. Extracted so the sentence can be asserted
+   per state rather than only through a live run: the old one was produced whatever
+   happened, so a run on a shot that owed no still announced a ready still package,
+   and so did a run that left an owed frame unapproved. `produced` is how many frames
+   the run was actually asked to make, which is the only honest thing to report when
+   nothing was owed. */
+function shotStillAutomationSummary(obligation, produced, approvedLabels) {
+  const names = approvedLabels.join(", ") || "none";
+  if (obligation.owedFrameCount === 0)
+    return `${produced} frame${produced === 1 ? " was" : "s were"} produced as optional work; this shot owes no still frame${obligation.routeDeclared ? " in the way it is made" : " until an execution route is chosen"}.`;
+  if (obligation.stillRequirementState === "frames-complete")
+    return `${approvedLabels.length} required frame${approvedLabels.length === 1 ? "" : "s"} approved (${names}). The still package is ready for manual motion setup.`;
+  return `${approvedLabels.length} of ${obligation.owedFrameCount} required frame${obligation.owedFrameCount === 1 ? "" : "s"} approved (${names}). The still package is not complete yet.`;
+}
+
+/* The hub card's two lines, one pair per state. Only `frames-complete` may say the
+   package is ready, and only the two owed states may print a fraction. */
+function shotStillObligationCard(obligation) {
+  const done = obligation.approvedOwedCount, owed = obligation.owedFrameCount;
+  switch (obligation.stillRequirementState) {
+    case "frames-complete": return { value: `${done}/${owed} approved`, note: "Still package ready" };
+    case "frames-incomplete": return { value: `${done}/${owed} approved`, note: "Full-shot automation can continue the chain" };
+    case "frames-not-required": return { value: "None", note: "This shot is made in a way that needs no still frame" };
+    case "route-undeclared": return { value: "None yet", note: "No still is required until you say how this shot is made" };
+    default: return { value: "—", note: "CineBraid cannot read this shot's still requirement" };
+  }
+}
+
 window.shotAutomationHub = (shot, placement = "look") => {
-  const frames = guidedFrames(shot), required = frames.filter((frame) => frame.required !== false), approved = required.filter((frame) => guidedFrameApproved(shot, frame, takesFor(shot.id), frames.indexOf(frame))).length;
+  const stillObligation = shotStillObligation(shot), stillCard = shotStillObligationCard(stillObligation);
   const blocking = blockingAttemptReviewSummary(shot), active = activeBlockingRow(shot), scene = sceneById(shot.scene), sceneApproved = v664SceneApprovedCount(shot), sceneReview = scene?.continuityReview || null;
   /* Counted over every attempt on the shot, scored over the opening pool. Reporting
      the opening pool alone said "No attempts yet" on a shot whose attempts were all
@@ -1020,13 +1124,19 @@ window.shotAutomationHub = (shot, placement = "look") => {
         : "No attempts yet";
   const currentRun = v626LatestRun("shot-chain", shot.id, "stills"), blockingRun = v626LatestRun("shot-chain", shot.id, "blocking-only");
   const open = !manualFirstWorkflow() || [currentRun?.status, blockingRun?.status].some((status) => ["running","awaiting-review","failed","interrupted"].includes(status));
-  return `<details class="shot-automation-hub" ${open ? "open" : ""}><summary><div><span>OPTIONAL ASSISTED PRODUCTION</span><b>Review blocking, automate this shot, or check the scene</b><small>Manual work remains first-class. These tools reuse approved references and existing results before spending credits.</small></div><span>${currentRun ? esc(String(currentRun.status || "run").replace(/-/g," ").toUpperCase()) : "OPTIONAL"}</span></summary><div class="shot-automation-hub-body"><div class="shot-automation-status-grid"><article><span>BLOCKING</span><b>${active ? "Guide active" : esc(blockingCount)}</b><small>${esc(blockingDetail)}</small></article><article><span>REQUIRED FRAMES</span><b>${approved}/${required.length} approved</b><small>${approved === required.length ? "Still package ready" : "Full-shot automation can continue the chain"}</small></article><article><span>SCENE CONTINUITY</span><b>${sceneReview ? esc(String(sceneReview.verdict || "reviewed").replace(/_/g," ")) : `${sceneApproved} approved still${sceneApproved === 1 ? "" : "s"}`}</b><small>${sceneApproved >= 2 ? "Ready for sequence review" : "Available after two scene stills are approved"}</small></article></div><div class="shot-automation-primary-actions">${blocking.recommended && blocking.recommendation?.pass ? `<button class="approve-btn" onclick="useRecommendedBlockingAttempt('${attr(shot.id)}')">USE RECOMMENDED GUIDE · ${Number(blocking.recommendation.score || 0)}</button>` : ""}<button class="approve-btn large" onclick="openShotAutomationModal('${attr(shot.id)}')">AUTOMATE FULL SHOT</button></div><div class="shot-automation-scene-actions"><a class="text-link-btn" href="#/scene/${attr(shot.scene)}">Scene continuity & automation · ${esc(scene?.title || shot.scene)} →</a></div></div></details>`;
+  return `<details class="shot-automation-hub" ${open ? "open" : ""}><summary><div><span>OPTIONAL ASSISTED PRODUCTION</span><b>Review blocking, automate this shot, or check the scene</b><small>Manual work remains first-class. These tools reuse approved references and existing results before spending credits.</small></div><span>${currentRun ? esc(String(currentRun.status || "run").replace(/-/g," ").toUpperCase()) : "OPTIONAL"}</span></summary><div class="shot-automation-hub-body"><div class="shot-automation-status-grid"><article><span>BLOCKING</span><b>${active ? "Guide active" : esc(blockingCount)}</b><small>${esc(blockingDetail)}</small></article><article><span>REQUIRED FRAMES</span><b>${esc(stillCard.value)}</b><small>${esc(stillCard.note)}</small></article><article><span>SCENE CONTINUITY</span><b>${sceneReview ? esc(String(sceneReview.verdict || "reviewed").replace(/_/g," ")) : `${sceneApproved} approved still${sceneApproved === 1 ? "" : "s"}`}</b><small>${sceneApproved >= 2 ? "Ready for sequence review" : "Available after two scene stills are approved"}</small></article></div><div class="shot-automation-primary-actions">${blocking.recommended && blocking.recommendation?.pass ? `<button class="approve-btn" onclick="useRecommendedBlockingAttempt('${attr(shot.id)}')">USE RECOMMENDED GUIDE · ${Number(blocking.recommendation.score || 0)}</button>` : ""}<button class="approve-btn large" onclick="openShotAutomationModal('${attr(shot.id)}')">AUTOMATE FULL SHOT</button></div><div class="shot-automation-scene-actions"><a class="text-link-btn" href="#/scene/${attr(shot.scene)}">Scene continuity & automation · ${esc(scene?.title || shot.scene)} →</a></div></div></details>`;
 };
 
 window.shotAutomationPanel = (shot) => {
-  const frames = guidedFrames(shot), required = frames.filter((frame) => frame.required !== false);
+  /* The wording follows the obligation, so a shot that owes no still is not told the
+     pipeline will "generate and review the opening frame" it never asked for. */
+  const stillObligation = shotStillObligation(shot);
   const run = v626LatestRun("shot-chain", shot.id, "stills");
-  const description = required.length > 1
+  const description = stillObligation.owedFrameCount === 0
+    ? (stillObligation.routeDeclared
+      ? "This shot is made in a way that requires no still frame. Full-shot automation will produce only the frames you select here, as optional work, and motion generation remains manual."
+      : "This shot has not said how it is made, so no still frame is required yet. Choose an execution route first, or select the frames you want produced as optional work. Motion generation remains manual.")
+    : stillObligation.owedFrameCount > 1
     ? `Run the complete still pipeline: review or create the opening blocking guide, generate and review every selected required frame parent-first, approve strong passes, and optionally review the assembled scene against the Project Bible. Motion generation remains manual.`
     : "Run the complete still pipeline: review or create blocking, generate and review the opening frame, approve a strong pass, and optionally review the assembled scene against the Project Bible. Motion generation remains manual.";
   return v626AutomationPanel(run, "Full shot still automation", description, "shot-chain", shot.id, "stills", `<button class="approve-btn large" onclick="openShotAutomationModal('${shot.id}')">AUTOMATE FULL SHOT</button>`, run?.status === "completed" ? `<button class="automation-motion-handoff" onclick="openAutomationMotionHandoff('${shot.id}')">Open manual motion setup →</button>` : "");
@@ -1265,15 +1375,27 @@ function v626ShotPreflight(shot, frameIds) {
   return { errors: [...new Set(errors)], warnings: [...new Set(warnings)] };
 }
 window.openShotAutomationModal = (shotId) => {
-  const shot = shotById(shotId), frames = guidedFrames(shot), required = frames.filter((frame) => frame.required !== false);
-  const unfinished = required.filter((frame, index) => !guidedFrameApproved(shot, frame, takesFor(shot.id), frames.indexOf(frame)));
-  const defaultIds = (unfinished.length ? unfinished : required.slice(0, 1)).map((frame) => frame.id);
+  const shot = shotById(shotId), frames = guidedFrames(shot);
+  /* THE PLAN'S DEFAULTS ARE THE CANONICAL OWED SET, AND CAN NEVER EXCEED IT.
+
+     This used to preselect `unfinished.length ? unfinished : required.slice(0, 1)`
+     over the stored flag — so a shot that owed nothing still opened with Frame A
+     ticked, and a run started from that plan would have produced a frame no
+     declaration had asked for. Every frame record stays LISTED, because choosing to
+     make one is a decision the filmmaker is allowed to take; none is CHOSEN for them.
+     An owed frame that is already approved is not preselected either: there is
+     nothing left to do about it. */
+  const stillObligation = shotStillObligation(shot);
+  const owedFrames = frames.filter((frame) => stillObligation.owedFrameIds.includes(frame.id));
+  const defaultIds = owedFrames
+    .filter((frame) => !guidedFrameApproved(shot, frame, takesFor(shot.id), frames.indexOf(frame)))
+    .map((frame) => frame.id);
   const maxWithBlocking = 9 + defaultIds.length * 6 + Math.max(0, defaultIds.filter((id) => frames.findIndex((frame) => frame.id === id) > 0).length) * 6;
   const generationSettings = v6211AutomationGenerationSettings();
   window._v626ShotAutomationDraft = { shotId, frameIds: defaultIds, reviewExistingBlocking: true, reviewSceneAfterShot: true, generationSettings };
   const existingBlocking = v664BlockingRowsForReview(shot).length;
   v6211RegisterGenerationView("shot", { outputs: 3, maxImages: maxWithBlocking });
-  openModal(`<div class="automation-plan-modal"><h3>Automate the full shot — ${esc(shotId)}</h3><div class="modal-sub">BLOCKING → AI REVIEW / SELECTION → REQUIRED FRAMES → OPTIONAL SCENE CONTINUITY · VIDEO REMAINS MANUAL</div><div id="shot-generation-view"></div><section class="automation-pipeline-summary"><b>Full still pipeline</b><span>CineBraid first reviews the ${existingBlocking || "existing"} blocking attempt${existingBlocking === 1 ? "" : "s"}. If none passes, it generates and reviews new grayscale guides. It then creates selected frames parent-first and can review the scene against approved references and Project Bible text.</span></section><div class="automation-frame-picker">${required.map((frame, index) => { const approved = guidedFrameApproved(shot, frame, takesFor(shot.id), frames.indexOf(frame)); return `<label><input type="checkbox" class="v626-auto-frame" value="${attr(frame.id)}" ${defaultIds.includes(frame.id) ? "checked" : ""} onchange="updateShotAutomationEstimate()"><span><b>Frame ${esc(frame.label)}</b><small>${approved ? `Already approved · ${esc(approved.name)}` : esc(frame.description || "No description")}${index ? ` · derives from Frame ${esc(required[index - 1]?.label || "previous")}` : ""}</small></span></label>`; }).join("")}</div><label class="checkline"><input id="v626-review-existing-blocking" type="checkbox" checked onchange="updateShotAutomationEstimate()"> Review and reuse existing blocking attempts before generating more${existingBlocking ? ` · ${existingBlocking} available` : ""}</label><label class="checkline"><input id="v626-derivative-blocking" type="checkbox" checked onchange="updateShotAutomationEstimate()"> Generate and review a frame-specific blocking edit for later frames</label><label class="checkline"><input id="v626-reuse-approved" type="checkbox" checked> Reuse existing approved frames and guides instead of spending credits again</label><label class="checkline"><input id="v626-review-scene-after" type="checkbox" checked> Review scene continuity after this shot completes when at least two scene stills are approved</label><div id="v626-shot-auto-preflight"></div><div id="v626-shot-auto-estimate" class="automation-cost-guard"><b>Maximum ${maxWithBlocking} images</b><span>3 options per request · up to 3 opening-blocking rounds · up to 2 frame and derivative-blocking rounds</span></div><div class="modal-actions"><button class="cancel" onclick="closeModal()">Cancel</button><button id="v626-start-shot-auto" class="approve-btn large" onclick="startPlannedShotAutomation()">START FULL SHOT AUTOMATION</button></div></div>`);
+  openModal(`<div class="automation-plan-modal"><h3>Automate the full shot — ${esc(shotId)}</h3><div class="modal-sub">BLOCKING → AI REVIEW / SELECTION → REQUIRED FRAMES → OPTIONAL SCENE CONTINUITY · VIDEO REMAINS MANUAL</div><div id="shot-generation-view"></div><section class="automation-pipeline-summary"><b>Full still pipeline</b><span>CineBraid first reviews the ${existingBlocking || "existing"} blocking attempt${existingBlocking === 1 ? "" : "s"}. If none passes, it generates and reviews new grayscale guides. It then creates selected frames parent-first and can review the scene against approved references and Project Bible text.</span></section><div class="automation-frame-picker">${frames.map((frame, index) => { const approved = guidedFrameApproved(shot, frame, takesFor(shot.id), frames.indexOf(frame)); return `<label><input type="checkbox" class="v626-auto-frame" value="${attr(frame.id)}" ${defaultIds.includes(frame.id) ? "checked" : ""} onchange="updateShotAutomationEstimate()"><span><b>Frame ${esc(frame.label)}</b><small>${approved ? `Already approved · ${esc(approved.name)}` : esc(frame.description || "No description")}${index ? ` · derives from Frame ${esc(frames[index - 1]?.label || "previous")}` : ""}</small></span></label>`; }).join("")}</div><label class="checkline"><input id="v626-review-existing-blocking" type="checkbox" checked onchange="updateShotAutomationEstimate()"> Review and reuse existing blocking attempts before generating more${existingBlocking ? ` · ${existingBlocking} available` : ""}</label><label class="checkline"><input id="v626-derivative-blocking" type="checkbox" checked onchange="updateShotAutomationEstimate()"> Generate and review a frame-specific blocking edit for later frames</label><label class="checkline"><input id="v626-reuse-approved" type="checkbox" checked> Reuse existing approved frames and guides instead of spending credits again</label><label class="checkline"><input id="v626-review-scene-after" type="checkbox" checked> Review scene continuity after this shot completes when at least two scene stills are approved</label><div id="v626-shot-auto-preflight"></div><div id="v626-shot-auto-estimate" class="automation-cost-guard"><b>Maximum ${maxWithBlocking} images</b><span>3 options per request · up to 3 opening-blocking rounds · up to 2 frame and derivative-blocking rounds</span></div><div class="modal-actions"><button class="cancel" onclick="closeModal()">Cancel</button><button id="v626-start-shot-auto" class="approve-btn large" onclick="startPlannedShotAutomation()">START FULL SHOT AUTOMATION</button></div></div>`);
   updateShotAutomationEstimate();
 };
 window.updateShotAutomationEstimate = () => {
@@ -2183,13 +2305,23 @@ async function runShotAutomation(runId) {
       await v626SetStage(run, `Frame ${frame?.label || frameId}`, "frame", `Creating the approved still chain. Motion generation remains manual.`);
       await v626AutomateFrame(run, run.targetId, frameId);
     }
-    const currentShot = shotById(run.targetId), required = guidedFrames(currentShot).filter((frame) => frame.required !== false), approvedLabels = required.filter((frame, index) => guidedFrameApproved(currentShot, frame, takesFor(currentShot.id), guidedFrames(currentShot).indexOf(frame))).map((frame) => frame.label);
-    ensureShotCreation(currentShot).automationReadyForMotion = true;
+    const currentShot = shotById(run.targetId), completedObligation = shotStillObligation(currentShot);
+    const approvedLabels = guidedFrames(currentShot)
+      .filter((frame) => completedObligation.approvedOwedFrameIds.includes(frame.id))
+      .map((frame) => frame.label);
+    /* THE FLAG IS A CLAIM, so it waits for the claim to be true. It was written
+       unconditionally, which put "STILL AUTOMATION COMPLETE" on the motion workspace
+       of a shot whose owed frames were still unapproved. */
+    if (stillObligationSettled(completedObligation))
+      ensureShotCreation(currentShot).automationReadyForMotion = true;
     ensureShotCreation(currentShot).automationCompletedFrameIds = ids;
     keepGuidedPanelOpen(currentShot, "motion"); dirty(); await flushPendingProjectSave();
     const sceneReview = await v664ReviewSceneAfterShot(run, currentShot);
     const sceneNote = sceneReview ? ` Scene continuity review: ${String(sceneReview.verdict || "reviewed").replace(/_/g," ")}.` : "";
-    await v626FinishRun(run, "completed", `${approvedLabels.length} required frame${approvedLabels.length === 1 ? "" : "s"} approved (${approvedLabels.join(", ") || "none"}).${sceneNote} The still package is ready for manual motion setup; no video was generated.`);
+    /* ZERO OWED IS NOT "FINISHED EVERYTHING IT OWED", which is what
+       `approved === required.length` said when both were zero. */
+    const stillSummary = shotStillAutomationSummary(completedObligation, ids.length, approvedLabels);
+    await v626FinishRun(run, "completed", `${stillSummary}${sceneNote} No video was generated.`);
     toast("Still automation completed — open Motion to generate video manually");
   } catch (error) {
     if (error?.reviewRequired) { toast("Automation paused for your approval"); }
