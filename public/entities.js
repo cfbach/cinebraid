@@ -2161,6 +2161,19 @@ function entityDemandRows(list, entity, production = entityReferenceDemandFor(li
   });
 }
 
+/* THE DEMAND CONTEXT, RESOLVED THROUGH THE TWO SHIPPED OWNERS AND NOWHERE ELSE.
+ *
+ * `entityCoverageStatesMarkup()` built this pair inline for the boards it renders.
+ * The coverage automation dialog needs the same pair to describe its work set
+ * truthfully, and a second inline copy in another file is how two surfaces come to
+ * disagree — so the pair has one constructor, and public/coverage-automation.js
+ * calls it rather than deriving demand of its own. It reads; it decides nothing. */
+function entityDemandContext(list, entity) {
+  if (list === "audio" || !entity) return { production: null, obligations: null };
+  const production = entityReferenceDemandFor(list, entity);
+  return { production, obligations: entityCurrentObligations(list, entity, production) };
+}
+window.entityDemandContext = entityDemandContext;
 /* THE OBLIGATION SET, BUILT ONCE. `null` means the readiness answer is not
    available, and every reader below then leaves required work required. */
 function obligationStateIds(obligations) {
@@ -2431,13 +2444,11 @@ function entityCoverageStatesMarkup(list, entity, mediaByName, media) {
   /* R7 — ONE RESOLUTION OF DEMAND FOR THE WHOLE STAGE. Demand is a fact about
      the REFERENCE, so the summary panel and both boards read the same answer
      rather than each walking the project for its own copy of it. */
-  const production = list === "audio" ? null : entityReferenceDemandFor(list, entity);
-  /* ALPHA R7 — AND THE OBLIGATION ANSWER TRAVELS WITH IT. The panel resolved this
-     for itself and the boards did not have it at all, which is exactly how the
-     chip came to claim attention over a panel that said nothing was waiting. One
-     readiness walk, one pair, three consumers. */
-  const obligations = list === "audio" ? null : entityCurrentObligations(list, entity, production);
-  const demand = { production, obligations };
+  /* ALPHA R7 — ONE READINESS WALK, ONE PAIR, THREE CONSUMERS. The panel resolved
+     this for itself and the boards did not have it at all, which is exactly how the
+     chip came to claim attention over a panel that said nothing was waiting. */
+  const demand = entityDemandContext(list, entity);
+  const { production, obligations } = demand;
   const views = [{id:"coverage",label:"Angles / views",render:()=>coverageBoardMarkup(list,entity,mediaByName,media,demand)}];
   if (list === "characters") views.push({id:"expressions",label:"Expressions",render:()=>expressionBoardMarkup(entity,mediaByName,media,demand)});
   views.push({id:"states",label:"Continuity states",render:()=>continuityStatesPanel(list,entity,media,demand)});

@@ -631,6 +631,103 @@ controlAsync({
   explain: "An offer to make a decision already made is a control whose only effect is to overwrite its own timestamp.",
 });
 
+/* ===========================================================================
+   CORRECTION 2 — THE AUTOMATION DIALOG'S COPY.
+   =========================================================================== */
+
+/* Opening the dialog needs image generation configured. The page's own config
+   object is set here — nothing is contacted, START is never pressed, and the
+   route guard is not involved because no request is made. */
+const drawAutomation = (project, mutateSource) => draw(project, COVERAGE_STORAGE, mutateSource);
+const AUTOMATION_DRIVE = `(() => {
+  CONFIG.generation = CONFIG.generation || {};
+  CONFIG.generation.fal = { ...(CONFIG.generation.fal || {}), enabled: true, keySource: "environment" };
+  const e = P.characters.find(x => x.id === 'CHAR-NC');
+  const slots = ensureCoverageSlots('characters', e).filter(s => !s.retired);
+  openCoverageAutomationModal('characters','CHAR-NC','hybrid');
+  const modal = document.getElementById('modal').innerHTML;
+  return {
+    opened: modal.includes('COVERAGE AUTOMATION'),
+    unfilled: slots.filter(s => isRequiredCoverage(s) && !slotSelectedFile(s)).length,
+    summary: (/id="coverage-missing-summary">([^<]*)</.exec(modal) || [])[1] || '',
+  };
+})()`;
+
+/* ===========================================================================
+   N12 — THE DIALOG'S WORDS COME FROM THE JOIN, NOT FROM ITS OWN OPINION.
+
+   The whole claim of correction 2 is that the automation copy consumes
+   effectiveReferenceRequirement() rather than inferring demand for itself. Break
+   the join so it answers `required` for everything, and the dialog must go back
+   to calling a plan nothing is waiting on "required ... still missing" — on the
+   same screen as a board that reads Planned.
+   =========================================================================== */
+controlAsync({
+  label: "N12 the automation dialog describes work through the shared join",
+  mutateSource: only("entities.js", (text) => mutate(
+    text,
+    '  if (requirement !== "required" || isDefault || !demand) return requirement;',
+    '  if (requirement !== "required" || isDefault || !demand || true) return requirement;',
+    "N12")),
+  probe: async (mutateSource) => {
+    const rendered = await drawAutomation(uxFixture(), mutateSource);
+    const out = vm.runInContext(AUTOMATION_DRIVE, rendered.context);
+    if (!out.opened) return { reached: false, held: false, reason: "no-automation-dialog" };
+    if (!out.unfilled) return { reached: false, held: false, reason: "nothing-unfilled" };
+    if (!out.summary) return { reached: false, held: false, reason: "no-dialog-summary" };
+    const claims = /required/i.test(String(out.summary).split(".")[0]);
+    return {
+      reached: true,
+      held: !claims,
+      reason: claims ? "dialog-called-a-dormant-plan-required" : "dialog-described-the-plan-as-planned",
+    };
+  },
+  reason: "dialog-called-a-dormant-plan-required",
+  explain: "A dialog that names its own demand answer is the second owner this correction exists to prevent.",
+});
+
+/* ===========================================================================
+   N13 — AND THE STRUCTURAL WORK SET STILL DECIDES WHAT IS BUILT.
+
+   The other direction, and the one that matters commercially: if the presentation
+   answer ever reached the selection, "Generate coverage" would plan nothing on a
+   reference no shot has cast — which is most of them, most of the time. Make
+   missingCoverageSlots() select on the effective answer and the count the dialog
+   offers must collapse.
+   =========================================================================== */
+controlAsync({
+  label: "N13 generation still selects the structural coverage plan",
+  mutateSource: only("coverage-automation.js", (text) => mutate(
+    text,
+    "    return slots.filter((slot) => !slotSelectedFile(slot) && (includeOptional || isRequiredCoverage(slot)));",
+    "    return slots.filter((slot) => !slotSelectedFile(slot) && (includeOptional\n"
+    + '      || effectiveReferenceRequirement(slot, entityDemandContext(list, entity)) === "required"));',
+    "N13")),
+  probe: async (mutateSource) => {
+    const rendered = await drawAutomation(uxFixture(), mutateSource);
+    const out = vm.runInContext(AUTOMATION_DRIVE, rendered.context);
+    if (!out.opened) return { reached: false, held: false, reason: "no-automation-dialog" };
+    if (!out.unfilled) return { reached: false, held: false, reason: "nothing-unfilled" };
+    if (!out.summary) return { reached: false, held: false, reason: "no-dialog-summary" };
+    /* AN EMPTY WORK SET IS THE DEFECT, NOT A MISSED CHECKPOINT. With nothing to
+       offer the dialog stops printing a number at all and says every view is
+       filled — which is exactly the collapse this control is watching for, so it
+       reads as an offer of none rather than as a probe that failed to run. */
+    const counted = /^(\d+)/.exec(String(out.summary));
+    const offered = counted ? Number(counted[1]) : 0;
+    return {
+      reached: true,
+      held: offered === out.unfilled,
+      /* Count-free: project normalisation seeds template slots beside the fixture's
+         own, so how MANY the plan holds is not the property — that generation
+         offers fewer of them than the structural set is. */
+      reason: offered === out.unfilled ? "structural-work-set-offered" : "generation-offered-less-than-the-plan",
+    };
+  },
+  reason: "generation-offered-less-than-the-plan",
+  explain: "Coverage automation exists to build the entity's plan; a plan nothing is waiting on is still the plan.",
+});
+
 /* ---------------------------------------------------------------------------
    NO CATCH-AS-SUCCESS. Enforced, not promised. */
 function testNoCatchAsSuccess() {

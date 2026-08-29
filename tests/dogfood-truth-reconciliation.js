@@ -428,8 +428,15 @@ async function checkExpressionTaskWithNoWorkSubmitsNothing() {
   assert.ok(/data-coverage-spend-plan="none"/.test(run.quote),
     `the expression quote must price an empty work set at nothing: ${run.quote}`);
   assert.strictEqual(run.startDisabled, true, "the paid control must obey that quote");
-  assert.ok(/^0 required expression slots still missing\./.test(run.summary),
-    `the dialog header must count the task's own slots, not the angle board: ${run.summary}`);
+  /* CORRECTION 2: the header describes the work in current-demand language, so an
+     empty EXPRESSION work set says every expression is filled — while the angle
+     board still has `rear` missing. If it were reading the angle board it would be
+     counting one unfilled coverage view, so this still proves the header follows
+     the task and not the other group. */
+  assert.ok(/^Every expression in the coverage plan has an image selected\./.test(run.summary),
+    `the dialog header must describe the task's own slots, not the angle board: ${run.summary}`);
+  assert.ok(!/coverage view/.test(run.summary),
+    `and must not borrow the angle board's noun: ${run.summary}`);
   /* The four things the invariant names, read off what the page actually did. */
   assert.deepStrictEqual(run.requests, [],
     `an expression task with nothing missing must contact no generation route: ${JSON.stringify(run.requests)}`);
@@ -452,8 +459,14 @@ async function checkExpressionTaskSubmitsExactlyItsOwnWork() {
   assert.ok(/Confirmed first submission: 1 paid request/.test(run.quote),
     `the quote must price exactly the one missing expression: ${run.quote}`);
   assert.strictEqual(run.startDisabled, false, "real work enables the paid control");
-  assert.ok(/^1 required expression slot still missing\./.test(run.summary),
+  /* CORRECTION 2: the COUNT is the property this pins — the header and the quote
+     beside it must name the same one piece of work. The noun follows current demand
+     rather than the structural plan, and this fixture's reference is not one any
+     shot is waiting on, so the honest word is "planned". */
+  assert.ok(/^1 planned expression not filled yet\./.test(run.summary),
     `the dialog header must agree with the quote beside it: ${run.summary}`);
+  assert.ok(/Nothing is required by current shots\./.test(run.summary),
+    `and must say why it is not calling it required: ${run.summary}`);
   assert.strictEqual(run.requests.length, 1,
     `exactly one request must be submitted for the one missing expression: ${JSON.stringify(run.requests)}`);
   const body = run.requests[0];
@@ -494,8 +507,10 @@ async function checkAngleTaskIsUnchanged() {
     { sheetType: "angles" },
   );
   assert.ok(/Confirmed first submission: 1 paid request/.test(one.quote), `the angle quote is unchanged: ${one.quote}`);
-  assert.ok(/^1 required coverage slot still missing\./.test(one.summary),
-    `the angle dialog keeps its own header wording and count: ${one.summary}`);
+  assert.ok(/^1 planned coverage view not filled yet\./.test(one.summary),
+    `the angle dialog keeps its own header noun and count: ${one.summary}`);
+  assert.ok(!/expression/.test(one.summary),
+    `and does not borrow the expression group's noun: ${one.summary}`);
   assert.strictEqual(one.requests.length, 1, `exactly the missing angle is submitted: ${JSON.stringify(one.requests)}`);
   assert.strictEqual(one.requests[0].targetCoverageSlotId, "rear");
   assert.strictEqual(one.requests[0].coverageSheetType, "angles",

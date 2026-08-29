@@ -577,15 +577,17 @@ async function testRequirementAndDemandCannotContradict() {
     entities.indexOf("function entityCoverageStatesMarkup("),
     entities.indexOf("function entityDetailsHistoryMarkup("));
   ok(stage.length > 200, "baseline: the coverage stage renderer was located");
-  eq((stage.match(/entityReferenceDemandFor\(/g) || []).length, 1,
-    "the coverage stage resolves demand exactly once");
-  /* ALPHA R7 — AND THE OBLIGATION ANSWER TRAVELS WITH IT. The boards did not have
-     it, which is how a slot chip came to claim attention over a panel that said
-     nothing was waiting. Same property, one fact wider. */
-  eq((stage.match(/entityCurrentObligations\(/g) || []).length, 1,
-    "and resolves the current obligations exactly once");
-  ok(/const demand = \{ production, obligations \};/.test(stage),
-    "and carries the pair as one context");
+  /* ALPHA R7 — ONE RESOLUTION, HANDED DOWN. CORRECTION 2 — and one CONSTRUCTOR for
+     it, because the coverage automation dialog needs the same pair and a second
+     inline copy in another file is how two surfaces come to disagree. */
+  eq((stage.match(/entityDemandContext\(/g) || []).length, 1,
+    "the coverage stage resolves the demand context exactly once");
+  eq((stage.match(/entityReferenceDemandFor\(|entityCurrentObligations\(/g) || []).length, 0,
+    "and never assembles it inline beside the constructor");
+  const owner = entities.slice(entities.indexOf("function entityDemandContext("),
+    entities.indexOf("function obligationStateIds("));
+  ok(/entityReferenceDemandFor\(list, entity\)/.test(owner) && /entityCurrentObligations\(list, entity, production\)/.test(owner),
+    "and the constructor reads the two shipped owners and nothing else");
   ok(/coverageBoardMarkup\(list,entity,mediaByName,media,demand\)/.test(stage),
     "and hands it to the angles board rather than letting it resolve its own");
   ok(/expressionBoardMarkup\(entity,mediaByName,media,demand\)/.test(stage),
@@ -1346,18 +1348,51 @@ async function testStructuralSeedAndAutomationAreUntouched() {
   eq(plan.opened, true, "baseline: the coverage automation modal opened");
   ok(plan.structural >= 2, `baseline: the template still declares ${plan.structural} required views`);
   ok(plan.unfilled >= 1, `baseline: ${plan.unfilled} of them are unfilled`);
-  ok(plan.summary.startsWith(`${plan.unfilled} required coverage slot`),
+  /* CONTROL A. The COUNT is the structural work set, unchanged — and the WORDS are
+     the effective state, because this reference is one no shot is waiting on. Both
+     halves are asserted, because either alone would pass a build that had confused
+     them: a truthful sentence about the wrong set, or the right set described as an
+     obligation nobody has. */
+  ok(plan.summary.startsWith(`${plan.unfilled} planned coverage view`),
     `automation still counts the structural set it always counted, got ${plan.summary!==''?JSON.stringify(plan.summary):'nothing'}`);
+  ok(/Nothing is required by current shots\./.test(plan.summary),
+    `and says why it is not calling it required, got ${JSON.stringify(plan.summary)}`);
+  /* Scoped to the CLAIM — the first sentence, which names the work. The sentence
+     after it is the denial ("Nothing is required by current shots."), and a word
+     ban that could not tell a claim from its negation would forbid saying so. */
+  const claim = String(plan.summary).split(".")[0];
+  for (const word of ["required", "missing", "blocking", "needed now"])
+    ok(!new RegExp(word, "i").test(claim),
+      `the dialog must not use ${word} language for a plan nothing is waiting on, got ${JSON.stringify(claim)}`);
 
-  /* AND NO PRESENTATION FUNCTION REACHED THE GENERATION PATH. */
+  /* CONTROLS C AND D. The generation module may now NAME the presentation owner —
+     that is the whole of correction 2 — but only where it chooses WORDS. The two
+     functions that choose WORK still select on the structural answer, and neither
+     of them may see the presentation one. */
   const automation = read("public/coverage-automation.js");
-  for (const name of ["effectiveReferenceRequirement", "effectiveRequirementLabel", "referenceSlotStatus"])
-    ok(!automation.includes(name),
-      `${name} is presentation and must not appear in the generation module`);
+  const region = (open, close) => automation.slice(automation.indexOf(open), automation.indexOf(close));
+  const workSet = region("function missingCoverageWork(", "function coverageRunSlots(")
+    /* Closed on the CORRECTION 2 banner rather than the next function, because the
+       banner is the doc comment that explains the split and naturally names both
+       sides of it — including it would make this check pass on prose. */
+    + region("function missingCoverageSlots(", "/* CORRECTION 2 —");
+  ok(workSet.length > 200, "baseline: both work-set selectors were located");
+  for (const name of ["effectiveReferenceRequirement", "effectiveRequirementLabel", "referenceSlotStatus", "entityDemandContext"])
+    ok(!workSet.includes(name),
+      `${name} is presentation and must not decide which slots ${"generation"} builds`);
   ok(/function missingCoverageSlots[\s\S]{0,260}isRequiredCoverage\(slot\)/.test(automation),
     "missingCoverageSlots() still selects on the structural answer");
   ok(/function missingCoverageWork[\s\S]{0,260}isRequiredCoverage\(slot\)/.test(automation),
     "and so does the work a run is priced and dispatched against");
+  /* AND THERE IS NO SECOND DEMAND CALCULATION. The module asks the one constructor
+     for the pair and the one join for the answer; it derives neither. */
+  for (const name of ["entityReferenceDemand", "referenceDemandState", "obligationStateIds",
+    "entityCurrentObligations", "entityReadinessObligations", "referenceDemandResolution"])
+    ok(!automation.includes(name),
+      `the generation module must not derive demand itself, found ${name}`);
+  const summary = region("function coverageWorkSummary(", "function coverageSlotViewTag(");
+  ok(/entityDemandContext\(list, entity\)/.test(summary) && /effectiveReferenceRequirement\(slot, demand\)/.test(summary),
+    "its copy consumes the shipped context and the shipped join, and nothing else");
 
   /* THE SEED ITSELF, unchanged. */
   const entities = read("public/entities.js");
@@ -1365,6 +1400,54 @@ async function testStructuralSeedAndAutomationAreUntouched() {
     "coverageTemplateForList() still seeds the character views as required");
   ok(entities.includes("requirement: templateRequirement(required)"),
     "through the same writer it always used");
+}
+
+/* CONTROL B — UNKNOWN DEMAND IS NOT SOFTENED.
+ *
+ * The correction's whole risk is that it turns "we cannot prove nothing needs this"
+ * into "nothing needs this". The dialog keeps the shipped sentence, byte for byte,
+ * where the demand answer cannot be obtained — and the board above it keeps its
+ * amber, so the two still agree in the direction that costs a filmmaker something.
+ */
+async function testUnknownDemandKeepsTheAutomationWarning() {
+  /* The reproduced ambiguity: a second character whose id is a PREFIX of this one,
+     so the shot's token matches two entities and shared-entities.js refuses to
+     answer. Clean, well-formed data — normalisation leaves it alone. */
+  const damaged = convergenceFixture();
+  damaged.characters.unshift({ id: "CHAR", name: "Other", prefix: "CHAR", approvedFile: "",
+    continuityStates: [{ id: "state-default", name: "Default", isDefault: true, approvedFile: "" }],
+    coverageSlots: [], expressionSlots: [], candidateFiles: [] });
+  for (const shot of damaged.shots || []) { shot.characters = []; shot.codes = ["CHAR-UX"]; }
+  const rendered = await surface(damaged, COVERAGE_STORAGE);
+
+  const seen = vm.runInContext(`(() => {
+    CONFIG.generation = CONFIG.generation || {};
+    CONFIG.generation.fal = { ...(CONFIG.generation.fal || {}), enabled: true, keySource: "environment" };
+    const e = P.characters.find(x => x.id === 'CHAR-UX');
+    const production = entityReferenceDemandFor('characters', e);
+    const slots = ensureCoverageSlots('characters', e).filter(s => !s.retired);
+    openCoverageAutomationModal('characters','CHAR-UX','hybrid');
+    return {
+      production: production.known ? (production.demanded ? 'demanded' : 'dormant') : 'unknown',
+      unfilled: slots.filter(s => isRequiredCoverage(s) && !slotSelectedFile(s)).length,
+      summary: (/id="coverage-missing-summary">([^<]*)</.exec(document.getElementById('modal').innerHTML) || [])[1] || '',
+      opened: document.getElementById('modal').innerHTML.includes('COVERAGE AUTOMATION'),
+    };
+  })()`, rendered.context);
+
+  eq(seen.production, "unknown", "baseline: an ambiguous token leaves the demand answer unobtainable");
+  eq(seen.opened, true, "baseline: the automation dialog opened");
+  ok(seen.unfilled >= 1, `baseline: the structural plan has ${seen.unfilled} unfilled required views`);
+  ok(seen.summary.startsWith(`${seen.unfilled} required coverage slot`),
+    `with no confident answer the dialog keeps the shipped warning, got ${JSON.stringify(seen.summary)}`);
+  ok(/still missing\./.test(seen.summary), "in the words it always used");
+  ok(!/Nothing is required by current shots/.test(seen.summary),
+    "and never claims nothing is required, which is the one thing it cannot know here");
+
+  /* AND THE BOARD ABOVE IT AGREES, in the same direction. */
+  const rail = within(rendered.html, '<nav class="bounded-slot-rail"', "</nav>");
+  ok(/tone-attention/.test(rail) && /Required — missing/.test(rail),
+    "the board fails closed too, so the dialog and the board do not disagree about uncertainty");
 }
 
 async function testCancellingAStagedChoiceLeavesTheViewAlone() {
@@ -1491,6 +1574,7 @@ async function main() {
   await testAlreadyHeldCandidateIsOfferedNoAssignment();
   await testKnownCurrentDemandStillReadsRequired();
   await testStructuralSeedAndAutomationAreUntouched();
+  await testUnknownDemandKeepsTheAutomationWarning();
   await testCancellingAStagedChoiceLeavesTheViewAlone();
   await testCompactSummaryAgreesWithTheBoard();
   testNoNewPersistenceAndNoDispatch();

@@ -344,6 +344,44 @@ try:
             f"2. every chip reads {chips['labels'][0]!r} in tone {chips['tones'][0]!r} with dot colour "
             f"{chips['dotColours'][0]}, the board reports 0 outstanding, and the fold says {chips['foldSummary']!r}")
 
+        # ---- 2b. and the automation dialog says the same thing ------------------------
+        # THE HOLD BLOCKER, ON ONE SCREEN. The board read Planned / none needed now
+        # while the shipped automation dialog read "4 required coverage slots still
+        # missing" about the same four views. Image generation is enabled on the
+        # page's own config object so the dialog will open; nothing is contacted and
+        # START is never pressed.
+        automation = page.evaluate("""() => {
+            CONFIG.generation = CONFIG.generation || {};
+            CONFIG.generation.fal = { ...(CONFIG.generation.fal || {}), enabled: true, keySource: "environment" };
+            const entity = P.characters.find((c) => c.id === 'CHAR-ALPHA');
+            const slots = ensureCoverageSlots('characters', entity).filter((s) => !s.retired);
+            openCoverageAutomationModal('characters', 'CHAR-ALPHA', 'hybrid');
+            const summary = document.getElementById('coverage-missing-summary');
+            const out = {
+                opened: !document.getElementById('modal').classList.contains('hidden'),
+                unfilled: slots.filter((s) => isRequiredCoverage(s) && !slotSelectedFile(s)).length,
+                copy: summary ? summary.textContent.trim() : '',
+                visible: !!summary && summary.getBoundingClientRect().height > 0,
+            };
+            closeModal();
+            return out;
+        }""")
+        assert automation["opened"], "2b. the coverage automation dialog must open"
+        assert automation["visible"], "2b. and its work summary must be on screen"
+        assert automation["unfilled"] >= 1, \
+            f"2b. baseline: the structural plan still has unfilled views ({automation['unfilled']})"
+        assert automation["copy"].startswith(f"{automation['unfilled']} planned coverage view"), \
+            f"2b. it must offer the whole structural plan, in current-demand words, got {automation['copy']!r}"
+        assert "Nothing is required by current shots." in automation["copy"], \
+            f"2b. and say why it is not calling it required, got {automation['copy']!r}"
+        claim = automation["copy"].split(".")[0]
+        for word in ("required", "missing", "blocking"):
+            assert word not in claim.lower(), \
+                f"2b. the dialog must not use {word} language beside a board reading Planned, got {claim!r}"
+        findings.append(f"2b. the automation dialog offers the same {automation['unfilled']} structural views as "
+                        f"{automation['copy']!r} — the same screen as a board reading "
+                        f"{chips['foldSummary']!r}, with no second answer between them")
+
         # ---- 3-5. browse visually, preview, cancel -------------------------------------
         select_view("profile")
         before_browse = slot_files()

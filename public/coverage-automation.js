@@ -169,6 +169,43 @@
     const slots = typeof ensureCoverageSlots === "function" ? ensureCoverageSlots(list, entity) : (entity.coverageSlots || []);
     return slots.filter((slot) => !slotSelectedFile(slot) && (includeOptional || isRequiredCoverage(slot)));
   }
+  /* CORRECTION 2 — WHAT COULD BE GENERATED AND HOW IT IS DESCRIBED ARE DIFFERENT
+   * QUESTIONS WITH DIFFERENT OWNERS.
+   *
+   * The WORK SET is missingCoverageSlots() / missingCoverageWork(), selected through
+   * isRequiredCoverage() — the STRUCTURAL coverage plan. It is unchanged by this
+   * correction and by the one before it, and it must not shrink because no shot is
+   * waiting: an entity's coverage package is a completeness fact, and generating it
+   * is exactly what this dialog is for.
+   *
+   * The WORDS are the other question, and this dialog was answering it with the
+   * structural one: "4 required coverage slots still missing", on the same screen
+   * as a board whose every chip read Planned and a strip that read NEEDED NOW ·
+   * None. One state, two answers, and the louder one was wrong.
+   *
+   * So the description asks the presentation owner the boards already ask —
+   * effectiveReferenceRequirement(), over the pair entityDemandContext() resolves
+   * from the two shipped demand owners. NOTHING IS INFERRED IN THIS FILE: it
+   * contains no demand derivation of its own, and N12 proves it by breaking
+   * effectiveReferenceRequirement() in memory and watching this sentence change.
+   *
+   * "Required" survives for the case where it is true. When the demand answer
+   * cannot be obtained, effectiveReferenceRequirement() still answers `required`,
+   * and this says so in the words it always used — cannot-prove-safe is not
+   * known-no-demand. */
+  function coverageWorkSummary(list, entity, work, sheetType) {
+    const expressions = sheetType === "expressions";
+    const slotWord = expressions ? "expression" : "coverage";
+    const viewWord = expressions ? "expression" : "coverage view";
+    const rows = (work || []).filter(Boolean);
+    const demand = typeof entityDemandContext === "function" ? entityDemandContext(list, entity) : null;
+    const owed = typeof effectiveReferenceRequirement === "function"
+      ? rows.filter((slot) => effectiveReferenceRequirement(slot, demand) === "required").length
+      : rows.length;
+    if (owed) return `${owed} required ${slotWord} slot${owed === 1 ? "" : "s"} still missing.`;
+    if (rows.length) return `${rows.length} planned ${viewWord}${rows.length === 1 ? "" : "s"} not filled yet. Nothing is required by current shots.`;
+    return `Every ${viewWord} in the coverage plan has an image selected.`;
+  }
   function coverageSlotViewTag(list, slot) {
     const map = {
       front: "front",
@@ -382,7 +419,7 @@
        submitted a sheet anyway. A control that takes a different decision from the
        one it names is the same defect family as a status that describes a
        different project from the one on screen. */
-    openModal(`<div class="coverage-automation-modal"><header><div><span>COVERAGE AUTOMATION</span><h3>${esc(entity.name || entity.id)}</h3><p>Generate a large multi-view sheet, extract approved crops, and individually regenerate only weak or missing slots.</p></div><button class="cancel" onclick="closeModal()">Close</button></header><div class="coverage-automation-summary"><img src="${attr(primary.url)}" alt="Approved primary reference"><div><b>Approved source</b><span>${esc(primary.name)}</span><small id="coverage-missing-summary">${missingRequired.length} required coverage slot${missingRequired.length === 1 ? "" : "s"} still missing.</small></div></div><div class="two-col"><label><span>Generation mode</span><select id="coverage-mode" onchange="updateCoverageAutomationPlan()"><option value="hybrid" ${defaultMode === "hybrid" ? "selected" : ""}>Hybrid — sheet first, manual missing-view fallback</option><option value="sheet" ${defaultMode === "sheet" ? "selected" : ""}>Sheet first only</option><option value="individual" ${defaultMode === "individual" ? "selected" : ""}>Generate missing slots individually</option></select></label><label><span>Sheet type</span><select id="coverage-sheet-type" onchange="updateCoverageAutomationPlan()"><option value="angles">Angle / viewpoint sheet</option>${expressionOption}</select></label><label><span>Resolution</span><select id="coverage-resolution"><option value="2k">2K</option><option value="4k" selected>4K recommended</option></select></label><label><span>Sheet candidates</span><select id="coverage-output-count" onchange="updateCoverageAutomationPlan()"><option value="1" selected>1</option><option value="2">2</option><option value="3">3</option></select></label></div><label><span>Additional direction</span><textarea id="coverage-direction" placeholder="Panel order, pose constraints, critical details, expression list, or geometry notes.">${esc(entity.coverageGenerationNotes || "")}</textarea></label><div class="coverage-mode-note"><b>${list === "locations" ? "Location guidance" : "Hybrid behavior"}</b><span>${list === "locations" ? "Individual viewpoints are recommended for locations because a single generated sheet may invent incompatible architecture. A sheet remains available when you have a strong layout authority." : "Generate a consistent overview sheet first. Extract useful panels into slots, then generate only any remaining or rejected views individually."}</span></div><div id="coverage-spend-plan" class="coverage-spend-plan"></div><div class="modal-actions"><button class="cancel" onclick="closeModal()">Cancel</button><button id="coverage-start-button" class="approve-btn large" onclick="startCoverageAutomation()">START COVERAGE GENERATION</button></div></div>`);
+    openModal(`<div class="coverage-automation-modal"><header><div><span>COVERAGE AUTOMATION</span><h3>${esc(entity.name || entity.id)}</h3><p>Generate a large multi-view sheet, extract approved crops, and individually regenerate only weak or missing slots.</p></div><button class="cancel" onclick="closeModal()">Close</button></header><div class="coverage-automation-summary"><img src="${attr(primary.url)}" alt="Approved primary reference"><div><b>Approved source</b><span>${esc(primary.name)}</span><small id="coverage-missing-summary">${esc(coverageWorkSummary(list, entity, missingRequired, "angles"))}</small></div></div><div class="two-col"><label><span>Generation mode</span><select id="coverage-mode" onchange="updateCoverageAutomationPlan()"><option value="hybrid" ${defaultMode === "hybrid" ? "selected" : ""}>Hybrid — sheet first, manual missing-view fallback</option><option value="sheet" ${defaultMode === "sheet" ? "selected" : ""}>Sheet first only</option><option value="individual" ${defaultMode === "individual" ? "selected" : ""}>Generate missing slots individually</option></select></label><label><span>Sheet type</span><select id="coverage-sheet-type" onchange="updateCoverageAutomationPlan()"><option value="angles">Angle / viewpoint sheet</option>${expressionOption}</select></label><label><span>Resolution</span><select id="coverage-resolution"><option value="2k">2K</option><option value="4k" selected>4K recommended</option></select></label><label><span>Sheet candidates</span><select id="coverage-output-count" onchange="updateCoverageAutomationPlan()"><option value="1" selected>1</option><option value="2">2</option><option value="3">3</option></select></label></div><label><span>Additional direction</span><textarea id="coverage-direction" placeholder="Panel order, pose constraints, critical details, expression list, or geometry notes.">${esc(entity.coverageGenerationNotes || "")}</textarea></label><div class="coverage-mode-note"><b>${list === "locations" ? "Location guidance" : "Hybrid behavior"}</b><span>${list === "locations" ? "Individual viewpoints are recommended for locations because a single generated sheet may invent incompatible architecture. A sheet remains available when you have a strong layout authority." : "Generate a consistent overview sheet first. Extract useful panels into slots, then generate only any remaining or rejected views individually."}</span></div><div id="coverage-spend-plan" class="coverage-spend-plan"></div><div class="modal-actions"><button class="cancel" onclick="closeModal()">Cancel</button><button id="coverage-start-button" class="approve-btn large" onclick="startCoverageAutomation()">START COVERAGE GENERATION</button></div></div>`);
     setTimeout(() => updateCoverageAutomationPlan(), 20);
   };
   window.openCoverageExpressionAutomation = (entityId) => {
@@ -399,7 +436,8 @@
        a key assignSlotReference() DELETES, so every assigned expression priced as
        another paid request. It now asks missingCoverageWork() for this task, which
        is the identical call startCoverageAutomation makes. */
-    const missing = entity ? missingCoverageWork(req.list, entity, sheetType).length : 0;
+    const work = entity ? missingCoverageWork(req.list, entity, sheetType) : [];
+    const missing = work.length;
     const requests = mode === "individual" ? missing : 1;
     const images = mode === "individual" ? requests * 3 : outputs;
     const potential = mode === "hybrid" ? ` · up to ${missing} later individual fallback request${missing === 1 ? "" : "s"}` : "";
@@ -427,8 +465,8 @@
       ? `<em class="coverage-spend-price is-${attr(price.kind)}" data-coverage-price-kind="${attr(price.kind)}"${price.amount == null ? "" : ` data-coverage-price-amount="${attr(String(price.amount))}"`}>${esc(price.headline)} · ${esc(price.detail)}</em>`
       : "";
     if (el) el.innerHTML = requests
-      ? `<b>Confirmed first submission: ${requests} paid request${requests === 1 ? "" : "s"} · up to ${images} image${images === 1 ? "" : "s"}</b><span>${mode === "individual" ? "Each missing required slot is submitted separately." : "This submits the sheet only."}${potential}</span>${priceMarkup}`
-      : `<b data-coverage-spend-plan="none">No paid request to submit</b><span>Every required ${sheetType === "expressions" ? "expression" : "view"} already has an image selected. Choose a sheet mode to generate new material, or close this dialog.</span>`;
+      ? `<b>Confirmed first submission: ${requests} paid request${requests === 1 ? "" : "s"} · up to ${images} image${images === 1 ? "" : "s"}</b><span>${mode === "individual" ? "Each unfilled slot in the coverage plan is submitted separately." : "This submits the sheet only."}${potential}</span>${priceMarkup}`
+      : `<b data-coverage-spend-plan="none">No paid request to submit</b><span>Every ${sheetType === "expressions" ? "expression" : "coverage view"} in the coverage plan already has an image selected. Choose a sheet mode to generate new material, or close this dialog.</span>`;
     /* THE CONTROL HEARS THE QUOTE. A derived plan that the button beside it does
        not obey is the same defect as a derived count nobody reads. */
     /* THE HEADER SAYS THE SAME NUMBER AS THE QUOTE. It is rendered once, when the
@@ -437,11 +475,11 @@
        expressions. Same number, said twice, from two owners; it is refreshed here
        from the one owner whenever the task changes. */
     const summary = document.getElementById("coverage-missing-summary");
-    if (summary) summary.innerHTML = `${missing} required ${sheetType === "expressions" ? "expression" : "coverage"} slot${missing === 1 ? "" : "s"} still missing.`;
+    if (summary) summary.innerHTML = esc(coverageWorkSummary(req.list, entity, work, sheetType));
     const start = document.getElementById("coverage-start-button");
     if (start && !start.dataset.coverageSubmitting) {
       start.disabled = !requests;
-      start.title = requests ? "" : "There is no missing required coverage for this reference.";
+      start.title = requests ? "" : "Nothing in this reference's coverage plan is unfilled.";
     }
   };
   window.startCoverageAutomation = async (spendConfirmed = false) => {
@@ -467,7 +505,7 @@
        and THEN throw — leaving a failed coverage run behind for a submission that
        was never possible. Current truth is asked before anything is written, and
        an empty work set is answered as an empty work set. */
-    if (!requestCount) return toast(`Every required ${sheetType === "expressions" ? "expression" : "view"} already has an image selected.`);
+    if (!requestCount) return toast(`Every ${sheetType === "expressions" ? "expression" : "coverage view"} in the coverage plan already has an image selected.`);
     if (requestCount > 2 && !spendConfirmed) {
       return confirmModal(`This will submit ${requestCount} paid FAL requests and may return up to ${imageCount} images.`, () => startCoverageAutomation(true), { title: "Confirm coverage generation", confirmLabel: `SUBMIT ${requestCount} REQUESTS` });
     }
