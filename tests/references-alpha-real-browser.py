@@ -41,7 +41,7 @@ CINEBRAID_PROJECTS_ROOT, so data/ and the shipped sample are never touched; the 
 guard aborts the paid route and anything off-loopback.
 """
 
-import base64, json, os, pathlib, socket, subprocess, sys, tempfile, time
+import base64, json, os, pathlib, re, socket, subprocess, sys, tempfile, time
 
 ROOT = pathlib.Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "tests"))
@@ -318,22 +318,28 @@ try:
             };
         }""")
         assert chips, "2. the coverage rail must render"
-        assert "required-missing" in chips["states"], \
-            f"2. the requirement answer is untouched — the plan still requires views, got {chips['states']}"
         assert "tone-attention" not in chips["tones"], \
-            f"2. but no chip may claim attention while nothing is waiting, got {chips['tones']}"
-        assert all("Required — missing" != label for label in chips["labels"]), \
-            f"2. nor use the word the panel above just denied, got {chips['labels']}"
-        assert "Required — not needed yet" in chips["labels"], \
-            f"2. it names the axis it is speaking on instead, got {chips['labels']}"
+            f"2. no chip may claim attention while nothing is waiting, got {chips['tones']}"
+        # THE WORD ITSELF, not merely the colour. A chip that says Required beside a
+        # panel that has just said nothing is required is the contradiction however
+        # it is painted, and "Required — not needed yet" was a fifth state in all
+        # but name. Four display states, and only one of them says Required.
+        assert not any("Required" in label for label in chips["labels"]), \
+            f"2. and none may use the word Required, got {chips['labels']}"
+        assert "Planned" in chips["labels"], \
+            f"2. the effective state is Planned, in the vocabulary that already means it, got {chips['labels']}"
+        assert "required-missing" not in chips["states"], \
+            f"2. and required-missing appears on no chip, got {chips['states']}"
+        assert set(chips["states"]) <= {"satisfied", "required-missing", "planned", "optional"}, \
+            f"2. every chip state must be one of the four display states, got {chips['states']}"
         assert "needs-attention" not in chips["card"], \
             f"2. and the slot card's own amber border follows the same answer, got {chips['card']}"
         assert chips["board"].get("boardOutstanding") == "0", \
             f"2. the board publishes nothing outstanding, got {chips['board'].get('boardOutstanding')!r}"
-        assert "none needed yet" in chips["foldSummary"], \
-            f"2. and its fold summary says so beside the plan fraction, got {chips['foldSummary']!r}"
-        # THE COLOUR ITSELF, resolved. A class name is a promise; this is the pixel.
-        amber_dots = [c for c in chips["dotColours"] if c and "255, 178" in c.replace("rgb(", "").replace(")", "")]
+        assert "none needed now" in chips["foldSummary"], \
+            f"2. and its fold summary says so, got {chips['foldSummary']!r}"
+        assert "required" not in chips["foldSummary"].lower(), \
+            f"2. without using the word required while nothing is, got {chips['foldSummary']!r}"
         findings.append(
             f"2. every chip reads {chips['labels'][0]!r} in tone {chips['tones'][0]!r} with dot colour "
             f"{chips['dotColours'][0]}, the board reports 0 outstanding, and the fold says {chips['foldSummary']!r}")
@@ -575,6 +581,90 @@ try:
                         "is replaced by 'ALREADY IN USE FOR FRONT' for one it does")
         page.evaluate("() => closeModal()")
 
+        # ---- 11. no demand -> real current demand, on the same target ------------------
+        # The one target kind a shot can actually be waiting on. Readiness raises one
+        # kind of row about an entity, `entity-state`, and none at all for a coverage
+        # or expression slot — public/shared-shot-readiness.js says so outright: "a
+        # required coverage slot is an ENTITY completeness fact, not a shot
+        # prerequisite". So this declares a state the character has no approved image
+        # for, which is exactly what turns into a current obligation.
+        page.evaluate("""(id) => {
+            const entity = P.characters.find((c) => c.id === id);
+            entity.continuityStates.push({ id: 'state-soaked', name: 'Soaked', isDefault: false,
+              parentStateId: 'state-default', approvedFile: '', notes: 'Rain sequence.',
+              referenceRequirement: 'required', generationMode: 'derive' });
+            boundedWriteState('selected:entity-coverage-view', 'characters:' + id, 'states');
+        }""", ENTITY)
+        page.evaluate("() => route()")
+        page.wait_for_selector(".continuity-state-rail", timeout=25000)
+
+        def state_rail():
+            return page.evaluate("""() => {
+                const rail = document.querySelector('.continuity-state-rail');
+                if (!rail) return null;
+                const soaked = [...rail.querySelectorAll('button')]
+                    .find((b) => ((b.querySelector('b') || {}).textContent || '').trim() === 'Soaked');
+                return {
+                    outstanding: rail.dataset.statesOutstanding,
+                    label: soaked ? (soaked.querySelector('small') || {}).textContent.trim() : '',
+                    tone: soaked ? ([...soaked.classList].find((c) => c.startsWith('tone-')) || '') : '',
+                    dot: soaked ? getComputedStyle(soaked.querySelector('i')).backgroundColor : '',
+                    strip: (document.querySelector('.entity-demand-summary') || { dataset: {} }).dataset.demandSummaryNow,
+                    needed: ((document.querySelector('.entity-demand-summary-now b') || {}).textContent || '').trim(),
+                };
+            }""")
+
+        before = state_rail()
+        assert before, "11. the continuity-state rail must render"
+        assert before["label"] == "Planned", \
+            f"11. with no shot waiting on it the declared state reads Planned, got {before['label']!r}"
+        assert before["tone"] != "tone-attention", f"11. and claims no attention, got {before['tone']!r}"
+        assert before["outstanding"] == "0", f"11. owing nothing, got {before['outstanding']!r}"
+        assert before["strip"] == "0", f"11. and the strip agrees, got {before['strip']!r}"
+
+        # THE TRANSITION. One shot now uses this character AND declares that state.
+        page.evaluate("""(id) => {
+            for (const shot of P.shots || []) {
+                shot.characters = [id];
+                shot.continuityStateSelections = { [id]: 'state-soaked' };
+            }
+        }""", ENTITY)
+        page.evaluate("() => route()")
+        page.wait_for_function(
+            """() => { const r = document.querySelector('.continuity-state-rail');
+                       return r && r.dataset.statesOutstanding !== '0'; }""", timeout=25000)
+        after = state_rail()
+        assert after["label"] == "Required", \
+            f"11. the very same target now reads Required, got {after['label']!r}"
+        assert after["tone"] == "tone-attention", f"11. in the attention tone, got {after['tone']!r}"
+        assert after["outstanding"] == "1", f"11. the board reports one outstanding, got {after['outstanding']!r}"
+        assert after["strip"] == "1", f"11. and the compact strip reports the same one, got {after['strip']!r}"
+        assert "1 required reference" in after["needed"], \
+            f"11. in words, on the strip read first, got {after['needed']!r}"
+        assert after["dot"] != before["dot"], (
+            f"11. and the dot changed colour, got {before['dot']} -> {after['dot']}")
+        # RESOLVED, not read off a class name. `--ok` and `--warn` are declared nowhere
+        # in the stylesheet, so both dots on this rail used to resolve to rgba(0,0,0,0):
+        # a state a shot is waiting on has to be visible before it is a signal.
+        channels = [int(value) for value in re.findall(r"\d+", after["dot"])[:3]]
+        assert len(channels) == 3 and channels[0] > 180 and channels[0] > channels[2], (
+            f"11. and it must resolve to a real warm colour rather than transparent, got {after['dot']}")
+        findings.append(
+            f"11. the same target went {before['label']!r}/{before['dot']} with 0 outstanding to "
+            f"{after['label']!r}/{after['dot']} with 1 outstanding and a strip reading {after['needed']!r}, "
+            "the moment a shot declared it")
+
+        # And back: withdraw the declaration and the word goes with it.
+        page.evaluate("""() => { for (const shot of P.shots || []) shot.continuityStateSelections = {}; }""")
+        page.evaluate("() => route()")
+        page.wait_for_function(
+            """() => { const r = document.querySelector('.continuity-state-rail');
+                       return r && r.dataset.statesOutstanding === '0'; }""", timeout=25000)
+        restored = state_rail()
+        assert restored["label"] == "Planned" and restored["tone"] != "tone-attention", \
+            f"11. and withdrawing the declaration returns it to Planned, got {restored}"
+        findings.append("11b. withdrawing the declaration returned the same target to Planned with 0 outstanding")
+
         # ---- N1. the amber can come back ----------------------------------------------
         # An AMBIGUOUS dependency reading: a second character whose id is a prefix of
         # this one, so the shot's token matches two entities and shared-entities.js
@@ -583,7 +673,8 @@ try:
             P.characters.unshift({ id: 'CHAR', name: 'Other', prefix: 'CHAR', approvedFile: '',
               continuityStates: [{ id: 'state-default', name: 'Default', isDefault: true, approvedFile: '' }],
               coverageSlots: [], expressionSlots: [], candidateFiles: [] });
-            for (const shot of P.shots || []) { shot.characters = []; shot.codes = [id]; }
+            for (const shot of P.shots || []) { shot.characters = []; shot.codes = [id]; shot.continuityStateSelections = {}; }
+            boundedWriteState('selected:entity-coverage-view', 'characters:' + id, 'coverage');
         }""", ENTITY)
         page.evaluate("() => route()")
         page.wait_for_selector(".bounded-entity-page[data-selected-task]", timeout=25000)
@@ -604,7 +695,7 @@ try:
         assert "tone-attention" in control["tones"], \
             f"N1. with no confident answer the amber must come back, got {control['tones']}"
         assert "Required — missing" in control["labels"], \
-            f"N1. and the words with it, got {control['labels']}"
+            f"N1. and the words with it — cannot-prove-safe is not the same as known-safe, got {control['labels']}"
         assert control["outstanding"] != "0", \
             f"N1. and the board must report outstanding work again, got {control['outstanding']!r}"
         findings.append("N1. control: with the demand answer unknown the board fails closed — the amber, the words "

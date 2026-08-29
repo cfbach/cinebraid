@@ -547,8 +547,18 @@ async function testRequirementAndDemandCannotContradict() {
      were: the panel says nothing is required now, the slot says Required. */
   ok(/No shot uses this character yet, so nothing is required now/.test(html),
     "baseline: the demand answer is unchanged");
-  ok(html.includes('data-slot-state="required-missing"'),
-    "baseline: the requirement answer is unchanged — Slice 3's four states are untouched");
+  /* CORRECTION 1 — the STRUCTURAL answer is unchanged and still what the plan
+     control offers and what automation reads; what the chip prints is the
+     EFFECTIVE one, and on a dormant reference that is Planned. */
+  const structural = vm.runInContext(`(() => {
+    const e = P.characters.find(x => x.id === 'CHAR-UX');
+    return ensureCoverageSlots('characters', e).filter(s => coverageRequirement(s) === 'required').length;
+  })()`, rendered.context);
+  ok(structural >= 2, `baseline: the plan still declares ${structural} required views`);
+  ok(html.includes('data-slot-state="planned"'),
+    "and with nothing waiting on them the board displays them as Planned");
+  ok(!html.includes('data-slot-state="required-missing"'),
+    "and never as required-missing, which would be a fifth state in all but name");
 
   /* What is new is the sentence that says which is which, on the board. */
   const intro = within(html, '<div class="entity-coverage-intro">', "</div></div>");
@@ -979,34 +989,49 @@ async function testDormantCoverageClaimsNoAttention() {
   ok(rail, "baseline: the coverage rail rendered");
   eq((rail.match(/tone-attention/g) || []).length, 0,
     "no coverage chip may claim attention while the production is waiting on none of it");
-  ok(/data-slot-state="required-missing"/.test(rail),
-    "and the requirement answer is untouched — the plan still requires the view");
-  ok(/Required — not needed yet/.test(rail),
-    "the chip says which axis it is speaking on rather than the word the panel just denied");
-  ok(!/Required — missing/.test(rail),
-    "and does not say the word that made the two halves contradict");
+  /* THE WORD ITSELF. A chip that says Required beside a panel that says nothing is
+     required is the contradiction, however the tone is painted. */
+  ok(!/Required/.test(rail), `no chip may use the word Required here, got ${rail.match(/<small>[^<]*<\/small>/g)}`);
+  ok(/data-slot-state="planned"/.test(rail),
+    "the effective state is Planned — real material, listed and reachable, that nothing is owed on");
+  ok(!/data-slot-state="required-missing"/.test(rail),
+    "and required-missing appears nowhere, so there is no fifth state");
+  const chipStates = new Set([...rail.matchAll(/data-slot-state="([a-z-]+)"/g)].map((m) => m[1]));
+  for (const state of chipStates) ok(["satisfied", "required-missing", "planned", "optional"].includes(state),
+    `every chip state must be one of the four display states, got ${state}`);
 
   const card = /<article class="coverage-slot-card focused-slot-selected ([^"]*)"/.exec(html);
   ok(card, "baseline: the slot card rendered");
   ok(!/needs-attention/.test(card[1]),
     "the card's own amber border follows the same answer rather than re-reading the requirement");
+  const header = /<article class="coverage-slot-card[\s\S]*?<span>([^<]*)<\/span>/.exec(html);
+  ok(header && !/REQUIRED/.test(header[1]),
+    `the card header must not call the view required either, got ${header && header[1]}`);
+  /* AND THE CONTROL THAT AUTHORS THE PLAN STILL OFFERS THE PLAN'S OWN ANSWER, so
+     the filmmaker can still see and change what the project declares. */
+  const select = within(html, '<select class="status-select reference-requirement-select"', "</select>");
+  ok(/value="required" selected/.test(select),
+    "the Project need control still shows the structural requirement it writes");
 
   const board = /<details class="fold compact-entity-section entity-coverage-section[^>]*data-board-outstanding="(\d+)" data-board-demand="([a-z]+)"/.exec(html);
   ok(board, "the board publishes what it is actually owed");
   eq(board[1], "0", "which is nothing");
   eq(board[2], "dormant", "because the production is not using this reference yet");
-  ok(/Coverage board <span>[^<]*none needed yet/.test(html),
-    "so its fold summary does not lead with a bare deficit fraction");
-  /* Derived, not pinned: normalisation seeds template slots beside the fixture's
-     own, so the invariant is that the fold still prints the PLAN OWNER'S fraction
-     — nothing is hidden, it is qualified. */
-  const plan = vm.runInContext(`(() => {
+  ok(/Coverage board <span>[^<]*none needed now/.test(html),
+    "so its fold summary says nothing is needed now");
+  const fold = /Coverage board <span>([^<]*)<\/span>/.exec(html);
+  ok(fold && !/required/i.test(fold[1]),
+    `and never uses the word required while nothing is, got ${fold && fold[1]}`);
+  /* Derived, not pinned: the fold prints the SAME answers the chips print, so the
+     progress fraction is the effective one and nothing can drift between them. */
+  const progress = vm.runInContext(`(() => {
     const e = P.characters.find(x => x.id === 'CHAR-UX');
-    const s = summariseCoverage(ensureCoverageSlots('characters', e));
-    return s.approvedRequired + '/' + s.required;
+    const slots = ensureCoverageSlots('characters', e).filter(s => !s.retired);
+    const held = slots.filter(s => slotSelectedFile(s)).length;
+    return held + '/' + slots.length;
   })()`, rendered.context);
-  ok(html.includes(`Coverage board <span>${plan} required approved`),
-    `while still printing the plan's own fraction (${plan}) — nothing is hidden, it is qualified`);
+  ok(html.includes(`Coverage board <span>${progress} selected`),
+    `the fold prints the effective progress (${progress} selected), so nothing is hidden`);
 }
 
 async function testAttentionSurvivesWhereTheAnswerIsUnknown() {
@@ -1032,6 +1057,8 @@ async function testAttentionSurvivesWhereTheAnswerIsUnknown() {
   ok(/tone-attention/.test(rail),
     "with no confident answer a required gap still claims attention");
   ok(/Required — missing/.test(rail), "and still says so in the words it always used");
+  ok(/data-slot-state="required-missing"/.test(rail),
+    "in the display state that means it — cannot-prove-safe keeps work visible");
 
   /* AND THE WHOLE MATRIX, driven directly, because the two shipped renders above
      can only show two of its rows. */
@@ -1045,17 +1072,30 @@ async function testAttentionSurvivesWhereTheAnswerIsUnknown() {
       usedButNothingOwed: ask({ production: { known: true, demanded: true, shotIds: ['L1-01'] }, obligations: { known: true, rows: [] } }),
       usedAndReadinessUnknown: ask({ production: { known: true, demanded: true, shotIds: ['L1-01'] }, obligations: { known: false } }),
       planned: (() => { const s = referenceSlotStatus({ id: 'rear', requirement: 'planned', selectedFile: '' }, { production: { known: true, demanded: false }, obligations: { known: true, rows: [] } }); return s.tone + ':' + s.state; })(),
+      optional: (() => { const s = referenceSlotStatus({ id: 'overhead', requirement: 'not-required', selectedFile: '' }, { production: { known: true, demanded: true }, obligations: { known: false } }); return s.tone + ':' + s.state; })(),
       satisfied: (() => { const s = referenceSlotStatus({ id: 'front', requirement: 'required', selectedFile: 'X.png' }, { production: { known: true, demanded: true }, obligations: { known: false } }); return s.tone + ':' + s.state; })(),
     };
   })()`, rendered.context);
   eq(matrix.nothing, "attention:required-missing", "asked with no demand context at all, the old answer stands");
   eq(matrix.unknownProduction, "attention:required-missing", "an unknown production answer keeps the work visible");
   eq(matrix.usedAndReadinessUnknown, "attention:required-missing", "so does an unavailable readiness derivation");
-  eq(matrix.dormant, "pending:required-missing", "a reference nothing uses owes nothing right now");
-  eq(matrix.usedButNothingOwed, "pending:required-missing",
-    "and neither does one whose readiness is already satisfied — readiness never owes a coverage slot");
+  eq(matrix.dormant, "pending:planned", "a reference nothing uses displays its plan as a plan");
+  eq(matrix.usedButNothingOwed, "pending:planned",
+    "and so does one whose readiness is already satisfied — readiness never owes a coverage slot");
   eq(matrix.planned, "pending:planned", "Planned is untouched");
+  eq(matrix.optional, "optional:optional",
+    "and Not required stays Optional even where the demand answer is unavailable — softening only ever claims less");
   eq(matrix.satisfied, "complete:satisfied", "and so is Selected — the four states are exactly the four states");
+  /* AND THE STRUCTURAL ANSWER IS UNTOUCHED UNDERNEATH ALL OF IT. */
+  const untouched = vm.runInContext(`(() => {
+    const slot = { id: 'profile', label: 'Profile', requirement: 'required', selectedFile: '' };
+    const dormant = { production: { known: true, demanded: false }, obligations: { known: true, rows: [] } };
+    return { structural: coverageRequirement(slot), required: isRequiredCoverage(slot),
+             effective: effectiveReferenceRequirement(slot, dormant) };
+  })()`, rendered.context);
+  eq(untouched.structural, "required", "the plan still declares this view required");
+  eq(untouched.required, true, "and isRequiredCoverage() — the answer automation reads — still says so");
+  eq(untouched.effective, "planned", "while the display says Planned, because nothing is waiting on it");
 }
 
 async function testSaveCropAndUseIsOneActionThatConverges() {
@@ -1166,6 +1206,165 @@ async function testAlreadyHeldCandidateIsOfferedNoAssignment() {
   /* AND THE OFFER SURVIVES WHERE IT IS A REAL DECISION. */
   ok(/ASSIGN TO PROFILE/.test(modals.open),
     "a candidate aimed at a view that does not hold it is still assignable from here");
+}
+
+/* ==========================================================================
+   CORRECTION 1 — "REQUIRED" MEANS THE PRODUCTION REQUIRES IT NOW.
+
+   The first pass softened the tone and the wording and kept the structural answer
+   as the STATE, which is a fifth state wearing four states' clothes. These prove
+   the collapse: the four display states, the one reachable KNOWN positive case,
+   the fail-closed case kept separate from it, and — because the structural seed
+   was deliberately not changed — that coverage automation still sees exactly the
+   set it saw before.
+   ========================================================================== */
+
+/* A shot that USES the character and DECLARES a state it has no approved image
+   for. That declaration is what readiness turns into a current obligation, and it
+   is the only way a reference target becomes required NOW: readiness raises one
+   kind of row about an entity, `entity-state`, and none at all for a coverage or
+   expression slot — public/shared-shot-readiness.js states this outright ("a
+   required coverage slot is an ENTITY completeness fact, not a shot
+   prerequisite"). */
+function demandedStateFixture({ declare = true } = {}) {
+  const project = convergenceFixture({ states: 2, cast: true });
+  for (const shot of project.shots || []) {
+    if (declare) shot.continuityStateSelections = { "CHAR-UX": "state-soaked" };
+  }
+  return project;
+}
+const STATES_STORAGE = {
+  ...COVERAGE_STORAGE,
+  "cinebraid-bounded:fixture:selected:entity-coverage-view:characters:CHAR-UX": "states",
+};
+
+async function testKnownCurrentDemandStillReadsRequired() {
+  /* WITHOUT the declaration: the shot uses the character, readiness owes nothing
+     for the variant, and the same target reads Planned. */
+  const quiet = await surface(demandedStateFixture({ declare: false }), STATES_STORAGE);
+  const quietRail = within(quiet.html, '<nav class="continuity-state-rail"', "</nav>");
+  ok(quietRail, "baseline: the continuity-state rail rendered");
+  eq((/data-states-outstanding="(\d+)"/.exec(quietRail) || [])[1], "0",
+    "a declared state nothing is waiting on is owed by nobody");
+  ok(/Soaked<\/b><small>Planned</.test(quietRail),
+    `and reads Planned, got ${quietRail.match(/<b>[^<]*<\/b><small>[^<]*<\/small>/g)}`);
+  eq((/data-demand-summary-now="(\d+)"/.exec(quiet.html) || [])[1], "0",
+    "and the compact strip agrees that nothing is needed now");
+
+  /* WITH it: the production is genuinely waiting on this exact target. */
+  const demanded = await surface(demandedStateFixture(), STATES_STORAGE);
+  const owner = vm.runInContext(`(() => {
+    const e = P.characters.find(x => x.id === 'CHAR-UX');
+    const production = entityReferenceDemandFor('characters', e);
+    const obligations = entityCurrentObligations('characters', e, production);
+    return { demanded: production.demanded, known: obligations.known,
+             owed: (obligations.rows || []).map(r => r.stateId) };
+  })()`, demanded.context);
+  eq(owner.demanded, true, "baseline: a shot uses this character");
+  eq(owner.known, true, "baseline: and the readiness answer is available");
+  ok(owner.owed.includes("state-soaked"),
+    `baseline: readiness names the declared state as a current obligation, got ${JSON.stringify(owner.owed)}`);
+
+  const rail = within(demanded.html, '<nav class="continuity-state-rail"', "</nav>");
+  eq((/data-states-outstanding="(\d+)"/.exec(rail) || [])[1], "1",
+    "so the board reports one target outstanding");
+  ok(/Soaked<\/b><small>Required</.test(rail),
+    `and the chip says Required, got ${rail.match(/<b>[^<]*<\/b><small>[^<]*<\/small>/g)}`);
+  ok(/tone-attention/.test(rail), "in the attention tone");
+  eq((/data-demand-summary-now="(\d+)"/.exec(demanded.html) || [])[1], "1",
+    "and the compact strip reports the same single real gap");
+  ok(/NEEDED NOW<\/span><b>1 required reference/.test(demanded.html),
+    "in words, on the strip the filmmaker reads first");
+
+  /* THE WORD IS STILL EARNED, NOT ISSUED. Approve the state and it stops. */
+  const settled = vm.runInContext(`(() => {
+    const e = P.characters.find(x => x.id === 'CHAR-UX');
+    const state = e.continuityStates.find(s => s.id === 'state-soaked');
+    const production = entityReferenceDemandFor('characters', e);
+    const obligations = entityCurrentObligations('characters', e, production);
+    return effectiveReferenceRequirement(state, { production, obligations }, { family: 'state' });
+  })()`, demanded.context);
+  eq(settled, "required", "the join returns Required for exactly this target");
+
+  /* F — AND WHEN THE DEMAND IS MET IT STOPS ASKING. Approving the state through
+     the shipped writer makes it canon, and the same chip reads Canon rather than
+     Required, from the same render. */
+  const resolvedNow = await surface(demandedStateFixture(), STATES_STORAGE);
+  vm.runInContext(`(() => {
+    const e = P.characters.find(x => x.id === 'CHAR-UX');
+    e.continuityStates.find(s => s.id === 'state-soaked').approvedFile = 'CHAR-UX-LOOSE.png';
+    P.productionAuthority = P.productionAuthority || { version: 1, receipts: [] };
+    P.productionAuthority.receipts.push({
+      id: 'authority-000009', sequence: 9, actor: 'human', act: 'explicit-approval',
+      command: 'approve-entity-state', kind: 'entity-state',
+      targetKey: 'entity-state:characters:CHAR-UX#state-soaked',
+      list: 'characters', entityId: 'CHAR-UX', stateId: 'state-soaked', slotId: '',
+      value: 'CHAR-UX-LOOSE.png', assetId: '', at: '2026-08-20T00:00:00.000Z',
+      status: 'current', supersededBy: '', supersededAt: '', revokedAt: '',
+      revocationReason: '', note: '', shotId: '', frameId: '', unitKey: '',
+      provenance: { manualAction: 'fixture', via: 'fixture', gesture: 'click' },
+    });
+  })()`, resolvedNow.context);
+  await resolvedNow.context.route();
+  const settledSection = within(
+    resolvedNow.context.document.getElementById("main").innerHTML,
+    '<nav class="continuity-state-rail"', "</nav>");
+  ok(settledSection, "baseline: the rail re-rendered");
+  eq((/data-states-outstanding="(\d+)"/.exec(settledSection) || [])[1], "0",
+    "a demand the production has met is owed by nobody");
+  ok(/Soaked<\/b><small>Canon</.test(settledSection),
+    `and the chip reads Canon rather than Required, got ${settledSection.match(/<b>[^<]*<\/b><small>[^<]*<\/small>/g)}`);
+}
+
+async function testStructuralSeedAndAutomationAreUntouched() {
+  /* THE REASON THE TEMPLATE SEED WAS NOT CHANGED. Coverage automation reads
+     isRequiredCoverage() — the structural answer — and if the display change had
+     reached it, "Generate missing angles" would plan zero targets on exactly the
+     project that needs them most. Proven through the shipped modal rather than a
+     helper, because the modal is what a filmmaker presses. */
+  const rendered = await surface(convergenceFixture(), COVERAGE_STORAGE);
+  const html = rendered.html;
+  ok(/data-slot-state="planned"/.test(html) && !/data-slot-state="required-missing"/.test(html),
+    "baseline: every view on this dormant reference displays as Planned");
+
+  /* The dialog refuses to open unless image generation is configured, so the page's
+     own config object is set here. Nothing is contacted and START is never pressed:
+     this reads the count the dialog PRINTS, which is what a filmmaker sees. */
+  const plan = vm.runInContext(`(() => {
+    CONFIG.generation = CONFIG.generation || {};
+    CONFIG.generation.fal = { ...(CONFIG.generation.fal || {}), enabled: true, keySource: "environment" };
+    const e = P.characters.find(x => x.id === 'CHAR-UX');
+    const slots = ensureCoverageSlots('characters', e).filter(s => !s.retired);
+    const structural = slots.filter(s => isRequiredCoverage(s));
+    openCoverageAutomationModal('characters', 'CHAR-UX', 'hybrid');
+    const modal = document.getElementById('modal').innerHTML;
+    return { structural: structural.length,
+             unfilled: structural.filter(s => !slotSelectedFile(s)).length,
+             summary: (/id="coverage-missing-summary">([^<]*)</.exec(modal) || [])[1] || '',
+             opened: modal.includes('COVERAGE AUTOMATION') };
+  })()`, rendered.context);
+  eq(plan.opened, true, "baseline: the coverage automation modal opened");
+  ok(plan.structural >= 2, `baseline: the template still declares ${plan.structural} required views`);
+  ok(plan.unfilled >= 1, `baseline: ${plan.unfilled} of them are unfilled`);
+  ok(plan.summary.startsWith(`${plan.unfilled} required coverage slot`),
+    `automation still counts the structural set it always counted, got ${plan.summary!==''?JSON.stringify(plan.summary):'nothing'}`);
+
+  /* AND NO PRESENTATION FUNCTION REACHED THE GENERATION PATH. */
+  const automation = read("public/coverage-automation.js");
+  for (const name of ["effectiveReferenceRequirement", "effectiveRequirementLabel", "referenceSlotStatus"])
+    ok(!automation.includes(name),
+      `${name} is presentation and must not appear in the generation module`);
+  ok(/function missingCoverageSlots[\s\S]{0,260}isRequiredCoverage\(slot\)/.test(automation),
+    "missingCoverageSlots() still selects on the structural answer");
+  ok(/function missingCoverageWork[\s\S]{0,260}isRequiredCoverage\(slot\)/.test(automation),
+    "and so does the work a run is priced and dispatched against");
+
+  /* THE SEED ITSELF, unchanged. */
+  const entities = read("public/entities.js");
+  ok(/\["front", "Front", true\][\s\S]{0,200}\["rear", "Rear", true\]/.test(entities),
+    "coverageTemplateForList() still seeds the character views as required");
+  ok(entities.includes("requirement: templateRequirement(required)"),
+    "through the same writer it always used");
 }
 
 async function testCancellingAStagedChoiceLeavesTheViewAlone() {
@@ -1290,6 +1489,8 @@ async function main() {
   await testSaveCropAndUseIsOneActionThatConverges();
   await testSaveAsCandidateAssignsNothing();
   await testAlreadyHeldCandidateIsOfferedNoAssignment();
+  await testKnownCurrentDemandStillReadsRequired();
+  await testStructuralSeedAndAutomationAreUntouched();
   await testCancellingAStagedChoiceLeavesTheViewAlone();
   await testCompactSummaryAgreesWithTheBoard();
   testNoNewPersistenceAndNoDispatch();

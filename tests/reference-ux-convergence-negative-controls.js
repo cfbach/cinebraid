@@ -453,14 +453,14 @@ const EXTRACTOR_DRIVE = (assign) => `(async () => {
    chip to the demand answer and the contradiction comes straight back.
    =========================================================================== */
 controlAsync({
-  label: "N7 a dormant coverage gap claims no attention",
+  label: "N7 a dormant coverage gap is never displayed as Required",
+  /* Skip the join and the chip prints the STRUCTURAL answer again, which is the
+     exact contradiction: "Required — missing" in amber under a panel that has just
+     said nothing is required now. */
   mutateSource: only("entities.js", (text) => mutate(
     text,
-    "  const resolved = demand\n"
-    + '    ? referenceDemandResolution({ family: "coverage", id: slot?.id || "", tier: "required", requirement: "required", satisfied: false },\n'
-    + "      demand.production, obligationStateIds(demand.obligations))\n"
-    + "    : null;",
-    "  const resolved = null; void demand;",
+    '  if (requirement !== "required" || isDefault || !demand) return requirement;',
+    '  if (requirement !== "required" || isDefault || !demand || true) return requirement;',
     "N7")),
   probe: async (mutateSource) => {
     const rendered = await draw(uxFixture(), COVERAGE_STORAGE, mutateSource);
@@ -468,19 +468,67 @@ controlAsync({
     const strip = /data-demand-summary-now="(\d+)"/.exec(html);
     if (!strip) return { reached: false, held: false, reason: "no-demand-summary" };
     if (strip[1] !== "0") return { reached: false, held: false, reason: `strip-counts-${strip[1]}` };
-    const rail = html.slice(html.indexOf('<nav class="bounded-slot-rail"'));
-    if (!rail) return { reached: false, held: false, reason: "no-slot-rail" };
-    const amber = (rail.slice(0, rail.indexOf("</nav>")).match(/tone-attention/g) || []).length;
+    const start = html.indexOf('<nav class="bounded-slot-rail"');
+    if (start < 0) return { reached: false, held: false, reason: "no-slot-rail" };
+    const rail = html.slice(start, html.indexOf("</nav>", start));
+    const claimed = /tone-attention/.test(rail) || /Required/.test(rail)
+      || /data-slot-state="required-missing"/.test(rail);
     return {
       reached: true,
-      held: amber === 0,
+      held: !claimed,
       /* Count-free, because project normalisation seeds template slots beside the
-         fixture's own and the number of amber chips is not the property. */
-      reason: amber ? "dormant-board-claimed-attention" : "no-attention-claimed",
+         fixture's own and the number of chips is not the property. */
+      reason: claimed ? "dormant-board-displayed-required" : "displayed-as-planned",
     };
   },
-  reason: "dormant-board-claimed-attention",
-  explain: "One screen saying both 'nothing is required now' and 'Required — missing' is the contradiction this slice exists to remove.",
+  reason: "dormant-board-displayed-required",
+  explain: "One screen saying both 'nothing is required now' and 'Required — missing' is the contradiction this correction exists to remove.",
+});
+
+/* ===========================================================================
+   N11 — AND "REQUIRED" MUST STILL APPEAR WHERE IT IS TRUE.
+
+   The other direction of the same join, and the one that stops the collapse from
+   being a blanket rename. Soften unconditionally and a continuity state a shot is
+   actually waiting on stops asking for anything.
+   =========================================================================== */
+controlAsync({
+  label: "N11 a target the production is waiting on still reads Required",
+  mutateSource: only("entities.js", (text) => mutate(
+    text,
+    '  return resolved.state === "required-now" ? "required" : "planned";',
+    '  void resolved; return "planned";',
+    "N11")),
+  probe: async (mutateSource) => {
+    const project = uxFixture();
+    const character = project.characters.find((row) => row.id === "CHAR-NC");
+    character.continuityStates.push({
+      id: "state-soaked", name: "Soaked", isDefault: false, parentStateId: "state-default",
+      approvedFile: "", notes: "Rain.", referenceRequirement: "required", generationMode: "derive",
+    });
+    for (const shot of project.shots || []) {
+      shot.characters = ["CHAR-NC"];
+      shot.continuityStateSelections = { "CHAR-NC": "state-soaked" };
+    }
+    const rendered = await draw(project, {
+      ...COVERAGE_STORAGE,
+      "cinebraid-bounded:fixture:selected:entity-coverage-view:characters:CHAR-NC": "states",
+    }, mutateSource);
+    const html = rendered.html;
+    const start = html.indexOf('<nav class="continuity-state-rail"');
+    if (start < 0) return { reached: false, held: false, reason: "no-state-rail" };
+    const rail = html.slice(start, html.indexOf("</nav>", start));
+    const owed = (/data-states-outstanding="(\d+)"/.exec(rail) || [])[1];
+    if (owed === undefined) return { reached: false, held: false, reason: "no-outstanding-count" };
+    const asks = /Soaked<\/b><small>Required</.test(rail) && owed !== "0";
+    return {
+      reached: true,
+      held: asks,
+      reason: asks ? "required-where-it-is-true" : "owed-target-stopped-asking",
+    };
+  },
+  reason: "owed-target-stopped-asking",
+  explain: "A join that only ever softens is a rename, and a state a shot is waiting on would go quiet.",
 });
 
 /* ===========================================================================

@@ -852,7 +852,14 @@ window.setEntityContinuityTracking = (list, id, key, value) => {
   route();
 };
 
-function continuityStatesPanel(list, it, media = []) {
+/* CORRECTION 1 — THE STATE RAIL RUNS THE SAME JOIN, and it is the one reference
+   surface where "the production requires this now" can be TRUE: readiness raises
+   exactly one kind of row about an entity, `entity-state`, and none at all for a
+   coverage or expression slot (public/shared-shot-readiness.js: "a required
+   coverage slot is an ENTITY completeness fact, not a shot prerequisite"). So a
+   declared state a shot is actually waiting on reads Required — missing in amber
+   here, and the same state with nothing waiting on it reads Planned. */
+function continuityStatesPanel(list, it, media = [], demand = null) {
   if (list === "audio") return "";
   const states = entityStateListRead(it, true);
   const ids = states.map((state) => state.id);
@@ -871,11 +878,13 @@ function continuityStatesPanel(list, it, media = []) {
   const selectedApprovedMedia = selectedApprovedFile ? (media || []).find((item) => item.name === selectedApprovedFile) : null;
   const selectedApprovedHero = st ? `<section class="state-approved-hero ${selectedApprovedMedia ? (selectedIsCanon ? "is-approved" : "is-historic") : "is-missing"}"><div class="state-approved-hero-copy"><span>${!selectedApprovedMedia ? "CANON IMAGE REQUIRED" : selectedIsCanon ? "CANON IMAGE" : "HISTORIC IMAGE · NOT APPROVED"}</span><b>${esc(st.name || "State")}</b><small>${!selectedApprovedFile ? "No image has been approved for this state." : selectedIsCanon ? esc(selectedApprovedFile) : `${esc(selectedApprovedFile)} — previously selected, never approved. Approve it to make it canon.`}</small>${!st.isDefault && parentInfo?.parent ? `<em>${selectedParentIsCanon ? `Derived from ${esc(parentInfo.label)}` : `${esc(parentInfo.label)} is not approved as canon — this state cannot derive from it yet`}</em>` : ""}</div>${selectedApprovedMedia ? `<button type="button" class="state-approved-preview" onclick="openMediaTheatre('${attr(encodeURIComponent(selectedApprovedMedia.url))}','${attr(encodeURIComponent(`${st.name || "State"} ${selectedIsCanon ? "canon" : "historic"} image · ${selectedApprovedFile}`))}','${isVideo(selectedApprovedMedia.name) ? "video" : "image"}')">${isVideo(selectedApprovedMedia.name) ? `<video muted src="${attr(selectedApprovedMedia.url)}"></video>` : `<img src="${attr(selectedApprovedMedia.url)}" alt="${selectedIsCanon ? `Approved canon image for ${attr(st.name || "state")}` : `Historic image for ${attr(st.name || "state")}, not approved`}">`}<span>VIEW LARGE</span></button>` : `<button type="button" class="approve-btn" onclick="approveEntityFile('${attr(list)}','${attr(it.id)}','','${attr(st.id)}')">CHOOSE APPROVED IMAGE</button>`}</section>` : "";
   const sectionKey = `entity:${list}:${it.id}:continuity-states`;
-  const rail = `<nav class="continuity-state-rail" aria-label="Continuity states">${states.map((state, index) => {
+  const owedStates = states.filter((state) => stateTruth.of(state).standing !== "canon"
+    && effectiveReferenceRequirement(state, demand, { isDefault: state.isDefault, family: "state" }) === "required").length;
+  const rail = `<nav class="continuity-state-rail" aria-label="Continuity states" data-states-outstanding="${owedStates}">${states.map((state, index) => {
     const standing = stateTruth.of(state).standing;
-    const requirement = referenceRequirement(state, state.isDefault);
+    const requirement = effectiveReferenceRequirement(state, demand, { isDefault: state.isDefault, family: "state" });
     const tone = standing === "canon" ? "complete" : standing === "historic" ? "pending" : requirement === "required" ? "attention" : requirement === "planned" ? "pending" : "optional";
-    const status = standing === "canon" ? (state.isDefault ? "Main canon image" : "Canon") : standing === "historic" ? "Historic · not approved" : referenceRequirementLabel(state);
+    const status = standing === "canon" ? (state.isDefault ? "Main canon image" : "Canon") : standing === "historic" ? "Historic · not approved" : effectiveRequirementLabel(state, demand, { isDefault: state.isDefault, family: "state" });
     return `<button type="button" class="tone-${tone} ${state.id===selectedId?"selected":""}" onclick="selectBoundedItem('continuity-state','${attr(list+":"+it.id)}','${attr(state.id)}')"><i></i><span><b>${esc(state.name || `State ${index+1}`)}</b><small>${status}</small></span></button>`;
   }).join("")}</nav>`;
   const editor = st ? `<article class="continuity-state-card continuity-state-card-focused ${st.isDefault ? "is-default" : ""}" data-continuity-state-id="${attr(st.id)}"><div class="continuity-state-head"><span>${selectedIndex + 1}</span><input value="${attr(st.name || "")}" placeholder="Clean suit / Damaged sleeve / Night lighting" onchange="setContinuityState('${list}','${it.id}',${selectedIndex},'name',this.value)" ${st.isDefault ? 'data-default="1"' : ''}><div class="continuity-state-head-actions">${st.isDefault ? `<button class="chip" onclick="approveEntityFile('${list}','${it.id}','${attr(st.approvedFile || '')}','${attr(st.id)}')">CHOOSE AUTHORITY</button>` : `<button class="chip" onclick="openContinuityStateVariant('${attr(list)}','${attr(it.id)}','${attr(st.id)}')">${selectedIsCanon ? "EDIT / REGENERATE" : selectedParentIsCanon ? `GENERATE FROM ${esc(parentInfo.label.toUpperCase())}` : "OPEN STATE WORKFLOW"}</button><button class="ghost-btn" onclick="openStateReferenceUpload('${attr(list)}','${attr(it.id)}','${attr(st.id)}')">UPLOAD STATE REFERENCE</button><button class="chip" onclick="approveEntityFile('${attr(list)}','${attr(it.id)}','','${attr(st.id)}')">CHOOSE CANDIDATE</button><button class="icon-danger" onclick="removeContinuityState('${list}','${it.id}',${selectedIndex})">×</button>`}</div></div>${selectedApprovedHero}${continuityStateValidationMarkup(list,it,st,media)}<div class="continuity-state-scope"><label>Applies to scenes / shots<input value="${attr(st.appliesTo || "")}" placeholder="Scenes 1–2 or L2-01, L2-02" onchange="setContinuityState('${list}','${it.id}',${selectedIndex},'appliesTo',this.value)"></label>${st.isDefault ? `<label>Reference requirement<input value="Required — the main approved image" disabled></label>` : `<label>Reference requirement${referenceRequirementSelect(referenceRequirement(st), `setContinuityState('${list}','${it.id}',${selectedIndex},'referenceRequirement',this.value);dirty();route()`)}</label>`}<div class="state-approved-readout"><span>${selectedIsCanon ? "Canon image" : selectedApprovedFile ? "Historic image · not approved" : "Canon image"}</span><b>${esc(selectedApprovedFile || "None selected")}</b><small>${selectedIsCanon ? "Approved by you as this state’s production truth." : selectedApprovedFile ? "Previously selected. Approve it to make it canon." : "Use Upload State Reference or Choose Candidate above."}</small></div></div><label class="continuity-state-delta"><span>${st.isDefault ? "Base-state notes" : "State change / delta"}</span><textarea placeholder="${st.isDefault ? "Primary appearance and any details that must always remain true." : "What changes from the parent state? Also name anything that must remain unchanged."}" onchange="setContinuityState('${list}','${it.id}',${selectedIndex},'notes',this.value)">${esc(st.notes || "")}</textarea></label>${typeof assetStatePromptStudio === "function" ? assetStatePromptStudio(list, it, st) : ""}${continuityStateCandidateTray(list,it,st,media)}</article>` : '<div class="canon-notes">No continuity states yet.</div>';
@@ -1107,8 +1116,50 @@ window.setExpressionSlotField = (id, index, key, value) => {
 function referenceRequirement(item, isDefault = false) {
   return coverageRequirement(item, isDefault);
 }
-function referenceRequirementLabel(item, isDefault = false) {
-  return requirementLabel(item, isDefault);
+/* CORRECTION 1 — THE WORD "REQUIRED" MEANS THE PRODUCTION REQUIRES IT NOW.
+ *
+ * The first pass at R7 kept the structural answer as the STATE and softened only
+ * the tone and the wording, so a fresh character's views read
+ * `data-slot-state="required-missing"` / "Required — not needed yet" / pending —
+ * a fifth semantic state that told the filmmaker Required, Planned, Not needed
+ * and Not-attention-worthy in one chip. The display contract has four states and
+ * only one of them is an attention state; this is the join that keeps it to four.
+ *
+ * TWO QUESTIONS, TWO OWNERS, AND ONLY ONE OF THEM IS USER-FACING HERE:
+ *
+ *   STRUCTURAL   coverageRequirement() over requirementTrace(). What the project's
+ *                coverage plan declares, seeded by coverageTemplateForList(). It is
+ *                UNCHANGED and is still what coverage automation reads through
+ *                isRequiredCoverage() — see missingCoverageSlots(), coverageRunSlots()
+ *                and coverageSheetSlots(), none of which call this function.
+ *   EFFECTIVE    that answer softened by current production truth, through
+ *                referenceDemandResolution() — the one function permitted to soften
+ *                it, and only ever toward claiming LESS.
+ *
+ * So a structurally required target the production is not waiting on is displayed
+ * as PLANNED, in the vocabulary that already exists for exactly that: real
+ * material, listed and reachable, that nothing is owed on. "Required — missing"
+ * survives for the case where it is true, and for the case where the demand answer
+ * cannot be obtained at all, because failing closed means keeping work visible.
+ *
+ * `demand` is optional. Without it this returns exactly what it returned before
+ * the join existed, which is what keeps every one-argument caller honest. */
+function effectiveReferenceRequirement(item, demand = null, options = {}) {
+  const isDefault = options.isDefault === true;
+  const requirement = referenceRequirement(item, isDefault);
+  /* The primary reference is the identity. It is not softened by anything: an
+     entity that exists has a main approved image as its own requirement. */
+  if (requirement !== "required" || isDefault || !demand) return requirement;
+  const family = options.family === "state" ? "state" : "coverage";
+  const resolved = referenceDemandResolution(
+    { family, id: String(item?.id || ""), tier: "required", requirement: "required", satisfied: false },
+    demand.production, obligationStateIds(demand.obligations));
+  return resolved.state === "required-now" ? "required" : "planned";
+}
+/* The same answer as a word, through the same label owner the structural
+   requirement uses, so there is one vocabulary and not two. */
+function effectiveRequirementLabel(item, demand = null, options = {}) {
+  return requirementLabel({ requirement: effectiveReferenceRequirement(item, demand, options) });
 }
 function referenceSlotStatus(slot, demand = null) {
   /* S7 — "Selected", never "Approved". A slot holding a file is a supporting
@@ -1125,45 +1176,10 @@ function referenceSlotStatus(slot, demand = null) {
      the styling hook it already was, and `label` stays the filmmaker's word —
      "Selected", never "Approved", for the reason S7 gives below. */
   if (slotSelectedFile(slot)) return { state: "satisfied", tone: "complete", label: "Selected" };
-  const requirement = referenceRequirement(slot);
+  const requirement = effectiveReferenceRequirement(slot, demand);
   if (requirement === "not-required") return { state: "optional", tone: "optional", label: "Not required" };
   if (requirement === "planned") return { state: "planned", tone: "pending", label: "Planned" };
-  /* ALPHA R7 — THE REQUIREMENT IS THE PLAN'S ANSWER; ATTENTION IS THE
-     PRODUCTION'S.
-
-     The two axes named above have been separate since Slice 5, and
-     boundedEntityTaskStatus() already stopped calling a dormant capability
-     outstanding work. The rail and the slot chip underneath it did not, so one
-     screen printed "No shot uses this character yet, so nothing is required now"
-     over four amber "Required — missing" dots — on a character whose four
-     required views nobody had authored at all, because coverageTemplateForList()
-     seeds them. Both halves were reading a true fact. Only the amber, and the
-     word "missing" beside it, was a claim neither owner had made.
-
-     NO SECOND ANSWER IS COMPUTED HERE. referenceDemandState() is
-     shared-coverage.js's own projection, it is the one function permitted to let
-     a production fact change a requirement reading, and its contract says it may
-     only ever move in the direction of claiming LESS. A view the plan requires
-     and the production is not waiting on comes back `available` — so the STATE
-     stays `required-missing` (the plan still requires it; the four states are
-     untouched and so is every reader keyed on them), and what changes is the
-     urgency the chip claims and the words it uses to claim it.
-
-     `production` is optional and defaults to null, which reproduces the answer
-     this function gave before: with no demand fact in hand a required gap still
-     reads as attention, because failing closed means keeping work visible. */
-  /* THE SAME TWO STEPS THE PANEL RUNS, THROUGH THE SAME FUNCTION — see
-     referenceDemandResolution(). A slot is never a state, so the state-family
-     branch cannot fire here and the rule collapses to the sentence
-     entityDemandRows() already writes down: readiness raises no requirement for a
-     coverage or expression slot, ever. */
-  const resolved = demand
-    ? referenceDemandResolution({ family: "coverage", id: slot?.id || "", tier: "required", requirement: "required", satisfied: false },
-      demand.production, obligationStateIds(demand.obligations))
-    : null;
-  return resolved && resolved.state === "available"
-    ? { state: "required-missing", tone: "pending", label: "Required — not needed yet" }
-    : { state: "required-missing", tone: "attention", label: "Required — missing" };
+  return { state: "required-missing", tone: "attention", label: "Required — missing" };
 }
 /* Both writers used to set `requirement` AND mirror it into `required`, keeping
    the retired boolean alive as a second authored copy of one fact — which is
@@ -1218,30 +1234,37 @@ function coveragePlanAxisNote(list, entity, production, noun = "view") {
   }
   return `${plan} What the production is actually waiting on is listed under What this production needs, above.`;
 }
-/* ALPHA R7, THE HEADLINE HALF. `${approvedRequired}/${required} required approved`
-   is a true statement about the coverage PLAN and a misleading one about the
-   production, and a fold summary is exactly where a filmmaker reads a fraction as
-   a backlog. So the board counts what it is actually owed — the slots whose chip
-   claims attention, which is referenceSlotStatus()'s answer and not a second walk
-   of the requirement — and says the demand out loud when the answer is none.
+/* CORRECTION 1, THE FOLD HALF. `${approvedRequired}/${required} required approved`
+   is a statement about the coverage PLAN, and a fold summary is exactly where a
+   filmmaker reads a fraction as an obligation — so beside chips that now read
+   Planned it said "required" about the same targets, which is the contradiction
+   one level up.
 
-   Nothing is hidden: the fraction is still printed, the slots are all still
-   listed, and `data-board-outstanding` publishes the count so a reader does not
+   The fold counts the SAME answers the chips print, from the same function, so
+   the two cannot disagree by construction. Nothing is hidden: every slot is still
+   listed and `data-board-outstanding` publishes the count so a reader does not
    have to parse the sentence. */
 function coverageBoardOutstanding(slots, demand = null) {
   const live = (slots || []).filter((slot) => slot && !slot.retired);
   const production = demand?.production || null;
+  const states = live.map((slot) => referenceSlotStatus(slot, demand).state);
+  const count = (state) => states.filter((value) => value === state).length;
   return {
-    outstanding: live.filter((slot) => referenceSlotStatus(slot, demand).tone === "attention").length,
+    total: live.length,
+    satisfied: count("satisfied"),
+    outstanding: count("required-missing"),
+    planned: count("planned"),
+    optional: count("optional"),
     demand: production && production.known === true ? (production.demanded ? "demanded" : "dormant") : "unknown",
   };
 }
-function coverageBoardTally(stats, owed) {
-  const plan = `${stats.approvedRequired}/${stats.required} required approved${stats.planned ? ` · ${stats.planned} planned` : ""}`;
-  /* Only when the plan has a gap AND nothing is waiting on it. A board with every
-     required view filled already reads as good news, and a board the production
-     IS waiting on must keep saying so. */
-  return owed.outstanding === 0 && stats.missingRequired > 0 ? `${plan} · none needed yet` : plan;
+function coverageBoardTally(owed, noun = "view") {
+  const progress = `${owed.satisfied}/${owed.total} selected`;
+  const planned = owed.planned ? ` · ${plural(owed.planned, "planned " + noun)}` : "";
+  /* The word "required" appears only when something currently is. */
+  return owed.outstanding
+    ? `${progress} · ${plural(owed.outstanding, "required " + noun)} missing${planned}`
+    : `${progress}${planned} · none needed now`;
 }
 function referenceRequirementSelect(value, onchange) {
   return `<select class="status-select reference-requirement-select" onchange="${onchange}"><option value="required" ${value === "required" ? "selected" : ""}>Required for this project</option><option value="planned" ${value === "planned" ? "selected" : ""}>Planned / useful later</option><option value="not-required" ${value === "not-required" ? "selected" : ""}>Not required</option></select>`;
@@ -1268,14 +1291,16 @@ function expressionBoardMarkup(entity, mediaByName, media, demand = null) {
   const slot = selected?.slot;
   const item = slot ? mediaByName.get(slotSelectedFile(slot)) : null;
   const slotState = slot ? referenceSlotStatus(slot, demand) : null;
+  /* THE SELECT AUTHORS THE PLAN, so it shows and writes the STRUCTURAL answer.
+     Everything else on this card describes the current state, so it shows the
+     EFFECTIVE one. Two words for two questions, from one join. */
   const requirement = slot ? referenceRequirement(slot) : "planned";
-  /* The card's amber border is the same claim the chip makes, so it asks the
-     same resolved answer rather than re-reading the requirement on its own. */
-  const editor = slot ? `<article class="coverage-slot-card focused-slot-selected ${slotSelectedFile(slot) ? "is-ready" : slotState.tone === "attention" ? "needs-attention" : ""}"><header><div><span>${esc(referenceRequirementLabel(slot).toUpperCase())} EXPRESSION</span><b>${esc(slot.label)}</b></div><span class="coverage-slot-state tone-${slotState.tone}" data-slot-state="${attr(slotState.state)}">${slotState.label}</span></header><div id="expression-slot-preview" class="coverage-slot-preview" data-slot-preview="committed">${item ? `<img src="${attr(item.url)}" alt="">` : `<div class="coverage-slot-empty">${requirement === "not-required" ? "No reference needed" : "No expression selected"}</div>`}</div><div class="coverage-slot-staged-note">PREVIEWING — nothing is written to this expression until you use it</div><label><span>Project need</span>${referenceRequirementSelect(requirement, `setExpressionSlotRequirement('${entity.id}',${selected.sourceIndex},this.value)`)}</label><div class="slot-commit-row"><button type="button" class="approve-btn" onclick="openReferenceMediaChooser('characters','${attr(entity.id)}','expression',${selected.sourceIndex})">Browse visually</button><button type="button" id="expression-slot-use" class="approve-btn" disabled onclick="useExpressionSlotSelection('${attr(entity.id)}',${selected.sourceIndex})">${slotSelectedFile(slot) ? "IN USE" : "SELECT AN IMAGE"}</button><small>Choosing an image previews it above. Nothing is written to this expression until you use it.</small></div><details class="coverage-slot-filename"><summary>Choose by filename</summary><label><span>Selected file</span><select id="expression-slot-file" data-committed="${attr(slotSelectedFile(slot))}" data-slot-list="characters" data-slot-entity="${attr(entity.id)}" onchange="stageSlotSelection('expression-slot-file','expression-slot-use')">${coverageSlotOptions(media,slotSelectedFile(slot),entity)}</select></label></details><label><span>Performance notes</span><textarea placeholder="Physical expression, intensity, and what must remain unchanged." onchange="setExpressionSlotField('${entity.id}',${selected.sourceIndex},'notes',this.value)">${esc(slot.notes||"")}</textarea></label></article>` : `<div class="entity-candidate-empty"><b>No expression slots configured</b><span>Add expressions only when this project needs them.</span></div>`;
+  const effective = slot ? effectiveReferenceRequirement(slot, demand) : "planned";
+  const editor = slot ? `<article class="coverage-slot-card focused-slot-selected ${slotSelectedFile(slot) ? "is-ready" : slotState.tone === "attention" ? "needs-attention" : ""}"><header><div><span>${esc(effectiveRequirementLabel(slot, demand).toUpperCase())} EXPRESSION</span><b>${esc(slot.label)}</b></div><span class="coverage-slot-state tone-${slotState.tone}" data-slot-state="${attr(slotState.state)}">${slotState.label}</span></header><div id="expression-slot-preview" class="coverage-slot-preview" data-slot-preview="committed">${item ? `<img src="${attr(item.url)}" alt="">` : `<div class="coverage-slot-empty">${effective === "not-required" ? "No reference needed" : "No expression selected"}</div>`}</div><div class="coverage-slot-staged-note">PREVIEWING — nothing is written to this expression until you use it</div><label><span>Project need</span>${referenceRequirementSelect(requirement, `setExpressionSlotRequirement('${entity.id}',${selected.sourceIndex},this.value)`)}</label><div class="slot-commit-row"><button type="button" class="approve-btn" onclick="openReferenceMediaChooser('characters','${attr(entity.id)}','expression',${selected.sourceIndex})">Browse visually</button><button type="button" id="expression-slot-use" class="approve-btn" disabled onclick="useExpressionSlotSelection('${attr(entity.id)}',${selected.sourceIndex})">${slotSelectedFile(slot) ? "IN USE" : "SELECT AN IMAGE"}</button><small>Choosing an image previews it above. Nothing is written to this expression until you use it.</small></div><details class="coverage-slot-filename"><summary>Choose by filename</summary><label><span>Selected file</span><select id="expression-slot-file" data-committed="${attr(slotSelectedFile(slot))}" data-slot-list="characters" data-slot-entity="${attr(entity.id)}" onchange="stageSlotSelection('expression-slot-file','expression-slot-use')">${coverageSlotOptions(media,slotSelectedFile(slot),entity)}</select></label></details><label><span>Performance notes</span><textarea placeholder="Physical expression, intensity, and what must remain unchanged." onchange="setExpressionSlotField('${entity.id}',${selected.sourceIndex},'notes',this.value)">${esc(slot.notes||"")}</textarea></label></article>` : `<div class="entity-candidate-empty"><b>No expression slots configured</b><span>Add expressions only when this project needs them.</span></div>`;
   const manual = `<div class="compact-section-actions coverage-board-actions manual-coverage-actions"><button class="approve-btn" onclick="openCoverageSheetPicker('characters','${entity.id}')">Crop expression sheet</button></div>`;
   const owed = coverageBoardOutstanding(slots.map((row) => row.slot), demand);
   const assisted = `<details class="coverage-assisted-actions" ${manualFirstWorkflow() ? "" : "open"}><summary>Optional assisted creation</summary><div class="compact-section-actions coverage-board-actions"><button class="approve-btn" onclick="openCoverageExpressionAutomation('${entity.id}')">Generate expression sheet</button></div></details>`;
-  return `<details class="fold compact-entity-section entity-expression-section bounded-source-section" data-board-outstanding="${owed.outstanding}" data-board-demand="${attr(owed.demand)}" ${open ? "open" : ""} ontoggle="rememberWorkspaceSection('${attr(key)}',this.open)"><summary>Expression board <span>${esc(coverageBoardTally(stats, owed))}${active ? " · generating" : ""}</span></summary>${entityCoverageActivityMarkup("characters", entity, "expressions")}<div class="entity-coverage-intro"><div><b>${stats.approvedTotal} of ${stats.total} expressions assigned</b><small>${esc(coveragePlanAxisNote("characters", entity, production, "expression"))}</small></div></div>${referenceSlotRailMarkup("expression-slot", entity.id, slots.map((row) => row.slot), selectedId, demand)}<div class="coverage-slot-grid bounded-single-slot">${editor}</div>${manual}${assisted}</details>`;
+  return `<details class="fold compact-entity-section entity-expression-section bounded-source-section" data-board-outstanding="${owed.outstanding}" data-board-demand="${attr(owed.demand)}" ${open ? "open" : ""} ontoggle="rememberWorkspaceSection('${attr(key)}',this.open)"><summary>Expression board <span>${esc(coverageBoardTally(owed, "expression"))}${active ? " · generating" : ""}</span></summary>${entityCoverageActivityMarkup("characters", entity, "expressions")}<div class="entity-coverage-intro"><div><b>${stats.approvedTotal} of ${stats.total} expressions assigned</b><small>${esc(coveragePlanAxisNote("characters", entity, production, "expression"))}</small></div></div>${referenceSlotRailMarkup("expression-slot", entity.id, slots.map((row) => row.slot), selectedId, demand)}<div class="coverage-slot-grid bounded-single-slot">${editor}</div>${manual}${assisted}</details>`;
 }
 
 /* Every coverage fraction CineBraid prints comes from here, and here is now one
@@ -1619,13 +1644,15 @@ function coverageBoardMarkup(list, entity, mediaByName, media, demand = null) {
   const slot = slots[selectedIndex];
   const mediaItem = slot ? mediaByName.get(slotSelectedFile(slot)) : null;
   const slotState = slot ? referenceSlotStatus(slot, demand) : null;
+  /* Same split as the expression card above: the select authors the plan and shows
+     the structural word; the header and the empty state describe now. */
   const requirement = slot ? referenceRequirement(slot) : "planned";
-  /* Same rule as the expression card above: one resolved answer, two renderings. */
-  const editor = slot ? `<article class="coverage-slot-card focused-slot-selected ${slotSelectedFile(slot) ? "is-ready" : slotState.tone === "attention" ? "needs-attention" : ""}"><header><div><span>${esc(referenceRequirementLabel(slot).toUpperCase())} SLOT</span><b>${esc(slot.label)}</b></div><span class="coverage-slot-state tone-${slotState.tone}" data-slot-state="${attr(slotState.state)}">${slotState.label}</span></header><div id="coverage-slot-preview" class="coverage-slot-preview" data-slot-preview="committed">${mediaItem ? (isVideo(mediaItem.name) ? `<video muted src="${attr(mediaItem.url)}"></video>` : `<img src="${attr(mediaItem.url)}" alt="">`) : `<div class="coverage-slot-empty">${requirement === "not-required" ? "No reference needed" : "No reference selected"}</div>`}</div><div class="coverage-slot-staged-note">PREVIEWING — nothing is written to this view until you use it</div><label><span>Project need</span>${referenceRequirementSelect(requirement, `setCoverageSlotRequirement('${list}','${entity.id}',${selectedIndex},this.value)`)}</label><div class="slot-commit-row"><button type="button" class="approve-btn" onclick="openReferenceMediaChooser('${attr(list)}','${attr(entity.id)}','coverage',${selectedIndex})">Browse visually</button><button type="button" id="coverage-slot-use" class="approve-btn" disabled onclick="useCoverageSlotSelection('${attr(list)}','${attr(entity.id)}',${selectedIndex})">${slotSelectedFile(slot) ? "IN USE" : "SELECT AN IMAGE"}</button><small>Choosing an image previews it above. Nothing is written to this view until you use it.</small></div><details class="coverage-slot-filename"><summary>Choose by filename</summary><label><span>Selected file</span><select id="coverage-slot-file" data-committed="${attr(slotSelectedFile(slot))}" data-slot-list="${attr(list)}" data-slot-entity="${attr(entity.id)}" onchange="stageSlotSelection('coverage-slot-file','coverage-slot-use')">${coverageSlotOptions(media, slotSelectedFile(slot), entity)}</select></label></details>${slotSelectedFile(slot) ? `<div class="approval-provenance-note">Supporting reference${String(slot.provenance?.source || "").includes("human") ? " chosen by you" : ""} — context for generation, not production truth.</div>` : ""}<label><span>Notes</span><textarea placeholder="When to use this slot, framing constraints, or what makes this view the right one to approve." onchange="setCoverageSlotField('${list}','${entity.id}',${selectedIndex},'notes',this.value)">${esc(slot.notes || "")}</textarea></label></article>` : `<div class="entity-candidate-empty"><b>No coverage slots configured</b><span>Add only the views this project actually needs.</span></div>`;
+  const effective = slot ? effectiveReferenceRequirement(slot, demand) : "planned";
+  const editor = slot ? `<article class="coverage-slot-card focused-slot-selected ${slotSelectedFile(slot) ? "is-ready" : slotState.tone === "attention" ? "needs-attention" : ""}"><header><div><span>${esc(effectiveRequirementLabel(slot, demand).toUpperCase())} SLOT</span><b>${esc(slot.label)}</b></div><span class="coverage-slot-state tone-${slotState.tone}" data-slot-state="${attr(slotState.state)}">${slotState.label}</span></header><div id="coverage-slot-preview" class="coverage-slot-preview" data-slot-preview="committed">${mediaItem ? (isVideo(mediaItem.name) ? `<video muted src="${attr(mediaItem.url)}"></video>` : `<img src="${attr(mediaItem.url)}" alt="">`) : `<div class="coverage-slot-empty">${effective === "not-required" ? "No reference needed" : "No reference selected"}</div>`}</div><div class="coverage-slot-staged-note">PREVIEWING — nothing is written to this view until you use it</div><label><span>Project need</span>${referenceRequirementSelect(requirement, `setCoverageSlotRequirement('${list}','${entity.id}',${selectedIndex},this.value)`)}</label><div class="slot-commit-row"><button type="button" class="approve-btn" onclick="openReferenceMediaChooser('${attr(list)}','${attr(entity.id)}','coverage',${selectedIndex})">Browse visually</button><button type="button" id="coverage-slot-use" class="approve-btn" disabled onclick="useCoverageSlotSelection('${attr(list)}','${attr(entity.id)}',${selectedIndex})">${slotSelectedFile(slot) ? "IN USE" : "SELECT AN IMAGE"}</button><small>Choosing an image previews it above. Nothing is written to this view until you use it.</small></div><details class="coverage-slot-filename"><summary>Choose by filename</summary><label><span>Selected file</span><select id="coverage-slot-file" data-committed="${attr(slotSelectedFile(slot))}" data-slot-list="${attr(list)}" data-slot-entity="${attr(entity.id)}" onchange="stageSlotSelection('coverage-slot-file','coverage-slot-use')">${coverageSlotOptions(media, slotSelectedFile(slot), entity)}</select></label></details>${slotSelectedFile(slot) ? `<div class="approval-provenance-note">Supporting reference${String(slot.provenance?.source || "").includes("human") ? " chosen by you" : ""} — context for generation, not production truth.</div>` : ""}<label><span>Notes</span><textarea placeholder="When to use this slot, framing constraints, or what makes this view the right one to approve." onchange="setCoverageSlotField('${list}','${entity.id}',${selectedIndex},'notes',this.value)">${esc(slot.notes || "")}</textarea></label></article>` : `<div class="entity-candidate-empty"><b>No coverage slots configured</b><span>Add only the views this project actually needs.</span></div>`;
   const manualActions = `<div class="compact-section-actions coverage-board-actions manual-coverage-actions"><button class="approve-btn" onclick="openImportedReferenceMapper('${list}','${entity.id}')">Map imported references</button><button class="ghost-btn" onclick="openCoverageSheetPicker('${list}','${entity.id}')">Crop reference sheet</button><button class="add-btn" onclick="addCoverageSlot('${list}','${entity.id}')">+ Add custom slot</button></div>`;
   const assistedActions = `<details class="coverage-assisted-actions" ${manualFirstWorkflow() ? "" : "open"}><summary>Optional assisted creation</summary><div class="compact-section-actions coverage-board-actions"><button class="approve-btn" onclick="openCoverageAutomationModal('${list}','${entity.id}','hybrid')">Generate missing angles</button></div></details>`;
   const owed = coverageBoardOutstanding(slots, demand);
-  return `<details class="fold compact-entity-section entity-coverage-section bounded-source-section" data-board-outstanding="${owed.outstanding}" data-board-demand="${attr(owed.demand)}" ${open ? "open" : ""} ontoggle="rememberWorkspaceSection('${attr(key)}',this.open)"><summary>Coverage board <span>${esc(coverageBoardTally(stats, owed))}${active ? " · generating" : ""}</span></summary>${entityCoverageActivityMarkup(list, entity, "angles")}${assignmentNotice}<div class="entity-coverage-intro"><div><b>${stats.approvedTotal} of ${stats.total} views assigned</b><small>${esc(coveragePlanAxisNote(list, entity, production))} Imported references can fill slots directly; generation is optional.</small></div></div>${referenceSlotRailMarkup("coverage-slot", `${list}:${entity.id}`, slots, selectedId, demand)}<div class="coverage-slot-grid bounded-single-slot">${editor}</div>${manualActions}${assistedActions}</details>`;
+  return `<details class="fold compact-entity-section entity-coverage-section bounded-source-section" data-board-outstanding="${owed.outstanding}" data-board-demand="${attr(owed.demand)}" ${open ? "open" : ""} ontoggle="rememberWorkspaceSection('${attr(key)}',this.open)"><summary>Coverage board <span>${esc(coverageBoardTally(owed))}${active ? " · generating" : ""}</span></summary>${entityCoverageActivityMarkup(list, entity, "angles")}${assignmentNotice}<div class="entity-coverage-intro"><div><b>${stats.approvedTotal} of ${stats.total} views assigned</b><small>${esc(coveragePlanAxisNote(list, entity, production))} Imported references can fill slots directly; generation is optional.</small></div></div>${referenceSlotRailMarkup("coverage-slot", `${list}:${entity.id}`, slots, selectedId, demand)}<div class="coverage-slot-grid bounded-single-slot">${editor}</div>${manualActions}${assistedActions}</details>`;
 }
 
 
@@ -2413,7 +2440,7 @@ function entityCoverageStatesMarkup(list, entity, mediaByName, media) {
   const demand = { production, obligations };
   const views = [{id:"coverage",label:"Angles / views",render:()=>coverageBoardMarkup(list,entity,mediaByName,media,demand)}];
   if (list === "characters") views.push({id:"expressions",label:"Expressions",render:()=>expressionBoardMarkup(entity,mediaByName,media,demand)});
-  views.push({id:"states",label:"Continuity states",render:()=>continuityStatesPanel(list,entity,media)});
+  views.push({id:"states",label:"Continuity states",render:()=>continuityStatesPanel(list,entity,media,demand)});
   const ids=views.map((view)=>view.id), context=`${list}:${entity.id}`;
   const fallback = entityStateListRead(entity,true).some((state)=>!state.isDefault && !state.approvedFile) ? "states" : "coverage";
   const selectedId=boundedSelected("entity-coverage-view",context,ids,fallback), selected=views.find((view)=>view.id===selectedId)||views[0];

@@ -372,8 +372,32 @@ async function testCoverageBoardRendersFourStates() {
   eq(expected.profile, "required-missing", "a required slot with no file is a required gap");
   eq(expected.rear, "planned", "a planned slot is planned, not missing");
   eq(expected.overhead, "optional", "a not-required slot is optional, not missing");
-  for (const state of ["satisfied", "required-missing", "planned", "optional"]) {
-    ok(html.includes(`data-slot-state="${state}"`), `the board must render the ${state} state as itself`);
+
+  /* WHAT THE BOARD RENDERS IS THE EFFECTIVE ANSWER, AND IT IS THE SAME FUNCTION.
+     referenceSlotStatus() asked with no demand context — the four lines above —
+     is the STRUCTURAL answer, and it still distinguishes all four states. Asked
+     WITH the page's own demand context it returns what the chip prints, and a
+     structurally required view nothing is currently waiting on prints Planned:
+     "Required" on this board means the production requires it now. The board is
+     compared slot by slot against that, which is a tighter claim than "all four
+     appear somewhere" — it cannot pass on a board that renders the wrong one. */
+  const effective = vm.runInContext(
+    `(() => { const e=P.characters.find(x=>x.id==='CHAR-IREN');
+       const production = entityReferenceDemandFor('characters', e);
+       const demand = { production, obligations: entityCurrentObligations('characters', e, production) };
+       const out={}; for (const s of ensureCoverageSlots('characters',e)) out[s.id]=referenceSlotStatus(s, demand).state;
+       return out; })()`,
+    rendered.context);
+  const rendered_states = new Set([...html.matchAll(/data-slot-state="([a-z-]+)"/g)].map((m) => m[1]));
+  for (const state of rendered_states) {
+    ok(["satisfied", "required-missing", "planned", "optional"].includes(state),
+      `the board may render only the four display states, got ${state}`);
+    ok(Object.values(effective).includes(state),
+      `the board rendered ${state}, which the owner names for no slot on it`);
+  }
+  for (const [id, state] of Object.entries(effective)) {
+    ok(rendered_states.has(state),
+      `the owner calls ${id} ${state}, so the board must render that state as itself`);
   }
 
   /* Four distinct tones, not one grey. */
