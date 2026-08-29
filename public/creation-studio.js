@@ -3882,6 +3882,33 @@ function guidedAudioPanel(s, c, profile, audioRefs) {
   </details>`;
 }
 
+/* THE MOTION WORK THIS SHOT ALREADY HAS, WHEN IT MAY NOT MAKE MORE.
+ *
+ * "May the filmmaker SEE retained motion work" and "may the filmmaker CREATE new motion
+ * under current intent" are different questions, and a Codex review found the panel
+ * answering only the second. An undeclared legacy shot carrying a written direction and
+ * a compiled motion prompt — real work, saved in the project file — rendered as a locked
+ * shell with no body at all. Resume reached the workspace and the workspace was empty:
+ * the content was not withheld on purpose, it was simply never drawn on the path where
+ * generation is unavailable.
+ *
+ * This reads persisted truth and copies nothing. The direction is the same value the
+ * editable field binds to, and the build is the same `latestPromptBuild()` the unlocked
+ * panel renders; there is no second prompt store and no cached history. It returns ""
+ * when the shot has no retained motion work, so the empty locked shell stays exactly as
+ * it was for a shot that genuinely has nothing to show.
+ *
+ * READ-ONLY MEANS READ-ONLY. Nothing here builds, rebuilds, edits, submits or generates:
+ * exposing history must not become a second route to production, and the sentence says
+ * what has to happen first instead. */
+function guidedMotionHistoryMarkup(s, direction, build) {
+  const written = String(direction || "").trim();
+  const compiled = build && !build.missing ? String(build.prompt || "").trim() : "";
+  if (!written && !compiled) return "";
+  const target = build && !build.missing ? String(build.profileName || build.profileId || "") : "";
+  const stamp = [target, build && !build.missing && build.packageId ? build.packageId : "", build && build.durationSeconds ? `${build.durationSeconds}s` : ""].filter(Boolean).join(" · ");
+  return `<section class="motion-workflow-section motion-history-section" id="motion-history-${attr(s.id)}" data-motion-history="retained"><div class="motion-section-heading"><span>RETAINED MOTION WORK</span><div><b>Kept from earlier work on this shot</b><small>This is what was written and compiled before. It is shown as a record and cannot be changed here; choose how this shot is made to work on motion again.</small></div><i>READ ONLY</i></div>${written ? `<article class="guided-prompt-result motion motion-history-entry" data-motion-history-part="direction"><header><div><span>MOTION DIRECTION AS WRITTEN</span></div></header><pre class="guided-ready-motion-prompt">${esc(written)}</pre></article>` : ""}${compiled ? `<article class="guided-prompt-result motion motion-history-entry" data-motion-history-part="compiled"><header><div><span>COMPILED MOTION PROMPT</span>${stamp ? `<small>${esc(stamp)}</small>` : ""}</div></header><pre class="guided-ready-motion-prompt">${esc(compiled)}</pre></article>` : ""}</section>`;
+}
 function guidedMotionPanel(s, current, takes, open = false) {
   const c = ensureShotCreation(s), approved = guidedApprovedMotion(s, takes), progress = guidedFrameProgress(s, takes), frames = progress.frames;
   /* THE ACTIVE unit, not the first one. Everything below that reads a unit — the route
@@ -3922,12 +3949,23 @@ function guidedMotionPanel(s, current, takes, open = false) {
     || readiness?.nextAction?.message
     || motionStage?.blockedReason
     || "Resolve the required production inputs first";
+  /* The retained work, asked for once and offered on both blocked paths: a shot with
+     returned video and a shot without it have the same claim on their own history. */
+  const historyMarkup = guidedMotionHistoryMarkup(s, direction, latest);
   if (!generationAvailable && !videos.length) {
     const reason = generationBlockedReason;
-    return `<details class="guided-work-panel guided-motion-card locked" data-guided-panel="motion"><summary><div><span>MOTION &middot; OPTIONAL</span><b>${esc(reason)}</b><small>Production readiness identifies the input that must be resolved before Motion is available.</small></div><span class="guided-mode-pill">LOCKED</span><i>&#8964;</i></summary></details>`;
+    /* NOTHING RETAINED, so nothing is being withheld: the shell is unchanged.
+
+       When there IS retained work the panel defaults OPEN, because the retained work is
+       the only thing in it — a fold would put the content back behind a click on the
+       path whose whole defect was that it could not be seen. guidedPanelOpen() still
+       lets a filmmaker who closed it keep it closed. */
+    if (!historyMarkup)
+      return `<details class="guided-work-panel guided-motion-card locked" data-guided-panel="motion"><summary><div><span>MOTION &middot; OPTIONAL</span><b>${esc(reason)}</b><small>Production readiness identifies the input that must be resolved before Motion is available.</small></div><span class="guided-mode-pill">LOCKED</span><i>&#8964;</i></summary></details>`;
+    return `<details id="guided-motion-workspace-${attr(s.id)}" class="guided-work-panel guided-motion-card guided-motion-history" data-guided-panel="motion" data-generation-readiness="blocked" data-motion-history="retained" ${guidedPanelOpen(s, "motion", true) ? "open" : ""} ontoggle="rememberGuidedPanel('${s.id}','motion',this.open)"><summary><div><span>MOTION &middot; RETAINED WORK</span><b>${esc(reason)}</b><small>The motion work already saved on this shot is kept and shown below. New motion cannot be produced until that is resolved.</small></div><span class="guided-mode-pill">HISTORY</span><i>&#8964;</i></summary><div class="guided-work-panel-body">${historyMarkup}</div></details>`;
   }
   if (!generationAvailable) {
-    return `<details id="guided-motion-workspace-${attr(s.id)}" class="guided-work-panel guided-motion-card" data-guided-panel="motion" data-generation-readiness="blocked" ${guidedPanelOpen(s, "motion", open) ? "open" : ""} ontoggle="rememberGuidedPanel('${s.id}','motion',this.open)"><summary><div><span>MOTION &middot; REVIEW</span><b>${videos.length} returned video${videos.length === 1 ? "" : "s"} available</b><small>Review, approve, finish, or import returned media. Production readiness still blocks new generation.</small></div><span class="guided-mode-pill">REVIEW</span><i>&#8964;</i></summary><div class="guided-work-panel-body"><nav class="motion-workflow-map" aria-label="Motion workflow sections"><button type="button" onclick="scrollGuidedMotionSection('${attr(s.id)}','results')"><span>2</span><b>Returned video</b><small>${videos.length} result${videos.length === 1 ? "" : "s"}</small></button><button type="button" onclick="scrollGuidedMotionSection('${attr(s.id)}','create')"><span>3</span><b>Create motion</b><small>New generation blocked</small></button></nav>${guidedMotionCandidatePanel(s, takes, approved)}<section class="motion-workflow-section motion-create-section locked" id="motion-create-${attr(s.id)}"><div class="motion-section-heading"><span>3 &middot; NEW GENERATION BLOCKED</span><div><b>${esc(generationBlockedReason)}</b><small>Resolve the current route prerequisites before creating new work. Returned video above remains available for review, approval, finishing, and import.</small></div><i>BLOCKED</i></div></section></div></details>`;
+    return `<details id="guided-motion-workspace-${attr(s.id)}" class="guided-work-panel guided-motion-card" data-guided-panel="motion" data-generation-readiness="blocked" ${guidedPanelOpen(s, "motion", open) ? "open" : ""} ontoggle="rememberGuidedPanel('${s.id}','motion',this.open)"><summary><div><span>MOTION &middot; REVIEW</span><b>${videos.length} returned video${videos.length === 1 ? "" : "s"} available</b><small>Review, approve, finish, or import returned media. Production readiness still blocks new generation.</small></div><span class="guided-mode-pill">REVIEW</span><i>&#8964;</i></summary><div class="guided-work-panel-body"><nav class="motion-workflow-map" aria-label="Motion workflow sections"><button type="button" onclick="scrollGuidedMotionSection('${attr(s.id)}','results')"><span>2</span><b>Returned video</b><small>${videos.length} result${videos.length === 1 ? "" : "s"}</small></button><button type="button" onclick="scrollGuidedMotionSection('${attr(s.id)}','create')"><span>3</span><b>Create motion</b><small>New generation blocked</small></button></nav>${guidedMotionCandidatePanel(s, takes, approved)}${historyMarkup}<section class="motion-workflow-section motion-create-section locked" id="motion-create-${attr(s.id)}"><div class="motion-section-heading"><span>3 &middot; NEW GENERATION BLOCKED</span><div><b>${esc(generationBlockedReason)}</b><small>Resolve the current route prerequisites before creating new work. Returned video above remains available for review, approval, finishing, and import.</small></div><i>BLOCKED</i></div></section></div></details>`;
   }
   const needsApprovedStill = motionFacts.routeRequirementsKnown
     ? motionFacts.requiredFrameCount > 0

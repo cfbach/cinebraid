@@ -966,6 +966,34 @@
     return "";
   }
 
+  /* AND THE PART OF THAT ANSWER THAT IS ABOUT MOTION, because the four values above are
+     four different declarations and truthiness collapses them back into two.
+
+     A second Codex review demonstrated the collapse: motion requiredness asked only
+     "has this shot declared ANYTHING", so a shot whose filmmaker had explicitly declared
+     a STILL-ONLY delivery, carrying one historical `post` clip, went from
+     `mark-shot-final` to READY · "Produce Motion a using i2v". A still declaration is a
+     statement that motion is NOT owed; reading it as one that motion IS owed is the same
+     class of defect as reading a stored clip as a declaration, one field along.
+
+       route             every route in the vocabulary names an animate method, so a
+                         declared route is a declared motion delivery. The route owner
+                         is asked for the methods rather than the list being restated
+                         here, and a route the build cannot read never reaches this.
+                         A route is the more specific and more current statement, so a
+                         shot carrying both a route and a still intent follows the route.
+       motion-delivery   the legacy authored field saying motion is owed.
+       still-delivery    the same field saying it is NOT. Historical clips stay declared,
+                         evaluated and rendered; none of them is current work.
+       ""                nothing has been declared, so nothing is owed.
+
+     Nothing here reads a clip, a kind, a candidate or a receipt: motion intent is never
+     inferred from the motion that already exists. */
+  function deliveryRequiresMotion(delivery, routeNeeds) {
+    if (delivery === "route") return list(record(routeNeeds).modes).length > 0;
+    return delivery === "motion-delivery";
+  }
+
   /* THE REQUIREMENTS THAT BELONG TO THE SHOT RATHER THAN TO THE UNIT CARRYING THEM.
 
      Readiness hangs an entity-state requirement on every unit because every unit
@@ -1023,12 +1051,16 @@
            whose stored `kind` merely NAMED a method, which is history describing a
            production that already happened.
            The unit is still declared, still evaluated and still rendered; it is owed
-           only once the shot says it delivers something. */
-        required: !!delivery,
+           only once the shot says it delivers MOTION — see deliveryRequiresMotion(),
+           which is the half `!!delivery` collapsed. */
+        required: deliveryRequiresMotion(delivery, routeNeeds),
         target: { kind: "shot-motion", shotId: text(s.id), unitKey: text(clip.id) },
       });
     }
-    if (!clips.length && (MOTION_INTENTS.includes(text(creation.deliveryIntent)) || routeNeeds.known)) {
+    /* THE SAME QUESTION, asked of the same predicate. A shot with no clip at all is owed
+       a motion unit exactly when its declaration includes motion; spelling that out a
+       second way here is how the two answers would drift apart. */
+    if (!clips.length && deliveryRequiresMotion(delivery, routeNeeds)) {
       units.push({
         id: "motion:shot",
         kind: "motion",

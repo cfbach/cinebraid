@@ -561,6 +561,11 @@ async function ncRM9() {
     frames: [{ id: "frame-a", label: "A", winner: "FRAME_A.png" }],
     clips: [{ id: "motion-a", label: "A", suffix: "a", title: "Panel check", kind: "i2v", fromFrame: "frame-a", toFrame: "", dur: 5, motionPrompt: "He checks the panel.", generationPackages: [] }],
     candidates: [candidate("FRAME_A.png"), candidate("SHOT_MOTION_1.mp4", { frameId: "", addedAt: "2026-08-20T12:00:00.000Z" })],
+    /* AND THIS ONE DELIVERS MOTION. The helper above declares a still delivery because
+       every other control here is about a frame, and a still delivery is a statement
+       that motion is NOT owed — under it this control could not reach produce-motion at
+       all, and would report a defect it never restored. */
+    creationBrief: { deliveryIntent: "motion" },
   }]);
   const scan = scanWith(project, { "L1-01": ["FRAME_A.png", "SHOT_MOTION_1.mp4"] });
   const broken = await render("#/shot/L1-01", project, { scan, mutateSource: replacing(PROJECTION_FILE, NC9_ANCHOR, NC9_BREAK) });

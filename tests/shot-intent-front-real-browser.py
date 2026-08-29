@@ -24,6 +24,11 @@ actually reported:
      frame, saved to disk and opened fresh — is not told to produce anything. This is
      the leak a Codex review demonstrated, and it is a browser claim because it is
      about what the shot workspace PUTS IN FRONT OF A FILMMAKER after a real page load.
+  7  RETAINED MOTION WORK IS ON SCREEN AND READ-ONLY. The stage is selected with the real
+     stage bar, the page is reloaded so the selection is a genuine Resume, and the saved
+     motion direction and compiled prompt are read with inner_text() off VISIBLE elements
+     — a string present in innerHTML inside a collapsed <details> would satisfy a source
+     assertion and show a filmmaker nothing.
 
 IT CARRIES ITS OWN NEGATIVE CONTROLS, because a "nothing was fabricated" assertion that
 cannot fail is worth nothing:
@@ -448,6 +453,118 @@ try:
             "7. and the saved project still holds the historical clip verbatim"
         findings.append(f"7. declaring i2v on that same legacy shot brought exactly one required frame from the "
                         f"canonical owner ({declared_legacy['action']}), with the post clip untouched on disk")
+
+
+        # ============================================ 8 · RETAINED MOTION WORK, READ-ONLY
+        # The legacy shot of the second review's blocker 2: a historical clip carrying the
+        # direction written for it, the compiled prompt built from it, no returned video,
+        # and no declared route.
+        motion_id = page.evaluate("""() => {
+            const scene = P.scenes[0].id;
+            P.promptBuildsById = P.promptBuildsById && typeof P.promptBuildsById === "object" ? P.promptBuildsById : {};
+            P.promptSnapshotsById = P.promptSnapshotsById && typeof P.promptSnapshotsById === "object" ? P.promptSnapshotsById : {};
+            P.promptBuildsById["b-motion-legacy"] = {
+              id: "b-motion-legacy", packageId: "S-01-A-M01", prompt: "COMPILED-MOTION: a slow push-in as the courier releases the parcel.",
+              kind: "guided-motion", scope: "motion:seg-post", profileId: "minimax-h3/i2v",
+              profileName: "MiniMax Hailuo 3", references: [], revision: 1, revisionReason: "compiled", durationSeconds: 5,
+            };
+            const shot = {
+              id: "SC-LEGACY-02", scene, title: "Legacy motion shot",
+              desc: "The courier releases the parcel and the drone lifts away.",
+              characters: [], positioning: "", route: "GENERATE", codes: [], risks: [], safe: "",
+              status: "BUILT", workflowStatus: "IN PROGRESS", iterations: 2, notes: "",
+              promptOptions: [], promptBuilds: [], winner: "", dur: 5, continuityStateSelections: {},
+              keyframes: [{ id: "frame-a-motion", label: "A", title: "Opening frame A",
+                            winner: "", description: "", notes: "", required: true, generationPackages: [] }],
+              clips: [{ id: "seg-post", suffix: "a", label: "A", title: "Finishing pass", dur: 5,
+                        kind: "post", note: "", motionPrompt: "The courier steps back and the parcel settles.",
+                        generationPackages: [], motionPlan: null }],
+              candidateFiles: [], stageApprovals: {}, generationPackages: [],
+              creationBrief: { locationId: "", propIds: [], mode: "auto", promptBuilds: [],
+                               motionPromptBuilds: [{ buildId: "b-motion-legacy", kind: "guided-motion" }] },
+            };
+            P.shots.push(shot);
+            dirty();
+            return shot.id;
+        }""")
+        saved_shot(motion_id, until=lambda row: (row.get("creationBrief") or {}).get("motionPromptBuilds"))
+
+        open_shot(motion_id, "8", fresh_document=True)
+
+        # RESUME IS PERFORMED, NOT SIMULATED: the Motion stage is chosen with the shipped
+        # stage-bar button, and then the document is reloaded. What comes back is the app
+        # resuming a saved selection out of a fresh page, which is the reported case.
+        page.wait_for_selector('.cb-stage-bar [data-stage-id="motion"]', timeout=20000)
+        page.locator('.cb-stage-bar [data-stage-id="motion"]').first.click()
+        page.wait_for_timeout(400)
+        page.reload(wait_until="domcontentloaded")
+        page.wait_for_selector(f'#main .shot-intent-control[data-shot-id="{motion_id}"]', timeout=20000)
+        assert not page_errors, f"8. the resumed Motion workspace raised uncaught errors: {page_errors}"
+
+        resumed_task = page.evaluate("""(id) => {
+            const s = P.shots.find((row) => row.id === id);
+            return boundedShotSelectedTask(s, takesFor(id));
+        }""", motion_id)
+        assert resumed_task == "motion", f"8. Resume must land on Motion, got {resumed_task!r}"
+
+        motion_panel = page.locator('[data-guided-panel="motion"]').first
+        assert motion_panel.count() > 0, "8. and the Motion workspace must be on screen"
+        assert motion_panel.get_attribute("data-motion-history") == "retained", \
+            "8. rendering the work it retained rather than an empty locked shell"
+
+        # READ OFF THE RENDERED TEXT OF VISIBLE ELEMENTS, not the page source: a string
+        # inside a collapsed <details> is in innerHTML and in front of nobody.
+        direction_node = page.locator('[data-motion-history-part="direction"] pre').first
+        compiled_node = page.locator('[data-motion-history-part="compiled"] pre').first
+        assert direction_node.is_visible(), "8. the retained motion direction must be visible"
+        assert compiled_node.is_visible(), "8. and so must the retained compiled prompt"
+        assert "The courier steps back" in direction_node.inner_text(), \
+            f"8. the direction on screen must be the saved one, got {direction_node.inner_text()!r}"
+        assert "COMPILED-MOTION" in compiled_node.inner_text(), \
+            f"8. and the compiled prompt must be the saved one, got {compiled_node.inner_text()!r}"
+
+        # READ-ONLY MEANS READ-ONLY.
+        blocked_controls = page.evaluate("""() => {
+            const panel = document.querySelector('[data-guided-panel="motion"]');
+            if (!panel) return ["(no panel)"];
+            return [...panel.querySelectorAll("button, input, select, textarea")]
+              .map((node) => (node.textContent || node.value || "").trim())
+              .filter((word) => /generate|produce|submit|build prompt|rebuild|improve|edit prompt/i.test(word));
+        }""")
+        assert blocked_controls == [], f"8. no control may offer to produce motion, found {blocked_controls}"
+
+        motion_frames = page.evaluate(FRAME_STATE, motion_id)
+        assert motion_frames["storedRoute"] is None, "8. viewing retained work declares no route"
+        assert motion_frames["action"] == "declare-shot-route", \
+            f"8. and the canonical current action is still the route question, got {motion_frames['action']!r}"
+        saved_motion = saved_shot(motion_id, until=lambda row: row.get("clips"))
+        assert "deliveryRoute" not in saved_motion, "8. and the saved project still carries no route key"
+        assert saved_motion["clips"][0]["motionPrompt"] == "The courier steps back and the parcel settles.", \
+            "8. with the stored motion prompt untouched on disk"
+        findings.append("8. an undeclared legacy shot resumed onto Motion shows its saved direction and compiled "
+                        "prompt as visible read-only text, offers no control that would produce motion, and still "
+                        f"answers {motion_frames['action']!r} with no route on disk")
+
+        # ---- and declaring a route returns the ordinary workspace -------------------
+        declare("t2v")
+        page.wait_for_timeout(400)
+        declared_motion = page.evaluate(FRAME_STATE, motion_id)
+        assert declared_motion["storedRoute"] == "t2v", "8. the declaration lands on the legacy motion shot"
+        page.wait_for_selector('[data-guided-panel="motion"]:not([data-motion-history])', timeout=10000)
+        restored = page.evaluate("""() => {
+            const panel = document.querySelector('[data-guided-panel="motion"]');
+            return {
+              history: panel ? panel.getAttribute("data-motion-history") : "(no panel)",
+              buildControls: panel ? [...panel.querySelectorAll("button")]
+                .map((node) => (node.textContent || "").trim())
+                .filter((word) => /build prompt|improve/i.test(word)) : [],
+            };
+        }""")
+        assert restored["history"] is None, "8. the read-only view steps aside once an execution route is declared"
+        assert restored["buildControls"], "8. and the ordinary motion controls come back"
+        findings.append(f"8. declaring t2v on that same shot restored the ordinary Motion workspace "
+                        f"({', '.join(restored['buildControls'])}), so the read-only view is a consequence of "
+                        "current intent rather than a state the shot is stuck in")
 
         assert not page_errors, f"the page raised uncaught errors: {page_errors}"
         browser.close()

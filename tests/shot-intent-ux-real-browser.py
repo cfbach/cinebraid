@@ -89,6 +89,13 @@ motion_shot["clips"] = [{
     "kind": "t2v", "dur": 5, "note": "", "motionPrompt": "The bay lights flicker once.",
     "fromFrame": "", "toFrame": "", "generationPackages": [],
 }]
+# AND IT DECLARES THAT IT DELIVERS MOTION. Every shot in the shipped sample declares a
+# STILL delivery, which is a statement that motion is NOT owed — readiness therefore
+# requires no motion unit for it, and a Motion panel with nothing required offers no
+# video-target picker to measure. Bolting a t2v clip onto a still-only shot and
+# expecting its picker was reading a delivery the shot had not declared. This says it.
+# It declares no ROUTE: section 6's precondition is that the route is still undecided.
+motion_shot["creationBrief"] = {**(motion_shot.get("creationBrief") or {}), "deliveryIntent": "motion"}
 # Section 6 compares every route in the rendered picker. Give that one shot truthful
 # Canon for every possible route input so the comparison is about intent narrowing,
 # not about a different route's missing frame/reference prerequisite.

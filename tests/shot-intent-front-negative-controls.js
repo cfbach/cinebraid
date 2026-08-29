@@ -119,6 +119,31 @@ function requiredFrames(row) {
   return row.units.filter((unit) => unit.kind === "frame" && unit.required);
 }
 
+
+/* The legacy shot of blocker 2: a historical clip carrying the direction that was
+   written for it, and the compiled motion prompt that was built from it — both
+   persisted, with no returned video and no declared route. */
+const MOTION_DIRECTION = "The courier steps back and the parcel settles.";
+const COMPILED_MOTION = "COMPILED-MOTION: a slow push-in as the courier releases the parcel.";
+function motionHistoryProject() {
+  const project = projectWith(newShotRecord({
+    id: "SC-01-09",
+    clips: [{ ...HISTORY_CLIP, motionPrompt: MOTION_DIRECTION }],
+    creationBrief: {
+      locationId: "", propIds: [], mode: "auto", promptBuilds: [],
+      motionPromptBuilds: [{ buildId: "b-motion-legacy", kind: "guided-motion" }],
+    },
+  }));
+  project.promptBuildsById = project.promptBuildsById && typeof project.promptBuildsById === "object" ? project.promptBuildsById : {};
+  project.promptSnapshotsById = project.promptSnapshotsById && typeof project.promptSnapshotsById === "object" ? project.promptSnapshotsById : {};
+  project.promptBuildsById["b-motion-legacy"] = {
+    id: "b-motion-legacy", packageId: "S-01-A-M01", prompt: COMPILED_MOTION, kind: "guided-motion",
+    scope: "motion:seg-post", profileId: "minimax-h3/i2v", profileName: "MiniMax Hailuo 3",
+    references: [], revision: 1, revisionReason: "compiled", durationSeconds: 5,
+  };
+  return project;
+}
+
 notes.push("Negative controls for Shot Intent at the front:");
 
 /* ===========================================================================
@@ -562,7 +587,7 @@ const HISTORY_ORACLE = { mediaListing: () => [{ name: "LEGACY-A.png", url: "/ass
    =========================================================================== */
 mustFail("NC-21 a stored clip becomes a required current unit", "no motion unit may be required", () => {
   const broken = compile(mutate(
-    `        required: !!delivery,`,
+    `        required: deliveryRequiresMotion(delivery, routeNeeds),`,
     `        required: true,`,
     "NC-21",
   ));
@@ -822,6 +847,76 @@ mustFail("NC-28 a legacy package is staled for a route it never recorded", "neve
   assert(!answer.reasons.some((reason) => /delivery route/.test(reason)),
     "a package that recorded no route is never staled for one");
 });
+
+
+/* ===========================================================================
+   NC-29 — A STILL-ONLY DELIVERY IS READ AS IMPLYING MOTION.
+
+   The exact collapse the second Codex review demonstrated: motion requiredness asked
+   `!!delivery` — "has this shot declared ANYTHING" — instead of asking whether the
+   declaration includes motion. A shot whose filmmaker declared a STILL-ONLY delivery,
+   carrying one historical `post` clip, went from mark-shot-final to READY and
+   "Produce Motion a using i2v": the clip changed the delivery.
+
+   BOTH HALVES ARE ASSERTED. The first legacy control watched only unit requiredness,
+   which is how a produce-motion action survived a green suite once already.
+   =========================================================================== */
+mustFail("NC-29 a still-only delivery is made to owe motion", "no motion unit may be required", () => {
+  const broken = compile(mutate(
+    `    return delivery === "motion-delivery";`,
+    `    return !!delivery;`,
+    "NC-29",
+  ));
+  const project = projectWith(newShotRecord({
+    keyframes: [{ id: "frame-a-new", label: "A", title: "Opening frame A", winner: "LEGACY-A.png", required: true, generationPackages: [] }],
+    clips: [HISTORY_CLIP],
+    candidateFiles: [{ stored: "LEGACY-A.png", original: "LEGACY-A.png", decision: "approved", mediaType: "image", frameId: "frame-a-new" }],
+    creationBrief: { locationId: "", propIds: [], mode: "auto", deliveryIntent: "still", promptBuilds: [] },
+  }));
+  GESTURE.gesture(() => Kernel.approveFrameCanon(project, { shotId: "SC-01-01", frameId: "frame-a-new", value: "LEGACY-A.png", assetId: "", at: AT, via: "negative-control" }));
+  const row = broken.evaluateShotReadiness(project, project.shots[0], HISTORY_ORACLE);
+  assert.strictEqual(row.units.filter((u) => u.kind === "motion" && u.required).length, 0,
+    "no motion unit may be required by a shot that declared a still delivery");
+  assert.strictEqual(row.nextAction.code, "mark-shot-final",
+    `and the still shot's own conclusion must stand, got ${row.nextAction.code}`);
+});
+
+/* ===========================================================================
+   NC-30 — RETAINED MOTION WORK IS WITHHELD WITH THE GENERATOR.
+
+   The second blocker: the Motion panel answered only "may new motion be created", so a
+   legacy shot's written direction and compiled motion prompt — persisted work, reached
+   by an explicit Resume — rendered as a locked shell with no body at all.
+
+   This control proves the RENDERED OUTPUT, not the source: the fixture's prompts are
+   asserted present in the project record first, so a control that stopped rendering
+   anything at all cannot pass as a control that hid them.
+   =========================================================================== */
+mustFailAsync("NC-30 retained motion work is hidden because generation is blocked",
+  "retained motion work must be visible", async () => {
+    const project = motionHistoryProject();
+    const page = await render("#/shot/SC-01-09", project, {
+      scan: scanFor(project),
+      storage: { "cinebraid-focused:fixture:shot-task:SC-01-09": "motion" },
+      mutateSource: pageMutation("creation-studio.js",
+        `  if (!written && !compiled) return "";`,
+        `  if (true) return "";`,
+        "NC-30"),
+    });
+    const seen = run(page.context, `
+      const s = P.shots.find((row) => row.id === "SC-01-09");
+      return {
+        task: boundedShotSelectedTask(s, takesFor("SC-01-09")),
+        storedDirection: (s.clips || [])[0].motionPrompt || "",
+        storedBuild: (resolvePromptBuildList(P, s.creationBrief.motionPromptBuilds || [])[0] || {}).prompt || "",
+        main: String(document.getElementById("main").innerHTML || ""),
+      };`);
+    assert.strictEqual(seen.task, "motion", "precondition: the saved Resume selection still reaches Motion");
+    assert.strictEqual(seen.storedDirection, MOTION_DIRECTION, "precondition: the direction is persisted on the shot");
+    assert.strictEqual(seen.storedBuild, COMPILED_MOTION, "precondition: the compiled prompt is persisted in the project");
+    assert(seen.main.includes(MOTION_DIRECTION) && seen.main.includes(COMPILED_MOTION),
+      "retained motion work must be visible when new generation is refused");
+  });
 
 async function main() {
   for (const control of QUEUE) await control();

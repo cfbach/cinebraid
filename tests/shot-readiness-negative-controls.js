@@ -400,7 +400,7 @@ mustFail("C13 optional frame treated as required", "an unrequired frame must not
    filmmaker did not ask for, and makes a finished still shot permanently unready. */
 mustFail("C14 motion unit manufactured", "no motion unit is manufactured for a still shot", () => {
   const broken = compile(mutate(
-    "    if (!clips.length && (MOTION_INTENTS.includes(text(creation.deliveryIntent)) || routeNeeds.known)) {",
+    "    if (!clips.length && deliveryRequiresMotion(delivery, routeNeeds)) {",
     "    if (!clips.length) {",
     "C14",
   ));

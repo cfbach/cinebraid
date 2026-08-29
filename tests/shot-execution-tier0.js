@@ -597,7 +597,12 @@ async function main() {
     return {
       canonicalReason: motionStage.blockedReason,
       panelHasCanonicalReason: !!motionStage.blockedReason && html.includes(motionStage.blockedReason),
-      panelLocked: html.includes("guided-motion-card locked"),
+      /* THE PANEL REFUSES NEW MOTION — which is the claim; the shell it refuses in is
+         not. A shot carrying retained motion work now renders that work read-only
+         instead of an empty locked shell, and both shapes declare the refusal with
+         data-generation-readiness. Reading only the class name would have let a
+         "must open" assertion pass against a panel that was still blocked. */
+      panelLocked: html.includes("guided-motion-card locked") || /data-generation-readiness="blocked"/.test(html),
       saysApproveFirst: html.includes("Approve required frames first"),
       pill: /guided-mode-pill[^>]*>([^<]*)</.exec(html)?.[1] || "",
       unitKind: unit.kind, unitFromFrame: unit.fromFrame,
@@ -676,7 +681,12 @@ async function main() {
     return {
       activeId: c.activeMotionUnitId, activeKind: unit ? unit.kind : "",
       effectiveMode: guidedEffectiveVideoMode(shot, c, unit),
-      panelLocked: html.includes("guided-motion-card locked"),
+      /* THE PANEL REFUSES NEW MOTION — which is the claim; the shell it refuses in is
+         not. A shot carrying retained motion work now renders that work read-only
+         instead of an empty locked shell, and both shapes declare the refusal with
+         data-generation-readiness. Reading only the class name would have let a
+         "must open" assertion pass against a panel that was still blocked. */
+      panelLocked: html.includes("guided-motion-card locked") || /data-generation-readiness="blocked"/.test(html),
       saysApproveFirst: html.includes("Approve required frames first"),
       pill: /guided-mode-pill[^>]*>([^<]*)</.exec(html)?.[1] || "",
     };
@@ -699,13 +709,19 @@ async function main() {
   const multi = (first, second, activeIndex) =>
     vm.runInContext(`__multi(${JSON.stringify(first)}, ${JSON.stringify(second)}, ${activeIndex})`, page.context);
 
+  /* THE TWO WORDS THE PILL USES TO REFUSE. A shot carrying retained motion work says
+     HISTORY and shows that work read-only; one with nothing retained says LOCKED and
+     shows an empty shell. Both are the shot-level refusal, which is the claim; asserting
+     the exact word would make the claim about the shell. */
+  const REFUSING_PILLS = ["LOCKED", "HISTORY"];
+
   /* A — first clip i2v, ACTIVE unit t2v. The active route governs and the panel opens. */
   const a = multi("i2v", "t2v", 1);
   assert.strictEqual(a.activeKind, "t2v", "the active unit is the t2v one");
   assert.strictEqual(a.effectiveMode, "t2v", "and it is what the route resolves to");
   assert.strictEqual(a.panelLocked, true, "selecting a t2v clip cannot bypass the hybrid shot's required inputs");
   assert.strictEqual(a.saysApproveFirst, false, "the panel must explain canonical readiness, not the deleted local frame warning");
-  assert.strictEqual(a.pill, "LOCKED", "the persistent shot-level truth governs the panel");
+  assert(REFUSING_PILLS.includes(a.pill), `the persistent shot-level truth governs the panel, got ${a.pill}`);
 
   /* B — first clip t2v, ACTIVE unit i2v. The gate must come BACK. This is the direction
      that silently opened a frame-gated route, which is the worse of the two. */
@@ -714,7 +730,7 @@ async function main() {
   assert.strictEqual(b.effectiveMode, "i2v", "and it is what the route resolves to");
   assert.strictEqual(b.panelLocked, true, "an active i2v unit must stay gated behind a t2v first clip");
   assert.strictEqual(b.saysApproveFirst, false, "and must use the canonical blocker rather than the deleted local warning");
-  assert.strictEqual(b.pill, "LOCKED", "and must present its frame status truthfully");
+  assert(REFUSING_PILLS.includes(b.pill), `and must present its frame status truthfully, got ${b.pill}`);
 
   /* SINGLE-UNIT BEHAVIOUR IS UNCHANGED, in both directions. */
   const soloT2v = multi("t2v", "t2v", 0), soloI2v = multi("i2v", "i2v", 0);
@@ -740,7 +756,8 @@ async function main() {
   assert.strictEqual(swap.before.panelLocked, true, "starts on the i2v unit, gated");
   assert.strictEqual(swap.after.activeId, "seg-two", "selecting the t2v unit moves the active id");
   assert.strictEqual(swap.after.panelLocked, true, "clip focus cannot lift the hybrid shot's canonical blocker");
-  assert.strictEqual(swap.after.pill, "LOCKED", "the pill remains a shot-level readiness projection");
+  assert(REFUSING_PILLS.includes(swap.after.pill),
+    `the pill remains a shot-level readiness projection, got ${swap.after.pill}`);
   assert.strictEqual(swap.back.panelLocked, true, "selecting back preserves the same shot truth");
   assert.strictEqual(swap.back.saysApproveFirst, false, "the obsolete local warning remains absent");
 }

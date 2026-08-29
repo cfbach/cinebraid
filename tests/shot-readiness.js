@@ -526,7 +526,11 @@ function requirementOf(row, needle) {
      Nothing is manufactured for it — no opening frame, no reference requirement —
      so its single motion unit has genuinely zero requirements. */
   const t2v = project({
-    shots: [shot("SH-T2V", { keyframes: [], clips: [{ id: "clip-1", kind: "t2v" }], creationBrief: {} })],
+    /* AND IT DECLARES THAT IT DELIVERS MOTION. `creationBrief: {}` reaches the helper
+       above as a still delivery, and a still delivery is a statement that motion is NOT
+       owed — this shot IS the motion case, so it says so rather than borrowing the
+       fixture default. */
+    shots: [shot("SH-T2V", { keyframes: [], clips: [{ id: "clip-1", kind: "t2v" }], creationBrief: { deliveryIntent: "motion" } })],
   });
   const t2vRow = shotOf(t2v, "SH-T2V", oracleFor());
   const t2vUnit = unitOf(t2vRow, "motion:clip-1");

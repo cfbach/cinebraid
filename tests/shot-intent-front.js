@@ -1311,6 +1311,280 @@ function checkRouteIndependentStillCounts() {
     + "motion delivery still owes its motion unit");
 }
 
+
+/* ===========================================================================
+   K — A STILL-ONLY DELIVERY DOES NOT IMPLY MOTION.
+
+   The second Codex review's first blocker, and a boundary between two of the four
+   answers declaredDelivery() gives. Motion requiredness asked `!!delivery` — "has this
+   shot declared ANYTHING" — so a shot whose filmmaker had explicitly declared a
+   STILL-ONLY delivery, carrying one historical `post` clip, went from mark-shot-final
+   to READY · "Produce Motion a using i2v". The clip changed the delivery.
+
+   A still declaration is a statement that motion is NOT owed. Reading it as one that
+   motion IS owed is the same class of defect as reading a stored clip as a declaration,
+   one field along — and the fix is not "stored clips are never required", which would
+   take motion away from the shots that genuinely owe it.
+   =========================================================================== */
+const STILL_BRIEF = { locationId: "", propIds: [], mode: "auto", deliveryIntent: "still", promptBuilds: [] };
+
+/* A still-only shot with its opening frame approved: the shape that reaches the delivery
+   decision, so anything that moves it is attributable to what was added. */
+function stillDeliveryProject(extra = {}) {
+  const project = projectWith(historyShot("SC-01-09", {
+    ...APPROVED_FRAME,
+    creationBrief: { ...STILL_BRIEF },
+    ...extra,
+  }));
+  approveFrame(project, "SC-01-09", "frame-a-legacy", "LEGACY-A.png");
+  return project;
+}
+
+function checkStillDeliveryMotion() {
+  /* K/A — the still shot with NO historical clip. Every case below is compared to this
+     one, so "the clip changed nothing" is measured rather than asserted twice. */
+  const baseline = historyState(stillDeliveryProject(), "SC-01-09");
+  assert.strictEqual(baseline.requiredFrames, 1, "KA: a declared still delivery owes its opening frame");
+  assert.strictEqual(baseline.requiredMotion, 0, "KA: and owes no motion — there is none, and none is declared");
+  assert.strictEqual(baseline.action, "mark-shot-final",
+    `KA: with the approval taken it reaches the delivery decision, got ${baseline.action}`);
+
+  /* K/B and K/C — the same shot carrying each historical clip kind in turn, then all of
+     them at once. The `post` clip is the one the review reproduced. */
+  const KINDS = ["post", "reuse", "hold", "plan", "i2v", "flf"];
+  const walked = [];
+  for (const kind of [...KINDS, "all"]) {
+    const clips = kind === "all" ? KINDS.map(historyClip) : [historyClip(kind)];
+    const project = stillDeliveryProject({ clips });
+    const seen = historyState(project, "SC-01-09");
+    walked.push(`${kind}:${seen.action}`);
+    assert.strictEqual(seen.requiredMotion, 0,
+      `KB ${kind}: a still delivery must owe no motion, ${seen.requiredMotion} required`);
+    assert.strictEqual(seen.requiredFrames, baseline.requiredFrames,
+      `KB ${kind}: and the frame requirement must not move either`);
+    assert.strictEqual(seen.action, baseline.action,
+      `KB ${kind}: the current readiness must be the no-clip answer (${baseline.action}), got ${seen.action}`);
+    assert(!["produce-motion", "produce-frame"].includes(seen.action),
+      `KB ${kind}: and it must never be a production CTA, got ${seen.action}`);
+    /* THE CLIPS ARE STILL THERE, and still declared units — preserved, not required. */
+    assert.deepStrictEqual(seen.media.clips, clips.map((clip) => `${clip.id}:${clip.kind}`),
+      `KB ${kind}: every historical clip must survive verbatim`);
+    assert.strictEqual(seen.units.filter((id) => id.startsWith("motion:")).length, clips.length,
+      `KB ${kind}: and each must still be a declared unit`);
+    assert.strictEqual(seen.media.receipt, true, `KB ${kind}: the approval receipt is untouched`);
+  }
+
+  /* K/D — a genuine current obligation still surfaces past the historical motion. The
+     still fix must not become "a still shot owes nothing", which is the same silence
+     this slice removed from the undeclared shot. Both crossings are covered, because a
+     cast member with an unconfirmed pointer and one with no approved file anywhere
+     arrive by different paths. */
+  const cast = stillDeliveryProject({ clips: [historyClip("post")], characters: ["KAI"] });
+  const castSeen = historyState(cast, "SC-01-09");
+  assert.strictEqual(castSeen.requiredMotion, 0, "KD: still no motion is owed");
+  assert.strictEqual(castSeen.action, "confirm-existing-reference",
+    `KD: an unconfirmed cast pointer still outranks the delivery decision, got ${castSeen.action}`);
+
+  const unsupplied = stillDeliveryProject({ clips: [historyClip("post")], characters: ["KAI"] });
+  for (const entity of unsupplied.characters || []) { entity.approvedFile = ""; entity.continuityStates = []; entity.candidateFiles = []; }
+  const unsuppliedSeen = historyState(unsupplied, "SC-01-09");
+  assert.strictEqual(unsuppliedSeen.requiredMotion, 0, "KD: and still no motion is owed here either");
+  assert.strictEqual(unsuppliedSeen.action, "supply-approved-media",
+    `KD: a cast member the production cannot supply is still owed, got ${unsuppliedSeen.action}`);
+  for (const seen of [castSeen, unsuppliedSeen])
+    assert.notStrictEqual(seen.action, baseline.action,
+      "KD: a genuine current obligation must displace the delivery decision, not be swallowed by it");
+
+  /* K/E — THE REGRESSION THAT MATTERS MOST: every declared route still owes its motion.
+     Same fixture, same historical clip, one declaration added. */
+  const routes = [];
+  for (const route of ROUTES) {
+    const project = stillDeliveryProject({
+      clips: [historyClip("post")],
+      creationBrief: { locationId: "", propIds: [], mode: "auto", promptBuilds: [] },
+      deliveryRoute: route,
+    });
+    const seen = historyState(project, "SC-01-09");
+    routes.push(`${route}:${seen.requiredMotion}`);
+    assert.strictEqual(seen.requiredMotion, 1,
+      `KE ${route}: a declared route still owes its motion unit, got ${seen.requiredMotion}`);
+    assert.notStrictEqual(seen.action, "declare-shot-route",
+      `KE ${route}: and is not asked the route question again`);
+  }
+
+  /* K/F — and so does an explicit motion delivery, in BOTH shipped dialects, whether or
+     not a clip exists to carry it. No new vocabulary: these are the two values
+     public/app.js and shared-authority-kernel.js already write. */
+  const dialects = [];
+  for (const intent of ["motion", "video"])
+    for (const clips of [[], [historyClip("post")]]) {
+      const project = stillDeliveryProject({
+        clips,
+        creationBrief: { locationId: "", propIds: [], mode: "auto", deliveryIntent: intent, promptBuilds: [] },
+      });
+      const seen = historyState(project, "SC-01-09");
+      dialects.push(`${intent}${clips.length ? "+clip" : ""}:${seen.action}`);
+      assert.strictEqual(seen.requiredMotion, 1,
+        `KF ${intent}: an explicit motion delivery owes its motion unit, got ${seen.requiredMotion}`);
+      assert.strictEqual(seen.action, "produce-motion",
+        `KF ${intent}: and its next action is the motion work, got ${seen.action}`);
+    }
+
+  /* K/G — a route and a still intent on the same record. The route is the more specific
+     and more current statement, so it wins; this is asserted so the precedence is a
+     decision rather than an accident of ordering. */
+  const contradiction = stillDeliveryProject({ clips: [historyClip("post")], deliveryRoute: "i2v" });
+  const contradictionSeen = historyState(contradiction, "SC-01-09");
+  assert.strictEqual(contradictionSeen.requiredMotion, 1,
+    "KG: a declared route outranks a stale still intent on the same record");
+
+  note("K. a declared still delivery does not imply motion: with no clip it reaches "
+    + `${baseline.action}, and with each historical clip it reaches the same (${walked.join(", ")}), `
+    + "every clip preserved as a declared unit that nothing requires; a genuine cast obligation still "
+    + `crosses (${castSeen.action}, ${unsuppliedSeen.action}); every declared route still owes its motion `
+    + `(${routes.join(", ")}) and so does each explicit motion dialect (${dialects.join(", ")})`);
+}
+
+/* ===========================================================================
+   L — RETAINED MOTION WORK IS VISIBLE WHILE NEW MOTION IS REFUSED.
+
+   The second blocker. "May the filmmaker SEE retained motion work" and "may the
+   filmmaker CREATE new motion under current intent" are different questions, and the
+   panel was answering only the second: an undeclared legacy shot carrying a written
+   direction and a compiled motion prompt — real work, saved in the project file —
+   rendered as a locked shell with no body. Resume reached the workspace and the
+   workspace was empty.
+   =========================================================================== */
+const MOTION_DIRECTION = "The courier steps back and the parcel settles.";
+const COMPILED_MOTION = "COMPILED-MOTION: a slow push-in as the courier releases the parcel.";
+/* Every control that would produce motion, named as it appears in the shipped markup. */
+const MOTION_PRODUCTION_CONTROLS = ["buildGuidedMotionPrompt", "falH3MotionPromptAction", "openGuidedMotionPromptEditor", "REBUILD MOTION PROMPT", "Build prompt"];
+
+function motionHistoryProject({ direction = MOTION_DIRECTION, compiled = COMPILED_MOTION, route = "", intent = "" } = {}) {
+  const project = projectWith(historyShot("SC-01-09", {
+    clips: [{ ...historyClip("post"), motionPrompt: direction }],
+    creationBrief: {
+      locationId: "", propIds: [], mode: "auto", promptBuilds: [],
+      ...(intent ? { deliveryIntent: intent } : {}),
+      ...(compiled ? { motionPromptBuilds: [{ buildId: "b-motion-legacy", kind: "guided-motion" }] } : {}),
+    },
+  }));
+  if (route) project.shots[0].deliveryRoute = route;
+  project.promptBuildsById = project.promptBuildsById && typeof project.promptBuildsById === "object" ? project.promptBuildsById : {};
+  project.promptSnapshotsById = project.promptSnapshotsById && typeof project.promptSnapshotsById === "object" ? project.promptSnapshotsById : {};
+  if (compiled)
+    project.promptBuildsById["b-motion-legacy"] = {
+      id: "b-motion-legacy", packageId: "S-01-A-M01", prompt: compiled, kind: "guided-motion",
+      scope: "motion:seg-post", profileId: "minimax-h3/i2v", profileName: "MiniMax Hailuo 3",
+      references: [], revision: 1, revisionReason: "compiled", durationSeconds: 5,
+    };
+  return project;
+}
+
+/* The Motion workspace as the filmmaker resumes onto it, read out of the rendered page.
+   `scan` decides whether a returned video exists, which is the only difference between
+   the two history cases the review asked for. */
+async function motionWorkspaceState(project, { videos = [], resume = true } = {}) {
+  const scan = scanFor(project);
+  scan.shots["SC-01-09"] = { takes: videos.map((name) => ({ name, url: `/assets/shots/SC-01-09/takes/${name}` })), locked: [] };
+  const page = await render("#/shot/SC-01-09", project, {
+    scan,
+    /* THE SAVED RESUME SELECTION, in the shipped key. An ORDINARY open still follows the
+       stage model's own recommendation; an explicit Resume must still land on the work,
+       and the two must not become one answer. */
+    storage: resume ? { "cinebraid-focused:fixture:shot-task:SC-01-09": "motion" } : {},
+  });
+  return run(page.context, `
+    const s = P.shots.find((row) => row.id === "SC-01-09");
+    const main = String(document.getElementById("main").innerHTML || "");
+    const panel = (main.match(/<details[^>]*data-guided-panel="motion"[\\s\\S]*$/) || [""])[0];
+    return {
+      task: boundedShotSelectedTask(s, takesFor("SC-01-09")),
+      action: shotReadinessFor(s).nextAction.code,
+      storedRoute: Object.prototype.hasOwnProperty.call(s, "deliveryRoute") ? s.deliveryRoute : null,
+      requiredMotion: shotReadinessFor(s).units.filter((u) => u.kind === "motion" && u.required).length,
+      clips: (s.clips || []).map((c) => c.id + ":" + c.kind),
+      motionStage: shotStageState("motion", shotStageModelFacts(s, takesFor("SC-01-09"))).availability,
+      panelPresent: /data-guided-panel="motion"/.test(main),
+      historyPanel: /data-motion-history="retained"/.test(main),
+      lockedShell: /guided-motion-card locked/.test(main),
+      panelOpen: /data-motion-history="retained" open/.test(main),
+      directionOnScreen: main.includes(${JSON.stringify(MOTION_DIRECTION)}),
+      compiledOnScreen: main.includes(${JSON.stringify(COMPILED_MOTION)}),
+      productionControls: ${JSON.stringify(MOTION_PRODUCTION_CONTROLS)}.filter((needle) => panel.includes(needle)),
+      primaryAction: (main.match(/openShotReadinessAction\\('SC-01-09','([a-z-]+)'\\)/) || [, ""])[1],
+    };`);
+}
+
+async function checkRetainedMotionHistory() {
+  /* L/A — HISTORICAL PROMPTS AND NO RETURNED VIDEO: the exact reproduction. */
+  const historyOnly = await motionWorkspaceState(motionHistoryProject());
+  assert.strictEqual(historyOnly.task, "motion", "LA: the saved Resume selection still reaches the Motion workspace");
+  assert.strictEqual(historyOnly.panelPresent, true, "LA: and the Motion panel is on screen");
+  assert.strictEqual(historyOnly.directionOnScreen, true,
+    "LA: the motion direction saved on the shot must be visible, not withheld with the generator");
+  assert.strictEqual(historyOnly.compiledOnScreen, true, "LA: and so must the compiled motion prompt");
+  assert.strictEqual(historyOnly.historyPanel, true, "LA: through the retained-work panel");
+  assert.strictEqual(historyOnly.panelOpen, true, "LA: which is open, because the retained work is the only thing in it");
+  assert.strictEqual(historyOnly.lockedShell, false, "LA: and not the empty locked shell");
+  /* READ-ONLY MEANS READ-ONLY. */
+  assert.deepStrictEqual(historyOnly.productionControls, [],
+    `LA: no control that would produce motion may appear, found ${historyOnly.productionControls.join(", ")}`);
+  assert.strictEqual(historyOnly.requiredMotion, 0, "LA: nothing about the undeclared shot is required");
+  /* NO CURRENT-ACTION LEAK: viewing history changes neither the route nor the answer. */
+  assert.strictEqual(historyOnly.storedRoute, null, "LA: viewing history declares no route");
+  assert.strictEqual(historyOnly.action, "declare-shot-route",
+    `LA: and the canonical current action is still the route question, got ${historyOnly.action}`);
+  assert.strictEqual(historyOnly.primaryAction, "declare-shot-route",
+    "LA: which is what the workspace puts in front of the filmmaker");
+  assert.deepStrictEqual(historyOnly.clips, ["seg-post:post"], "LA: with the historical clip untouched");
+
+  /* L/B — HISTORICAL PROMPTS PLUS A RETURNED VIDEO. Codex confirmed returned video stays
+     reviewable; the retained prompts must be visible in that state too, and neither may
+     authorise new generation. */
+  const withVideo = await motionWorkspaceState(motionHistoryProject(), { videos: ["LEGACY-MOTION.mp4"] });
+  assert.strictEqual(withVideo.directionOnScreen, true, "LB: the retained direction is visible beside a returned video");
+  assert.strictEqual(withVideo.compiledOnScreen, true, "LB: and so is the compiled prompt");
+  assert(/LEGACY-MOTION\.mp4/.test(JSON.stringify(withVideo)) || withVideo.panelPresent,
+    "LB: and the returned video keeps its own review path");
+  assert.deepStrictEqual(withVideo.productionControls, [],
+    `LB: still no control that would produce motion, found ${withVideo.productionControls.join(", ")}`);
+  assert.strictEqual(withVideo.action, "declare-shot-route", "LB: and the current action is unchanged");
+
+  /* L/C — NOTHING RETAINED. A shot with no written direction and no compiled prompt has
+     nothing to show, and the shipped locked shell is unchanged for it: this correction
+     exposes retained work and invents none. */
+  const empty = await motionWorkspaceState(motionHistoryProject({ direction: "", compiled: "" }));
+  assert.strictEqual(empty.historyPanel, false, "LC: a shot with no retained motion work gets no history panel");
+  assert.strictEqual(empty.lockedShell, true, "LC: it keeps the shipped locked shell");
+  assert.deepStrictEqual(empty.productionControls, [], "LC: and offers no production control either");
+
+  /* L/D — AND DECLARING A ROUTE BRINGS THE REAL WORKSPACE BACK. The history view is a
+     consequence of current intent, not a new mode a shot can get stuck in. */
+  const declared = await motionWorkspaceState(motionHistoryProject({ intent: "motion" }));
+  assert.strictEqual(declared.requiredMotion, 1, "LD: an explicit motion delivery owes its motion unit again");
+  assert.strictEqual(declared.historyPanel, false, "LD: so the read-only history view steps aside");
+  assert(declared.productionControls.length > 0,
+    "LD: and the ordinary motion controls are available again");
+  assert.strictEqual(declared.directionOnScreen, true, "LD: with the same retained direction still on screen");
+
+  /* L/E — RESUME AND AN ORDINARY OPEN STAY DIFFERENT. Nothing here promotes the Motion
+     stage: without the saved selection the same shot opens where the declared stage model
+     recommends, which is how the accepted intent hierarchy is preserved. */
+  const ordinary = await motionWorkspaceState(motionHistoryProject(), { resume: false });
+  assert.notStrictEqual(ordinary.task, "motion",
+    `LE: an ordinary open must not be turned into a Resume, got ${ordinary.task}`);
+  assert.strictEqual(ordinary.action, "declare-shot-route",
+    "LE: and it answers with the same current action either way");
+
+  note("L. retained motion work is visible while new motion is refused: an undeclared legacy shot resumed "
+    + `onto Motion shows its saved direction and compiled prompt read-only (${historyOnly.productionControls.length} `
+    + `production controls), with the route still absent and ${historyOnly.primaryAction} still the current action; `
+    + "the same holds beside a returned video; a shot with nothing retained keeps the shipped locked shell; "
+    + `declaring a motion delivery restores the ordinary workspace; and without the saved selection the same shot `
+    + `opens on ${ordinary.task}, so Resume and an ordinary open stay different questions`);
+}
+
 /* =========================================================================== */
 async function main() {
   await checkContextualAdd();
@@ -1327,6 +1601,8 @@ async function main() {
   checkHistoricalMedia();
   checkHistoryThenDeclaration();
   checkRouteIndependentStillCounts();
+  checkStillDeliveryMotion();
+  await checkRetainedMotionHistory();
 
   /* The action code this slice adds is declared in all three places a readiness action
      has to be declared, or it renders as a bare "Next action" with no destination. */

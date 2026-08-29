@@ -98,7 +98,15 @@ async function blockedShotConsumers() {
 
   equal(payload.motion.availability, "blocked", "persistent Motion stage is blocked");
   equal(payload.motion.blockedReason, payload.motionUnit.nextAction.message, "Motion stage repeats the canonical unit blocker");
-  ok(payload.panel.includes("guided-motion-card locked"), "Motion workspace agrees with stage availability");
+  /* THE PANEL DECLARES THE BLOCK; the shell it uses to say so is not the claim. A shot
+     carrying retained motion work now renders that work READ-ONLY instead of an empty
+     locked shell, because being unable to make new motion is not a reason to hide the
+     motion direction already written. Both shapes must still refuse production, so the
+     refusal is what is asserted, and it is asserted twice as hard as the class name was. */
+  ok(/guided-motion-card locked|data-generation-readiness="blocked"/.test(payload.panel),
+    "Motion workspace agrees with stage availability");
+  ok(!/buildGuidedMotionPrompt|falH3MotionPromptAction|approveGuidedMotion/.test(payload.panel),
+    "and a blocked Motion workspace offers no control that would produce motion");
   ok(payload.panel.includes(payload.motion.blockedReason), "Motion workspace explains the canonical blocker");
 
   equal(payload.projectNext.kind, "blocker", "project-level Production recommendation remains the stronger blocker projection");
