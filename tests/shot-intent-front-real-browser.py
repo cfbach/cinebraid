@@ -24,6 +24,11 @@ actually reported:
      frame, saved to disk and opened fresh — is not told to produce anything. This is
      the leak a Codex review demonstrated, and it is a browser claim because it is
      about what the shot workspace PUTS IN FRONT OF A FILMMAKER after a real page load.
+  8  THE SHELL AROUND #main AGREES ABOUT WHAT COMES NEXT. The persistent stage bar and
+     the Assistant rail are mounted in index.html chrome rather than in #main, so they
+     are unreachable from the Node suite -- and each renders a 'what next' answer of
+     its own. An undeclared shot must draw no Continue button on any stage and the rail
+     must report that it has no recommendation.
   7  RETAINED MOTION WORK IS ON SCREEN AND READ-ONLY. The stage is selected with the real
      stage bar, the page is reloaded so the selection is a genuine Resume, and the saved
      motion direction and compiled prompt are read with inner_text() off VISIBLE elements
@@ -37,6 +42,8 @@ cannot fail is worth nothing:
      to catch it.
   N2 sends the Shots-page Add back through the generic chooser and requires section 1's
      assertion to catch it.
+  N3 forces the old unconditional `inputs -> look` answer back through the model both
+     shell surfaces read, and requires section 9's assertion to catch it.
 
 NOTHING HERE IS PAID AND NOTHING LEAVES THE MACHINE. Config and projects live in a
 temporary directory reached through CINEBRAID_CONFIG_PATH and CINEBRAID_PROJECTS_ROOT, so
@@ -112,6 +119,24 @@ FRAME_STATE = """(shotId) => {
   };
 }"""
 
+
+# The two surfaces AROUND #main: the persistent stage bar and the Assistant rail. Both
+# render shotStageProgress()'s recommendedNext, so the buttons are read off the page and
+# the model's answer is read beside them -- an assertion against a recomputed value
+# alone would pass while the button on the page said something else.
+SHELL_STATE = """(shotId) => {
+  const shot = typeof shotById === 'function' ? shotById(shotId) : null;
+  const declared = shot ? shotStageProgress(shotStageModelFacts(shot, takesFor(shotId))) : [];
+  const next = document.querySelector('[data-cb-section="next"]');
+  return {
+    barPresent: !!document.querySelector('.cb-stage-actions'),
+    railPresent: !!document.querySelector('.cb-assistant'),
+    recommendations: declared.filter((s) => s.recommendedNext).map((s) => `${s.id}->${s.recommendedNext}`),
+    advancing: [...document.querySelectorAll('.cb-stage-action[data-advances="1"]')].map((b) => b.textContent.trim()),
+    barLabels: [...document.querySelectorAll('.cb-stage-action')].map((b) => b.textContent.trim()),
+    railNext: next ? next.innerText : '',
+  };
+}"""
 
 def free_port():
     sock = socket.socket(); sock.bind(("127.0.0.1", 0)); port = sock.getsockname()[1]; sock.close(); return port
@@ -565,6 +590,82 @@ try:
         findings.append(f"8. declaring t2v on that same shot restored the ordinary Motion workspace "
                         f"({', '.join(restored['buildControls'])}), so the read-only view is a consequence of "
                         "current intent rather than a state the shot is stuck in")
+
+
+        # ============================================ 9 · THE SHELL'S OWN NEXT ACTION
+        # Sections 4-8 read `#main`. The two surfaces AROUND it answer "what next"
+        # separately, and both draw straight from shotStageProgress()'s
+        # recommendedNext: the persistent stage bar as a `Continue to <stage>` button,
+        # and the Assistant rail as "Next action / <stage> / CineBraid recommends this
+        # next". Neither is inside #main, so neither is reachable from the Node suite --
+        # this is the only place they can be looked at.
+        open_shot(undecided_id, "9")
+        frames_at_start = page.evaluate(FRAME_STATE, undecided_id)["allFrames"]
+        # The rail is mounted only while it is OPEN -- an unoccupied shell slot collapses,
+        # and not mounting is the whole mechanism by which the centre reclaims the width.
+        # So it is opened through its own shipped toggle, not by calling the API.
+        if not page.evaluate("() => window.CineBraidCreatorSurfaces.railOpen()"):
+            page.locator("#creator-rail-toggle").click()
+            page.wait_for_selector(".cb-assistant", timeout=10000)
+        shell = page.evaluate(SHELL_STATE, undecided_id)
+        assert shell["barPresent"], "9. fixture check: the persistent stage bar must be on the page to be read"
+        assert shell["railPresent"], "9. fixture check: and the Assistant rail must be mounted"
+        assert shell["recommendations"] == [], \
+            f"9. an undeclared shot must produce no stage recommendation at all, got {shell['recommendations']}"
+        assert shell["advancing"] == [], \
+            f"9. and the bar must draw no Continue button, got {shell['advancing']}"
+        assert "Look & blocking" not in " ".join(shell["barLabels"]), \
+            f"9. least of all one pointing at the declared-optional Look stage, got {shell['barLabels']}"
+        assert "No recommendation is available yet" in shell["railNext"], \
+            f"9. and the rail must say so in its own shipped words, got {shell['railNext']!r}"
+        findings.append("9. on the undeclared shot the persistent stage bar draws no Continue button on any stage "
+                        "and the Assistant rail reads 'No recommendation is available yet' -- the shell agrees with "
+                        "the '0/0 required frames' inside #main instead of contradicting it")
+
+        # N3 -- put the shipped defect back on the shell. `inputs -> "look"` was the
+        # unconditional answer, so this forces exactly that value through the model the
+        # bar and the rail both read, and repaints with the shipped painter.
+        page.evaluate("""() => {
+          window.__realProgress = window.shotStageProgress;
+          window.shotStageProgress = (facts) => window.__realProgress(facts)
+            .map((stage) => (stage.id === "inputs" ? { ...stage, recommendedNext: "look" } : stage));
+          window.CineBraidStageSurfaces.paint();
+        }""")
+        page.wait_for_selector('.cb-stage-action[data-advances="1"]', timeout=10000)
+        broken = page.evaluate(SHELL_STATE, undecided_id)
+        assert "Continue to Look & blocking" in broken["barLabels"], \
+            f"N3. precondition: the control must genuinely reproduce the reported defect, got {broken['barLabels']}"
+        page.evaluate("() => { window.shotStageProgress = window.__realProgress; window.CineBraidStageSurfaces.paint(); }")
+        page.wait_for_function("() => !document.querySelector('.cb-stage-action[data-advances=\"1\"]')", timeout=10000)
+        assert page.evaluate(SHELL_STATE, undecided_id)["advancing"] == [], \
+            "N3. and the assertion section 9 relies on catches it"
+        findings.append("N3. negative control: forcing the old `inputs -> look` answer puts "
+                        "'Continue to Look & blocking' back on the bar of a shot that has declared nothing, "
+                        "and section 9's assertion catches it")
+
+        # ---- a route that DOES owe a frame gets its handoff back --------------------
+        declare("i2v")
+        page.wait_for_selector('.cb-stage-action[data-advances="1"]', timeout=10000)
+        owed = page.evaluate(SHELL_STATE, undecided_id)
+        assert "inputs->frames" in owed["recommendations"], \
+            f"9. a declared route that owes an opening frame must recommend Frames, got {owed['recommendations']}"
+        assert "Continue to Frames" in owed["barLabels"], \
+            f"9. and the bar must offer it, got {owed['barLabels']}"
+        assert "Frames" in owed["railNext"], \
+            f"9. and the rail must name it, got {owed['railNext']!r}"
+        assert "Look & blocking" not in " ".join(owed["barLabels"]), \
+            "9. declaring a route must not resurrect the optional stage as a next step either"
+
+        declare("")
+        page.wait_for_function("() => !document.querySelector('.cb-stage-action[data-advances=\"1\"]')", timeout=10000)
+        withdrawn = page.evaluate(SHELL_STATE, undecided_id)
+        assert withdrawn["recommendations"] == [] and withdrawn["advancing"] == [], \
+            f"9. withdrawing the route must withdraw the handoff with it, got {withdrawn['recommendations']}"
+        assert page.evaluate(FRAME_STATE, undecided_id)["allFrames"] == frames_at_start, \
+            "9. and none of that moved the shot's own frame records"
+        findings.append("9. declaring i2v on the same shot brought back exactly one handoff -- 'Continue to Frames' "
+                        "on the bar and Frames in the rail -- and withdrawing the route withdrew it again, with the "
+                        "frame record untouched throughout")
 
         assert not page_errors, f"the page raised uncaught errors: {page_errors}"
         browser.close()
