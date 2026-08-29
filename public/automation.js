@@ -1068,13 +1068,49 @@ function shotStillObligation(shot) {
   };
 }
 
-/* IS THE SHOT STILL WAITING ON A STILL IT OWES. The one question the "STILL
-   AUTOMATION COMPLETE" flag is allowed to ask. Every state except an outstanding
-   obligation settles it — including the two zero states, where the shot is genuinely
-   not waiting on a still — and `unknown` settles nothing it could be wrong about,
-   because it owes nothing this file can name. */
+/* HAS A ROUTE-REQUIRED STILL OBLIGATION BEEN COMPLETED. The one question the
+   "STILL AUTOMATION COMPLETE" receipt is allowed to answer.
+
+   THIS ASKED THE WRONG QUESTION. It asked whether the shot was still WAITING on a
+   still — `stillRequirementState !== "frames-incomplete"` — and the two zero states
+   answered yes, because a shot that owes nothing is indeed not waiting. But the flag
+   this gates is read as COMPLETION, not as absence of waiting, and those are not the
+   same claim:
+
+     route-undeclared     owes nothing because nobody has said how the shot is made.
+                          There is no obligation to have completed.
+     frames-not-required  a declared route legitimately owes no still. Again there is
+                          no obligation to have completed.
+
+   Both are "no current still debt" and NEITHER is "the still work is done". Only a
+   shot that owed stills and has satisfied all of them has completed anything, so
+   `frames-complete` is the only state that may say so — and `unknown` cannot, because
+   a receipt written on an unreadable obligation is the guess this file exists to
+   refuse. An optional frame run on a zero-owed shot still finishes, still keeps its
+   media and still reports itself in the run summary; what it does not do is turn a
+   shot that owed nothing into a shot that has completed something. */
 function stillObligationSettled(obligation) {
-  return obligation.stillRequirementState !== "frames-incomplete";
+  return obligation.stillRequirementState === "frames-complete";
+}
+
+/* MAY THE SHIPPED "STILL AUTOMATION COMPLETE" BANNER BE DRAWN FOR THIS SHOT.
+
+   TWO THINGS, and the persisted half alone was never enough. `automationReadyForMotion`
+   is a RECEIPT — a run finished and the obligation it was for was complete — and a
+   receipt keeps saying what it said on the day it was written. The obligation does not:
+   declaring a reference-driven route on a shot whose opening frame was approved under
+   an image route leaves the receipt true and the claim false, and the banner went on
+   announcing a completed still package for a route that requires no still at all.
+
+   So the claim is re-checked against current truth every time it is read. Nothing is
+   deleted and nothing is reconciled on write: the historical frames stay, the receipt
+   stays, and declaring the frame-owing route again makes the banner correct again
+   because it was always the CURRENT obligation being asked. That is the same shape as
+   every other derivation in this product — the stage model stores no status either. */
+function stillAutomationCompletionClaim(shot) {
+  const creation = shot && typeof shot.creationBrief === "object" && shot.creationBrief ? shot.creationBrief : {};
+  if (!creation.automationReadyForMotion) return false;
+  return stillObligationSettled(shotStillObligation(shot));
 }
 
 /* WHAT A COMPLETED STILL RUN MAY CLAIM. Extracted so the sentence can be asserted
@@ -2311,9 +2347,16 @@ async function runShotAutomation(runId) {
       .map((frame) => frame.label);
     /* THE FLAG IS A CLAIM, so it waits for the claim to be true. It was written
        unconditionally, which put "STILL AUTOMATION COMPLETE" on the motion workspace
-       of a shot whose owed frames were still unapproved. */
+       of a shot whose owed frames were still unapproved — and then, once gated on
+       "not waiting", on a shot that had never owed a still at all. */
+    /* AND THE RECEIPT IS NOT LEFT SAYING SOMETHING ELSE. A run that completes on a
+       shot with no route-required still obligation writes nothing at all: absence is
+       "no completed obligation is being claimed", which is what an optional frame run
+       on a zero-owed shot honestly leaves behind. A stale `true` from an earlier route
+       is removed here rather than reconciled somewhere else. */
     if (stillObligationSettled(completedObligation))
       ensureShotCreation(currentShot).automationReadyForMotion = true;
+    else delete ensureShotCreation(currentShot).automationReadyForMotion;
     ensureShotCreation(currentShot).automationCompletedFrameIds = ids;
     keepGuidedPanelOpen(currentShot, "motion"); dirty(); await flushPendingProjectSave();
     const sceneReview = await v664ReviewSceneAfterShot(run, currentShot);

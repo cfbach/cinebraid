@@ -1134,7 +1134,6 @@ const ROUTE_LINE = '  const routeDeclared = typeof readShotRoute === "function" 
 const HUB_LINE = "  const stillObligation = shotStillObligation(shot), stillCard = shotStillObligationCard(stillObligation);";
 const DEFAULTS_LINE = "  const defaultIds = owedFrames";
 const SUMMARY_ZERO_LINE = "  if (obligation.owedFrameCount === 0)";
-const SETTLED_LINE = '  return obligation.stillRequirementState !== "frames-incomplete";';
 
 /* One rendered shot, with every automation surface read out of the page. */
 async function automationView(shotExtra, mutateSource, { takes = [] } = {}) {
@@ -1344,21 +1343,174 @@ mustFailAsync("NC-45 an approved frame makes the shot count as declared",
       "and the shot stays undeclared rather than becoming a route that needs no still");
   });
 
-/* ---------------------------------------------------------------------------
-   NC-46 — THE COMPLETION FLAG IS SET WHATEVER HAPPENED.
+/* ===========================================================================
+   NC-46 .. NC-51 — ZERO OWED IS NOT AUTOMATION COMPLETE.
 
-   `automationReadyForMotion` drives "STILL AUTOMATION COMPLETE" on the motion
-   workspace. Written unconditionally, it says so while an owed frame is unapproved.
+   Section P. NC-46 REPLACES a control whose subject was too narrow to catch the
+   defect it was named for: it exercised only `frames-incomplete`, so a predicate that
+   said "settled" for both zero states passed it every time. That predicate shipped.
+
+   The mutations below split the boundary into its parts — the decision, each zero
+   state, the persisted write, the shipped render, and the re-check that keeps a stale
+   receipt from outliving its truth — so no single repair can be credited with catching
+   all of them.
+   =========================================================================== */
+
+const COMPLETE_ONLY_LINE = '  return obligation.stillRequirementState === "frames-complete";';
+const CLAIM_CURRENT_LINE = "  return stillObligationSettled(shotStillObligation(shot));";
+const CLAIM_RECEIPT_LINE = "  if (!creation.automationReadyForMotion) return false;";
+const WRITE_GATE_LINE = "    if (stillObligationSettled(completedObligation))";
+const STUDIO_READER = '${(typeof stillAutomationCompletionClaim === "function" ? stillAutomationCompletionClaim(s) : false) ? `<div class="automation-motion-ready">';
+
+/* A motion-workspace shot carrying a persisted completion receipt. The receipt is
+   present in every fixture below, so what is being tested is always the obligation. */
+async function completionView(shotExtra, mutateSource, { approve = [], route = "" } = {}) {
+  const frame = (id, label, title, winner) => ({ id, label, title, winner, required: true, generationPackages: [] });
+  const project = projectWith(newShotRecord({
+    keyframes: [
+      frame("frame-a-new", "A", "Opening frame A", approve.includes("frame-a-new") ? "FRAME_A.png" : null),
+      frame("frame-b-new", "B", "Closing frame B", approve.includes("frame-b-new") ? "FRAME_B.png" : null),
+    ],
+    candidateFiles: approve.map((id) => ({
+      stored: id === "frame-a-new" ? "FRAME_A.png" : "FRAME_B.png",
+      original: id === "frame-a-new" ? "FRAME_A.png" : "FRAME_B.png",
+      decision: "approved", mediaType: "image", frameId: id,
+    })),
+    ...(route ? { deliveryRoute: route } : {}),
+    ...shotExtra,
+  }));
+  project.shots[0].creationBrief = {
+    ...project.shots[0].creationBrief, deliveryIntent: "motion", automationReadyForMotion: true,
+  };
+  for (const id of approve)
+    GESTURE.gesture(() => Kernel.approveFrameCanon(project, {
+      shotId: "SC-01-01", frameId: id, value: id === "frame-a-new" ? "FRAME_A.png" : "FRAME_B.png",
+      assetId: "", at: AT, via: "completion-control",
+    }));
+  const scan = scanFor(project);
+  scan.shots["SC-01-01"] = {
+    takes: approve.map((id) => {
+      const name = id === "frame-a-new" ? "FRAME_A.png" : "FRAME_B.png";
+      return { name, url: `/assets/shots/SC-01-01/takes/${name}` };
+    }), locked: [],
+  };
+  const page = await render("#/shot/SC-01-01", project, {
+    scan, mutateSource, storage: { "cinebraid-focused:fixture:shot-task:SC-01-01": "motion" },
+  });
+  return run(page.context, `
+    const s = P.shots.find((row) => row.id === "SC-01-01");
+    const obligation = shotStillObligation(s);
+    const html = String(document.getElementById("main").innerHTML || "");
+    return { state: obligation.stillRequirementState, owed: obligation.owedFrameCount,
+      settled: stillObligationSettled(obligation),
+      claim: stillAutomationCompletionClaim(s),
+      banner: /STILL AUTOMATION COMPLETE/.test(html) };`);
+}
+
+/* ---------------------------------------------------------------------------
+   NC-46 — "NOT WAITING" IS READ AS "DONE" AGAIN.
+
+   The shipped predicate, restored exactly. It asked whether the shot was still waiting
+   on a still, which both zero states answer no to, and the receipt gated on it then
+   announced a completed still package for a shot that had declared no route at all.
    --------------------------------------------------------------------------- */
-mustFailAsync("NC-46 an outstanding obligation still settles the completion flag",
-  "is not settled", async () => {
-    const seen = await automationView({ deliveryRoute: "i2v" }, pageMutation("automation.js", SETTLED_LINE,
-      "  return true;",
-      "NC-46"));
-    assert.strictEqual(seen.obligation.stillRequirementState, "frames-incomplete",
-      "precondition: this shot owes a frame it has not approved");
+mustFailAsync("NC-46 an undeclared shot counts as having completed its still work",
+  "has completed no still obligation", async () => {
+    const seen = await completionView({}, pageMutation("automation.js", COMPLETE_ONLY_LINE,
+      '  return obligation.stillRequirementState !== "frames-incomplete";', "NC-46"));
+    assert.strictEqual(seen.state, "route-undeclared", "precondition: the shot has declared no route");
     assert.strictEqual(seen.settled, false,
-      "an outstanding obligation is not settled, so nothing may claim the still work is complete");
+      "a shot that owed no still has completed no still obligation — not waiting is not the same claim as done");
+  });
+
+/* ---------------------------------------------------------------------------
+   NC-47 — A DECLARED ZERO-FRAME ROUTE COUNTS AS DONE.
+
+   The other zero state, mutated on its own. A route that legitimately requires no
+   still has no obligation to have completed either, and NC-46 alone would not notice:
+   a predicate special-cased to exclude only the undeclared state passes it.
+   --------------------------------------------------------------------------- */
+mustFailAsync("NC-47 a route that requires no still counts as having completed one",
+  "has completed no still obligation", async () => {
+    const seen = await completionView({}, pageMutation("automation.js", COMPLETE_ONLY_LINE,
+      '  return obligation.stillRequirementState === "frames-complete" || obligation.stillRequirementState === "frames-not-required";',
+      "NC-47"), { route: "r2v" });
+    assert.strictEqual(seen.state, "frames-not-required", "precondition: this route owes no still");
+    assert.strictEqual(seen.settled, false,
+      "a shot that owed no still has completed no still obligation — a route needing none is not a route that finished one");
+  });
+
+/* ---------------------------------------------------------------------------
+   NC-48 — THE 0 === 0 SHORTCUT.
+
+   The arithmetic the whole correction exists to remove, restored at the predicate:
+   every owed frame is approved when there are none of either.
+   --------------------------------------------------------------------------- */
+mustFailAsync("NC-48 zero approved of zero owed is read as complete",
+  "has completed no still obligation", async () => {
+    const seen = await completionView({}, pageMutation("automation.js", COMPLETE_ONLY_LINE,
+      "  return obligation.approvedOwedCount === obligation.owedFrameCount;", "NC-48"));
+    assert.strictEqual(seen.owed, 0, "precondition: the shot owes nothing");
+    assert.strictEqual(seen.settled, false,
+      "a shot that owed no still has completed no still obligation — 0 of 0 is not an achievement");
+  });
+
+/* ---------------------------------------------------------------------------
+   NC-49 — THE RECEIPT IS WRITTEN WHATEVER THE DECISION SAID.
+
+   The persist itself. A live automation run is not driven here, so the shape is what
+   is held: one writer, gated, with the stale value removed on the other branch. This
+   ungates it, and section P6's source assertion has to notice.
+   --------------------------------------------------------------------------- */
+mustFail("NC-49 the completion receipt is persisted regardless of the obligation",
+  "must be gated on the completion decision", () => {
+    const broken = mutateIn(readLF(path.join(PUBLIC, "automation.js")), WRITE_GATE_LINE,
+      "    if (true)", "NC-49");
+    const lines = broken.replace(/\/\*[\s\S]*?\*\//g, " ").split("\n");
+    const at = lines.findIndex((line) => /automationReadyForMotion\s*=/.test(line));
+    assert(at >= 0, "NC-49: the writer must still be findable");
+    const before = lines.slice(0, at).reverse().find((line) => line.trim());
+    assert(/if \(stillObligationSettled\(completedObligation\)\)/.test(before || ""),
+      `the write must be gated on the completion decision, found ${JSON.stringify((before || "").trim())} above it`);
+  });
+
+/* ---------------------------------------------------------------------------
+   NC-50 — THE SHIPPED SURFACE READS THE RECEIPT ALONE.
+
+   public/creation-studio.js, reverted to the flag it used to read directly. The
+   obligation is untouched and correct; the banner is drawn anyway. This is the reader
+   half, and no mutation of the predicate would catch it.
+   --------------------------------------------------------------------------- */
+mustFailAsync("NC-50 the motion workspace renders completion straight from the receipt",
+  "must not claim a completed still package", async () => {
+    const seen = await completionView({}, pageMutation("creation-studio.js", STUDIO_READER,
+      '${c.automationReadyForMotion ? `<div class="automation-motion-ready">', "NC-50"));
+    assert.strictEqual(seen.owed, 0, "precondition: the shot owes no still");
+    assert.strictEqual(seen.banner, false,
+      "a shot with no route-required still obligation must not claim a completed still package, whatever an old receipt says");
+  });
+
+/* ---------------------------------------------------------------------------
+   NC-51 — A STALE RECEIPT OUTLIVES ITS TRUTH.
+
+   The reviewed route-change case. The claim stops re-asking current truth and answers
+   from the persisted half alone, so a shot completed under an opening-frame route goes
+   on announcing a finished still package after being changed to one that owes none.
+   --------------------------------------------------------------------------- */
+mustFailAsync("NC-51 a completion receipt survives a route change that voids it",
+  "may not keep claiming under one that owes none", async () => {
+    const seen = await completionView({}, pageMutation("automation.js", CLAIM_CURRENT_LINE,
+      "  return true;", "NC-51"), { route: "t2v", approve: ["frame-a-new"] });
+    /* A TEXT-DRIVEN ROUTE, not a reference-driven one: the Motion panel refuses to open
+       for r2v and renders the shipped locked shell, which has no banner block at all —
+       so the wrong behaviour would not be observable there. t2v owes no still either
+       and its workspace opens, which is what makes the fabricated claim visible. */
+    assert.strictEqual(seen.state, "frames-not-required",
+      "precondition: the current route owes no still, while the receipt from the old one is still on the record");
+    assert.strictEqual(seen.claim, false,
+      "a completion receipt from a route that owed stills may not keep claiming under one that owes none");
+    assert.strictEqual(seen.banner, false,
+      "a shot with no route-required still obligation must not claim a completed still package, whatever an old receipt says");
   });
 
 async function main() {

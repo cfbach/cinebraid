@@ -42,6 +42,9 @@
  *   O  shot frame OBLIGATION and still/automation COMPLETION are different questions:
  *      four states, three of which are zero-or-done and only one of which may say a
  *      still package is ready
+ *   P  and ZERO OWED IS NOT COMPLETE: only a shot that owed stills and satisfied them
+ *      has completed a still obligation, and the persisted receipt that says so is
+ *      re-checked against current truth every time it is read
  *
  * NO PROVIDER, NO PAID ROUTE, NO NETWORK, NO PROJECT DATA. Every fixture is built in
  * memory and the repository's own projects/ directory is never opened.
@@ -1892,9 +1895,40 @@ async function checkAutomationHasNoSecondOwner() {
     "N2: the composing projection must exist for the surfaces to consume");
   assert(/currentlyRequiredFrames\(/.test(automationCode),
     "N2: and it must reach the canonical answer through app.js's existing projection rather than rebuilding it");
+  /* The four surfaces that used to derive a requirement, plus the completion claim
+     that re-checks a persisted receipt against it. Named rather than counted, so a
+     surface that quietly stops consuming is a failure instead of an off-by-one. */
+  /* DECLARATION anchors, not bare names: every one of these also appears inside an
+     onclick string in this file's own markup, and the first match would be that. */
+  const CONSUMING_SURFACES = [
+    ["window.shotAutomationHub = ", "the REQUIRED FRAMES card"],
+    ["window.shotAutomationPanel = ", "the panel's pipeline wording"],
+    ["window.openShotAutomationModal = ", "the picker defaults and the run plan"],
+    ["async function runShotAutomation(", "the completion summary and the persisted receipt"],
+    ["function stillAutomationCompletionClaim(", "the shipped STILL AUTOMATION COMPLETE banner"],
+  ];
+  /* Brace-matched from the declaration, because these are a mix of `function` and
+     `window.x = (...) => {`, and a "next line starting with }" heuristic lands in the
+     wrong place for the arrow forms. */
+  const functionBody = (source, name) => {
+    const at = source.indexOf(name);
+    if (at < 0) return "";
+    let depth = 0, end = source.indexOf("{", at);
+    for (let i = end; i < source.length; i++) {
+      if (source[i] === "{") depth++;
+      else if (source[i] === "}") { depth--; if (!depth) { end = i; break; } }
+    }
+    return source.slice(at, end + 1);
+  };
+  for (const [fnName, what] of CONSUMING_SURFACES) {
+    const body = functionBody(automationCode, fnName);
+    assert(body, `N2: ${fnName} must still exist — it owns ${what}`);
+    assert(/shotStillObligation\(|completedObligation|stillObligationSettled\(/.test(body),
+      `N2: ${fnName} must consume the obligation projection, because it owns ${what}`);
+  }
   const consumers = (automationCode.match(/shotStillObligation\(/g) || []).length - 1;
-  assert.strictEqual(consumers, 4,
-    `N2: the four surfaces that used to derive a requirement must all consume the projection, found ${consumers} call sites`);
+  assert(consumers >= 4,
+    `N2: the surfaces that used to derive a requirement must all consume the projection, found ${consumers} call sites`);
 
   /* N3 — THE ARGUED READERS ELSEWHERE ARE STILL EXACTLY THE THREE THAT WERE ARGUED.
      app.js's requiredFrames() — section I proves its only consumer is route-invariant
@@ -2096,7 +2130,11 @@ async function checkAutomationObligation() {
   assert.strictEqual(owedTwo.settled, false, "O5: an outstanding obligation is not settled, so nothing claims completion");
   assert(/not complete yet/.test(owedTwo.summary), `O5: and the run summary says so, got ${JSON.stringify(owedTwo.summary)}`);
   assert.strictEqual(complete.settled, true, "O5: a satisfied obligation is settled");
-  assert.strictEqual(notRequired.settled, true, "O5: and so is one that was never owed — that shot is not waiting on a still");
+  /* AND A SHOT THAT NEVER OWED ANYTHING IS NOT. This assertion previously read `true`,
+     on the reasoning that such a shot is not WAITING on a still — which is true, and
+     is not the question. See section P. */
+  assert.strictEqual(notRequired.settled, false,
+    "O5: a shot that owed no still has completed no still obligation — not waiting is not the same claim as done");
   observed.push(`card, plan, preflight, completion flag and run summary all move with the one projection`);
 
   /* O6 — HISTORICAL MEDIA DOES NOT AUTHOR A ROUTE, and automation is not where it
@@ -2149,6 +2187,232 @@ async function checkAutomationObligation() {
   note("O. automation consumes the obligation and completion is a separate question: " + observed.join("; "));
 }
 
+/* ===========================================================================
+   P — ZERO OWED IS NOT AUTOMATION COMPLETE.
+
+   Section O separated the OBLIGATION from its COMPLETION and then got the completion
+   half wrong by one word. `stillObligationSettled()` asked whether the shot was still
+   WAITING on a still — anything but `frames-incomplete` — and both zero states
+   answered yes, because a shot that owes nothing is indeed not waiting.
+
+   That is a true sentence about waiting and a false one about completion, and the flag
+   it gates, `automationReadyForMotion`, is read as completion: public/creation-studio.js
+   renders it as "STILL AUTOMATION COMPLETE" plus "The approved start frame is ready for
+   image-to-video". So an optional frame run on a shot that had declared no route at all
+   persisted a receipt saying its still package was finished, and the workspace said so.
+
+     route-undeclared     no obligation exists to have been completed
+     frames-not-required  no obligation exists to have been completed
+     frames-incomplete    an obligation exists and is unmet
+     frames-complete      an obligation exists and is met — THE ONLY completed one
+
+   THE RECEIPT IS ALSO RE-CHECKED WHEN READ. `automationReadyForMotion` is persisted, and
+   a persisted claim keeps saying what it said on the day it was written while the
+   obligation moves underneath it: an opening-frame route completed, then changed to a
+   reference-driven one, left the receipt true and the claim false. The claim asks
+   current truth every render instead. Nothing is deleted, and declaring the frame-owing
+   route again makes the banner correct again.
+   =========================================================================== */
+
+function completionShot({ route = "", approve = [], receipt = false } = {}) {
+  const frame = (id, label, title, winner) => ({ id, label, title, winner, description: "", notes: "", required: true, generationPackages: [] });
+  const shot = newShotRecord("SC-01-01", "SC-01", {
+    keyframes: [
+      frame("frame-a-new", "A", "Opening frame A", approve.includes("frame-a-new") ? "FRAME_A.png" : null),
+      frame("frame-b-new", "B", "Closing frame B", approve.includes("frame-b-new") ? "FRAME_B.png" : null),
+    ],
+    candidateFiles: approve.map((id) => ({
+      stored: id === "frame-a-new" ? "FRAME_A.png" : "FRAME_B.png",
+      original: id === "frame-a-new" ? "FRAME_A.png" : "FRAME_B.png",
+      decision: "approved", mediaType: "image", frameId: id,
+    })),
+  });
+  /* A motion delivery so the Motion workspace opens at all — an undeclared shot is
+     offered no generation, and this section is about what that workspace SAYS. */
+  shot.creationBrief = { ...shot.creationBrief, deliveryIntent: "motion" };
+  if (route) shot.deliveryRoute = route;
+  if (receipt) shot.creationBrief.automationReadyForMotion = true;
+  return shot;
+}
+
+async function completionState(options) {
+  const project = projectWith(completionShot(options));
+  for (const id of options.approve || [])
+    approveFrame(project, "SC-01-01", id, id === "frame-a-new" ? "FRAME_A.png" : "FRAME_B.png");
+  const takes = (options.approve || []).map((id) => (id === "frame-a-new" ? "FRAME_A.png" : "FRAME_B.png"));
+  const scan = scanFor(project);
+  scan.shots["SC-01-01"] = { takes: takes.map((name) => ({ name, url: `/assets/shots/SC-01-01/takes/${name}` })), locked: [] };
+  const page = await render("#/shot/SC-01-01", project, {
+    scan, storage: { "cinebraid-focused:fixture:shot-task:SC-01-01": "motion" },
+  });
+  return run(page.context, `
+    const s = P.shots.find((row) => row.id === "SC-01-01");
+    const obligation = shotStillObligation(s);
+    const html = String(document.getElementById("main").innerHTML || "");
+    return {
+      state: obligation.stillRequirementState,
+      owed: obligation.owedFrameCount,
+      approvedOwed: obligation.approvedOwedCount,
+      settled: stillObligationSettled(obligation),
+      receipt: !!s.creationBrief.automationReadyForMotion,
+      claim: stillAutomationCompletionClaim(s),
+      banner: /STILL AUTOMATION COMPLETE/.test(html),
+      startFrameClaim: /approved start frame is ready for image-to-video/.test(html),
+      /* WHETHER THE SURFACE COULD HAVE DRAWN IT. A route the Motion panel refuses to
+         open renders the shipped locked shell, which contains no banner block at all —
+         so "no banner" there proves nothing about the completion gate. Reported so an
+         absence assertion can require a surface that was able to speak. */
+      panelLocked: /<details[^>]*class="[^"]*locked[^"]*"[^>]*data-guided-panel="motion"/.test(html),
+      frames: (s.keyframes || []).map((frame) => frame.id + ":" + (frame.winner || "")),
+      candidates: (s.candidateFiles || []).map((row) => row.stored),
+    };`);
+}
+
+async function checkCompletionBoundary() {
+  const observed = [];
+  const OWED_ID = { "first-frame": "frame-a-new", "last-frame": "frame-b-new" };
+  const bothIds = ["frame-a-new", "frame-b-new"];
+
+  /* P1 — THE TRUTH TABLE. The receipt is persisted in EVERY row, so the only thing
+     deciding is the obligation: a control that merely never wrote the flag would pass
+     this vacuously. Route expectations derive from shotRouteInputNeeds() as everywhere
+     else in this suite. */
+  const rows = [];
+  const settledFor = async (label, options, expectSettled, expectState) => {
+    const seen = await completionState({ ...options, receipt: true });
+    assert.strictEqual(seen.state, expectState,
+      `P1 fixture check: ${label} must be ${expectState}, got ${seen.state}`);
+    assert.strictEqual(seen.receipt, true, `P1 fixture check: ${label} must carry the persisted receipt`);
+    assert.strictEqual(seen.settled, expectSettled,
+      `P1: ${label} — stillObligationSettled must be ${expectSettled}. Not waiting on a still is not the same claim as having completed one.`);
+    assert.strictEqual(seen.claim, expectSettled,
+      `P1: ${label} — the shipped completion claim must follow the obligation, not the receipt alone`);
+    rows.push(`${label}=${seen.settled}`);
+    return seen;
+  };
+
+  await settledFor("route-undeclared/0 owed", {}, false, "route-undeclared");
+  for (const route of ROUTES.filter((row) => frameNeedsOf(row).length === 0))
+    await settledFor(`${route}/0 owed`, { route }, false, "frames-not-required");
+  for (const route of ROUTES.filter((row) => frameNeedsOf(row).length > 0)) {
+    const owedIds = frameNeedsOf(route).map((role) => OWED_ID[role]);
+    await settledFor(`${route}/none approved`, { route }, false, "frames-incomplete");
+    if (owedIds.length > 1)
+      await settledFor(`${route}/one of ${owedIds.length} approved`, { route, approve: owedIds.slice(0, 1) }, false, "frames-incomplete");
+    await settledFor(`${route}/all ${owedIds.length} approved`, { route, approve: owedIds }, true, "frames-complete");
+  }
+  observed.push(`settled per case — ${rows.join(", ")}`);
+
+  /* P2 — THE CLAIM NEEDS BOTH HALVES. A satisfied obligation with no receipt is a shot
+     nobody ran automation on; it may not wear a completed-automation banner either. */
+  const owedRoute = ROUTES.find((route) => frameNeedsOf(route).length === 1);
+  const noReceipt = await completionState({ route: owedRoute, approve: ["frame-a-new"], receipt: false });
+  assert.strictEqual(noReceipt.state, "frames-complete", "P2 fixture check: the obligation is satisfied");
+  assert.strictEqual(noReceipt.settled, true, "P2 fixture check: and settled");
+  assert.strictEqual(noReceipt.claim, false,
+    "P2: with no run receipt there is no completed AUTOMATION to claim — the banner is a statement about a run");
+  assert.strictEqual(noReceipt.banner, false, "P2: and it is not drawn");
+  observed.push("a satisfied obligation with no run receipt draws no banner");
+
+  /* P3 — THE SHIPPED SURFACE. What creation-studio.js actually renders, per state. */
+  const rendered = [];
+  for (const [label, options, expectBanner] of [
+    ["undeclared", { receipt: true }, false],
+    [ROUTES.find((route) => frameNeedsOf(route).length === 0), { route: ROUTES.find((r) => frameNeedsOf(r).length === 0), receipt: true }, false],
+    [`${owedRoute} incomplete`, { route: owedRoute, receipt: true }, false],
+    [`${owedRoute} complete`, { route: owedRoute, approve: ["frame-a-new"], receipt: true }, true],
+  ]) {
+    const seen = await completionState(options);
+    /* The claim is the semantic and is asserted for every row. */
+    assert.strictEqual(seen.claim, expectBanner,
+      `P3: ${label} — the completion claim must be ${expectBanner}, got ${seen.claim}`);
+    /* THE RENDERED ABSENCE IS ONLY ASSERTED WHERE IT MEANS SOMETHING. A route the
+       Motion panel refuses to open renders the shipped locked shell, which carries no
+       banner block at all, so "no banner" there would hold however the gate answered.
+       Those rows are recorded as locked shells rather than counted as proof. */
+    if (seen.panelLocked) { rendered.push(`${label}:locked-shell`); continue; }
+    assert.strictEqual(seen.banner, expectBanner,
+      `P3: ${label} must ${expectBanner ? "" : "not "}render STILL AUTOMATION COMPLETE, got banner=${seen.banner}`);
+    if (!expectBanner)
+      assert.strictEqual(seen.startFrameClaim, false,
+        `P3: ${label} must not claim an approved start frame is ready either`);
+    rendered.push(`${label}:${seen.banner ? "banner" : "silent"}`);
+  }
+  /* AND THE TABLE IS NOT ALL LOCKED SHELLS: at least one open workspace that stays
+     silent, and at least one that speaks. Without both, P3 proves nothing. */
+  assert(rendered.some((row) => row.endsWith(":silent")),
+    `P3: at least one OPEN Motion workspace must be observed staying silent, got ${rendered.join(", ")}`);
+  assert(rendered.some((row) => row.endsWith(":banner")),
+    `P3: and at least one must be observed drawing the banner, got ${rendered.join(", ")}`);
+  observed.push(`the shipped motion workspace renders ${rendered.join(", ")}`);
+
+  /* P4 — A ROUTE CHANGE STOPS A STALE RECEIPT CLAIMING, AND DELETES NOTHING.
+
+     The reviewed edge case: complete under an opening-frame route, then change to one
+     that owes no still. The receipt is left exactly where it is — withdrawing a route
+     is not a reason to destroy history — and the claim simply stops being made. */
+  const twoFrameRoute = ROUTES.find((route) => frameNeedsOf(route).length === 2);
+  const complete = await completionState({ route: owedRoute, approve: ["frame-a-new"], receipt: true });
+  assert.strictEqual(complete.claim, true, "P4 fixture check: legitimately complete first");
+  const mediaBefore = complete.frames.join("|") + "::" + complete.candidates.join("|");
+
+  const walk = [];
+  for (const route of [...ROUTES.filter((row) => frameNeedsOf(row).length === 0), ""]) {
+    const after = await completionState({ route, approve: ["frame-a-new"], receipt: true });
+    assert.strictEqual(after.receipt, true,
+      `P4: the persisted receipt must survive the change to ${route || "undeclared"} — history is not deleted to withdraw a claim`);
+    assert.strictEqual(after.claim, false,
+      `P4: but it must stop claiming completion under ${route || "undeclared"}, which owes no still`);
+    assert.strictEqual(after.banner, false, `P4: and the banner must be gone under ${route || "undeclared"}`);
+    assert.strictEqual(after.frames.join("|") + "::" + after.candidates.join("|"), mediaBefore,
+      `P4: and no frame, winner or candidate may move`);
+    walk.push(`${route || "undeclared"}:silent`);
+  }
+  /* AND IT IS REVERSIBLE, which is the point of re-checking rather than clearing. */
+  const back = await completionState({ route: owedRoute, approve: ["frame-a-new"], receipt: true });
+  assert.strictEqual(back.claim, true,
+    "P4: declaring the frame-owing route again makes the same receipt true again — the claim was never destroyed, only re-asked");
+  assert.strictEqual(back.banner, true, "P4: and the banner returns");
+  observed.push(`${owedRoute} complete -> ${walk.join(" -> ")} -> ${owedRoute}:banner, receipt and media untouched throughout`);
+
+  /* P5 — TWO ENDPOINTS, ONE APPROVED. The half-done case for a two-frame route, kept
+     separate from the zero cases so a predicate that answered "only complete" by
+     accident of counting cannot pass. */
+  const half = await completionState({ route: twoFrameRoute, approve: ["frame-a-new"], receipt: true });
+  assert.strictEqual(half.owed, 2, "P5 fixture check: two owed");
+  assert.strictEqual(half.approvedOwed, 1, "P5 fixture check: one approved");
+  assert.strictEqual(half.settled, false, "P5: one of two endpoints is not a completed obligation");
+  assert.strictEqual(half.banner, false, "P5: and draws no banner");
+  const whole = await completionState({ route: twoFrameRoute, approve: bothIds, receipt: true });
+  assert.strictEqual(whole.settled, true, "P5: both endpoints is");
+  observed.push(`${twoFrameRoute} 1/2 -> false, 2/2 -> true`);
+
+  /* P6 — THE WRITE FOLLOWS THE DECISION, AND THERE IS ONLY ONE WRITE.
+
+     The persist happens inside a live automation run, which this suite does not drive.
+     What it can hold is the shape: exactly one writer of the receipt in the whole file,
+     gated on the decision P1 exercises, with the stale value removed on the other
+     branch rather than left behind. Asserted over stripped source so the prose above
+     the writer cannot satisfy it. */
+  const automationSource = codeOnly(readLF("public/automation.js")).split("\n");
+  const writeLines = automationSource
+    .map((line, index) => [index, line])
+    .filter(([, line]) => /automationReadyForMotion\s*=/.test(line));
+  assert.strictEqual(writeLines.length, 1,
+    `P6: the receipt must have exactly one writer, found ${writeLines.length}`);
+  const [writeAt] = writeLines[0];
+  const before = automationSource.slice(0, writeAt).reverse().find((line) => line.trim());
+  const after = automationSource.slice(writeAt + 1).find((line) => line.trim());
+  assert(/if \(stillObligationSettled\(completedObligation\)\)/.test(before || ""),
+    `P6: the write must be gated on the completion decision, found ${JSON.stringify((before || "").trim())} above it`);
+  assert(/else delete .*automationReadyForMotion/.test(after || ""),
+    `P6: and the other branch must remove a stale receipt rather than leave it, found ${JSON.stringify((after || "").trim())} below it`);
+  observed.push("one gated writer, with the stale receipt removed on the other branch");
+
+  note("P. zero owed is not automation complete: " + observed.join("; ")
+    + " — the two zero states are 'no obligation existed', which is not 'the obligation is done'");
+}
+
 /* =========================================================================== */
 async function main() {
   await checkContextualAdd();
@@ -2170,6 +2434,7 @@ async function main() {
   await checkShellNextAction();
   await checkAutomationHasNoSecondOwner();
   await checkAutomationObligation();
+  await checkCompletionBoundary();
 
   /* The action code this slice adds is declared in all three places a readiness action
      has to be declared, or it renders as a bare "Next action" with no destination. */

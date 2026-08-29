@@ -1030,10 +1030,31 @@ async function main() {
      the Motion workspace does not offer new generation to a shot that has declared
      no delivery, and this case is about a completed still chain handing off TO motion. */
   motionReadyFixture.shots[0].creationBrief.deliveryIntent = "motion";
+  /* AND A ROUTE THAT ACTUALLY OWES THE FRAMES THIS FIXTURE APPROVED.
+
+     Without it the shot reads `route-undeclared`: two approved frames, and NO
+     route-required still obligation to have completed. The banner asserted below is a
+     claim about a completed obligation, so on an undeclared shot it was a claim about
+     nothing — the exact thing the shot-intent work removes everywhere else, asserted
+     here as a requirement. `flf` is the honest declaration for this fixture rather
+     than a convenient one: it owes both endpoints, this fixture approves both, and the
+     banner's own copy for two approved frames says they are ready for a first/last-frame
+     video. The handoff being tested is unchanged; it now has an obligation behind it. */
+  motionReadyFixture.shots[0].deliveryRoute = "flf";
   motionReadyFixture.shots[0].creationBrief.automationReadyForMotion = true;
   motionReadyFixture.shots[0].creationBrief.automationCompletedFrameIds = ["frame-a", "frame-b"];
   const motionReadyRender = await render("#/shot/L1-01", motionReadyFixture, { storage: { "cinebraid-focused:fixture:shot-task:L1-01": "motion" } });
   assert(motionReadyRender.html.includes("STILL AUTOMATION COMPLETE"), "completed still chains must expose a clear manual-motion handoff");
+  /* AND ONLY a completed one does. The same fixture with its route withdrawn owes no
+     still, so there is no completed obligation and the receipt alone may not speak —
+     the persisted flag is left exactly where it is, and the claim is simply not made. */
+  const motionUndeclaredFixture = JSON.parse(JSON.stringify(motionReadyFixture));
+  delete motionUndeclaredFixture.shots[0].deliveryRoute;
+  const motionUndeclaredRender = await render("#/shot/L1-01", motionUndeclaredFixture, { storage: { "cinebraid-focused:fixture:shot-task:L1-01": "motion" } });
+  assert(motionUndeclaredFixture.shots[0].creationBrief.automationReadyForMotion === true,
+    "the persisted receipt must survive: withdrawing a route is not a reason to delete history");
+  assert(!motionUndeclaredRender.html.includes("STILL AUTOMATION COMPLETE"),
+    "a shot with no route-required still obligation must not claim a completed still package, whatever an old receipt says");
   assert(motionReadyRender.html.includes("Motion is never submitted by the still-automation runner"), "motion handoff must explicitly keep video generation manual");
 
   const interactive = await render("#/shot/L1-01", fixture, { storage: { "cinebraid-focused:fixture:shot-task:L1-01": "automation" } });
