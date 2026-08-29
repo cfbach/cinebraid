@@ -761,13 +761,59 @@
 
   const DERIVATIONS = { inputs: inputsState, look: lookState, frames: framesState, motion: motionState, deliver: deliverState };
 
+  /* IS THE FRAMES STAGE GENUINELY OWED — asked of the canonical count, never
+     re-derived here.
+
+     `requiredFrameCount` is the fact projection's answer and it is already routed
+     through the only two owners that may require a frame: shotRouteInputNeeds()
+     where a route is declared, and shared-shot-readiness.js's required frame units
+     where one is not. Reading it adds no third opinion about frame requirements —
+     shotStageState() below already reads the same value to decide whether the Frames
+     stage is optional, and this is that same answer asked as a question about work
+     rather than about presentation. It is a REQUIRED count, which is a declaration;
+     the evidence counts (frameApprovedCount, frameTotal) remain untouchable here for
+     the reason C5 states. A stage whose work is already finished is not owed either,
+     so the approval half is asked as well. */
+  function framesOwed(facts) {
+    return facts.requiredFrameCount > 0 && !facts.requiredFramesApproved;
+  }
+
   /* The one genuinely recommended handoff, or "" where none honestly exists.
-     Frames -> Motion is recommended only when the shot has said it wants motion:
-     an undecided shot gets no recommendation rather than a guess, because
-     overclaiming a next step is how a workspace starts lying about the work. */
+
+     A RECOMMENDATION IS ONLY EVER PRODUCED FOR A DESTINATION THE SHOT ACTUALLY OWES.
+     Frames -> Motion was already written that way: an undecided shot gets no
+     recommendation rather than a guess, because overclaiming a next step is how a
+     workspace starts lying about the work. The first two handoffs were not, and each
+     stated something the shot's own declarations did not support:
+
+       inputs -> "look"   unconditionally. Look & blocking is DECLARED optional — it
+                          may be skipped outright — so it is never OWED, and a
+                          brand-new shot that had declared nothing and done nothing
+                          was still told "Continue to Look & blocking" by the
+                          persistent bar (public/shared-stage-actions.js) and
+                          "CineBraid recommends this next" by the Assistant rail
+                          (public/creator-surfaces.js). An optional stage is an
+                          invitation; it cannot be the next step.
+
+       look -> "frames"   unconditionally, including on a shot whose declared delivery
+                          requires ZERO frames and whose Frames stage this module
+                          therefore marks `optional` two functions down. That is frame
+                          debt arriving as a next ACTION instead of as a count — the
+                          same fabrication the shot-intent slice removed from the
+                          count, returning through the bar. Which deliveries need a
+                          frame is emphatically not asked here; the projection has
+                          already asked it, and this reads only its number.
+
+     So neither is offered unless the frames work is genuinely owed. Inputs also stays
+     put while an input the shot has declared is still missing: the honest next step
+     for a shot that is short an input is the stage it is already standing on, whose
+     own readiness action already names what is missing. */
   function recommendedNextFor(stageId, facts) {
-    if (stageId === "inputs") return "look";
-    if (stageId === "look") return "frames";
+    if (stageId === "inputs") {
+      if (facts.missingReferenceCount) return "";
+      return framesOwed(facts) ? "frames" : "";
+    }
+    if (stageId === "look") return framesOwed(facts) ? "frames" : "";
     if (stageId === "frames") {
       if (!facts.requiredFramesApproved) return "";
       if (facts.hasMotionUnit || facts.deliveryIntent === "motion") return "motion";

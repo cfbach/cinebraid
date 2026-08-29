@@ -331,9 +331,44 @@ async function checkRepresentativeStates() {
   observed.push("motion:available:needs-review:attention");
 
   /* Recommended handoffs: present where one genuinely exists, absent where the shot has
-     not said what it wants. */
-  assert.strictEqual(Stage.shotStageState("inputs", S3.facts).recommendedNext, "look");
-  assert.strictEqual(Stage.shotStageState("look", S3.facts).recommendedNext, "frames");
+     not said what it wants.
+
+     THE FIRST TWO HANDOFFS ARE OWED-GATED NOW, and the assertions below are the
+     REWRITTEN form of two that used to pin them open unconditionally — rewritten
+     rather than dropped, because the handoffs still have to be constrained and
+     deleting the pins would have left them unwatched. What they pinned was wrong on
+     both counts: `inputs -> look` was asserted outright, which made a DECLARED
+     OPTIONAL stage the recommended next step for every shot in the product including
+     one that had declared nothing and done nothing; `look -> frames` was asserted
+     outright too, which pointed a shot whose declared delivery requires no frame at
+     the Frames stage this model had already marked optional for it. Both now ask the
+     question the Frames handoff always asked: is the destination genuinely owed. */
+  assert.strictEqual(Stage.shotStageState("inputs", S3.facts).recommendedNext, "",
+    "S3's one required frame is already approved, so nothing downstream of Inputs is owed and no advance may be recommended");
+  assert.strictEqual(Stage.shotStageState("look", S3.facts).recommendedNext, "",
+    "and Look recommends nothing on the same shot for the same reason");
+  /* Look & blocking is never recommended BY ANYTHING. It is declared optional — it may
+     be skipped outright — and an optional stage cannot be the step a shot must take
+     next. Stated over every declared stage so a future handoff cannot reintroduce it. */
+  for (const stageId of Stage.SHOT_STAGE_IDS) {
+    for (const facts of [{}, { requiredFrameCount: 1 }, { requiredFrameCount: 1, requiredFramesApproved: true }, S3.facts]) {
+      assert.notStrictEqual(Stage.shotStageState(stageId, facts).recommendedNext, "look",
+        `${stageId} recommended Look & blocking, a stage its own declaration says may be skipped outright`);
+    }
+  }
+  /* Where a frame IS owed the handoff to Frames is real, and is offered from both
+     stages that declare Frames as a successor. */
+  assert.strictEqual(Stage.shotStageState("inputs", { requiredFrameCount: 1 }).recommendedNext, "frames");
+  assert.strictEqual(Stage.shotStageState("look", { requiredFrameCount: 1 }).recommendedNext, "frames");
+  /* A shot short of an input it has itself declared is not sent downstream: the honest
+     next step is the stage it is standing on, whose readiness action names what is
+     missing. */
+  assert.strictEqual(Stage.shotStageState("inputs", { requiredFrameCount: 1, missingReferenceCount: 1 }).recommendedNext, "",
+    "a shot missing a declared input must not be advised to leave the stage that is missing it");
+  /* And a delivery that owes no frame is never pointed at Frames from either stage. */
+  assert.strictEqual(Stage.shotStageState("inputs", { requiredFrameCount: 0, referenceCount: 2 }).recommendedNext, "",
+    "a shot that owes no frame must not be advanced toward the Frames stage");
+  assert.strictEqual(Stage.shotStageState("look", { requiredFrameCount: 0, referenceCount: 2 }).recommendedNext, "");
   assert.strictEqual(Stage.shotStageState("frames", { requiredFramesApproved: true, hasMotionUnit: true }).recommendedNext, "motion");
   assert.strictEqual(Stage.shotStageState("frames", { requiredFramesApproved: true, deliveryIntent: "still" }).recommendedNext, "deliver");
   assert.strictEqual(Stage.shotStageState("frames", { requiredFramesApproved: true, deliveryIntent: "undecided" }).recommendedNext, "",
@@ -341,7 +376,7 @@ async function checkRepresentativeStates() {
   assert.strictEqual(Stage.shotStageState("frames", { requiredFramesApproved: false, deliveryIntent: "motion" }).recommendedNext, "",
     "nothing is recommended out of a stage whose own work is unfinished");
   assert.strictEqual(Stage.shotStageState("deliver", S6.facts).recommendedNext, "", "the final stage recommends nothing");
-  note("Handoffs: recommendations exist only where the shot's own state supports one");
+  note("Handoffs: recommendations exist only where the shot's own state supports one — the declared-optional Look stage is recommended by nothing, and Frames only where a frame is owed and unapproved");
 
   /* Optionality is DECLARED, and is a different question from completion. */
   assert.strictEqual(S1.byId.look.optional, true, "planning may be skipped where appropriate");
