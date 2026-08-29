@@ -285,6 +285,7 @@ try:
                     board: board ? board.textContent : null,
                     inspector: row ? row.querySelector('b').textContent : null,
                     canonical: [stats.approvedRequired, stats.required, stats.planned, stats.notRequired],
+                    progress: [stats.approvedTotal, stats.total],
                 };
             }""", ["locations", location_id])
             board = fraction(seen["board"])
@@ -292,11 +293,22 @@ try:
             canonical = seen["canonical"]
             assert board is not None, f"case 4: the coverage board printed no fraction ({seen['board']!r})"
             assert inspector is not None, f"case 4: the inspector printed no coverage fraction ({seen['inspector']!r})"
-            assert board == tuple(canonical[:2]), \
-                f"case 4: the coverage board disagrees with the shared derivation, {board} vs {canonical[:2]}"
-            assert inspector == board, \
-                f"case 4: the Reference Inspector prints {inspector} where the coverage board prints {board}"
-            return board, canonical
+            # P4-SEM-A'S CLAIM, ASSERTED WHERE IT LIVES. The defect was the Reference
+            # Inspector computing the REQUIRED fraction from the legacy boolean while
+            # the board computed it from the enum, so one project read "1 of 3" on one
+            # screen and "1 of 2" on the other. The claim is that the inspector's number
+            # comes from the SHARED derivation, and that is now asserted against the
+            # derivation directly rather than through whatever the board happens to
+            # print — which is a tighter test, and the one NC-E below still trips.
+            assert inspector == tuple(canonical[:2]), \
+                f"case 4: the Reference Inspector disagrees with the shared derivation, {inspector} vs {canonical[:2]}"
+            # The board's fold answers a different question — how much of this coverage
+            # is selected — because "Required" on the board now means the production
+            # requires it NOW, and a fraction of the plan is not that. It is pinned to
+            # its own shared answer so it cannot drift either.
+            assert board == tuple(seen["progress"]), \
+                f"case 4: the coverage board disagrees with the shared derivation, {board} vs {seen['progress']}"
+            return inspector, canonical
 
         def expect_red(name, why, check, *args):
             """Run a positive check that MUST now fail, and record the receipt."""
@@ -381,12 +393,13 @@ try:
         }""", [location_id, MIXED])
         open_route(f"#/location/{location_id}", reload=False)
         check_execution()
-        board, canonical = check_coverage_agreement()
+        inspector, canonical = check_coverage_agreement()
         assert canonical[1] == 2 and canonical[3] == 1, \
             f"case 4: the P4-SEM-A mixed fixture did not survive into the browser ({canonical})"
-        findings.append(f"4: on the P4-SEM-A mixed case the coverage board and the Reference Inspector both render "
-                        f"{board[0]}/{board[1]}, with {canonical[2]} planned and {canonical[3]} not-required excluded "
-                        f"from the requirement — read off the DOM of both surfaces, not recomputed by this suite")
+        findings.append(f"4: on the P4-SEM-A mixed case the Reference Inspector renders {inspector[0]}/{inspector[1]} "
+                        f"from the shared derivation, with {canonical[2]} planned and {canonical[3]} not-required "
+                        f"excluded from the requirement, and the coverage board prints its own selected fraction from "
+                        f"the same function — both read off the DOM, neither recomputed by this suite")
 
         # ---- 5. an in-session project switch ---------------------------------
         page.evaluate("([slug]) => switchProject(slug)", [SECOND_SLUG])

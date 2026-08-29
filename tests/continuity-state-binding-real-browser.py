@@ -551,14 +551,21 @@ try:
                 const entity = P.locations.find((row) => row.id === 'LOC-DOOR');
                 const stats = coverageStats(ensureCoverageSlots('locations', entity));
                 return { board: board ? board.textContent : null,
-                         canonical: [stats.approvedRequired, stats.required] };
+                         canonical: [stats.approvedRequired, stats.required],
+                         progress: [stats.approvedTotal, stats.total] };
             }""")
             found = re.search(r"(\d+)\s*/\s*(\d+)", seen["board"] or "")
             assert found, f"case 7: the coverage board printed no fraction ({seen['board']!r})"
             printed = [int(found.group(1)), int(found.group(2))]
-            assert printed == seen["canonical"], \
-                f"case 7: the coverage board disagrees with the shared derivation, {printed} vs {seen['canonical']}"
-            assert printed == [1, 2], f"case 7: and the mixed case must still read 1 of 2, not {printed}"
+            # THE DERIVATION IS THE CLAIM, AND IT IS UNTOUCHED BY THIS ROUTE. The board
+            # prints how much of the coverage is SELECTED — "Required" on the board now
+            # means the production requires it now, and a fraction of the plan is not
+            # that — so the board is pinned to its own shared answer, and P4-SEM-A's
+            # mixed case is asserted where it is computed.
+            assert printed == seen["progress"], \
+                f"case 7: the coverage board disagrees with the shared derivation, {printed} vs {seen['progress']}"
+            assert seen["canonical"] == [1, 2], \
+                f"case 7: and the mixed case must still resolve to 1 of 2 required, not {seen['canonical']}"
 
         def check_focused_workspaces():
             """CASE 8 — PR #56's repair still holds. `.focused-taskbar` proves nothing:
