@@ -414,7 +414,14 @@ async function main() {
         outputCount: 1,
         quality: "high",
         resolution: "4k",
-        aspectRatio: "16:9",
+        /* 3:4 — this posts to the PUBLIC route, where the entitled format is the entity
+           list's own (referenceAspectLabel("characters")). A real angle sheet is 16:9, and
+           it is dispatched through /api/generation/fal/coverage/jobs, whose server-built
+           descriptor carries that format; no shipped dispatcher sends a sheet here. What
+           this case is about is the sheet fields round-tripping onto the job, which they
+           still do — the 16:9 it used to send was standing in for a screen that has not
+           existed since the coverage route took over. */
+        aspectRatio: "3:4",
         coverageJobType: "sheet",
         coverageSheetType: "angles",
         coverageSourceFile: "CHAR-ONE-REFERENCE.png",
@@ -561,6 +568,19 @@ async function main() {
     ];
     const LONG_EDGES = { "1k": 1024, "2k": 2048, "4k": 4096 };
     for (const [aspectRatio, resolution, expected] of FORMAT_SIZES) {
+      /* THIS TABLE IS ABOUT aspectSize()'s ARITHMETIC, not about who chooses the format,
+         so the shot is made to declare the format each row is exercising. The paid
+         boundary derives what a request is entitled to from the shot and refuses a request
+         naming a different one — a format is a route input here, not a control a caller
+         picks — and without this the table would be asserting that a caller can reframe a
+         16:9 production nine different ways. Written unconditionally: the deliberately
+         unreadable rows ("widescreen", "50:1", "") do not resolve, so the shot falls back
+         to the production's own format exactly as before and those rows go on proving that
+         an unreadable input lands on 16:9. */
+      const formatted = JSON.parse(fs.readFileSync(projectFile, "utf8"));
+      const formattedShot = (formatted.shots || []).find((row) => String(row?.id) === "S1");
+      formattedShot.creationBrief = { ...(formattedShot.creationBrief || {}), composition: { ...(formattedShot.creationBrief?.composition || {}), aspectRatio } };
+      fs.writeFileSync(projectFile, JSON.stringify(formatted, null, 2));
       const submit = await json(`${appOrigin}/api/generation/fal/jobs`, {
         method: "POST",
         headers: { "content-type": "application/json" },

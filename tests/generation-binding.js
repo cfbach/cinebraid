@@ -661,7 +661,11 @@ async function main() {
         purpose: "entity-reference", entityList: "characters", entityId: KAI,
         prompt: "Kai, three-quarter view, neutral studio light.",
         references: [ref("base-kai", "base", "image", KAI_PNG)],
-        outputCount: 1, aspectRatio: "16:9", clientRequestId: "legacy-entity-1",
+        /* 3:4 — referenceAspectLabel("characters"), which is what the shipped
+           entity-reference dispatcher sends. A character anchor is a full-body portrait
+           and never the production delivery format, and the paid boundary now refuses a
+           request naming a format nothing offered it. */
+        outputCount: 1, aspectRatio: "3:4", clientRequestId: "legacy-entity-1",
       });
       assert.strictEqual(result.status, 200, JSON.stringify(result.data));
       const job = storedJob(h, result.data.job.id);

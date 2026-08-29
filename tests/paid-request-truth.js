@@ -65,6 +65,19 @@ const BuildHistory = require("../public/shared-build-history");
 const { imageControlCapability, IMAGE_MODEL_ID } = require("../image-execution");
 const Options = require("../public/shared-generation-options");
 const CoverageOwnership = require("../public/shared-coverage");
+const { referenceAspectLabel } = require("../public/shared-aspect");
+
+/* THE FORMAT A COVERAGE DISPATCHER SENDS, read the way the dispatcher reads it.
+ *
+ * public/coverage-automation.js decides it two different ways and this stands in for both:
+ * a SHEET is a contact sheet whose format belongs to the operation (an expression sheet is
+ * 4:3, an angle sheet 16:9), while SLOT work is an entity card and takes the list's own
+ * format from the shared resolver. Derived here rather than written out so a fixture
+ * cannot quietly stand in for a screen that does not exist — which is exactly what a
+ * hard-coded 16:9 on a characters entity was doing before the boundary checked. */
+const coverageAspectFor = (body) => (String(body?.coverageJobType || "") === "sheet"
+  ? (String(body?.coverageSheetType || "") === "expressions" ? "4:3" : "16:9")
+  : referenceAspectLabel(String(body?.entityList || "")));
 const Lifecycle = require("../generation-lifecycle");
 const { addFramePromptBuild, baseSpec, buildRef, REF_IDENTITY } = require("./image-execution-fixture");
 const { declaredGenerationBody } = require("./generation-request-fixture");
@@ -451,6 +464,71 @@ async function main() {
          would have made every later object in this process answer for `resolution`. */
       assert.strictEqual(({}).resolution, undefined, "no object in this process may have gained a resolution");
       note(`4b. a Simple request smuggling resolution:"4k" as a __proto__ member reaches the adapter at ${smuggledSize} — the same size a request carrying no resolution lands on — the row records that size rather than the one it was refused, and Object.prototype is untouched`);
+    } finally { h.close(); }
+  }
+
+  /* =======================================================================
+     4c. THE OTHER FACTOR OF THE SIZE.
+
+     Reproductions 3 and 4b are about `resolution`, which the plan governs. They were half
+     a guarantee, because the provider's image_size has two factors and the plan could not
+     reach the other one: `aspectRatio` is declared in the control vocabulary but is in no
+     image surface's `only` list, and the image capabilities declare no aspectRatios — so
+     the row is filtered out of plan.controls and restrictPayloadToPlan has nothing to
+     govern. It survived the gate on every image surface in both views.
+
+     It is not a label. The compiled path lets it overwrite the shot's compiled spec and
+     the uncompiled path computes width and height from it, so a Simple request that could
+     not ship 4K could still ship a square. No dialog offers it — every one derives it from
+     the production format — so it is a route input, and this is it being treated as one. */
+  {
+    const h = await harness();
+    try {
+      const buildId = seedFramePackage(h);
+      const declaration = Presentation.generationRequestDeclaration({ surface: "compiled-frame", viewMode: "simple" });
+      const production = h.project().meta.aspectRatio;
+      assert.strictEqual(production, "16:9", "the fixture production must declare a format for this to be about anything");
+
+      /* A. A FORMAT NOTHING ASKED FOR IS REFUSED, before the row and before the provider. */
+      const square = await h.post({ ...framePlanBody(buildId, { clientRequestId: "square", aspectRatio: "1:1" }), generationRequest: declaration });
+      assert.strictEqual(square.status, 409, `a request naming a format the production does not deliver is refused: ${JSON.stringify(square.data)}`);
+      assert.strictEqual(square.data.code, "GENERATION_ASPECT_MISMATCH", "typed as its own refusal");
+      assert.strictEqual(square.data.entitledAspectRatio, "16:9", "naming what this shot is entitled to");
+      assert.strictEqual(square.data.providerContacted, false, "with the pre-provider evidence every refusal on this route carries");
+      assert.strictEqual(h.calls.length, 0, "NO provider call");
+      assert.strictEqual(h.ledger().length, 0, "and NO ledger row");
+
+      /* B. NAMING NOTHING IS NOT REFUSED — it lands on the entitled format, which is where
+            every dialog was sending it anyway. The rule modelIdentityRefusal already
+            applies: a request that names nothing has a truthful fallback. */
+      const unnamed = { ...framePlanBody(buildId, { clientRequestId: "unnamed" }) };
+      delete unnamed.aspectRatio;
+      const unnamedResult = await h.post({ ...unnamed, generationRequest: declaration });
+      assert.strictEqual(unnamedResult.status, 200, `naming no format must dispatch: ${JSON.stringify(unnamedResult.data)}`);
+      const unnamedRow = h.ledger().find((row) => row.clientRequestId === "unnamed");
+      assert.strictEqual(unnamedRow.aspectRatio, "16:9", "on the format the production entitles it to, not a literal");
+      await h.settle(unnamedResult.data.job.id);
+
+      /* C. AND NAMING THE ENTITLED ONE — what every shipped dispatcher sends — still
+            dispatches, to the identical size. The gate must be a check, not a narrowing. */
+      const named = await h.post({ ...framePlanBody(buildId, { clientRequestId: "named", aspectRatio: "16:9" }), generationRequest: declaration });
+      assert.strictEqual(named.status, 200, `naming the entitled format must dispatch: ${JSON.stringify(named.data)}`);
+      assert.strictEqual(JSON.stringify(h.calls[1].body.image_size), JSON.stringify(h.calls[0].body.image_size),
+        "and reach the adapter at exactly the size the request that named nothing did");
+
+      /* D. A SHOT THAT DECLARES ITS OWN FORMAT OVERRIDES THE PRODUCTION, because
+            shotAspectLabel reads the shot's override first — so the entitlement follows
+            the shot rather than a project-wide literal. */
+      await h.settle(named.data.job.id);
+      const overridden = h.project();
+      overridden.shots[0].creationBrief = { ...(overridden.shots[0].creationBrief || {}), composition: { aspectRatio: "2.39:1" } };
+      h.saveProject(overridden);
+      const wide = await h.post({ ...framePlanBody(buildId, { clientRequestId: "wide", aspectRatio: "2.39:1" }), generationRequest: declaration });
+      assert.strictEqual(wide.status, 200, `the shot's own declared format is what it is entitled to: ${JSON.stringify(wide.data)}`);
+      const stillSixteenNine = await h.post({ ...framePlanBody(buildId, { clientRequestId: "stale-format", aspectRatio: "16:9" }), generationRequest: declaration });
+      assert.strictEqual(stillSixteenNine.status, 409, `and the production's format is now the wrong one for this shot: ${JSON.stringify(stillSixteenNine.data)}`);
+      assert.strictEqual(stillSixteenNine.data.entitledAspectRatio, "2.39:1", "named from the shot's own declaration");
+      note(`4c. aspectRatio is the second factor of image_size and no image dialog offers it: a compiled-frame request naming 1:1 on a 16:9 production is refused GENERATION_ASPECT_MISMATCH with no provider call and no ledger row, one naming nothing lands on the entitled 16:9, one naming 16:9 reaches the adapter at the identical size, and a shot declaring 2.39:1 moves the entitlement to 2.39:1`);
     } finally { h.close(); }
   }
 
@@ -969,7 +1047,12 @@ async function main() {
         purpose: "entity-reference", entityList: "characters", entityId: "KAI", entityType: "character",
         sourceBuildId: "entity-fixture", prompt: "Kai against neutral grey, three-quarter view.",
         references: [{ key: "base", label: "Approved primary", role: "base", url: KAI_PNG }],
-        outputCount: 1, quality: "high", resolution: "4k", aspectRatio: "16:9", ...extra,
+        /* 3:4, because that is what the shipped entity-reference dispatcher sends for a
+           characters entity — referenceAspectLabel("characters"). A character anchor is a
+           full-body portrait and has never been the production delivery format. This
+           fixture stands in for that dispatcher, so a 16:9 here would be standing in for
+           a screen that does not exist, and the boundary now says so. */
+        outputCount: 1, quality: "high", resolution: "4k", aspectRatio: "3:4", ...extra,
       });
       const character = (coverageAutomation) => {
         const project = h.project();
@@ -1096,6 +1179,10 @@ async function main() {
       const coverage = await h.coverage(entityBody({
         clientRequestId: "coverage",
         coverageJobType: "sheet", coverageSheetType: "angles",
+        /* A sheet is a contact sheet, not an entity card: the OPERATION decides its
+           format, and an angle sheet is 16:9 — which is what the coverage dispatcher
+           sends and what the route's own trusted descriptor entitles it to. */
+        aspectRatio: "16:9",
         generationRequest: Presentation.generationRequestDeclaration({ surface: "reference-automation", viewMode: "simple" }),
       }));
       assert.strictEqual(coverage.status, 200, `the coverage operation must dispatch: ${JSON.stringify(coverage.data)}`);
@@ -1136,15 +1223,21 @@ async function main() {
       const project = h.project();
       project.characters.push({ id: "KAI", name: "Kai", type: "Character", approvedFile: "KAI.png", continuityStates: [] });
       h.saveProject(project);
-      const coverageBody = (extra) => ({
-        purpose: "entity-reference", entityList: "characters", entityId: "KAI", entityType: "character",
-        sourceBuildId: "entity-fixture", prompt: "Kai against neutral grey.",
-        references: [{ key: "base", label: "Approved primary", role: "base", url: KAI_PNG }],
-        outputCount: 1, quality: "high", resolution: "4k", aspectRatio: "16:9",
-        coverageJobType: "sheet", coverageSheetType: "angles",
-        generationRequest: Presentation.generationRequestDeclaration({ surface: "reference-automation", viewMode: "simple" }),
-        ...extra,
-      });
+      const coverageBody = (extra) => {
+        /* Merged first, because the format follows the job type and half these callers
+           override it to `slot` — a default computed before the override would send an
+           angle sheet's 16:9 on entity-card work. */
+        const merged = { coverageJobType: "sheet", coverageSheetType: "angles", entityList: "characters", ...extra };
+        return {
+          purpose: "entity-reference", entityId: "KAI", entityType: "character",
+          sourceBuildId: "entity-fixture", prompt: "Kai against neutral grey.",
+          references: [{ key: "base", label: "Approved primary", role: "base", url: KAI_PNG }],
+          outputCount: 1, quality: "high", resolution: "4k",
+          aspectRatio: coverageAspectFor(merged),
+          generationRequest: Presentation.generationRequestDeclaration({ surface: "reference-automation", viewMode: "simple" }),
+          ...merged,
+        };
+      };
       const runOf = () => h.project().characters[0].coverageAutomation;
 
       /* THE REVIEWER'S REPRODUCTION, first and by name. */

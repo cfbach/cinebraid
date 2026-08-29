@@ -3,7 +3,7 @@
 const crypto = require("crypto");
 const fs = require("fs");
 const path = require("path");
-const { parseAspectRatio, h3AspectSupport } = require("./public/shared-aspect");
+const { parseAspectRatio, h3AspectSupport, shotAspectLabel, referenceAspectLabel } = require("./public/shared-aspect");
 const { readJobLedger, writeJobLedgerSync, JobLedgerUnreadableError } = require("./generation-job-store");
 const { jobOutputsForRename, repairJobOutputIdentity } = require("./public/shared-media-disposition");
 const { compileH3ExecutionPlan, h3ControlCapability, planProvenance, H3ExecutionError } = require("./h3-execution");
@@ -677,6 +677,74 @@ function registerFalGeneration(app, context) {
      A package with no recorded dependency snapshot is NOT refused. Refusing on an absence
      would block every package compiled before dependencies were captured - and every
      blocking package, which never records one at all - on evidence nobody has. */
+  /* THE FORMAT THIS REQUEST IS ENTITLED TO, and why it is not a control.
+   *
+   * `aspectRatio` is declared in the control vocabulary but appears in exactly one
+   * surface's `only` list - motion-h3 - and the four image surfaces declare no
+   * `aspectRatios` capability, so controlSupport() answers {supported:true, values:null},
+   * the row is filtered out of plan.controls, and restrictPayloadToPlan has nothing to
+   * govern. It survives the gate on every image surface in BOTH views.
+   *
+   * That would be harmless if it were a label. It is one of the two factors of the
+   * provider's image_size: the compiled path lets it OVERWRITE the shot's compiled spec
+   * (image-execution.js:199-200) and the uncompiled path computes width and height from
+   * it directly (aspectSize below). No image dialog offers it - every one of them derives
+   * it from the production format through the same two resolvers used here - so it is
+   * exactly what the module header forbids: a control nothing rendered, contributing to
+   * the payload. Simple stripping `resolution` so a filmmaker who was never offered a size
+   * cannot ship 4K, while the second factor of that same field stayed free, was half a
+   * guarantee.
+   *
+   * So it is treated as the route input it actually is, the way the other two route inputs
+   * on this boundary already are: derived from state the request does not carry. Adding it
+   * to the surface tables would change nothing - a simple-tier supported control is
+   * rendered, and a rendered control is allowed.
+   *
+   * A COVERAGE SHEET IS NEITHER OF THE TWO RESOLVERS - an expression sheet is 4:3 and an
+   * angle sheet 16:9, decided by the operation rather than by the entity - so that surface
+   * carries its entitled format on the same server-built descriptor that already says
+   * which operation is running. Same object, same construction, no new trust in the body. */
+  function entitledAspectLabel(owner, body, purpose, trusted) {
+    /* Motion resolves its own: the plan governs the control on this surface and
+       h3AspectGate() already refuses a ratio the mode cannot carry. A second opinion here
+       would be a second owner of the same question. */
+    if (purpose === "motion-h3") return "";
+    if (trusted?.aspectRatio) return String(trusted.aspectRatio);
+    const entityList = String(body?.entityList || "");
+    if (entityList) return referenceAspectLabel(entityList);
+    const shotId = String(body?.shotId || "");
+    if (!shotId) return "";
+    const project = ownerProject(owner);
+    const shot = (project.shots || []).find((row) => String(row?.id) === shotId);
+    if (!shot) return "";
+    return shotAspectLabel(project, shot);
+  }
+
+  /* Shaped like modelIdentityRefusal and applying its rule: a request that names nothing
+     is not refused - it lands on the entitled format below, which is where every dialog
+     was sending it anyway - and a request that names the WRONG one never quietly
+     proceeds. Refusing rather than overwriting, because silently reframing a paid request
+     is the same class of failure as silently resizing one. */
+  function aspectAuthorityRefusal(owner, body, purpose, trusted) {
+    const requested = String(body?.aspectRatio || "");
+    if (!requested) return null;
+    /* A STRING THAT IS NOT A FORMAT IS NOT A COMPETING CLAIM. aspectSize() already reads
+       an unreadable ratio, and one outside the believable range, as "nobody said" and
+       lands it on the same fallback an absent value gets - so there is nothing here for a
+       caller to gain and nothing for this gate to protect. Refusing it would turn a
+       fallback that has always been silent into an error, which is a different change from
+       the one this makes. */
+    if (!parseAspectRatio(requested)) return null;
+    const entitled = entitledAspectLabel(owner, body, purpose, trusted);
+    if (!entitled || requested === entitled) return null;
+    return {
+      status: 409,
+      code: "GENERATION_ASPECT_MISMATCH",
+      error: `This request asks for ${requested}, but this production delivers ${entitled} here. CineBraid will not spend on a frame in a format nothing asked for. Nothing was submitted.`,
+      detail: { requestedAspectRatio: requested, entitledAspectRatio: entitled },
+    };
+  }
+
   function packageFreshnessRefusal(owner, job) {
     if (!job.shotId || !job.sourceBuildId) return null;
     const project = ownerProject(owner);
@@ -2215,6 +2283,9 @@ function registerFalGeneration(app, context) {
     if (guardError) return res.status(guardError.status).json({ error: guardError.message, code: guardError.code || "AUTOMATION_GUARD" });
     const refs = Array.isArray(req.body?.references) ? req.body.references.filter((ref) => ref && ref.url) : [];
     const edit = refs.length > 0;
+    /* Resolved once, before the row is built, so the same answer is both what a request
+       naming nothing lands on and what a request naming something is judged against. */
+    const entitledAspect = entitledAspectLabel(owner, req.body, purpose, trusted);
     const job = {
       id: uid(),
       automationRunId,
@@ -2272,7 +2343,11 @@ function registerFalGeneration(app, context) {
          difference; clamping here as well would apply a floor this module has no
          evidence for and would hide the adjustment. */
       durationSeconds: purpose === "motion-h3" ? Math.max(0, Math.round(Number(req.body?.durationSeconds) || 0)) : 0,
-      aspectRatio: String(req.body?.aspectRatio || (purpose === "motion-h3" && String(req.body?.profileMode || "") === "r2v" ? "adaptive" : "16:9")),
+      /* The entitled format is the fallback rather than a bare "16:9". The unpaid preview
+         route passes "" here and lets the compiled spec win, so a literal made the paid
+         route answer differently from the preview of the same shot on a production that
+         is not 16:9 - the request had to carry the format to get its own. */
+      aspectRatio: String(req.body?.aspectRatio || (purpose === "motion-h3" && String(req.body?.profileMode || "") === "r2v" ? "adaptive" : entitledAspect || "16:9")),
       revisionRequest: String(req.body?.revisionRequest || "").trim(),
       revisedFromAssetId: String(req.body?.revisedFromAssetId || ""),
       createdAt: now(),
@@ -2305,6 +2380,11 @@ function registerFalGeneration(app, context) {
     const identityRefusal = modelIdentityRefusal(job, cfg);
     if (identityRefusal)
       return requestTruthRefusal(res, identityRefusal.status, identityRefusal.code, identityRefusal.error, identityRefusal.detail);
+    /* THE FORMAT THE SCREEN WAS SHOWING, in the same slot and for the same reason: it is
+       the other factor of the size, and it was the one the plan could not reach. */
+    const aspectRefusal = aspectAuthorityRefusal(owner, req.body, purpose, trusted);
+    if (aspectRefusal)
+      return requestTruthRefusal(res, aspectRefusal.status, aspectRefusal.code, aspectRefusal.error, aspectRefusal.detail);
     const staleRefusal = packageFreshnessRefusal(owner, job);
     if (staleRefusal)
       return requestTruthRefusal(res, staleRefusal.status, staleRefusal.code, staleRefusal.error, staleRefusal.detail);
@@ -2771,6 +2851,14 @@ function registerFalGeneration(app, context) {
       surface: "reference-automation",
       entityList: list,
       entityId,
+      /* AND WHAT FORMAT THIS OPERATION DELIVERS. A sheet is a contact sheet rather than an
+         entity card - an expression sheet is 4:3 and an angle sheet 16:9 - so it is the
+         operation, not the entity, that decides. Read from the jobType and sheetType this
+         route validated for itself a few lines above, exactly as the coverage dispatcher
+         reads them; slot work is an entity card like any other and takes the list's own
+         format. On the descriptor so that the boundary's aspect check is answering about
+         the operation it is running rather than about a field the request supplied. */
+      aspectRatio: jobType === "sheet" ? (sheetType === "expressions" ? "4:3" : "16:9") : referenceAspectLabel(list),
       async onDispatchCommit(dispatchOwner, job) {
         await commitProject(dispatchOwner, (project) => {
           const entity = (project[list] || []).find((item) => String(item?.id) === entityId);

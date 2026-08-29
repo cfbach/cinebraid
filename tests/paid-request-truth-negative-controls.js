@@ -548,6 +548,38 @@ async function main() {
     });
 
   /* =======================================================================
+     3b. THE SECOND FACTOR OF THE SIZE, LEFT ON THE CALLER'S WORD.
+
+     Control 1 proves `resolution` cannot get past the plan. That is one of the two factors
+     of image_size, and the plan cannot reach the other: no image surface lists
+     `aspectRatio` and no image capability declares aspectRatios, so restrictPayloadToPlan
+     has nothing to govern and the key survives on every image surface in both views.
+     Remove the refusal that treats it as the route input it is, and a Simple request that
+     could not ship 4K ships a square instead. */
+  await control("a boundary that takes the requested format on the caller's word",
+    "a paid request cannot choose a delivery format nothing offered it", async (phase) => {
+      const falGeneration = loadModified("fal-generation.js", [[
+        "    const aspectRefusal = aspectAuthorityRefusal(owner, req.body, purpose, trusted);",
+        "    const aspectRefusal = null;",
+      ]]);
+      phase("MUTATION_LANDED");
+      const h = await harness(falGeneration);
+      try {
+        const buildId = seedFramePackage(h);
+        const result = await h.post({
+          ...framePlanBody(buildId, { aspectRatio: "1:1" }),
+          generationRequest: Presentation.generationRequestDeclaration({ surface: "compiled-frame", viewMode: "simple" }),
+        });
+        assert.strictEqual(result.status, 200, `the unsafe path must actually run: ${JSON.stringify(result.data)}`);
+        assert.strictEqual(h.calls.length, 1, "and must actually reach the provider");
+        phase("UNSAFE_PATH_EXECUTED");
+        const size = h.calls[0].body.image_size;
+        observeHarm(size && size.width === size.height,
+          `THE DEFECT: a request reframed a 16:9 production's paid frame to a square nothing offered — image_size ${JSON.stringify(size)}, and the row records aspectRatio ${JSON.stringify((h.ledger()[0] || {}).aspectRatio)}`);
+      } finally { h.close(); }
+    });
+
+  /* =======================================================================
      4b/4c. THE SAME GATE, REACHED BY A NAME IT DOES NOT RESOLVE.
 
      Control 4 removes the gate. These two leave it in place and reintroduce the reasons it
@@ -793,7 +825,12 @@ async function main() {
           purpose: "entity-reference", entityList: "characters", entityId: "KAI", entityType: "character",
           sourceBuildId: "entity-fixture", prompt: "Kai against neutral grey.",
           references: [{ key: "base", label: "Approved primary", role: "base", url: KAI_PNG }],
-          outputCount: 1, quality: "high", resolution: "4k", aspectRatio: "16:9",
+          /* 3:4 — this posts to the PUBLIC route, where there is no trusted descriptor, so
+             the entitled format is the characters list's own. A hand-rolled bypass sends
+             whatever gets it through, and 16:9 here would simply be refused by the aspect
+             gate before this control could observe its own harm: the surface promotion
+             would go unmeasured while the control reported green for another gate's work. */
+          outputCount: 1, quality: "high", resolution: "4k", aspectRatio: "3:4",
           coverageJobType: "sheet", coverageSheetType: "angles",
           generationRequest: Presentation.generationRequestDeclaration({ surface: "reference-automation", viewMode: "simple" }),
         });
@@ -1064,7 +1101,9 @@ async function main() {
           purpose: "entity-reference", entityList: "characters", entityId: "KAI", entityType: "character",
           sourceBuildId: "entity-fixture", prompt: "Kai against neutral grey.",
           references: [{ key: "base", label: "Approved primary", role: "base", url: KAI_PNG }],
-          outputCount: 1, quality: "high", resolution: "4k", aspectRatio: "16:9",
+          /* 4:3 — an EXPRESSION sheet, whose format the coverage operation decides and
+             which is not the angle sheet's 16:9. */
+          outputCount: 1, quality: "high", resolution: "4k", aspectRatio: "4:3",
           coverageJobType: "sheet", coverageSheetType: "expressions",
           clientRequestId: "a-different-press",
           generationRequest: Presentation.generationRequestDeclaration({ surface: "reference-automation", viewMode: "simple" }),

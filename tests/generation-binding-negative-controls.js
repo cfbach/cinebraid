@@ -734,7 +734,10 @@ const LEGACY_EDIT_BODY = {
   purpose: "entity-reference", entityList: "characters", entityId: KAI,
   prompt: "Kai, three-quarter view.",
   references: [{ key: "base-kai", role: "base", mediaType: "image", url: "/assets/anchors/KAI.png" }],
-  outputCount: 1, aspectRatio: "16:9", clientRequestId: "nc-legacy-edit",
+  /* 3:4 — referenceAspectLabel("characters"), what the shipped entity-reference
+     dispatcher sends. The paid boundary refuses a format nothing offered the request, and
+     a control refused by a gate other than its own has measured nothing. */
+  outputCount: 1, aspectRatio: "3:4", clientRequestId: "nc-legacy-edit",
 };
 const LEGACY_ZERO_INPUT_BODY = {
   purpose: "blocking", shotId: "SH-1", prompt: "Flat greyscale blocking.",
