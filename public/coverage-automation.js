@@ -669,6 +669,10 @@
     const panelCount = COVERAGE_CROP_LAYOUTS[layout].cols * COVERAGE_CROP_LAYOUTS[layout].rows;
     const panelIndex = Math.max(0, Math.min(panelCount - 1, firstIndex));
     window._coverageCrop = { list, entityId, fileName, url: media.url, sheetType, slots, slotId: slots[firstIndex]?.id || slots[0]?.id || "", layout, panelIndex, crop: cropPresetForPanel(panelIndex, layout), sourceRow: row };
+    /* The sheet workflow's own condition: more than one view on this sheet is
+       still empty, so "and then the next one" is a real offer rather than a
+       button that reopens the extractor on nothing. */
+    const moreToCrop = slots.filter((item) => !slotSelectedFile(item)).length > 1;
     /* R3 — THE CROP IS THE INTERACTION; EVERYTHING ELSE WAS COMPETING WITH IT.
      *
      * This modal exposed eleven controls at once — target, sheet layout, panel
@@ -697,7 +701,7 @@
      * crop, source sheet and note on the candidate row, and "Save crop & use"
      * still performs the accepted one-action assignment with no second
      * confirmation. */
-    openModal(`<div class="coverage-extractor-modal"><header><div><span>REFERENCE EXTRACTION</span><h3>${esc(entity.name || entity.id)}</h3><p>Turn one sheet into clean authority views. Select a target, choose the panel, fine-tune only when needed, then save.</p></div><button class="cancel" onclick="closeModal()">Close</button></header><nav class="coverage-extractor-steps" aria-label="Reference extraction steps"><span class="active"><b>1</b> Choose target</span><span class="active"><b>2</b> Crop panel</span><span><b>3</b> Save authority</span></nav><div class="coverage-extractor-layout"><div><div id="coverage-crop-stage" class="coverage-crop-stage"><img id="coverage-crop-source" src="${attr(media.url)}" alt="Reference sheet"><div id="coverage-crop-overlay" class="coverage-crop-overlay"><span id="coverage-crop-target-label"></span></div></div><small>Drag anywhere on the sheet to redraw the crop. The layout and panel controls provide a fast starting point.</small></div><aside><label><span>Save this crop as</span><select id="coverage-crop-slot" onchange="selectCoverageCropSlot(this.value)">${slots.map((slot) => `<option value="${attr(slot.id)}" ${slot.id === window._coverageCrop.slotId ? "selected" : ""}>${esc(slot.label)}${slot.approvedFile ? " · already assigned" : ""}</option>`).join("")}</select></label><div class="coverage-crop-navigation"><button class="ghost-btn" onclick="stepCoverageCropPanel(-1)">← Previous panel</button><button class="ghost-btn" onclick="stepCoverageCropPanel(1)">Next panel →</button></div><label class="checkline coverage-direct-override"><input id="coverage-crop-approve" type="checkbox"> Save this crop and use it for this view</label><div class="coverage-review-gate"><b>Review is optional</b><span>Ticked, the crop is saved and selected for the view above in this one action. Left unticked, it is saved as a candidate you can review later. Neither is a canon approval.</span></div><details class="coverage-crop-advanced"><summary>Fine tune</summary><div><div class="coverage-crop-quick-grid"><label><span>Sheet layout</span><select id="coverage-crop-layout" onchange="setCoverageCropLayout(this.value)">${Object.entries(COVERAGE_CROP_LAYOUTS).map(([id,preset]) => `<option value="${id}" ${id === layout ? "selected" : ""}>${preset.label}</option>`).join("")}</select></label><label><span>Panel position</span><select id="coverage-crop-panel" onchange="setCoverageCropPanel(this.value)">${coverageCropPanelOptions(layout,panelIndex)}</select></label></div><div class="coverage-crop-presets"><button onclick="applyCoverageCropPreset()">Reset to panel</button><button onclick="setCoverageCropFull()">Use full image</button></div><div class="coverage-crop-fields">${["x","y","w","h"].map((key) => `<label><span>${key.toUpperCase()} %</span><input id="coverage-crop-${key}" type="number" min="0" max="100" step="0.5" onchange="setCoverageCropField('${key}',this.value)"></label>`).join("")}</div><label><span>Extraction note</span><textarea id="coverage-crop-note" placeholder="Why this panel is authoritative or any limitations."></textarea></label><div class="coverage-crop-provenance"><b>Source sheet</b><span>${esc(fileName)}</span><small>CineBraid stores the crop coordinates, panel layout, and source file so the angle can be traced later.</small></div></div></details></aside></div><div class="modal-actions coverage-extractor-actions"><button class="cancel" onclick="closeModal()">Cancel</button><button class="ghost-btn" onclick="extractCoverageCrop(true)">SAVE CROP & CLOSE</button><button class="approve-btn large" onclick="extractCoverageCrop(false)">SAVE CROP & NEXT ANGLE</button></div></div>`);
+    openModal(`<div class="coverage-extractor-modal"><header><div><span>REFERENCE EXTRACTION</span><h3>${esc(entity.name || entity.id)}</h3><p>Turn one sheet into clean authority views. Select a target, choose the panel, fine-tune only when needed, then save.</p></div><button class="cancel" onclick="closeModal()">Close</button></header><nav class="coverage-extractor-steps" aria-label="Reference extraction steps"><span class="active"><b>1</b> Choose target</span><span class="active"><b>2</b> Crop panel</span><span><b>3</b> Save authority</span></nav><div class="coverage-extractor-layout"><div><div id="coverage-crop-stage" class="coverage-crop-stage"><img id="coverage-crop-source" src="${attr(media.url)}" alt="Reference sheet"><div id="coverage-crop-overlay" class="coverage-crop-overlay"><span id="coverage-crop-target-label"></span></div></div><small>Drag anywhere on the sheet to redraw the crop. The layout and panel controls provide a fast starting point.</small></div><aside><label><span>Save this crop as</span><select id="coverage-crop-slot" onchange="selectCoverageCropSlot(this.value)">${slots.map((slot) => `<option value="${attr(slot.id)}" ${slot.id === window._coverageCrop.slotId ? "selected" : ""}>${esc(slot.label)}${slot.approvedFile ? " · already assigned" : ""}</option>`).join("")}</select></label><div class="coverage-crop-navigation"><button class="ghost-btn" onclick="stepCoverageCropPanel(-1)">← Previous panel</button><button class="ghost-btn" onclick="stepCoverageCropPanel(1)">Next panel →</button></div><div class="coverage-review-gate"><b>Review is optional</b><span>Save crop &amp; use puts this crop into the view above in one action. Save as candidate keeps it without changing the view. Neither is a canon approval, and an AI check can be run afterwards either way.</span></div><details class="coverage-crop-advanced"><summary>Fine tune</summary><div><div class="coverage-crop-quick-grid"><label><span>Sheet layout</span><select id="coverage-crop-layout" onchange="setCoverageCropLayout(this.value)">${Object.entries(COVERAGE_CROP_LAYOUTS).map(([id,preset]) => `<option value="${id}" ${id === layout ? "selected" : ""}>${preset.label}</option>`).join("")}</select></label><label><span>Panel position</span><select id="coverage-crop-panel" onchange="setCoverageCropPanel(this.value)">${coverageCropPanelOptions(layout,panelIndex)}</select></label></div><div class="coverage-crop-presets"><button onclick="applyCoverageCropPreset()">Reset to panel</button><button onclick="setCoverageCropFull()">Use full image</button></div><div class="coverage-crop-fields">${["x","y","w","h"].map((key) => `<label><span>${key.toUpperCase()} %</span><input id="coverage-crop-${key}" type="number" min="0" max="100" step="0.5" onchange="setCoverageCropField('${key}',this.value)"></label>`).join("")}</div><label><span>Extraction note</span><textarea id="coverage-crop-note" placeholder="Why this panel is authoritative or any limitations."></textarea></label><div class="coverage-crop-provenance"><b>Source sheet</b><span>${esc(fileName)}</span><small>CineBraid stores the crop coordinates, panel layout, and source file so the angle can be traced later.</small></div></div></details></aside></div><div class="modal-actions coverage-extractor-actions"><button class="cancel" onclick="closeModal()">Cancel</button><button class="ghost-btn" onclick="extractCoverageCrop({ assign: false })">SAVE AS CANDIDATE</button>${moreToCrop ? `<button class="ghost-btn" onclick="extractCoverageCrop({ assign: false, next: true })">SAVE & NEXT VIEW</button>` : ""}<button class="approve-btn large" onclick="extractCoverageCrop({ assign: true })">SAVE CROP & USE</button></div></div>`);
     setTimeout(() => { coverageCropRender(); coverageCropBindStage(); }, 30);
   };
   window.selectCoverageCropSlot = (slotId) => {
@@ -749,7 +753,38 @@
     if (state.crop.y + state.crop.h > 100) state.crop.h = 100 - state.crop.y;
     coverageCropRender();
   };
-  window.extractCoverageCrop = async (closeAfter = false) => {
+  /* ALPHA R3 / R8 — THE ATOMIC ACTION IS NAMED ON THE BUTTON THAT PERFORMS IT.
+   *
+   * "Save crop & use" was already accepted, already atomic and already correct —
+   * and it was spelled as a checkbox called "Save this crop and use it for this
+   * view" sitting above two buttons that both said SAVE CROP and neither of which
+   * said USE. So the one-action path was a two-control path, the filmmaker had to
+   * read a four-line explanation to find out which combination assigned, and the
+   * commonest outcome of pressing the big button was a candidate they had not
+   * asked for.
+   *
+   * The two acts the brief distinguishes are now the two controls:
+   *
+   *   SAVE CROP & USE     assign: true   — save, assign the named view, return to
+   *                                        Coverage. One press, no confirmation.
+   *   SAVE AS CANDIDATE   assign: false  — save, change no view.
+   *   SAVE & NEXT VIEW    assign: false  — the candidate path, continued onto the
+   *                                        next empty view of the same sheet.
+   *                                        This is exactly what the old default
+   *                                        button did, kept and renamed.
+   *
+   * NOTHING BELOW CHANGED SHAPE. The crop, the upload, the candidate row, the
+   * provenance, `reviewRequired`, the scan refresh and the coverage hand-off are
+   * the same writes in the same order; `approve` is simply read from the caller
+   * instead of from a DOM element. A boolean argument is still accepted, meaning
+   * what it always meant, so a page mid-session cannot break on an old handler. */
+  window.extractCoverageCrop = async (options = false) => {
+    const settings = options && typeof options === "object" ? options : { assign: false, next: options !== true };
+    const assign = settings.assign === true;
+    /* Continuation belongs to the candidate path alone, because an assignment may
+       still raise the REPLACE question and reopening the extractor over it would
+       bury a decision the filmmaker has to make. */
+    const continueToNext = !assign && settings.next === true;
     const state = window._coverageCrop;
     const entity = state && entityFor(state.list, state.entityId);
     const slot = state?.slots.find((item) => item.id === state.slotId);
@@ -766,8 +801,7 @@
     const response = await fetch(`/api/media/upload?type=${encodeURIComponent(entityFolder(state.list))}&name=${encodeURIComponent(name)}${projectSlugParam()}`, { method: "POST", headers: { "Content-Type": "image/png" }, body: blob });
     const data = await response.json().catch(() => ({}));
     if (!response.ok) return toast(data.error || "Could not save the extracted crop");
-    const approve = document.getElementById("coverage-crop-approve")?.checked === true;
-    if (approve) closeAfter = true;
+    const approve = assign;
     const note = document.getElementById("coverage-crop-note")?.value || "";
     entity.candidateFiles = Array.isArray(entity.candidateFiles) ? entity.candidateFiles : [];
     const candidateRow = { stored: data.name, original: data.name, addedAt: new Date().toISOString(), decision: "unreviewed", reviewRequired: !approve, directApprovalRequested: !!approve, targetCoverageSlotId: slot.id, targetCoverageSlotName: slot.label, coverageGroup: state.sheetType === "expressions" ? "expressions" : "angles", coverageCrop: { sourceSheet: state.fileName, layout: state.layout, panelIndex: state.panelIndex, normalized: { ...state.crop }, sourceBuildId: state.sourceRow.sourceBuildId || "", generationJobId: state.sourceRow.generationJobId || "", manuallyAdjusted: true, note }, coverageJobType: "extracted-crop", referenceView: coverageSlotViewTag(state.list, slot) };
@@ -782,12 +816,12 @@
     const nextSlot = state.slots.find((item) => item.id !== slot.id && !slotSelectedFile(item)) || null;
     closeModal();
     await route();
-    if (!closeAfter && nextSlot) {
+    if (continueToNext && nextSlot) {
       setTimeout(() => {
         openCoverageSheetExtractor(state.list, state.entityId, state.fileName);
         setTimeout(() => selectCoverageCropSlot(nextSlot.id), 30);
       }, 40);
-      toast(`${slot.label} extracted${approve ? " with human approval requested" : " as a review candidate"} — continue with ${nextSlot.label}`);
+      toast(`${slot.label} extracted as a review candidate — continue with ${nextSlot.label}`);
     } else {
       /* NO SECOND CONFIRMATION, AND THE COPY NO LONGER ASKS FOR ONE.
          The assignment below already completes the filmmaker's explicit
@@ -800,9 +834,10 @@
          approveCoverageCandidate() may still raise a REPLACE confirmation. That
          is a question about displacing a view the slot already holds, which is a
          different question from approving this crop, and it stays. */
-      /* R4, THE OTHER HALF. The unchecked branch used to open Candidate Review
-         on a 60ms timer, and the human pass found that the worst hand-off on the
-         screen: the button that had just been pressed said SAVE CROP, not
+      /* R4, THE OTHER HALF. The non-assigning branch — SAVE AS CANDIDATE, and
+         before the alpha pass the unticked checkbox — used to open Candidate
+         Review on a 60ms timer, and the human pass found that the worst hand-off
+         on the screen: the button that had just been pressed said SAVE CROP, not
          REVIEW, and the answer to pressing it was a modal about a decision the
          filmmaker had not asked to make — on top of the Coverage board they had
          been working in, which they then had to dismiss to see the result.

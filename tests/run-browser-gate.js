@@ -64,6 +64,7 @@ const SUITES = [
   "check:returned-review-browser",
   "check:launch-language-browser",
   "check:reference-demand-browser",
+  "check:references-alpha-browser",
 ];
 
 /* Suites that launch a browser and are known to fail, pinned to the reason.

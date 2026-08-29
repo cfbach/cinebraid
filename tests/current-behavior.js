@@ -539,6 +539,7 @@ async function main() {
     "reference-ux-convergence.js",
     "reference-workflow-repair.js",
     "reference-workspace-ux.js",
+    "references-alpha-real-browser.py",
     "release-package-smoke.js",
     "render-harness.js",
     "request-boundary.js",

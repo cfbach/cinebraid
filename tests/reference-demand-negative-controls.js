@@ -205,11 +205,15 @@ async function nc1() {
         `    if (false)
       return { state: "available", tier, basis: "no-current-production-demand", demanded: false };`,
       ]],
+      /* THE ANCHOR MOVED WITH THE SEAM. The obligation set is now built by
+         obligationStateIds() — one derivation for the panel AND for the coverage
+         board's slot chip — so disabling it here disables it for both, which is a
+         strictly wider defect than the inline version this control used to arm. */
       "entities.js": [[
-        `  const owed = obligations && obligations.known === true
+        `  return obligations && obligations.known === true
     ? new Set((obligations.rows || []).map((row) => String(row.stateId || "")))
     : null;`,
-        `  const owed = null; void obligations;`,
+        `  void obligations; return null;`,
       ]],
     },
     probe: async (mutate) => {
@@ -568,9 +572,9 @@ async function nc12() {
     defect: "the derived demand answer is persisted onto the slot beside the fact it came from",
     run: async () => {
       await patchedFile("public/entities.js", [[
-        `    return { ...row, demandState: state, demandBasis: basis, productionDemanded: resolved.demanded };`,
-        `    row.demandState = state;
-    return { ...row, demandState: state, demandBasis: basis, productionDemanded: resolved.demanded };`,
+        `    return { ...row, demandState: resolved.state, demandBasis: resolved.basis, productionDemanded: resolved.demanded };`,
+        `    row.demandState = resolved.state;
+    return { ...row, demandState: resolved.state, demandBasis: resolved.basis, productionDemanded: resolved.demanded };`,
       ]], async () => {
         const patched = readLF("public/entities.js");
         assert.ok(/row\.demandState\s*=(?!=)/.test(patched),
@@ -748,11 +752,15 @@ async function nc17() {
     id: "NC-REF17",
     defect: "an active entity whose readiness is satisfied still claims its whole coverage template is required now",
     editsByFile: {
+      /* THE ANCHOR MOVED WITH THE SEAM. The obligation set is now built by
+         obligationStateIds() — one derivation for the panel AND for the coverage
+         board's slot chip — so disabling it here disables it for both, which is a
+         strictly wider defect than the inline version this control used to arm. */
       "entities.js": [[
-        `  const owed = obligations && obligations.known === true
+        `  return obligations && obligations.known === true
     ? new Set((obligations.rows || []).map((row) => String(row.stateId || "")))
     : null;`,
-        `  const owed = null; void obligations;`,
+        `  void obligations; return null;`,
       ]],
     },
     probe: async (mutate) => {
@@ -1088,7 +1096,7 @@ async function main() {
   /* THE TREE IS CLEAN. Every file a control can reach, checked for the exact
      text that control introduces. */
   const restored = [
-    ["public/entities.js", [/row\.demandState\s*=(?!=)/, /const owed = null; void obligations;/, /if \(false\) \{/]],
+    ["public/entities.js", [/row\.demandState\s*=(?!=)/, /void obligations; return null;/, /if \(false\) \{/]],
     ["public/shared-coverage.js", [/if \(false\)\s*\n\s*return \{ state: "available"/]],
     ["public/shared-entities.js", [/if \(true\) return \{ known: true, demanded: true/, /void namesThis; void status;/, /void shotDependencyReadingIsWellFormed;/]],
     /* Each pattern is the EXACT text one control introduces, and each was checked
@@ -1133,7 +1141,7 @@ async function main() {
     "public/shared-entities.js lost the malformed-collection guard");
   assert.ok(readLF("public/app.js").includes(`s.creationBrief[SHOT_NO_PRIMARY_LOCATION_KEY] !== true`),
     "public/app.js lost the explicit no-primary-location guard");
-  assert.ok(readLF("public/entities.js").includes(`const owed = obligations && obligations.known === true`),
+  assert.ok(readLF("public/entities.js").includes(`  return obligations && obligations.known === true`),
     "public/entities.js lost the current-obligation gate");
 
   console.log(`Reference demand negative controls passed — ${results.length} defects introduced, ${results.length} caught:`);

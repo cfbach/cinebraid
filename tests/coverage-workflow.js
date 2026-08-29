@@ -62,10 +62,18 @@ async function testRenderedCoverageControls() {
   assert(!reviewModal.includes("APPROVE FOR DEFAULT"), "sheet review must not encourage assigning the whole sheet as one continuity-state image");
   rendered.context.openCoverageSheetExtractor("characters", "CHAR-IREN", "CHAR-IREN-SHEET.png");
   const extractor = rendered.context.document.getElementById("modal").innerHTML;
-  assert(extractor.includes("SAVE CROP & NEXT ANGLE"), "crop workflow must support saving and moving to the next angle");
-  assert(extractor.includes("SAVE CROP & CLOSE"), "crop workflow must also allow a deliberate exit");
+  /* ALPHA R3 — THE SAME FOUR PROPERTIES, CARRIED BY NAMED CONTROLS. This asserted
+     two buttons that both said SAVE CROP plus a checkbox that decided which of
+     them assigned; the act a filmmaker wanted most had no button of its own. The
+     continuation, the deliberate exit, the explanation and the opt-in default are
+     all still here — each on the control that performs it. */
+  assert(extractor.includes("SAVE & NEXT VIEW"), "crop workflow must support saving and moving to the next view");
+  assert(extractor.includes("SAVE AS CANDIDATE"), "crop workflow must also allow a deliberate exit that assigns nothing");
+  assert(extractor.includes("SAVE CROP & USE"), "and the one-action assign must be a control of its own");
   assert(extractor.includes("Review is optional"), "crop extraction must explain optional review and human approval");
-  assert(!/id="coverage-crop-approve"[^>]*checked/.test(extractor), "direct crop approval must be opt-in, not the default");
+  assert(!extractor.includes('id="coverage-crop-approve"'), "the redundant save-and-use checkbox must be gone — the button already says it");
+  assert(/extractCoverageCrop\(\{ assign: true \}\)/.test(extractor) && /extractCoverageCrop\(\{ assign: false \}\)/.test(extractor),
+    "and assignment must be an argument of the action rather than ambient DOM state");
 }
 
 async function testCoverageSubmissionAndPersistentOpenState() {

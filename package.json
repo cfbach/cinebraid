@@ -283,6 +283,7 @@
     "check:reference-demand": "node tests/reference-demand.js",
     "check:reference-demand-negative": "node tests/reference-demand-negative-controls.js",
     "check:reference-demand-browser": "node tests/run-python-check.js tests/reference-demand-real-browser.py",
+    "check:references-alpha-browser": "node tests/run-python-check.js tests/references-alpha-real-browser.py",
     "check:launch-language": "node tests/launch-language-convergence.js",
     "check:launch-language-negative": "node tests/launch-language-convergence-negative-controls.js",
     "check:launch-language-browser": "node tests/run-python-check.js tests/launch-language-convergence-real-browser.py",

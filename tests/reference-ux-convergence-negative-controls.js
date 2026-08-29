@@ -15,11 +15,14 @@
  *   6. an unrelated throw fails the suite loudly
  *   7. the invariant HOLDS under the real module
  *
- * WHY THESE SIX. A presentation slice can go wrong in exactly two ways that
+ * WHY THESE TEN. A presentation slice can go wrong in exactly two ways that
  * matter: it can make the screen CLAIM something that is not true, or it can make
- * something DISAPPEAR while calling it simplification. Five of the six below are
- * one or the other of those. The sixth guards the hand-off, which is the thing a
- * filmmaker notices last and trusts least once it is wrong.
+ * something DISAPPEAR while calling it simplification. N1, N2, N4, N6 and N7 are
+ * one or the other of those. N3 guards the hand-off, which is the thing a
+ * filmmaker notices last and trusts least once it is wrong. N5 guards a way out.
+ * N8, N9 and N10 guard the line between SAVING something and CHOOSING it — the
+ * one distinction on this screen where getting it wrong silently changes what a
+ * production is built from.
  *
  * IN MEMORY, ALWAYS. Nothing in the working tree is written, so no control can be
  * "restored" by a checkout that would also discard real work.
@@ -382,6 +385,202 @@ controlAsync({
   },
   reason: "chooser-hidden-with-real-choices",
   explain: "Hiding a control that has nothing to say is simplification; hiding one that does is a lost capability.",
+});
+
+/* ===========================================================================
+   ALPHA BLOCKERS — four more mechanisms, four more watched failures.
+   =========================================================================== */
+
+/* The extractor needs two edges the render harness has no model for: an upload
+   endpoint and a canvas. Everything between them is the shipped writer. */
+const sheetFixture = () => {
+  const project = uxFixture();
+  const character = project.characters.find((row) => row.id === "CHAR-NC");
+  character.candidateFiles.push({
+    stored: "CHAR-NC-SHEET.png", original: "CHAR-NC-SHEET.png", decision: "unreviewed",
+    coverageJobType: "sheet", coverageSheetType: "angles",
+  });
+  return project;
+};
+const drawExtractor = (mutateSource) => {
+  const uploaded = [];
+  const scan = (extra) => {
+    const base = uxScan();
+    return { ...base, anchors: [...base.anchors, { name: "CHAR-NC-SHEET.png", url: "/assets/anchors/CHAR-NC-SHEET.png" },
+      ...extra.map((name) => ({ name, url: `/assets/anchors/${name}` }))] };
+  };
+  return {
+    uploaded,
+    render: () => render("#/character/CHAR-NC", sheetFixture(), {
+      scan: scan([]),
+      storage: { ...COVERAGE_STORAGE },
+      ...(mutateSource ? { mutateSource } : {}),
+      fetch: async (url, options, respond) => {
+        const target = String(url || "");
+        if (target.startsWith("/api/media/upload")) {
+          const name = decodeURIComponent((/name=([^&]+)/.exec(target) || [])[1] || "");
+          uploaded.push(name);
+          return respond({ name });
+        }
+        if (target === "/api/scan") return respond(scan(uploaded));
+        return null;
+      },
+    }),
+  };
+};
+const EXTRACTOR_DRIVE = (assign) => `(async () => {
+  const realCreate = document.createElement.bind(document);
+  document.createElement = (tag) => String(tag).toLowerCase() === "canvas"
+    ? { width: 0, height: 0, getContext: () => ({ drawImage() {} }), toBlob: (done) => done({ size: 12, type: "image/png" }) }
+    : realCreate(tag);
+  openCoverageSheetExtractor('characters','CHAR-NC','CHAR-NC-SHEET.png', true);
+  const source = document.getElementById('coverage-crop-source');
+  if (!source) return null;
+  source.naturalWidth = 1200; source.naturalHeight = 400;
+  selectCoverageCropSlot('profile');
+  const held = () => slotSelectedFile(ensureCoverageSlots('characters', P.characters.find(x => x.id === 'CHAR-NC')).find(s => s.id === 'profile'));
+  const before = held();
+  await extractCoverageCrop({ assign: ${assign ? "true" : "false"} });
+  return { before, after: held() };
+})()`;
+
+/* ===========================================================================
+   N7 — A GAP NOTHING IS WAITING ON MAY NOT CLAIM ATTENTION.
+
+   The alpha finding, exactly: the panel says "No shot uses this character yet,
+   so nothing is required now" and the board twenty inches below it prints amber
+   "Required — missing" chips for views the coverage TEMPLATE seeded. Blind the
+   chip to the demand answer and the contradiction comes straight back.
+   =========================================================================== */
+controlAsync({
+  label: "N7 a dormant coverage gap claims no attention",
+  mutateSource: only("entities.js", (text) => mutate(
+    text,
+    "  const resolved = demand\n"
+    + '    ? referenceDemandResolution({ family: "coverage", id: slot?.id || "", tier: "required", requirement: "required", satisfied: false },\n'
+    + "      demand.production, obligationStateIds(demand.obligations))\n"
+    + "    : null;",
+    "  const resolved = null; void demand;",
+    "N7")),
+  probe: async (mutateSource) => {
+    const rendered = await draw(uxFixture(), COVERAGE_STORAGE, mutateSource);
+    const html = rendered.html;
+    const strip = /data-demand-summary-now="(\d+)"/.exec(html);
+    if (!strip) return { reached: false, held: false, reason: "no-demand-summary" };
+    if (strip[1] !== "0") return { reached: false, held: false, reason: `strip-counts-${strip[1]}` };
+    const rail = html.slice(html.indexOf('<nav class="bounded-slot-rail"'));
+    if (!rail) return { reached: false, held: false, reason: "no-slot-rail" };
+    const amber = (rail.slice(0, rail.indexOf("</nav>")).match(/tone-attention/g) || []).length;
+    return {
+      reached: true,
+      held: amber === 0,
+      /* Count-free, because project normalisation seeds template slots beside the
+         fixture's own and the number of amber chips is not the property. */
+      reason: amber ? "dormant-board-claimed-attention" : "no-attention-claimed",
+    };
+  },
+  reason: "dormant-board-claimed-attention",
+  explain: "One screen saying both 'nothing is required now' and 'Required — missing' is the contradiction this slice exists to remove.",
+});
+
+/* ===========================================================================
+   N8 — SAVE CROP & USE MUST ACTUALLY USE IT.
+
+   The atomic action's whole content. Sever the assignment and the button still
+   saves, still returns to Coverage, and leaves the view it named empty — which
+   is the pre-slice defect the human pass reported as "I had to select it again".
+   =========================================================================== */
+controlAsync({
+  label: "N8 Save crop & use converges into the view it named",
+  mutateSource: only("coverage-automation.js", (text) => mutate(
+    text, "    const approve = assign;", "    const approve = false; void assign;", "N8")),
+  probe: async (mutateSource) => {
+    const harness = drawExtractor(mutateSource);
+    const rendered = await harness.render();
+    const out = await vm.runInContext(EXTRACTOR_DRIVE(true), rendered.context);
+    if (!out) return { reached: false, held: false, reason: "no-extractor" };
+    if (out.before !== "") return { reached: false, held: false, reason: "view-was-not-empty" };
+    if (!harness.uploaded.length) return { reached: false, held: false, reason: "no-crop-uploaded" };
+    const landed = out.after === harness.uploaded[harness.uploaded.length - 1];
+    return {
+      reached: true,
+      held: landed,
+      reason: landed ? "view-holds-the-crop" : "save-crop-and-use-left-the-view-empty",
+    };
+  },
+  reason: "save-crop-and-use-left-the-view-empty",
+  explain: "An action that names a view and says USE must fill it, or the filmmaker has to make the decision twice.",
+});
+
+/* ===========================================================================
+   N9 — AND SAVE AS CANDIDATE MUST NOT.
+
+   The other half of the same distinction, and the more dangerous one: an
+   assignment nobody asked for silently replaces what a view was holding.
+   =========================================================================== */
+controlAsync({
+  label: "N9 Save as candidate assigns nothing",
+  mutateSource: only("coverage-automation.js", (text) => mutate(
+    text, "    const approve = assign;", "    const approve = true; void assign;", "N9")),
+  probe: async (mutateSource) => {
+    const harness = drawExtractor(mutateSource);
+    const rendered = await harness.render();
+    const out = await vm.runInContext(EXTRACTOR_DRIVE(false), rendered.context);
+    if (!out) return { reached: false, held: false, reason: "no-extractor" };
+    if (out.before !== "") return { reached: false, held: false, reason: "view-was-not-empty" };
+    if (!harness.uploaded.length) return { reached: false, held: false, reason: "no-crop-uploaded" };
+    const untouched = out.after === "";
+    return {
+      reached: true,
+      held: untouched,
+      reason: untouched ? "view-unchanged" : "save-as-candidate-assigned-the-view",
+    };
+  },
+  reason: "save-as-candidate-assigned-the-view",
+  explain: "Saving something for later is not choosing it, and a build that blurs the two decides for the filmmaker.",
+});
+
+/* ===========================================================================
+   N10 — AN ACTION MAY NOT OFFER A DECISION THAT IS ALREADY MADE.
+
+   Remove the state owner's answer and Candidate Review offers "ASSIGN TO FRONT"
+   over a candidate the Front view is already holding — a press that re-commits
+   the same file and rewrites the timestamp of a decision nobody changed.
+   =========================================================================== */
+controlAsync({
+  label: "N10 a candidate the view already holds is offered no assignment",
+  mutateSource: only("review.js", (text) => mutate(
+    text,
+    '  return slot && slotSelectedFile(slot) === String(fileName || "") ? slot : null;',
+    "  void slot; return null;",
+    "N10")),
+  probe: async (mutateSource) => {
+    const project = uxFixture();
+    const character = project.characters.find((row) => row.id === "CHAR-NC");
+    character.coverageSlots[0].selectedFile = "CHAR-NC-LOOSE.png";
+    const row = character.candidateFiles.find((item) => item.stored === "CHAR-NC-LOOSE.png");
+    row.targetCoverageSlotId = "front";
+    row.targetCoverageSlotName = "Front";
+    row.coverageGroup = "angles";
+    row.decision = "selected-coverage";
+    const rendered = await draw(project, COVERAGE_STORAGE, mutateSource);
+    const out = vm.runInContext(`(() => {
+      const entity = P.characters.find(x => x.id === 'CHAR-NC');
+      const front = ensureCoverageSlots('characters', entity).find(s => s.id === 'front');
+      openEntityCandidateReview('characters','CHAR-NC','CHAR-NC-LOOSE.png','state-default');
+      return { held: slotSelectedFile(front), modal: document.getElementById('modal').innerHTML };
+    })()`, rendered.context);
+    if (out.held !== "CHAR-NC-LOOSE.png") return { reached: false, held: false, reason: `view-holds(${out.held})` };
+    if (!out.modal.includes("CANDIDATE REVIEW")) return { reached: false, held: false, reason: "no-review-modal" };
+    const offered = /ASSIGN TO FRONT/.test(out.modal);
+    return {
+      reached: true,
+      held: !offered,
+      reason: offered ? "offered-to-assign-what-the-view-already-holds" : "current-state-stated-instead",
+    };
+  },
+  reason: "offered-to-assign-what-the-view-already-holds",
+  explain: "An offer to make a decision already made is a control whose only effect is to overwrite its own timestamp.",
 });
 
 /* ---------------------------------------------------------------------------

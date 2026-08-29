@@ -262,10 +262,18 @@ async function testExtractionProgressiveDisclosure() {
     ['id="coverage-crop-slot"', "which view this crop becomes is the first question"],
     ['id="coverage-crop-stage"', "the draggable crop is the interaction"],
     ["Previous panel", "moving between panels is normal work"],
-    ['id="coverage-crop-approve"', "save-and-use is the one-action path and stays on the surface"],
+    ['<div class="coverage-review-gate">', "what each save actually does stays on the surface"],
   ]) ok(normal.includes(needle), `the normal extractor surface must keep: ${why}`);
   ok(normal.includes("Review is optional"),
-    "and the checkbox keeps its explanation beside it rather than behind a fold");
+    "and that explanation is beside the crop rather than behind a fold");
+  /* ALPHA R3 — the one-action path is a BUTTON now, so it lives in the action row
+     below the fold's closing tag rather than on the panel beside it. */
+  ok(!modal.includes('id="coverage-crop-approve"'),
+    "the redundant save-and-use checkbox is gone — the control that performs it says so");
+  ok(/<button class="approve-btn large" onclick="extractCoverageCrop\(\{ assign: true \}\)">SAVE CROP & USE<\/button>/.test(modal),
+    "and Save crop & use is the primary named action");
+  ok(/<button class="ghost-btn" onclick="extractCoverageCrop\(\{ assign: false \}\)">SAVE AS CANDIDATE<\/button>/.test(modal),
+    "with Save as candidate beside it as a distinct act");
 
   /* The machinery: present, still addressable, and no longer leading. */
   for (const [id, why] of [
@@ -561,11 +569,18 @@ async function testRequirementAndDemandCannotContradict() {
   ok(stage.length > 200, "baseline: the coverage stage renderer was located");
   eq((stage.match(/entityReferenceDemandFor\(/g) || []).length, 1,
     "the coverage stage resolves demand exactly once");
-  ok(/coverageBoardMarkup\(list,entity,mediaByName,media,production\)/.test(stage),
+  /* ALPHA R7 — AND THE OBLIGATION ANSWER TRAVELS WITH IT. The boards did not have
+     it, which is how a slot chip came to claim attention over a panel that said
+     nothing was waiting. Same property, one fact wider. */
+  eq((stage.match(/entityCurrentObligations\(/g) || []).length, 1,
+    "and resolves the current obligations exactly once");
+  ok(/const demand = \{ production, obligations \};/.test(stage),
+    "and carries the pair as one context");
+  ok(/coverageBoardMarkup\(list,entity,mediaByName,media,demand\)/.test(stage),
     "and hands it to the angles board rather than letting it resolve its own");
-  ok(/expressionBoardMarkup\(entity,mediaByName,media,production\)/.test(stage),
+  ok(/expressionBoardMarkup\(entity,mediaByName,media,demand\)/.test(stage),
     "and to the expression board");
-  ok(/entityDemandMarkup\(list, entity, production \|\| undefined\)/.test(stage),
+  ok(/entityDemandMarkup\(list, entity, production \|\| undefined, obligations \|\| undefined\)/.test(stage),
     "and to the panel that publishes the headline");
 
   /* A REFERENCE A SHOT USES gets the other half of the sentence. */
@@ -896,6 +911,350 @@ async function testDetailsIsNotADataDump() {
 }
 
 /* ==========================================================================
+   ALPHA BLOCKERS — the half of R3/R5/R7/R8 the fresh-user pass found still open
+   after the convergence slice landed.
+
+     A1  a coverage gap the production is not waiting on claims no attention
+     A2  and the fail-closed direction still does, so the gate is a gate
+     A3  Save crop & use is one press, and it converges into the view it named
+     A4  Save as candidate is the same press minus the assignment, and only that
+     A5  neither opens a review nobody asked for
+     A6  a candidate the view already holds is offered no assignment
+     A7  the compact strip and the board underneath agree about what is owed
+   ========================================================================== */
+
+/* The extraction writer's only two edges the harness cannot supply: a canvas
+   that can rasterise, and an <img> that reports its natural size. Everything
+   between them — the crop maths, the upload call, the candidate row, the
+   provenance, the scan refresh, the hand-off and the assignment — is the shipped
+   code, running. */
+function extractorHarness(project, storage) {
+  const uploaded = [];
+  const scanWith = (extra) => {
+    const base = convergenceScan();
+    return { ...base, anchors: [...base.anchors, ...extra.map((name) => ({ name, url: `/assets/anchors/${name}` }))] };
+  };
+  return {
+    uploaded,
+    render: () => render("#/character/CHAR-UX", project, {
+      scan: convergenceScan(),
+      storage,
+      fetch: async (url, options, respond) => {
+        const target = String(url || "");
+        if (target.startsWith("/api/media/upload")) {
+          const name = decodeURIComponent((/name=([^&]+)/.exec(target) || [])[1] || "");
+          uploaded.push(name);
+          return respond({ name });
+        }
+        if (target === "/api/scan") return respond(scanWith(uploaded));
+        return null;
+      },
+    }),
+  };
+}
+
+const EXTRACTOR_CANVAS = `
+  const realCreate = document.createElement.bind(document);
+  document.createElement = (tag) => String(tag).toLowerCase() === "canvas"
+    ? { width: 0, height: 0, getContext: () => ({ drawImage() {} }), toBlob: (done) => done({ size: 12, type: "image/png" }) }
+    : realCreate(tag);`;
+/* Applied AFTER the modal opens, because the element only exists then. */
+const EXTRACTOR_SOURCE_SIZE = `
+  const source = document.getElementById('coverage-crop-source');
+  source.naturalWidth = 1200; source.naturalHeight = 400;`;
+
+async function testDormantCoverageClaimsNoAttention() {
+  const rendered = await surface(convergenceFixture(), COVERAGE_STORAGE);
+  const html = rendered.html;
+
+  /* THE OBSERVED CONTRADICTION. The panel says nothing is required now; the board
+     twenty inches below it printed four amber "Required — missing" chips for views
+     coverageTemplateForList() seeded and nobody authored. */
+  ok(/No shot uses this character yet, so nothing is required now/.test(html),
+    "baseline: the panel's demand answer is unchanged");
+  eq((/data-demand-summary-now="(\d+)"/.exec(html) || [])[1], "0",
+    "baseline: and it counts nothing as owed");
+
+  const rail = within(html, '<nav class="bounded-slot-rail"', "</nav>");
+  ok(rail, "baseline: the coverage rail rendered");
+  eq((rail.match(/tone-attention/g) || []).length, 0,
+    "no coverage chip may claim attention while the production is waiting on none of it");
+  ok(/data-slot-state="required-missing"/.test(rail),
+    "and the requirement answer is untouched — the plan still requires the view");
+  ok(/Required — not needed yet/.test(rail),
+    "the chip says which axis it is speaking on rather than the word the panel just denied");
+  ok(!/Required — missing/.test(rail),
+    "and does not say the word that made the two halves contradict");
+
+  const card = /<article class="coverage-slot-card focused-slot-selected ([^"]*)"/.exec(html);
+  ok(card, "baseline: the slot card rendered");
+  ok(!/needs-attention/.test(card[1]),
+    "the card's own amber border follows the same answer rather than re-reading the requirement");
+
+  const board = /<details class="fold compact-entity-section entity-coverage-section[^>]*data-board-outstanding="(\d+)" data-board-demand="([a-z]+)"/.exec(html);
+  ok(board, "the board publishes what it is actually owed");
+  eq(board[1], "0", "which is nothing");
+  eq(board[2], "dormant", "because the production is not using this reference yet");
+  ok(/Coverage board <span>[^<]*none needed yet/.test(html),
+    "so its fold summary does not lead with a bare deficit fraction");
+  /* Derived, not pinned: normalisation seeds template slots beside the fixture's
+     own, so the invariant is that the fold still prints the PLAN OWNER'S fraction
+     — nothing is hidden, it is qualified. */
+  const plan = vm.runInContext(`(() => {
+    const e = P.characters.find(x => x.id === 'CHAR-UX');
+    const s = summariseCoverage(ensureCoverageSlots('characters', e));
+    return s.approvedRequired + '/' + s.required;
+  })()`, rendered.context);
+  ok(html.includes(`Coverage board <span>${plan} required approved`),
+    `while still printing the plan's own fraction (${plan}) — nothing is hidden, it is qualified`);
+}
+
+async function testAttentionSurvivesWhereTheAnswerIsUnknown() {
+  /* THE GATE IS A GATE. shared-entities.js cannot answer for a shot whose
+     dependency collections are malformed, entityReadinessObligations() refuses to
+     read that as "nothing owed", and a required gap therefore keeps its amber —
+     failing closed means keeping work visible. */
+  /* The reproduced ambiguity from tests/reference-demand.js FD3: a second
+     character whose id is a PREFIX of this one, so the shot's `CHAR-UX` token
+     matches two entities and the resolver's pick cannot be trusted. Clean,
+     well-formed data that normalisation leaves alone — and an answer the owner
+     refuses to give. */
+  const damaged = convergenceFixture();
+  damaged.characters.unshift({ id: "CHAR", name: "Other", prefix: "CHAR", approvedFile: "",
+    continuityStates: [{ id: "state-default", name: "Default", isDefault: true, approvedFile: "" }],
+    coverageSlots: [], expressionSlots: [], candidateFiles: [] });
+  for (const shot of damaged.shots || []) { shot.characters = []; shot.codes = ["CHAR-UX"]; }
+  const rendered = await surface(damaged, COVERAGE_STORAGE);
+  const production = /data-demand-production="([a-z]+)"/.exec(rendered.html);
+  eq(production && production[1], "unknown",
+    "baseline: a malformed dependency collection leaves the demand answer unknown");
+  const rail = within(rendered.html, '<nav class="bounded-slot-rail"', "</nav>");
+  ok(/tone-attention/.test(rail),
+    "with no confident answer a required gap still claims attention");
+  ok(/Required — missing/.test(rail), "and still says so in the words it always used");
+
+  /* AND THE WHOLE MATRIX, driven directly, because the two shipped renders above
+     can only show two of its rows. */
+  const matrix = vm.runInContext(`(() => {
+    const slot = { id: 'profile', label: 'Profile', requirement: 'required', selectedFile: '' };
+    const ask = (demand) => { const s = referenceSlotStatus(slot, demand); return s.tone + ':' + s.state; };
+    return {
+      nothing: ask(null),
+      unknownProduction: ask({ production: { known: false }, obligations: { known: false } }),
+      dormant: ask({ production: { known: true, demanded: false }, obligations: { known: true, rows: [] } }),
+      usedButNothingOwed: ask({ production: { known: true, demanded: true, shotIds: ['L1-01'] }, obligations: { known: true, rows: [] } }),
+      usedAndReadinessUnknown: ask({ production: { known: true, demanded: true, shotIds: ['L1-01'] }, obligations: { known: false } }),
+      planned: (() => { const s = referenceSlotStatus({ id: 'rear', requirement: 'planned', selectedFile: '' }, { production: { known: true, demanded: false }, obligations: { known: true, rows: [] } }); return s.tone + ':' + s.state; })(),
+      satisfied: (() => { const s = referenceSlotStatus({ id: 'front', requirement: 'required', selectedFile: 'X.png' }, { production: { known: true, demanded: true }, obligations: { known: false } }); return s.tone + ':' + s.state; })(),
+    };
+  })()`, rendered.context);
+  eq(matrix.nothing, "attention:required-missing", "asked with no demand context at all, the old answer stands");
+  eq(matrix.unknownProduction, "attention:required-missing", "an unknown production answer keeps the work visible");
+  eq(matrix.usedAndReadinessUnknown, "attention:required-missing", "so does an unavailable readiness derivation");
+  eq(matrix.dormant, "pending:required-missing", "a reference nothing uses owes nothing right now");
+  eq(matrix.usedButNothingOwed, "pending:required-missing",
+    "and neither does one whose readiness is already satisfied — readiness never owes a coverage slot");
+  eq(matrix.planned, "pending:planned", "Planned is untouched");
+  eq(matrix.satisfied, "complete:satisfied", "and so is Selected — the four states are exactly the four states");
+}
+
+async function testSaveCropAndUseIsOneActionThatConverges() {
+  const harness = extractorHarness(convergenceFixture(), COVERAGE_STORAGE);
+  const rendered = await harness.render();
+  const result = await vm.runInContext(`(async () => {
+    ${EXTRACTOR_CANVAS}
+    openCoverageSheetExtractor('characters','CHAR-UX','CHAR-UX-SHEET.png', true);
+    ${EXTRACTOR_SOURCE_SIZE}
+    selectCoverageCropSlot('profile');
+    const slotOf = (id) => slotSelectedFile(ensureCoverageSlots('characters', P.characters.find(x => x.id === 'CHAR-UX')).find(s => s.id === id));
+    const before = slotOf('profile');
+    await extractCoverageCrop({ assign: true });
+    const rows = (P.characters.find(x => x.id === 'CHAR-UX').candidateFiles || [])
+      .filter((r) => r.coverageJobType === 'extracted-crop' && r.coverageCrop)
+      .map((r) => ({ file: r.stored, decision: r.decision, reviewRequired: r.reviewRequired, target: r.targetCoverageSlotId, crop: !!r.coverageCrop, sheet: r.coverageCrop && r.coverageCrop.sourceSheet }));
+    return JSON.stringify({ before, after: slotOf('profile'), rows,
+      modalHidden: document.getElementById('modal').classList.contains('hidden'),
+      modal: document.getElementById('modal').innerHTML,
+      task: localStorage.getItem('cinebraid-focused:fixture:entity-task:characters:CHAR-UX'),
+      board: localStorage.getItem('cinebraid-bounded:fixture:selected:entity-coverage-view:characters:CHAR-UX'),
+      slot: localStorage.getItem('cinebraid-bounded:fixture:selected:coverage-slot:characters:CHAR-UX') });
+  })()`, rendered.context);
+  const out = JSON.parse(result);
+
+  eq(out.before, "", "baseline: the view the crop is made for is empty");
+  eq(out.rows.length, 1, "one press produces exactly one crop");
+  eq(out.rows[0].file, harness.uploaded[0], "which is the file that was uploaded");
+  eq(out.after, harness.uploaded[0],
+    "and the view it named is holding it — no second selection, no manual convergence");
+  eq(out.rows[0].decision, "selected-coverage", "the candidate row records the selection");
+  eq(out.rows[0].reviewRequired, false, "and does not go on asking to be reviewed first");
+  eq(out.rows[0].crop, true, "the crop provenance is stored");
+  eq(out.rows[0].sheet, "CHAR-UX-SHEET.png", "naming the sheet it came from");
+
+  /* A5 — NO REVIEW NOBODY ASKED FOR, AND NO SECOND CONFIRMATION. */
+  eq(out.modalHidden, true, "the extractor closes and nothing takes its place");
+  ok(!/CANDIDATE REVIEW/.test(out.modal),
+    "Candidate Review does not open after the filmmaker has already decided");
+  ok(!/modal-confirm-action/.test(out.modal),
+    "and the one press is not asked to confirm itself");
+
+  /* THE HAND-OFF: back to the board, on the view the crop was made for. */
+  eq(out.task, "coverage", "it lands on the coverage stage");
+  eq(out.board, "coverage", "on the angles board");
+  eq(out.slot, "profile", "with the view the crop was made for selected");
+}
+
+async function testSaveAsCandidateAssignsNothing() {
+  const harness = extractorHarness(convergenceFixture(), COVERAGE_STORAGE);
+  const rendered = await harness.render();
+  const result = await vm.runInContext(`(async () => {
+    ${EXTRACTOR_CANVAS}
+    openCoverageSheetExtractor('characters','CHAR-UX','CHAR-UX-SHEET.png', true);
+    ${EXTRACTOR_SOURCE_SIZE}
+    selectCoverageCropSlot('profile');
+    const slots = () => ensureCoverageSlots('characters', P.characters.find(x => x.id === 'CHAR-UX')).map(s => s.id + '=' + slotSelectedFile(s));
+    const before = slots().join('|');
+    await extractCoverageCrop({ assign: false });
+    const rows = (P.characters.find(x => x.id === 'CHAR-UX').candidateFiles || [])
+      .filter((r) => r.coverageJobType === 'extracted-crop' && r.coverageCrop)
+      .map((r) => ({ file: r.stored, decision: r.decision, reviewRequired: r.reviewRequired, target: r.targetCoverageSlotId }));
+    return JSON.stringify({ before, after: slots().join('|'), rows,
+      modal: document.getElementById('modal').innerHTML,
+      modalHidden: document.getElementById('modal').classList.contains('hidden') });
+  })()`, rendered.context);
+  const out = JSON.parse(result);
+
+  eq(out.rows.length, 1, "the crop is preserved");
+  eq(out.rows[0].target, "profile", "still recording which view it was made for");
+  eq(out.rows[0].decision, "unreviewed", "as a candidate, not a decision");
+  eq(out.rows[0].reviewRequired, true, "and one a review can still be run on");
+  eq(out.after, out.before,
+    "and not one coverage view changed — saving a candidate is not an assignment");
+  eq(out.modalHidden, true, "the extractor closes");
+  ok(!/CANDIDATE REVIEW/.test(out.modal),
+    "and this path does not open a review on the filmmaker's behalf either");
+}
+
+async function testAlreadyHeldCandidateIsOfferedNoAssignment() {
+  /* CHAR-UX-FRONT.png is the file the Front view already holds, and it carries
+     the target that used to print "ASSIGN TO FRONT" over it. */
+  const rendered = await surface(convergenceFixture(), COVERAGE_STORAGE);
+  const modals = vm.runInContext(`(() => {
+    const entity = P.characters.find(x => x.id === 'CHAR-UX');
+    const front = (entity.candidateFiles || []).find(r => (r.stored || r.original) === 'CHAR-UX-FRONT.png');
+    front.targetCoverageSlotId = 'front'; front.targetCoverageSlotName = 'Front'; front.coverageGroup = 'angles';
+    const loose = (entity.candidateFiles || []).find(r => (r.stored || r.original) === 'CHAR-UX-LOOSE.png');
+    loose.targetCoverageSlotId = 'profile'; loose.targetCoverageSlotName = 'Profile'; loose.coverageGroup = 'angles';
+    openEntityCandidateReview('characters','CHAR-UX','CHAR-UX-FRONT.png','state-default');
+    const held = document.getElementById('modal').innerHTML;
+    closeModal();
+    openEntityCandidateReview('characters','CHAR-UX','CHAR-UX-LOOSE.png','state-default');
+    return { held, open: document.getElementById('modal').innerHTML,
+      committed: slotSelectedFile(ensureCoverageSlots('characters', entity).find(s => s.id === 'front')) };
+  })()`, rendered.context);
+
+  eq(modals.committed, "CHAR-UX-FRONT.png",
+    "baseline: the state owner says this candidate is the file the Front view holds");
+  ok(!/ASSIGN TO FRONT/.test(modals.held),
+    "so the modal must not offer to assign it there again");
+  ok(/data-review-target-current="front"/.test(modals.held),
+    "it states the current fact instead");
+  ok(/ALREADY IN USE FOR FRONT/.test(modals.held), "in words");
+  ok(/openCoverageSlotFromReview\('characters','CHAR-UX','angles','front'\)/.test(modals.held),
+    "and offers the way to go look at it");
+
+  /* AND THE OFFER SURVIVES WHERE IT IS A REAL DECISION. */
+  ok(/ASSIGN TO PROFILE/.test(modals.open),
+    "a candidate aimed at a view that does not hold it is still assignable from here");
+}
+
+async function testCancellingAStagedChoiceLeavesTheViewAlone() {
+  /* THE THIRD STAGING GESTURE. Choosing previews, using commits — and walking
+     away must do neither. This drives the two ways a filmmaker leaves: closing
+     the visual chooser without picking a card, and staging a choice and then
+     letting the page re-render, which is what navigating away and back does. */
+  const rendered = await surface(convergenceFixture(), COVERAGE_STORAGE);
+  const out = await vm.runInContext(`(async () => {
+    const slotOf = () => slotSelectedFile(ensureCoverageSlots('characters', P.characters.find(x => x.id === 'CHAR-UX')).find(s => s.id === 'profile'));
+    boundedWriteState('selected:coverage-slot','characters:CHAR-UX','profile');
+    await route();
+    const before = { slot: slotOf(), rev: SAVE_REVISION };
+
+    /* Opened and closed without choosing anything. */
+    openReferenceMediaChooser('characters','CHAR-UX','coverage',1);
+    const opened = document.getElementById('modal').innerHTML.includes('CHOOSE AN IMAGE');
+    closeModal();
+    const afterClose = { slot: slotOf(), rev: SAVE_REVISION, value: document.getElementById('coverage-slot-file').value };
+
+    /* Staged, then abandoned by a re-render. */
+    const select = document.getElementById('coverage-slot-file');
+    select.dataset.committed = '';
+    select.dataset.slotList = 'characters';
+    select.dataset.slotEntity = 'CHAR-UX';
+    pickReferenceMediaForSlot('coverage-slot-file','coverage-slot-use','CHAR-UX-LOOSE.png');
+    const staged = { mode: document.getElementById('coverage-slot-preview').dataset.slotPreview, slot: slotOf() };
+    await route();
+    /* READ OFF THE FRESHLY RENDERED MARKUP, not the elements the staging handler
+       wrote to. A browser discards those on re-render and parses new ones; this
+       harness caches its element objects, so asking them would measure the
+       harness rather than the page. */
+    const html = document.getElementById('main').innerHTML;
+    const afterRender = { slot: slotOf(), rev: SAVE_REVISION,
+      committed: html.includes('id="coverage-slot-preview" class="coverage-slot-preview" data-slot-preview="committed"'),
+      staged: html.includes('data-slot-preview="staged"'),
+      label: (/id="coverage-slot-use"[^>]*>([^<]*)</.exec(html) || [])[1] };
+    return JSON.stringify({ before, opened, afterClose, staged, afterRender });
+  })()`, rendered.context);
+  const result = JSON.parse(out);
+
+  eq(result.opened, true, "baseline: the visual chooser opened on the selected view");
+  eq(result.before.slot, "", "baseline: that view is empty");
+  eq(result.afterClose.slot, result.before.slot, "closing the chooser without picking writes nothing to the view");
+  eq(result.afterClose.rev, result.before.rev, "and schedules no save");
+  eq(result.afterClose.value, "", "and stages nothing");
+
+  eq(result.staged.mode, "staged", "baseline: picking a card does stage and preview it");
+  eq(result.staged.slot, "", "without touching the view");
+  eq(result.afterRender.slot, result.before.slot,
+    "and abandoning that staged choice leaves the committed view exactly as it was");
+  eq(result.afterRender.rev, result.before.rev, "with no save scheduled by the staging");
+  eq(result.afterRender.committed, true,
+    "the re-rendered preview declares the committed image again");
+  eq(result.afterRender.staged, false, "with no staged state left anywhere on the page");
+  eq(result.afterRender.label, "SELECT AN IMAGE",
+    "and the commit control returns to its resting label");
+}
+
+const EXPRESSION_STORAGE = {
+  ...COVERAGE_STORAGE,
+  "cinebraid-bounded:fixture:selected:entity-coverage-view:characters:CHAR-UX": "expressions",
+};
+
+async function testCompactSummaryAgreesWithTheBoard() {
+  /* BOTH BOARDS, because they are two renderings of one rule and a rule applied
+     to one of them is a rule that will drift. */
+  for (const [label, fixture, storage] of [
+    ["dormant", convergenceFixture(), COVERAGE_STORAGE],
+    ["used, nothing owed", convergenceFixture({ cast: true }), COVERAGE_STORAGE],
+    ["dormant expressions", convergenceFixture(), EXPRESSION_STORAGE],
+    ["used expressions, nothing owed", convergenceFixture({ cast: true }), EXPRESSION_STORAGE],
+  ]) {
+    const rendered = await surface(fixture, storage);
+    const html = rendered.html;
+    const owedByStrip = Number((/data-demand-summary-now="(\d+)"/.exec(html) || [])[1] || -1);
+    const boards = [...html.matchAll(/data-board-outstanding="(\d+)"/g)].map((m) => Number(m[1]));
+    ok(owedByStrip >= 0, `${label}: baseline: the compact strip publishes what it counts`);
+    ok(boards.length >= 1, `${label}: baseline: the board publishes what it counts`);
+    if (owedByStrip === 0) {
+      eq(boards.filter((count) => count > 0).length, 0,
+        `${label}: no board may claim outstanding work while the strip above it counts none`);
+      ok(!/tone-attention/.test(within(html, '<nav class="bounded-slot-rail"', "</nav>")),
+        `${label}: and no chip may claim attention under a strip that says nothing is needed now`);
+    }
+  }
+}
+
+/* ==========================================================================
    NOTHING PERSISTED, NOTHING DISPATCHED.
    ========================================================================== */
 function testNoNewPersistenceAndNoDispatch() {
@@ -926,11 +1285,20 @@ async function main() {
   await testSingleStateApprovalIsOneAct();
   testStatusDropdownIsReadable();
   await testDetailsIsNotADataDump();
+  await testDormantCoverageClaimsNoAttention();
+  await testAttentionSurvivesWhereTheAnswerIsUnknown();
+  await testSaveCropAndUseIsOneActionThatConverges();
+  await testSaveAsCandidateAssignsNothing();
+  await testAlreadyHeldCandidateIsOfferedNoAssignment();
+  await testCancellingAStagedChoiceLeavesTheViewAlone();
+  await testCompactSummaryAgreesWithTheBoard();
   testNoNewPersistenceAndNoDispatch();
   console.log(`References UX convergence suite passed ${checks} checks across the provenance chooser, the lightbox backdrop, `
     + `extraction disclosure, the save/assign hand-off, unreviewed factors, the compact production-needs summary, `
     + `requirement-vs-demand legibility, staged preview, the visual chooser, continuity-state authoring, single-state `
-    + `approval, dropdown readability and Details disclosure. Provider calls made: 0.`);
+    + `approval, dropdown readability and Details disclosure, plus the alpha blockers: dormant coverage claiming no `
+    + `attention, the fail-closed direction, Save crop & use converging in one action, Save as candidate assigning `
+    + `nothing, the retired stale-assign action and strip/board agreement. Provider calls made: 0.`);
 }
 
 main().catch((error) => { console.error(error); process.exit(1); });

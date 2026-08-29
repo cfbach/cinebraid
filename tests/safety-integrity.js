@@ -27,8 +27,16 @@ async function main() {
   const extractSlice = coverage.slice(coverage.indexOf("window.extractCoverageCrop"), coverage.indexOf("window.seedCoverageFromPrimary"));
   assert(!/slot\.approvedFile\s*=\s*data\.name/.test(extractSlice), "crop extraction must not directly overwrite an authority");
   assert(extractSlice.includes("reviewRequired"), "extracted crops must record a review gate");
-  assert(coverage.includes('id="coverage-crop-approve" type="checkbox"'), "direct approval must remain an explicit checkbox");
-  assert(!coverage.includes('id="coverage-crop-approve" type="checkbox" checked'), "direct approval must default off");
+  /* ALPHA R3 — THE EXPLICIT ACT MOVED FROM A CHECKBOX ONTO THE BUTTON THAT NAMES
+     IT, and the safety property is unchanged and stronger for it: assignment is
+     now an ARGUMENT of the action, so no ambient DOM state, no stale checkbox and
+     no re-render can turn a save into an assignment, and every caller that does
+     not ask for one does not get one. */
+  assert(!coverage.includes('id="coverage-crop-approve"'), "the ambient save-and-use checkbox must not come back");
+  assert(/const assign = settings\.assign === true;/.test(coverage), "crop assignment must default off for any caller that does not ask");
+  assert(/const approve = assign;/.test(coverage), "and must be decided by the caller's named action alone");
+  assert(coverage.includes("extractCoverageCrop({ assign: true })") && coverage.includes("extractCoverageCrop({ assign: false })"),
+    "with assigning and non-assigning saves offered as separate controls");
 
   assert(entities.includes("entityCandidateIsCoverageSheet(entity, item.name)"), "single-angle selectors must exclude complete sheets");
   assert(entities.includes("replacementHistory"), "coverage authority replacement must preserve history");
