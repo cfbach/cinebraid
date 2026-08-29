@@ -570,6 +570,81 @@ try:
         page.wait_for_function(
             """() => { const i = document.getElementById('coverage-crop-source'); return i && i.naturalWidth > 0; }""",
             timeout=15000)
+        # ---- 8b. the target list names the view it would overwrite ---------------------
+        # Front was assigned in step 8 by the shipped writer, and assignSlotReference()
+        # DELETES the legacy `approvedFile` key this marker used to be read from — so
+        # "· already assigned" is reachable only through slotSelectedFile(). Its absence
+        # was invisible rather than obvious: the extractor still OPENED on the first
+        # empty view, so the panel's own default target disagreed with the list beside
+        # it, and a filmmaker cropping a second panel was offered an occupied view that
+        # looked free.
+        #
+        # Asserted as SET EQUALITY rather than by naming Front, because a marker that
+        # every option wears is not a warning either.
+        targets = page.evaluate("""() => {
+            const sel = document.getElementById('coverage-crop-slot');
+            const options = [...(sel ? sel.options : [])].map((o) => ({ id: o.value, text: o.textContent.trim() }));
+            const slots = P.characters[0].coverageSlots || [];
+            const holds = (id) => {
+                const s = slots.find((x) => x.id === id) || {};
+                return !!(s.selectedFile || s.approvedFile || '');
+            };
+            const front = slots.find((s) => s.id === 'front') || {};
+            return {
+                marked: options.filter((o) => o.text.includes('already assigned')).map((o) => o.id).sort(),
+                holding: options.filter((o) => holds(o.id)).map((o) => o.id).sort(),
+                texts: options.map((o) => o.text),
+                selected: sel ? sel.value : '',
+                legacyKey: front.approvedFile === undefined ? '(deleted)' : front.approvedFile,
+                frontFile: front.selectedFile || '',
+            };
+        }""")
+        assert targets["legacyKey"] == "(deleted)", \
+            f"8b. premise: the shipped writer removes the legacy key, got {targets['legacyKey']!r}"
+        assert targets["frontFile"], "8b. premise: and Front really is holding a file after step 8"
+        assert "front" in targets["holding"], "8b. premise: so Front is in the occupied set"
+        assert targets["marked"] == targets["holding"], \
+            ("8b. exactly the occupied views may be marked — "
+             f"marked {targets['marked']}, occupied {targets['holding']}, options {targets['texts']}")
+        assert not targets["marked"] == [], "8b. and at least one view is occupied here, or the check is vacuous"
+        findings.append(f"8b. reopening the extractor marks exactly the occupied views {targets['marked']} "
+                        f"and still defaults to {targets['selected']!r}")
+
+        # ---- 8c. a provenance chooser with nothing to choose is not rendered -----------
+        # R1's rule on the surface the first pass did not reach: the generation-record
+        # fold, headed "Generation records — provenance", kept rendering a <select>
+        # whose only option was the placeholder. Driven through the page's own renderer
+        # in the real browser, in all three shapes the rule distinguishes.
+        provenance = page.evaluate("""() => {
+            const e = P.characters[0];
+            const list = 'characters';
+            e.made = [{ model: '', files: '', prompt: 'p', date: '2026-08-01' }];
+            P.meta.models = [];
+            const empty = entityGenerationRecordsMarkup(list, e);
+            P.meta.models = [{ id: 'm1', name: 'Model One' }, { id: 'm2', name: 'Model Two' }];
+            const choice = entityGenerationRecordsMarkup(list, e);
+            P.meta.models = [];
+            e.made[0].model = 'legacy-model-id';
+            const recorded = entityGenerationRecordsMarkup(list, e);
+            e.made = [];
+            return {
+                emptyHasSelect: /<select/.test(empty),
+                emptyHasPlaceholder: empty.indexOf('model\\u2026') >= 0,
+                choiceHasSelect: /<select/.test(choice),
+                choiceOffersBoth: /Model One/.test(choice) && /Model Two/.test(choice),
+                recordedShowsValue: /legacy-model-id/.test(recorded),
+                recordedHasSelect: /<select/.test(recorded),
+            };
+        }""")
+        assert not provenance["emptyHasSelect"], "8c. no models is not a choice, so there is no chooser"
+        assert not provenance["emptyHasPlaceholder"], "8c. and not the placeholder standing in for one"
+        assert provenance["choiceHasSelect"] and provenance["choiceOffersBoth"], \
+            f"8c. two models is a real choice and must still be offered, got {provenance}"
+        assert provenance["recordedShowsValue"], "8c. a recorded model survives an emptied model list"
+        assert not provenance["recordedHasSelect"], "8c. but is stated rather than offered as a choice"
+        findings.append("8c. the provenance fold renders no chooser with nothing to choose, a chooser with two "
+                        "models, and a recorded model as static text")
+
         page.evaluate("() => selectCoverageCropSlot('front-three-quarter')")
         before_candidate = slot_files()
         page.locator('.coverage-extractor-actions button:has-text("SAVE AS CANDIDATE")').click()
