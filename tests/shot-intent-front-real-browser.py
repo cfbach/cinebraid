@@ -24,6 +24,10 @@ actually reported:
      frame, saved to disk and opened fresh — is not told to produce anything. This is
      the leak a Codex review demonstrated, and it is a browser claim because it is
      about what the shot workspace PUTS IN FRONT OF A FILMMAKER after a real page load.
+  9  AUTOMATION OWES WHAT THE ROUTE OWES. The hub card, the AUTOMATE FULL SHOT dialog
+     and the plan a run would consume are two collapsed <details> deep on the Look
+     stage, and the dialog's preselection only exists once it is really opened --
+     neither is reachable from the Node suite.
   8  THE SHELL AROUND #main AGREES ABOUT WHAT COMES NEXT. The persistent stage bar and
      the Assistant rail are mounted in index.html chrome rather than in #main, so they
      are unreachable from the Node suite -- and each renders a 'what next' answer of
@@ -44,6 +48,8 @@ cannot fail is worth nothing:
      assertion to catch it.
   N3 forces the old unconditional `inputs -> look` answer back through the model both
      shell surfaces read, and requires section 9's assertion to catch it.
+  N4 gives automation its own frame requirement back and requires section 10's
+     assertion to catch it.
 
 NOTHING HERE IS PAID AND NOTHING LEAVES THE MACHINE. Config and projects live in a
 temporary directory reached through CINEBRAID_CONFIG_PATH and CINEBRAID_PROJECTS_ROOT, so
@@ -135,6 +141,38 @@ SHELL_STATE = """(shotId) => {
     advancing: [...document.querySelectorAll('.cb-stage-action[data-advances="1"]')].map((b) => b.textContent.trim()),
     barLabels: [...document.querySelectorAll('.cb-stage-action')].map((b) => b.textContent.trim()),
     railNext: next ? next.innerText : '',
+  };
+}"""
+
+# The automation surface, which lives on the Look stage inside two collapsed
+# <details> -- the assisted-blocking tools, then the automation hub itself. Read as a
+# filmmaker reaches it: open the disclosures, then read the card and the dialog the
+# AUTOMATE FULL SHOT button opens.
+AUTOMATION_STATE = """(shotId) => {
+  const shot = shotById(shotId);
+  const obligation = shotStillObligation(shot);
+  const hub = document.querySelector('.shot-automation-hub');
+  const cards = hub ? [...hub.querySelectorAll('article')].map((row) => ({
+    label: (row.querySelector('span') || {}).textContent || '',
+    value: (row.querySelector('b') || {}).textContent || '',
+    note: (row.querySelector('small') || {}).textContent || '',
+  })) : [];
+  return {
+    hubPresent: !!hub,
+    hubVisible: !!(hub && hub.offsetParent !== null),
+    obligation,
+    requiredFramesCard: cards.find((row) => row.label === 'REQUIRED FRAMES') || null,
+    settled: stillObligationSettled(obligation),
+    summary: shotStillAutomationSummary(obligation, 1, obligation.approvedOwedFrameIds.map(() => 'A')),
+  };
+}"""
+
+PICKER_STATE = """() => {
+  const boxes = [...document.querySelectorAll('#modal .v626-auto-frame')];
+  return {
+    offered: boxes.map((box) => box.value),
+    preselected: boxes.filter((box) => box.checked).map((box) => box.value),
+    draftFrameIds: (window._v626ShotAutomationDraft || {}).frameIds || [],
   };
 }"""
 
@@ -666,6 +704,106 @@ try:
         findings.append("9. declaring i2v on the same shot brought back exactly one handoff -- 'Continue to Frames' "
                         "on the bar and Frames in the rail -- and withdrawing the route withdrew it again, with the "
                         "frame record untouched throughout")
+
+
+        # ================================== 10 · AUTOMATION OWES WHAT THE ROUTE OWES
+        # The independent review's blocker, in the browser. automation.js used to
+        # derive its own frame requirement from the stored `frame.required` flag and
+        # reuse it for the card, the picker, the plan and the completion sentence.
+        # Everything here is read through two real disclosures and the real dialog.
+        def open_automation_hub():
+            page.evaluate("""() => {
+              for (const node of document.querySelectorAll('#main details')) {
+                if (/OPTIONAL ASSISTED BLOCKING|OPTIONAL ASSISTED PRODUCTION/.test(node.textContent || ''))
+                  node.open = true;
+              }
+            }""")
+            page.wait_for_selector(".shot-automation-hub", timeout=20000)
+
+        open_shot(undecided_id, "10")
+        page.evaluate("(id) => { const b = document.querySelector(`.cb-stage-strip .focused-task-button[data-stage-id=\"look\"]`); if (b) b.click(); }", "look")
+        page.wait_for_timeout(400)
+        open_automation_hub()
+
+        auto = page.evaluate(AUTOMATION_STATE, undecided_id)
+        assert auto["hubPresent"], "10. fixture check: the automation hub must be reachable to be read"
+        assert auto["obligation"]["stillRequirementState"] == "route-undeclared", \
+            f"10. an undeclared shot is in the undeclared state, got {auto['obligation']['stillRequirementState']!r}"
+        assert auto["obligation"]["owedFrameIds"] == [], \
+            f"10. and owes no frame, got {auto['obligation']['owedFrameIds']}"
+        card = auto["requiredFramesCard"]
+        assert card is not None, "10. fixture check: the REQUIRED FRAMES card must be on the hub"
+        assert card["value"] == "None yet", \
+            f"10. the card must not print a fraction of a requirement that does not exist, got {card}"
+        assert "0/1" not in card["value"], "10. least of all the reported one"
+        assert "still package ready" not in card["note"].lower(), \
+            f"10. and must not call an empty shot's still package ready, got {card['note']!r}"
+        assert "still package is ready" not in auto["summary"].lower(), \
+            f"10. nor may a completed run on it, got {auto['summary']!r}"
+        findings.append(f"10. the automation hub on the undeclared shot reads REQUIRED FRAMES {card['value']!r} "
+                        f"· {card['note']!r}, and a completed run on it could only say "
+                        f"{auto['summary'][:52]!r}")
+
+        # The real dialog: every frame offered, none chosen for the filmmaker.
+        page.click("#main .shot-automation-hub .automation-plan-btn, #main .shot-automation-hub button.approve-btn.large")
+        page.wait_for_selector("#modal:not(.hidden) .v626-auto-frame", timeout=20000)
+        picker = page.evaluate(PICKER_STATE)
+        assert picker["offered"], "10. fixture check: the picker must offer the shot's frames"
+        assert picker["preselected"] == [], \
+            f"10. no frame may be preselected for automation on a shot that owes none, got {picker['preselected']}"
+        assert picker["draftFrameIds"] == [], \
+            f"10. and the automation plan must carry no frame id, got {picker['draftFrameIds']}"
+        page.evaluate("() => closeModal()")
+        findings.append(f"10. its AUTOMATE FULL SHOT dialog offers {len(picker['offered'])} frames and preselects none, "
+                        "so the plan a run would plan is empty")
+
+        # ---- and a route that DOES owe a frame gets exactly its own ----------------
+        declare("i2v")
+        page.wait_for_timeout(400)
+        open_automation_hub()
+        owed = page.evaluate(AUTOMATION_STATE, undecided_id)
+        assert owed["obligation"]["owedFrameIds"], "10. a declared opening-frame route owes one"
+        assert owed["requiredFramesCard"]["value"].endswith("approved"), \
+            f"10. and the card counts it, got {owed['requiredFramesCard']}"
+        assert owed["settled"] is False, "10. with the obligation outstanding, nothing claims completion"
+        assert "not complete" in owed["summary"].lower(), \
+            f"10. and a run would say so, got {owed['summary']!r}"
+        page.click("#main .shot-automation-hub .automation-plan-btn, #main .shot-automation-hub button.approve-btn.large")
+        page.wait_for_selector("#modal:not(.hidden) .v626-auto-frame", timeout=20000)
+        owed_picker = page.evaluate(PICKER_STATE)
+        assert owed_picker["preselected"] == owed["obligation"]["owedFrameIds"], \
+            f"10. the plan must preselect exactly the owed frames, got {owed_picker['preselected']} for {owed['obligation']['owedFrameIds']}"
+        assert owed_picker["draftFrameIds"] == owed["obligation"]["owedFrameIds"], \
+            f"10. and the draft the run would consume must be the same set, got {owed_picker['draftFrameIds']}"
+        page.evaluate("() => closeModal()")
+        declare("")
+        findings.append(f"10. declaring i2v moved the card, the preselection and the run draft to "
+                        f"{owed['obligation']['owedFrameIds']} together — one obligation, four surfaces")
+
+        # N4 -- give automation its own opinion back.
+        page.evaluate("""() => {
+          window.__realObligation = window.shotStillObligation;
+          window.shotStillObligation = (shot) => {
+            const frames = guidedFrames(shot);
+            const owed = frames.filter((frame) => frame.required !== false);
+            return { routeDeclared: false, owedFrameIds: owed.map((f) => f.id), owedFrameCount: owed.length,
+                     approvedOwedFrameIds: [], approvedOwedCount: 0, stillRequirementState: "frames-incomplete" };
+          };
+          route();
+        }""")
+        page.wait_for_timeout(400)
+        open_automation_hub()
+        broken_card = page.evaluate(AUTOMATION_STATE, undecided_id)["requiredFramesCard"]
+        assert broken_card["value"] != "None yet", \
+            f"N4. precondition: the control must genuinely reproduce the reported defect, got {broken_card}"
+        page.evaluate("() => { window.shotStillObligation = window.__realObligation; route(); }")
+        page.wait_for_timeout(400)
+        open_automation_hub()
+        assert page.evaluate(AUTOMATION_STATE, undecided_id)["requiredFramesCard"]["value"] == "None yet", \
+            "N4. and the assertion section 10 relies on catches it"
+        findings.append(f"N4. negative control: giving automation its own requirement again puts "
+                        f"{broken_card['value']!r} back on the hub card of a shot that owes none, and section 10 "
+                        "catches it")
 
         assert not page_errors, f"the page raised uncaught errors: {page_errors}"
         browser.close()
