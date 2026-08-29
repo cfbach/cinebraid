@@ -1925,6 +1925,33 @@ window.openEntityCreationSection = (list, id) => {
   section.classList.add("focus-flash");
   setTimeout(() => section.classList.remove("focus-flash"), 1200);
 };
+/* R1, THE SURFACE THE FIRST PASS DID NOT REACH.
+ *
+ * "Made with (optional provenance)" was hidden when the project had no model
+ * list of its own (public/library-tools.js, the intake modal) — and the fold
+ * below, headed "Generation records — provenance", went on rendering the same
+ * empty chooser one file over: a <select> whose only option was the placeholder
+ * "model…". Same control, same question, same non-answer, on the reference's own
+ * page rather than in a dialog. R1's rule was applied where it was reported and
+ * nowhere else, which is how a vocabulary defect survives a fix.
+ *
+ * The rule itself is unchanged and is applied here as stated: two or more real
+ * answers is a CHOICE and gets a dropdown; one recorded answer with nothing to
+ * change it to is a FACT and is printed as one; nothing at all is not a control.
+ *
+ * NOTHING IS LOST IN EITHER DIRECTION. `made[i].model` is still written by the
+ * select whenever the project has models, so the capability is untouched; and a
+ * model recorded by a project whose list has since been emptied is still shown,
+ * because hiding the field unconditionally would have silently swallowed a
+ * provenance fact this fold exists to display. */
+function entityProvenanceModelControl(list, id, index, record) {
+  const models = P.meta.models || [];
+  const recorded = String(record?.model || "");
+  if (!models.length) {
+    return recorded ? `<span class="opt-id" data-provenance-model="static">${esc(recorded)}</span>` : "";
+  }
+  return `<select class="status-select" data-provenance-model="choice" onchange="P['${list}'].find(x=>x.id==='${id}').made[${index}].model=this.value;dirty()"><option value="">model…</option>${models.map((m) => `<option value="${m.id}" ${recorded === m.id ? "selected" : ""}>${esc(m.name)}</option>`).join("")}</select>`;
+}
 function entityGenerationRecordsMarkup(list, entity) {
   const id = entity.id;
   /* SECTION G. Provenance is production evidence and none of it is deleted —
@@ -1932,7 +1959,7 @@ function entityGenerationRecordsMarkup(list, entity) {
      here, one click away. What changed is that a wall of prompt text no longer
      opens by default underneath the reference, which is the same progressive
      disclosure the freeze asks of the Project Bible. */
-  return `<details class="fold compact-entity-section"><summary>Generation records — provenance <span>${(entity.made || []).length}</span></summary><div class="section-label">Generation record — model + prompt that made the approved files</div>${(entity.made || []).map((g,gi) => `<div class="block-row"><div class="block-row-head"><select class="status-select" onchange="P['${list}'].find(x=>x.id==='${id}').made[${gi}].model=this.value;dirty()"><option value="">model…</option>${(P.meta.models || []).map((m) => `<option value="${m.id}" ${g.model === m.id ? "selected" : ""}>${esc(m.name)}</option>`).join("")}</select><input style="width:200px" placeholder="file(s)" value="${attr(g.files || "")}" onchange="P['${list}'].find(x=>x.id==='${id}').made[${gi}].files=this.value;dirty()"><span class="dur-chip">${esc(g.date || "")}</span>${g.automationRunId ? `<span class="dur-chip">AUTOMATION · ${esc(g.approval || "approved")}</span><button class="chip" onclick="copyEntityAutomationReport('${list}','${id}',${gi})">COPY RUN REPORT</button>` : ""}<button class="copy-btn" style="margin-left:auto" onclick="copyText(P['${list}'].find(x=>x.id==='${id}').made[${gi}].prompt||'')">COPY</button><button class="chip" onclick="P['${list}'].find(x=>x.id==='${id}').made.splice(${gi},1);dirty();route()">remove</button></div><textarea placeholder="the exact prompt used" onchange="P['${list}'].find(x=>x.id==='${id}').made[${gi}].prompt=this.value;dirty()">${esc(g.prompt || "")}</textarea></div>`).join("")}<button class="add-btn" onclick="(P['${list}'].find(x=>x.id==='${id}').made=P['${list}'].find(x=>x.id==='${id}').made||[]).push({model:'',files:'',prompt:'',date:new Date().toISOString().slice(0,10)});dirty();route()">+ Add generation record</button></details>`;
+  return `<details class="fold compact-entity-section"><summary>Generation records — provenance <span>${(entity.made || []).length}</span></summary><div class="section-label">Generation record — model + prompt that made the approved files</div>${(entity.made || []).map((g,gi) => `<div class="block-row"><div class="block-row-head">${entityProvenanceModelControl(list, id, gi, g)}<input style="width:200px" placeholder="file(s)" value="${attr(g.files || "")}" onchange="P['${list}'].find(x=>x.id==='${id}').made[${gi}].files=this.value;dirty()"><span class="dur-chip">${esc(g.date || "")}</span>${g.automationRunId ? `<span class="dur-chip">AUTOMATION · ${esc(g.approval || "approved")}</span><button class="chip" onclick="copyEntityAutomationReport('${list}','${id}',${gi})">COPY RUN REPORT</button>` : ""}<button class="copy-btn" style="margin-left:auto" onclick="copyText(P['${list}'].find(x=>x.id==='${id}').made[${gi}].prompt||'')">COPY</button><button class="chip" onclick="P['${list}'].find(x=>x.id==='${id}').made.splice(${gi},1);dirty();route()">remove</button></div><textarea placeholder="the exact prompt used" onchange="P['${list}'].find(x=>x.id==='${id}').made[${gi}].prompt=this.value;dirty()">${esc(g.prompt || "")}</textarea></div>`).join("")}<button class="add-btn" onclick="(P['${list}'].find(x=>x.id==='${id}').made=P['${list}'].find(x=>x.id==='${id}').made||[]).push({model:'',files:'',prompt:'',date:new Date().toISOString().slice(0,10)});dirty();route()">+ Add generation record</button></details>`;
 }
 function entitySavedPromptsMarkup(list, entity) {
   const id=entity.id, prompts=entity.prompts || [];

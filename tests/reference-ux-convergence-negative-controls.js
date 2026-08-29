@@ -15,14 +15,22 @@
  *   6. an unrelated throw fails the suite loudly
  *   7. the invariant HOLDS under the real module
  *
- * WHY THESE TEN. A presentation slice can go wrong in exactly two ways that
- * matter: it can make the screen CLAIM something that is not true, or it can make
+ * WHY THESE. A presentation slice can go wrong in exactly two ways that matter:
+ * it can make the screen CLAIM something that is not true, or it can make
  * something DISAPPEAR while calling it simplification. N1, N2, N4, N6 and N7 are
  * one or the other of those. N3 guards the hand-off, which is the thing a
  * filmmaker notices last and trusts least once it is wrong. N5 guards a way out.
  * N8, N9 and N10 guard the line between SAVING something and CHOOSING it — the
  * one distinction on this screen where getting it wrong silently changes what a
- * production is built from.
+ * production is built from. N11 through N15 guard the effective-Required join in
+ * BOTH directions, across every surface that words it.
+ *
+ * N16 AND N17 ARE A DIFFERENT KIND, AND THE REASON IS WORTH KEEPING. Neither
+ * guards something this slice invented; each guards a rule this slice applied on
+ * the surface where it was REPORTED and not on the second surface that had the
+ * same defect — an empty provenance chooser (N16), and a target list describing
+ * an occupied view through the key the writer deletes (N17). A per-surface fix is
+ * what let both survive a merged pass, so both are pinned per surface here.
  *
  * IN MEMORY, ALWAYS. Nothing in the working tree is written, so no control can be
  * "restored" by a checkout that would also discard real work.
@@ -817,6 +825,109 @@ controlAsync({
   },
   reason: "hero-softened-an-unprovable-demand",
   explain: "Cannot-prove-safe is not known-no-demand, and the surface read first is the worst place to blur them.",
+});
+
+/* ===========================================================================
+   N16 — A CHOOSER WITH NOTHING TO CHOOSE, ON THE SECOND SURFACE.
+
+   R1 was applied to the intake modal and not to the generation-record fold, so
+   the same empty <select> went on rendering one file over. Put the unconditional
+   chooser back and a project with no model list is asked to pick from a list
+   whose only entry is the placeholder.
+
+   The mutation restores the SHIPPED-BEFORE markup exactly, so what this control
+   watches fail is the real historical behaviour rather than an invented one.
+   =========================================================================== */
+controlAsync({
+  label: "N16 a provenance chooser with one non-answer is not rendered",
+  mutateSource: only("entities.js", (text) => mutate(
+    text,
+    "  if (!models.length) {\n"
+    + '    return recorded ? `<span class="opt-id" data-provenance-model="static">${esc(recorded)}</span>` : "";\n'
+    + "  }",
+    "  /* mutated: the pre-R1 unconditional chooser */",
+    "N16")),
+  probe: async (mutateSource) => {
+    const project = uxFixture();
+    project.characters[0].made = [{ model: "", files: "CHAR-NC-PRIMARY.png", prompt: "p", date: "2026-08-01" }];
+    const rendered = await draw(project, COVERAGE_STORAGE, mutateSource);
+    const fold = vm.runInContext(
+      `entityGenerationRecordsMarkup('characters', P.characters.find((x) => x.id === 'CHAR-NC'))`,
+      rendered.context);
+    if (!String(fold).includes("Generation records")) return { reached: false, held: false, reason: "no-fold" };
+    const models = vm.runInContext("(P.meta.models || []).length", rendered.context);
+    if (models !== 0) return { reached: false, held: false, reason: "fixture-had-models" };
+    const chooser = /<select/.test(fold);
+    return {
+      reached: true,
+      held: !chooser,
+      reason: chooser ? "empty-chooser-rendered" : "no-chooser",
+    };
+  },
+  reason: "empty-chooser-rendered",
+  explain: "A control offering one non-answer asks for a decision that does not exist, and costs a field of space to do it.",
+});
+
+/* ===========================================================================
+   N17 — THE TARGET LIST READS THE KEY THE WRITER DELETES.
+
+   The highest-consequence of the two residuals, because it is the one that can
+   cost work rather than attention: restore the `slot.approvedFile` read and the
+   extraction panel offers an already-assigned view as though it were empty, with
+   the panel's own default target still — correctly — skipping past it.
+
+   The control asserts the PREMISE separately (the writer really did delete the
+   legacy key), so a future change that stopped deleting it would fail this
+   control loudly rather than let it pass for the wrong reason.
+   =========================================================================== */
+controlAsync({
+  label: "N17 a target list names the view it would overwrite",
+  mutateSource: only("coverage-automation.js", (text) => mutate(
+    text,
+    '${slotSelectedFile(slot) ? " · already assigned" : ""}',
+    '${slot.approvedFile ? " · already assigned" : ""}',
+    "N17")),
+  probe: async (mutateSource) => {
+    const project = uxFixture();
+    project.characters[0].candidateFiles.push({
+      stored: "CHAR-NC-SHEET.png", original: "CHAR-NC-SHEET.png", decision: "unreviewed",
+      coverageJobType: "sheet", coverageSheetType: "angles",
+    });
+    const rendered = await render("#/character/CHAR-NC", project, {
+      scan: {
+        anchors: ["CHAR-NC-PRIMARY.png", "CHAR-NC-LOOSE.png", "CHAR-NC-SHEET.png"]
+          .map((name) => ({ name, url: `/assets/anchors/${name}` })),
+        plates: [], props: [], vehicles: [], audio: [], media: [],
+        shots: { "L1-01": { takes: [], locked: [] } },
+      },
+      storage: { ...COVERAGE_STORAGE },
+      ...(mutateSource ? { mutateSource } : {}),
+    });
+    const out = vm.runInContext(`(() => {
+      const e = P.characters.find((x) => x.id === 'CHAR-NC');
+      const first = ensureCoverageSlots('characters', e)[0];
+      const wrote = assignSlotReference(first, { fileName: 'CHAR-NC-LOOSE.png', by: 'human', via: 'test', at: '2026-08-29T00:00:00Z' });
+      openCoverageSheetExtractor('characters','CHAR-NC','CHAR-NC-SHEET.png', true);
+      const html = document.getElementById('modal').innerHTML;
+      const a = html.indexOf('<select id="coverage-crop-slot"');
+      return {
+        assigned: !!(wrote && wrote.assigned),
+        legacyGone: first.approvedFile === undefined,
+        list: a < 0 ? '' : html.slice(a, html.indexOf('</select>', a)),
+      };
+    })()`, rendered.context);
+    if (!out.assigned) return { reached: false, held: false, reason: "writer-did-not-assign" };
+    if (!out.legacyGone) return { reached: false, held: false, reason: "writer-kept-the-legacy-key" };
+    if (!out.list) return { reached: false, held: false, reason: "no-target-list" };
+    const named = out.list.includes("Front · already assigned");
+    return {
+      reached: true,
+      held: named,
+      reason: named ? "occupied-view-named" : "occupied-view-offered-as-empty",
+    };
+  },
+  reason: "occupied-view-offered-as-empty",
+  explain: "An occupied target that looks free is how an assignment gets silently overwritten by the next crop.",
 });
 
 /* ---------------------------------------------------------------------------

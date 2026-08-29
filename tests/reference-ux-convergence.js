@@ -1671,6 +1671,122 @@ async function testTheHeroDerivesNoDemandOfItsOwn() {
 }
 
 /* ==========================================================================
+   R1, ON THE SURFACE THE FIRST PASS DID NOT REACH.
+
+   The intake modal stopped rendering a chooser with one non-answer. The
+   generation-record fold on the reference's own page — headed "Generation
+   records — provenance" — kept rendering exactly that: a <select> whose only
+   option was the placeholder "model…". Three shapes, because the rule has three
+   answers and only the middle one is a dropdown.
+   ========================================================================== */
+async function testProvenanceRecordChooserFollowsTheSameRule() {
+  const project = convergenceFixture();
+  project.characters[0].made = [{ model: "", files: "CHAR-UX-PRIMARY.png", prompt: "a portrait", date: "2026-08-01" }];
+  project.meta.models = [];
+  const rendered = await surface(project, COVERAGE_STORAGE);
+  const fold = (expr) => vm.runInContext(expr, rendered.context);
+
+  /* NOTHING TO CHOOSE — so there is no control, not an empty one. */
+  const bare = fold(`entityGenerationRecordsMarkup('characters', P.characters.find((x) => x.id === 'CHAR-UX'))`);
+  ok(bare.includes("Generation records"), "baseline: the provenance fold rendered");
+  ok(!/<select/.test(bare), "a project with no model list gets no model chooser at all");
+  ok(bare.indexOf("model…") < 0, "and not the placeholder that was standing in for one");
+
+  /* TWO REAL ANSWERS — a choice, and it is offered. The capability is the thing
+     this check protects: R1 removes an empty control, never the control. */
+  const rich = fold(`(() => {
+    P.meta.models = [{ id: 'm1', name: 'Model One' }, { id: 'm2', name: 'Model Two' }];
+    const out = entityGenerationRecordsMarkup('characters', P.characters.find((x) => x.id === 'CHAR-UX'));
+    P.meta.models = [];
+    return out;
+  })()`);
+  ok(/<select/.test(rich), "two models is a real choice and still gets a dropdown");
+  ok(/Model One/.test(rich) && /Model Two/.test(rich), "and it offers both of them");
+  ok(/made\[0\]\.model=this\.value/.test(rich), "writing provenance is unchanged");
+
+  /* ONE RECORDED ANSWER AND NOTHING TO CHANGE IT TO — a fact, printed as one.
+     Hiding the field unconditionally would have swallowed a provenance record
+     this fold exists to display, which is the failure mode worth naming. */
+  const recorded = fold(`(() => {
+    const e = P.characters.find((x) => x.id === 'CHAR-UX');
+    e.made[0].model = 'legacy-model-id';
+    return entityGenerationRecordsMarkup('characters', e);
+  })()`);
+  ok(/legacy-model-id/.test(recorded), "a recorded model survives an emptied project model list");
+  ok(!/<select/.test(recorded), "but it is stated rather than offered as a choice");
+  ok(/data-provenance-model="static"/.test(recorded), "and says which of the three answers it is");
+}
+
+/* ==========================================================================
+   R3 / R8 — A TARGET LIST MUST NAME THE VIEWS THAT ARE ALREADY FILLED.
+
+   Both places that offer "which view does this become" described an occupied
+   target by reading `slot.approvedFile` — the key assignSlotReference() DELETES
+   when it writes `selectedFile`. So the marker was unreachable for every view
+   filled by the current writer, which is every view anyone has ever assigned.
+
+   The extractor already knew better twice over: it OPENS on the first empty view
+   and gates "SAVE & NEXT VIEW" on slotSelectedFile(). One fact, three reads, one
+   of them stale — and the visible one was the stale one, so a filmmaker cropping
+   a second panel was offered a target that looked free and could overwrite a
+   view they had already assigned.
+   ========================================================================== */
+async function testTargetListsNameTheViewsAlreadyFilled() {
+  const project = convergenceFixture();
+  project.characters[0].candidateFiles.push({
+    stored: "CHAR-UX-SHEET.png", original: "CHAR-UX-SHEET.png", decision: "unreviewed",
+    coverageJobType: "sheet", coverageSheetType: "angles",
+  });
+  const rendered = await surface(project, COVERAGE_STORAGE);
+
+  const out = vm.runInContext(`(() => {
+    const e = P.characters.find((x) => x.id === 'CHAR-UX');
+    const slots = ensureCoverageSlots('characters', e);
+    const first = slots[0];
+    /* The real writer, not a hand-set field: the point of the check is what the
+       shipped assignment path leaves behind. */
+    const wrote = assignSlotReference(first, { fileName: 'CHAR-UX-FRONT.png', by: 'human', via: 'test', at: '2026-08-29T00:00:00Z' });
+    openCoverageSheetExtractor('characters','CHAR-UX','CHAR-UX-SHEET.png', true);
+    const extractor = document.getElementById('modal').innerHTML;
+    const a = extractor.indexOf('<select id="coverage-crop-slot"');
+    const extractorList = a < 0 ? '' : extractor.slice(a, extractor.indexOf('</select>', a));
+    closeModal();
+    openImportedReferenceMapper('characters','CHAR-UX');
+    const mapper = document.getElementById('modal').innerHTML;
+    const b = mapper.indexOf('<select id="import-reference-target"');
+    const mapperList = b < 0 ? '' : mapper.slice(b, mapper.indexOf('</select>', b));
+    return {
+      assigned: wrote && wrote.assigned === true,
+      legacyGone: first.approvedFile === undefined,
+      canonical: slotSelectedFile(first),
+      label: first.label,
+      extractorList,
+      mapperList,
+    };
+  })()`, rendered.context);
+
+  /* The premise. If the writer stopped deleting the legacy key this check would
+     pass for the wrong reason, so it is asserted rather than assumed. */
+  ok(out.assigned, "baseline: the shipped writer assigned the view");
+  ok(out.legacyGone, "baseline: and removed the legacy approvedFile key, which is why the old read was unreachable");
+  eq(out.canonical, "CHAR-UX-FRONT.png", "baseline: the canonical owner reports the file");
+
+  ok(out.extractorList, "the extraction panel offered a target list");
+  ok(out.extractorList.includes(`${out.label} · already assigned`),
+    `the extractor must name the view it is about to overwrite, got ${out.extractorList}`);
+  /* And the views that really are empty must stay unmarked, or the marker means
+     nothing — a label everything wears is not a warning. */
+  ok(!/Profile · already assigned/.test(out.extractorList),
+    "an empty view is not marked, so the marker still distinguishes");
+
+  ok(out.mapperList, `"Use an existing image" offered a target list`);
+  ok(/Front · currently CHAR-UX-FRONT\.png/.test(out.mapperList),
+    `the mapper must name what an occupied view currently holds, got ${out.mapperList}`);
+  ok(!/3\/4 front · currently/.test(out.mapperList),
+    "and must not claim an empty view holds something");
+}
+
+/* ==========================================================================
    NOTHING PERSISTED, NOTHING DISPATCHED.
    ========================================================================== */
 function testNoNewPersistenceAndNoDispatch() {
@@ -1714,13 +1830,15 @@ async function main() {
   await testEveryReferenceSurfaceAgreesAboutWhatIsOwed();
   await testEveryReferenceSurfaceFailsClosedTogether();
   await testTheHeroDerivesNoDemandOfItsOwn();
+  await testProvenanceRecordChooserFollowsTheSameRule();
+  await testTargetListsNameTheViewsAlreadyFilled();
   testNoNewPersistenceAndNoDispatch();
   console.log(`References UX convergence suite passed ${checks} checks across the provenance chooser, the lightbox backdrop, `
     + `extraction disclosure, the save/assign hand-off, unreviewed factors, the compact production-needs summary, `
     + `requirement-vs-demand legibility, staged preview, the visual chooser, continuity-state authoring, single-state `
     + `approval, dropdown readability and Details disclosure, plus the alpha blockers: dormant coverage claiming no `
     + `attention, the fail-closed direction, Save crop & use converging in one action, Save as candidate assigning `
-    + `nothing, the retired stale-assign action and strip/board agreement. Provider calls made: 0.`);
+    + `nothing, the retired stale-assign action and strip/board agreement, plus the two residual surfaces this pass found: the provenance chooser on the generation-record fold, and the target lists that described an occupied view through the key the writer deletes. Provider calls made: 0.`);
 }
 
 main().catch((error) => { console.error(error); process.exit(1); });
