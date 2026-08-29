@@ -728,6 +728,97 @@ controlAsync({
   explain: "Coverage automation exists to build the entity's plan; a plan nothing is waiting on is still the plan.",
 });
 
+/* ===========================================================================
+   CORRECTION 3 — THE PRIMARY HERO.
+   =========================================================================== */
+
+const HERO_STORAGE = { "cinebraid-focused:fixture:entity-task:characters:CHAR-NC": "reference" };
+const heroLineOf = (html) => (/class="reference-primary-remaining">([^<]*)</.exec(html) || [])[1] || "";
+/* The plan the hero names, read from the structural owner rather than from the
+   sentence — so "the plan is unchanged" is a claim about the set, not the prose. */
+const HERO_PLAN = `(() => {
+  const e = P.characters.find(x => x.id === 'CHAR-NC');
+  return ensureCoverageSlots('characters', e)
+    .filter(s => !s.retired && coverageRequirement(s) === 'required' && !slotSelectedFile(s))
+    .map(s => s.label || s.id);
+})()`;
+
+/* ===========================================================================
+   N14 — THE HERO MAY NOT CALL A DORMANT PLAN AN OBLIGATION.
+
+   Put the structural answer back in front of the join and the top of the reference
+   says "Views still needed" over chips that read Planned — the contradiction this
+   correction exists to remove, on the surface a filmmaker reads first.
+   =========================================================================== */
+controlAsync({
+  label: "N14 the hero describes a dormant plan as a plan",
+  mutateSource: only("entities.js", (text) => mutate(
+    text,
+    "  const heroOwed = heroMissing.filter((slot) => effectiveReferenceRequirement(slot, heroDemand) === \"required\").length;",
+    "  const heroOwed = heroMissing.length; void heroDemand;",
+    "N14")),
+  probe: async (mutateSource) => {
+    const rendered = await draw(uxFixture(), HERO_STORAGE, mutateSource);
+    const line = heroLineOf(rendered.html);
+    if (!line) return { reached: false, held: false, reason: "no-hero-remaining-line" };
+    const plan = vm.runInContext(HERO_PLAN, rendered.context);
+    if (!plan.length) return { reached: false, held: false, reason: "nothing-unfilled" };
+    const claims = /still needed/.test(line);
+    return {
+      reached: true,
+      held: !claims,
+      /* THE PLAN ITSELF IS UNCHANGED EITHER WAY — the sentence moves, the set does
+         not, and a control that let the set shrink would be proving the wrong thing. */
+      named: plan.every((label) => line.includes(label) || /more\./.test(line)),
+      reason: claims ? "hero-called-a-dormant-plan-still-needed" : "hero-described-the-plan-as-planned",
+    };
+  },
+  reason: "hero-called-a-dormant-plan-still-needed",
+  explain: "The first line of the reference is the one a fresh user believes, and it was the last one still saying it.",
+});
+
+/* ===========================================================================
+   N15 — AND IT MAY NOT SOFTEN WHAT IT CANNOT PROVE.
+
+   The other direction. Make the join answer `planned` unconditionally and a
+   reference whose demand cannot be established stops warning about work it has no
+   way of knowing is safe to stand down.
+   =========================================================================== */
+controlAsync({
+  label: "N15 an unprovable demand keeps the hero's warning",
+  mutateSource: only("entities.js", (text) => mutate(
+    text,
+    '  return resolved.state === "required-now" ? "required" : "planned";',
+    '  void resolved; return "planned";',
+    "N15")),
+  probe: async (mutateSource) => {
+    /* The reproduced ambiguity: a second character whose id is a PREFIX of this
+       one, so the shot's token matches two entities and the demand answer cannot
+       be given. */
+    const project = uxFixture();
+    project.characters.unshift({ id: "CHAR", name: "Other", prefix: "CHAR", approvedFile: "",
+      continuityStates: [{ id: "state-default", name: "Default", isDefault: true, approvedFile: "" }],
+      coverageSlots: [], expressionSlots: [], candidateFiles: [] });
+    for (const shot of project.shots || []) { shot.characters = []; shot.codes = ["CHAR-NC"]; }
+    const rendered = await draw(project, HERO_STORAGE, mutateSource);
+    const line = heroLineOf(rendered.html);
+    if (!line) return { reached: false, held: false, reason: "no-hero-remaining-line" };
+    const known = vm.runInContext(`(() => {
+      const e = P.characters.find(x => x.id === 'CHAR-NC');
+      return entityReferenceDemandFor('characters', e).known;
+    })()`, rendered.context);
+    if (known !== false) return { reached: false, held: false, reason: "demand-was-answerable" };
+    const warns = /still needed/.test(line);
+    return {
+      reached: true,
+      held: warns,
+      reason: warns ? "hero-failed-closed" : "hero-softened-an-unprovable-demand",
+    };
+  },
+  reason: "hero-softened-an-unprovable-demand",
+  explain: "Cannot-prove-safe is not known-no-demand, and the surface read first is the worst place to blur them.",
+});
+
 /* ---------------------------------------------------------------------------
    NO CATCH-AS-SUCCESS. Enforced, not promised. */
 function testNoCatchAsSuccess() {

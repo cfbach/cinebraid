@@ -1537,6 +1537,140 @@ async function testCompactSummaryAgreesWithTheBoard() {
 }
 
 /* ==========================================================================
+   CORRECTION 3 — THE PRIMARY HERO, AND THE WHOLE SCREEN AT ONCE.
+
+   The hero was the last surface naming the structural plan as an obligation:
+   "Views still needed: Front, 3/4 front, Profile" over chips reading Planned. This
+   asserts every surface of the same rendered reference together, because the defect
+   was never one string — it was two answers on one screen, and a per-surface test
+   is exactly what let it survive three corrections.
+   ========================================================================== */
+
+const REFERENCE_STORAGE = { "cinebraid-focused:fixture:entity-task:characters:CHAR-UX": "reference" };
+
+/* Every claim the reference makes about what it owes, from one project, read off
+   the two stages a filmmaker actually moves between. */
+async function referenceSurfaces(project) {
+  const hero = await surface(project, REFERENCE_STORAGE);
+  const coverage = await surface(project, COVERAGE_STORAGE);
+  const dialog = vm.runInContext(`(() => {
+    CONFIG.generation = CONFIG.generation || {};
+    CONFIG.generation.fal = { ...(CONFIG.generation.fal || {}), enabled: true, keySource: "environment" };
+    openCoverageAutomationModal('characters','CHAR-UX','hybrid');
+    const modal = document.getElementById('modal').innerHTML;
+    const e = P.characters.find(x => x.id === 'CHAR-UX');
+    const slots = ensureCoverageSlots('characters', e).filter(s => !s.retired);
+    closeModal();
+    return {
+      opened: modal.includes('COVERAGE AUTOMATION'),
+      copy: (/id="coverage-missing-summary">([^<]*)</.exec(modal) || [])[1] || '',
+      structural: slots.filter(s => isRequiredCoverage(s) && !slotSelectedFile(s)).map(s => s.label || s.id),
+      production: (() => { const p = entityReferenceDemandFor('characters', e);
+        return p.known ? (p.demanded ? 'demanded' : 'dormant') : 'unknown'; })(),
+    };
+  })()`, coverage.context);
+  return {
+    hero: (/class="reference-primary-remaining">([^<]*)</.exec(hero.html) || [])[1] || "",
+    fold: (/Coverage board <span>([^<]*)</.exec(coverage.html) || [])[1] || "",
+    chips: [...new Set([...within(coverage.html, '<nav class="bounded-slot-rail"', "</nav>")
+      .matchAll(/data-slot-state="([a-z-]+)"/g)].map((m) => m[1]))],
+    labels: [...new Set([...within(coverage.html, '<nav class="bounded-slot-rail"', "</nav>")
+      .matchAll(/<small>([^<]*)<\/small>/g)].map((m) => m[1]))],
+    strip: (/NEEDED NOW<\/span><b>([^<]*)</.exec(coverage.html) || [])[1] || "",
+    ...dialog,
+  };
+}
+
+async function testEveryReferenceSurfaceAgreesAboutWhatIsOwed() {
+  /* KNOWN NO DEMAND — and both shapes of it, because "dormant" and "used but
+     nothing owed" are different facts that must produce the same screen. */
+  for (const [label, project] of [
+    ["no shot uses it", convergenceFixture()],
+    ["a shot uses it and readiness owes nothing", convergenceFixture({ cast: true })],
+  ]) {
+    const seen = await referenceSurfaces(project);
+    eq(seen.opened, true, `${label}: baseline: the automation dialog opened`);
+    ok(seen.structural.length >= 1,
+      `${label}: baseline: the structural plan still holds ${seen.structural.length} unfilled views`);
+
+    ok(seen.hero.startsWith("Planned view"),
+      `${label}: the hero describes the plan as a plan, got ${JSON.stringify(seen.hero)}`);
+    ok(!/still needed/.test(seen.hero),
+      `${label}: and never as an obligation, got ${JSON.stringify(seen.hero)}`);
+    /* AND IT STILL NAMES THE PLAN. What the hero contains did not change. */
+    ok(seen.hero.includes(seen.structural[0]),
+      `${label}: the hero still names the plan's own views, got ${JSON.stringify(seen.hero)}`);
+
+    ok(/none needed now/.test(seen.fold), `${label}: the fold says nothing is needed now, got ${JSON.stringify(seen.fold)}`);
+    ok(!/required/i.test(seen.fold), `${label}: without the word, got ${JSON.stringify(seen.fold)}`);
+    ok(!seen.chips.includes("required-missing"), `${label}: no chip is required-missing, got ${seen.chips}`);
+    ok(!seen.labels.some((word) => /Required/.test(word)), `${label}: no chip says Required, got ${seen.labels}`);
+    eq(seen.strip.trim(), "None", `${label}: the strip counts nothing owed`);
+    ok(seen.copy.startsWith(`${seen.structural.length} planned coverage view`),
+      `${label}: the dialog offers the whole plan in planning words, got ${JSON.stringify(seen.copy)}`);
+    ok(/Nothing is required by current shots\./.test(seen.copy),
+      `${label}: and says why, got ${JSON.stringify(seen.copy)}`);
+
+    /* THE WHOLE SCREEN, IN ONE SENTENCE: nowhere on it does the word "required"
+       appear as a claim about this reference's coverage. */
+    /* NEGATIONS ARE NOT CLAIMS. "Not required" is the optional chip's own label
+       and "Nothing is required by current shots" is the dialog saying exactly what
+       this correction wants said; a ban that could not tell a claim from its denial
+       would forbid the truthful sentence along with the false one. */
+    const claims = [seen.hero, seen.fold, ...seen.labels, seen.strip, seen.copy.split(".")[0]]
+      .map((text) => String(text).replace(/Not required/g, "").replace(/Nothing is required[^.]*/g, ""));
+    for (const claim of claims)
+      ok(!/\brequired\b/i.test(claim),
+        `${label}: no surface may call this plan required, got ${JSON.stringify(claim)}`);
+  }
+}
+
+async function testEveryReferenceSurfaceFailsClosedTogether() {
+  /* UNKNOWN DEMAND — the same five surfaces, in the other direction. A screen that
+     softened only some of them would be the same defect wearing the other face. */
+  const damaged = convergenceFixture();
+  damaged.characters.unshift({ id: "CHAR", name: "Other", prefix: "CHAR", approvedFile: "",
+    continuityStates: [{ id: "state-default", name: "Default", isDefault: true, approvedFile: "" }],
+    coverageSlots: [], expressionSlots: [], candidateFiles: [] });
+  for (const shot of damaged.shots || []) { shot.characters = []; shot.codes = ["CHAR-UX"]; }
+  const seen = await referenceSurfaces(damaged);
+
+  eq(seen.production, "unknown", "baseline: the demand answer cannot be obtained");
+  eq(seen.opened, true, "baseline: the automation dialog opened");
+  ok(seen.structural.length >= 1, `baseline: the plan holds ${seen.structural.length} unfilled views`);
+
+  ok(seen.hero.startsWith("View") && /still needed/.test(seen.hero),
+    `the hero keeps the sentence it shipped with, got ${JSON.stringify(seen.hero)}`);
+  ok(!/^Planned view/.test(seen.hero), "and is not softened into a plan it cannot prove is one");
+  ok(/required view/.test(seen.fold), `the fold keeps its warning, got ${JSON.stringify(seen.fold)}`);
+  ok(seen.chips.includes("required-missing"), `the chips fail closed, got ${seen.chips}`);
+  ok(seen.labels.some((word) => /Required — missing/.test(word)), `in the words they shipped with, got ${seen.labels}`);
+  ok(seen.copy.startsWith(`${seen.structural.length} required coverage slot`),
+    `and the dialog keeps its own, got ${JSON.stringify(seen.copy)}`);
+  ok(!/Nothing is required by current shots/.test(seen.copy),
+    "and never claims nothing is required, which is the one thing it cannot know here");
+}
+
+async function testTheHeroDerivesNoDemandOfItsOwn() {
+  /* NO SECOND OWNER, and the hero is the newest place one could appear. It may name
+     the shared context and the shared join; it may not name a demand derivation. */
+  const entities = read("public/entities.js");
+  const hero = entities.slice(entities.indexOf("function referencePrimaryHeroMarkup("),
+    entities.indexOf("function referenceCreationHub("));
+  ok(hero.length > 400, "baseline: the hero renderer was located");
+  ok(/entityDemandContext\(list, entity\)/.test(hero),
+    "the hero asks the one constructor for the demand context");
+  ok(/effectiveReferenceRequirement\(slot, heroDemand\)/.test(hero),
+    "and the one join for the answer");
+  for (const name of ["entityReferenceDemandFor", "entityCurrentObligations", "referenceDemandState",
+    "obligationStateIds", "referenceDemandResolution", "entityReadinessObligations"])
+    ok(!hero.includes(name), `the hero must not derive demand itself, found ${name}`);
+  /* AND WHAT THE PLAN CONTAINS IS STILL THE STRUCTURAL ANSWER. */
+  ok(/referenceRequirement\(slot\) === "required" && !slotSelectedFile\(slot\)/.test(hero),
+    "the set it names is still the structural coverage plan");
+}
+
+/* ==========================================================================
    NOTHING PERSISTED, NOTHING DISPATCHED.
    ========================================================================== */
 function testNoNewPersistenceAndNoDispatch() {
@@ -1577,6 +1711,9 @@ async function main() {
   await testUnknownDemandKeepsTheAutomationWarning();
   await testCancellingAStagedChoiceLeavesTheViewAlone();
   await testCompactSummaryAgreesWithTheBoard();
+  await testEveryReferenceSurfaceAgreesAboutWhatIsOwed();
+  await testEveryReferenceSurfaceFailsClosedTogether();
+  await testTheHeroDerivesNoDemandOfItsOwn();
   testNoNewPersistenceAndNoDispatch();
   console.log(`References UX convergence suite passed ${checks} checks across the provenance chooser, the lightbox backdrop, `
     + `extraction disclosure, the save/assign hand-off, unreviewed factors, the compact production-needs summary, `

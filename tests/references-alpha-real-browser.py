@@ -382,6 +382,43 @@ try:
                         f"{automation['copy']!r} — the same screen as a board reading "
                         f"{chips['foldSummary']!r}, with no second answer between them")
 
+        # ---- 2c. and so does the first line of the reference ---------------------------
+        # THE SURFACE A FRESH USER READS FIRST, and the last one still naming the
+        # structural plan as an obligation: "Views still needed: Front, 3/4 front,
+        # Profile" over chips reading Planned. The hero lives on the reference stage,
+        # so this steps back to it and returns.
+        page.locator(".bounded-entity-taskbar .focused-task-button", has_text="Primary reference").click()
+        page.wait_for_function(
+            """() => { const n = document.querySelector('.bounded-entity-page');
+                       return n && n.dataset.selectedTask === 'reference'; }""", timeout=25000)
+        page.wait_for_selector(".reference-primary-hero", timeout=25000)
+        hero = page.evaluate("""() => {
+            const line = document.querySelector('.reference-primary-remaining');
+            const entity = P.characters.find((c) => c.id === 'CHAR-ALPHA');
+            const plan = ensureCoverageSlots('characters', entity)
+                .filter((s) => !s.retired && coverageRequirement(s) === 'required' && !slotSelectedFile(s))
+                .map((s) => s.label || s.id);
+            return {
+                text: line ? line.textContent.trim() : '',
+                visible: !!line && line.getBoundingClientRect().height > 0,
+                plan,
+            };
+        }""")
+        assert hero["text"], "2c. the hero must state what the coverage plan still holds"
+        assert hero["visible"], "2c. visibly"
+        assert hero["text"].startswith("Planned view"), \
+            f"2c. and describe it as a plan, got {hero['text']!r}"
+        assert "still needed" not in hero["text"], \
+            f"2c. never as an obligation, got {hero['text']!r}"
+        # WHAT THE PLAN CONTAINS DID NOT CHANGE — the same views, still named.
+        assert hero["plan"] and hero["plan"][0] in hero["text"], \
+            f"2c. and still name the plan's own views, got {hero['text']!r} for {hero['plan']}"
+        findings.append(f"2c. the primary hero reads {hero['text']!r} — the same {len(hero['plan'])} structural "
+                        f"views, described as the plan they are, on the same reference whose board reads "
+                        f"{chips['foldSummary']!r}")
+        open_coverage()
+        open_board()
+
         # ---- 3-5. browse visually, preview, cancel -------------------------------------
         select_view("profile")
         before_browse = slot_files()

@@ -1815,9 +1815,33 @@ function referencePrimaryHeroMarkup(list, entity, media, mediaByName, activeCand
      that has no image, and saying "after this" would imply it did. */
   const heroMissing = heroSlots.filter((slot) => !slot.retired
     && referenceRequirement(slot) === "required" && !slotSelectedFile(slot));
-  const remainingLine = heroMissing.length
-    ? `${pluralWord(heroMissing.length, "View", "Views")} still needed: ${heroMissing.slice(0, 3).map((slot) => esc(slot.label || slot.id)).join(", ")}${heroMissing.length > 3 ? ` and ${heroMissing.length - 3} more` : ""}.`
-    : "";
+  /* CORRECTION 3 — AND IT SAYS SO IN THE WORDS THE REST OF THE PAGE USES.
+   *
+   * This line named the STRUCTURAL coverage plan and called it "still needed", so
+   * the top of the reference read "Views still needed: Front, 3/4 front, Profile"
+   * over a board whose every chip said Planned, a fold that said "none needed now"
+   * and a strip that said NEEDED NOW · None. Last surface, same contradiction.
+   *
+   * WHAT THE PLAN CONTAINS IS UNCHANGED. `heroMissing` is still the structural
+   * answer — coverageRequirement() over the slots the template seeded — and the
+   * same views are still named, in the same order, up to the same three. Only the
+   * sentence around them moves, and it moves by asking the presentation owner the
+   * boards, the strip and the automation dialog already ask:
+   * effectiveReferenceRequirement() over entityDemandContext(). No demand is
+   * inferred here and no set is re-derived.
+   *
+   * The count in the attention branch stays `heroMissing.length` so that sentence
+   * is byte-identical to the one that shipped: where the demand answer cannot be
+   * obtained the hero keeps its warning, because cannot-prove-safe is not
+   * known-no-demand. */
+  const heroDemand = entityDemandContext(list, entity);
+  const heroOwed = heroMissing.filter((slot) => effectiveReferenceRequirement(slot, heroDemand) === "required").length;
+  const heroNames = `${heroMissing.slice(0, 3).map((slot) => esc(slot.label || slot.id)).join(", ")}${heroMissing.length > 3 ? ` and ${heroMissing.length - 3} more` : ""}.`;
+  const remainingLine = !heroMissing.length
+    ? ""
+    : heroOwed
+      ? `${pluralWord(heroMissing.length, "View", "Views")} still needed: ${heroNames}`
+      : `${pluralWord(heroMissing.length, "Planned view", "Planned views")}: ${heroNames}`;
   return `<section class="reference-primary-hero ${it.isCanon ? "is-canon" : it.file ? "is-historic" : "is-missing"}" data-primary-standing="${attr(it.standing)}"><div class="reference-primary-visual">${heroMedia
     ? `<button type="button" class="reference-primary-preview" onclick="inspectMediaFile('${attr(encodeURIComponent(heroMedia.url))}','${attr(heroMedia.assetId || "")}','${attr(encodeURIComponent(`${entity.name || entity.id} primary reference · ${it.file}`))}','${isVideo(heroMedia.name) ? "video" : "image"}')" aria-label="${it.isCanon ? "Inspect the approved primary reference" : "Inspect the selected but unapproved primary reference"}">${isVideo(heroMedia.name) ? `<video muted src="${attr(heroMedia.url)}"></video>` : `<img src="${attr(heroMedia.url)}" alt="">`}<span>INSPECT</span></button>`
     : `<div class="reference-primary-empty">No primary image</div>`}</div><div class="reference-primary-copy"><span>${band}</span><h2>${esc(entity.name || entity.id)}</h2>${roleLine ? `<small class="reference-primary-role">${esc(roleLine)}</small>` : ""}<p>${line}</p>${usage ? `<small class="reference-primary-usage">${usage}</small>` : ""}<div class="reference-primary-actions"><button class="${next.primary ? "approve-btn recommended" : "ghost-btn"}" onclick="${next.run}"><span>${esc(next.label)}</span><small>${next.hint}</small></button></div>${remainingLine ? `<small class="reference-primary-remaining">${remainingLine}</small>` : ""}</div></section>`;
