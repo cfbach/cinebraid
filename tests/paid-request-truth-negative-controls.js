@@ -1360,6 +1360,44 @@ async function main() {
     });
 
   /* =======================================================================
+     10c. A REFUSAL THAT REACHED NO PROVIDER, FILED AS A PROVIDER FAULT.
+
+     The classifier used to enumerate the two refusal codes that existed when Batch 1B
+     wrote it. Restore that scope and every refusal this boundary has added since falls
+     through to the `provider` default — misnamed on the durable run, recorded as
+     `providerContacted: true`, and spending an authorised attempt through a retry gate
+     that reads failureClass.
+
+     The mutation is in the shipped browser source and the harm is read from the shipped
+     classifier, so this control never leaves the property it is about. */
+  await control("a runner that recognises pre-provider refusals by an enumerated code list",
+    "a refusal that reached no provider is not a provider fault", async (phase) => {
+      const { code } = modifiedSource("public/automation.js", [[
+        "  if (error?.providerContacted === false) return \"local-preflight\";\n  return \"provider\";",
+        "  return \"provider\";",
+      ]]);
+      phase("MUTATION_LANDED");
+      const sandbox = {
+        window: {}, console,
+        document: { addEventListener() {}, getElementById: () => null, querySelector: () => null, querySelectorAll: () => [] },
+        fetch: async () => ({ ok: true, json: async () => ({}) }),
+        setTimeout, clearTimeout, setInterval, clearInterval,
+        localStorage: { getItem: () => null, setItem() {}, removeItem() {} },
+      };
+      sandbox.globalThis = sandbox;
+      vm.runInNewContext(code, sandbox, { filename: "public/automation.js" });
+      assert.strictEqual(typeof sandbox.v626FailureClass, "function", "the mutated classifier must be reachable");
+      /* The exact shape the dispatcher builds from a stale-package refusal. */
+      const stale = { code: "GENERATION_PACKAGE_STALE", providerContacted: false };
+      const failureClass = sandbox.v626FailureClass(stale);
+      const deterministic = sandbox.v626IsDeterministicLocalFailure(stale);
+      phase("UNSAFE_PATH_EXECUTED");
+      observeHarm(failureClass === "provider" && deterministic === false,
+        `THE DEFECT: a request the money boundary refused before contacting anything was classified ${JSON.stringify(failureClass)}, `
+        + `so the run records providerContacted:${!deterministic} and Retry Failed Step spends an authorised attempt on a request that reached no provider`);
+    });
+
+  /* =======================================================================
      11. A BUDGET COMPARED IN BINARY FLOATING POINT.  [reviewer blocker 3] */
   await control("a spend ceiling compared with a raw floating-point greater-than",
     "meeting a budget exactly is not exceeding it", async (phase) => {

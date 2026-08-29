@@ -493,6 +493,18 @@ function v626FailureClass(error) {
   if (error?.authorityViolation === true || error?.code === "HUMAN_AUTHORITY_REQUIRED") return "local-package";
   if (error?.localPreflightError === true || error?.classification === "local-preflight") return "local-preflight";
   if (V6_LOCAL_PREFLIGHT_CODES.includes(String(error?.code || ""))) return "local-preflight";
+  /* THE PROPERTY, RATHER THAN A LIST OF THE CODES THAT HAPPEN TO HAVE IT.
+   *
+   * The two codes above were the only pre-provider refusals the boundary emitted when this
+   * was written. It emits nine now — package staleness, model and option identity, surface
+   * mismatch, aspect authority, the spend guards — and every one of them states
+   * `providerContacted: false` on the wire. Enumerating codes meant each new refusal
+   * silently inherited the `provider` default: misnamed as a provider fault, written to the
+   * durable run as `providerContacted: true`, and — because the retry gate reads
+   * failureClass — spending an attempt from a budget authorised for real generation, on a
+   * request that reached no provider. Asking the fact directly is what stops the next one
+   * inheriting it too. */
+  if (error?.providerContacted === false) return "local-preflight";
   return "provider";
 }
 /* The two local classes share one property that matters operationally: a retry
@@ -1596,10 +1608,19 @@ async function v626WaitFalJob(run, step, body) {
       if (data.code) submissionError.code = data.code;
       if (data.classification) submissionError.classification = data.classification;
       if (data.contradictions) submissionError.contradictions = data.contradictions;
-      if (data.classification === "local-preflight" || V6_LOCAL_PREFLIGHT_CODES.includes(String(data.code || ""))) {
+      /* The boundary states this on every refusal it makes before dispatch, so it is read
+         rather than inferred from a code list that only knew about two of them. */
+      if (data.providerContacted === false || data.classification === "local-preflight" || V6_LOCAL_PREFLIGHT_CODES.includes(String(data.code || ""))) {
         submissionError.localPreflightError = true;
         submissionError.providerContacted = false;
-        submissionError.remediation = "Correct the frame's presence declaration or the prompt text that contradicts it, then run this step again. No paid request was submitted and no attempt was spent.";
+        /* The presence-specific sentence stays scoped to the presence gate. Telling a
+           filmmaker whose package went stale, or whose run met its spend ceiling, to
+           "correct the frame's presence declaration" would be worse than saying nothing —
+           so everything else carries the boundary's own explanation, which already says
+           what happened and that nothing was submitted. */
+        submissionError.remediation = V6_LOCAL_PREFLIGHT_CODES.includes(String(data.code || ""))
+          ? "Correct the frame's presence declaration or the prompt text that contradicts it, then run this step again. No paid request was submitted and no attempt was spent."
+          : "";
       }
       throw submissionError;
     }

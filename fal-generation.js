@@ -2280,7 +2280,13 @@ function registerFalGeneration(app, context) {
     req.body = planGate.payload;
     const requestedOutputCount = purpose === "motion-h3" ? 1 : clamp(req.body?.outputCount, purpose === "blocking" ? cfg.blockingOutputs : cfg.frameOutputs, 1, 4);
     const guardError = automationSubmissionError(owner, jobs, req.body, requestedOutputCount);
-    if (guardError) return res.status(guardError.status).json({ error: guardError.message, code: guardError.code || "AUTOMATION_GUARD" });
+    /* Through the same helper as every other refusal on this route, so it carries the same
+       pre-provider evidence. automationSubmissionError() runs here — before the job row is
+       built, before commit() and long before submit() — so `providerContacted: false` is a
+       fact this line can assert rather than a hope. It was the one refusal shape that said
+       nothing, and the automation runner reads exactly that field to decide whether an
+       attempt was spent. */
+    if (guardError) return requestTruthRefusal(res, guardError.status, guardError.code || "AUTOMATION_GUARD", guardError.message);
     const refs = Array.isArray(req.body?.references) ? req.body.references.filter((ref) => ref && ref.url) : [];
     const edit = refs.length > 0;
     /* Resolved once, before the row is built, so the same answer is both what a request

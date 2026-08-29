@@ -2350,6 +2350,90 @@ async function main() {
     } finally { h.close(); }
   }
 
+  /* =======================================================================
+     20. A REFUSAL THAT REACHED NO PROVIDER IS NOT A PROVIDER FAULT.
+
+     Batch 1B established that a deterministic local refusal must not be classified
+     `provider`, because doing so misnames the fault AND spends an attempt from a budget
+     the director authorised for real generation — the retry gate reads failureClass.
+
+     It was written as a list of the two codes that existed then. This boundary emits nine
+     now, and every one of them states `providerContacted: false` on the wire, so each new
+     refusal silently inherited the `provider` default: a stale package or a met spend
+     ceiling was written to the durable run as a provider fault, `providerContacted: true`,
+     and Retry Failed Step spent an authorised attempt on a request that reached nothing.
+
+     Two halves, asserted separately: that the boundary states the fact, and that the
+     runner reads it. The second runs the shipped browser source rather than asserting on
+     its text. */
+  {
+    const h = await harness();
+    try {
+      const buildId = seedFramePackage(h);
+      const declaration = Presentation.generationRequestDeclaration({ surface: "compiled-frame", viewMode: "advanced" });
+
+      /* THE BOUNDARY'S HALF. One refusal per family that can end a paid request before
+         dispatch, each read off the wire rather than assumed. */
+      const refusals = [];
+      const collect = async (what, body) => {
+        const result = await h.post(body);
+        assert.strictEqual(result.status >= 400, true, `${what} must be a refusal: ${JSON.stringify(result.data)}`);
+        assert.strictEqual(result.data.providerContacted, false, `${what} must state that no provider was contacted`);
+        assert.strictEqual(result.data.paidRequestSubmitted, false, `${what} must state that nothing was submitted`);
+        refusals.push({ what, data: result.data });
+      };
+      await collect("an undeclared body", framePlanBody(buildId, { clientRequestId: "pc-undeclared" }));
+      await collect("a format nothing offered", { ...framePlanBody(buildId, { clientRequestId: "pc-aspect", aspectRatio: "1:1" }), generationRequest: declaration });
+      await collect("an option identity CineBraid could not have minted", {
+        ...framePlanBody(buildId, { clientRequestId: "pc-option" }),
+        generationRequest: Presentation.generationRequestDeclaration({
+          surface: "compiled-frame", viewMode: "advanced",
+          selectedOptionId: `${IMAGE_MODEL_ID}::not-a-real-surface::not-a-real-mode`,
+        }),
+      });
+      await collect("an automation run that does not exist", {
+        ...framePlanBody(buildId, { clientRequestId: "pc-run" }),
+        automationRunId: "no-such-run", automationStepKey: "step-1", automationRunnerId: "runner-1",
+        generationRequest: Presentation.generationRequestDeclaration({ surface: "automation-run", viewMode: "simple" }),
+      });
+      assert.strictEqual(h.calls.length, 0, "NONE of them reached the provider");
+      assert.strictEqual(h.ledger().length, 0, "and none of them left a row");
+
+      /* THE RUNNER'S HALF, on the shipped source. */
+      const vm = require("vm");
+      const sandbox = {
+        window: {}, console,
+        document: { addEventListener() {}, getElementById: () => null, querySelector: () => null, querySelectorAll: () => [] },
+        fetch: async () => ({ ok: true, json: async () => ({}) }),
+        setTimeout, clearTimeout, setInterval, clearInterval,
+        localStorage: { getItem: () => null, setItem() {}, removeItem() {} },
+      };
+      sandbox.globalThis = sandbox;
+      vm.runInNewContext(fs.readFileSync(path.join(__dirname, "..", "public", "automation.js"), "utf8"), sandbox, { filename: "public/automation.js" });
+      assert.strictEqual(typeof sandbox.v626FailureClass, "function", "the shipped classifier must be reachable, or this proves nothing about it");
+      assert.strictEqual(typeof sandbox.v626IsDeterministicLocalFailure, "function", "and so must the retry gate's own predicate");
+
+      for (const { what, data } of refusals) {
+        /* Shaped as the dispatcher shapes it: the fields it copies off the response. */
+        const error = { code: data.code, classification: data.classification, providerContacted: data.providerContacted };
+        assert.strictEqual(sandbox.v626FailureClass(error), "local-preflight",
+          `${what} (${data.code}) must be classified local-preflight, not a provider fault`);
+        assert.strictEqual(sandbox.v626IsDeterministicLocalFailure(error), true,
+          `${what}: and must not spend an authorised attempt`);
+      }
+
+      /* AND THE OTHER DIRECTION, so this is a classifier and not a rubber stamp. A twin
+         left unresolved DID reach a provider — the route does not claim otherwise — and a
+         transport failure is a provider fault by definition. Both must stay `provider`, or
+         a real spend would stop advancing the attempt counter. */
+      assert.strictEqual(sandbox.v626FailureClass({ code: "GENERATION_UNRESOLVED" }), "provider",
+        "an unresolved twin reached a provider and must still be classified as one");
+      assert.strictEqual(sandbox.v626FailureClass({ message: "socket hang up" }), "provider",
+        "and so must a transport failure");
+      note(`20. all ${refusals.length} pre-provider refusal families state providerContacted:false on the wire with 0 provider calls and 0 ledger rows, and the shipped v626FailureClass reads that fact rather than a list of codes — each is local-preflight and spends no authorised attempt, while an unresolved twin and a transport failure are still provider faults`);
+    } finally { h.close(); }
+  }
+
   console.log("");
   console.log("PAID REQUEST TRUTH — the money boundary enforces the request:");
   for (const line of notes) console.log(`  - ${line}`);
