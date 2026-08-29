@@ -550,7 +550,11 @@ function registerFalGeneration(app, context) {
        spends money. `removed` is kept because a request that silently dropped a value
        is the mirror image of one that silently kept it. */
     const gated = Presentation.restrictPayloadToPlan(req.body, plan);
-    return { ok: true, declaration, plan, surface: expected, payload: gated.payload, removed: gated.removed };
+    /* AND WHICH PACKAGE THE ROUTE IS ABOUT TO COMPILE, when a compiled surface is in play.
+       The capability resolvers ask readSourceIntent() that question already; carrying the
+       answer out is what lets the freshness gate below examine the same package instead of
+       the one the request happened to name. Null for the surfaces that compile nothing. */
+    return { ok: true, declaration, plan, surface: expected, payload: gated.payload, removed: gated.removed, resolvedBuildId: String(capability?.buildId || "") };
   }
 
   /* WHAT THE SCREEN WAS SHOWING, recorded on the job. Additive execution-ledger facts:
@@ -2279,6 +2283,21 @@ function registerFalGeneration(app, context) {
     };
     /* WHAT THE SCREEN WAS SHOWING, on the row before the row exists. */
     applyRequestTruth(job, planGate);
+    /* THE PACKAGE THE ROUTE WILL ACTUALLY COMPILE, named on the row before anything asks
+       whether it is current.
+     *
+     * `sourceBuildId` is copied straight off the body and has never been required: both
+     * compilers read an empty one as "take this shot's last usable build". So a request
+     * that simply omitted the key compiled and dispatched a package the freshness gate
+     * below had returned null on without performing a single comparison - while the
+     * byte-identical request naming that same package was refused 409. One omitted field
+     * decided it, which is the shape of a bypass rather than a lenience.
+     *
+     * Filled in from the resolution the gate already performed, so this is the same
+     * package by construction. Lines 1101/1042 write the compiled build's id onto the row
+     * after compilation for exactly this value; they become a no-op re-assert, and the row
+     * stops naming a build id nothing had checked. */
+    job.sourceBuildId = job.sourceBuildId || planGate.resolvedBuildId || "";
     /* THE MODEL THE SCREEN NAMED, and THE PACKAGE THE SHOT STILL STANDS BEHIND. Both
        refuse before compilation, before the row is committed and before anything leaves
        this machine, for the same reason every other gate on this route does: a refused

@@ -116,12 +116,38 @@
       warnings: ["This historical prompt build is unavailable."],
     };
   }
+  /* THE OTHER NAME A PACKAGE ANSWERS TO.
+   *
+   * promptBuildsById is keyed by `raw.id || raw.packageId` (uniqueBuildId above), and a
+   * guided build carries BOTH - `guided-frame-<base36>` as its id and `SH-1-FRAME-R01` as
+   * its packageId - so the map has a key for one of them and not the other. Naming a
+   * package by packageId is an established idiom here: image-execution.js matches on all
+   * three of id/buildId/packageId, protectedBuildIds() below keeps its own byPackage map,
+   * and review-provenance.js reads `pkg.sourceBuildId || pkg.id`. Every one of those is a
+   * hand-rolled copy of a rule this resolver did not implement, and the copies disagreed
+   * where it mattered most: the paid boundary's freshness gate resolves through here, so a
+   * request naming a package by its packageId got `missing:true`, no comparison, and a
+   * stale package dispatched - while the byte-identical request naming the same package by
+   * its id was refused.
+   *
+   * ONLY WHEN IT NAMES ONE PACKAGE. Zero or several and this stays a miss, because an
+   * ambiguous name is not an identity and picking from it would be a guess. */
+  function packageAliasBuild(project, id) {
+    if (!id) return null;
+    let found = null;
+    for (const build of Object.values(project.promptBuildsById)) {
+      if (clean(build?.packageId) !== id) continue;
+      if (found) return null;
+      found = build;
+    }
+    return found;
+  }
   function resolvePromptBuild(project, entry) {
     if (!entry) return null;
     if (typeof entry === "object" && !entry.buildId) return entry;
     ensurePromptHistory(project);
     const id = entryBuildId(entry);
-    const build = project.promptBuildsById[id];
+    const build = project.promptBuildsById[id] || packageAliasBuild(project, id);
     if (!build) return missingPromptBuild(id, typeof entry === "object" ? entry : {});
     const resolved = { ...clone(build) };
     if (build.compositionSnapshotId) resolved.composition = clone(project.promptSnapshotsById[build.compositionSnapshotId]?.value || null);

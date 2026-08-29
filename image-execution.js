@@ -359,6 +359,12 @@ function imageControlCapability(request = {}) {
   const surface = text(request.surface) || "api";
   const capability = resolveImageFalCapability(mode, ImagePack.capabilityLayer(mode, surface));
   return {
+    /* WHICH PACKAGE THIS ANSWER IS ABOUT. readSourceIntent() has already decided it -
+       including the empty-buildId case, where it takes the shot's last usable build - and
+       throwing that away made the caller's freshness gate ask about a different package
+       than the compiler was about to use, or about none at all. Reported rather than
+       re-derived: a second resolution rule is exactly what must not exist here. */
+    buildId: text(build.id) || text(build.buildId),
     resolutions: capability.resolutions,
     qualityTiers: ImagePack.GPT_IMAGE_2_FACTS.qualityTiers,
     durationSeconds: null,

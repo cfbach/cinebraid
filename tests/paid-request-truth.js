@@ -625,6 +625,41 @@ async function main() {
         "and must say what evidence it looked at, so a partial verdict is not read as the whole one");
       assert.strictEqual(h.calls.length, 1, "no second provider call");
 
+      /* AND IT IS THE PACKAGE THAT IS REFUSED, NOT THE STRING THAT NAMED IT.
+       *
+       * The gate keys off job.sourceBuildId, and two ways of referring to the very same
+       * package used to miss it entirely — each producing a dispatch where the assertion
+       * above produces a 409, on identical project state.
+       *
+       * OMITTED. sourceBuildId was never a required field, and both compilers read an
+       * empty one as "this shot's last usable build" — so leaving the key out compiled and
+       * dispatched V1 while the gate returned null without comparing anything. */
+      const omitted = { ...framePlanBody(buildId, { clientRequestId: "v1-omitted" }) };
+      delete omitted.sourceBuildId;
+      const omittedResult = await h.post(declaredGenerationBody(omitted));
+      assert.strictEqual(omittedResult.status, 409,
+        `naming no package must be refused for the package the route would compile: ${JSON.stringify(omittedResult.data)}`);
+      assert.strictEqual(omittedResult.data.code, "GENERATION_PACKAGE_STALE", "with the same typed refusal");
+      assert.strictEqual(h.calls.length, 1, "and no provider call");
+
+      /* BY packageId. promptBuildsById is keyed by `id || packageId`, so a guided build
+         with both is reachable under one key and not the other — and image-execution.js
+         matches all three of id/buildId/packageId, so the compiler found V1 while the
+         resolver reported it missing and the gate returned null. */
+      const alias = pack.packageId;
+      assert(alias && alias !== buildId, "the fixture must give the package a packageId distinct from its key, or this proves nothing");
+      const byPackageId = await h.post(declaredGenerationBody(framePlanBody(alias, { clientRequestId: "v1-by-package-id" })));
+      assert.strictEqual(byPackageId.status, 409,
+        `naming the same package by its packageId must be refused exactly as its id is: ${JSON.stringify(byPackageId.data)}`);
+      assert.strictEqual(byPackageId.data.code, "GENERATION_PACKAGE_STALE", "with the same typed refusal");
+      assert.strictEqual(h.calls.length, 1, "and no provider call");
+
+      /* A NAME THAT BELONGS TO NOTHING IS STILL A MISS. The alias must not have turned
+         the resolver into something that finds a package for any string. */
+      const unknown = await h.post(declaredGenerationBody(framePlanBody("no-such-package", { clientRequestId: "v1-unknown" })));
+      assert.strictEqual(unknown.status, 404, `an unknown package is still not found: ${JSON.stringify(unknown.data)}`);
+      assert.strictEqual(h.calls.length, 1, "and no provider call");
+
       /* REBUILT TO V2 — the same package with its snapshot recompiled — is accepted. */
       const rebuilt = h.project();
       const rebuiltShot = rebuilt.shots[0];
@@ -637,7 +672,7 @@ async function main() {
       const v2 = await h.post(declaredGenerationBody(framePlanBody(buildId, { clientRequestId: "v2" })));
       assert.strictEqual(v2.status, 200, `the rebuilt package must be accepted: ${JSON.stringify(v2.data)}`);
       assert.strictEqual(h.calls.length, 2, "and reaches the provider");
-      note("8. a package whose shot has moved on is refused at the money boundary with GENERATION_PACKAGE_STALE naming \"approved frame changed\" and its evidence scope; rebuilding the snapshot makes the same request dispatch");
+      note("8. a package whose shot has moved on is refused at the money boundary with GENERATION_PACKAGE_STALE naming \"approved frame changed\" and its evidence scope — and refused identically when the request names that package by its packageId or names no package at all, the two ways of reaching the same compile that used to skip the comparison entirely; an unknown name is still a 404, and rebuilding the snapshot makes the same request dispatch");
     } finally { h.close(); }
   }
 

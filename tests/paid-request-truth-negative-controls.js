@@ -548,6 +548,74 @@ async function main() {
     });
 
   /* =======================================================================
+     4b/4c. THE SAME GATE, REACHED BY A NAME IT DOES NOT RESOLVE.
+
+     Control 4 removes the gate. These two leave it in place and reintroduce the reasons it
+     used to return null on a package it was supposed to be judging — one per way of naming
+     the same compile. Both are the same harm as control 4 and neither is control 4: the
+     refusal is present and simply never asked its question.
+
+     The shared setup is control 4's, to the byte: a package with a recorded snapshot, then
+     an approved frame that makes it stale. */
+  const seedStalePackage = (h) => {
+    const project = h.project();
+    const buildId = addFramePromptBuild(project, "SH-1", {
+      frameId: "FR-A", spec: baseSpec({ shotId: "SH-1" }), references: [buildRef(REF_IDENTITY, KAI_PNG)],
+    });
+    const shot = project.shots[0];
+    const pack = project.promptBuildsById[buildId];
+    pack.dependencySnapshot = {
+      ...BuildHistory.packageProjectInputs(project, shot, pack, BuildHistory.packageDirection(shot, pack)),
+      references: [],
+    };
+    h.saveProject(project);
+    const moved = h.project();
+    moved.shots[0].frames[0].winner = "A.png";
+    h.saveProject(moved);
+    return { buildId, packageId: pack.packageId };
+  };
+
+  await control("a boundary that judges the package the request named instead of the one it will compile",
+    "a package the shot no longer stands behind is refused before dispatch", async (phase) => {
+      const falGeneration = loadModified("fal-generation.js", [[
+        `    job.sourceBuildId = job.sourceBuildId || planGate.resolvedBuildId || "";`,
+        "",
+      ]]);
+      phase("MUTATION_LANDED");
+      const h = await harness(falGeneration);
+      try {
+        seedStalePackage(h);
+        /* No sourceBuildId. The compilers read an empty one as the shot's last usable
+           build, so this dispatches the very package control 4 refuses. */
+        const body = { ...framePlanBody("") };
+        delete body.sourceBuildId;
+        const result = await h.post(declaredGenerationBody(body));
+        phase("UNSAFE_PATH_EXECUTED");
+        observeHarm(result.status === 200,
+          `THE DEFECT: omitting sourceBuildId dispatched an out-of-date package the gate never compared — HTTP ${result.status}, ${h.calls.length} provider call(s), and the row names ${JSON.stringify((h.ledger()[0] || {}).sourceBuildId)} after the fact`);
+      } finally { h.close(); }
+    });
+
+  await control("a build resolver that answers for one of a package's two names",
+    "a package the shot no longer stands behind is refused before dispatch", async (phase) => {
+      await withPatchedModule("public/shared-build-history.js", [[
+        "    const build = project.promptBuildsById[id] || packageAliasBuild(project, id);",
+        "    const build = project.promptBuildsById[id];",
+      ]], async (falGeneration) => {
+        phase("MUTATION_LANDED");
+        const h = await harness(falGeneration);
+        try {
+          const { packageId } = seedStalePackage(h);
+          assert(packageId, "the fixture must give the package a packageId, or the mutation changes nothing");
+          const result = await h.post(declaredGenerationBody(framePlanBody(packageId)));
+          phase("UNSAFE_PATH_EXECUTED");
+          observeHarm(result.status === 200,
+            `THE DEFECT: naming the package by its packageId dispatched it while the identical request naming its id is refused — HTTP ${result.status}, ${h.calls.length} provider call(s)`);
+        } finally { h.close(); }
+      });
+    });
+
+  /* =======================================================================
      5. THE COMPARATOR'S SKIP RULE, REMOVED.
 
      The subtler half of freshness, and the one that would make the boundary WRONG rather

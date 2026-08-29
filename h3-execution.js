@@ -403,6 +403,11 @@ function h3ControlCapability(request = {}) {
   const surface = text(request.surface) || "api";
   const capability = resolveH3FalCapability(mode, H3Pack.capabilityLayer(mode, surface));
   return {
+    /* WHICH PACKAGE THIS ANSWER IS ABOUT — see the same field on
+       imageControlCapability(). readSourceIntent() has already chosen it, empty-buildId
+       fallback included; reporting it is what lets the paid boundary's freshness gate
+       examine the package the compiler will actually use. */
+    buildId: text(build.id) || text(build.buildId),
     resolutions: capability.resolutions,
     /* An empty ARRAY where the mode carries no aspect_ratio field at all, which is the
        same answer public/fal-generation.js's falH3ControlPlan() gives from
