@@ -185,11 +185,11 @@ const STAGE_STATUS = {
      `notRequired` is the answer of whatever the shot has DECLARED: nothing it has
      said asks for an authored frame, so Frames is not owed one. Originally this was
      a declared ROUTE's answer only, which left an undeclared shot reading
-     "Not started - 0 of 1 frame approved" while the same screen's command summary
+     "Not started — 0 of 1 frame approved" while the same screen's command summary
      read "0/0". The reading is now the canonical required-frame count, so a shot
      that has declared nothing gets the same honest word as one whose declared route
      asks for no frame. It is emphatically NOT the not-applicable distinction
-     shared-stage-model.js declares it cannot make - that is about a stage being
+     shared-stage-model.js declares it cannot make — that is about a stage being
      irrelevant to a shot forever, and this is a live reading of declarations the
      filmmaker can change at any time.
 
