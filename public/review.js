@@ -329,6 +329,30 @@ window.reviewEntityCandidatesBatch = async (list, id, scope = "visible", force =
   await route();
   toast(run.failed ? `Batch review finished with ${run.failed} failed candidate${run.failed === 1 ? "" : "s"}` : `Batch review complete · ${run.completed} candidates`);
 };
+/* THE FOURTH READER OF THE KEY THE WRITER DELETES — and the one that could cost
+ * a reference rather than merely mislabel one.
+ *
+ * The "replaces <file>" clause below asked the slot for its current assignment
+ * with `?.approvedFile`. assignSlotReference() writes `selectedFile` and DELETES
+ * `approvedFile` (public/shared-entity-slots.js), so for any view filled by the
+ * canonical writer this resolved to undefined and the row rendered as though the
+ * target were empty. Batch Approval then replaced it anyway: the replacement path
+ * asks slotSelectedFile() and records the history correctly, so the mechanism
+ * KNEW the slot was occupied while the confirmation immediately above it said
+ * nothing. A human confirmation step that cannot show what it is about to
+ * displace is not a confirmation.
+ *
+ * This file already had the answer twice, ~130 lines up: both `placedNames` sets
+ * ask slotSelectedFile() for slots and `state.approvedFile` for states. Only this
+ * one line was left on the old key.
+ *
+ * THE TWO NAMESPACES, AND ONLY THE SLOT ARM MOVES. A continuity state genuinely
+ * owns an `approvedFile` of its own — ensureEntityStateList() keeps
+ * `entity.approvedFile` synced to the default state's — so the state arm below is
+ * correct and is untouched. slotSelectedFile() returns "" for an absent slot, the
+ * same falsy value the optional chain produced, so a genuinely empty target still
+ * renders no replacement clause. No owner is added, no key is repopulated, and
+ * assignSlotReference() is unchanged. */
 window.openEntityBatchApproval = (list, id, batchId) => {
   const entity = P[list]?.find((item) => item.id === id);
   const run = entity ? entityBatchRunById(entity, batchId) : null;
@@ -336,7 +360,7 @@ window.openEntityBatchApproval = (list, id, batchId) => {
   const shortlist = entityBatchShortlist(run).filter((item) => item.best && item.approvable);
   if (!shortlist.length) return toast("No passing candidates are available for approval");
   window._entityBatchApproval = { list, id, batchId };
-  openModal(`<div class="entity-batch-approval-modal"><header><span>BATCH APPROVAL</span><h3>Approve selected passing candidates</h3><p>This is the human confirmation step. Current filenames are kept; each selected image becomes the authority for only its listed target.</p></header><div class="entity-batch-approval-list">${shortlist.map((item, index) => { const current = item.type === "coverage" || item.type === "expressions" ? [...(entity.coverageSlots || []), ...(entity.expressionSlots || [])].find((slot) => slot.id === item.best.slotId)?.approvedFile : entityStateById(entity, item.best.stateId)?.approvedFile || (item.best.stateId === "state-default" ? entity.approvedFile : ""); return `<label><input type="checkbox" data-batch-approval-index="${index}" checked><span><b>${esc(item.label)}</b><small>${esc(item.best.fileName)} · ${Math.round(Number(item.best.score || 0))}/100${current && current !== item.best.fileName ? ` · replaces ${esc(current)}` : ""}</small></span></label>`; }).join("")}</div><div class="modal-actions"><button class="cancel" onclick="closeModal()">Cancel</button><button class="approve-btn large" onclick="confirmEntityBatchApproval()">CONFIRM SELECTED APPROVALS</button></div></div>`);
+  openModal(`<div class="entity-batch-approval-modal"><header><span>BATCH APPROVAL</span><h3>Approve selected passing candidates</h3><p>This is the human confirmation step. Current filenames are kept; each selected image becomes the authority for only its listed target.</p></header><div class="entity-batch-approval-list">${shortlist.map((item, index) => { const current = item.type === "coverage" || item.type === "expressions" ? slotSelectedFile([...(entity.coverageSlots || []), ...(entity.expressionSlots || [])].find((slot) => slot.id === item.best.slotId)) : entityStateById(entity, item.best.stateId)?.approvedFile || (item.best.stateId === "state-default" ? entity.approvedFile : ""); return `<label><input type="checkbox" data-batch-approval-index="${index}" checked><span><b>${esc(item.label)}</b><small>${esc(item.best.fileName)} · ${Math.round(Number(item.best.score || 0))}/100${current && current !== item.best.fileName ? ` · replaces ${esc(current)}` : ""}</small></span></label>`; }).join("")}</div><div class="modal-actions"><button class="cancel" onclick="closeModal()">Cancel</button><button class="approve-btn large" onclick="confirmEntityBatchApproval()">CONFIRM SELECTED APPROVALS</button></div></div>`);
 };
 /* `humanApproved` is the canonical mark of a decision a person took, written by every
    other approval path (public/entities.js, public/library-tools.js) and read by the

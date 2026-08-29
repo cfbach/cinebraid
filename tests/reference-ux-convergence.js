@@ -1787,6 +1787,88 @@ async function testTargetListsNameTheViewsAlreadyFilled() {
 }
 
 /* ==========================================================================
+   BATCH APPROVAL MUST NAME WHAT IT WOULD REPLACE.
+
+   The fourth reader of the deleted key, and the only one that could cost a
+   reference rather than mislabel one. openEntityBatchApproval() resolved a
+   slot's current assignment with `?.approvedFile`, which assignSlotReference()
+   removes — so a view filled by the canonical writer rendered as though it were
+   empty, and confirming replaced it anyway. The replacement path asks
+   slotSelectedFile() and records the history correctly, so the mechanism knew
+   the slot was occupied while the confirmation immediately above it did not say
+   so.
+
+   Three states are asserted, because "shows a warning" alone would also pass if
+   the clause were unconditional: an occupied slot names its file, a genuinely
+   empty slot stays quiet, and a continuity state — which owns an `approvedFile`
+   of its own and was never wrong — still names its file.
+   ========================================================================== */
+async function testBatchApprovalNamesWhatItWouldReplace() {
+  const project = convergenceFixture();
+  project.characters[0].candidateFiles.push(
+    { stored: "CURRENT-FRONT.png", original: "CURRENT-FRONT.png", decision: "unreviewed" },
+    { stored: "NEW-FRONT.png", original: "NEW-FRONT.png", decision: "unreviewed" },
+  );
+  const rendered = await surface(project, COVERAGE_STORAGE);
+
+  const out = vm.runInContext(`(() => {
+    const e = P.characters.find((x) => x.id === 'CHAR-UX');
+    const slot = ensureCoverageSlots('characters', e).find((s) => s.id === 'front');
+    /* The canonical writer, not a hand-set field: the whole point is what the
+       shipped assignment path leaves behind for this surface to read. */
+    const wrote = assignSlotReference(slot, { fileName: 'CURRENT-FRONT.png', by: 'human', via: 'test', at: '2026-08-29T00:00:00Z' });
+    const result = (over) => Object.assign({
+      status: 'completed', pass: true, score: 91, approvable: true,
+      contractVersion: 'reference-authority-v3',
+    }, over);
+    e.candidateReviewBatches = [{ id: 'batch-1', status: 'completed', results: [
+      result({ fileName: 'NEW-FRONT.png', targetKey: 'coverage:front', targetLabel: 'Front', type: 'coverage', slotId: 'front' }),
+      result({ fileName: 'NEW-REAR.png', targetKey: 'coverage:rear', targetLabel: 'Rear', type: 'coverage', slotId: 'rear' }),
+      result({ fileName: 'NEW-DEFAULT.png', targetKey: 'state:state-default', targetLabel: 'Default', type: 'state', stateId: 'state-default' }),
+    ] }];
+    openEntityBatchApproval('characters', 'CHAR-UX', 'batch-1');
+    const html = document.getElementById('modal').innerHTML;
+    const a = html.indexOf('entity-batch-approval-list');
+    const body = a < 0 ? '' : html.slice(a, html.indexOf('modal-actions', a));
+    const rowFor = (file) => (body.split('<label>').find((chunk) => chunk.includes(file)) || '');
+    return {
+      assigned: !!(wrote && wrote.assigned),
+      legacyGone: slot.approvedFile === undefined,
+      canonical: slotSelectedFile(slot),
+      rearHolds: slotSelectedFile(ensureCoverageSlots('characters', e).find((s) => s.id === 'rear')),
+      defaultState: (entityStateById(e, 'state-default') || {}).approvedFile || '',
+      occupied: rowFor('NEW-FRONT.png'),
+      empty: rowFor('NEW-REAR.png'),
+      state: rowFor('NEW-DEFAULT.png'),
+    };
+  })()`, rendered.context);
+
+  /* PREMISES. Asserted rather than assumed, so that a future change which stopped
+     deleting the legacy key could not let this pass for the wrong reason. */
+  ok(out.assigned, "baseline: the canonical writer assigned Front");
+  ok(out.legacyGone, "baseline: and removed approvedFile, which is why the old read saw nothing");
+  eq(out.canonical, "CURRENT-FRONT.png", "baseline: the canonical projection reports the occupant");
+  eq(out.rearHolds, "", "baseline: and Rear is genuinely empty");
+  eq(out.defaultState, "CHAR-UX-PRIMARY.png", "baseline: the default state holds its own approved file");
+
+  /* 1. OCCUPIED — the confirmation names the file it would displace. */
+  ok(out.occupied, "the batch approval row for the occupied target rendered");
+  ok(/replaces CURRENT-FRONT\.png/.test(out.occupied),
+    `an occupied target must name what it replaces, got ${out.occupied}`);
+
+  /* 2. EMPTY — and stays quiet, or the warning means nothing. */
+  ok(out.empty, "the batch approval row for the empty target rendered");
+  ok(!/replaces/.test(out.empty),
+    `a genuinely empty target must claim no replacement, got ${out.empty}`);
+
+  /* 3. THE STATE ARM WAS NEVER WRONG AND IS UNTOUCHED. A continuity state owns an
+     approvedFile of its own, so correcting the slot arm must not disturb it. */
+  ok(out.state, "the batch approval row for the continuity state rendered");
+  ok(/replaces CHAR-UX-PRIMARY\.png/.test(out.state),
+    `the state arm must still name its current approved file, got ${out.state}`);
+}
+
+/* ==========================================================================
    NOTHING PERSISTED, NOTHING DISPATCHED.
    ========================================================================== */
 function testNoNewPersistenceAndNoDispatch() {
@@ -1832,13 +1914,14 @@ async function main() {
   await testTheHeroDerivesNoDemandOfItsOwn();
   await testProvenanceRecordChooserFollowsTheSameRule();
   await testTargetListsNameTheViewsAlreadyFilled();
+  await testBatchApprovalNamesWhatItWouldReplace();
   testNoNewPersistenceAndNoDispatch();
   console.log(`References UX convergence suite passed ${checks} checks across the provenance chooser, the lightbox backdrop, `
     + `extraction disclosure, the save/assign hand-off, unreviewed factors, the compact production-needs summary, `
     + `requirement-vs-demand legibility, staged preview, the visual chooser, continuity-state authoring, single-state `
     + `approval, dropdown readability and Details disclosure, plus the alpha blockers: dormant coverage claiming no `
     + `attention, the fail-closed direction, Save crop & use converging in one action, Save as candidate assigning `
-    + `nothing, the retired stale-assign action and strip/board agreement, plus the two residual surfaces this pass found: the provenance chooser on the generation-record fold, and the target lists that described an occupied view through the key the writer deletes. Provider calls made: 0.`);
+    + `nothing, the retired stale-assign action and strip/board agreement, plus the two residual surfaces this pass found: the provenance chooser on the generation-record fold, and the target lists and the batch-approval confirmation that described an occupied slot through the key the writer deletes. Provider calls made: 0.`);
 }
 
 main().catch((error) => { console.error(error); process.exit(1); });

@@ -930,6 +930,67 @@ controlAsync({
   explain: "An occupied target that looks free is how an assignment gets silently overwritten by the next crop.",
 });
 
+/* ===========================================================================
+   N18 — BATCH APPROVAL MAY NOT PRESENT AN OCCUPIED TARGET AS FREE.
+
+   The same deleted key as N17, on the surface where reading it stale is most
+   expensive: this is the human confirmation step, and confirming it REPLACES the
+   reference. The replacement path itself asks slotSelectedFile() and records
+   `CURRENT-FRONT.png -> NEW-FRONT.png` correctly, so the defect was never that
+   the product lost track of the occupant — it was that the sentence a person
+   reads before saying yes did not mention it.
+
+   The mutation restores the exact `?.approvedFile` optional chain that shipped,
+   so what fails here is the real historical behaviour.
+   =========================================================================== */
+controlAsync({
+  label: "N18 batch approval names the reference it would replace",
+  mutateSource: only("review.js", (text) => mutate(
+    text,
+    "slotSelectedFile([...(entity.coverageSlots || []), ...(entity.expressionSlots || [])].find((slot) => slot.id === item.best.slotId))",
+    "[...(entity.coverageSlots || []), ...(entity.expressionSlots || [])].find((slot) => slot.id === item.best.slotId)?.approvedFile",
+    "N18")),
+  probe: async (mutateSource) => {
+    const project = uxFixture();
+    project.characters[0].candidateFiles.push(
+      { stored: "CURRENT-FRONT.png", original: "CURRENT-FRONT.png", decision: "unreviewed" },
+      { stored: "NEW-FRONT.png", original: "NEW-FRONT.png", decision: "unreviewed" },
+    );
+    const rendered = await draw(project, COVERAGE_STORAGE, mutateSource);
+    const out = vm.runInContext(`(() => {
+      const e = P.characters.find((x) => x.id === 'CHAR-NC');
+      const slot = ensureCoverageSlots('characters', e).find((s) => s.id === 'front');
+      const wrote = assignSlotReference(slot, { fileName: 'CURRENT-FRONT.png', by: 'human', via: 'test', at: '2026-08-29T00:00:00Z' });
+      e.candidateReviewBatches = [{ id: 'batch-nc', status: 'completed', results: [{
+        fileName: 'NEW-FRONT.png', status: 'completed', pass: true, score: 91, approvable: true,
+        contractVersion: 'reference-authority-v3',
+        targetKey: 'coverage:front', targetLabel: 'Front', type: 'coverage', slotId: 'front',
+      }] }];
+      openEntityBatchApproval('characters', 'CHAR-NC', 'batch-nc');
+      const html = document.getElementById('modal').innerHTML;
+      const a = html.indexOf('entity-batch-approval-list');
+      return {
+        assigned: !!(wrote && wrote.assigned),
+        legacyGone: slot.approvedFile === undefined,
+        canonical: slotSelectedFile(slot),
+        body: a < 0 ? '' : html.slice(a, html.indexOf('modal-actions', a)),
+      };
+    })()`, rendered.context);
+    if (!out.assigned) return { reached: false, held: false, reason: "writer-did-not-assign" };
+    if (!out.legacyGone) return { reached: false, held: false, reason: "writer-kept-the-legacy-key" };
+    if (out.canonical !== "CURRENT-FRONT.png") return { reached: false, held: false, reason: "slot-does-not-hold-the-file" };
+    if (!out.body) return { reached: false, held: false, reason: "no-batch-approval-modal" };
+    const named = out.body.includes("replaces CURRENT-FRONT.png");
+    return {
+      reached: true,
+      held: named,
+      reason: named ? "replacement-named" : "occupied-target-confirmed-as-empty",
+    };
+  },
+  reason: "occupied-target-confirmed-as-empty",
+  explain: "Confirming this replaces the reference, so a confirmation that cannot name the occupant is the one place this defect costs work.",
+});
+
 /* ---------------------------------------------------------------------------
    NO CATCH-AS-SUCCESS. Enforced, not promised. */
 function testNoCatchAsSuccess() {
