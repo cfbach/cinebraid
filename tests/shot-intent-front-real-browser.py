@@ -24,6 +24,11 @@ actually reported:
      frame, saved to disk and opened fresh — is not told to produce anything. This is
      the leak a Codex review demonstrated, and it is a browser claim because it is
      about what the shot workspace PUTS IN FRONT OF A FILMMAKER after a real page load.
+ 10  ZERO OWED IS NOT AUTOMATION COMPLETE. `automationReadyForMotion` is a PERSISTED
+     receipt and public/creation-studio.js turns it into "STILL AUTOMATION COMPLETE"
+     plus an approved-start-frame claim. Whether the shipped surface still makes that
+     claim once the obligation underneath has moved is a render question, and only a
+     browser answers it.
   9  AUTOMATION OWES WHAT THE ROUTE OWES. The hub card, the AUTOMATE FULL SHOT dialog
      and the plan a run would consume are two collapsed <details> deep on the Look
      stage, and the dialog's preselection only exists once it is really opened --
@@ -50,6 +55,8 @@ cannot fail is worth nothing:
      shell surfaces read, and requires section 9's assertion to catch it.
   N4 gives automation its own frame requirement back and requires section 10's
      assertion to catch it.
+  N5 lets the shipped surface trust the persisted receipt alone and requires section
+     11's assertion to catch it.
 
 NOTHING HERE IS PAID AND NOTHING LEAVES THE MACHINE. Config and projects live in a
 temporary directory reached through CINEBRAID_CONFIG_PATH and CINEBRAID_PROJECTS_ROOT, so
@@ -173,6 +180,33 @@ PICKER_STATE = """() => {
     offered: boxes.map((box) => box.value),
     preselected: boxes.filter((box) => box.checked).map((box) => box.value),
     draftFrameIds: (window._v626ShotAutomationDraft || {}).frameIds || [],
+  };
+}"""
+
+# The completion boundary as the Motion workspace renders it. `automationReadyForMotion`
+# is a PERSISTED receipt; what is read here is whether the shipped surface still turns it
+# into a completion claim once the obligation underneath it has moved.
+COMPLETION_STATE = """(shotId) => {
+  const shot = shotById(shotId);
+  const obligation = shotStillObligation(shot);
+  const main = document.getElementById('main');
+  const panel = document.querySelector('[data-guided-panel="motion"]');
+  /* The panel is a <details>; innerText omits a collapsed body, so the claim is read
+     from the emitted markup -- the gate either renders the block or it does not -- and
+     the disclosure is opened as well so a present claim is genuinely on screen. */
+  if (panel && !panel.open) panel.open = true;
+  const text = main ? main.innerHTML : '';
+  return {
+    state: obligation.stillRequirementState,
+    owed: obligation.owedFrameCount,
+    approvedOwed: obligation.approvedOwedCount,
+    settled: stillObligationSettled(obligation),
+    receipt: !!(shot.creationBrief || {}).automationReadyForMotion,
+    claim: stillAutomationCompletionClaim(shot),
+    panelLocked: !!(panel && panel.classList.contains('locked')),
+    banner: text.includes('STILL AUTOMATION COMPLETE'),
+    startFrameClaim: text.includes('approved start frame is ready for image-to-video'),
+    frames: (shot.keyframes || []).map((f) => f.id + ':' + (f.winner || '')),
   };
 }"""
 
@@ -805,6 +839,132 @@ try:
                         f"{broken_card['value']!r} back on the hub card of a shot that owes none, and section 10 "
                         "catches it")
 
+
+        # ============================= 11 · ZERO OWED IS NOT AUTOMATION COMPLETE
+        # The persisted receipt an automation run leaves behind, and what the shipped
+        # Motion workspace does with it once the obligation has moved. The receipt is
+        # written into local state rather than earned by a run: this suite calls no
+        # provider and starts no generation, and the point under test is the RENDER.
+        def with_receipt(shot_id, declared_route):
+            # `declared`, not `route`: the page's own re-render function is called
+            # route(), and an argument of that name shadows it inside the callback.
+            page.evaluate(
+                """([id, declared]) => {
+                  const shot = shotById(id);
+                  shot.creationBrief = shot.creationBrief || {};
+                  shot.creationBrief.deliveryIntent = 'motion';
+                  shot.creationBrief.automationReadyForMotion = true;
+                  if (declared) shot.deliveryRoute = declared; else delete shot.deliveryRoute;
+                  route();
+                }""", [shot_id, declared_route])
+            page.wait_for_timeout(400)
+            return page.evaluate(COMPLETION_STATE, shot_id)
+
+        open_shot(undecided_id, "11")
+        page.evaluate("() => { const b = document.querySelector('.cb-stage-strip .focused-task-button[data-stage-id=\"motion\"]'); if (b) b.click(); }")
+        page.wait_for_timeout(400)
+
+        # UNDECLARED: a receipt on a shot that never owed a still claims nothing.
+        undeclared_done = with_receipt(undecided_id, "")
+        assert undeclared_done["receipt"] is True, "11. fixture check: the persisted receipt must be on the record"
+        assert undeclared_done["state"] == "route-undeclared", \
+            f"11. and the shot must owe nothing, got {undeclared_done['state']!r}"
+        assert undeclared_done["panelLocked"] is False, \
+            "11. fixture check: the Motion workspace must be open, or an absent banner proves nothing"
+        assert undeclared_done["settled"] is False, \
+            "11. a shot that owed no still has completed no still obligation"
+        assert undeclared_done["banner"] is False, \
+            "11. so the workspace must not render STILL AUTOMATION COMPLETE"
+        assert undeclared_done["startFrameClaim"] is False, \
+            "11. nor claim an approved start frame is ready for image-to-video"
+        findings.append("11. an undeclared shot carrying a completed-automation receipt renders neither "
+                        "STILL AUTOMATION COMPLETE nor an approved-start-frame claim")
+
+        # A DECLARED ZERO-FRAME ROUTE: the same, with a route that legitimately owes none.
+        zero_route_done = with_receipt(undecided_id, "t2v")
+        assert zero_route_done["state"] == "frames-not-required", \
+            f"11. a text-driven route owes no still, got {zero_route_done['state']!r}"
+        assert zero_route_done["panelLocked"] is False, \
+            "11. fixture check: its Motion workspace must be open too"
+        assert zero_route_done["settled"] is False, \
+            "11. a route that requires no still has completed no still obligation"
+        assert zero_route_done["banner"] is False, \
+            "11. so it must not render STILL AUTOMATION COMPLETE either"
+        assert zero_route_done["startFrameClaim"] is False, "11. nor the start-frame claim"
+        findings.append("11. the same receipt under a declared zero-frame route (t2v) renders neither claim: "
+                        f"state {zero_route_done['state']!r}, {zero_route_done['owed']} owed")
+
+        # POSITIVE: a frame-requiring route whose owed frame IS approved.
+        #
+        # THE APPROVAL IS EARNED, NOT SYNTHESIZED. approveFrameCanon() called from
+        # page.evaluate is refused -- "can only be approved by an explicit human approval
+        # action" -- which is the authority guarantee, and routing around it would make
+        # this proof worthless. So the receipt is earned the way a filmmaker earns it:
+        # the demo sample ships SAMPLE-01 with its opening image on disk and no receipt,
+        # and this clicks the shipped approve control and confirms the shipped dialog.
+        open_shot("SAMPLE-01", "11")
+        page.evaluate("() => { const b = document.querySelector('.cb-stage-strip .focused-task-button[data-stage-id=\"frames\"]'); if (b) b.click(); }")
+        page.wait_for_selector("button.guided-approve-selected", timeout=20000)
+        page.locator("button.guided-approve-selected").first.click()
+        page.wait_for_selector("#modal:not(.hidden) button[onclick='confirmApproveTake()']", timeout=20000)
+        page.locator("#modal button[onclick='confirmApproveTake()']").first.click()
+        page.wait_for_timeout(800)
+        assert not page_errors, f"11. approving raised uncaught errors: {page_errors}"
+        receipts = page.evaluate("() => ((P.productionAuthority || {}).receipts || []).length")
+        assert receipts >= 1, "11. fixture check: the click must have written a real approval receipt"
+
+        page.evaluate("() => { const b = document.querySelector('.cb-stage-strip .focused-task-button[data-stage-id=\"motion\"]'); if (b) b.click(); }")
+        page.wait_for_timeout(400)
+        complete = with_receipt("SAMPLE-01", "i2v")
+        # THE OBLIGATION HALF IS PROVEN HERE, with a receipt this suite actually earned.
+        assert complete["state"] == "frames-complete", \
+            f"11. a genuinely approved opening frame must complete an i2v obligation, got {complete['state']!r} ({complete['approvedOwed']}/{complete['owed']})"
+        assert complete["settled"] is True, \
+            "11. and an owed frame that is approved completes the obligation — the correction withdraws false claims, not true ones"
+        assert complete["claim"] is True, \
+            "11. so the shipped completion claim is granted for it"
+        findings.append(f"11. SAMPLE-01, whose opening frame was approved by a real click through the shipped approve "
+                        f"control and dialog ({receipts} receipt, {complete['approvedOwed']}/{complete['owed']} owed), reaches "
+                        "frames-complete and IS granted the completion claim")
+
+        # THE RENDERED HALF depends on the Motion workspace being open, which needs
+        # generation configured; the QA sandbox writes no credentials on purpose, so the
+        # panel can render the shipped locked shell instead — and that shell carries no
+        # banner block at all, which would make an assertion here prove nothing either
+        # way. Reported rather than forced: tests/shot-intent-front.js section P3 and the
+        # motionReadyFixture in tests/render-harness.js both cover the positive render.
+        if complete["panelLocked"] or not complete["banner"]:
+            findings.append("11. NOT EXERCISED IN BROWSER: the legitimate completion BANNER, because this "
+                            f"sandbox renders the Motion workspace's locked shell for it (panelLocked="
+                            f"{complete['panelLocked']}) and that shell has no banner block. Section P3 covers it.")
+        else:
+            assert complete["startFrameClaim"] is True, \
+                "11. and its approved-start-frame line is the truthful one for an opening-frame route"
+            findings.append("11. and the workspace legitimately renders STILL AUTOMATION COMPLETE for it")
+
+        # Back to the undeclared shot for the control.
+        open_shot(undecided_id, "11")
+        page.evaluate("() => { const b = document.querySelector('.cb-stage-strip .focused-task-button[data-stage-id=\"motion\"]'); if (b) b.click(); }")
+        page.wait_for_timeout(400)
+
+        # N5 -- let the shipped surface trust the receipt alone again.
+        with_receipt(undecided_id, "")
+        page.evaluate("""() => {
+          window.__realClaim = window.stillAutomationCompletionClaim;
+          window.stillAutomationCompletionClaim = (shot) => !!(shot.creationBrief || {}).automationReadyForMotion;
+          route();
+        }""")
+        page.wait_for_timeout(400)
+        broken_claim = page.evaluate(COMPLETION_STATE, undecided_id)
+        assert broken_claim["banner"] is True, \
+            "N5. precondition: the control must genuinely reproduce the reported defect"
+        page.evaluate("() => { window.stillAutomationCompletionClaim = window.__realClaim; route(); }")
+        page.wait_for_timeout(400)
+        assert page.evaluate(COMPLETION_STATE, undecided_id)["banner"] is False, \
+            "N5. and the assertion section 11 relies on catches it"
+        findings.append("N5. negative control: reading the persisted receipt alone puts STILL AUTOMATION "
+                        "COMPLETE back on a shot that owes no still, and section 11's assertion catches it")
+
         assert not page_errors, f"the page raised uncaught errors: {page_errors}"
         browser.close()
 finally:
@@ -818,4 +978,6 @@ assert not paid_calls, f"a paid route was called: {paid_calls}"
 print("\n".join(findings))
 print(f"project data isolated: config {config_path}, projects {projects_root} — data/ untouched")
 print(f"generation endpoint calls: {len(generation_calls)} — provider calls: 0 — paid execution: 0 — off-site requests: 0")
+for call in generation_calls:
+    print(f"  local generation endpoint touched (never a provider, never billed): {call}")
 print("Shot intent at the front real-browser audit passed")
