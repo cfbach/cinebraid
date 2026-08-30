@@ -4,6 +4,9 @@ const { SimpleZipWriter } = require("./zip-stream");
 const { summarizeRecordedCost } = require("./generation-cost");
 const ProductionAuthority = require("./public/shared-production-authority");
 const Lifecycle = require("./generation-lifecycle");
+/* WHICH AUTHORIZATION A PAID DISPATCH BELONGS TO. This file establishes the run half of
+   that answer; it owns no ceiling beyond the immutable one already on the run record. */
+const PaidPermit = require("./paid-dispatch-permit");
 const APP_VERSION = require("./package.json").version;
 
 const MAX_TERMINAL_RUNS = 100;
@@ -1097,7 +1100,48 @@ function registerAutomationRuns(app, deps) {
       }, current.leaseDiagnostics),
     }, current, { preserveUpdatedAt: true, revision: current.revision || 1 });
     write(runs);
-    res.json({ run: publicRun(runs[index]), reacquired, leaseMs: LEASE_MS, heartbeatMs: HEARTBEAT_MS });
+    /* AND THE PERMIT FOR THE PAID STEP THIS CALL WAS MADE FOR.
+     *
+     * This route already did every check a paid-step permit needs, and did them from
+     * server state: the run is registered, it has not been cancelled, the lease is held by
+     * this runner, and the step is named. It recorded all of that as a diagnostic and the
+     * money boundary never read it — so membership went on being whatever the generation
+     * POST happened to say about itself, and a run capped at one image dispatched a second
+     * by leaving `automationRunId` out.
+     *
+     * The class and the run are established HERE, from the validated run above. The caller
+     * supplies only the scope of the request it is about to make, which can narrow what
+     * the permit may buy and cannot choose its class, its run, its step or any ceiling —
+     * those come from this record, and the ceiling stays immutable on it.
+     *
+     * ISSUED AFTER the run write, deliberately. A crash between the two leaves a permit
+     * for a lease that was written, never the reverse; and an unredeemed permit simply
+     * expires, while a lease without one is re-revalidated on the next attempt. */
+    let paidPermit = null;
+    if (stepKey) {
+      try {
+        paidPermit = PaidPermit.issuePaidPermit(projectDir(), {
+          permitClass: "automation",
+          authorizationRef: String(runs[index].id || ""),
+          stepKey,
+          scope: plainObject(req.body?.paidScope),
+          at: now(),
+        });
+      } catch (error) {
+        return res.status(error?.status || 500).json({
+          error: error?.message || "Could not issue a paid dispatch permit for this step.",
+          code: error?.code || "PAID_PERMIT_ISSUE_FAILED",
+          run: publicRun(runs[index]),
+        });
+      }
+    }
+    res.json({
+      run: publicRun(runs[index]),
+      reacquired,
+      leaseMs: LEASE_MS,
+      heartbeatMs: HEARTBEAT_MS,
+      ...(paidPermit ? { paidPermitId: paidPermit.id, paidPermitExpiresAt: paidPermit.expiresAt } : {}),
+    });
   });
   app.post("/api/automation/runs/:id/release", (req, res) => {
     const runs = read(), index = findRun(runs, req.params.id);

@@ -510,7 +510,7 @@ window.startFalFrameGeneration = async () => {
   try {
     await flushPendingProjectSave();
     closeModal();
-    const response = await fetch("/api/generation/fal/jobs", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(gated.payload) });
+    const response = await fetch("/api/generation/fal/jobs", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(await paidDispatchPermitFor(gated.payload)) });
     const data = await response.json();
     if (!response.ok) throw new Error(data.error || "Could not start generation");
     FAL_GENERATION_JOBS = [...(FAL_GENERATION_JOBS || []).filter((job) => job.id !== data.job.id), data.job];

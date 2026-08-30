@@ -21,7 +21,7 @@ function origin(server) {
 async function json(url, options = {}) {
   /* A suite that posts to the paid route is standing in for a dialog, and a dialog
      declares which surface and view it was. See tests/generation-request-fixture.js. */
-  const response = await fetch(url, declaredRequestInit(url, options));
+  const response = await fetch(url, await declaredRequestInit(url, options));
   const data = await response.json();
   return { response, data };
 }

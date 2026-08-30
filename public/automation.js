@@ -387,12 +387,20 @@ async function v627AcquireAutomationLease(runId) {
   return run;
 }
 
-async function v6211RevalidatePaidStepLease(run, step) {
+async function v6211RevalidatePaidStepLease(run, step, scope, stepKey) {
   if (!run?.id) throw Object.assign(new Error("Automation run is unavailable."), { code: "LEASE_LOST", leaseLost: true });
   const response = await fetch(`/api/automation/runs/${encodeURIComponent(run.id)}/lease/revalidate`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ runnerId: V627_AUTOMATION_RUNNER_ID, stepKey: step?.key || "" }),
+    /* THE SCOPE OF THE REQUEST THIS CALL IS BEING MADE FOR. It narrows what the permit
+       the server is about to mint may buy; it cannot choose the permit's class, its run,
+       its step or its ceiling, all of which the server establishes from the run record it
+       has just validated. */
+    /* THE DURABLE OPERATION KEY, not the plain step key. A retry is a different paid
+       attempt with its own idempotency key, and the permit has to name the same one the
+       generation POST will carry or the boundary would rewrite a retry back onto the
+       original step and collide with the job that step already has. */
+    body: JSON.stringify({ runnerId: V627_AUTOMATION_RUNNER_ID, stepKey: stepKey || step?.key || "", paidScope: scope || {} }),
   });
   const data = await response.json();
   if (!response.ok) {
@@ -407,7 +415,10 @@ async function v6211RevalidatePaidStepLease(run, step) {
   v626ReplaceRun(data.run || run);
   V626_ACTIVE_AUTOMATION_RUNS.add(run.id);
   V628_AUTOMATION_LEASE_LOST_RUNS.delete(run.id);
-  return data.run || run;
+  /* The permit travels back beside the run, because this call is the only server touch a
+     paid automation step makes before it dispatches, and the run it just proved is the
+     authorization the permit names. */
+  return { run: data.run || run, paidPermitId: data.paidPermitId || "" };
 }
 
 async function v627ReleaseAutomationLease(run) {
@@ -1735,7 +1746,15 @@ async function v626WaitFalJob(run, step, body) {
     if (!Number.isInteger(count) || count <= 0) throw new Error("Requested image count is invalid. No paid request was submitted.");
     if (used + count > max) throw new Error(`Credit guard stopped the run before exceeding its ${max}-image cap.`);
     const durableOperationKey = step.retryCount ? `${step.key}:retry-${step.retryCount}` : step.key;
-    await v6211RevalidatePaidStepLease(run, step);
+    /* THE SAME FIELDS THE MONEY BOUNDARY WILL FINGERPRINT, from the body about to be
+       submitted rather than from a second description of it. */
+    const paidScope = {
+      purpose: body.purpose, shotId: body.shotId, frameId: body.frameId,
+      entityList: body.entityList, entityId: body.entityId,
+      surface: CINEBRAID_REQUEST_SURFACE_IDS.automationRun, viewMode: "simple",
+      buildId: body.sourceBuildId || "", outputCount: count,
+    };
+    const revalidated = await v6211RevalidatePaidStepLease(run, step, paidScope, durableOperationKey);
     step = run.steps?.[step.key] || step;
     await v641SetStepActivity(run, step.key, "submitting", "Lease revalidated. Submitting the paid image request to FAL now.", {
       system: "FAL · GPT IMAGE 2", providerAccepted: false,
@@ -1748,7 +1767,7 @@ async function v626WaitFalJob(run, step, body) {
        are a recorded authorisation here rather than live controls. `simple` is lossless
        for this surface: it owns the candidate count and quality, both production-tier,
        and the run's stored resolution is a route input the gate leaves alone. */
-    const response = await fetch("/api/generation/fal/jobs", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ ...body, generationRequest: generationRequestDeclaration({ surface: CINEBRAID_REQUEST_SURFACE_IDS.automationRun, viewMode: "simple" }), automationRunId: run.id, automationStepKey: durableOperationKey, automationRunnerId: V627_AUTOMATION_RUNNER_ID }) });
+    const response = await fetch("/api/generation/fal/jobs", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ ...body, generationRequest: generationRequestDeclaration({ surface: CINEBRAID_REQUEST_SURFACE_IDS.automationRun, viewMode: "simple" }), automationRunId: run.id, automationStepKey: durableOperationKey, automationRunnerId: V627_AUTOMATION_RUNNER_ID, paidPermitId: revalidated.paidPermitId }) });
     const data = await response.json();
     if (!response.ok) {
       step.activity = { ...(step.activity || {}), state: "request rejected", detail: `${data.error || `FAL submission returned HTTP ${response.status}` } No paid request was accepted.`, system: "FAL · GPT IMAGE 2", providerAccepted: false, paidRequestSubmitted: false, httpStatus: response.status, errorCode: data.code || "", updatedAt: v626Now() };

@@ -302,6 +302,40 @@ window.openFalGenerationModal = (purpose, shotId, frameId = "", buildId = "") =>
   openModal(`<h3>${blocking ? revision && sourceRow ? "Revise blocking attempt" : "Generate blocking options" : `Generate Frame ${esc(frame?.label || "A")} options`}</h3><div class="modal-sub">FAL · ${esc((build.profileName || build.profileId || "Prompt build").toUpperCase())}${blocking && revision && sourceRow ? " · EDIT" : ""}</div>${blocking && revision ? `<div class="fal-revision-summary"><b>Requested changes</b><p>${esc(revision)}</p>${sourceRow ? `<small>Using ${esc(sourceRow.asset.title || sourceRow.asset.file)} as the editable grayscale scaffold.</small>` : `<small>Generating a fresh blocking attempt from the revised prompt.</small>`}</div>` : ""}<div id="fal-legacy-generation-view"></div><p class="hint">This submits a paid FAL request. CineBraid will store returned images in this shot and link them to the prompt build.</p><div class="modal-actions"><button class="cancel" onclick="closeModal()">Cancel</button><button class="approve-btn large" onclick="startFalGeneration()">START GENERATION</button></div>`);
   setTimeout(() => drawLegacyView(), 0);
 };
+/* THE PERMIT A DIRECT PRESS DISPATCHES ON.
+ *
+ * Every dialog in CineBraid that spends money is one filmmaker action, and that action is
+ * an authorization in its own right — manual generation stays legitimate while an
+ * automation run is live on the same shot, which is why the server does not try to guess
+ * whether a request is manual. It knows because this route minted a `direct` permit for it.
+ *
+ * A round trip inside the Generate press the filmmaker already made. Nothing is shown, no
+ * choice is asked for, and a refusal here surfaces as the same toast every other
+ * pre-provider refusal on this path does. The scope sent is the paid-relevant identity of
+ * the request about to be submitted; the server hashes it and refuses a dispatch that is
+ * not that work. */
+async function paidDispatchPermitFor(body) {
+  const source = body && typeof body === "object" ? body : {};
+  const response = await fetch("/api/generation/paid-permit", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      generationRequest: source.generationRequest,
+      purpose: source.purpose,
+      shotId: source.shotId,
+      frameId: source.frameId,
+      entityList: source.entityList,
+      entityId: source.entityId,
+      sourceBuildId: source.sourceBuildId,
+      outputCount: source.outputCount,
+    }),
+  });
+  const data = await response.json().catch(() => ({}));
+  if (!response.ok || !data.paidPermitId)
+    throw new Error(data.error || "CineBraid could not authorize this paid request, so nothing was submitted.");
+  return { ...source, paidPermitId: data.paidPermitId };
+}
+
 window.startFalGeneration = async () => {
   const request = window._falGenerationRequest;
   if (!request) return;
@@ -353,7 +387,7 @@ window.startFalGeneration = async () => {
   closeModal();
   keepGuidedPanelOpen(s, blocking ? "blocking" : "");
   try {
-    const response = await fetch("/api/generation/fal/jobs", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(gatedBody) });
+    const response = await fetch("/api/generation/fal/jobs", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(await paidDispatchPermitFor(gatedBody)) });
     const data = await response.json();
     if (!response.ok) throw new Error(data.error || "Could not start generation");
     FAL_GENERATION_JOBS = [...(FAL_GENERATION_JOBS || []).filter((job) => job.id !== data.job.id), data.job];
@@ -675,7 +709,7 @@ window.startFalEntityGeneration = async () => {
   try {
     await flushPendingProjectSave();
     closeModal();
-    const response = await fetch("/api/generation/fal/jobs", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(gatedBody) });
+    const response = await fetch("/api/generation/fal/jobs", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(await paidDispatchPermitFor(gatedBody)) });
     const data = await response.json();
     if (!response.ok) throw new Error(data.error || "Could not start entity generation");
     FAL_GENERATION_JOBS = [...(FAL_GENERATION_JOBS || []).filter((job) => job.id !== data.job.id), data.job];
@@ -751,7 +785,7 @@ window.startCandidateCorrectionGeneration = async () => {
   try {
     await flushPendingProjectSave();
     closeModal();
-    const response = await fetch("/api/generation/fal/jobs", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(gatedBody) });
+    const response = await fetch("/api/generation/fal/jobs", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(await paidDispatchPermitFor(gatedBody)) });
     const data = await response.json();
     if (!response.ok) throw new Error(data.error || "Could not start correction generation");
     FAL_GENERATION_JOBS = [...(FAL_GENERATION_JOBS || []).filter((job) => job.id !== data.job.id), data.job];
@@ -1481,7 +1515,7 @@ window.startFalH3MotionGeneration = async () => {
   try {
     await flushPendingProjectSave();
     closeModal();
-    const response = await fetch("/api/generation/fal/jobs", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(gated.payload) });
+    const response = await fetch("/api/generation/fal/jobs", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(await paidDispatchPermitFor(gated.payload)) });
     const data = await response.json();
     if (!response.ok) throw new Error(data.error || "Could not start MiniMax H3 generation");
     FAL_GENERATION_JOBS = [...(FAL_GENERATION_JOBS || []).filter((job) => job.id !== data.job.id), data.job];

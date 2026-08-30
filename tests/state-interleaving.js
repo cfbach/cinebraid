@@ -163,8 +163,8 @@ async function request(url, options) {
     : await response.text();
   return { response, body };
 }
-const postJson = (url, payload) =>
-  request(url, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(withGenerationDeclaration(url, payload)) });
+const postJson = async (url, payload) =>
+  request(url, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(await withGenerationDeclaration(url, payload, { origin: base })) });
 const putJson = (url, payload, headers = {}) =>
   request(url, { method: "PUT", headers: { "content-type": "application/json", ...headers }, body: JSON.stringify(payload) });
 

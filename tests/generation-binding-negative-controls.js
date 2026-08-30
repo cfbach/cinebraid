@@ -257,7 +257,7 @@ async function dispatchLegacyOnce(FalModule, body) {
 
   try {
     const response = await fetch(`${appOrigin}/api/generation/fal/jobs`, {
-      method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(withGenerationDeclaration("/api/generation/fal/jobs", body)),
+      method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(await withGenerationDeclaration(`${appOrigin}/api/generation/fal/jobs`, body)),
     });
     const data = await response.json();
     const jobId = data?.job?.id || "";
@@ -347,10 +347,10 @@ async function dispatchOnce(FalModule) {
     const response = await fetch(`${appOrigin}/api/generation/fal/jobs`, {
       method: "POST",
       headers: { "content-type": "application/json" },
-      body: JSON.stringify(withGenerationDeclaration("/api/generation/fal/jobs", {
+      body: JSON.stringify(await withGenerationDeclaration("/api/generation/fal/jobs", {
         purpose: "motion-h3", shotId: "SH-1", sourceBuildId: buildId, profileFamily: "minimax-h3",
         profileMode: "i2v", durationSeconds: 8, resolution: "2K", aspectRatio: "16:9", clientRequestId: "nc6a",
-      })),
+      }, { origin: appOrigin })),
     });
     const data = await response.json();
     assert.strictEqual(response.status, 200, `NC-6a dispatch failed: ${JSON.stringify(data)}`);

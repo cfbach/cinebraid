@@ -164,13 +164,44 @@ async function harness(options = {}) {
   const appServer = await listen(app);
   const appOrigin = originOf(appServer);
 
-  /* RAW. This suite is the one place that must be able to post an undeclared body, so it
-     deliberately does not go through tests/generation-request-fixture.js's stamp. */
-  const post = async (body) => {
+  /* THE PERMIT A DIALOG WOULD HAVE OBTAINED, from the shipped issuance route on this
+     harness's own server. Exposed on its own so a section about permits can mint one
+     deliberately - for a scope that does not match, or twice, or not at all. */
+  const permitFor = async (scope) => {
+    const response = await fetch(`${appOrigin}/api/generation/paid-permit`, {
+      method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(scope),
+    });
+    return { status: response.status, data: await response.json().catch(() => ({})) };
+  };
+
+  /* RAW IN THE BODY, REAL IN THE PERMIT. This suite is the one place that must be able to
+     post an UNDECLARED body, and since the paid dispatch permit that is two separate
+     things a request can be missing. Keeping them separate is the point: a body with no
+     declaration but a valid permit still has to be refused by the PLAN gate, which is what
+     reproduction 1 is about, and it could not prove that if the permit gate answered
+     first for a different reason.
+
+     So the permit is minted from a scope the issuance route will accept - the body's own
+     declaration where it has one, a stamped one where it does not - and the body itself is
+     posted exactly as written. `options.permit` opts out entirely, for the sections that
+     are about the permit rather than about what it protects. */
+  const post = async (body, options = {}) => {
+    let sent = body;
+    if (options.permit !== false && body && typeof body === "object" && !body.paidPermitId) {
+      const scope = declaredGenerationBody(body);
+      const issued = await permitFor({
+        generationRequest: scope?.generationRequest,
+        purpose: body.purpose, shotId: body.shotId, frameId: body.frameId,
+        entityList: body.entityList, entityId: body.entityId,
+        sourceBuildId: body.sourceBuildId, outputCount: body.outputCount,
+      });
+      assert(issued.data?.paidPermitId, `the harness could not obtain a dispatch permit: ${JSON.stringify(issued.data)}`);
+      sent = { ...body, paidPermitId: issued.data.paidPermitId };
+    }
     const response = await fetch(`${appOrigin}/api/generation/fal/jobs`, {
       method: "POST",
       headers: { "content-type": "application/json" },
-      body: JSON.stringify(body),
+      body: JSON.stringify(sent),
     });
     return { status: response.status, data: await response.json() };
   };
@@ -186,7 +217,7 @@ async function harness(options = {}) {
   };
 
   return {
-    dir, file, calls, cancelCalls, post, runs, settle, appOrigin,
+    dir, file, calls, cancelCalls, post, permitFor, runs, settle, appOrigin,
     project: () => JSON.parse(fs.readFileSync(file, "utf8")),
     saveProject: (project) => fs.writeFileSync(file, JSON.stringify(project, null, 2)),
     saveRuns: (rows) => fs.writeFileSync(runs.file, JSON.stringify(rows, null, 2)),
@@ -2449,26 +2480,27 @@ async function main() {
   }
 
   /* =======================================================================
-     21. THE OTHER BOUNDED RUN: COVERAGE AUTOMATION.
+     21. THE OTHER BOUNDED RUN: COVERAGE AUTOMATION, AND WHAT IT BELONGS TO.
 
-     Reproductions 10, 17, 18 and 19 prove the automation runner cannot exceed the count
-     or the spend one press authorised. Coverage automation is CineBraid's SECOND paid
-     automation path and the one that most obviously multiplies a press into several paid
-     requests — "generate missing slots individually" submits one per unfilled slot, three
-     candidates each — and every one of those guards returned null for it, because they are
-     keyed on `automationRunId` and a coverage job carries none.
+     Reproductions 10 and 17-19 prove the automation runner cannot exceed the count or the
+     spend one press authorised. Coverage automation is CineBraid's SECOND paid automation
+     path and the one that most obviously multiplies a press into several paid requests —
+     "generate missing slots individually" submits one per unfilled slot, three candidates
+     each — and every one of those guards returned null for it, because they are keyed on
+     `automationRunId` and a coverage job carries none.
 
-     So a press quoted at two requests and six images dispatched four and committed twelve,
-     with each individual job comfortably inside every bound that was actually being
-     checked. What follows drives that exact sequence.
+     Bounding it was half the answer. An independent reviewer took the first version apart
+     without touching a single number: with the bounded run's own job still IN_QUEUE, the
+     same slot work resubmitted with a BLANK `coverageMode` was read as unrelated, escaped
+     the bound, and REPLACED the live run — so the record of an authorisation with paid
+     work still in flight was destroyed by a field the bounded work writes for itself.
 
-     A NOTE ON HOW A JOB IS RETIRED HERE. The concurrency cap is two, so a run of more than
-     two requests needs earlier jobs to finish — and Cancel is the wrong way to arrange it,
-     because cancelling terminates the coverage run through updateEntityCoverageRun() and
-     the third request would then be establishing a NEW run rather than continuing this one.
-     That is the production shape too: a press dispatches its slots while its run is live.
-     So a delivered job is written to the ledger as delivered, which is what the provider
-     answering does, and leaves the run exactly as it was. */
+     Membership is not a comparison of presentation fields any more. The coverage route
+     decides which authorization a dispatch belongs to from its own run record and the
+     board the results file against, mints that decision into a coverage-class permit, and
+     the boundary reads it there. Every request below leaves the first job UNSETTLED,
+     because "a live bounded authorization still holding paid work" is exactly the window
+     the rule governs. */
   {
     const h = await harness();
     try {
@@ -2476,7 +2508,7 @@ async function main() {
       project.characters = [{ id: "KAI", name: "Kai", type: "Character", approvedFile: "KAI.png", continuityStates: [] }];
       h.saveProject(project);
       const runOf = () => h.project().characters[0].coverageAutomation;
-      /* THE PRESS: two paid requests, up to six images. The figures public/coverage-
+      /* THE PRESS: one paid request, up to three images. The figures public/coverage-
          automation.js derives from missingCoverageWork() and prices in front of the
          filmmaker before the button. */
       const slot = (n, extra = {}) => ({
@@ -2485,58 +2517,57 @@ async function main() {
         outputCount: 3, quality: "high", resolution: "4k", aspectRatio: referenceAspectLabel("characters"),
         coverageJobType: "slot", coverageSheetType: "", coverageMode: "individual",
         targetCoverageSlotId: `slot-${n}`, clientRequestId: `bounded-${n}`,
-        coverageRequestCount: 2, coverageMaximumImages: 6,
+        coverageRequestCount: 1, coverageMaximumImages: 3,
         generationRequest: Presentation.generationRequestDeclaration({ surface: "reference-automation", viewMode: "simple" }),
         ...extra,
       });
-      /* A job the provider DELIVERED, written where a delivery is written. */
-      const deliver = (jobId) => {
-        const rows = h.ledger();
-        const row = rows.find((item) => item.id === jobId);
-        assert(row, `the job to deliver must exist: ${jobId}`);
-        row.status = "COMPLETED";
-        row.ingestedAt = "2026-08-29T00:00:00.000Z";
-        h.seedLedger(rows);
-      };
 
       const one = await h.coverage(slot(1));
-      assert.strictEqual(one.status, 200, `the first authorised request dispatches: ${JSON.stringify(one.data)}`);
+      assert.strictEqual(one.status, 200, `the authorised request dispatches: ${JSON.stringify(one.data)}`);
       const established = runOf();
-      assert.strictEqual(established.requestCount, 2, "and establishes the run with the count the press authorised");
-      assert.strictEqual(established.maximumImages, 6, "and with its image ceiling");
+      assert.strictEqual(established.requestCount, 1, "and establishes the run with the count the press authorised");
+      assert.strictEqual(established.maximumImages, 3, "and with its image ceiling");
       /* AND ITS DOLLAR CEILING, from the one owner that multiplies a rate by a quantity —
-         six images at the configured $0.06. Not a figure the request supplied. */
+         three images at the configured $0.06. Not a figure the request supplied. */
       assert.strictEqual(established.maxSpend?.priced, true, `a configured rate prices the run: ${JSON.stringify(established.maxSpend)}`);
-      assert.strictEqual(established.maxSpend.amount, 0.36, "six images at $0.06, from costEstimateFromRate()");
-      deliver(one.data.job.id);
+      assert.strictEqual(established.maxSpend.amount, 0.18, "three images at $0.06, from costEstimateFromRate()");
+      assert.strictEqual(h.ledger()[0].status, "IN_QUEUE", "and its paid work is UNSETTLED, which is the window this rule governs");
+      const RUN_JSON = JSON.stringify(established);
+      const beforeSecond = h.calls.length;
 
-      /* THE SECOND REQUEST CARRIES A LARGER QUOTE, and this is where the ceiling used to
-         move. It is still INSIDE the authorised count, so it dispatches on its merits —
-         and while these figures were reassigned on every job of the run, dispatching is
-         all it took: the run came back recording 999/9999 and everything after it was
-         judged against a bound the run had written for itself on the way past. */
-      const two = await h.coverage(slot(2, { coverageRequestCount: 999, coverageMaximumImages: 9999 }));
-      assert.strictEqual(two.status, 200, `the second authorised request still dispatches: ${JSON.stringify(two.data)}`);
-      assert.strictEqual(runOf().requestCount, 2, "but the established count is unchanged");
-      assert.strictEqual(runOf().maximumImages, 6, "and so is the established image ceiling");
-      assert.strictEqual(runOf().maxSpend.amount, 0.36, "and so is the spend it was authorised for");
-      deliver(two.data.job.id);
+      /* A. THE HONEST SECOND REQUEST is refused for the count it would break. */
+      const honest = await h.coverage(slot(2));
+      assert.strictEqual(honest.status, 409, `a second request exceeds the authorised count: ${JSON.stringify(honest.data)}`);
+      assert.strictEqual(honest.data.code, "COVERAGE_REQUEST_CAP", "typed for the count it broke");
+      assert(/authorised for 1 paid request/.test(String(honest.data.error)), `naming the figure approved: ${honest.data.error}`);
+      assert.strictEqual(honest.data.providerContacted, false, "and states it reached no provider");
+      assert.strictEqual(h.calls.length, beforeSecond, "PROVIDER INVOCATION COUNT ON REFUSAL = 0");
 
-      /* THE REPRODUCTION. A third request into a run authorised for two. */
-      const beforeThird = h.calls.length;
-      const three = await h.coverage(slot(3, { coverageRequestCount: 999, coverageMaximumImages: 9999 }));
-      assert.strictEqual(three.status, 409, `the third exceeds the authorised count: ${JSON.stringify(three.data)}`);
-      assert.strictEqual(three.data.code, "COVERAGE_REQUEST_CAP", "typed for the count it broke");
-      assert(/authorised for 2 paid requests/.test(String(three.data.error)),
-        `naming the figure the filmmaker actually approved rather than the one this request carried: ${three.data.error}`);
-      assert.strictEqual(three.data.providerContacted, false, "and states it reached no provider");
-      assert.strictEqual(three.data.paidRequestSubmitted, false, "and that nothing was submitted");
-      assert.strictEqual(h.calls.length, beforeThird, "PROVIDER INVOCATION COUNT ON REFUSAL = 0");
-      assert.strictEqual(h.ledger().length, 2, "and no third row was written");
+      /* B. THE REVIEWER'S REPRODUCTION, and the reason this section was rewritten.
+         Byte-identical work with a BLANK coverageMode and no quote at all — the exact
+         shape the per-slot control sends, which is what made it indistinguishable. It is
+         refused for the SAME reason, and the live bounded run is untouched. */
+      const reclassified = await h.coverage(slot(3, { coverageMode: "", coverageSheetType: "angles", coverageRequestCount: undefined, coverageMaximumImages: undefined }));
+      assert.strictEqual(reclassified.status, 409,
+        `reclassifying the same work must not detach it from the authorization: ${JSON.stringify(reclassified.data)}`);
+      assert.strictEqual(reclassified.data.code, "COVERAGE_REQUEST_CAP", "and it is refused by the bound, not by a shape rule");
+      assert.strictEqual(JSON.stringify(runOf()), RUN_JSON,
+        `and the live bounded run must be BYTE-EQUIVALENT — it was previously replaced and destroyed: ${JSON.stringify(runOf())}`);
+      assert.strictEqual(h.calls.length, beforeSecond, "still 0 provider calls");
+      assert.strictEqual(h.ledger().length, 1, "and no second row was written");
 
-      /* THE IMAGE CEILING IS THE OTHER HALF, and it binds independently of the count. A
-         run authorised for two requests but only four images refuses the second request
-         once three of those four are committed. */
+      /* C. INCOMPATIBLE FILING WORK REFUSES TRUTHFULLY rather than replacing the run.
+         An expression sheet files against a different board from the angle work in
+         flight, so it cannot join this authorization — and it may not end it either. */
+      const expression = await h.coverage(slot(4, { coverageJobType: "sheet", coverageSheetType: "expressions", aspectRatio: "4:3", coverageMode: "sheet", coverageRequestCount: 1, coverageMaximumImages: 1 }));
+      assert.strictEqual(expression.status, 409, `incompatible filing work is refused: ${JSON.stringify(expression.data)}`);
+      assert.strictEqual(expression.data.code, "COVERAGE_RUN_BUSY", "typed for the operation already running");
+      assert(/angles/.test(String(expression.data.error)) && /expressions/.test(String(expression.data.error)),
+        `naming both boards so the refusal is actionable: ${expression.data.error}`);
+      assert.strictEqual(JSON.stringify(runOf()), RUN_JSON, "and the running authorization is untouched");
+      assert.strictEqual(h.calls.length, beforeSecond, "PROVIDER INVOCATION COUNT ON REFUSAL = 0");
+
+      /* D. THE IMAGE CEILING binds independently of the count. */
       const g = await harness();
       try {
         const p = g.project();
@@ -2545,9 +2576,6 @@ async function main() {
         const tight = (n) => ({ ...slot(n), coverageRequestCount: 2, coverageMaximumImages: 4 });
         const firstTight = await g.coverage(tight(1));
         assert.strictEqual(firstTight.status, 200, `three of four images commit: ${JSON.stringify(firstTight.data)}`);
-        const rows = g.ledger();
-        rows.find((item) => item.id === firstTight.data.job.id).status = "COMPLETED";
-        g.seedLedger(rows);
         const before = g.calls.length;
         const overImages = await g.coverage(tight(2));
         assert.strictEqual(overImages.status, 409, `and the second request would take it to six: ${JSON.stringify(overImages.data)}`);
@@ -2556,47 +2584,29 @@ async function main() {
         assert.strictEqual(g.calls.length, before, "PROVIDER INVOCATION COUNT ON REFUSAL = 0");
       } finally { g.close(); }
 
-      /* AND WHAT THIS DELIBERATELY DOES NOT DO: manufacture a bound for a press that never
-         quoted one.
-
-         The per-slot "generate" control on the coverage board sends a single request for a
-         single slot and quotes nothing — one press making one request has nothing to bound
-         — and two presses on two different slots land in the SAME run record, because the
-         projection groups by task rather than by press. A guard that refused an unbounded
-         continuation would refuse the second slot a filmmaker asked for. That is not a
-         bound being enforced; it is authorised work stopped on arithmetic nobody performed,
-         and it is the shape this section had to be corrected away from. */
+      /* E. AND WHAT THIS DELIBERATELY DOES NOT DO: manufacture a bound for a press that
+         never quoted one. The per-slot control on the coverage board sends a single
+         request for a single slot and quotes nothing, and two presses on two different
+         slots land in the SAME run record because the projection groups by task rather
+         than by press. Refusing there would refuse the second slot a filmmaker asked for
+         — authorised work stopped on arithmetic nobody performed. */
       const u = await harness();
       try {
         const p = u.project();
         p.characters = [{ id: "KAI", name: "Kai", type: "Character", approvedFile: "KAI.png", continuityStates: [] }];
         u.saveProject(p);
-        /* EXACTLY what generateCoverageSlot() sends: no coverageMode, no quote. */
         const manual = (n) => ({ ...slot(n), coverageMode: "", coverageSheetType: "angles", coverageRequestCount: undefined, coverageMaximumImages: undefined });
         const firstManual = await u.coverage(manual(1));
         assert.strictEqual(firstManual.status, 200, `the first slot press dispatches: ${JSON.stringify(firstManual.data)}`);
         assert.strictEqual(u.project().characters[0].coverageAutomation.requestCount, undefined,
           "and the run honestly records no bound rather than inventing one");
-        const rows = u.ledger();
-        rows.find((item) => item.id === firstManual.data.job.id).status = "COMPLETED";
-        u.seedLedger(rows);
         const secondManual = await u.coverage(manual(2));
         assert.strictEqual(secondManual.status, 200,
-          `and so does the second slot the filmmaker asks for: ${JSON.stringify(secondManual.data)}`);
+          `and so does the second slot the filmmaker asks for, with the first still in flight: ${JSON.stringify(secondManual.data)}`);
         assert.strictEqual(u.calls.length, 2, "both single presses reach the provider");
       } finally { u.close(); }
 
-      /* AND A RECORDED BOUND CANNOT BE REMOVED ANY MORE THAN IT CAN BE RAISED. The same
-         `if (!continuing)` that stops a continuation restating the figures stops it
-         deleting them, so a bounded press cannot become an unbounded one by omission. */
-      assert.strictEqual(runOf().requestCount, 2, "the bounded run above still records its count");
-      const stripped = await h.coverage(slot(5, { coverageRequestCount: undefined, coverageMaximumImages: undefined }));
-      assert.strictEqual(stripped.status, 409, `and omitting the quote does not remove it: ${JSON.stringify(stripped.data)}`);
-      assert.strictEqual(stripped.data.code, "COVERAGE_REQUEST_CAP", "the run is still judged by what it was authorised for");
-      assert.strictEqual(runOf().requestCount, 2, "and the record is untouched");
-      assert.strictEqual(h.calls.length, beforeThird, "still 0 provider calls beyond the authorised two");
-
-      note("21. a coverage press authorised for 2 paid requests and 6 images dispatches exactly 2 — a 3rd is COVERAGE_REQUEST_CAP and a run one image over its ceiling is COVERAGE_IMAGE_CAP, each with providerContacted:false, 0 provider calls and no row; the ceiling is priced once at establishment from costEstimateFromRate(), and a later request can neither restate it (999/9999) nor remove it (omitted). A press that quoted nothing — the per-slot control — is not given a bound it never declared, and its second slot still dispatches");
+      note("21. a coverage press authorised for 1 paid request and 3 images dispatches exactly 1 while its work is unsettled: the honest second request AND the same work reclassified with a blank coverageMode are both COVERAGE_REQUEST_CAP, an expression sheet arriving mid-run is COVERAGE_RUN_BUSY, and in all three the live bounded run stays BYTE-EQUIVALENT with 0 provider calls and no second row — the escape that replaced and destroyed it is closed. The image ceiling binds separately (COVERAGE_IMAGE_CAP), the dollar ceiling is priced once from costEstimateFromRate(), and a press that quoted nothing is given no bound it never declared: two per-slot presses both dispatch");
     } finally { h.close(); }
   }
 
@@ -2676,6 +2686,254 @@ async function main() {
       assert.strictEqual(h.calls.length, 1, "one authorised image, one provider call, across the whole run");
 
       note("22. an automation run authorised for 1 image and $0.06 cannot restate itself at 500 and $999 through the ordinary progress route — the PUT is accepted and the authorised figures come back unchanged, the credit guard still names the 1-image cap, and the run makes exactly 1 provider call");
+    } finally { h.close(); }
+  }
+
+  /* =======================================================================
+     23. THE PAID DISPATCH PERMIT.
+
+     Two independent reviews reached the same floor by different routes: an automation run
+     capped at one image dispatched a second by omitting `automationRunId`, and a coverage
+     run bounded to one request dispatched a second by blanking `coverageMode`. Neither is
+     a matching bug. Membership in a bounded authorization was a CLAIM the request made
+     about itself, and a claim written by the work being bounded can always be unwritten.
+
+     So a paid dispatch now redeems a permit that a server path minted after establishing
+     the authorization from state the request cannot reach. The permit answers exactly one
+     question — which authorization is paying for this — and the ceilings, the price, the
+     plan and the freshness verdict stay with the owners that already had them. */
+  {
+    const h = await harness();
+    try {
+      const buildId = seedFramePackage(h);
+      const RUNNER = "runner-1";
+      /* The automation half needs the run registry mounted, because the automation permit
+         is minted by the route the runner ALREADY calls before every paid step. */
+      const { registerAutomationRuns } = require("../automation-runs");
+      const runsApp = express();
+      runsApp.use(express.json({ limit: "8mb" }));
+      registerAutomationRuns(runsApp, {
+        readConfig: () => ({}), readProject: () => h.project(), writeProject: () => {},
+        activeSlug: () => "truth", projectDir: () => h.dir, projectDirForSlug: () => ({ slug: "truth", dir: h.dir, file: h.file }),
+      });
+      const runsServer = await listen(runsApp);
+      const runsOrigin = originOf(runsServer);
+      try {
+        const frameScope = (extra = {}) => ({
+          generationRequest: Presentation.generationRequestDeclaration({ surface: "compiled-frame", viewMode: "advanced" }),
+          purpose: "frame", shotId: "SH-1", frameId: "FR-A", sourceBuildId: buildId, outputCount: 1, ...extra,
+        });
+        const frameBody = (extra = {}) => ({
+          ...framePlanBody(buildId, { outputCount: 1, ...extra }),
+          generationRequest: Presentation.generationRequestDeclaration({ surface: "compiled-frame", viewMode: "advanced" }),
+        });
+        const rawPost = async (body) => {
+          const response = await fetch(`${h.appOrigin}/api/generation/fal/jobs`, {
+            method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(body),
+          });
+          return { status: response.status, data: await response.json() };
+        };
+
+        /* A. A VALID DIRECT PERMIT DISPATCHES ONCE, and the row records what paid. */
+        const issued = await h.permitFor(frameScope());
+        assert.strictEqual(issued.status, 200, `the direct issuance route mints: ${JSON.stringify(issued.data)}`);
+        assert(/^permit-[0-9a-f]{32}$/.test(String(issued.data.paidPermitId)),
+          `and the id is server-random rather than anything a caller could construct: ${issued.data.paidPermitId}`);
+        const dispatched = await rawPost(frameBody({ clientRequestId: "permit-ok", paidPermitId: issued.data.paidPermitId }));
+        assert.strictEqual(dispatched.status, 200, `a valid permit dispatches: ${JSON.stringify(dispatched.data)}`);
+        assert.strictEqual(h.calls.length, 1, "exactly one provider call");
+        const row = h.ledger().find((item) => item.id === dispatched.data.job.id);
+        assert.strictEqual(row.paidPermitId, issued.data.paidPermitId, "the ledger row names the permit it redeemed");
+        assert.deepStrictEqual(row.paidAuthorization, { class: "direct", ref: "" },
+          `and the authorization the server established, not one the body claimed: ${JSON.stringify(row.paidAuthorization)}`);
+        await h.settle(dispatched.data.job.id);
+
+        /* B. FOUR WAYS A PERMIT CAN BE WRONG, and none of them reaches a provider. */
+        const refusals = [];
+        const collect = async (what, body, expected) => {
+          const before = h.calls.length;
+          const rows = h.ledger().length;
+          const result = await rawPost(body);
+          assert.strictEqual(result.status, expected.status, `${what}: ${JSON.stringify(result.data)}`);
+          assert.strictEqual(result.data.code, expected.code, `${what}: typed`);
+          assert.strictEqual(result.data.providerContacted, false, `${what}: states providerContacted:false`);
+          assert.strictEqual(result.data.paidRequestSubmitted, false, `${what}: and that nothing was submitted`);
+          assert.strictEqual(h.calls.length, before, `${what}: PROVIDER INVOCATION COUNT = 0`);
+          assert.strictEqual(h.ledger().length, rows, `${what}: and no ledger row`);
+          refusals.push(what);
+        };
+        await collect("no permit at all", frameBody({ clientRequestId: "no-permit" }), { status: 400, code: "PAID_PERMIT_REQUIRED" });
+        await collect("a fabricated permit", frameBody({ clientRequestId: "fake", paidPermitId: "permit-" + "f".repeat(32) }),
+          { status: 409, code: "PAID_PERMIT_UNKNOWN" });
+        /* AN EXPIRED PERMIT, aged on disk rather than by waiting. The store is the durable
+           record this reads, so editing it is editing the fact the boundary consults. */
+        const stale = await h.permitFor(frameScope());
+        const permits = JSON.parse(fs.readFileSync(path.join(h.dir, "paid-permits.json"), "utf8"));
+        permits.find((item) => item.id === stale.data.paidPermitId).expiresAt = "2020-01-01T00:00:00.000Z";
+        fs.writeFileSync(path.join(h.dir, "paid-permits.json"), JSON.stringify(permits, null, 2));
+        await collect("an expired permit", frameBody({ clientRequestId: "stale", paidPermitId: stale.data.paidPermitId }),
+          { status: 409, code: "PAID_PERMIT_EXPIRED" });
+        await collect("a permit already redeemed", frameBody({ clientRequestId: "replay", paidPermitId: issued.data.paidPermitId }),
+          { status: 409, code: "PAID_PERMIT_ALREADY_REDEEMED" });
+
+        /* C. THE SCOPE IS BOUND, so a permit is not a licence for the authorization. */
+        const forCount = await h.permitFor(frameScope({ outputCount: 1 }));
+        await collect("four images bought with a permit minted for one",
+          frameBody({ clientRequestId: "count", outputCount: 4, paidPermitId: forCount.data.paidPermitId }),
+          { status: 409, code: "PAID_PERMIT_SCOPE_MISMATCH" });
+        const forShot = await h.permitFor(frameScope({ shotId: "SH-1" }));
+        await collect("a different view than the permit was minted for",
+          { ...frameBody({ clientRequestId: "plan", paidPermitId: forShot.data.paidPermitId }),
+            generationRequest: Presentation.generationRequestDeclaration({ surface: "compiled-frame", viewMode: "simple" }) },
+          { status: 409, code: "PAID_PERMIT_SCOPE_MISMATCH" });
+
+        /* D. CONCURRENT REDEMPTION OF ONE PERMIT PRODUCES AT MOST ONE PAID JOB.
+           commit() serialises per project and re-reads inside its own turn, so the second
+           turn sees what the first wrote. Distinct clientRequestIds, so the answer comes
+           from the permit rather than from the duplicate-request guard. */
+        const race = await h.permitFor(frameScope());
+        const beforeRace = h.calls.length;
+        const both = await Promise.all([
+          rawPost(frameBody({ clientRequestId: "race-a", paidPermitId: race.data.paidPermitId })),
+          rawPost(frameBody({ clientRequestId: "race-b", paidPermitId: race.data.paidPermitId })),
+        ]);
+        const won = both.filter((result) => result.status === 200);
+        assert.strictEqual(won.length, 1, `exactly one concurrent redemption may win: ${JSON.stringify(both.map((r) => [r.status, r.data.code]))}`);
+        assert(["PAID_PERMIT_ALREADY_REDEEMED", "PAID_PERMIT_UNKNOWN"].includes(both.find((r) => r.status !== 200).data.code),
+          `and the loser is refused for the permit: ${JSON.stringify(both.find((r) => r.status !== 200).data)}`);
+        assert.strictEqual(h.calls.length, beforeRace + 1, "exactly one provider call came out of the race");
+        await h.settle(won[0].data.job.id);
+
+        /* E. AN AUTOMATION DISPATCH STAYS ITS RUN'S EVEN WHEN THE BODY SAYS OTHERWISE.
+           This is the reviewer's reproduction, inverted: the omission that used to detach
+           a job from its ceiling now changes nothing, because the ceiling is found through
+           the permit and the body is corrected from it. */
+        const AUTHORIZED = { priced: true, amount: 0.06, quantity: 1, unitBasis: "image", ratePerUnit: 0.06, rateSource: "configured" };
+        h.saveRuns([{
+          id: "automation-permit", schemaVersion: 2, revision: 1, type: "shot-chain", targetId: "SH-1", scope: "main",
+          status: "running", runnerId: RUNNER, leaseExpiresAt: "2099-01-01T00:00:00.000Z",
+          config: { maxImages: 1, maxSpend: AUTHORIZED }, usage: { imagesGenerated: 0 }, steps: {}, logs: [],
+        }, {
+          /* A SECOND, DIFFERENTLY SCOPED RUN ON THE SAME SHOT. CineBraid supports this and
+             the permit must keep the two coherent rather than merging their budgets. */
+          id: "automation-blocking", schemaVersion: 2, revision: 1, type: "shot-chain", targetId: "SH-1", scope: "blocking-only",
+          status: "running", runnerId: RUNNER, leaseExpiresAt: "2099-01-01T00:00:00.000Z",
+          config: { maxImages: 1, maxSpend: AUTHORIZED }, usage: { imagesGenerated: 0 }, steps: {}, logs: [],
+        }]);
+        const revalidate = async (runId, stepKey, scope) => {
+          const response = await fetch(`${runsOrigin}/api/automation/runs/${encodeURIComponent(runId)}/lease/revalidate`, {
+            method: "POST", headers: { "content-type": "application/json" },
+            body: JSON.stringify({ runnerId: RUNNER, stepKey, paidScope: scope }),
+          });
+          return { status: response.status, data: await response.json() };
+        };
+        const runScope = (extra = {}) => ({
+          purpose: "frame", surface: "automation-run", viewMode: "simple",
+          shotId: "SH-1", frameId: "FR-A", entityList: "", entityId: "", buildId: "", outputCount: 1, ...extra,
+        });
+        /* `automationRunnerId` is still a body value on purpose, and it is the one
+           automation field that does not need to come from the permit: the credit guard
+           refuses unless it EQUALS the run's current holder and that lease is unexpired,
+           so a wrong or missing one can only refuse this request. A strictly narrowing
+           input is not a claim the boundary has to defend against. The run and the step
+           are different — those decide which ceiling applies, and they come from the
+           permit. */
+        const runBody = (extra = {}) => ({
+          purpose: "frame", shotId: "SH-1", frameId: "FR-A", frameLabel: "A", prompt: "Kai sets the parcel down.",
+          aspectRatio: "16:9", outputCount: 1, automationRunnerId: RUNNER,
+          generationRequest: Presentation.generationRequestDeclaration({ surface: "automation-run", viewMode: "simple" }),
+          ...extra,
+        });
+
+        const stepOne = await revalidate("automation-permit", "step-1", runScope());
+        assert.strictEqual(stepOne.status, 200, `revalidation mints beside the lease it already checked: ${JSON.stringify(stepOne.data)}`);
+        assert(stepOne.data.paidPermitId, "and returns the permit for the step it was called for");
+        /* THE BODY OMITS THE RUN ENTIRELY. Under the previous candidate this dispatched as
+           independent work and the run's one-image ceiling never saw it. */
+        const detached = await rawPost(runBody({ clientRequestId: "detached", paidPermitId: stepOne.data.paidPermitId }));
+        assert.strictEqual(detached.status, 200, `it still dispatches — it is authorised work: ${JSON.stringify(detached.data)}`);
+        const detachedRow = h.ledger().find((item) => item.id === detached.data.job.id);
+        assert.strictEqual(detachedRow.paidAuthorization.class, "automation", "but it is recorded as the run's work");
+        assert.strictEqual(detachedRow.paidAuthorization.ref, "automation-permit", "naming the run the permit was minted for");
+        assert.strictEqual(detachedRow.paidAuthorization.stepKey, "step-1", "and the step");
+        assert.strictEqual(detachedRow.automationRunId, "automation-permit",
+          "and the row's own run field is corrected from the permit rather than left as the body wrote it");
+        await h.settle(detached.data.job.id);
+
+        /* AND THE CEILING IT COULD NOT SEE BEFORE NOW REFUSES IT. */
+        const stepTwo = await revalidate("automation-permit", "step-2", runScope());
+        await collect("a second image against a one-image run, with the run omitted from the body",
+          runBody({ clientRequestId: "over", automationRunId: "", paidPermitId: stepTwo.data.paidPermitId }),
+          { status: 409, code: "AUTOMATION_GUARD" });
+
+        /* AND NAMING A DIFFERENT RUN IN THE BODY BUYS NOTHING. The other run has its own
+           untouched one-image budget; the permit says which one is paying. */
+        const stepThree = await revalidate("automation-permit", "step-3", runScope());
+        await collect("a request naming the other run while holding this run's permit",
+          runBody({ clientRequestId: "swap", automationRunId: "automation-blocking", automationStepKey: "b-1", paidPermitId: stepThree.data.paidPermitId }),
+          { status: 409, code: "AUTOMATION_GUARD" });
+
+        /* F. TWO SCOPED RUNS ON ONE SHOT STAY COHERENT — the second still has its own
+           image, and spends it under its own authorization. */
+        const blockingStep = await revalidate("automation-blocking", "b-1", runScope({ purpose: "blocking" }));
+        const blocking = await rawPost(runBody({
+          purpose: "blocking", clientRequestId: "blocking-1", paidPermitId: blockingStep.data.paidPermitId,
+        }));
+        assert.strictEqual(blocking.status, 200, `the differently scoped run spends its own budget: ${JSON.stringify(blocking.data)}`);
+        assert.strictEqual(h.ledger().find((item) => item.id === blocking.data.job.id).paidAuthorization.ref, "automation-blocking",
+          "under its own authorization");
+        await h.settle(blocking.data.job.id);
+
+        /* G. AND DIRECT WORK REMAINS POSSIBLE ALONGSIDE IT. This is the accepted product
+           decision, asserted rather than assumed: a filmmaker pressing Generate on the same
+           shot while a bounded run is live is a separate authorization, not an escape. */
+        const alongside = await h.permitFor(frameScope({ outputCount: 1 }));
+        const manual = await rawPost(frameBody({ clientRequestId: "alongside", paidPermitId: alongside.data.paidPermitId }));
+        assert.strictEqual(manual.status, 200, `direct generation is not blocked by a live run: ${JSON.stringify(manual.data)}`);
+        assert.strictEqual(h.ledger().find((item) => item.id === manual.data.job.id).paidAuthorization.class, "direct",
+          "and is recorded as the direct authorization it is");
+        await h.settle(manual.data.job.id);
+
+        /* H. THE STORE IS DURABLE, so a permit survives a process that does not.
+           A second server over the same project directory is what a restart looks like
+           from the store's point of view: nothing in memory carries over. */
+        const survivor = await h.permitFor(frameScope());
+        const restarted = express();
+        restarted.use(express.json({ limit: "8mb" }));
+        registerFalGeneration(restarted, {
+          readConfig: () => ({ generation: { fal: {
+            enabled: true, apiKey: "fal-secret-test-key", baseUrl: h.mockOrigin,
+            textModel: "openai/gpt-image-2", editModel: "openai/gpt-image-2/edit",
+            maxConcurrent: 8, frameResolution: "1k", blockingResolution: "1k",
+            frameQuality: "high", blockingQuality: "low", frameOutputs: 1, blockingOutputs: 1,
+            estimatedCostPerImage: 0.06,
+          } } }),
+          readProject: () => h.project(), writeProject: (project) => h.saveProject(project),
+          activeSlug: () => "truth", projectDirForSlug: () => ({ slug: "truth", dir: h.dir, file: h.file }),
+        });
+        const restartedServer = await listen(restarted);
+        try {
+          const restartedOrigin = originOf(restartedServer);
+          const afterRestart = async (body) => {
+            const response = await fetch(`${restartedOrigin}/api/generation/fal/jobs`, {
+              method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(body),
+            });
+            return { status: response.status, data: await response.json() };
+          };
+          const survived = await afterRestart(frameBody({ clientRequestId: "survivor", paidPermitId: survivor.data.paidPermitId }));
+          assert.strictEqual(survived.status, 200,
+            `a permit issued before the restart is still redeemable: ${JSON.stringify(survived.data)}`);
+          /* AND SPENTNESS SURVIVES IT TOO, because spentness is the LEDGER's answer rather
+             than a flag in the permit store — the one durable record a restart cannot
+             disagree with. */
+          const replayed = await afterRestart(frameBody({ clientRequestId: "survivor-replay", paidPermitId: survivor.data.paidPermitId }));
+          assert.strictEqual(replayed.status, 409, `and replay after it stays refused: ${JSON.stringify(replayed.data)}`);
+          assert.strictEqual(replayed.data.code, "PAID_PERMIT_ALREADY_REDEEMED", "for the redemption the ledger records");
+          assert.strictEqual(replayed.data.redeemedByJobId, survived.data.job.id, "naming the job that spent it");
+        } finally { restartedServer.close(); }
+
+        note(`23. a paid dispatch redeems a server-minted permit or does not happen: ${refusals.length} refusal families (no permit, fabricated, expired, already redeemed, a count the permit was not minted for, a view it was not minted for, a second image against a one-image run with the run omitted, and a request naming another run) each state providerContacted:false with 0 provider calls and no ledger row; two concurrent redemptions of one permit produce exactly 1 job and 1 provider call; the ledger row carries the server-written paidPermitId and paidAuthorization; an automation dispatch stays bound to its run and step with automationRunId omitted or pointing elsewhere; two differently scoped runs on one shot each spend their own budget; direct generation still dispatches beside a live run; and a permit issued before a restart is redeemable exactly once across it`);
+      } finally { runsServer.close(); }
     } finally { h.close(); }
   }
 

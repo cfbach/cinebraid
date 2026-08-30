@@ -5,6 +5,9 @@ const fs = require("fs");
 const path = require("path");
 const { parseAspectRatio, h3AspectSupport, shotAspectLabel, referenceAspectLabel } = require("./public/shared-aspect");
 const { readJobLedger, writeJobLedgerSync, JobLedgerUnreadableError } = require("./generation-job-store");
+/* WHICH AUTHORIZATION A PAID DISPATCH BELONGS TO. Locates the record that owns the
+   ceiling; owns no ceiling, no price and no plan of its own. See the module header. */
+const PaidPermit = require("./paid-dispatch-permit");
 const { jobOutputsForRename, repairJobOutputIdentity } = require("./public/shared-media-disposition");
 const { compileH3ExecutionPlan, h3ControlCapability, planProvenance, H3ExecutionError } = require("./h3-execution");
 const { serializeH3PlanForFal, H3BackendError, FAL_H3_BACKEND } = require("./fal-h3-backend");
@@ -508,6 +511,111 @@ function registerFalGeneration(app, context) {
     });
   }
 
+  /* =========================================================================
+     THE PAID DISPATCH PERMIT, AT THE BOUNDARY THAT SPENDS MONEY.
+
+     Two things had been true at once on this route: the plan gate above proved WHAT a
+     request was allowed to carry, and nothing proved WHICH AUTHORIZATION was paying for
+     it. Membership was a claim — `automationRunId` on the body, and a comparison of
+     coverage presentation fields — so the bounded work could shed its own bound by
+     omitting or restating a field it wrote itself. Both were reproduced.
+
+     A permit is minted only by a path that has already established the authorization from
+     state the request cannot reach: a validated run lease, the coverage operation this
+     server is running, or the direct issuance route standing in for a person pressing
+     Generate. The class comes from the ISSUANCE PATH. There is no body field that selects
+     it, which is what makes "a run cannot reclassify itself as manual work" a fact about
+     the shape of the system rather than a rule someone remembered to write.
+
+     WHAT THIS DOES NOT DECIDE: price, ceiling, plan, freshness. It locates the record that
+     owns the ceiling and hands it to the guards that already existed. */
+  function resolveDispatchPermit(owner, jobs, req, trusted) {
+    /* THE SERVER OPERATION'S OWN PERMIT. The coverage route establishes the authorization
+       and mints in the same call, so this one never crosses a request or process boundary
+       and is deliberately not persisted: there is no window in which it could be presented
+       by anything else, and a file write would add a crash seam that buys nothing. */
+    if (trusted?.permit) return { ok: true, membership: trusted.permit };
+    const presented = String(req.body?.paidPermitId || "").trim();
+    /* SPENTNESS IS THE LEDGER'S ANSWER, ASKED HERE TOO.
+     *
+     * The commit turn below is what makes single-use atomic, and this does not replace it.
+     * It exists so a replay is told the TRUTH rather than a side effect: a redeemed permit
+     * is dropped from the store as housekeeping, so without this a second attempt would be
+     * refused as "CineBraid never issued this", which is false and sends a filmmaker
+     * looking for the wrong problem. Reading the ledger — the same rows this request
+     * already holds — answers from the record that actually decides. */
+    if (presented) {
+      const spent = jobs.find((item) => String(item?.paidPermitId || "") === presented);
+      if (spent)
+        return {
+          ok: false, status: 409, code: "PAID_PERMIT_ALREADY_REDEEMED",
+          error: `This dispatch permit has already been redeemed by generation ${spent.id}. Nothing was submitted.`,
+          detail: { redeemedByJobId: spent.id },
+        };
+    }
+    let found;
+    try {
+      found = PaidPermit.findPaidPermit(owner.dir, presented, now());
+    } catch (error) {
+      /* A corrupt permit store is not an empty one, for the same reason a corrupt ledger
+         is not an empty ledger: reading it as empty refuses everything while looking
+         exactly like a system working correctly. */
+      return { ok: false, status: error?.status || 409, code: error?.code || "PAID_PERMIT_STORE_UNREADABLE", error: error.message, detail: error?.detail || {} };
+    }
+    if (found.ok) return { ok: true, membership: found.permit };
+    if (found.reason === "missing")
+      return {
+        ok: false, status: 400, code: "PAID_PERMIT_REQUIRED",
+        error: "This paid request carries no dispatch permit, so CineBraid cannot tell which authorization would be paying for it. Nothing was submitted. Generate again from a CineBraid generation dialog.",
+      };
+    if (found.reason === "expired")
+      return {
+        ok: false, status: 409, code: "PAID_PERMIT_EXPIRED",
+        error: "This request's dispatch permit has expired, so CineBraid did not send it. Nothing was submitted. Generate again.",
+      };
+    return {
+      ok: false, status: 409, code: "PAID_PERMIT_UNKNOWN",
+      error: "CineBraid did not issue the dispatch permit this paid request presents, so it did not send it. Nothing was submitted. Generate again from a CineBraid generation dialog.",
+    };
+  }
+
+  /* THE PAID-RELEVANT IDENTITY OF ONE DISPATCH, in one function so the issuer and the
+     boundary cannot describe the same request differently. The issuance routes call it
+     with the scope a caller declares; this line calls it with the request as gated. */
+  function dispatchScopeFor(body, planGate, purpose, outputCount) {
+    return {
+      purpose: String(purpose || ""),
+      surface: String(planGate?.surface || ""),
+      viewMode: String(planGate?.declaration?.viewMode || ""),
+      shotId: String(body?.shotId || ""),
+      frameId: String(body?.frameId || ""),
+      entityList: String(body?.entityList || ""),
+      entityId: String(body?.entityId || ""),
+      /* The REQUEST's own package name, not the resolved one. An issuer cannot see what
+         readSourceIntent() will pick, and freshness plus the plan gate already own the
+         resolution — binding a value the issuer could not know would refuse honest work. */
+      buildId: String(body?.sourceBuildId || ""),
+      outputCount: Math.max(0, Math.round(Number(outputCount) || 0)),
+    };
+  }
+
+  /* THE PAID QUANTITY A DISPATCH WILL ACTUALLY BUY, computed the one way. Shared with the
+     issuance routes so a declared scope and the dispatch it authorises agree by
+     construction rather than by two copies of a clamp staying in step. */
+  /* THE PURPOSE THIS ROUTE WILL ACT ON, in one place. The boundary normalises an unknown
+     purpose to "frame"; an issuer that kept the caller's raw word would fingerprint a
+     different request from the one about to be dispatched and refuse honest work. */
+  const DISPATCH_PURPOSES = ["blocking", "frame", "correction", "entity-reference", "motion-h3"];
+  function normalizedPurpose(body) {
+    const requested = String(body?.purpose || "frame");
+    return DISPATCH_PURPOSES.includes(requested) ? requested : "frame";
+  }
+
+  function effectiveOutputCount(purpose, body) {
+    const cfg = config();
+    return purpose === "motion-h3" ? 1 : clamp(body?.outputCount, purpose === "blocking" ? cfg.blockingOutputs : cfg.frameOutputs, 1, 4);
+  }
+
   function enforceRequestPlan(owner, req, purpose, trusted) {
     const declaration = Presentation.readGenerationRequestDeclaration(req.body);
     const legal = legalRequestSurfaces(owner, req.body, purpose, trusted);
@@ -902,24 +1010,27 @@ function registerFalGeneration(app, context) {
      — the server-built descriptor the coverage route supplies and no request field can
      reach. A filmmaker generating one entity reference by hand is not run work and does
      not spend a run's budget. */
-  function coverageSubmissionError(owner, jobs, body, outputCount, trusted) {
-    if (trusted?.surface !== "reference-automation") return null;
-    const list = String(trusted.entityList || "");
-    const entityId = String(trusted.entityId || "");
+  function coverageSubmissionError(owner, jobs, body, outputCount, membership) {
+    if (membership?.permitClass !== "coverage") return null;
+    /* WHICH RUN THIS DISPATCH IS IN, read off the permit.
+     *
+     * This used to compare `run.sheetType`/`run.mode` against the same two fields on the
+     * request, and an independent reviewer took a bounded run apart with that: blanking
+     * `coverageMode` made byte-identical work "unrelated", so it escaped the bound AND
+     * replaced the live run, which destroyed the authorization record along with it. A
+     * membership test over fields the bounded work writes for itself cannot be repaired by
+     * matching them more carefully — there is nothing to match. The coverage route decides
+     * membership from the live run and the filing target and mints it into the permit;
+     * this reads that decision. An empty reference is the establishing request, which has
+     * no run to be judged against and is what sets the bound. */
+    const ref = String(membership.authorizationRef || "");
+    if (!ref) return null;
+    const list = String(body?.entityList || "");
+    const entityId = String(body?.entityId || "");
     const entity = (ownerProject(owner)[list] || []).find((row) => String(row?.id) === entityId);
     const run = entity?.coverageAutomation;
-    /* NO RUN YET IS THE ESTABLISHING REQUEST. The record is written at the dispatch-commit
-       point below — deliberately, so a refused request never leaves a live run behind — so
-       the first job of a press has nothing to be judged against and is what sets the
-       bound. Everything after it is judged against what that press authorised. */
-    if (!run || !COVERAGE_RUN_ACTIVE_STATUSES.includes(String(run.status || ""))) return null;
-    /* A DIFFERENT TASK IS A DIFFERENT RUN, and the predicate is the establishment
-       predicate: an expression sheet is not the angle sheet that happens to be running.
-       Read from the same two values the descriptor was built from, so the request this
-       guard judges and the run onDispatchCommit continues cannot disagree about which
-       run they mean. */
-    if (String(run.sheetType || "") !== String(trusted.coverageSheetType || "")
-      || String(run.mode || "") !== String(trusted.coverageMode || "")) return null;
+    if (!run || String(run.id || "") !== ref) return null;
+    if (!COVERAGE_RUN_ACTIVE_STATUSES.includes(String(run.status || ""))) return null;
     const authorizedRequests = Number(run.requestCount);
     const authorizedImages = Number(run.maximumImages);
     /* A RUN THAT RECORDED NO BOUND IS NOT A BOUNDED PRESS, and inventing one for it would
@@ -962,6 +1073,62 @@ function registerFalGeneration(app, context) {
         message: `This coverage run was authorised for up to ${authorizedImages} image${authorizedImages === 1 ? "" : "s"}. This request would take it to ${committedImages + outputCount}, so it was not submitted.`,
       };
     return authorizedSpendError(run.maxSpend, runJobs, body, outputCount);
+  }
+
+  /* WHICH BOARD A COVERAGE RESULT FILES AGAINST. The one distinction the run record has
+     always drawn — public/entities.js compares `group === "expressions"` against
+     `run.sheetType === "expressions"`, and the crop writer groups the same way — said here
+     once so membership and filing cannot answer differently. */
+  function coverageFilingTarget(sheetType) {
+    return String(sheetType || "") === "expressions" ? "expressions" : "angles";
+  }
+
+  /* DOES THIS RUN STILL HAVE PAID WORK NOBODY HAS HEARD BACK ABOUT?
+   *
+   * ingestEntity() has asked exactly this question since coverage was written, to decide
+   * when a run stops running: the run's own job ids, intersected with the ledger, minus
+   * everything settled. Lifted here unchanged so the liveness rule that now protects a
+   * bounded authorization and the rule that ends a run are the same derivation rather than
+   * two that can drift. `exceptJobId` is ingest's own "and not the one I am delivering". */
+  const COVERAGE_JOB_SETTLED = ["COMPLETED", "FAILED", "CANCELLED"];
+  function coverageRunUnsettled(jobs, run, exceptJobId = "") {
+    const member = Array.isArray(run?.jobs) ? run.jobs : [];
+    return (jobs || []).filter((item) => member.includes(item.id)
+      && item.id !== exceptJobId
+      && !COVERAGE_JOB_SETTLED.includes(String(item.status || "").toUpperCase()));
+  }
+
+  /* WHICH COVERAGE AUTHORIZATION THE OPERATION ABOUT TO DISPATCH BELONGS TO.
+   *
+   * Decided by the server, from the server's own record, and minted into the permit — so
+   * that nothing downstream has to ask the request. Three outcomes, and each is the
+   * already-approved rule:
+   *
+   *   - a live BOUNDED run still holding unsettled paid work, and this work files to the
+   *     same board: it is that run's work, whatever the request calls itself;
+   *   - the same run, and this work files somewhere else: refused truthfully. An
+   *     expression sheet is not the angle sheet that is running, and the previous
+   *     behaviour — silently replacing the live run — destroyed the authorization record
+   *     of paid work that was still in flight;
+   *   - anything else, including a settled run, an unbounded run and no run at all: an
+   *     independent press, which establishes or continues coverage exactly as before. */
+  function coverageAuthorizationFor(owner, jobs, list, entityId, sheetType) {
+    const entity = (ownerProject(owner)[list] || []).find((row) => String(row?.id) === entityId);
+    const run = entity?.coverageAutomation;
+    if (!run || !COVERAGE_RUN_ACTIVE_STATUSES.includes(String(run.status || ""))) return { ok: true, ref: "" };
+    const bounded = Number.isInteger(Number(run.requestCount)) && Number(run.requestCount) > 0
+      && Number.isInteger(Number(run.maximumImages)) && Number(run.maximumImages) > 0;
+    if (!bounded) return { ok: true, ref: "" };
+    if (!coverageRunUnsettled(jobs, run).length) return { ok: true, ref: "" };
+    if (coverageFilingTarget(run.sheetType) !== coverageFilingTarget(sheetType))
+      return {
+        ok: false,
+        status: 409,
+        code: "COVERAGE_RUN_BUSY",
+        error: `Coverage generation for this reference is already running ${coverageFilingTarget(run.sheetType)} work that CineBraid has not heard back about, and ${coverageFilingTarget(sheetType)} candidates file against a different board. Nothing was submitted. Wait for the running coverage to return, then generate again.`,
+        detail: { runningFilingTarget: coverageFilingTarget(run.sheetType), requestedFilingTarget: coverageFilingTarget(sheetType) },
+      };
+    return { ok: true, ref: String(run.id || "") };
   }
 
   /* WHAT THIS RUN HAS ALREADY COMMITTED, from the ledger rather than from any counter.
@@ -2342,6 +2509,40 @@ function registerFalGeneration(app, context) {
     }
     if (!cfg.enabled) return res.status(400).json({ error: "FAL generation is disabled in Settings." });
     if (!cfg.apiKey) return res.status(400).json({ error: "FAL API key is not configured." });
+    /* THE PERMIT, BEFORE ANY OTHER READ OF THE BODY.
+     *
+     * WHICH AUTHORIZATION THIS DISPATCH BELONGS TO IS SETTLED HERE, from a token a server
+     * path minted after establishing that authorization from state the request cannot
+     * reach. Everything below reads membership off `membership` and never off the body:
+     * that is the difference between a bound and a suggestion.
+     *
+     * PLACEMENT IS PART OF THE GUARANTEE, and it is not merely "early". The automation
+     * reuse guard on the next lines used to read `req.body.automationRunId`; a request
+     * that simply omitted the field slipped past its own run's idempotency and could
+     * dispatch a second paid job for a step that already had one. So the permit resolves
+     * FIRST and the guard is given the run and step the permit names.
+     *
+     * A refusal here is the cheapest one on this route: no row, no project write, no
+     * provider, nothing to undo. */
+    const permitGate = resolveDispatchPermit(owner, jobs, req, trusted);
+    if (!permitGate.ok)
+      return requestTruthRefusal(res, permitGate.status, permitGate.code, permitGate.error, permitGate.detail || {});
+    const membership = permitGate.membership;
+    /* THE RUN AND STEP THIS DISPATCH IS IN, taken from the permit and written back onto
+       the body so that every existing reader below — the reuse guard, the job row, the
+       credit guard, the runner's own diagnostics — keeps working unchanged while reading
+       server truth instead of a claim. Omitting or editing either field on the wire now
+       changes nothing at all. */
+    /* `automationRunnerId` is deliberately NOT taken from the permit. It is the one
+       automation field that can only narrow: the credit guard refuses unless it equals the
+       run's current lease holder and that lease is unexpired, so a wrong or omitted one
+       refuses this request and nothing else. The run and the step are different — they
+       decide WHICH ceiling applies, which is exactly what a request must not choose. */
+    if (membership.permitClass === "automation") {
+      req.body = { ...(req.body && typeof req.body === "object" ? req.body : {}) };
+      req.body.automationRunId = membership.authorizationRef;
+      req.body.automationStepKey = membership.stepKey;
+    }
     const automationRunId = String(req.body?.automationRunId || "").trim();
     const automationStepKey = String(req.body?.automationStepKey || "").trim();
     if (automationRunId && automationStepKey) {
@@ -2405,8 +2606,7 @@ function registerFalGeneration(app, context) {
         job: publicJob(unresolvedTwin),
       });
     if (activeCount(jobs) >= cfg.maxConcurrent) return res.status(409).json({ error: `FAL already has ${cfg.maxConcurrent} active CineBraid job${cfg.maxConcurrent === 1 ? "" : "s"}. Wait for completion or cancel it.` });
-    const requestedPurpose = String(req.body?.purpose || "frame");
-    const purpose = ["blocking", "frame", "correction", "entity-reference", "motion-h3"].includes(requestedPurpose) ? requestedPurpose : "frame";
+    const purpose = normalizedPurpose(req.body);
     /* THE PAYLOAD GATE, BEFORE THE FIRST CONTROL KEY IS READ.
      *
      * Placement is the whole guarantee. `requestedOutputCount` on the next line is the
@@ -2428,6 +2628,23 @@ function registerFalGeneration(app, context) {
        copy. */
     req.body = planGate.payload;
     const requestedOutputCount = purpose === "motion-h3" ? 1 : clamp(req.body?.outputCount, purpose === "blocking" ? cfg.blockingOutputs : cfg.frameOutputs, 1, 4);
+    /* AND THE PERMIT WAS MINTED FOR THIS PAID WORK, not merely for this authorization.
+     *
+     * Recomputed HERE and not earlier, because two of the fingerprinted values only become
+     * true at this line: the payload has been restricted to what the declared view can
+     * carry, and `requestedOutputCount` is the quantity that will actually be bought
+     * rather than the one the body asked for. Comparing against the raw body would bind a
+     * permit to a number the route was never going to honour.
+     *
+     * Without this a permit would be a licence for the authorization rather than for the
+     * dispatch: one minted for a single blocking candidate would buy four 4K frames on
+     * another shot, and the ledger would record it under an authorization that had agreed
+     * to neither. */
+    const presentedScope = dispatchScopeFor(req.body, planGate, purpose, requestedOutputCount);
+    if (PaidPermit.paidScopeFingerprint(presentedScope) !== String(membership.scopeFingerprint || ""))
+      return requestTruthRefusal(res, 409, "PAID_PERMIT_SCOPE_MISMATCH",
+        "This paid request is not the work its dispatch permit was issued for, so CineBraid did not send it. Nothing was submitted. Generate again from the CineBraid dialog.",
+        { presentedScope });
     const guardError = automationSubmissionError(owner, jobs, req.body, requestedOutputCount);
     /* Through the same helper as every other refusal on this route, so it carries the same
        pre-provider evidence. automationSubmissionError() runs here — before the job row is
@@ -2442,7 +2659,7 @@ function registerFalGeneration(app, context) {
        the browser that drew them. Same position — before the row is built, before commit()
        and long before submit() — so `providerContacted: false` is a fact rather than a
        hope, and the same refusal helper, so it carries the same pre-provider evidence. */
-    const coverageGuardError = coverageSubmissionError(owner, jobs, req.body, requestedOutputCount, trusted);
+    const coverageGuardError = coverageSubmissionError(owner, jobs, req.body, requestedOutputCount, membership);
     if (coverageGuardError) return requestTruthRefusal(res, coverageGuardError.status, coverageGuardError.code, coverageGuardError.message);
     const refs = Array.isArray(req.body?.references) ? req.body.references.filter((ref) => ref && ref.url) : [];
     const edit = refs.length > 0;
@@ -2487,6 +2704,17 @@ function registerFalGeneration(app, context) {
       targetCoverageSlotName: String(req.body?.targetCoverageSlotName || ""),
       coverageSourceFile: String(req.body?.coverageSourceFile || ""),
       authorityContractVersion: String(req.body?.authorityContractVersion || ""),
+      /* WHICH AUTHORIZATION PAID FOR THIS, written by the server from the permit rather
+         than copied from the request. This pair IS the durable membership the ledger never
+         had: `automationRunId` beside it is the same value, but that field is what the
+         body claimed and this is what the boundary established. It is also what makes a
+         permit single-use — a permit is redeemed if and only if a row here names it. */
+      paidPermitId: String(membership.id || ""),
+      paidAuthorization: {
+        class: String(membership.permitClass || ""),
+        ref: String(membership.authorizationRef || ""),
+        ...(membership.stepKey ? { stepKey: String(membership.stepKey) } : {}),
+      },
       prompt: String(req.body?.prompt || "").trim(),
       references: refs.slice(0, 16).map((ref, index) => ({
         key: ref.key || `image-${index + 1}`,
@@ -2847,14 +3075,40 @@ function registerFalGeneration(app, context) {
        The old order could only over-claim, which is the direction that lies.
 
        See docs/coverage-durability-correction-note.md for the reading at every seam. */
+    /* AND THE PERMIT IS SPENT IN THE SAME TURN THAT SPENDS IT.
+     *
+     * commit() serialises per project directory and RE-READS the ledger inside its own
+     * turn with a synchronous mutator, so this check and the row it guards are indivisible
+     * against every other dispatch of this project. That is what makes a permit
+     * single-use without a lock, a counter or a second store: two concurrent redemptions
+     * cannot both find no row, because the second turn reads what the first wrote.
+     *
+     * SPENTNESS LIVES HERE AND NOWHERE ELSE. Writing `redeemed: true` into paid-permits.json
+     * would be a second answer in a file that cannot be written atomically with this one —
+     * adjacent writes are not a transaction, which this route learned at the coverage seam
+     * below. Removing the permit from that store afterwards is housekeeping; nothing about
+     * this guarantee depends on it succeeding. */
     try {
-      await commit(owner, (current) => { current.push(job); });
+      await commit(owner, (current) => {
+        const spent = current.find((item) => String(item?.paidPermitId || "") === String(membership.id || ""));
+        if (spent) {
+          const error = new Error(`This dispatch permit has already been redeemed by generation ${spent.id}. Nothing was submitted.`);
+          error.paidPermitRedeemed = spent.id;
+          throw error;
+        }
+        current.push(job);
+      });
     } catch (error) {
       /* Nothing durable exists and nothing has been sent. There is no coverage record to
          reconcile, because it has not been written yet — which is the point of the
          order. */
+      if (error?.paidPermitRedeemed)
+        return requestTruthRefusal(res, 409, "PAID_PERMIT_ALREADY_REDEEMED", error.message, { redeemedByJobId: error.paidPermitRedeemed });
       return res.status(ledgerFailureStatus(error)).json(ledgerFailurePayload(error));
     }
+    /* Housekeeping, after the fact that matters is durable. A stored permit that survives
+       a crash here is refused by the ledger check above, so this failing costs nothing. */
+    if (!trusted?.permit) PaidPermit.dropPaidPermit(owner.dir, membership.id);
     if (typeof trusted?.onDispatchCommit === "function") {
       try {
         await trusted.onDispatchCommit(owner, job);
@@ -2957,6 +3211,58 @@ function registerFalGeneration(app, context) {
     }
   }
 
+  /* THE DIRECT AUTHORIZATION PATH.
+   *
+   * A filmmaker pressing Generate in a generation dialog is an authorization in its own
+   * right, and it always was: manual generation is legitimate while an automation run is
+   * live on the same shot, two differently scoped runs may touch one object at once, and a
+   * manual payload can be materially identical to an automation step. CineBraid has never
+   * claimed exclusivity over a production object and this does not start.
+   *
+   * So the class is `direct` BECAUSE THIS ROUTE MINTED IT, and never because a field was
+   * missing. That distinction is the whole point: inferring "manual" from an absent
+   * `automationRunId`, absent coverage fields, a manual-looking payload or a run nobody
+   * happened to find is exactly the inference that let bounded work reclassify itself.
+   *
+   * WHAT THIS ROUTE DOES NOT DO: price anything, establish any ceiling, resolve a
+   * generation plan, or dispatch. It records the paid scope a dialog is about to submit
+   * and hands back a token for it. It is a round trip inside one Generate press, not a
+   * confirmation step, and nothing here is shown to a filmmaker. */
+  app.post("/api/generation/paid-permit", (req, res) => {
+    let owner;
+    try {
+      owner = captureOwner();
+    } catch (error) {
+      return res.status(ledgerFailureStatus(error)).json(ledgerFailurePayload(error));
+    }
+    const cfg = config();
+    if (!cfg.enabled) return res.status(400).json({ error: "FAL generation is disabled in Settings.", providerContacted: false, paidRequestSubmitted: false });
+    const scopeBody = req.body && typeof req.body === "object" ? req.body : {};
+    const declaration = Presentation.readGenerationRequestDeclaration(scopeBody);
+    if (!declaration.declared)
+      return res.status(400).json({
+        error: "A dispatch permit has to say which generation surface and view the request will come from. Nothing was submitted.",
+        code: "PAID_PERMIT_SCOPE_REQUIRED", providerContacted: false, paidRequestSubmitted: false,
+      });
+    const purpose = normalizedPurpose(scopeBody);
+    try {
+      /* Through the SAME two functions the boundary will use, so a scope declared here and
+         the dispatch it authorises agree by construction rather than by two copies of the
+         same arithmetic staying in step. */
+      const permit = PaidPermit.issuePaidPermit(owner.dir, {
+        permitClass: "direct",
+        scope: dispatchScopeFor(scopeBody, { surface: declaration.surface, declaration }, purpose, effectiveOutputCount(purpose, scopeBody)),
+        at: now(),
+      });
+      res.json({ ok: true, paidPermitId: permit.id, expiresAt: permit.expiresAt });
+    } catch (error) {
+      res.status(error?.status || 500).json({
+        error: error?.message || "Could not issue a dispatch permit.",
+        code: error?.code || "PAID_PERMIT_ISSUE_FAILED", providerContacted: false, paidRequestSubmitted: false,
+      });
+    }
+  });
+
   /* THE PUBLIC ENTRY POINT. No trusted context, ever: a browser request describes the
      work it wants and cannot tell the server which privileged operation is running. */
   /* Both entry points end in guardRoute(), as guardRoute's own note says every
@@ -3006,12 +3312,43 @@ function registerFalGeneration(app, context) {
 
     const mode = String(req.body?.coverageMode || jobType);
     const sheetType = String(req.body?.coverageSheetType || "");
+    /* WHICH COVERAGE AUTHORIZATION THIS PRESS BELONGS TO, decided before anything is
+       dispatched and from the server's own run record. Every provider-bound request that
+       enters through this route gets a COVERAGE-class permit — there is no branch here in
+       which a missing or altered field could earn it a `direct` one instead. */
+    let coverageJobs;
+    try {
+      coverageJobs = readJobs(owner);
+    } catch (error) {
+      return res.status(ledgerFailureStatus(error)).json(ledgerFailurePayload(error));
+    }
+    const authorization = coverageAuthorizationFor(owner, coverageJobs, list, entityId, sheetType);
+    if (!authorization.ok)
+      return res.status(authorization.status).json({
+        error: authorization.error, code: authorization.code, ...authorization.detail,
+        providerContacted: false, paidRequestSubmitted: false,
+      });
+    /* Minted here and handed straight to the boundary as an argument. It never reaches a
+       client and never crosses a process boundary, so it is deliberately not persisted:
+       there is no window in which anything else could present it. */
+    const coveragePermit = PaidPermit.mintPaidPermit({
+      permitClass: "coverage",
+      authorizationRef: authorization.ref,
+      scope: dispatchScopeFor(
+        req.body,
+        { surface: "reference-automation", declaration: { viewMode: Presentation.readGenerationRequestDeclaration(req.body).viewMode } },
+        normalizedPurpose(req.body),
+        effectiveOutputCount(normalizedPurpose(req.body), req.body),
+      ),
+      at: now(),
+    });
     /* THE TRUSTED OPERATION DESCRIPTOR. Built here from values this route validated for
        itself, handed to the shared boundary as an argument, and reachable from no request
        field. It says which operation is running, which entity it is for, and what to do
        at the one moment the boundary decides the work is really happening. */
     return guardRoute(res, dispatchGenerationRequest(req, res, {
       surface: "reference-automation",
+      permit: coveragePermit,
       entityList: list,
       entityId,
       /* WHICH COVERAGE TASK THIS IS, on the descriptor rather than re-derived downstream.
@@ -3034,16 +3371,25 @@ function registerFalGeneration(app, context) {
           const entity = (project[list] || []).find((item) => String(item?.id) === entityId);
           if (!entity) throw new Error(`Entity ${entityId} no longer exists.`);
           const existing = entity.coverageAutomation;
-          /* ONE PRESS IS ONE RUN, and a different task is a different run. A single
-             coverage press dispatches several slot jobs and they belong together, so a
-             live run for the same task is CONTINUED and the job ids accumulate on it.
-             Asking for different work is not a continuation: an expression sheet is not
-             the angle sheet that happened to be running, and a record that kept saying
-             `angles` would file the returned candidates against the wrong board. */
+          /* ONE PRESS IS ONE RUN, and WHICH RUN IS THE PERMIT'S ANSWER.
+           *
+           * This compared the stored run's `sheetType` and `mode` against the request's
+           * own two fields. Both are written by the work being bounded, so blanking one
+           * made byte-identical coverage work "a different task": it detached from the
+           * bound AND replaced the live run, destroying the record of paid work still in
+           * flight. Matching those fields more carefully cannot fix that — there is
+           * nothing on the request that is evidence about which press it is.
+           *
+           * `coverageAuthorizationFor()` decided this before dispatch, from the live run
+           * and the board the results file against, and minted the answer into the permit.
+           * A named reference is a continuation of exactly that run; an empty one is a new
+           * press, which is only ever issued when no bounded run is still holding unsettled
+           * paid work. So a live bounded run can no longer be replaced by anything, and
+           * genuinely independent coverage still establishes its own run as before. */
           const continuing = existing
             && COVERAGE_RUN_ACTIVE_STATUSES.includes(String(existing.status || ""))
-            && String(existing.sheetType || "") === sheetType
-            && String(existing.mode || "") === mode;
+            && String(existing.id || "") === String(coveragePermit.authorizationRef || "")
+            && !!coveragePermit.authorizationRef;
           const run = continuing ? { ...existing, updatedAt: now() } : {
             id: `coverage:${list}:${entityId}:${uid()}`,
             list, entityId, mode, sheetType,

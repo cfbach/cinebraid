@@ -174,6 +174,11 @@ async function openFrameDialog(fal = {}, planOverrides = {}) {
        prefix — or even the method — overwrites the captured submission with {}. The
        control would then report a pass while inspecting an empty object, which is the
        failure mode where a test agrees with everything. */
+    /* THE PERMIT ROUTE A GENERATE PRESS NOW CALLS FIRST. The shipped dialog obtains a
+       paid dispatch permit from the server inside the same press, so a harness standing in
+       for one has to answer it or the dispatch it is testing never happens. */
+    if (String(url) === "/api/generation/paid-permit")
+      return { ok: true, json: async () => ({ ok: true, paidPermitId: "permit-harness", expiresAt: "2099-01-01T00:00:00.000Z" }) };
     if (/\/api\/generation\/fal\/jobs$/.test(String(url))) {
       submitted = body;
       return { ok: true, json: async () => ({ job: { id: "job-1", status: "COMPLETED", purpose: body.purpose } }) };
@@ -1068,7 +1073,7 @@ function candidateCorrectionSection() {
      presence of a gate somewhere in the file. */
   const posts = dispatch.split("/api/generation/fal/jobs");
   assert(posts.length >= 2, "13d: the correction must still reach the paid endpoint somewhere");
-  assert(/JSON\.stringify\(gatedBody\)/.test(dispatch),
+  assert(/JSON\.stringify\(await paidDispatchPermitFor\(gatedBody\)\)/.test(dispatch),
     "13d: the correction must submit the gated body");
   assert(!/body: JSON\.stringify\(body\)/.test(dispatch),
     "13d: and must not keep a raw-body POST beside it");

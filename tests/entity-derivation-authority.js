@@ -83,6 +83,10 @@ async function page({ canon, task = "states", mutateSource, stateFile }) {
       "cinebraid-section:fixture:entity:props:PR-TOOL:state-generation:state-worn": "1",
     },
     fetch: async (url, options, respond) => {
+      /* THE PERMIT ROUTE A GENERATE PRESS NOW CALLS FIRST. The shipped dialogs obtain a
+         paid dispatch permit from the server inside the same press, so a harness standing
+         in for one has to answer it or the dispatch it is testing never happens. */
+      if (url === "/api/generation/paid-permit") return respond({ ok: true, paidPermitId: "permit-harness", expiresAt: "2099-01-01T00:00:00.000Z" });
       if (url === "/api/generation/fal/status") return respond({ enabled: true, configured: true, defaults: {} });
       if (url === "/api/generation/fal/jobs" && options.method === "POST") {
         /* THE LAST POINT BEFORE TRANSPORT. Whatever is here is what CineBraid
@@ -344,6 +348,10 @@ async function main() {
         scan: SCAN,
         mutateSource,
         fetch: async (url, options, respond) => {
+      /* THE PERMIT ROUTE A GENERATE PRESS NOW CALLS FIRST. The shipped dialogs obtain a
+         paid dispatch permit from the server inside the same press, so a harness standing
+         in for one has to answer it or the dispatch it is testing never happens. */
+      if (url === "/api/generation/paid-permit") return respond({ ok: true, paidPermitId: "permit-harness", expiresAt: "2099-01-01T00:00:00.000Z" });
           const method = (options && options.method) || "GET";
           seen.push(method + " " + url);
           if (url === "/api/generation/fal/status") return respond({ enabled: true, configured: true, defaults: {} });

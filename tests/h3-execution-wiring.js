@@ -155,7 +155,7 @@ async function harness() {
     const response = await fetch(`${appOrigin}${url}`, {
       method: options.method || "POST",
       headers: { "content-type": "application/json" },
-      ...(options.body ? { body: JSON.stringify(withGenerationDeclaration(url, options.body)) } : {}),
+      ...(options.body ? { body: JSON.stringify(await withGenerationDeclaration(url, options.body, { origin: appOrigin })) } : {}),
     });
     return { status: response.status, data: await response.json() };
   };

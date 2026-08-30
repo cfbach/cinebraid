@@ -275,9 +275,33 @@ async function harness(falGeneration, options = {}) {
       });
       return { status: response.status, data: await response.json() };
     },
-    post: async (body) => {
+    /* THE PERMIT A DIALOG WOULD HAVE OBTAINED, from the shipped issuance route on this
+       control's own server — including when that server is a MUTATED private copy, which
+       is the point: a control that minted its permits some other way would be exercising a
+       path the product does not have. `options.permit: false` posts without one, for the
+       controls that are about the permit rather than about what it protects. */
+    permitFor: async (scope) => {
+      const response = await fetch(`${appOrigin}/api/generation/paid-permit`, {
+        method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(scope),
+      });
+      return { status: response.status, data: await response.json().catch(() => ({})) };
+    },
+    post: async (body, options = {}) => {
+      let sent = body;
+      if (options.permit !== false && body && typeof body === "object" && !body.paidPermitId) {
+        const scope = declaredGenerationBody(body);
+        const issued = await fetch(`${appOrigin}/api/generation/paid-permit`, {
+          method: "POST", headers: { "content-type": "application/json" },
+          body: JSON.stringify({
+            generationRequest: scope?.generationRequest, purpose: body.purpose,
+            shotId: body.shotId, frameId: body.frameId, entityList: body.entityList,
+            entityId: body.entityId, sourceBuildId: body.sourceBuildId, outputCount: body.outputCount,
+          }),
+        }).then((r) => r.json()).catch(() => ({}));
+        if (issued?.paidPermitId) sent = { ...body, paidPermitId: issued.paidPermitId };
+      }
       const response = await fetch(`${appOrigin}/api/generation/fal/jobs`, {
-        method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(body),
+        method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(sent),
       });
       return { status: response.status, data: await response.json() };
     },
@@ -909,12 +933,17 @@ async function main() {
       const falGeneration = loadModified("fal-generation.js", [[
         /* The hook fires at the dispatch-commit point; this makes the route fire it up
            front instead, exactly as the held candidate did. */
+        /* The anchor moved with the seam: the descriptor now carries the coverage
+           permit the route mints before dispatching. Re-armed at the moved seam rather
+           than deleted — a control that quietly stops matching proves nothing. */
         `    return guardRoute(res, dispatchGenerationRequest(req, res, {
       surface: "reference-automation",
+      permit: coveragePermit,
       entityList: list,
       entityId,`,
         `    const early = {
       surface: "reference-automation",
+      permit: coveragePermit,
       entityList: list,
       entityId,`,
       ], [
@@ -974,14 +1003,17 @@ async function main() {
   await control("a coverage projection written before the job that justifies it",
     "persisted coverage never claims paid generation the ledger cannot justify", async (phase) => {
       const falGeneration = loadModified("fal-generation.js", [[
+        /* The anchor moved with the seam: the ledger turn now also consumes the dispatch
+           permit, because single-use has to be decided inside the same indivisible write.
+           Re-armed where the seam went. */
         `    try {
-      await commit(owner, (current) => { current.push(job); });
-    } catch (error) {`,
+      await commit(owner, (current) => {
+        const spent = current.find((item) => String(item?.paidPermitId || "") === String(membership.id || ""));`,
         `    if (typeof trusted?.onDispatchCommit === "function") await trusted.onDispatchCommit(owner, job);
     if (trusted) throw new Error("process stopped between the two durable writes");
     try {
-      await commit(owner, (current) => { current.push(job); });
-    } catch (error) {`,
+      await commit(owner, (current) => {
+        const spent = current.find((item) => String(item?.paidPermitId || "") === String(membership.id || ""));`,
       ]]);
       phase("MUTATION_LANDED");
       const h = await harness(falGeneration);
@@ -1598,7 +1630,7 @@ async function main() {
   await control("a money boundary that never asks what the coverage press authorised",
     "a coverage run cannot exceed the count one press authorised", async (phase) => {
       const mutated = loadModified("fal-generation.js", [[
-        `    const coverageGuardError = coverageSubmissionError(owner, jobs, req.body, requestedOutputCount, trusted);`,
+        `    const coverageGuardError = coverageSubmissionError(owner, jobs, req.body, requestedOutputCount, membership);`,
         `    const coverageGuardError = null;`,
       ]]);
       phase("MUTATION_LANDED");
@@ -1711,6 +1743,422 @@ async function main() {
         observeHarm(third.status === 200,
           `THE DEFECT: a run authorised for 1 image and $0.06 restated itself at ${raised.run.config.maxImages} images and $${raised.run.config.maxSpend?.amount} through the ordinary progress route, and the credit guard then let a further paid request through — ${h.calls.length} provider calls`);
       } finally { runsServer.close(); h.close(); }
+    });
+
+  /* =========================================================================
+     THE PAID DISPATCH PERMIT.
+
+     Membership in a bounded authorization is the thing these protect. Each control removes
+     one part of the permit and shows the bound stops being one — which is the only way to
+     know the assertions above are measuring the permit rather than something adjacent that
+     happens to refuse. */
+
+  const permitFrameBody = (buildId, extra = {}) => ({
+    purpose: "frame", imagePlan: true, shotId: "SH-1", frameId: "FR-A", frameLabel: "A",
+    sourceBuildId: buildId, prompt: "Kai sets the parcel down in the hangar.",
+    aspectRatio: "16:9", outputCount: 1,
+    generationRequest: Presentation.generationRequestDeclaration({ surface: "compiled-frame", viewMode: "advanced" }),
+    ...extra,
+  });
+  const permitScope = (buildId, extra = {}) => ({
+    generationRequest: Presentation.generationRequestDeclaration({ surface: "compiled-frame", viewMode: "advanced" }),
+    purpose: "frame", shotId: "SH-1", frameId: "FR-A", sourceBuildId: buildId, outputCount: 1, ...extra,
+  });
+
+  await control("a money boundary that does not require a dispatch permit",
+    "no provider-bound paid dispatch happens without redeeming a server-issued permit", async (phase) => {
+      const mutated = loadModified("fal-generation.js", [[
+        `    const permitGate = resolveDispatchPermit(owner, jobs, req, trusted);
+    if (!permitGate.ok)`,
+        `    const permitGate = { ok: true, membership: { id: "", permitClass: "direct", authorizationRef: "", stepKey: "", scopeFingerprint: "" } };
+    if (false)`,
+      ], [
+        `    if (PaidPermit.paidScopeFingerprint(presentedScope) !== String(membership.scopeFingerprint || ""))`,
+        `    if (false && PaidPermit.paidScopeFingerprint(presentedScope) !== String(membership.scopeFingerprint || ""))`,
+      ]]);
+      phase("MUTATION_LANDED");
+      const h = await harness(mutated);
+      try {
+        const buildId = seedFramePackage(h);
+        phase("UNSAFE_PATH_EXECUTED");
+        const naked = await h.post(permitFrameBody(buildId, { clientRequestId: "no-permit" }), { permit: false });
+        observeHarm(naked.status === 200,
+          `THE DEFECT: a paid request carrying no dispatch permit reached the provider — ${h.calls.length} provider call(s) and ${h.ledger().length} ledger row(s) for work no authorization claimed`);
+      } finally { h.close(); }
+    });
+
+  await control("a boundary that takes any well-formed permit id on the caller's word",
+    "a permit CineBraid did not issue is refused", async (phase) => {
+      const mutated = loadModified("fal-generation.js", [[
+        `    if (found.ok) return { ok: true, membership: found.permit };`,
+        `    if (found.ok) return { ok: true, membership: found.permit };
+    if (found.reason === "unknown") return { ok: true, membership: { id: presented, permitClass: "direct", authorizationRef: "", stepKey: "", scopeFingerprint: PaidPermit.paidScopeFingerprint(dispatchScopeFor(req.body, { surface: "compiled-frame", declaration: { viewMode: "advanced" } }, normalizedPurpose(req.body), effectiveOutputCount(normalizedPurpose(req.body), req.body))) } };`,
+      ]]);
+      phase("MUTATION_LANDED");
+      const h = await harness(mutated);
+      try {
+        const buildId = seedFramePackage(h);
+        phase("UNSAFE_PATH_EXECUTED");
+        const forged = await h.post(permitFrameBody(buildId, { clientRequestId: "forged", paidPermitId: `permit-${"a".repeat(32)}` }), { permit: false });
+        observeHarm(forged.status === 200,
+          `THE DEFECT: a permit id the caller invented was accepted as an authorization — ${h.calls.length} provider call(s) for a dispatch no server path minted`);
+      } finally { h.close(); }
+    });
+
+  await control("a permit consumed outside the serialised ledger turn that writes the job",
+    "one permit dispatches at most one paid job", async (phase) => {
+      /* The check moves OUT of the commit callback and in front of it, which is where a
+         reasonable implementation would put it and is exactly what makes it unsound: two
+         requests can both read a ledger with no row before either writes one. */
+      const mutated = loadModified("fal-generation.js", [[
+        `      await commit(owner, (current) => {
+        const spent = current.find((item) => String(item?.paidPermitId || "") === String(membership.id || ""));
+        if (spent) {
+          const error = new Error(\`This dispatch permit has already been redeemed by generation \${spent.id}. Nothing was submitted.\`);
+          error.paidPermitRedeemed = spent.id;
+          throw error;
+        }
+        current.push(job);
+      });`,
+        `      const preread = readJobs(owner).find((item) => String(item?.paidPermitId || "") === String(membership.id || ""));
+      if (preread) {
+        const error = new Error(\`This dispatch permit has already been redeemed by generation \${preread.id}. Nothing was submitted.\`);
+        error.paidPermitRedeemed = preread.id;
+        throw error;
+      }
+      await new Promise((resolve) => setTimeout(resolve, 25));
+      await commit(owner, (current) => { current.push(job); });`,
+      ], [
+        /* And the early ledger read has to go too, or it would answer instead. */
+        `      const spent = jobs.find((item) => String(item?.paidPermitId || "") === presented);
+      if (spent)`,
+        `      const spent = null;
+      if (spent)`,
+      ]]);
+      phase("MUTATION_LANDED");
+      const h = await harness(mutated);
+      try {
+        const buildId = seedFramePackage(h);
+        const issued = await h.permitFor(permitScope(buildId));
+        assert(issued.data?.paidPermitId, `the control needs a real permit: ${JSON.stringify(issued.data)}`);
+        phase("UNSAFE_PATH_EXECUTED");
+        const both = await Promise.all([
+          h.post(permitFrameBody(buildId, { clientRequestId: "race-a", paidPermitId: issued.data.paidPermitId }), { permit: false }),
+          h.post(permitFrameBody(buildId, { clientRequestId: "race-b", paidPermitId: issued.data.paidPermitId }), { permit: false }),
+        ]);
+        const won = both.filter((result) => result.status === 200).length;
+        observeHarm(won > 1,
+          `THE DEFECT: one permit dispatched ${won} paid jobs concurrently — ${h.calls.length} provider calls against a single authorization`);
+      } finally { h.close(); }
+    });
+
+  await control("automation membership read off the request body, with the scope check that also guards it removed",
+    "an automation dispatch cannot detach from its run by omitting automationRunId", async (phase) => {
+      /* TWO MUTATIONS, BECAUSE TWO GUARDS SUPPLY THIS PROPERTY. Correcting the body from
+         the permit is the one under test; the scope fingerprint independently refuses a
+         request whose declared surface is not the one the permit was minted for, and with
+         it in place this control would report a green it had not earned — it would be
+         measuring the fingerprint. Both come out, which is what makes the remaining
+         question "does membership come from the permit". */
+      const mutated = loadModified("fal-generation.js", [[
+        `    if (membership.permitClass === "automation") {
+      req.body = { ...(req.body && typeof req.body === "object" ? req.body : {}) };
+      req.body.automationRunId = membership.authorizationRef;
+      req.body.automationStepKey = membership.stepKey;
+    }`,
+        `    if (false) { req.body = { ...req.body }; }`,
+      ], [
+        `    if (PaidPermit.paidScopeFingerprint(presentedScope) !== String(membership.scopeFingerprint || ""))`,
+        `    if (false && PaidPermit.paidScopeFingerprint(presentedScope) !== String(membership.scopeFingerprint || ""))`,
+      ]]);
+      phase("MUTATION_LANDED");
+      const h = await harness(mutated);
+      const runsApp = express();
+      runsApp.use(express.json({ limit: "8mb" }));
+      const { registerAutomationRuns } = require("../automation-runs");
+      registerAutomationRuns(runsApp, {
+        readConfig: () => ({}), readProject: () => h.project(), writeProject: () => {},
+        activeSlug: () => "ctrl", projectDir: () => h.dir, projectDirForSlug: () => ({ slug: "ctrl", dir: h.dir, file: h.file }),
+      });
+      const runsServer = await listen(runsApp);
+      try {
+        const runsOrigin = originOf(runsServer);
+        const buildId = seedFramePackage(h);
+        const RUNNER = "runner-1";
+        h.saveRuns([{
+          id: "automation-detach", schemaVersion: 2, revision: 1, type: "shot-chain", targetId: "SH-1", scope: "main",
+          status: "running", runnerId: RUNNER, leaseExpiresAt: "2099-01-01T00:00:00.000Z",
+          config: { maxImages: 1, maxSpend: { priced: true, amount: 0.06, quantity: 1, unitBasis: "image", ratePerUnit: 0.06, rateSource: "configured" } },
+          usage: { imagesGenerated: 0 }, steps: {}, logs: [],
+        }]);
+        const revalidate = async (stepKey) => {
+          const response = await fetch(`${runsOrigin}/api/automation/runs/automation-detach/lease/revalidate`, {
+            method: "POST", headers: { "content-type": "application/json" },
+            body: JSON.stringify({ runnerId: RUNNER, stepKey, paidScope: {
+              purpose: "frame", surface: "automation-run", viewMode: "simple",
+              shotId: "SH-1", frameId: "FR-A", entityList: "", entityId: "", buildId: "", outputCount: 1,
+            } }),
+          });
+          return (await response.json()).paidPermitId;
+        };
+        const runBody = (extra) => ({
+          purpose: "frame", shotId: "SH-1", frameId: "FR-A", frameLabel: "A", prompt: "p",
+          aspectRatio: "16:9", outputCount: 1, automationRunnerId: RUNNER,
+          generationRequest: Presentation.generationRequestDeclaration({ surface: "automation-run", viewMode: "simple" }),
+          ...extra,
+        });
+        /* The run's single authorised image, spent honestly. */
+        const first = await h.post(runBody({ clientRequestId: "step-1", automationRunId: "automation-detach", automationStepKey: "step-1", paidPermitId: await revalidate("step-1") }), { permit: false });
+        assert.strictEqual(first.status, 200, `the authorised image must dispatch: ${JSON.stringify(first.data)}`);
+        await h.settle(first.data.job.id);
+        phase("UNSAFE_PATH_EXECUTED");
+        /* The same work again, with the run omitted from the body. */
+        const detached = await h.post(runBody({
+          clientRequestId: "detached", paidPermitId: await revalidate("step-2"),
+          generationRequest: Presentation.generationRequestDeclaration({ surface: "fixed-image", viewMode: "simple" }),
+        }), { permit: false });
+        observeHarm(detached.status === 200,
+          `THE DEFECT: omitting automationRunId detached a second paid job from a run authorised for one image — ${h.calls.length} provider calls, and the row records ${JSON.stringify(h.ledger().find((item) => item.clientRequestId === "detached")?.paidAuthorization)}`);
+      } finally { runsServer.close(); h.close(); }
+    });
+
+  await control("a permit accepted for a run or step other than the one it names",
+    "a permit buys work only under the authorization it was minted for", async (phase) => {
+      const mutated = loadModified("fal-generation.js", [[
+        `      req.body.automationRunId = membership.authorizationRef;
+      req.body.automationStepKey = membership.stepKey;`,
+        `      req.body.automationRunId = String(req.body.automationRunId || membership.authorizationRef);
+      req.body.automationStepKey = String(req.body.automationStepKey || membership.stepKey);`,
+      ]]);
+      phase("MUTATION_LANDED");
+      const h = await harness(mutated);
+      const runsApp = express();
+      runsApp.use(express.json({ limit: "8mb" }));
+      const { registerAutomationRuns } = require("../automation-runs");
+      registerAutomationRuns(runsApp, {
+        readConfig: () => ({}), readProject: () => h.project(), writeProject: () => {},
+        activeSlug: () => "ctrl", projectDir: () => h.dir, projectDirForSlug: () => ({ slug: "ctrl", dir: h.dir, file: h.file }),
+      });
+      const runsServer = await listen(runsApp);
+      try {
+        const runsOrigin = originOf(runsServer);
+        seedFramePackage(h);
+        const RUNNER = "runner-1";
+        const CAP = { priced: true, amount: 0.06, quantity: 1, unitBasis: "image", ratePerUnit: 0.06, rateSource: "configured" };
+        h.saveRuns([
+          { id: "run-spent", schemaVersion: 2, revision: 1, type: "shot-chain", targetId: "SH-1", scope: "main", status: "running", runnerId: RUNNER, leaseExpiresAt: "2099-01-01T00:00:00.000Z", config: { maxImages: 1, maxSpend: CAP }, usage: { imagesGenerated: 0 }, steps: {}, logs: [] },
+          { id: "run-fresh", schemaVersion: 2, revision: 1, type: "shot-chain", targetId: "SH-1", scope: "blocking-only", status: "running", runnerId: RUNNER, leaseExpiresAt: "2099-01-01T00:00:00.000Z", config: { maxImages: 4, maxSpend: { ...CAP, amount: 0.24, quantity: 4 } }, usage: { imagesGenerated: 0 }, steps: {}, logs: [] },
+        ]);
+        const permitFor = async (runId) => {
+          const response = await fetch(`${runsOrigin}/api/automation/runs/${runId}/lease/revalidate`, {
+            method: "POST", headers: { "content-type": "application/json" },
+            body: JSON.stringify({ runnerId: RUNNER, stepKey: "s1", paidScope: {
+              purpose: "frame", surface: "automation-run", viewMode: "simple",
+              shotId: "SH-1", frameId: "FR-A", entityList: "", entityId: "", buildId: "", outputCount: 1,
+            } }),
+          });
+          return (await response.json()).paidPermitId;
+        };
+        const runBody = (extra) => ({
+          purpose: "frame", shotId: "SH-1", frameId: "FR-A", frameLabel: "A", prompt: "p",
+          aspectRatio: "16:9", outputCount: 1, automationRunnerId: RUNNER, automationStepKey: "s1",
+          generationRequest: Presentation.generationRequestDeclaration({ surface: "automation-run", viewMode: "simple" }),
+          ...extra,
+        });
+        const first = await h.post(runBody({ clientRequestId: "spend-1", automationRunId: "run-spent", paidPermitId: await permitFor("run-spent") }), { permit: false });
+        assert.strictEqual(first.status, 200, `run-spent's one image must dispatch: ${JSON.stringify(first.data)}`);
+        await h.settle(first.data.job.id);
+        phase("UNSAFE_PATH_EXECUTED");
+        /* run-spent's permit, presented while the body names the run that still has budget. */
+        const swapped = await h.post(runBody({ clientRequestId: "swapped", automationRunId: "run-fresh", automationStepKey: "s2", paidPermitId: await permitFor("run-spent") }), { permit: false });
+        observeHarm(swapped.status === 200,
+          `THE DEFECT: a permit minted for run-spent bought work charged to run-fresh — the row records ${JSON.stringify(h.ledger().find((item) => item.clientRequestId === "swapped")?.paidAuthorization)} and ${h.calls.length} provider calls were made`);
+      } finally { runsServer.close(); h.close(); }
+    });
+
+  await control("a permit whose class is taken from the request rather than the issuance path",
+    "an authorization cannot reclassify itself as independent direct work", async (phase) => {
+      /* The scope fingerprint comes out for the same reason as the control above: it
+         independently refuses a run-scoped permit presented under a direct surface, so
+         leaving it in would measure it instead of the class. */
+      const mutated = loadModified("fal-generation.js", [[
+        `    if (found.ok) return { ok: true, membership: found.permit };`,
+        `    if (found.ok) return { ok: true, membership: { ...found.permit, permitClass: String(req.body?.paidPermitClass || found.permit.permitClass), authorizationRef: req.body?.paidPermitClass === "direct" ? "" : found.permit.authorizationRef } };`,
+      ], [
+        `    if (PaidPermit.paidScopeFingerprint(presentedScope) !== String(membership.scopeFingerprint || ""))`,
+        `    if (false && PaidPermit.paidScopeFingerprint(presentedScope) !== String(membership.scopeFingerprint || ""))`,
+      ]]);
+      phase("MUTATION_LANDED");
+      const h = await harness(mutated);
+      const runsApp = express();
+      runsApp.use(express.json({ limit: "8mb" }));
+      const { registerAutomationRuns } = require("../automation-runs");
+      registerAutomationRuns(runsApp, {
+        readConfig: () => ({}), readProject: () => h.project(), writeProject: () => {},
+        activeSlug: () => "ctrl", projectDir: () => h.dir, projectDirForSlug: () => ({ slug: "ctrl", dir: h.dir, file: h.file }),
+      });
+      const runsServer = await listen(runsApp);
+      try {
+        const runsOrigin = originOf(runsServer);
+        seedFramePackage(h);
+        const RUNNER = "runner-1";
+        h.saveRuns([{
+          id: "run-classy", schemaVersion: 2, revision: 1, type: "shot-chain", targetId: "SH-1", scope: "main",
+          status: "running", runnerId: RUNNER, leaseExpiresAt: "2099-01-01T00:00:00.000Z",
+          config: { maxImages: 1, maxSpend: { priced: true, amount: 0.06, quantity: 1, unitBasis: "image", ratePerUnit: 0.06, rateSource: "configured" } },
+          usage: { imagesGenerated: 0 }, steps: {}, logs: [],
+        }]);
+        const permit = async (stepKey) => {
+          const response = await fetch(`${runsOrigin}/api/automation/runs/run-classy/lease/revalidate`, {
+            method: "POST", headers: { "content-type": "application/json" },
+            body: JSON.stringify({ runnerId: RUNNER, stepKey, paidScope: {
+              purpose: "frame", surface: "automation-run", viewMode: "simple",
+              shotId: "SH-1", frameId: "FR-A", entityList: "", entityId: "", buildId: "", outputCount: 1,
+            } }),
+          });
+          return (await response.json()).paidPermitId;
+        };
+        const runBody = (extra) => ({
+          purpose: "frame", shotId: "SH-1", frameId: "FR-A", frameLabel: "A", prompt: "p",
+          aspectRatio: "16:9", outputCount: 1, automationRunnerId: RUNNER, automationRunId: "run-classy",
+          generationRequest: Presentation.generationRequestDeclaration({ surface: "automation-run", viewMode: "simple" }),
+          ...extra,
+        });
+        const first = await h.post(runBody({ clientRequestId: "c1", automationStepKey: "s1", paidPermitId: await permit("s1") }), { permit: false });
+        assert.strictEqual(first.status, 200, `the run's one image must dispatch: ${JSON.stringify(first.data)}`);
+        await h.settle(first.data.job.id);
+        phase("UNSAFE_PATH_EXECUTED");
+        /* A run-scoped permit, presented with a body asking to be read as direct work. */
+        const reclassified = await h.post(runBody({
+          /* Both automation fields cleared: the credit guard refuses a half-named run
+             outright, so leaving the step key behind would refuse for that instead and
+             the control would never reach the reclassification it is about. */
+          clientRequestId: "c2", automationStepKey: "", automationRunId: "", paidPermitClass: "direct",
+          generationRequest: Presentation.generationRequestDeclaration({ surface: "compiled-frame", viewMode: "simple" }),
+          imagePlan: true, sourceBuildId: h.ledger()[0].sourceBuildId, paidPermitId: await permit("s2"),
+        }), { permit: false });
+        observeHarm(reclassified.status === 200,
+          `THE DEFECT: a run-scoped permit bought a second paid job by asking to be read as direct work — ${h.calls.length} provider calls against a one-image ceiling, recorded as ${JSON.stringify(h.ledger().find((item) => item.clientRequestId === "c2")?.paidAuthorization)}`);
+      } finally { runsServer.close(); h.close(); }
+    });
+
+  await control("coverage membership restored to a comparison of presentation fields",
+    "reclassified coverage work cannot escape or replace a live bounded authorization", async (phase) => {
+      const mutated = loadModified("fal-generation.js", [[
+        `    const authorization = coverageAuthorizationFor(owner, coverageJobs, list, entityId, sheetType);`,
+        `    const liveRun = (ownerProject(owner)[list] || []).find((row) => String(row?.id) === entityId)?.coverageAutomation;
+    const authorization = { ok: true, ref: liveRun && COVERAGE_RUN_ACTIVE_STATUSES.includes(String(liveRun.status || "")) && String(liveRun.sheetType || "") === sheetType && String(liveRun.mode || "") === mode ? String(liveRun.id || "") : "" };`,
+      ]]);
+      phase("MUTATION_LANDED");
+      const h = await harness(mutated);
+      try {
+        seedCoverageEntity(h);
+        const bounded = await h.coverage(coverageSlot(1, { coverageRequestCount: 1, coverageMaximumImages: 3 }));
+        assert.strictEqual(bounded.status, 200, `the bounded press must dispatch: ${JSON.stringify(bounded.data)}`);
+        const liveRun = JSON.stringify(h.project().characters[0].coverageAutomation);
+        phase("UNSAFE_PATH_EXECUTED");
+        const escaped = await h.coverage(coverageSlot(2, { coverageMode: "", coverageSheetType: "angles", coverageRequestCount: undefined, coverageMaximumImages: undefined }));
+        observeHarm(escaped.status === 200,
+          `THE DEFECT: blanking coverageMode detached byte-identical work from a run authorised for 1 request — ${h.calls.length} provider calls, and the live bounded run went from ${liveRun} to ${JSON.stringify(h.project().characters[0].coverageAutomation)}`);
+      } finally { h.close(); }
+    });
+
+  await control("a live bounded coverage run replaced while its paid work is unsettled",
+    "an authorization with paid work in flight is never destroyed by a later request", async (phase) => {
+      /* Membership still comes from the permit; what is removed is the LIVENESS half — the
+         rule that a bounded run holding unsettled work owns the entity's coverage work. */
+      const mutated = loadModified("fal-generation.js", [[
+        `    if (!coverageRunUnsettled(jobs, run).length) return { ok: true, ref: "" };`,
+        `    if (true) return { ok: true, ref: "" };`,
+      ]]);
+      phase("MUTATION_LANDED");
+      const h = await harness(mutated);
+      try {
+        seedCoverageEntity(h);
+        const bounded = await h.coverage(coverageSlot(1, { coverageRequestCount: 1, coverageMaximumImages: 3 }));
+        assert.strictEqual(bounded.status, 200, `the bounded press must dispatch: ${JSON.stringify(bounded.data)}`);
+        const before = h.project().characters[0].coverageAutomation;
+        assert.strictEqual(h.ledger()[0].status, "IN_QUEUE", "and its paid work must still be unsettled");
+        phase("UNSAFE_PATH_EXECUTED");
+        const later = await h.coverage(coverageSlot(2, { coverageMode: "", coverageSheetType: "angles", coverageRequestCount: undefined, coverageMaximumImages: undefined }));
+        const after = h.project().characters[0].coverageAutomation;
+        observeHarm(later.status === 200 || String(after?.id) !== String(before?.id),
+          `THE DEFECT: a bounded run whose job was still IN_QUEUE was replaced — ${JSON.stringify(before)} became ${JSON.stringify(after)}, with ${h.calls.length} provider calls`);
+      } finally { h.close(); }
+    });
+
+  await control("a scope fingerprint that leaves the paid quantity out",
+    "a permit cannot buy more images than it was minted for", async (phase) => {
+      /* The mutation is in the permit module, and the route holds its own copy of it — so
+         the patched module is installed in the require cache and fal-generation.js is
+         compiled fresh against it, or the boundary would go on running the correct code. */
+      const permitModule = path.join(ROOT, "paid-dispatch-permit.js");
+      const { code } = modifiedSource("paid-dispatch-permit.js", [[
+        `  canonical.outputCount = Math.max(0, Math.round(Number(row.outputCount) || 0));`,
+        `  canonical.outputCount = 0;`,
+      ]]);
+      const patched = new Module(permitModule, module);
+      patched.filename = permitModule;
+      patched.paths = Module._nodeModulePaths(path.dirname(permitModule));
+      patched._compile(code, permitModule);
+      const previous = require.cache[permitModule];
+      require.cache[permitModule] = { id: permitModule, filename: permitModule, loaded: true, exports: patched.exports };
+      let mutated;
+      try {
+        delete require.cache[path.join(ROOT, "fal-generation.js")];
+        mutated = require("../fal-generation");
+      } finally {
+        if (previous) require.cache[permitModule] = previous; else delete require.cache[permitModule];
+        delete require.cache[path.join(ROOT, "fal-generation.js")];
+        require("../fal-generation");
+      }
+      phase("MUTATION_LANDED");
+      const h = await harness(mutated);
+      try {
+        const buildId = seedFramePackage(h);
+        const issued = await h.permitFor(permitScope(buildId, { outputCount: 1 }));
+        assert(issued.data?.paidPermitId, `the control needs a real permit: ${JSON.stringify(issued.data)}`);
+        phase("UNSAFE_PATH_EXECUTED");
+        const greedy = await h.post(permitFrameBody(buildId, { clientRequestId: "greedy", outputCount: 4, paidPermitId: issued.data.paidPermitId }), { permit: false });
+        const row = h.ledger().find((item) => item.clientRequestId === "greedy");
+        observeHarm(greedy.status === 200 && Number(row?.outputCount) > 1,
+          `THE DEFECT: a permit minted for 1 image dispatched ${row?.outputCount} — the quantity the filmmaker authorised is not part of what the permit binds`);
+      } finally { h.close(); }
+    });
+
+  await control("a permit refusal deferred until after the provider has been told",
+    "a request refused for its permit reaches no provider and leaves no row", async (phase) => {
+      /* THE ORDERING IS THE PROPERTY, and it is distinct from "the permit is required" one
+         control above. Here the permit IS checked and the request IS refused — just not
+         until the row has been committed and the provider has been asked. The refusal even
+         still says providerContacted:false, which is what makes this the worst version:
+         the answer is a lie the caller has no way to test. */
+      const mutated = loadModified("fal-generation.js", [[
+        `    const permitGate = resolveDispatchPermit(owner, jobs, req, trusted);
+    if (!permitGate.ok)
+      return requestTruthRefusal(res, permitGate.status, permitGate.code, permitGate.error, permitGate.detail || {});
+    const membership = permitGate.membership;`,
+        `    const permitGate = resolveDispatchPermit(owner, jobs, req, trusted);
+    const deferredPermitRefusal = permitGate.ok ? null : permitGate;
+    const membership = permitGate.ok ? permitGate.membership : { id: "", permitClass: "direct", authorizationRef: "", stepKey: "", scopeFingerprint: "" };`,
+      ], [
+        `    if (PaidPermit.paidScopeFingerprint(presentedScope) !== String(membership.scopeFingerprint || ""))`,
+        `    if (false && PaidPermit.paidScopeFingerprint(presentedScope) !== String(membership.scopeFingerprint || ""))`,
+      ], [
+        `      const outcome = await submit(owner, job, job.references, preparedLegacy);`,
+        `      const outcome = await submit(owner, job, job.references, preparedLegacy);
+      if (deferredPermitRefusal)
+        return requestTruthRefusal(res, deferredPermitRefusal.status, deferredPermitRefusal.code, deferredPermitRefusal.error, deferredPermitRefusal.detail || {});`,
+      ]]);
+      phase("MUTATION_LANDED");
+      const h = await harness(mutated);
+      try {
+        const buildId = seedFramePackage(h);
+        phase("UNSAFE_PATH_EXECUTED");
+        const refused = await h.post(permitFrameBody(buildId, { clientRequestId: "leak" }), { permit: false });
+        observeHarm(h.calls.length > 0 || h.ledger().length > 0,
+          `THE DEFECT: a request refused ${refused.status} for its permit still reached the provider ${h.calls.length} time(s) and left ${h.ledger().length} ledger row(s), while answering providerContacted:${refused.data?.providerContacted}`);
+      } finally { h.close(); }
     });
 
   console.log("");

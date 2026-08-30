@@ -1094,6 +1094,10 @@ async function openRealH3Dialog({ stale = false } = {}) {
   const rendered = await render("#/shot/L1-01", h3MotionProject(), {
     fetch: async (url, init = {}, respond) => {
       if (init.method === "POST") posts.push({ url: String(url), body: init.body });
+  /* THE PERMIT ROUTE A GENERATE PRESS NOW CALLS FIRST. The shipped dialogs obtain a
+     paid dispatch permit from the server inside the same press, so a harness standing in
+     for one has to answer it or the dispatch it is testing never happens. */
+      if (url === "/api/generation/paid-permit") return respond({ ok: true, paidPermitId: "permit-harness", expiresAt: "2099-01-01T00:00:00.000Z" });
       if (url === "/api/config") return respond({ generation: { fal: { enabled: true, apiKey: "harness", keySource: "config" } } });
       if (url === "/api/generation/fal/h3/plan") return respond(H3_PLAN);
       if (String(url).startsWith("/api/generation/options")) return respond({ options: [] });

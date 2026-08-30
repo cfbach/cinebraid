@@ -198,10 +198,10 @@ async function request(url, options = {}) {
   const body = type.includes("application/json") ? await response.json().catch(() => ({})) : await response.text();
   return { response, body };
 }
-const post = (url, payload) => request(url, {
+const post = async (url, payload) => request(url, {
   method: "POST",
   headers: { "content-type": "application/json" },
-  body: JSON.stringify(withGenerationDeclaration(url, payload)),
+  body: JSON.stringify(await withGenerationDeclaration(url, payload, { origin: base })),
 });
 
 /* --------------------------------------------------------------- receipts */

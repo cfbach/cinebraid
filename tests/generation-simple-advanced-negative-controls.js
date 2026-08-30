@@ -689,7 +689,7 @@ async function main() {
   try {
     await flushPendingProjectSave();
     closeModal();
-    const response = await fetch("/api/generation/fal/jobs", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(gatedBody) });
+    const response = await fetch("/api/generation/fal/jobs", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(await paidDispatchPermitFor(gatedBody)) });
     const data = await response.json();
     if (!response.ok) throw new Error(data.error || "Could not start correction generation");`,
       `  try {
@@ -708,7 +708,7 @@ async function main() {
       const dispatch = String(source).replace(/\/\*[\s\S]*?\*\//g, "")
         .split("window.startCandidateCorrectionGeneration")[1]
         .split("window.refreshCandidateCorrectionGeneration")[0];
-      assert(/JSON\.stringify\(gatedBody\)/.test(dispatch), "13d: the correction must submit the gated body");
+      assert(/JSON\.stringify\(await paidDispatchPermitFor\(gatedBody\)\)/.test(dispatch), "13d: the correction must submit the gated body");
       assert(!/body: JSON\.stringify\(body\)/.test(dispatch), "13d: and must not keep a raw-body POST beside it");
       assert(/restrictPayloadToPlan\(\s*body,\s*falFixedImageControlPlan\(/.test(dispatch),
         "13d: through the accepted plan authority, not one of its own");

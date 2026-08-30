@@ -100,7 +100,7 @@ async function scenario(falGeneration, behaviour) {
   const api = async (url, body, method = "POST") => {
     const response = await fetch(`${origin}${url}`, {
       method, headers: { "content-type": "application/json" },
-      ...(body ? { body: JSON.stringify(withGenerationDeclaration(url, body)) } : {}),
+      ...(body ? { body: JSON.stringify(await withGenerationDeclaration(url, body, { origin })) } : {}),
     });
     return { status: response.status, data: await response.json() };
   };

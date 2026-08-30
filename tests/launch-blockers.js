@@ -464,12 +464,12 @@ async function providerRefusal() {
 
   const prompt = 'Hold the frame steady while the courier steps forward through the rain.';
   const reference = (name, role) => ({ key: name, label: name, role, mediaType: 'image', url: `/assets/shots/S1/takes/${name}` });
-  const submit = (body) => fetch(`${appOrigin}/api/generation/fal/jobs`, {
+  const submit = async (body) => fetch(`${appOrigin}/api/generation/fal/jobs`, {
     method: 'POST', headers: { 'content-type': 'application/json' },
     /* A paid request declares which surface built it and which view was showing; the
        boundary refuses one that does not, and this suite is standing in for the motion
        dialog. See tests/generation-request-fixture.js. */
-    body: JSON.stringify(withGenerationDeclaration('/api/generation/fal/jobs', { purpose: 'motion-h3', shotId: 'S1', profileFamily: 'minimax-h3', prompt, ...body })),
+    body: JSON.stringify(await withGenerationDeclaration(`${appOrigin}/api/generation/fal/jobs`, { purpose: 'motion-h3', shotId: 'S1', profileFamily: 'minimax-h3', prompt, ...body })),
   }).then(async (response) => ({ status: response.status, data: await response.json() }));
 
   try {

@@ -197,9 +197,12 @@ async function main() {
   /* -------------------------------------------------------------------------
      NC-B — a later submission re-prices the jobs already in the ledger, which is
      exactly "changing Settings rewrites history" expressed as a write. */
+  /* THE ANCHOR MOVED WITH THE SEAM. The ledger turn that writes the job row now also
+     consumes the paid dispatch permit inside it, because single-use has to be decided in
+     the same indivisible write. Re-armed where the seam went rather than deleted. */
   const NC_B_EDITS = [[
-    "      await commit(owner, (current) => { current.push(job); });",
-    "      await commit(owner, (current) => { current.push(job); for (const row of current) if (row.accounting) row.accounting = submissionAccounting({ purpose: row.purpose, outputCount: row.outputCount, ratePerImage: cfg.estimatedCostPerImage, at: now() }); });",
+    "        current.push(job);",
+    "        current.push(job); for (const row of current) if (row.accounting) row.accounting = submissionAccounting({ purpose: row.purpose, outputCount: row.outputCount, ratePerImage: cfg.estimatedCostPerImage, at: now() });",
   ]];
   await control({
     id: "NC-B",

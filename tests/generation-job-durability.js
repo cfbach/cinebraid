@@ -207,8 +207,8 @@ async function serverChecks() {
     const response = await fetch(base + url, options);
     return { status: response.status, body: await response.json().catch(() => ({})) };
   };
-  const postJson = (url, payload) =>
-    request(url, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(withGenerationDeclaration(url, payload)) });
+  const postJson = async (url, payload) =>
+    request(url, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(await withGenerationDeclaration(url, payload, { origin: base })) });
 
   try {
     const deadline = Date.now() + 20000;

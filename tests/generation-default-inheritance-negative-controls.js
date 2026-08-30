@@ -172,7 +172,7 @@ async function serverOn(config) {
 
   const post = async (route, body) => {
     const response = await fetch(`${base}${route}`, {
-      method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(withGenerationDeclaration(route, body)),
+      method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(await withGenerationDeclaration(route, body, { origin: base })),
     });
     return { status: response.status, data: await response.json() };
   };

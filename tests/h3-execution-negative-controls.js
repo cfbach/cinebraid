@@ -338,6 +338,26 @@ async function main() {
         "    const planGate = enforceRequestPlan(owner, req, purpose, trusted);",
         "    const planGate = { ok: true, surface: \"motion-h3\", declaration: { viewMode: \"advanced\", selectedOptionId: \"\", selectedModelId: \"\" }, payload: req.body, removed: [] };",
       ],
+      /* …AND the paid dispatch permit, for the third time and the same reason.
+       *
+       * The permit is a THIRD guard that now stands in front of this dispatcher: a paid
+       * request that redeems nothing is refused before a control key is read, so with only
+       * the first three mutations this control went vacuous again — the property held
+       * because of the permit rather than because of anything about the legacy path.
+       *
+       * Each new guard on this boundary makes this control weaker unless it is added here,
+       * which is the cost of the pattern and is worth paying: what this proves is that with
+       * NOTHING in the way, a hand-written prompt would originate a paid H3 request. */
+      [
+        `    const permitGate = resolveDispatchPermit(owner, jobs, req, trusted);
+    if (!permitGate.ok)`,
+        `    const permitGate = { ok: true, membership: { id: "", permitClass: "direct", authorizationRef: "", stepKey: "", scopeFingerprint: "" } };
+    if (false)`,
+      ],
+      [
+        `    if (PaidPermit.paidScopeFingerprint(presentedScope) !== String(membership.scopeFingerprint || ""))`,
+        `    if (false && PaidPermit.paidScopeFingerprint(presentedScope) !== String(membership.scopeFingerprint || ""))`,
+      ],
     ]);
 
     const calls = [];
