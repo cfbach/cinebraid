@@ -14,7 +14,7 @@ const { generationOptionsFor, generationConnections } = require("./generation-op
 const { INTENT_FIELDS } = require("./generation-compiler");
 const { generationBindingRecord, GenerationBindingError } = require("./generation-binding");
 const { submissionAccounting, summarizeRecordedCost } = require("./generation-cost");
-const { configuredMotionRate, usdExceeds } = require("./public/shared-generation-rate");
+const { configuredMotionRate, configuredImageRate, costEstimateFromRate, usdExceeds } = require("./public/shared-generation-rate");
 const { guidePayload } = require("./generation-options");
 const Lifecycle = require("./generation-lifecycle");
 const FramePresence = require("./public/shared-frame-presence");
@@ -787,31 +787,36 @@ function registerFalGeneration(app, context) {
     const reportedUsage = Math.max(0, Number(run.usage?.imagesGenerated || 0));
     const consumed = Math.max(committed, reportedUsage);
     if (consumed + outputCount > maxImages) return { status: 409, message: `Automation credit guard stopped the request before exceeding its ${maxImages}-image cap.` };
-    /* THE AUTHORISED SPEND, ENFORCED WHERE IT IS SPENT.
-     *
-     * One press authorises a bounded run, and until now the boundary understood only
-     * half of what that press said. `maxImages` is a count; the number the planner
-     * actually put in front of the person pressing the button was the dollar ceiling it
-     * quoted, and nothing enforced that. A run authorised at nine images and about
-     * $0.18 could be resumed after the rate moved and spend several times what was
-     * approved, one in-cap job at a time.
-     *
-     * The ceiling is the run's own recorded figure - quoted and stored at authorisation
-     * from costEstimateFromRate(), so this compares like with like and performs no
-     * arithmetic of its own. What has been spent comes from the estimates the jobs
-     * already carry, through summarizeRecordedCost(), which is the only sanctioned way
-     * to read them.
-     *
-     * DELIBERATELY CONSERVATIVE IN ONE DIRECTION. A run holding unpriced or unrecorded
-     * jobs has a true spend at least as high as its priced sum, so this can let through
-     * a request that is genuinely over - it can never refuse one that is genuinely
-     * under. Refusing on a total known to be incomplete would stop authorised work on
-     * arithmetic nobody can show.
-     *
-     * A run with no recorded ceiling is not refused: there is nothing to compare
-     * against, the image cap still stands, and inventing a dollar limit the filmmaker
-     * was never quoted would be worse than having none. */
-    const authorized = run.config?.maxSpend;
+    /* AND THE DOLLAR CEILING THAT PRESS ALSO SET. `maxImages` is a count; the number the
+       planner actually put in front of the person pressing the button was the spend it
+       quoted. One press authorises both, so both are enforced — through the shared
+       helper below, which is the same one coverage automation's ceiling goes through. */
+    return authorizedSpendError(run.config?.maxSpend, runJobs, body, outputCount);
+  }
+
+  /* THE AUTHORISED SPEND, ENFORCED WHERE IT IS SPENT — ONCE, FOR BOTH BOUNDED RUNS.
+   *
+   * CineBraid has two paid automation paths: the automation runner, whose ceiling is
+   * recorded on the run at authorisation, and coverage automation, whose ceiling is
+   * recorded on the coverage run the same way. They are the same question about two
+   * records, so this is the same code answering it. Duplicating it per path is how the
+   * two would come to disagree about what "over budget" means.
+   *
+   * `authorized` is the run's own recorded figure — quoted and stored at authorisation
+   * from costEstimateFromRate() — so this compares like with like and performs no
+   * arithmetic of its own. What has been spent comes from the estimates the jobs already
+   * carry, through summarizeRecordedCost(), which is the only sanctioned way to read them.
+   *
+   * DELIBERATELY CONSERVATIVE IN ONE DIRECTION. A run holding unpriced or unrecorded jobs
+   * has a true spend at least as high as its priced sum, so this can let through a request
+   * that is genuinely over - it can never refuse one that is genuinely under. Refusing on
+   * a total known to be incomplete would stop authorised work on arithmetic nobody can
+   * show.
+   *
+   * A run with no recorded ceiling is not refused here: there is nothing to compare
+   * against, the count caps still stand, and inventing a dollar limit the filmmaker was
+   * never quoted would be worse than having none. */
+  function authorizedSpendError(authorized, runJobs, body, outputCount) {
     if (authorized && authorized.priced === true && Number.isFinite(Number(authorized.amount))) {
       const spent = summarizeRecordedCost(runJobs);
       const pending = submissionAccounting({
@@ -868,6 +873,150 @@ function registerFalGeneration(app, context) {
         };
     }
     return null;
+  }
+
+  /* =========================================================================
+     THE OTHER BOUNDED RUN.
+
+     Coverage automation is the second paid automation path in CineBraid, and it is the
+     one that most obviously dispatches SEVERAL paid requests from one press: "generate
+     missing slots individually" submits one paid request per unfilled slot, three
+     candidates each, in a loop. The dialog quotes exactly that before the button — "N
+     paid requests · up to M images · $X" — and the server has recorded both figures on
+     the run it owns since the coverage route was written.
+
+     It recorded them and read them back nowhere. `automationSubmissionError()` above is
+     keyed on `automationRunId`, which a coverage job does not carry, so every count and
+     spend guard on this boundary returned null for coverage work before the first control
+     key was read. A press authorised for two requests and six images could dispatch four
+     and commit twelve, and each individual job was inside every bound that was actually
+     being checked. A run bounded only in the browser is not a bounded run: the whole
+     point of the money boundary is that it holds for a request the browser did not build.
+
+     WHAT THIS IS NOT: a second authorisation model. The bound is the one the coverage
+     route already stores, the count comes from the ledger the way the automation guard's
+     does, and the dollar ceiling goes through authorizedSpendError() — the same function,
+     not a copy of it.
+
+     WHICH DISPATCHES THIS GOVERNS. Only the coverage operation's, decided from `trusted`
+     — the server-built descriptor the coverage route supplies and no request field can
+     reach. A filmmaker generating one entity reference by hand is not run work and does
+     not spend a run's budget. */
+  function coverageSubmissionError(owner, jobs, body, outputCount, trusted) {
+    if (trusted?.surface !== "reference-automation") return null;
+    const list = String(trusted.entityList || "");
+    const entityId = String(trusted.entityId || "");
+    const entity = (ownerProject(owner)[list] || []).find((row) => String(row?.id) === entityId);
+    const run = entity?.coverageAutomation;
+    /* NO RUN YET IS THE ESTABLISHING REQUEST. The record is written at the dispatch-commit
+       point below — deliberately, so a refused request never leaves a live run behind — so
+       the first job of a press has nothing to be judged against and is what sets the
+       bound. Everything after it is judged against what that press authorised. */
+    if (!run || !COVERAGE_RUN_ACTIVE_STATUSES.includes(String(run.status || ""))) return null;
+    /* A DIFFERENT TASK IS A DIFFERENT RUN, and the predicate is the establishment
+       predicate: an expression sheet is not the angle sheet that happens to be running.
+       Read from the same two values the descriptor was built from, so the request this
+       guard judges and the run onDispatchCommit continues cannot disagree about which
+       run they mean. */
+    if (String(run.sheetType || "") !== String(trusted.coverageSheetType || "")
+      || String(run.mode || "") !== String(trusted.coverageMode || "")) return null;
+    const authorizedRequests = Number(run.requestCount);
+    const authorizedImages = Number(run.maximumImages);
+    /* A RUN THAT RECORDED NO BOUND IS NOT A BOUNDED PRESS, and inventing one for it would
+       refuse work nobody ever limited.
+     *
+     * The coverage dialog is not the only thing that reaches this route. The per-slot
+     * "generate" control on the coverage board sends a single request for a single slot
+     * and quotes nothing, because one press making one request has nothing to bound — and
+     * consecutive presses on two different slots land in the SAME run record, since the
+     * projection groups by task rather than by press. Refusing an unbounded continuation
+     * therefore refuses the second slot a filmmaker asks for, which is not a bound being
+     * enforced; it is authorised work being stopped on arithmetic nobody performed.
+     *
+     * So this enforces the bound a press DECLARED and does not manufacture one. What that
+     * does and does not buy, stated plainly rather than implied: a quoted press cannot go
+     * past its own quote, in either figure, and cannot restate it on the way — which is the
+     * defect this closes. It is not a cap on coverage work in general, and it cannot be:
+     * a caller reaching this route without a quote is making single presses, which is the
+     * one thing every paid surface in CineBraid already permits one at a time.
+     *
+     * The absence is not a hole a later request can dig, either. `if (!continuing)` at the
+     * establishment point means a continuation never writes these figures at all — so a
+     * run that recorded a bound cannot have it removed any more than it can have it
+     * raised. */
+    const bounded = Number.isInteger(authorizedRequests) && authorizedRequests > 0
+      && Number.isInteger(authorizedImages) && authorizedImages > 0;
+    if (!bounded) return null;
+    const runJobs = coverageRunJobs(jobs, run, list, entityId);
+    if (runJobs.length + 1 > authorizedRequests)
+      return {
+        status: 409,
+        code: "COVERAGE_REQUEST_CAP",
+        message: `This coverage run was authorised for ${authorizedRequests} paid request${authorizedRequests === 1 ? "" : "s"} and has already submitted ${runJobs.length}. This one was not submitted.`,
+      };
+    const committedImages = runJobs.reduce((sum, job) => sum + Math.max(0, Number(job.outputCount || 0)), 0);
+    if (committedImages + outputCount > authorizedImages)
+      return {
+        status: 409,
+        code: "COVERAGE_IMAGE_CAP",
+        message: `This coverage run was authorised for up to ${authorizedImages} image${authorizedImages === 1 ? "" : "s"}. This request would take it to ${committedImages + outputCount}, so it was not submitted.`,
+      };
+    return authorizedSpendError(run.maxSpend, runJobs, body, outputCount);
+  }
+
+  /* WHAT THIS RUN HAS ALREADY COMMITTED, from the ledger rather than from any counter.
+   *
+   * Two signals, unioned, because either alone under-counts. The run's own `jobs` list is
+   * the direct record and is what onDispatchCommit writes; it misses a job whose
+   * projection write failed, which is a state this route deliberately tolerates and
+   * records rather than refuses. So a coverage job for this same entity, carrying a
+   * coverage job type and created no earlier than this run, counts as this run's work
+   * too: only one coverage run can be live on an entity at a time, so there is no other
+   * live run for such a job to belong to.
+   *
+   * A manual entity-reference generation carries no `coverageJobType` and is excluded —
+   * charging it to a run the filmmaker did not start would refuse authorised work. */
+  function coverageRunJobs(jobs, run, list, entityId) {
+    const member = new Set((Array.isArray(run.jobs) ? run.jobs : []).map((id) => String(id)));
+    const startedAt = Date.parse(run.startedAt || "");
+    return jobs.filter((job) => {
+      if (member.has(String(job.id))) return true;
+      if (String(job.purpose || "") !== "entity-reference") return false;
+      if (String(job.entityList || "") !== list || String(job.entityId || "") !== entityId) return false;
+      if (!String(job.coverageJobType || "")) return false;
+      const createdAt = Date.parse(job.createdAt || "");
+      return Number.isFinite(startedAt) && Number.isFinite(createdAt) && createdAt >= startedAt;
+    });
+  }
+
+  /* WHAT THE PRESS AUTHORISED IN MONEY, recorded beside what it authorised in images, at
+     the moment the run is established.
+   *
+   * The same arithmetic the coverage dialog already showed the filmmaker: it prices its
+   * quote with generationPriceLine() over configuredImageRate() and the same image count,
+   * and public/automation.js records the automation runner's ceiling from
+   * costEstimateFromRate() over the same rate. This is that one function, over the count
+   * this run was established with — not a second multiplication, and not a figure the
+   * request supplied.
+   *
+   * Recorded once, at establishment, and never recomputed: editing the rate in Settings
+   * tomorrow changes what tomorrow's press is authorised to spend and changes nothing
+   * about this one. An unconfigured rate records an honest `priced: false`, and the run
+   * then has no dollar ceiling to enforce — it still has both count caps. */
+  function coverageAuthorizedSpend(maximumImages) {
+    const derived = costEstimateFromRate({
+      rate: configuredImageRate({ generation: { fal: config() } }),
+      quantity: Math.max(0, Number(maximumImages) || 0),
+    });
+    return {
+      priced: derived.priced,
+      amount: derived.priced ? derived.estimate.amount : null,
+      quantity: Math.max(0, Number(maximumImages) || 0),
+      unitBasis: derived.basis.unitBasis,
+      ratePerUnit: derived.basis.ratePerUnit,
+      rateSource: derived.basis.rateSource,
+      ...(derived.priced ? {} : { unpricedReason: derived.basis.unpricedReason || "no-configured-rate" }),
+    };
   }
   /* The cost owner's own word for why it could not price something, in a sentence. It
      records the reason; this only reads it, and says so plainly when there is none. */
@@ -2287,6 +2436,14 @@ function registerFalGeneration(app, context) {
        nothing, and the automation runner reads exactly that field to decide whether an
        attempt was spent. */
     if (guardError) return requestTruthRefusal(res, guardError.status, guardError.code || "AUTOMATION_GUARD", guardError.message);
+    /* AND THE OTHER BOUNDED RUN, in the same slot and for the same reasons. Coverage
+       automation dispatches one paid request per unfilled slot from a single press, and
+       until this line the count and spend the filmmaker approved were enforced only by
+       the browser that drew them. Same position — before the row is built, before commit()
+       and long before submit() — so `providerContacted: false` is a fact rather than a
+       hope, and the same refusal helper, so it carries the same pre-provider evidence. */
+    const coverageGuardError = coverageSubmissionError(owner, jobs, req.body, requestedOutputCount, trusted);
+    if (coverageGuardError) return requestTruthRefusal(res, coverageGuardError.status, coverageGuardError.code, coverageGuardError.message);
     const refs = Array.isArray(req.body?.references) ? req.body.references.filter((ref) => ref && ref.url) : [];
     const edit = refs.length > 0;
     /* Resolved once, before the row is built, so the same answer is both what a request
@@ -2857,6 +3014,13 @@ function registerFalGeneration(app, context) {
       surface: "reference-automation",
       entityList: list,
       entityId,
+      /* WHICH COVERAGE TASK THIS IS, on the descriptor rather than re-derived downstream.
+         The boundary's run guard and onDispatchCommit below both have to decide whether
+         this request is continuing the run already on the entity, and two derivations of
+         one predicate is how they would come to answer differently. Same two values, read
+         once, here. */
+      coverageMode: mode,
+      coverageSheetType: sheetType,
       /* AND WHAT FORMAT THIS OPERATION DELIVERS. A sheet is a contact sheet rather than an
          entity card - an expression sheet is 4:3 and an angle sheet 16:9 - so it is the
          operation, not the entity, that decides. Read from the jobType and sheetType this
@@ -2886,10 +3050,31 @@ function registerFalGeneration(app, context) {
             status: jobType === "sheet" ? "sheet-running" : "individual-running",
             startedAt: now(), updatedAt: now(), jobs: [],
           };
-          /* What the planner told the filmmaker this press would cost. Display facts on
-             the machine's own record; they grant nothing. */
-          if (Number(req.body?.coverageRequestCount) > 0) run.requestCount = Number(req.body.coverageRequestCount);
-          if (Number(req.body?.coverageMaximumImages) > 0) run.maximumImages = Number(req.body.coverageMaximumImages);
+          /* WHAT THIS PRESS AUTHORISED, WRITTEN ONCE, WHEN IT IS AUTHORISED.
+           *
+           * These two figures are the quote the coverage dialog put in front of the
+           * filmmaker — "N paid requests · up to M images" — and since coverageSubmission-
+           * Error() they are what the money boundary holds every later job of this run to.
+           * That makes WHEN they may be written the whole of the guarantee.
+           *
+           * They used to be assigned on every job of the run, continuing or not. So the
+           * fourth request of a two-request run simply restated the ceiling as it went
+           * past it, and the guard would have read back a bound handed to it by the thing
+           * it was bounding. A ceiling the bounded work can rewrite is not a ceiling.
+           *
+           * `continuing` is already the answer to "is this the same press": a live run for
+           * the same task. So a continuation inherits the bound it is a continuation of,
+           * and only the establishing job — the one that just created `run` above — sets
+           * it. They are display facts on the machine's own record in exactly the sense
+           * they always were: they grant nothing, and now they withhold. */
+          if (!continuing) {
+            if (Number(req.body?.coverageRequestCount) > 0) run.requestCount = Number(req.body.coverageRequestCount);
+            if (Number(req.body?.coverageMaximumImages) > 0) run.maximumImages = Number(req.body.coverageMaximumImages);
+            /* AND WHAT IT AUTHORISED IN MONEY, from the count above through the one owner
+               that multiplies a rate by a quantity. Recorded only where a count was, so a
+               run never carries a ceiling describing work nobody quoted. */
+            if (Number(run.maximumImages) > 0) run.maxSpend = coverageAuthorizedSpend(run.maximumImages);
+          }
           /* THE JOB THIS RUN IS BECOMING LIVE FOR, recorded with it. A run and the job it
              was established for exist in the same durable turn, so there is no moment at
              which the record claims work with nothing behind it. */

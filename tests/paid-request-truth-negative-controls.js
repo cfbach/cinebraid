@@ -31,6 +31,7 @@ const Presentation = require("../public/shared-generation-presentation");
 const BuildHistory = require("../public/shared-build-history");
 const { IMAGE_MODEL_ID } = require("../image-execution");
 const CoverageOwnership = require("../public/shared-coverage");
+const { referenceAspectLabel } = require("../public/shared-aspect");
 /* The shipped route, for a control whose mutation is in a DIFFERENT module. */
 const falGenerationReal = require("../fal-generation");
 const { addFramePromptBuild, baseSpec, buildRef, REF_IDENTITY } = require("./image-execution-fixture");
@@ -1553,6 +1554,163 @@ async function main() {
       phase("UNSAFE_PATH_EXECUTED");
       observeHarm(JSON.stringify(rendered) !== JSON.stringify(coverage.map((entry) => entry.label)),
         `THE DEFECT: the panel published its own sequence — the compiler emitted ${JSON.stringify(coverage.map((e) => e.label))} and the screen shows ${JSON.stringify(rendered)}`);
+    });
+
+  /* =========================================================================
+     THE SECOND BOUNDED RUN, AND THE TWO WAYS ITS BOUND STOPS BEING ONE.
+
+     Coverage automation multiplies one press into several paid requests. A bound on it can
+     fail in two independent ways — the boundary can decline to check it, or the work can
+     be allowed to restate it — and a suite that only proves the first would go on passing
+     while the second put the run back where it started. So there is a control for each. */
+
+  /* A COVERAGE RUN'S PRESS IS QUOTED, AND WHAT THAT PRESS AUTHORISED IS ENFORCED HERE. */
+  const coverageSlot = (n, extra = {}) => ({
+    purpose: "entity-reference", entityList: "characters", entityId: "KAI", entityType: "character",
+    prompt: "Kai from the requested angle.", references: [{ key: "base", label: "Approved primary", role: "base", url: KAI_PNG }],
+    /* A character card's own format, from the shared resolver the boundary asks — a
+       literal here would be refused by the aspect gate before the bound could answer. */
+    outputCount: 3, quality: "high", resolution: "4k", aspectRatio: referenceAspectLabel("characters"),
+    coverageJobType: "slot", coverageSheetType: "", coverageMode: "individual",
+    targetCoverageSlotId: `slot-${n}`, clientRequestId: `ctrl-${n}`,
+    coverageRequestCount: 2, coverageMaximumImages: 6,
+    generationRequest: Presentation.generationRequestDeclaration({ surface: "reference-automation", viewMode: "simple" }),
+    ...extra,
+  });
+  /* The entity a coverage run belongs to, and a job the provider DELIVERED. Cancelling
+     would terminate the run through updateEntityCoverageRun(), and then the next request
+     would be establishing a new run rather than continuing this one — which is the state
+     these controls are about. */
+  const seedCoverageEntity = (h) => {
+    const project = h.project();
+    project.characters = [{ id: "KAI", name: "Kai", type: "Character", approvedFile: "KAI.png", continuityStates: [] }];
+    h.saveProject(project);
+  };
+  const deliverJob = (h, jobId) => {
+    const rows = h.ledger();
+    const row = rows.find((item) => item.id === jobId);
+    assert(row, `the job to deliver must exist: ${jobId}`);
+    row.status = "COMPLETED";
+    row.ingestedAt = "2026-08-29T00:00:00.000Z";
+    h.seedLedger(rows);
+  };
+
+  await control("a money boundary that never asks what the coverage press authorised",
+    "a coverage run cannot exceed the count one press authorised", async (phase) => {
+      const mutated = loadModified("fal-generation.js", [[
+        `    const coverageGuardError = coverageSubmissionError(owner, jobs, req.body, requestedOutputCount, trusted);`,
+        `    const coverageGuardError = null;`,
+      ]]);
+      phase("MUTATION_LANDED");
+
+      const h = await harness(mutated);
+      try {
+        seedCoverageEntity(h);
+        const first = await h.coverage(coverageSlot(1));
+        assert.strictEqual(first.status, 200, `the establishing request must dispatch: ${JSON.stringify(first.data)}`);
+        assert.strictEqual(h.project().characters[0].coverageAutomation.requestCount, 2,
+          "and the run must record the press's own count, or this control is not about enforcement");
+        deliverJob(h, first.data.job.id);
+        const second = await h.coverage(coverageSlot(2));
+        assert.strictEqual(second.status, 200, `and so must the second: ${JSON.stringify(second.data)}`);
+        deliverJob(h, second.data.job.id);
+        phase("UNSAFE_PATH_EXECUTED");
+
+        const third = await h.coverage(coverageSlot(3));
+        observeHarm(third.status === 200,
+          `THE DEFECT: a coverage press authorised for 2 paid requests submitted a 3rd — ${h.calls.length} provider calls and ${h.ledger().length} ledger rows for a run quoted at 2 requests and 6 images`);
+      } finally { h.close(); }
+    });
+
+  await control("a coverage run whose authorised figures are reassigned by every job of it",
+    "a request cannot restate the ceiling it is judged by", async (phase) => {
+      const mutated = loadModified("fal-generation.js", [[
+        `          if (!continuing) {
+            if (Number(req.body?.coverageRequestCount) > 0) run.requestCount = Number(req.body.coverageRequestCount);`,
+        `          if (true) {
+            if (Number(req.body?.coverageRequestCount) > 0) run.requestCount = Number(req.body.coverageRequestCount);`,
+      ]]);
+      phase("MUTATION_LANDED");
+
+      const h = await harness(mutated);
+      try {
+        seedCoverageEntity(h);
+        const first = await h.coverage(coverageSlot(1));
+        assert.strictEqual(first.status, 200, `the establishing request must dispatch: ${JSON.stringify(first.data)}`);
+        deliverJob(h, first.data.job.id);
+        /* STILL INSIDE THE AUTHORISED COUNT, so it dispatches on its merits — and carries
+           a larger quote while it does. Under the defect that is all it takes. */
+        const second = await h.coverage(coverageSlot(2, { coverageRequestCount: 999, coverageMaximumImages: 9999 }));
+        assert.strictEqual(second.status, 200, `the second authorised request must dispatch: ${JSON.stringify(second.data)}`);
+        deliverJob(h, second.data.job.id);
+        phase("UNSAFE_PATH_EXECUTED");
+
+        const run = h.project().characters[0].coverageAutomation;
+        const third = await h.coverage(coverageSlot(3, { coverageRequestCount: 999, coverageMaximumImages: 9999 }));
+        observeHarm(third.status === 200,
+          `THE DEFECT: the run's own second request rewrote the bound it was about to be judged by — the record now reads ${run.requestCount} requests / ${run.maximumImages} images against a press quoted at 2 / 6, and a 3rd paid request went out (${h.calls.length} provider calls)`);
+      } finally { h.close(); }
+    });
+
+  await control("an automation run whose authorised bound is whatever its last progress update said",
+    "an authorised run cannot restate its own ceiling through the progress route", async (phase) => {
+      const mutatedRuns = loadModified("automation-runs.js", [[
+        `    const config = preserveAuthorizedBound(
+      source.config && typeof source.config === "object" ? source.config : plainObject(base.config),
+      existing,
+    );`,
+        `    const config = source.config && typeof source.config === "object" ? source.config : plainObject(base.config);`,
+      ]]);
+      phase("MUTATION_LANDED");
+
+      const h = await harness(falGenerationReal);
+      const runsApp = express();
+      runsApp.use(express.json({ limit: "8mb" }));
+      mutatedRuns.registerAutomationRuns(runsApp, {
+        readConfig: () => ({}), readProject: () => h.project(), writeProject: () => {},
+        activeSlug: () => "ctrl", projectDir: () => h.dir, projectDirForSlug: () => ({ slug: "ctrl", dir: h.dir, file: h.file }),
+      });
+      const runsServer = await listen(runsApp);
+      try {
+        const runsOrigin = originOf(runsServer);
+        const RUNNER = "runner-1";
+        h.saveRuns([{
+          id: "automation-ctrl", schemaVersion: 2, revision: 1, type: "shot-chain", targetId: "SH-1", scope: "main",
+          status: "running", runnerId: RUNNER, leaseExpiresAt: "2099-01-01T00:00:00.000Z",
+          config: { maxImages: 1, maxSpend: { priced: true, amount: 0.06, quantity: 1, unitBasis: "image", ratePerUnit: 0.06, rateSource: "configured" } },
+          usage: { imagesGenerated: 0 }, steps: {}, logs: [],
+        }]);
+        const buildId = seedFramePackage(h);
+        const step = (key) => declaredGenerationBody({
+          purpose: "frame", shotId: "SH-1", frameId: "FR-A", frameLabel: "A", sourceBuildId: buildId,
+          prompt: "Kai sets the parcel down in the hangar.", aspectRatio: "16:9", outputCount: 1,
+          clientRequestId: `ctrl-bound-${key}`,
+          automationRunId: "automation-ctrl", automationStepKey: key, automationRunnerId: RUNNER,
+          generationRequest: Presentation.generationRequestDeclaration({ surface: "automation-run", viewMode: "simple" }),
+        });
+
+        const first = await h.post(step("step-1"));
+        assert.strictEqual(first.status, 200, `the one authorised image must dispatch: ${JSON.stringify(first.data)}`);
+        await h.settle(first.data.job.id);
+        const capped = await h.post(step("step-2"));
+        assert.strictEqual(capped.status, 409, `and the second must be refused while the bound holds: ${JSON.stringify(capped.data)}`);
+
+        const stored = await (await fetch(`${runsOrigin}/api/automation/runs/automation-ctrl`)).json();
+        const raise = await fetch(`${runsOrigin}/api/automation/runs/automation-ctrl`, {
+          method: "PUT", headers: { "content-type": "application/json" },
+          body: JSON.stringify({
+            ...stored.run, runnerId: RUNNER,
+            config: { maxImages: 500, maxSpend: { priced: true, amount: 999, quantity: 500, unitBasis: "image", ratePerUnit: 0.06, rateSource: "configured" } },
+          }),
+        });
+        const raised = await raise.json();
+        assert.strictEqual(raise.status, 200, `the progress update must be accepted: ${JSON.stringify(raised)}`);
+        phase("UNSAFE_PATH_EXECUTED");
+
+        const third = await h.post(step("step-3"));
+        observeHarm(third.status === 200,
+          `THE DEFECT: a run authorised for 1 image and $0.06 restated itself at ${raised.run.config.maxImages} images and $${raised.run.config.maxSpend?.amount} through the ordinary progress route, and the credit guard then let a further paid request through — ${h.calls.length} provider calls`);
+      } finally { runsServer.close(); h.close(); }
     });
 
   console.log("");

@@ -228,9 +228,23 @@ async function harness(options = {}) {
       });
       return { status: response.status, data: await response.json().catch(() => ({})) };
     },
+    /* THE COVERAGE DISPATCHER'S OWN QUOTE, stamped the way tests/generation-request-
+       fixture.js stamps a declaration and for the same reason: a fixture standing in for
+       public/coverage-automation.js has to send what that file sends. Every press it makes
+       carries `coverageRequestCount` and `coverageMaximumImages` — the two figures the
+       dialog showed the filmmaker — and since coverageSubmissionError() those are what the
+       money boundary holds the rest of the run to.
+
+       DELIBERATELY LARGER THAN ANY SECTION'S TRAFFIC. A stamp is not the thing under test:
+       a default tight enough to bind would answer for the concurrency cap, the duplicate
+       guard and the durability seams before those gates could, and each of those sections
+       would go on passing while proving something narrower than it says. The sections that
+       ARE about the bound pass their own figures and override this. */
     coverage: async (body) => {
       const response = await fetch(`${appOrigin}/api/generation/fal/coverage/jobs`, {
-        method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(body),
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ coverageRequestCount: 8, coverageMaximumImages: 32, ...body }),
       });
       return { status: response.status, data: await response.json() };
     },
@@ -2431,6 +2445,237 @@ async function main() {
       assert.strictEqual(sandbox.v626FailureClass({ message: "socket hang up" }), "provider",
         "and so must a transport failure");
       note(`20. all ${refusals.length} pre-provider refusal families state providerContacted:false on the wire with 0 provider calls and 0 ledger rows, and the shipped v626FailureClass reads that fact rather than a list of codes — each is local-preflight and spends no authorised attempt, while an unresolved twin and a transport failure are still provider faults`);
+    } finally { h.close(); }
+  }
+
+  /* =======================================================================
+     21. THE OTHER BOUNDED RUN: COVERAGE AUTOMATION.
+
+     Reproductions 10, 17, 18 and 19 prove the automation runner cannot exceed the count
+     or the spend one press authorised. Coverage automation is CineBraid's SECOND paid
+     automation path and the one that most obviously multiplies a press into several paid
+     requests — "generate missing slots individually" submits one per unfilled slot, three
+     candidates each — and every one of those guards returned null for it, because they are
+     keyed on `automationRunId` and a coverage job carries none.
+
+     So a press quoted at two requests and six images dispatched four and committed twelve,
+     with each individual job comfortably inside every bound that was actually being
+     checked. What follows drives that exact sequence.
+
+     A NOTE ON HOW A JOB IS RETIRED HERE. The concurrency cap is two, so a run of more than
+     two requests needs earlier jobs to finish — and Cancel is the wrong way to arrange it,
+     because cancelling terminates the coverage run through updateEntityCoverageRun() and
+     the third request would then be establishing a NEW run rather than continuing this one.
+     That is the production shape too: a press dispatches its slots while its run is live.
+     So a delivered job is written to the ledger as delivered, which is what the provider
+     answering does, and leaves the run exactly as it was. */
+  {
+    const h = await harness();
+    try {
+      const project = h.project();
+      project.characters = [{ id: "KAI", name: "Kai", type: "Character", approvedFile: "KAI.png", continuityStates: [] }];
+      h.saveProject(project);
+      const runOf = () => h.project().characters[0].coverageAutomation;
+      /* THE PRESS: two paid requests, up to six images. The figures public/coverage-
+         automation.js derives from missingCoverageWork() and prices in front of the
+         filmmaker before the button. */
+      const slot = (n, extra = {}) => ({
+        purpose: "entity-reference", entityList: "characters", entityId: "KAI", entityType: "character",
+        prompt: "Kai from the requested angle.", references: [{ key: "base", label: "Approved primary", role: "base", url: KAI_PNG }],
+        outputCount: 3, quality: "high", resolution: "4k", aspectRatio: referenceAspectLabel("characters"),
+        coverageJobType: "slot", coverageSheetType: "", coverageMode: "individual",
+        targetCoverageSlotId: `slot-${n}`, clientRequestId: `bounded-${n}`,
+        coverageRequestCount: 2, coverageMaximumImages: 6,
+        generationRequest: Presentation.generationRequestDeclaration({ surface: "reference-automation", viewMode: "simple" }),
+        ...extra,
+      });
+      /* A job the provider DELIVERED, written where a delivery is written. */
+      const deliver = (jobId) => {
+        const rows = h.ledger();
+        const row = rows.find((item) => item.id === jobId);
+        assert(row, `the job to deliver must exist: ${jobId}`);
+        row.status = "COMPLETED";
+        row.ingestedAt = "2026-08-29T00:00:00.000Z";
+        h.seedLedger(rows);
+      };
+
+      const one = await h.coverage(slot(1));
+      assert.strictEqual(one.status, 200, `the first authorised request dispatches: ${JSON.stringify(one.data)}`);
+      const established = runOf();
+      assert.strictEqual(established.requestCount, 2, "and establishes the run with the count the press authorised");
+      assert.strictEqual(established.maximumImages, 6, "and with its image ceiling");
+      /* AND ITS DOLLAR CEILING, from the one owner that multiplies a rate by a quantity —
+         six images at the configured $0.06. Not a figure the request supplied. */
+      assert.strictEqual(established.maxSpend?.priced, true, `a configured rate prices the run: ${JSON.stringify(established.maxSpend)}`);
+      assert.strictEqual(established.maxSpend.amount, 0.36, "six images at $0.06, from costEstimateFromRate()");
+      deliver(one.data.job.id);
+
+      /* THE SECOND REQUEST CARRIES A LARGER QUOTE, and this is where the ceiling used to
+         move. It is still INSIDE the authorised count, so it dispatches on its merits —
+         and while these figures were reassigned on every job of the run, dispatching is
+         all it took: the run came back recording 999/9999 and everything after it was
+         judged against a bound the run had written for itself on the way past. */
+      const two = await h.coverage(slot(2, { coverageRequestCount: 999, coverageMaximumImages: 9999 }));
+      assert.strictEqual(two.status, 200, `the second authorised request still dispatches: ${JSON.stringify(two.data)}`);
+      assert.strictEqual(runOf().requestCount, 2, "but the established count is unchanged");
+      assert.strictEqual(runOf().maximumImages, 6, "and so is the established image ceiling");
+      assert.strictEqual(runOf().maxSpend.amount, 0.36, "and so is the spend it was authorised for");
+      deliver(two.data.job.id);
+
+      /* THE REPRODUCTION. A third request into a run authorised for two. */
+      const beforeThird = h.calls.length;
+      const three = await h.coverage(slot(3, { coverageRequestCount: 999, coverageMaximumImages: 9999 }));
+      assert.strictEqual(three.status, 409, `the third exceeds the authorised count: ${JSON.stringify(three.data)}`);
+      assert.strictEqual(three.data.code, "COVERAGE_REQUEST_CAP", "typed for the count it broke");
+      assert(/authorised for 2 paid requests/.test(String(three.data.error)),
+        `naming the figure the filmmaker actually approved rather than the one this request carried: ${three.data.error}`);
+      assert.strictEqual(three.data.providerContacted, false, "and states it reached no provider");
+      assert.strictEqual(three.data.paidRequestSubmitted, false, "and that nothing was submitted");
+      assert.strictEqual(h.calls.length, beforeThird, "PROVIDER INVOCATION COUNT ON REFUSAL = 0");
+      assert.strictEqual(h.ledger().length, 2, "and no third row was written");
+
+      /* THE IMAGE CEILING IS THE OTHER HALF, and it binds independently of the count. A
+         run authorised for two requests but only four images refuses the second request
+         once three of those four are committed. */
+      const g = await harness();
+      try {
+        const p = g.project();
+        p.characters = [{ id: "KAI", name: "Kai", type: "Character", approvedFile: "KAI.png", continuityStates: [] }];
+        g.saveProject(p);
+        const tight = (n) => ({ ...slot(n), coverageRequestCount: 2, coverageMaximumImages: 4 });
+        const firstTight = await g.coverage(tight(1));
+        assert.strictEqual(firstTight.status, 200, `three of four images commit: ${JSON.stringify(firstTight.data)}`);
+        const rows = g.ledger();
+        rows.find((item) => item.id === firstTight.data.job.id).status = "COMPLETED";
+        g.seedLedger(rows);
+        const before = g.calls.length;
+        const overImages = await g.coverage(tight(2));
+        assert.strictEqual(overImages.status, 409, `and the second request would take it to six: ${JSON.stringify(overImages.data)}`);
+        assert.strictEqual(overImages.data.code, "COVERAGE_IMAGE_CAP", "typed for the ceiling it broke, not the count — the count still allows it");
+        assert(/would take it to 6/.test(String(overImages.data.error)), `naming the projection: ${overImages.data.error}`);
+        assert.strictEqual(g.calls.length, before, "PROVIDER INVOCATION COUNT ON REFUSAL = 0");
+      } finally { g.close(); }
+
+      /* AND WHAT THIS DELIBERATELY DOES NOT DO: manufacture a bound for a press that never
+         quoted one.
+
+         The per-slot "generate" control on the coverage board sends a single request for a
+         single slot and quotes nothing — one press making one request has nothing to bound
+         — and two presses on two different slots land in the SAME run record, because the
+         projection groups by task rather than by press. A guard that refused an unbounded
+         continuation would refuse the second slot a filmmaker asked for. That is not a
+         bound being enforced; it is authorised work stopped on arithmetic nobody performed,
+         and it is the shape this section had to be corrected away from. */
+      const u = await harness();
+      try {
+        const p = u.project();
+        p.characters = [{ id: "KAI", name: "Kai", type: "Character", approvedFile: "KAI.png", continuityStates: [] }];
+        u.saveProject(p);
+        /* EXACTLY what generateCoverageSlot() sends: no coverageMode, no quote. */
+        const manual = (n) => ({ ...slot(n), coverageMode: "", coverageSheetType: "angles", coverageRequestCount: undefined, coverageMaximumImages: undefined });
+        const firstManual = await u.coverage(manual(1));
+        assert.strictEqual(firstManual.status, 200, `the first slot press dispatches: ${JSON.stringify(firstManual.data)}`);
+        assert.strictEqual(u.project().characters[0].coverageAutomation.requestCount, undefined,
+          "and the run honestly records no bound rather than inventing one");
+        const rows = u.ledger();
+        rows.find((item) => item.id === firstManual.data.job.id).status = "COMPLETED";
+        u.seedLedger(rows);
+        const secondManual = await u.coverage(manual(2));
+        assert.strictEqual(secondManual.status, 200,
+          `and so does the second slot the filmmaker asks for: ${JSON.stringify(secondManual.data)}`);
+        assert.strictEqual(u.calls.length, 2, "both single presses reach the provider");
+      } finally { u.close(); }
+
+      /* AND A RECORDED BOUND CANNOT BE REMOVED ANY MORE THAN IT CAN BE RAISED. The same
+         `if (!continuing)` that stops a continuation restating the figures stops it
+         deleting them, so a bounded press cannot become an unbounded one by omission. */
+      assert.strictEqual(runOf().requestCount, 2, "the bounded run above still records its count");
+      const stripped = await h.coverage(slot(5, { coverageRequestCount: undefined, coverageMaximumImages: undefined }));
+      assert.strictEqual(stripped.status, 409, `and omitting the quote does not remove it: ${JSON.stringify(stripped.data)}`);
+      assert.strictEqual(stripped.data.code, "COVERAGE_REQUEST_CAP", "the run is still judged by what it was authorised for");
+      assert.strictEqual(runOf().requestCount, 2, "and the record is untouched");
+      assert.strictEqual(h.calls.length, beforeThird, "still 0 provider calls beyond the authorised two");
+
+      note("21. a coverage press authorised for 2 paid requests and 6 images dispatches exactly 2 — a 3rd is COVERAGE_REQUEST_CAP and a run one image over its ceiling is COVERAGE_IMAGE_CAP, each with providerContacted:false, 0 provider calls and no row; the ceiling is priced once at establishment from costEstimateFromRate(), and a later request can neither restate it (999/9999) nor remove it (omitted). A press that quoted nothing — the per-slot control — is not given a bound it never declared, and its second slot still dispatches");
+    } finally { h.close(); }
+  }
+
+  /* =======================================================================
+     22. AND THE RUNNER'S CEILING IS THE RUN'S, NOT THE RUNNER'S.
+
+     Reproductions 10 and 17-19 prove the spend guard enforces `config.maxSpend` exactly as
+     designed. They prove nothing about where that figure came from, and it came from the
+     last thing that wrote the run: public/automation.js PUTs the whole run object back on
+     every progress update and the merge took `config` wholesale. So the guard was enforcing
+     a ceiling handed to it by the work it was capping — a run authorised for one image and
+     $0.06 could restate itself at five hundred and $999 through the ordinary progress route
+     and go on dispatching, one in-cap job at a time.
+
+     The browser's own note beside v626AuthorizedSpend() already says the intent: "Recorded
+     at CREATION and never recomputed." This is that sentence made true of the record. */
+  {
+    const h = await harness();
+    try {
+      const RUNNER = "runner-1";
+      const AUTHORIZED = { priced: true, amount: 0.06, quantity: 1, unitBasis: "image", ratePerUnit: 0.06, rateSource: "configured" };
+      const runRow = () => ({
+        id: "automation-bound", schemaVersion: 2, revision: 1, type: "shot-chain", targetId: "SH-1", scope: "main",
+        status: "running", runnerId: RUNNER, leaseExpiresAt: "2099-01-01T00:00:00.000Z",
+        config: { maxImages: 1, maxSpend: AUTHORIZED }, usage: { imagesGenerated: 0 }, steps: {}, logs: [],
+      });
+      h.saveRuns([runRow()]);
+      const buildId = seedFramePackage(h);
+      const step = (key) => ({
+        ...framePlanBody(buildId, { clientRequestId: `bound-${key}`, outputCount: 1 }),
+        imagePlan: undefined,
+        automationRunId: "automation-bound", automationStepKey: key, automationRunnerId: RUNNER,
+        generationRequest: Presentation.generationRequestDeclaration({ surface: "automation-run", viewMode: "simple" }),
+      });
+
+      const first = await h.post(step("step-1"));
+      assert.strictEqual(first.status, 200, `the one authorised image dispatches: ${JSON.stringify(first.data)}`);
+      await h.settle(first.data.job.id);
+      const second = await h.post(step("step-2"));
+      assert.strictEqual(second.status, 409, `and the second is refused by the count cap: ${JSON.stringify(second.data)}`);
+
+      /* THE REPRODUCTION: the run restates its own authorisation through sanitizeRun(),
+         which is the one function every run writer on that route goes through — the
+         progress PUT, the lease, the heartbeat and the retry all merge through it. */
+      const { registerAutomationRuns } = require("../automation-runs");
+      const runsApp = express();
+      runsApp.use(express.json({ limit: "8mb" }));
+      registerAutomationRuns(runsApp, {
+        readConfig: () => ({}), readProject: () => h.project(), writeProject: () => {},
+        activeSlug: () => "truth", projectDir: () => h.dir, projectDirForSlug: () => ({ slug: "truth", dir: h.dir, file: h.file }),
+      });
+      const runsServer = await listen(runsApp);
+      try {
+        const runsOrigin = originOf(runsServer);
+        const stored = await (await fetch(`${runsOrigin}/api/automation/runs/automation-bound`)).json();
+        const raise = await fetch(`${runsOrigin}/api/automation/runs/automation-bound`, {
+          method: "PUT", headers: { "content-type": "application/json" },
+          body: JSON.stringify({
+            ...stored.run, runnerId: RUNNER,
+            config: { maxImages: 500, maxSpend: { priced: true, amount: 999, quantity: 500, unitBasis: "image", ratePerUnit: 0.06, rateSource: "configured" } },
+          }),
+        });
+        const raised = await raise.json();
+        /* THE UPDATE IS ACCEPTED — a run legitimately reports its own progress, and
+           refusing the whole PUT would break every step it writes. What it may not do is
+           come back holding a different authorisation. */
+        assert.strictEqual(raise.status, 200, `the progress update itself is accepted: ${JSON.stringify(raised)}`);
+        assert.strictEqual(raised.run.config.maxImages, 1, "and carries the count it was authorised with");
+        assert.deepStrictEqual(raised.run.config.maxSpend, AUTHORIZED, "and the spend it was authorised with");
+      } finally { runsServer.close(); }
+
+      const before = h.calls.length;
+      const third = await h.post(step("step-3"));
+      assert.strictEqual(third.status, 409, `so the guard still refuses: ${JSON.stringify(third.data)}`);
+      assert(/1-image cap/.test(String(third.data.error)), `naming the figure the filmmaker actually approved: ${third.data.error}`);
+      assert.strictEqual(h.calls.length, before, "PROVIDER INVOCATION COUNT ON REFUSAL = 0");
+      assert.strictEqual(h.calls.length, 1, "one authorised image, one provider call, across the whole run");
+
+      note("22. an automation run authorised for 1 image and $0.06 cannot restate itself at 500 and $999 through the ordinary progress route — the PUT is accepted and the authorised figures come back unchanged, the credit guard still names the 1-image cap, and the run makes exactly 1 provider call");
     } finally { h.close(); }
   }
 
