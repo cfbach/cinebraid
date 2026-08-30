@@ -331,9 +331,17 @@ function testSecretScanContract() {
   assert(!names.has(".github/workflows/windows-ci.yml"), "the publication tree is not honouring export-ignore");
   assert(fs.existsSync(path.join(ROOT, ".github/workflows/windows-ci.yml")), "the working tree should still carry the CI wiring");
 
-  /* And it is really the archive's bytes. */
+  /* And it is really the committed content. Compared with line endings
+     normalised: `git archive` applies the eol conversion a checkout would get -
+     CRLF on this repository's Windows checkouts, because .gitattributes sets
+     `* text=auto` - while `git show` dumps the LF blob. A byte comparison would
+     pass on a Linux runner and fail on every Windows one. */
   const archived = archive.find((e) => e.name === "package.json");
-  assert.strictEqual(archived.text, git(["show", "HEAD:package.json"]), "the publication tree text is not the committed content");
+  assert.strictEqual(
+    lf(archived.text),
+    lf(git(["show", "HEAD:package.json"])),
+    "the publication tree text is not the committed content",
+  );
 
   /* The release build reads the archive before it writes either artifact. */
   const release = read("scripts/build-release.js");
