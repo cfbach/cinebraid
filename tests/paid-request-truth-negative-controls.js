@@ -938,12 +938,12 @@ async function main() {
            than deleted — a control that quietly stops matching proves nothing. */
         `    return guardRoute(res, dispatchGenerationRequest(req, res, {
       surface: "reference-automation",
-      permit: coveragePermit,
+      permit: { ...coveragePermit, transition },
       entityList: list,
       entityId,`,
         `    const early = {
       surface: "reference-automation",
-      permit: coveragePermit,
+      permit: { ...coveragePermit, transition },
       entityList: list,
       entityId,`,
       ], [
@@ -2045,9 +2045,16 @@ async function main() {
   await control("coverage membership restored to a comparison of presentation fields",
     "reclassified coverage work cannot escape or replace a live bounded authorization", async (phase) => {
       const mutated = loadModified("fal-generation.js", [[
-        `    const authorization = coverageAuthorizationFor(owner, coverageJobs, list, entityId, sheetType);`,
+        /* Re-armed at the moved seam: the route now resolves one transition rather than an
+           authorization, so the defect is reintroduced by making that transition compare
+           presentation fields again. */
+        `    const transition = coverageTransitionFor(owner, coverageJobs, req.body, sheetType);`,
         `    const liveRun = (ownerProject(owner)[list] || []).find((row) => String(row?.id) === entityId)?.coverageAutomation;
-    const authorization = { ok: true, ref: liveRun && COVERAGE_RUN_ACTIVE_STATUSES.includes(String(liveRun.status || "")) && String(liveRun.sheetType || "") === sheetType && String(liveRun.mode || "") === mode ? String(liveRun.id || "") : "" };`,
+    const presentationMatch = !!liveRun && COVERAGE_RUN_ACTIVE_STATUSES.includes(String(liveRun.status || ""))
+      && String(liveRun.sheetType || "") === sheetType && String(liveRun.mode || "") === mode;
+    const transition = presentationMatch
+      ? { action: "govern", ref: String(liveRun.id || "") }
+      : { action: "establish" };`,
       ]]);
       phase("MUTATION_LANDED");
       const h = await harness(mutated);
@@ -2068,10 +2075,10 @@ async function main() {
       /* Membership still comes from the permit; what is removed is the LIVENESS half — the
          rule that a bounded run holding unsettled work owns the entity's coverage work. */
       const mutated = loadModified("fal-generation.js", [[
-        /* The anchor moved with the seam: the unsettled set is now computed once above and
-           shared with the unbounded-transition decision. Re-armed where it went. */
-        `    if (!unsettled.length) return { ok: true, ref: "" };`,
-        `    if (true) return { ok: true, ref: "" };`,
+        /* The anchor moved with the seam again: the bounded-run arm of the transition
+           table is where "still holding unsettled work" is now asked. Re-armed there. */
+        `      if (!outstanding) return { action: COVERAGE_TRANSITIONS.ESTABLISH };`,
+        `      if (true) return { action: COVERAGE_TRANSITIONS.ESTABLISH };`,
       ]]);
       phase("MUTATION_LANDED");
       const h = await harness(mutated);
@@ -2172,15 +2179,13 @@ async function main() {
          are not the same question, and conflating them loses a job that is still in flight
          from the board a filmmaker is watching it on. */
       const mutated = loadModified("fal-generation.js", [[
-        /* Re-armed at the moved seam: the ungoverned branch now also refuses to absorb a
-           press that declared a bound of its own. */
-        `          const continuing = live && (governedBy
-            ? String(existing.id || "") === governedBy
-            : !requestBounded
-              && !coverageRunBounded(existing)
-              && String(existing.sheetType || "") === sheetType
-              && String(existing.mode || "") === mode);`,
-        `          const continuing = live && !!governedBy && String(existing.id || "") === governedBy;`,
+        /* Re-armed at the moved seam: the decision is a CELL of the transition table now.
+           Row B1 — a compatible unbounded press over live unbounded unsettled work — is the
+           one under test, so the mutation makes that cell establish instead of continue,
+           which is exactly "only a bounded authorization can make me join something". */
+        `    /* B1 — compatible and unbounded: the ordinary per-slot press, which continues.`,
+        `    if (true) return { action: COVERAGE_TRANSITIONS.ESTABLISH };
+    /* B1 — compatible and unbounded: the ordinary per-slot press, which continues.`,
       ]]);
       phase("MUTATION_LANDED");
       const h = await harness(mutated);
@@ -2206,19 +2211,15 @@ async function main() {
 
   await control("a newly bounded coverage press absorbed into a live unbounded projection",
     "a bounded operation cannot be established over unsettled unbounded work", async (phase) => {
-      /* TWO MUTATIONS, BECAUSE THE SERIALISATION HAS TWO HALVES AND EITHER ALONE ONLY MOVES
-         THE DAMAGE. Removing the refusal lets the bounded press through; removing
-         `!requestBounded` from the continuation guard is what then ABSORBS it into the
-         unbounded run — which is the shape that silently drops the ceiling rather than the
-         shape that discards the projection. Together they reproduce the defect the way a
-         reasonable implementation would have written it. */
+      /* ONE CELL, because the model made it one decision. Row B2 — a press that quotes a
+         ceiling arriving over live unbounded work nobody has heard back about — waits.
+         Making that cell CONTINUE instead absorbs it into somebody else's unbounded run,
+         which is the shape that silently drops the ceiling rather than the shape that
+         discards the projection. That the whole defect is now one cell is the point of
+         having a table: before the model this took two mutations in two files. */
       const mutated = loadModified("fal-generation.js", [[
-        `    if (!ref) return coverageSerializationError(owner, jobs, body);`,
-        `    if (!ref) return null;`,
-      ], [
-        `            : !requestBounded
-              && !coverageRunBounded(existing)`,
-        `            : !coverageRunBounded(existing)`,
+        `    if (requestBounded) return { action: COVERAGE_TRANSITIONS.REFUSE, reason: "unsettled-unbounded-work", existingTarget, incomingTarget, outstanding };`,
+        `    if (requestBounded) return { action: COVERAGE_TRANSITIONS.CONTINUE, ref: String(run.id || "") };`,
       ]]);
       phase("MUTATION_LANDED");
       const h = await harness(mutated);
@@ -2250,6 +2251,119 @@ async function main() {
         }));
         observeHarm(declaredBoundLost || beyond.status === 200,
           `THE DEFECT: a press quoted at 1 request / 3 images was absorbed into a live unbounded run whose work was still in flight — the governing record reads ${JSON.stringify({ id: governing?.id, requestCount: governing?.requestCount, maximumImages: governing?.maximumImages })}, a further press answered ${beyond.status}, and ${h.calls.length} provider calls were made under a ceiling of 3 images`);
+      } finally { h.close(); }
+    });
+
+  /* =========================================================================
+     THE COVERAGE PROJECTION TRANSITION MODEL, CELL BY CELL.
+
+     coverageTransition() is a table, so these mutate CELLS of it rather than lines
+     scattered across a route, a guard and a commit callback. Each mutation is a
+     defensible-looking implementation that gets exactly one row wrong, and each is driven
+     through the real route until the wrong transition is observable in the durable record. */
+  const transitionEntity = (h) => {
+    const project = h.project();
+    project.characters = [{ id: "KAI", name: "Kai", type: "Character", approvedFile: "KAI.png", continuityStates: [] }];
+    h.saveProject(project);
+  };
+  const transitionBody = (extra = {}) => ({
+    purpose: "entity-reference", entityList: "characters", entityId: "KAI", entityType: "character",
+    prompt: "Kai from the requested angle.", references: [{ key: "base", label: "Approved primary", role: "base", url: KAI_PNG }],
+    outputCount: 1, quality: "high", resolution: "4k", aspectRatio: referenceAspectLabel("characters"),
+    coverageJobType: "slot", coverageSheetType: "", coverageMode: "",
+    coverageRequestCount: undefined, coverageMaximumImages: undefined,
+    generationRequest: Presentation.generationRequestDeclaration({ surface: "reference-automation", viewMode: "simple" }),
+    ...extra,
+  });
+  const expressionsBody = (extra = {}) => transitionBody({
+    coverageJobType: "sheet", coverageSheetType: "expressions", coverageMode: "sheet", aspectRatio: "4:3", ...extra,
+  });
+  const settle = (h, jobId) => {
+    const rows = h.ledger();
+    rows.find((r) => r.id === jobId).status = "COMPLETED";
+    rows.find((r) => r.id === jobId).ingestedAt = "2026-08-30T00:00:00.000Z";
+    h.seedLedger(rows);
+  };
+
+  await control("filing compatibility decided by raw spelling instead of the canonical target",
+    "an empty sheetType and the word angles are one projection", async (phase) => {
+      /* The predicate this model replaced. Empty and "angles" are the same board by
+         coverageFilingTarget() and by every reader in the product, and comparing the raw
+         strings makes the second press destroy the first. */
+      const mutated = loadModified("fal-generation.js", [[
+        `    const existingTarget = coverageFilingTarget(run.sheetType);
+    const sameBoard = existingTarget === incomingTarget;`,
+        `    const existingTarget = coverageFilingTarget(run.sheetType);
+    const sameBoard = String(run.sheetType || "") === String(incomingTarget === "expressions" ? "expressions" : "angles");`,
+      ]]);
+      phase("MUTATION_LANDED");
+      const h = await harness(mutated);
+      try {
+        transitionEntity(h);
+        const first = await h.coverage(transitionBody({ clientRequestId: "alias-1", targetCoverageSlotId: "s1", coverageSheetType: "" }));
+        assert.strictEqual(first.status, 200, `the opening press must dispatch: ${JSON.stringify(first.data)}`);
+        assert.strictEqual(h.ledger()[0].status, "IN_QUEUE", "and stay in flight");
+        const opened = h.project().characters[0].coverageAutomation;
+        phase("UNSAFE_PATH_EXECUTED");
+        const second = await h.coverage(transitionBody({ clientRequestId: "alias-2", targetCoverageSlotId: "s2", coverageSheetType: "angles" }));
+        const after = h.project().characters[0].coverageAutomation;
+        observeHarm(String(after?.id) !== String(opened?.id) || !(after?.jobs || []).includes(first.data.job.id) || second.status !== 200,
+          `THE DEFECT: one angles board spelled two ways was read as two tasks — run ${opened?.id} carrying ${JSON.stringify(opened?.jobs)} became ${after?.id} carrying ${JSON.stringify(after?.jobs)}, the second press answered ${second.status}, and the first job is still ${h.ledger().find((r) => r.id === first.data.job.id)?.status}`);
+      } finally { h.close(); }
+    });
+
+  await control("incompatible unbounded work allowed to replace a projection with jobs in flight",
+    "a run holding unsettled paid work is never replaced", async (phase) => {
+      /* Row B3. Replacement looks harmless when the existing run quoted nothing — there is
+         no ceiling to lose — and it is not: the record of an in-flight paid job goes with it. */
+      const mutated = loadModified("fal-generation.js", [[
+        `    if (!sameBoard) return { action: COVERAGE_TRANSITIONS.REFUSE, reason: "incompatible-filing-target", existingTarget, incomingTarget, outstanding };
+    /* B2 — compatible, but it quoted a ceiling. Absorbing it drops that ceiling; replacing
+       loses the in-flight work. So it waits. */`,
+        `    if (!sameBoard) return { action: COVERAGE_TRANSITIONS.ESTABLISH };
+    /* B2 */`,
+      ]]);
+      phase("MUTATION_LANDED");
+      const h = await harness(mutated);
+      try {
+        transitionEntity(h);
+        const first = await h.coverage(transitionBody({ clientRequestId: "b3-1", targetCoverageSlotId: "s1" }));
+        assert.strictEqual(first.status, 200, `the angles press must dispatch: ${JSON.stringify(first.data)}`);
+        assert.strictEqual(h.ledger()[0].status, "IN_QUEUE", "and its job must still be in flight");
+        const opened = h.project().characters[0].coverageAutomation;
+        phase("UNSAFE_PATH_EXECUTED");
+        const expressions = await h.coverage(expressionsBody({ clientRequestId: "b3-2" }));
+        const after = h.project().characters[0].coverageAutomation;
+        observeHarm(expressions.status === 200 && (String(after?.id) !== String(opened?.id) || !(after?.jobs || []).includes(first.data.job.id)),
+          `THE DEFECT: expressions work replaced a projection whose angles job was still ${h.ledger().find((r) => r.id === first.data.job.id)?.status} — run ${opened?.id} carrying ${JSON.stringify(opened?.jobs)} became ${after?.id} carrying ${JSON.stringify(after?.jobs)}, with ${h.calls.length} provider calls made`);
+      } finally { h.close(); }
+    });
+
+  await control("a settled projection that keeps refusing incompatible work forever",
+    "serialisation is a wait, not a wall", async (phase) => {
+      /* Row C3. Refusing on the FILING TARGET alone — without asking whether anything is
+         still outstanding — passes every "must refuse" assertion and quietly makes the
+         entity's other coverage board unusable from then on. A guard that only ever refuses
+         looks safe and is not. */
+      const mutated = loadModified("fal-generation.js", [[
+        `    if (!outstanding) {
+      if (requestBounded || !sameBoard) return { action: COVERAGE_TRANSITIONS.ESTABLISH };`,
+        `    if (!outstanding) {
+      if (!sameBoard) return { action: COVERAGE_TRANSITIONS.REFUSE, reason: "incompatible-filing-target", existingTarget, incomingTarget, outstanding };
+      if (requestBounded) return { action: COVERAGE_TRANSITIONS.ESTABLISH };`,
+      ]]);
+      phase("MUTATION_LANDED");
+      const h = await harness(mutated);
+      try {
+        transitionEntity(h);
+        const first = await h.coverage(transitionBody({ clientRequestId: "c3-1", targetCoverageSlotId: "s1" }));
+        assert.strictEqual(first.status, 200, `the angles press must dispatch: ${JSON.stringify(first.data)}`);
+        /* SETTLED — nothing is in flight, so nothing can be lost by moving on. */
+        settle(h, first.data.job.id);
+        phase("UNSAFE_PATH_EXECUTED");
+        const expressions = await h.coverage(expressionsBody({ clientRequestId: "c3-2" }));
+        observeHarm(expressions.status !== 200,
+          `THE DEFECT: expressions work was refused ${expressions.status}/${expressions.data.reason} although the angles job it was waiting for is ${h.ledger().find((r) => r.id === first.data.job.id)?.status} — the wait never ends and the other board can no longer be generated for this reference`);
       } finally { h.close(); }
     });
 

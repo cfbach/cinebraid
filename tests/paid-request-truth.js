@@ -337,6 +337,15 @@ function framePlanBody(buildId, extra = {}) {
   };
 }
 
+/* THE SAME QUESTION THE ROUTE ASKS OF A RUN RECORD — did the press that opened it quote a
+   ceiling. Written out rather than imported because fal-generation.js keeps it inside the
+   registration closure; a test that guessed differently would be asserting about a
+   different word than the one the boundary uses, so it mirrors it exactly. */
+function coverageRunBoundedLike(run) {
+  return Number.isInteger(Number(run?.requestCount)) && Number(run.requestCount) > 0
+    && Number.isInteger(Number(run?.maximumImages)) && Number(run.maximumImages) > 0;
+}
+
 async function main() {
   /* =======================================================================
      1. THE DECLARATION IS REQUIRED.
@@ -3104,6 +3113,205 @@ async function main() {
 
       note("24. the five-row transition matrix, with `entity.coverageAutomation` the single current record: unbounded work continues its own projection (same run, both jobs, no ceiling); a bounded press arriving over UNSETTLED unbounded work is refused COVERAGE_RUN_BUSY/unsettled-unbounded-work before the provider, leaving the run byte-equivalent, the in-flight job represented and no half-written ceiling; once that work settles the same press establishes its own run and persists 1 request / 3 images / $0.18; the established ceiling then refuses a second job and cannot be restated or detached by presentation; and incompatible filing work is still COVERAGE_RUN_BUSY/incompatible-filing-target with the run preserved — a serialisation, not a wall");
     } finally { h.close(); }
+  }
+
+  /* =======================================================================
+     25. THE COVERAGE PROJECTION TRANSITION MODEL, EVERY REACHABLE ROW.
+
+     `entity.coverageAutomation` is the SINGLE current coverage-run record, so every
+     incoming press either joins what is there, replaces it, or must wait. Three reviews
+     found three different holes in the ad hoc predicate that used to decide that, each
+     patched where it was found — which is how one decision ends up spread across a route,
+     a guard and a commit callback answering slightly different questions.
+
+     coverageTransition() is a table now, and this is that table driven end to end through
+     the real route. Four server truths choose the row: whether the existing run quoted a
+     ceiling, whether it still has paid work nobody has heard back about, whether the
+     incoming press quotes one, and whether both file to the same board by
+     coverageFilingTarget() — the canonical owner, NOT raw spelling.
+
+     A cell that changes silently fails here. */
+  {
+    const TARGET_SPELLINGS = { angles: ["", "angles"], expressions: ["expressions"] };
+    /* THE SPELLINGS ARE DELIBERATELY DIFFERENT ON EACH SIDE where a row allows it: a run
+       stored `sheetType: ""` and a press sending `"angles"` are the SAME board, and the
+       predicate this replaces called them different tasks and destroyed the first. */
+    const MATRIX = [
+      { row: "R1",  existing: "none",              incoming: "unbounded", board: "angles",      expect: "establish" },
+      { row: "R2",  existing: "none",              incoming: "bounded",   board: "angles",      expect: "establish", bound: true },
+      { row: "R3",  existing: "unbounded/unsettled", incoming: "unbounded", board: "same-alias", expect: "continue" },
+      { row: "R4",  existing: "unbounded/unsettled", incoming: "bounded",   board: "same-alias", expect: "busy", reason: "unsettled-unbounded-work" },
+      { row: "R5",  existing: "unbounded/unsettled", incoming: "unbounded", board: "different",  expect: "busy", reason: "incompatible-filing-target" },
+      { row: "R6",  existing: "unbounded/unsettled", incoming: "bounded",   board: "different",  expect: "busy", reason: "incompatible-filing-target" },
+      { row: "R7",  existing: "unbounded/settled",   incoming: "unbounded", board: "same-alias", expect: "continue" },
+      { row: "R8",  existing: "unbounded/settled",   incoming: "bounded",   board: "same-alias", expect: "establish", bound: true },
+      { row: "R9",  existing: "unbounded/settled",   incoming: "unbounded", board: "different",  expect: "establish" },
+      { row: "R10", existing: "unbounded/settled",   incoming: "bounded",   board: "different",  expect: "establish", bound: true },
+      { row: "R11", existing: "bounded/unsettled",   incoming: "unbounded", board: "same-alias", expect: "govern" },
+      { row: "R12", existing: "bounded/unsettled",   incoming: "bounded",   board: "same-alias", expect: "govern" },
+      { row: "R13", existing: "bounded/unsettled",   incoming: "unbounded", board: "different",  expect: "busy", reason: "incompatible-filing-target" },
+      { row: "R14", existing: "bounded/unsettled",   incoming: "bounded",   board: "different",  expect: "busy", reason: "incompatible-filing-target" },
+      { row: "R15", existing: "bounded/settled",     incoming: "unbounded", board: "same-alias", expect: "establish" },
+      { row: "R16", existing: "bounded/settled",     incoming: "bounded",   board: "same-alias", expect: "establish", bound: true },
+      { row: "R17", existing: "bounded/settled",     incoming: "unbounded", board: "different",  expect: "establish" },
+      { row: "R18", existing: "bounded/settled",     incoming: "bounded",   board: "different",  expect: "establish", bound: true },
+    ];
+
+    const observed = [];
+    for (const cell of MATRIX) {
+      const h = await harness();
+      try {
+        const project = h.project();
+        project.characters = [{ id: "KAI", name: "Kai", type: "Character", approvedFile: "KAI.png", continuityStates: [] }];
+        h.saveProject(project);
+        const runOf = () => h.project().characters[0].coverageAutomation;
+        /* The opening press files to angles, spelled "" — the alias a bounded individual
+           press really sends. The incoming press spells it "angles" for a same-board row,
+           so every "same-alias" row below is also an alias-compatibility assertion. */
+        const body = (spelling, bounded, extra = {}) => ({
+          purpose: "entity-reference", entityList: "characters", entityId: "KAI", entityType: "character",
+          prompt: "Kai from the requested angle.", references: [{ key: "base", label: "Approved primary", role: "base", url: KAI_PNG }],
+          outputCount: 1, quality: "high", resolution: "4k",
+          coverageJobType: "slot", coverageSheetType: spelling, coverageMode: "",
+          aspectRatio: referenceAspectLabel("characters"),
+          ...(bounded ? { coverageRequestCount: 4, coverageMaximumImages: 12 } : { coverageRequestCount: undefined, coverageMaximumImages: undefined }),
+          generationRequest: Presentation.generationRequestDeclaration({ surface: "reference-automation", viewMode: "simple" }),
+          ...extra,
+        });
+
+        let opened = null;
+        if (cell.existing !== "none") {
+          const openBounded = cell.existing.startsWith("bounded");
+          opened = await h.coverage(body(TARGET_SPELLINGS.angles[0], openBounded, { clientRequestId: `${cell.row}-open`, targetCoverageSlotId: "s1" }));
+          assert.strictEqual(opened.status, 200, `${cell.row}: the opening press must dispatch: ${JSON.stringify(opened.data)}`);
+          assert.strictEqual(coverageRunBoundedLike(runOf()), openBounded, `${cell.row}: and open the kind of run this row is about`);
+          if (cell.existing.endsWith("/settled")) {
+            const rows = h.ledger();
+            rows.find((r) => r.id === opened.data.job.id).status = "COMPLETED";
+            rows.find((r) => r.id === opened.data.job.id).ingestedAt = "2026-08-30T00:00:00.000Z";
+            h.seedLedger(rows);
+          } else {
+            assert.strictEqual(h.ledger()[0].status, "IN_QUEUE", `${cell.row}: and leave its work unsettled`);
+          }
+        }
+        const before = { calls: h.calls.length, rows: h.ledger().length, run: runOf() ? JSON.stringify(runOf()) : null };
+
+        const spelling = cell.board === "different" ? TARGET_SPELLINGS.expressions[0] : TARGET_SPELLINGS.angles[1];
+        const incoming = await h.coverage(body(spelling, cell.incoming === "bounded", {
+          clientRequestId: `${cell.row}-in`, targetCoverageSlotId: "s2",
+          ...(cell.board === "different" ? { coverageJobType: "sheet", coverageMode: "sheet", aspectRatio: "4:3" } : {}),
+        }));
+        const after = runOf();
+        const result = {
+          row: cell.row,
+          existingBounded: cell.existing.startsWith("bounded"),
+          existingUnsettled: cell.existing.endsWith("/unsettled"),
+          incomingBounded: cell.incoming === "bounded",
+          sameBoard: cell.board !== "different",
+          status: incoming.status,
+          reason: incoming.data.reason || "",
+          sameRunId: opened ? String(after?.id) === String(JSON.parse(before.run).id) : false,
+          retainedOpeningJob: opened ? (after?.jobs || []).includes(opened.data.job.id) : null,
+          boundAfter: coverageRunBoundedLike(after),
+          providerDelta: h.calls.length - before.calls,
+        };
+        observed.push(result);
+
+        /* ---- the cell's own assertions ---------------------------------------- */
+        if (cell.expect === "busy") {
+          assert.strictEqual(incoming.status, 409, `${cell.row}: must refuse: ${JSON.stringify(incoming.data)}`);
+          assert.strictEqual(incoming.data.code, "COVERAGE_RUN_BUSY", `${cell.row}: through the coverage-busy code`);
+          assert.strictEqual(incoming.data.reason, cell.reason, `${cell.row}: for the reason this row earns`);
+          assert.strictEqual(incoming.data.providerContacted, false, `${cell.row}: reaching no provider`);
+          assert.strictEqual(result.providerDelta, 0, `${cell.row}: PROVIDER INVOCATION DELTA = 0`);
+          assert.strictEqual(h.ledger().length, before.rows, `${cell.row}: and writing no ledger row`);
+          assert.strictEqual(JSON.stringify(after), before.run, `${cell.row}: the existing run must be BYTE-EQUIVALENT`);
+          assert(result.retainedOpeningJob, `${cell.row}: and its in-flight job must remain represented`);
+        } else {
+          assert.strictEqual(incoming.status, 200, `${cell.row}: must dispatch: ${JSON.stringify(incoming.data)}`);
+          assert.strictEqual(result.providerDelta, 1, `${cell.row}: PROVIDER INVOCATION DELTA = 1`);
+          if (cell.expect === "continue" || cell.expect === "govern") {
+            assert(result.sameRunId, `${cell.row}: must join the existing run, not replace it: ${JSON.stringify(after)}`);
+            assert(result.retainedOpeningJob, `${cell.row}: retaining the opening job`);
+            assert.deepStrictEqual(after.jobs, [opened.data.job.id, incoming.data.job.id], `${cell.row}: with both jobs on it`);
+          } else {
+            if (opened) assert(!result.sameRunId, `${cell.row}: must establish its own run: ${JSON.stringify(after)}`);
+            assert.deepStrictEqual(after.jobs, [incoming.data.job.id], `${cell.row}: carrying only the job it was established for`);
+          }
+          /* WHETHER A BOUND EXISTS AFTERWARD, and it is never invented. `continue` and
+             `govern` keep whatever the existing run had; `establish` records what THIS
+             press quoted and nothing else. */
+          const expectedBound = cell.expect === "continue" ? cell.existing.startsWith("bounded")
+            : cell.expect === "govern" ? true
+              : !!cell.bound;
+          assert.strictEqual(result.boundAfter, expectedBound, `${cell.row}: bound-after must be ${expectedBound}: ${JSON.stringify(after)}`);
+          if (cell.expect === "govern")
+            assert.strictEqual(after.requestCount, 4, `${cell.row}: and the governing ceiling is the one already recorded, not the incoming quote`);
+        }
+      } finally { h.close(); }
+    }
+
+    assert.strictEqual(observed.length, MATRIX.length, "every row of the model must have been driven");
+    /* THE TABLE, PRINTED. A future change that flips one cell shows up here as a changed
+       line rather than as a silence. */
+    for (const r of observed)
+      note(`25.${r.row} existing[bounded=${r.existingBounded} unsettled=${r.existingUnsettled}] incoming[bounded=${r.incomingBounded}] sameBoard=${r.sameBoard} -> ${r.status}${r.reason ? `/${r.reason}` : ""} sameRun=${r.sameRunId} keptOpeningJob=${r.retainedOpeningJob} boundAfter=${r.boundAfter} providerDelta=${r.providerDelta}`);
+    /* THE NAMED SEQUENCE, because a matrix of independent cells does not prove that a
+       refusal is a WAIT rather than a wall. B3 -> C3, driven as one story on one entity:
+       angles work in flight refuses expressions work, and the same expressions work
+       succeeds once the angle job has settled — with the settled job still on the ledger,
+       which is where a yielded projection's history lives. */
+    {
+      const h = await harness();
+      try {
+        const project = h.project();
+        project.characters = [{ id: "KAI", name: "Kai", type: "Character", approvedFile: "KAI.png", continuityStates: [] }];
+        h.saveProject(project);
+        const runOf = () => h.project().characters[0].coverageAutomation;
+        const angles = {
+          purpose: "entity-reference", entityList: "characters", entityId: "KAI", entityType: "character",
+          prompt: "Kai from the requested angle.", references: [{ key: "base", label: "Approved primary", role: "base", url: KAI_PNG }],
+          outputCount: 1, quality: "high", resolution: "4k", aspectRatio: referenceAspectLabel("characters"),
+          coverageJobType: "slot", coverageSheetType: "", coverageMode: "",
+          coverageRequestCount: undefined, coverageMaximumImages: undefined,
+          clientRequestId: "seq-angles", targetCoverageSlotId: "s1",
+          generationRequest: Presentation.generationRequestDeclaration({ surface: "reference-automation", viewMode: "simple" }),
+        };
+        const expressions = (n) => ({
+          ...angles, coverageJobType: "sheet", coverageSheetType: "expressions", coverageMode: "sheet",
+          aspectRatio: "4:3", clientRequestId: `seq-expr-${n}`, targetCoverageSlotId: "",
+        });
+
+        const first = await h.coverage(angles);
+        assert.strictEqual(first.status, 200, `seq: the angles press dispatches: ${JSON.stringify(first.data)}`);
+        assert.strictEqual(h.ledger()[0].status, "IN_QUEUE", "seq: and stays in flight");
+        const RUN_JSON = JSON.stringify(runOf());
+        const blocked = await h.coverage(expressions(1));
+        assert.strictEqual(blocked.status, 409, `seq: expressions work waits: ${JSON.stringify(blocked.data)}`);
+        assert.strictEqual(blocked.data.reason, "incompatible-filing-target", "seq: for the board it files against");
+        assert.strictEqual(JSON.stringify(runOf()), RUN_JSON, "seq: the angles run is untouched");
+        assert.strictEqual(h.calls.length, 1, "seq: and reached no provider");
+
+        /* Settle the angle job — the only thing standing in the way. */
+        const rows = h.ledger();
+        rows.find((r) => r.id === first.data.job.id).status = "COMPLETED";
+        rows.find((r) => r.id === first.data.job.id).ingestedAt = "2026-08-30T00:00:00.000Z";
+        h.seedLedger(rows);
+
+        const allowed = await h.coverage(expressions(2));
+        assert.strictEqual(allowed.status, 200, `seq: and the SAME work now succeeds — a wait, not a wall: ${JSON.stringify(allowed.data)}`);
+        assert.notStrictEqual(runOf().id, JSON.parse(RUN_JSON).id, "seq: as the current expressions projection");
+        assert.strictEqual(coverageRunBoundedLike(runOf()), false, "seq: with no bound invented for it");
+        /* AND THE YIELDED WORK IS NOT LOST — it is on the ledger, which is where the
+           history of a projection that has yielded lives. */
+        assert.strictEqual(h.ledger().length, 2, "seq: both jobs are on the ledger");
+        assert.strictEqual(h.ledger().find((r) => r.id === first.data.job.id).status, "COMPLETED",
+          "seq: the angle job the projection yielded from is still there, settled");
+        note("25.seq. B3 -> C3 as one story: angles work in flight refuses expressions work with incompatible-filing-target and 0 provider calls, and the identical expressions press succeeds once that job settles — the current projection moves, no bound is invented, and the settled angle job remains on the ledger");
+      } finally { h.close(); }
+    }
+
+    note(`25. all ${MATRIX.length} reachable rows of the coverage projection transition model, driven through the real route: compatibility is decided by coverageFilingTarget() alone, so a run stored sheetType:"" and a press sending "angles" are one projection; every refusal is COVERAGE_RUN_BUSY with the reason it earns, 0 provider calls, no ledger row and a byte-equivalent run; no continuation fabricates a bound and no establishment inherits one`);
   }
 
   console.log("");
