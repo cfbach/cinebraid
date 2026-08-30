@@ -2068,7 +2068,9 @@ async function main() {
       /* Membership still comes from the permit; what is removed is the LIVENESS half — the
          rule that a bounded run holding unsettled work owns the entity's coverage work. */
       const mutated = loadModified("fal-generation.js", [[
-        `    if (!coverageRunUnsettled(jobs, run).length) return { ok: true, ref: "" };`,
+        /* The anchor moved with the seam: the unsettled set is now computed once above and
+           shared with the unbounded-transition decision. Re-armed where it went. */
+        `    if (!unsettled.length) return { ok: true, ref: "" };`,
         `    if (true) return { ok: true, ref: "" };`,
       ]]);
       phase("MUTATION_LANDED");
@@ -2170,9 +2172,12 @@ async function main() {
          are not the same question, and conflating them loses a job that is still in flight
          from the board a filmmaker is watching it on. */
       const mutated = loadModified("fal-generation.js", [[
+        /* Re-armed at the moved seam: the ungoverned branch now also refuses to absorb a
+           press that declared a bound of its own. */
         `          const continuing = live && (governedBy
             ? String(existing.id || "") === governedBy
-            : !coverageRunBounded(existing)
+            : !requestBounded
+              && !coverageRunBounded(existing)
               && String(existing.sheetType || "") === sheetType
               && String(existing.mode || "") === mode);`,
         `          const continuing = live && !!governedBy && String(existing.id || "") === governedBy;`,
@@ -2196,6 +2201,55 @@ async function main() {
         const after = h.project().characters[0].coverageAutomation;
         observeHarm(String(after?.id) !== String(opened?.id) || !(after?.jobs || []).includes(first.data.job.id),
           `THE DEFECT: the second compatible manual press replaced the projection — run ${opened?.id} carrying ${JSON.stringify(opened?.jobs)} became ${after?.id} carrying ${JSON.stringify(after?.jobs)}, and the first job is still ${h.ledger().find((row) => row.id === first.data.job.id)?.status} with ${h.calls.length} provider calls made`);
+      } finally { h.close(); }
+    });
+
+  await control("a newly bounded coverage press absorbed into a live unbounded projection",
+    "a bounded operation cannot be established over unsettled unbounded work", async (phase) => {
+      /* TWO MUTATIONS, BECAUSE THE SERIALISATION HAS TWO HALVES AND EITHER ALONE ONLY MOVES
+         THE DAMAGE. Removing the refusal lets the bounded press through; removing
+         `!requestBounded` from the continuation guard is what then ABSORBS it into the
+         unbounded run — which is the shape that silently drops the ceiling rather than the
+         shape that discards the projection. Together they reproduce the defect the way a
+         reasonable implementation would have written it. */
+      const mutated = loadModified("fal-generation.js", [[
+        `    if (!ref) return coverageSerializationError(owner, jobs, body);`,
+        `    if (!ref) return null;`,
+      ], [
+        `            : !requestBounded
+              && !coverageRunBounded(existing)`,
+        `            : !coverageRunBounded(existing)`,
+      ]]);
+      phase("MUTATION_LANDED");
+      const h = await harness(mutated);
+      try {
+        seedCoverageEntity(h);
+        const manual = coverageSlot(1, {
+          coverageMode: "", coverageSheetType: "angles",
+          coverageRequestCount: undefined, coverageMaximumImages: undefined,
+        });
+        const first = await h.coverage(manual);
+        assert.strictEqual(first.status, 200, `the unbounded manual press must dispatch: ${JSON.stringify(first.data)}`);
+        assert.strictEqual(h.ledger()[0].status, "IN_QUEUE", "and its work must still be unsettled");
+        assert.strictEqual(h.project().characters[0].coverageAutomation.requestCount, undefined,
+          "and the run it opened must be genuinely unbounded, or this control is about nothing");
+        phase("UNSAFE_PATH_EXECUTED");
+
+        /* The bounded press the filmmaker was quoted 1 request / 3 images for. */
+        const bounded = await h.coverage(coverageSlot(2, {
+          coverageMode: "", coverageSheetType: "angles",
+          coverageRequestCount: 1, coverageMaximumImages: 3,
+        }));
+        const governing = h.project().characters[0].coverageAutomation;
+        const declaredBoundLost = bounded.status === 200 && governing?.requestCount === undefined;
+        /* AND THE CONSEQUENCE, not just the shape: with no ceiling on the governing run a
+           further press dispatches where the quote said it must not. */
+        const beyond = await h.coverage(coverageSlot(3, {
+          coverageMode: "", coverageSheetType: "angles",
+          coverageRequestCount: 1, coverageMaximumImages: 3,
+        }));
+        observeHarm(declaredBoundLost || beyond.status === 200,
+          `THE DEFECT: a press quoted at 1 request / 3 images was absorbed into a live unbounded run whose work was still in flight — the governing record reads ${JSON.stringify({ id: governing?.id, requestCount: governing?.requestCount, maximumImages: governing?.maximumImages })}, a further press answered ${beyond.status}, and ${h.calls.length} provider calls were made under a ceiling of 3 images`);
       } finally { h.close(); }
     });
 

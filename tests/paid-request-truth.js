@@ -2972,6 +2972,140 @@ async function main() {
     } finally { h.close(); }
   }
 
+  /* =======================================================================
+     24. THE TRANSITION BETWEEN AN UNBOUNDED PROJECTION AND A BOUNDED ONE.
+
+     `entity.coverageAutomation` is the single current coverage-run record, and section 21
+     settled what happens inside each kind of run. It did not settle what happens when the
+     kind CHANGES while paid work is in flight, and an independent reviewer found the gap
+     there: a bounded press arriving over a live unbounded manual run REPLACED it, so the
+     ceiling was recorded on a new run while the manual job still IN_QUEUE vanished from the
+     projection — two paid calls, one of them represented nowhere. Had the two presses
+     shared a task the same request would have been absorbed instead and the quote dropped
+     silently. One record, two destructive outcomes, no third one available.
+
+     So the answer is neither: it SERIALISES. A bounded operation cannot be established
+     while unbounded work nobody has heard back about is still outstanding, and once that
+     work settles it establishes normally, with its own ceiling, enforced. The five rows
+     below are the whole matrix. */
+  {
+    const h = await harness();
+    try {
+      const project = h.project();
+      project.characters = [{ id: "KAI", name: "Kai", type: "Character", approvedFile: "KAI.png", continuityStates: [] }];
+      h.saveProject(project);
+      const runOf = () => h.project().characters[0].coverageAutomation;
+      const press = (extra = {}) => ({
+        purpose: "entity-reference", entityList: "characters", entityId: "KAI", entityType: "character",
+        prompt: "Kai from the requested angle.", references: [{ key: "base", label: "Approved primary", role: "base", url: KAI_PNG }],
+        outputCount: 3, quality: "high", resolution: "4k", aspectRatio: referenceAspectLabel("characters"),
+        coverageJobType: "slot", coverageSheetType: "angles", coverageMode: "",
+        coverageRequestCount: undefined, coverageMaximumImages: undefined,
+        generationRequest: Presentation.generationRequestDeclaration({ surface: "reference-automation", viewMode: "simple" }),
+        ...extra,
+      });
+      /* A bounded press is the coverage dialog's: it names a mode and quotes a plan. */
+      const boundedPress = (extra = {}) => press({
+        coverageMode: "individual", coverageSheetType: "", coverageRequestCount: 1, coverageMaximumImages: 3, ...extra,
+      });
+      const deliver = (jobId) => {
+        const rows = h.ledger();
+        const row = rows.find((item) => item.id === jobId);
+        assert(row, `the job to deliver must exist: ${jobId}`);
+        row.status = "COMPLETED";
+        row.ingestedAt = "2026-08-30T00:00:00.000Z";
+        h.seedLedger(rows);
+      };
+
+      /* THE ROWS ARE ORDERED SO THAT ONE JOB IS IN FLIGHT WHEN ROW 4 RUNS. The route caps
+         concurrency at two, and a third live job would be refused by that cap instead —
+         the assertion would then be reading the wrong refusal and row 4 would prove
+         nothing about the transition it exists for. */
+      const manualOne = await h.coverage(press({ clientRequestId: "m1", targetCoverageSlotId: "s1" }));
+      assert.strictEqual(manualOne.status, 200, `1: the unbounded press dispatches: ${JSON.stringify(manualOne.data)}`);
+      const unboundedRun = runOf();
+      assert.strictEqual(h.ledger()[0].status, "IN_QUEUE", "1: and its work is unsettled");
+      assert.strictEqual(unboundedRun.requestCount, undefined, "1: with no ceiling of its own");
+      const UNBOUNDED_JSON = JSON.stringify(unboundedRun);
+      const afterManual = h.calls.length;
+
+      /* ROW 4 — LIVE UNBOUNDED WITH UNSETTLED WORK → NEWLY BOUNDED ACTION: refuse.
+         The reviewer's reproduction. It is refused BEFORE the provider, the unbounded run
+         is byte-equivalent, and nothing of the bounded authorization is half-written. */
+      const blocked = await h.coverage(boundedPress({ clientRequestId: "b1", targetCoverageSlotId: "s3" }));
+      assert.strictEqual(blocked.status, 409, `4: a bounded press may not establish over unsettled unbounded work: ${JSON.stringify(blocked.data)}`);
+      assert.strictEqual(blocked.data.code, "COVERAGE_RUN_BUSY", "4: through the existing coverage-busy code");
+      assert.strictEqual(blocked.data.reason, "unsettled-unbounded-work",
+        `4: naming the reason it is busy, so it is distinguishable from the filing refusal: ${JSON.stringify(blocked.data)}`);
+      assert.strictEqual(blocked.data.providerContacted, false, "4: and states it reached no provider");
+      assert.strictEqual(h.calls.length, afterManual, "4: PROVIDER INVOCATION COUNT DID NOT INCREASE");
+      assert.strictEqual(JSON.stringify(runOf()), UNBOUNDED_JSON,
+        `4: the live unbounded run is BYTE-EQUIVALENT: ${JSON.stringify(runOf())}`);
+      assert(runOf().jobs.includes(manualOne.data.job.id), "4: the first job is still represented");
+      assert.strictEqual(h.ledger().find((row) => row.id === manualOne.data.job.id).status, "IN_QUEUE",
+        "4: and is still genuinely in flight, which is why it could not be discarded");
+      assert.strictEqual(runOf().requestCount, undefined, "4: no bounded authorization was half-created");
+      assert.strictEqual(runOf().maxSpend, undefined, "4: and none was half-priced");
+      assert.strictEqual(h.ledger().length, 1, "4: and no second row was written");
+
+      /* ROW 1 — UNBOUNDED → COMPATIBLE UNBOUNDED: continue the projection. Proved in full
+         at 21E; asserted here as the row of the matrix it is, because the rows either side
+         of it are only meaningful beside it — a refusal that also lost the projection would
+         satisfy row 4 while destroying what row 1 guarantees. */
+      const manualTwo = await h.coverage(press({ clientRequestId: "m2", targetCoverageSlotId: "s2" }));
+      assert.strictEqual(manualTwo.status, 200, `1: a compatible unbounded press still dispatches: ${JSON.stringify(manualTwo.data)}`);
+      assert.strictEqual(runOf().id, unboundedRun.id, "1: same run id");
+      assert.deepStrictEqual(runOf().jobs, [manualOne.data.job.id, manualTwo.data.job.id], "1: both jobs retained");
+      assert.strictEqual(runOf().requestCount, undefined, "1: and no ceiling was fabricated");
+      assert.strictEqual(h.calls.length, afterManual + 1, "1: and it reached the provider");
+
+      /* ROW 5 — SETTLED UNBOUNDED RUN → NEWLY BOUNDED ACTION: establish, with its ceiling.
+         This is what makes row 4 a serialisation rather than a wall. */
+      deliver(manualOne.data.job.id);
+      deliver(manualTwo.data.job.id);
+      const established = await h.coverage(boundedPress({ clientRequestId: "b2", targetCoverageSlotId: "s4" }));
+      assert.strictEqual(established.status, 200, `5: once the manual work settles the bounded press establishes: ${JSON.stringify(established.data)}`);
+      const boundedRun = runOf();
+      assert.notStrictEqual(boundedRun.id, unboundedRun.id, "5: as its own run, not the settled one");
+      assert.strictEqual(boundedRun.requestCount, 1, "5: persisting the request count it quoted");
+      assert.strictEqual(boundedRun.maximumImages, 3, "5: and its image ceiling");
+      assert.strictEqual(boundedRun.maxSpend?.amount, 0.18, "5: and its spend ceiling, priced from costEstimateFromRate()");
+      assert.deepStrictEqual(boundedRun.jobs, [established.data.job.id], "5: carrying the job it was established for");
+      /* AND NO UNSETTLED JOB DISAPPEARED — both manual jobs are delivered and still on the
+         ledger, which is the record that survives a projection yielding to a newer run. */
+      assert.strictEqual(h.ledger().length, 3, "5: every job is still on the ledger");
+      for (const id of [manualOne.data.job.id, manualTwo.data.job.id])
+        assert.strictEqual(h.ledger().find((row) => row.id === id).status, "COMPLETED",
+          "5: the previous projection yielded only after its work had settled");
+
+      /* ROW 2 — BOUNDED → COMPATIBLE GOVERNED WORK: the established ceiling is enforced,
+         and a request cannot restate it. */
+      const overflow = await h.coverage(boundedPress({ clientRequestId: "b3", targetCoverageSlotId: "s5", coverageRequestCount: 99, coverageMaximumImages: 99 }));
+      assert.strictEqual(overflow.status, 409, `2: a second bounded job exceeds the authorised count: ${JSON.stringify(overflow.data)}`);
+      assert.strictEqual(overflow.data.code, "COVERAGE_REQUEST_CAP", "2: typed for the count it broke");
+      assert.strictEqual(runOf().requestCount, 1, "2: and the ceiling it was judged by is the one that was authorised");
+      /* AND PRESENTATION CANNOT DETACH IT — the prior escape, re-run inside this matrix. */
+      const reclassified = await h.coverage(press({ clientRequestId: "b4", targetCoverageSlotId: "s6" }));
+      assert.strictEqual(reclassified.status, 409, `2: nor may reclassified work detach from it: ${JSON.stringify(reclassified.data)}`);
+      assert.strictEqual(reclassified.data.code, "COVERAGE_REQUEST_CAP", "2: refused by the bound, not by a shape rule");
+
+      /* ROW 3 — BOUNDED LIVE → INCOMPATIBLE FILING WORK: refuse truthfully, run preserved. */
+      const BOUNDED_JSON = JSON.stringify(runOf());
+      const expression = await h.coverage(boundedPress({
+        clientRequestId: "b5", coverageJobType: "sheet", coverageSheetType: "expressions",
+        coverageMode: "sheet", aspectRatio: "4:3", coverageRequestCount: 1, coverageMaximumImages: 1,
+      }));
+      assert.strictEqual(expression.status, 409, `3: incompatible filing work is refused: ${JSON.stringify(expression.data)}`);
+      assert.strictEqual(expression.data.code, "COVERAGE_RUN_BUSY", "3: through the coverage-busy code");
+      assert.strictEqual(expression.data.reason, "incompatible-filing-target",
+        "3: naming a DIFFERENT reason from row 4, so one refusal cannot stand in for the other");
+      assert.strictEqual(JSON.stringify(runOf()), BOUNDED_JSON, "3: and the bounded run is byte-equivalent");
+      assert.strictEqual(h.calls.length, 3, "the refusing rows made no further provider call — 2 unbounded presses and 1 bounded establishment");
+
+      note("24. the five-row transition matrix, with `entity.coverageAutomation` the single current record: unbounded work continues its own projection (same run, both jobs, no ceiling); a bounded press arriving over UNSETTLED unbounded work is refused COVERAGE_RUN_BUSY/unsettled-unbounded-work before the provider, leaving the run byte-equivalent, the in-flight job represented and no half-written ceiling; once that work settles the same press establishes its own run and persists 1 request / 3 images / $0.18; the established ceiling then refuses a second job and cannot be restated or detached by presentation; and incompatible filing work is still COVERAGE_RUN_BUSY/incompatible-filing-target with the run preserved — a serialisation, not a wall");
+    } finally { h.close(); }
+  }
+
   console.log("");
   console.log("PAID REQUEST TRUTH — the money boundary enforces the request:");
   for (const line of notes) console.log(`  - ${line}`);

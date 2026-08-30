@@ -1024,7 +1024,7 @@ function registerFalGeneration(app, context) {
      * this reads that decision. An empty reference is the establishing request, which has
      * no run to be judged against and is what sets the bound. */
     const ref = String(membership.authorizationRef || "");
-    if (!ref) return null;
+    if (!ref) return coverageSerializationError(owner, jobs, body);
     const list = String(body?.entityList || "");
     const entityId = String(body?.entityId || "");
     const entity = (ownerProject(owner)[list] || []).find((row) => String(row?.id) === entityId);
@@ -1075,6 +1075,45 @@ function registerFalGeneration(app, context) {
     return authorizedSpendError(run.maxSpend, runJobs, body, outputCount);
   }
 
+  /* A NEW BOUND CANNOT BE ESTABLISHED OVER UNBOUNDED WORK NOBODY HAS HEARD BACK ABOUT.
+   *
+   * `entity.coverageAutomation` is the single current coverage-run record, so a bounded
+   * press arriving on top of a live unbounded one has only two outcomes available and both
+   * destroy something: continuing the unbounded run silently drops the ceiling the filmmaker
+   * was just quoted, and replacing it discards a projection whose jobs are still in flight —
+   * which is what an independent reviewer found, with an IN_QUEUE job disappearing from the
+   * board and two paid calls made. There is no third outcome that does not mean a second run
+   * store, so the honest answer is to SERIALISE: the bounded press waits for the manual work
+   * to settle, and then establishes normally with its own ceiling.
+   *
+   * PLACED HERE, BELOW THE UNRESOLVED-TWIN GUARD, AND THAT IS THE POINT OF THE PLACEMENT.
+   * An equivalent retry of a submission CineBraid never got an answer for is also "a request
+   * arriving over unsettled work", and for that one "we already sent this and do not know
+   * what happened" is the truer and more actionable answer. Deciding this in the coverage
+   * route instead would have pre-empted it and told a filmmaker to wait when what they
+   * needed to hear was that money may already have been spent.
+   *
+   * Reported through the existing coverage-busy code, because that is what this is, with the
+   * reason named beside it so it is distinguishable from the filing-target refusal without a
+   * second taxonomy for the same situation. */
+  function coverageSerializationError(owner, jobs, body) {
+    if (!coverageRequestBound(body)) return null;
+    const list = String(body?.entityList || "");
+    const entityId = String(body?.entityId || "");
+    const entity = (ownerProject(owner)[list] || []).find((row) => String(row?.id) === entityId);
+    const run = entity?.coverageAutomation;
+    if (!run || !COVERAGE_RUN_ACTIVE_STATUSES.includes(String(run.status || ""))) return null;
+    if (coverageRunBounded(run)) return null;
+    const unsettled = coverageRunUnsettled(jobs, run);
+    if (!unsettled.length) return null;
+    return {
+      status: 409,
+      code: "COVERAGE_RUN_BUSY",
+      message: `Coverage generation for this reference is already running ${unsettled.length} request${unsettled.length === 1 ? "" : "s"} that CineBraid has not heard back about, and this press asks for a bounded run of its own. Starting one now would either drop the limit you just approved or lose track of the work already in flight, so nothing was submitted. Wait for the running coverage to return, then start it again.`,
+      detail: { reason: "unsettled-unbounded-work", unsettledJobs: unsettled.length },
+    };
+  }
+
   /* WHICH BOARD A COVERAGE RESULT FILES AGAINST. The one distinction the run record has
      always drawn — public/entities.js compares `group === "expressions"` against
      `run.sheetType === "expressions"`, and the crop writer groups the same way — said here
@@ -1121,19 +1160,35 @@ function registerFalGeneration(app, context) {
       && Number.isInteger(Number(run?.maximumImages)) && Number(run.maximumImages) > 0;
   }
 
+  /* WHETHER THE INCOMING PRESS DECLARES A BOUND, through the SAME predicate that reads one
+     off a stored run — so "bounded" cannot mean one thing about a record and another about
+     the request that would become one.
+
+     This is a client-supplied pair, and it is safe to read here for the reason
+     `automationRunnerId` is: it can only make this request stricter. Declaring a quote can
+     cause a refusal or a ceiling; it can never remove one, and it can never buy access to
+     an authorization the request does not own. */
+  function coverageRequestBound(body) {
+    return coverageRunBounded({ requestCount: body?.coverageRequestCount, maximumImages: body?.coverageMaximumImages });
+  }
+
   function coverageAuthorizationFor(owner, jobs, list, entityId, sheetType) {
     const entity = (ownerProject(owner)[list] || []).find((row) => String(row?.id) === entityId);
     const run = entity?.coverageAutomation;
     if (!run || !COVERAGE_RUN_ACTIVE_STATUSES.includes(String(run.status || ""))) return { ok: true, ref: "" };
+    const unsettled = coverageRunUnsettled(jobs, run);
+    /* An unbounded run governs nothing, so there is no authorization here to name. Whether
+       a BOUNDED press may establish one over it is a different question and is answered
+       below in coverageSubmissionError(), after the unresolved-twin guard — see there. */
     if (!coverageRunBounded(run)) return { ok: true, ref: "" };
-    if (!coverageRunUnsettled(jobs, run).length) return { ok: true, ref: "" };
+    if (!unsettled.length) return { ok: true, ref: "" };
     if (coverageFilingTarget(run.sheetType) !== coverageFilingTarget(sheetType))
       return {
         ok: false,
         status: 409,
         code: "COVERAGE_RUN_BUSY",
         error: `Coverage generation for this reference is already running ${coverageFilingTarget(run.sheetType)} work that CineBraid has not heard back about, and ${coverageFilingTarget(sheetType)} candidates file against a different board. Nothing was submitted. Wait for the running coverage to return, then generate again.`,
-        detail: { runningFilingTarget: coverageFilingTarget(run.sheetType), requestedFilingTarget: coverageFilingTarget(sheetType) },
+        detail: { reason: "incompatible-filing-target", runningFilingTarget: coverageFilingTarget(run.sheetType), requestedFilingTarget: coverageFilingTarget(sheetType) },
       };
     return { ok: true, ref: String(run.id || "") };
   }
@@ -2667,7 +2722,7 @@ function registerFalGeneration(app, context) {
        and long before submit() — so `providerContacted: false` is a fact rather than a
        hope, and the same refusal helper, so it carries the same pre-provider evidence. */
     const coverageGuardError = coverageSubmissionError(owner, jobs, req.body, requestedOutputCount, membership);
-    if (coverageGuardError) return requestTruthRefusal(res, coverageGuardError.status, coverageGuardError.code, coverageGuardError.message);
+    if (coverageGuardError) return requestTruthRefusal(res, coverageGuardError.status, coverageGuardError.code, coverageGuardError.message, coverageGuardError.detail || {});
     const refs = Array.isArray(req.body?.references) ? req.body.references.filter((ref) => ref && ref.url) : [];
     const edit = refs.length > 0;
     /* Resolved once, before the row is built, so the same answer is both what a request
@@ -3329,6 +3384,10 @@ function registerFalGeneration(app, context) {
     } catch (error) {
       return res.status(ledgerFailureStatus(error)).json(ledgerFailurePayload(error));
     }
+    /* WHAT THIS PRESS IS ASKING FOR IN ITS OWN RIGHT, read once and used by both the
+       authorization decision above and the projection decision at the dispatch-commit
+       point — a press cannot be bounded for one and unbounded for the other. */
+    const requestBounded = coverageRequestBound(req.body);
     const authorization = coverageAuthorizationFor(owner, coverageJobs, list, entityId, sheetType);
     if (!authorization.ok)
       return res.status(authorization.status).json({
@@ -3410,12 +3469,20 @@ function registerFalGeneration(app, context) {
            * `!coverageRunBounded(existing)` is the guard that keeps it that way. It also
            * means a continuation never inherits a ceiling from a run that quoted one —
            * nothing here fabricates or borrows a bound, and an unbounded run stays
-           * unbounded however many compatible presses join it. */
+           * unbounded however many compatible presses join it.
+           *
+           * AND `!requestBounded` IS THE OTHER HALF OF THAT SENTENCE. A press that quoted a
+           * ceiling is not filing into somebody else's unbounded run: absorbing it would
+           * drop the limit the filmmaker was shown, which is the same silent loss read from
+           * the other end. Once the unbounded work has settled — the only way this line is
+           * reached with a bounded press, because an unsettled one is refused above — the
+           * bounded press establishes its own run and its own ceiling. */
           const governedBy = String(coveragePermit.authorizationRef || "");
           const live = !!existing && COVERAGE_RUN_ACTIVE_STATUSES.includes(String(existing.status || ""));
           const continuing = live && (governedBy
             ? String(existing.id || "") === governedBy
-            : !coverageRunBounded(existing)
+            : !requestBounded
+              && !coverageRunBounded(existing)
               && String(existing.sheetType || "") === sheetType
               && String(existing.mode || "") === mode);
           const run = continuing ? { ...existing, updatedAt: now() } : {
