@@ -36,7 +36,13 @@ const { execFileSync, spawnSync } = require("child_process");
 
 const ROOT = path.resolve(__dirname, "..");
 const SCANNER_FILE = path.join(ROOT, "scripts", "scan-secrets.js");
-const SCANNER_SOURCE = fs.readFileSync(SCANNER_FILE, "utf8");
+/* Two copies on purpose. The mutation anchors below are written with `\n`, and a
+   clone with core.autocrlf=true materialises the scanner with CRLF - so an anchor
+   matched against the raw bytes finds nothing and the control reports itself
+   broken rather than testing anything. Mutations run against the normalised copy;
+   the "nothing was written" check compares the raw one. */
+const SCANNER_BYTES = fs.readFileSync(SCANNER_FILE, "utf8");
+const SCANNER_SOURCE = SCANNER_BYTES.replace(/\r\n/g, "\n");
 const scanner = require(SCANNER_FILE);
 
 const notes = [];
@@ -292,7 +298,7 @@ const STATUS_BEFORE = sourceStatus();
 function testNothingWasWritten() {
   assert.strictEqual(
     fs.readFileSync(SCANNER_FILE, "utf8"),
-    SCANNER_SOURCE,
+    SCANNER_BYTES,
     "the scanner on disk was modified; every mutation in this suite must be compiled in memory",
   );
   assert.deepStrictEqual(

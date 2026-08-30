@@ -28,9 +28,13 @@ const path = require("path");
 const { execFileSync } = require("child_process");
 
 const ROOT = path.resolve(__dirname, "..");
-const read = (rel) => fs.readFileSync(path.join(ROOT, rel), "utf8");
-const exists = (rel) => fs.existsSync(path.join(ROOT, rel));
 const lf = (text) => text.replace(/\r\n/g, "\n");
+/* Normalised on the way in. `.gitattributes` sets `* text=auto`, so a clone with
+   core.autocrlf=true - Windows CI, and every ordinary Windows clone - gets CRLF
+   working files, and a `\n` in an anchor then matches nothing. This suite is about
+   what a document says, never about its line endings. */
+const read = (rel) => lf(fs.readFileSync(path.join(ROOT, rel), "utf8"));
+const exists = (rel) => fs.existsSync(path.join(ROOT, rel));
 
 const pkg = JSON.parse(read("package.json"));
 const { releaseIdentity } = require(path.join(ROOT, "release-identity"));
@@ -367,7 +371,7 @@ function testPublicationContract() {
 
   /* Prose can say anything; the commands are what someone will paste. Every push
      in this document must name one branch on both sides. */
-  const blocks = [...doc.matchAll(/```[a-z]*\n([\s\S]*?)```/g)].map((m) => m[1]);
+  const blocks = [...doc.matchAll(/```[a-z]*\r?\n([\s\S]*?)```/g)].map((m) => m[1]);
   assert(blocks.length > 0, "PUBLICATION.md has no commands");
   const pushes = blocks.join("\n").split(/\r?\n/).filter((line) => line.trim().startsWith("git push"));
   assert(pushes.length > 0, "PUBLICATION.md must show the publication command");
