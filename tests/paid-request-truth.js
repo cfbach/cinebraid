@@ -2595,15 +2595,50 @@ async function main() {
         const p = u.project();
         p.characters = [{ id: "KAI", name: "Kai", type: "Character", approvedFile: "KAI.png", continuityStates: [] }];
         u.saveProject(p);
+        const manualRun = () => u.project().characters[0].coverageAutomation;
         const manual = (n) => ({ ...slot(n), coverageMode: "", coverageSheetType: "angles", coverageRequestCount: undefined, coverageMaximumImages: undefined });
         const firstManual = await u.coverage(manual(1));
         assert.strictEqual(firstManual.status, 200, `the first slot press dispatches: ${JSON.stringify(firstManual.data)}`);
-        assert.strictEqual(u.project().characters[0].coverageAutomation.requestCount, undefined,
-          "and the run honestly records no bound rather than inventing one");
+        const openedRun = manualRun();
+        assert.strictEqual(openedRun.requestCount, undefined, "and the run honestly records no bound rather than inventing one");
+        assert.deepStrictEqual(openedRun.jobs, [firstManual.data.job.id], "carrying the job it was established for");
+        assert.strictEqual(u.ledger()[0].status, "IN_QUEUE",
+          "and that job is genuinely still in flight — the projection is being watched while it runs");
+
         const secondManual = await u.coverage(manual(2));
         assert.strictEqual(secondManual.status, 200,
           `and so does the second slot the filmmaker asks for, with the first still in flight: ${JSON.stringify(secondManual.data)}`);
         assert.strictEqual(u.calls.length, 2, "both single presses reach the provider");
+
+        /* AND THE FIRST PRESS IS STILL THERE.
+         *
+         * "Both dispatched and no budget exists" was all this asserted, and it was not
+         * enough: an independent reviewer found the second press silently REPLACING the
+         * first run record, so the run id changed and the job still IN_QUEUE disappeared
+         * from the board a filmmaker was watching it on. Two provider calls, one of them
+         * represented nowhere. An empty authorization reference means "nothing bounded
+         * governs this dispatch" — never "discard the projection". */
+        const continuedRun = manualRun();
+        assert.strictEqual(continuedRun.id, openedRun.id,
+          `the second compatible press must CONTINUE the run, not replace it: ${openedRun.id} -> ${continuedRun.id}`);
+        assert.deepStrictEqual(continuedRun.jobs, [firstManual.data.job.id, secondManual.data.job.id],
+          `and both jobs must be represented on it: ${JSON.stringify(continuedRun.jobs)}`);
+        assert(continuedRun.jobs.includes(firstManual.data.job.id),
+          "the first job, still IN_QUEUE, must not vanish from the projection it was dispatched into");
+        assert.strictEqual(u.ledger().find((row) => row.id === firstManual.data.job.id).status, "IN_QUEUE",
+          "and it is still in flight, which is what makes losing it from the board a lie rather than a tidy-up");
+
+        /* AND NOTHING WAS BORROWED OR INVENTED TO KEEP IT CONTINUOUS. Continuity is a
+           filing decision; it grants no ceiling, and it must not acquire one. */
+        assert.strictEqual(continuedRun.requestCount, undefined, "no request count was fabricated");
+        assert.strictEqual(continuedRun.maximumImages, undefined, "no image ceiling was fabricated");
+        assert.strictEqual(continuedRun.maxSpend, undefined, "and no spend ceiling was fabricated");
+        /* Asserted on the record rather than by pressing a third time: the route caps
+           concurrency at two in-flight jobs, so a third press here would be refused by
+           that cap and the assertion would be reading the wrong refusal. */
+        assert.deepStrictEqual(
+          Object.keys(continuedRun).filter((key) => ["requestCount", "maximumImages", "maxSpend"].includes(key)), [],
+          `the continued run carries no bound-shaped key at all: ${JSON.stringify(continuedRun)}`);
       } finally { u.close(); }
 
       note("21. a coverage press authorised for 1 paid request and 3 images dispatches exactly 1 while its work is unsettled: the honest second request AND the same work reclassified with a blank coverageMode are both COVERAGE_REQUEST_CAP, an expression sheet arriving mid-run is COVERAGE_RUN_BUSY, and in all three the live bounded run stays BYTE-EQUIVALENT with 0 provider calls and no second row — the escape that replaced and destroyed it is closed. The image ceiling binds separately (COVERAGE_IMAGE_CAP), the dollar ceiling is priced once from costEstimateFromRate(), and a press that quoted nothing is given no bound it never declared: two per-slot presses both dispatch");

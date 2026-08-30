@@ -1112,13 +1112,20 @@ function registerFalGeneration(app, context) {
    *     of paid work that was still in flight;
    *   - anything else, including a settled run, an unbounded run and no run at all: an
    *     independent press, which establishes or continues coverage exactly as before. */
+  /* WHETHER A PRESS QUOTED ANYTHING, in one place. The authorization test below and the
+     projection test at the dispatch-commit point both need this answer and must not be
+     able to give different ones — a run that is bounded for the purpose of enforcement and
+     unbounded for the purpose of continuation would be exactly the seam this slice closed. */
+  function coverageRunBounded(run) {
+    return Number.isInteger(Number(run?.requestCount)) && Number(run.requestCount) > 0
+      && Number.isInteger(Number(run?.maximumImages)) && Number(run.maximumImages) > 0;
+  }
+
   function coverageAuthorizationFor(owner, jobs, list, entityId, sheetType) {
     const entity = (ownerProject(owner)[list] || []).find((row) => String(row?.id) === entityId);
     const run = entity?.coverageAutomation;
     if (!run || !COVERAGE_RUN_ACTIVE_STATUSES.includes(String(run.status || ""))) return { ok: true, ref: "" };
-    const bounded = Number.isInteger(Number(run.requestCount)) && Number(run.requestCount) > 0
-      && Number.isInteger(Number(run.maximumImages)) && Number(run.maximumImages) > 0;
-    if (!bounded) return { ok: true, ref: "" };
+    if (!coverageRunBounded(run)) return { ok: true, ref: "" };
     if (!coverageRunUnsettled(jobs, run).length) return { ok: true, ref: "" };
     if (coverageFilingTarget(run.sheetType) !== coverageFilingTarget(sheetType))
       return {
@@ -3371,25 +3378,46 @@ function registerFalGeneration(app, context) {
           const entity = (project[list] || []).find((item) => String(item?.id) === entityId);
           if (!entity) throw new Error(`Entity ${entityId} no longer exists.`);
           const existing = entity.coverageAutomation;
-          /* ONE PRESS IS ONE RUN, and WHICH RUN IS THE PERMIT'S ANSWER.
+          /* ONE PRESS IS ONE RUN — AND THAT IS TWO QUESTIONS, NOT ONE.
            *
-           * This compared the stored run's `sheetType` and `mode` against the request's
-           * own two fields. Both are written by the work being bounded, so blanking one
-           * made byte-identical coverage work "a different task": it detached from the
-           * bound AND replaced the live run, destroying the record of paid work still in
-           * flight. Matching those fields more carefully cannot fix that — there is
-           * nothing on the request that is evidence about which press it is.
+           * This once compared the stored run's `sheetType` and `mode` against the
+           * request's own two fields and used the answer for BOTH of them. Those fields are
+           * written by the work being bounded, so blanking one made byte-identical coverage
+           * work "a different task": it detached from the bound AND replaced the live run,
+           * destroying the record of paid work still in flight.
            *
-           * `coverageAuthorizationFor()` decided this before dispatch, from the live run
-           * and the board the results file against, and minted the answer into the permit.
-           * A named reference is a continuation of exactly that run; an empty one is a new
-           * press, which is only ever issued when no bounded run is still holding unsettled
-           * paid work. So a live bounded run can no longer be replaced by anything, and
-           * genuinely independent coverage still establishes its own run as before. */
-          const continuing = existing
-            && COVERAGE_RUN_ACTIVE_STATUSES.includes(String(existing.status || ""))
-            && String(existing.id || "") === String(coveragePermit.authorizationRef || "")
-            && !!coveragePermit.authorizationRef;
+           * WHICH AUTHORIZATION IS PAYING is the permit's, decided before dispatch by
+           * `coverageAuthorizationFor()` from the live run and the board results file
+           * against. For bounded work it is the whole of the answer: a named reference
+           * continues exactly that run, which is what stops presentation fields detaching
+           * bounded work or replacing a run whose paid jobs are still in flight.
+           *
+           * WHICH RUN RECORD THIS FILES AGAINST is a different question, and an empty
+           * reference is not an answer to it. Empty means "no bounded authorization governs
+           * this dispatch" — the case of a per-slot press, which quotes nothing and has
+           * nothing to bound. Reading it as "start a fresh run" made every second manual
+           * press replace the first: the run id changed, the accumulated job list was
+           * discarded, and a job that was still IN_QUEUE vanished from the board a
+           * filmmaker was watching it on. Two provider calls, one of them no longer
+           * represented anywhere in the projection.
+           *
+           * So the ungoverned branch answers the FILING question the way this route always
+           * did — same live run, same task — and it is reachable only when nothing bounded
+           * is in play: a bounded run holding unsettled work either names itself in the
+           * permit (compatible work) or refuses the request outright (incompatible filing),
+           * so it can never fall through to here and be continued by presentation alone.
+           *
+           * `!coverageRunBounded(existing)` is the guard that keeps it that way. It also
+           * means a continuation never inherits a ceiling from a run that quoted one —
+           * nothing here fabricates or borrows a bound, and an unbounded run stays
+           * unbounded however many compatible presses join it. */
+          const governedBy = String(coveragePermit.authorizationRef || "");
+          const live = !!existing && COVERAGE_RUN_ACTIVE_STATUSES.includes(String(existing.status || ""));
+          const continuing = live && (governedBy
+            ? String(existing.id || "") === governedBy
+            : !coverageRunBounded(existing)
+              && String(existing.sheetType || "") === sheetType
+              && String(existing.mode || "") === mode);
           const run = continuing ? { ...existing, updatedAt: now() } : {
             id: `coverage:${list}:${entityId}:${uid()}`,
             list, entityId, mode, sheetType,

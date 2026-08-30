@@ -2161,6 +2161,44 @@ async function main() {
       } finally { h.close(); }
     });
 
+  await control("an unbounded coverage run continued only when a bounded authorization names it",
+    "a compatible manual press continues the run it joined instead of replacing it", async (phase) => {
+      /* THE REGRESSION, EXACTLY. `coverageAuthorizationFor()` correctly answers an empty
+         reference for an unbounded manual run — nothing bounded governs that dispatch — and
+         this mutation reads that emptiness as "start a fresh run", which is what the first
+         version of the permit correction did. The money question and the filing question
+         are not the same question, and conflating them loses a job that is still in flight
+         from the board a filmmaker is watching it on. */
+      const mutated = loadModified("fal-generation.js", [[
+        `          const continuing = live && (governedBy
+            ? String(existing.id || "") === governedBy
+            : !coverageRunBounded(existing)
+              && String(existing.sheetType || "") === sheetType
+              && String(existing.mode || "") === mode);`,
+        `          const continuing = live && !!governedBy && String(existing.id || "") === governedBy;`,
+      ]]);
+      phase("MUTATION_LANDED");
+      const h = await harness(mutated);
+      try {
+        seedCoverageEntity(h);
+        const manual = (n) => coverageSlot(n, {
+          coverageMode: "", coverageSheetType: "angles",
+          coverageRequestCount: undefined, coverageMaximumImages: undefined,
+        });
+        const first = await h.coverage(manual(1));
+        assert.strictEqual(first.status, 200, `the first manual press must dispatch: ${JSON.stringify(first.data)}`);
+        const opened = h.project().characters[0].coverageAutomation;
+        assert.strictEqual(h.ledger()[0].status, "IN_QUEUE", "and its job must still be in flight");
+        const second = await h.coverage(manual(2));
+        assert.strictEqual(second.status, 200, `and so must the second: ${JSON.stringify(second.data)}`);
+        phase("UNSAFE_PATH_EXECUTED");
+
+        const after = h.project().characters[0].coverageAutomation;
+        observeHarm(String(after?.id) !== String(opened?.id) || !(after?.jobs || []).includes(first.data.job.id),
+          `THE DEFECT: the second compatible manual press replaced the projection — run ${opened?.id} carrying ${JSON.stringify(opened?.jobs)} became ${after?.id} carrying ${JSON.stringify(after?.jobs)}, and the first job is still ${h.ledger().find((row) => row.id === first.data.job.id)?.status} with ${h.calls.length} provider calls made`);
+      } finally { h.close(); }
+    });
+
   console.log("");
   console.log("Harness self-checks — each of these was counted as a DETECTION by the previous harness:");
   console.log(`  - a stale mutation anchor is rejected: ${selfChecks.stale}`);
