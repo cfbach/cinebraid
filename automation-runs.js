@@ -248,6 +248,43 @@ function registerAutomationRuns(app, deps) {
       updatedAt: cleanText(source.updatedAt || now(), 80),
     };
   }
+  /* WHAT A RUN WAS AUTHORISED TO SPEND IS SETTLED WHEN IT IS AUTHORISED.
+   *
+   * These are the two figures the paid boundary enforces on every job of this run —
+   * fal-generation.js's automationSubmissionError() reads `config.maxImages` as the
+   * candidate cap and `config.maxSpend` as the dollar ceiling, and refuses a job that
+   * would take the run past either. Everything else on `config` is planner settings the
+   * runner may legitimately restate as it works.
+   *
+   * The browser writes both exactly once, in v626NewRun(), and its own note beside
+   * v626AuthorizedSpend() states the intent plainly: "Recorded at CREATION and never
+   * recomputed." That was true of the WRITER and untrue of the RECORD. v626SaveRun()
+   * PUTs the whole run object back on every progress update, and this merge took
+   * `config` wholesale from the body — so a run authorised for nine images and $0.18
+   * could restate itself at five hundred images and $999 through the ordinary progress
+   * route, and the credit guard would then enforce the new figure exactly as designed,
+   * reporting a cap it had been handed by the thing it was capping.
+   *
+   * A ceiling the bounded thing can rewrite is not a ceiling, so the authorised figures
+   * are carried forward from the stored run wherever there is one. `existing` is null in
+   * exactly one place — POST /api/automation/runs — which is the moment of authorisation
+   * and the only moment these may be set.
+   *
+   * AN ABSENT FIGURE IS PART OF THE AUTHORISATION TOO, and is preserved as an absence.
+   * A run authorised without an image cap cannot dispatch at all (the guard refuses a
+   * run with no valid positive cap), so letting a later write add one would widen what
+   * the run may do rather than narrow it. */
+  const AUTHORIZED_BOUND_KEYS = ["maxImages", "maxSpend"];
+  function preserveAuthorizedBound(next, existing) {
+    if (!existing) return next;
+    const established = plainObject(existing.config);
+    const out = { ...plainObject(next) };
+    for (const key of AUTHORIZED_BOUND_KEYS) {
+      if (Object.prototype.hasOwnProperty.call(established, key)) out[key] = established[key];
+      else delete out[key];
+    }
+    return out;
+  }
   function sanitizeRun(value, existing = null, options = {}) {
     const source = plainObject(value);
     const base = existing || {};
@@ -255,7 +292,10 @@ function registerAutomationRuns(app, deps) {
     const steps = {};
     for (const [key, step] of Object.entries(stepsSource).slice(0, MAX_STEPS)) steps[key] = sanitizeStep(step, key);
     const logsSource = Array.isArray(source.logs) ? source.logs : Array.isArray(base.logs) ? base.logs : [];
-    const config = source.config && typeof source.config === "object" ? source.config : plainObject(base.config);
+    const config = preserveAuthorizedBound(
+      source.config && typeof source.config === "object" ? source.config : plainObject(base.config),
+      existing,
+    );
     const usage = source.usage && typeof source.usage === "object" ? source.usage : plainObject(base.usage);
     const status = RUN_STATUSES.includes(source.status) ? source.status : base.status || "running";
     const preservedUpdatedAt = options.preserveUpdatedAt ? cleanText(source.updatedAt || base.updatedAt || now(), 80) : now();
