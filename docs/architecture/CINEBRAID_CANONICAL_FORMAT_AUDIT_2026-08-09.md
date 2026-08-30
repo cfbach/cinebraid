@@ -538,7 +538,7 @@ asset:     { id: "asset-<32hex>", mediaType, storage: { path (project-relative),
 reference: { id, subject: {type: shot|frame|entity|state|coverage, id},
              assetId, purpose: <role vocabulary>, priority, order, approved: bool }
 ```
-This is what makes *"this shot refers to this asset for this purpose"* expressible without `C:\Users\Cale\Desktop\foo.png` — the stated goal.
+This is what makes *"this shot refers to this asset for this purpose"* expressible without `C:\Users\<user>\Desktop\foo.png` — the stated goal.
 
 ### `statements[]` — the evidence sidebar (the key design proposal)
 
@@ -872,7 +872,7 @@ Of these, **M011 (entity prose)**, **M020 (`codes[]`)** and **M030 (asset resolu
 
 # PART 29 — OPEN FORMAT GOVERNANCE QUESTIONS
 
-*Note: a substantial prior strategy document exists outside the repository at* `C:\Users\calef\OneDrive\Desktop\OPEN_FILM_FORMAT_INITIATIVE_STRATEGY_2026-08-07.md` *(profiles, evidence model, source anchoring, relationships to MovieLabs OMC, MovieLabs Creative Vocabulary, OpenTimelineIO, Fountain, JSON Schema). This audit is consistent with its design principles §7.1–7.9 and reaches the same conclusions independently from repository evidence. **This is external evidence, clearly separated from repository findings.***
+*Note: a substantial prior strategy document exists outside the repository at* `C:\Users\<user>\OneDrive\Desktop\OPEN_FILM_FORMAT_INITIATIVE_STRATEGY_2026-08-07.md` *(profiles, evidence model, source anchoring, relationships to MovieLabs OMC, MovieLabs Creative Vocabulary, OpenTimelineIO, Fountain, JSON Schema). This audit is consistent with its design principles §7.1–7.9 and reaches the same conclusions independently from repository evidence. **This is external evidence, clearly separated from repository findings.***
 
 - **Should the spec live separately?** Eventually yes — but not first. Extract the spec only after CineBraid has shipped one full load/save cycle through the canonical contract. A spec with no conformant implementation attracts no one.
 - **Should CineBraid be the reference implementation?** Yes, and it should say so explicitly. The risk is CineBraid's convenience quietly becoming the definition; the mitigation is the conformance suite below, which CineBraid must pass without privileged knowledge.

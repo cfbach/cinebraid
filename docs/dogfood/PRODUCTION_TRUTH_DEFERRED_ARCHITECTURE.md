@@ -5,8 +5,12 @@
 **Date:** 2026-08-14
 
 CineBraid's alpha is **one creator, one local project truth, explicit Canon
-decisions**. The list below is everything a Professional or Enterprise tier
-would plausibly need and that this alpha deliberately does **not** implement.
+decisions**. The list below is the multi-user, team and organization-scale
+infrastructure that a shared deployment would need and that this alpha
+deliberately does **not** implement. None of it is deterministic core
+functionality withheld for a paid edition: what is deferred here is shared
+identity and authority architecture, which one creator on one machine has no
+use for.
 Each is recorded so a future maintainer can tell a gap from a decision.
 
 ---
@@ -22,7 +26,7 @@ Each is recorded so a future maintainer can tell a gap from a decision.
 | **Hostile-local-process security** | Explicitly out of scope. Any process that can rewrite `project.json` can write whatever it likes; guarding the in-page path against it would be theatre. | An out-of-process authority service. |
 | **Distributed locks** | One writer. The media ledger already has a one-writer-per-project rule for the same reason. | A lock protocol and a recovery story for a stale lock. |
 | **Simultaneous-editor conflict resolution** | No second editor. | Operational transform or CRDT over the project document, plus a merge rule for competing receipts. |
-| **Enterprise policy engines** | The only policy is the four target kinds' own rules, and they are fixed in the kernel. A configurable engine is exactly the replaceable-rule shape three audits walked through. | A policy language, and a way to make it non-replaceable at runtime. |
+| **Configurable organization policy engines** | The only policy is the four target kinds' own rules, and they are fixed in the kernel. A configurable engine is exactly the replaceable-rule shape three audits walked through. | A policy language, and a way to make it non-replaceable at runtime. |
 | **Complex cross-version authority migration** | The ledger is version 1 and fails closed on anything else. A project written by a future build is not read, which is the honest answer. | A migration framework for receipts, with the same accounting discipline `ofp/` applies to project documents. |
 
 ---

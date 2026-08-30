@@ -14,9 +14,9 @@
   --acc:#7dc98a; --acc-soft:rgba(125,201,138,.14);
   /* radii — rounded, modern */
   --r-card:16px; --r-tile:12px; --r-input:10px; --r-pill:999px; --r-sm:8px;
-  --display:'IBM Plex Sans Condensed','Arial Narrow',sans-serif;
-  --body:'IBM Plex Sans',system-ui,sans-serif;
-  --mono:'IBM Plex Mono',ui-monospace,Menlo,monospace;
+  --display:'IBM Plex Sans Condensed','Arial Narrow','Helvetica Neue Condensed','Segoe UI Semibold','Segoe UI',system-ui,sans-serif;
+  --body:'IBM Plex Sans',system-ui,'Segoe UI',-apple-system,'Helvetica Neue',Arial,sans-serif;
+  --mono:'IBM Plex Mono',ui-monospace,'Cascadia Mono','Segoe UI Mono',Menlo,Consolas,monospace;
   /* ==========================================================================
      THE OVERLAY STACK. One ladder, declared once, in the order a person reads it.
 
@@ -3247,11 +3247,11 @@ input:focus,textarea:focus,select:focus{border-color:rgba(79,216,204,.34);box-sh
 /* --- v6.6.4-studio.repair.2 consolidated application theme --- */
 :root{
   --ui-scale:1;
-  --body:'IBM Plex Sans',system-ui,sans-serif;
-  --display:'IBM Plex Sans Condensed','Arial Narrow',sans-serif;
-  --mono:'IBM Plex Mono',ui-monospace,Menlo,monospace;
+  --body:'IBM Plex Sans',system-ui,'Segoe UI',-apple-system,'Helvetica Neue',Arial,sans-serif;
+  --display:'IBM Plex Sans Condensed','Arial Narrow','Helvetica Neue Condensed','Segoe UI Semibold','Segoe UI',system-ui,sans-serif;
+  --mono:'IBM Plex Mono',ui-monospace,'Cascadia Mono','Segoe UI Mono',Menlo,Consolas,monospace;
 }
-#app[data-font="studio"]{--body:'IBM Plex Sans',system-ui,sans-serif;--display:'IBM Plex Sans Condensed','Arial Narrow',sans-serif}
+#app[data-font="studio"]{--body:'IBM Plex Sans',system-ui,'Segoe UI',-apple-system,'Helvetica Neue',Arial,sans-serif;--display:'IBM Plex Sans Condensed','Arial Narrow','Helvetica Neue Condensed','Segoe UI Semibold','Segoe UI',system-ui,sans-serif}
 #app[data-font="system"]{--body:system-ui,'Segoe UI',sans-serif;--display:system-ui,'Segoe UI',sans-serif;--mono:ui-monospace,Menlo,monospace}
 #app[data-font="editorial"]{--body:'Aptos','Trebuchet MS',sans-serif;--display:'Arial Narrow','Aptos Condensed','IBM Plex Sans Condensed',sans-serif}
 #app[data-acc="blue"]{--acc:#26d4e9;--acc-soft:rgba(38,212,233,.14)}

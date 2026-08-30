@@ -1,3 +1,15 @@
+# CineBraid 6.7.0-dev.1 — Public Source Readiness
+
+- The pre-release channel moved from `private` to `dev`. `release-identity.js` gives an unlisted channel its raw version rather than an invented label, so the display name is `CineBraid 6.7.0-dev.1` and no new label was added. `npm run sync:version` stamped the window title, the 65 asset cache stamps and the lockfile; no version literal was edited by hand.
+- `LICENSE` is the standard, unmodified Apache License 2.0. It previously described a private mainline build and a separately prepared Community repository; that split is obsolete. `package.json` now declares the SPDX identifier `Apache-2.0`.
+- New at the root: `CONTRIBUTING.md` (pull requests, DCO sign-off, no CLA), `SECURITY.md` (coordinated disclosure) and `TRADEMARKS.md` (the name and logo are held separately from the code licence). No `NOTICE` file: no shipped file carries an Apache NOTICE obligation.
+- All three HTML pages, including the pre-authentication login page, no longer fetch web fonts from a CDN. Typography resolves from locally installed and system faces, and no font binary was added. `npm run check:public-exposure` fails if a remote font or CDN reference reappears.
+- `npm run check:secrets` invoked the scanner with no target and exited 2 with usage on every call, so it had never scanned anything. It now scans the tracked working tree and the exact `git archive` publication tree, allows synthetic fixture values one exact value at a time per file and per rule, and is wired into `scripts/build-release.js` — which reads the archive buffer before either artifact is written — and into `npm run check:ci`.
+- Documentation truth: the README said 6.6.5 while `package.json` said 6.7.0, and named Express as the only runtime dependency while the server probes `ffmpeg`. Both corrected, along with what ffmpeg is for and when a provider key is actually needed.
+- `docs/PUBLICATION.md` records the publication contract: only `main` travels, to one named repository, with no mirror, no `--all` and no wildcard refspec.
+- No application behaviour change. Persistence, provider and model configuration, generation, authority and authentication are untouched.
+- A development identity, not a released build. See `docs/releases/v6.7.0-dev.1/`.
+
 # CineBraid 6.7.0 Private Test 1 — Open Film Project 1.0-draft.1 Contract
 
 - First CineBraid build carrying the Open Film Project draft contract: `format.id` `open-film-project`, `format.version` `1.0-draft.1`, with report-only validation over 24 synthetic fixtures.

@@ -223,6 +223,9 @@ const nodeSuites = [
   "check:paid-request-truth-negative",
   "check:sheet-gate",
   "check:sheet-gate-negative",
+  "check:secrets",
+  "check:public-exposure",
+  "check:public-exposure-negative",
 ];
 
 /* Suites that assert something about the whole machine and therefore cannot share it.

@@ -75,7 +75,7 @@ function findPackageRoot(dir) {
 
 function structuralCheck() {
   const rootMarkdown = fs.readdirSync(ROOT).filter((name) => name.endsWith(".md"));
-  assert(rootMarkdown.length <= 5, `release root contains ${rootMarkdown.length} Markdown files`);
+  assert(rootMarkdown.length <= 8, `release root contains ${rootMarkdown.length} Markdown files`);
   const releaseDir = path.join(ROOT, "docs", "releases", `v${VERSION}`);
   assert(fs.existsSync(releaseDir), `release documentation folder is missing: ${releaseDir}`);
   for (const suffix of ["RELEASE_NOTES", "PATCH_INSTALL", "VERIFICATION_REPORT"]) {

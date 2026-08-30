@@ -29,6 +29,7 @@ const os = require("os");
 const path = require("path");
 const zlib = require("zlib");
 const { execFileSync } = require("child_process");
+const { scanEntries, tarTextEntries } = require("./scan-secrets");
 
 const ROOT = path.resolve(__dirname, "..");
 
@@ -78,6 +79,23 @@ fs.mkdirSync(OUT, { recursive: true });
 const tar = git(["archive", "--format=tar", `--prefix=${PREFIX}`, commit]);
 const tarGz = zlib.gzipSync(tar, { level: 9 });
 const zip = git(["archive", "--format=zip", "-9", `--prefix=${PREFIX}`, commit]);
+
+/* ---- nothing ships until the archive itself has been read ---------------- */
+
+/* The credential and privacy scan runs on the tar buffer that is about to become
+   both artifacts, not on the working tree: `git archive` has already applied
+   .gitattributes export-ignore, so this is the exact byte set a publication would
+   carry. Placed before the writes, so a finding leaves no artifact on disk to be
+   uploaded by mistake. */
+const scanned = scanEntries(tarTextEntries(tar, PREFIX));
+assert(scanned.files > 0, "the credential scan read no files out of the release archive");
+for (const s of scanned.suppressed) console.log(`  allowed ${s.file}:${s.line}  ${s.rule} — ${s.allowedBecause}`);
+assert.deepStrictEqual(
+  scanned.findings.map((f) => `${f.file}:${f.line}  ${f.rule} — ${f.why}`),
+  [],
+  "the release archive carries credential or privacy findings",
+);
+console.log(`Credential/privacy scan clean over ${scanned.files} archive files`);
 
 const windowsArchive = path.join(OUT, identity.windowsArchive);
 const runtimeArchive = path.join(OUT, identity.runtimeArchive);

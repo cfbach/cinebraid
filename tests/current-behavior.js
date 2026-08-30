@@ -513,6 +513,8 @@ async function main() {
     "project-save-revision-race.js",
     "project-switch-safety.js",
     "provider-health.js",
+    "public-exposure-negative-controls.js",
+    "public-exposure.js",
     "quiet-shell-real-browser.py",
     "quiet-shell.js",
     "readiness-action-projection-negative-controls.js",
@@ -735,7 +737,7 @@ async function main() {
   assert(!/\bconfirm\s*\(/.test(frontendConfirmSources), "native browser confirms must not bypass the accessible modal system");
 
   const rootMarkdown = fs.readdirSync(ROOT).filter((name) => name.endsWith(".md"));
-  assert(rootMarkdown.length <= 5, `root has ${rootMarkdown.length} markdown files`);
+  assert(rootMarkdown.length <= 8, `root has ${rootMarkdown.length} markdown files`);
   assert(!fs.readdirSync(ROOT).some((name) => name.endsWith(".docx")));
 
   const files = [];

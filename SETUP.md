@@ -1,4 +1,4 @@
-# CineBraid 6.6.5 Private Test 1 setup
+# CineBraid setup
 
 ## Requirements
 

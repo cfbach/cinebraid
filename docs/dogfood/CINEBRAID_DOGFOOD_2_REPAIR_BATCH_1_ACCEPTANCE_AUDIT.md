@@ -38,7 +38,7 @@ These are not isolated copy or presentation defects. They arise because authorit
 | Working tree before audit report | Clean | No checkout or reset performed |
 | Audit worktree | None | Not required; target branch was already checked out and clean |
 
-The only Git diagnostic was a sandbox warning that the process could not read `C:\Users\calef\.config\git\ignore`. It did not change the repository receipt or command exit status.
+The only Git diagnostic was a sandbox warning that the process could not read `C:\Users\<user>\.config\git\ignore`. It did not change the repository receipt or command exit status.
 
 The required closeout, prior forensic audit, and implementation handoff were read before judging the branch. Their claims were treated as hypotheses, not proof.
 

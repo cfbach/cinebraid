@@ -1,13 +1,21 @@
-# CineBraid 6.6.5 Private Test 1
+# CineBraid
 
-**Your production, your control.**
+**The production layer that keeps AI cinema tied together.
+Your production, your control.**
 
-The first packaged CineBraid release, for isolated private testing. It ships as a
-Windows ZIP and an architecture-neutral runtime tarball with checksums and a
-manifest, and it is meant to be installed **alongside** an existing CineBraid
-rather than over one.
+CineBraid is a local-first film production application. It holds the approved
+truth of a production — the Project Bible, references, continuity, shots, review
+and approval — and it keeps that truth yours: it runs on your machine, binds
+loopback by default, and uploads nothing on its own.
 
-This is a private test build, not a public production release.
+You can plan and finish a production entirely by hand, with no AI provider
+configured and no generation enabled. AI assistance and provider-backed
+generation are optional layers on top of that.
+
+**Status: in development.** The version is `6.7.0-dev.1` — a development
+identity, not a released or production-ready build. There is no support
+commitment and no supported-version matrix; work happens on `main`. Expect rough
+edges, and read [SECURITY.md](SECURITY.md) before reporting anything sensitive.
 
 ## Requirements
 
@@ -24,21 +32,54 @@ Check what you have:
 node --version
 ```
 
-Express is the only runtime dependency. There is no build step and no bundler.
+`express` is the only npm runtime dependency, and there is no build step and no
+bundler. It is installed from the lockfile with `npm ci`; nothing is vendored into
+the repository.
+
+**ffmpeg is optional and is not bundled.** CineBraid never requires it to start or
+to run the manual workflow. It probes for `ffmpeg -version` in two places and
+reports the answer rather than depending on it:
+
+- `/api/system/health` reports whether ffmpeg was found, and its version line.
+- The system assistant raises a low-priority advisory when it is missing, because
+  media inspection and proxy utilities are the things that would want it.
+
+If you never see that advisory, you never needed it. Install it from your own
+package manager if you want those utilities.
+
+### API keys are optional
+
+No credential is needed to install, start, open a project, or take a shot from
+opening to approved. Provider keys are needed only when you turn on a
+provider-backed feature:
+
+- an **AI assistant** for planning and continuity help — a local Ollama server, an
+  OpenAI-compatible server you run, or the OpenAI or Anthropic APIs. "No AI" is a
+  supported setting, not a degraded one.
+- **in-app generation**, which is dispatched to fal.ai. Without a key, the
+  generation surfaces stay off and everything else works.
+
+A missing or unreachable provider degrades that feature, not the product. Keys are
+stored server-side in `data/config.json` and masked when settings are read back,
+so they are never sent to the browser in plain text.
 
 ## Start
 
-From the release folder:
+From a source checkout:
 
-- Windows: `start.bat`
-- macOS: `start.command`
-- Linux / DGX Spark: `./start.sh`
-
-Or, once dependencies are installed with `npm ci`:
+```bash
+npm ci
+```
 
 ```bash
 npm start
 ```
+
+From a release folder, the startup scripts do the same thing:
+
+- Windows: `start.bat`
+- macOS: `start.command`
+- Linux / DGX Spark: `./start.sh`
 
 Then open the local CineBraid URL shown in the terminal — by default
 `http://127.0.0.1:4477`. Set `PORT` if 4477 is taken.
@@ -55,6 +96,10 @@ this computer can reach it, and it says so on startup:
 Local-only mode: other devices cannot connect.
 ```
 
+The interface makes no third-party requests to render itself: no font CDN, no
+analytics, no remote scripts or stylesheets. Everything the browser loads is
+served by your own CineBraid.
+
 Reaching the interface from another machine is a **deliberate opt-in**, never a
 default:
 
@@ -67,21 +112,21 @@ npm run start:lan
 or sensitive projects — without one, anyone who can reach the port can drive the
 application.
 
-You do not need LAN mode to use CineBraid, and you do not need it to run local
-models: CineBraid reaches out to those, not the other way round.
+You do not need LAN mode to use CineBraid, and you do not need it to use a local
+AI server: CineBraid reaches out to that, not the other way round.
 
 ## Manual first
 
 CineBraid is a **manual-first** production tool. Every stage — planning, the
 Project Bible, shot work, review and approval — is usable end to end by hand,
-with no AI provider configured and no generation enabled. AI and in-app
-generation are optional accelerators layered on top of that manual workflow, and
-they are switched off in a fresh install.
+with no AI provider configured and no generation enabled. You can bring in images,
+video and audio made anywhere, organize them, assign continuity, attach them to
+shots, and mark the final result.
 
-Two consequences worth knowing before you test:
+Two consequences worth knowing:
 
 - **Human approval stays explicit.** Nothing is approved, locked or superseded on
-  your behalf.
+  your behalf. A machine can propose; only a person decides.
 - **A missing or unreachable provider degrades the feature, not the product.**
   If an assistant is not configured, the manual path is still there.
 
@@ -99,7 +144,8 @@ see the manual workflow before deciding what to automate.
 ## Testing an install
 
 Three commands, in increasing order of cost. All are portable and none contacts a
-provider — no suite in CineBraid depends on a live model service.
+provider — no suite in CineBraid depends on a live model service, and none needs
+an API key.
 
 ```bash
 npm run check:quick
@@ -130,26 +176,33 @@ not installed; that is expected on a plain install and is not a failure.
   media, and rolling backups.
 - `data/config.json` — your settings, including provider credentials.
 
-Provider keys are stored server-side and masked when settings are read back, so
-they are not sent to the browser in plain text. Projects, media, provider keys
-and local-model settings all stay inside the workspace you configure; nothing is
-uploaded anywhere by CineBraid itself.
+Projects, media, provider keys and local-model settings all stay inside the
+workspace you configure; nothing is uploaded anywhere by CineBraid itself. When
+you do dispatch a generation, the material for that request goes to the provider
+you chose, and nowhere else.
 
 Both directories are excluded from version control and from release archives.
 
-## Private-preview safety
+## Contributing
 
-- Human approval remains explicit.
-- Two or more motion anchor frames must pass sequence continuity review before
-  motion opens.
-- Projects, media, provider keys, and local-model settings remain local to the
-  configured workspace.
+Pull requests are welcome. Commits need a DCO `Signed-off-by` line; there is no
+CLA and you keep your copyright. See [CONTRIBUTING.md](CONTRIBUTING.md).
+
+Security issues go through [SECURITY.md](SECURITY.md), not a public issue.
+
+## Licence
+
+CineBraid is licensed under the **Apache License 2.0** — see [LICENSE](LICENSE).
+
+The licence covers the code. The CineBraid name and logo are branding held
+separately; see [TRADEMARKS.md](TRADEMARKS.md) before using either in a fork.
 
 ## More documentation
 
 - `docs/GETTING_STARTED.md` — the short path from install to a finished shot.
 - `SETUP.md` — install, configuration and provider setup in detail.
-- `docs/releases/v6.6.5-private.1/` — release notes and verification material.
+- `docs/PUBLICATION.md` — how a reviewed commit reaches the public repository.
+- `docs/releases/v6.7.0-dev.1/` — notes and install guidance for this identity.
 
 For an isolated side-by-side QA install on the DGX Spark, see
 `docs/SPARK_QA_SETUP.md`.
