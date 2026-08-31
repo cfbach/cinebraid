@@ -346,17 +346,92 @@
     return new Error(`Braidy cannot carry ${braidyFactPath(path)}: ${said}`);
   }
 
-  /* PLAIN, ASKED IN A WAY THAT SURVIVES A REALM BOUNDARY.
+  /* PLAIN, ASKED IN A WAY THAT SURVIVES A REALM BOUNDARY AND STILL MEANS SOMETHING.
 
-     `proto === Object.prototype` is the obvious spelling and it is wrong here: a suite
-     evaluates this file in a vm context with its own Object, and a fact object built
-     by the host would be refused as exotic. The same holds for anything reaching a
-     browser from another frame. What is actually being asked is "does the prototype
-     chain stop one step up", which is true of Object.prototype in every realm and of a
-     null prototype, and false of a Date, a Map, a Set or a class instance. */
+     Two wrong answers were tried before this one.
+
+     `proto === Object.prototype` is realm-sensitive: this file is evaluated in a vm
+     context by its own suite, and every fact object built by the host would have been
+     refused as exotic. The same is true of anything reaching a browser from another
+     frame.
+
+     `Object.getPrototypeOf(proto) === null` fixed that and was far too generous. It
+     asks "does the chain stop one step up", which is true of Object.prototype in every
+     realm — and equally true of any prototype somebody rooted at null. All of these
+     were accepted by it:
+
+       class Exotic {}
+       Object.setPrototypeOf(Exotic.prototype, null)
+       new Exotic()                                  a class instance, straight through
+
+       const proto = Object.create(null)
+       Object.create(proto)                          an instance of a caller's own type
+
+     The question is not how long the chain is. It is whether `proto` IS the intrinsic
+     Object.prototype of the realm the value came from, and that has to be established
+     rather than inferred from shape.
+
+     WHAT ESTABLISHES IT. An intrinsic Object.prototype is introduced by a native
+     `Object` constructor that points back at it, and carries native methods of its
+     own. Both halves are checked, and neither can be forged from script:
+
+       * the constructor is read as an OWN DATA PROPERTY, so an inherited or accessor
+         `constructor` proves nothing;
+       * `constructor.prototype === proto`, which is what defeats handing over the real
+         `Object` as somebody else's constructor — and is also why a Proxy cannot be
+         used here, since the proxy invariants forbid reporting a `prototype` other
+         than the target's non-configurable one;
+       * `Function.prototype.toString` reports `[native code]` for genuine intrinsics
+         only. It is called through Function.prototype rather than through the value,
+         so an own `toString` cannot answer for it; a Proxy or a bound function loses
+         the name and reads `function () { [native code] }`; an authored
+         `function Object() {}` and a `class Object {}` read as their own source; and a
+         body written to LOOK native fails the anchors.
+
+     A DIRECT null prototype stays accepted on its own — `Object.create(null)` is a
+     plain record with nothing between it and nothing, which is exactly what a fact
+     bag is. What is refused is inheriting from a null-rooted prototype somebody else
+     made, because that is an instance of their type and not a record.
+
+     Memoised in a WeakSet, because a fact graph is normally one realm and this would
+     otherwise re-derive the same answer for every node. */
+  const BRAIDY_INTRINSIC_PROTOTYPES = new WeakSet();
+  const BRAIDY_FOREIGN_PROTOTYPES = new WeakSet();
+  const BRAIDY_NATIVE_SOURCE = /^function\s+([A-Za-z$_][\w$]*)\s*\(\s*\)\s*\{\s*\[native code\]\s*\}$/;
+
+  function braidyNativeFunctionNamed(candidate, name) {
+    if (typeof candidate !== "function") return false;
+    let source = "";
+    try { source = Function.prototype.toString.call(candidate); } catch { return false; }
+    const match = BRAIDY_NATIVE_SOURCE.exec(source);
+    return !!match && match[1] === name;
+  }
+
+  function braidyIntrinsicObjectPrototype(proto) {
+    if (BRAIDY_INTRINSIC_PROTOTYPES.has(proto)) return true;
+    if (BRAIDY_FOREIGN_PROTOTYPES.has(proto)) return false;
+    const decide = () => {
+      if (Object.getPrototypeOf(proto) !== null) return false;
+      const constructorAt = Object.getOwnPropertyDescriptor(proto, "constructor");
+      if (!constructorAt || !("value" in constructorAt)) return false;
+      const constructor = constructorAt.value;
+      if (!braidyNativeFunctionNamed(constructor, "Object")) return false;
+      /* Read once. `constructor.prototype` on an exotic callable can throw. */
+      let introduced = null;
+      try { introduced = constructor.prototype; } catch { return false; }
+      if (introduced !== proto) return false;
+      /* A second intrinsic anchor, for the same price. */
+      const hasOwn = Object.getOwnPropertyDescriptor(proto, "hasOwnProperty");
+      return !!hasOwn && "value" in hasOwn && braidyNativeFunctionNamed(hasOwn.value, "hasOwnProperty");
+    };
+    const answer = decide();
+    (answer ? BRAIDY_INTRINSIC_PROTOTYPES : BRAIDY_FOREIGN_PROTOTYPES).add(proto);
+    return answer;
+  }
+
   function braidyPlainObject(value) {
     const proto = Object.getPrototypeOf(value);
-    return proto === null || Object.getPrototypeOf(proto) === null;
+    return proto === null || braidyIntrinsicObjectPrototype(proto);
   }
 
   function braidyFactValue(value, path, ancestors) {
@@ -633,6 +708,9 @@
     BRAIDY_QUALIFICATION,
     BRAIDY_INTENT_FRAMING,
     braidySafeId,
+    /* Exported so a suite can put the predicate under every prototype shape directly,
+       rather than only through a handoff. */
+    braidyPlainObject,
     braidyPresentation,
     braidyHandoff,
     braidyResolveAction,

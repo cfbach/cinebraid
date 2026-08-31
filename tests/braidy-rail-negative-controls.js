@@ -231,10 +231,31 @@ async function factControls() {
 
   await control("C5g the plain-object test is written so a realm boundary refuses everything", "checkFactsAreReadOnlyContext",
     { contract: mutate(SOURCES.contract,
-        "    return proto === null || Object.getPrototypeOf(proto) === null;",
+        "    return proto === null || braidyIntrinsicObjectPrototype(proto);",
         "    return proto === null || proto === Object.prototype;",
         "C5g") },
     "Every fact object built outside this file's realm — a suite's, another frame's — would be refused as exotic, which is a working contract failing for a reason that has nothing to do with the facts.");
+
+  /* TWO CONTROLS, TWO MECHANISMS, and they are deliberately not the same mutation.
+     C5f removes the gate entirely; these two leave it in place and make it credulous in
+     two different ways, because a predicate can be wrong about a class instance and
+     right about a caller's bare prototype, or the other way round. C5h restores the
+     rule the reviewer found. C5i restores a narrower and more plausible misreading that
+     C5h's fix alone would not catch. */
+
+  await control("C5h the chain's shape is taken as proof, as it was", "checkFactsAreReadOnlyContext",
+    { contract: mutate(SOURCES.contract,
+        "    return proto === null || braidyIntrinsicObjectPrototype(proto);",
+        "    return proto === null || Object.getPrototypeOf(proto) === null;",
+        "C5h") },
+    "`class Exotic {}` with `Object.setPrototypeOf(Exotic.prototype, null)` produces instances whose chain stops one step up exactly as a plain record's does. A class instance would cross the handoff boundary, be copied key by key, and reach the model as whatever survived — its methods silently gone.");
+
+  await control("C5i a null-rooted prototype with nothing on it is treated as bare", "checkFactsAreReadOnlyContext",
+    { contract: mutate(SOURCES.contract,
+        "      const constructorAt = Object.getOwnPropertyDescriptor(proto, \"constructor\");\n      if (!constructorAt || !(\"value\" in constructorAt)) return false;",
+        "      const constructorAt = Object.getOwnPropertyDescriptor(proto, \"constructor\");\n      if (!constructorAt) return true;\n      if (!(\"value\" in constructorAt)) return false;",
+        "C5i") },
+    "The reading is tempting — a null-rooted prototype carrying nothing looks like Object.create(null) — and it is wrong: `Object.create(Object.create(null))` is an instance of somebody's own type. It also survives C5h's fix untouched, which is why it is watched separately.");
 
   await control("C6 the facts stop being given to the model at all", "checkFactsAreReadOnlyContext",
     { contract: mutate(SOURCES.contract,

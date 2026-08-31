@@ -386,6 +386,84 @@ function checkFactsAreReadOnlyContext(sources = SOURCES) {
   assert.throws(() => api.braidyHandoff({ intent: "ask", target: { kind: "project" }, facts: { a: { b: [{ c: new Date(0) }] } } }),
     /facts\.a\.b\.0\.c/, "the refusal must name where the unsupported fact is, not just that there was one");
 
+  /* WHAT COUNTS AS A PLAIN RECORD, and why the shape of the chain is not the question.
+
+     The first answer was `proto === Object.prototype`, which is realm-sensitive: this
+     file is evaluated in a vm context, so every fact object the suite built was refused
+     as exotic. The second was `Object.getPrototypeOf(proto) === null` — "does the chain
+     stop one step up" — which is true of Object.prototype in every realm and equally
+     true of any prototype somebody rooted at null. A class instance whose prototype had
+     been null-rooted went straight through it, and so did an instance of a caller's own
+     null-rooted type. Neither is a record; both are somebody's object with methods on
+     it, arriving where CineBraid promised only its own answers would be.
+
+     So the question is whether the prototype IS the intrinsic Object.prototype of the
+     realm the value came from, and the cases below are the ones that separate the two
+     readings. */
+  const CrossRealm = vm.runInNewContext("({ Plain: {}, nested: { deep: [1, 2] }, make: () => ({}) })");
+
+  class OrdinaryClass { constructor() { this.x = 1; } }
+  class NullRootedClass { constructor() { this.x = 1; } }
+  Object.setPrototypeOf(NullRootedClass.prototype, null);
+
+  const callerNullRoot = Object.create(null);
+  const callerOrdinaryProto = { marker: true };
+
+  /* A prototype dressed up to look intrinsic: null-rooted, with an own `constructor`
+     that is a function pointing back at it. Everything the shape test could ask for. */
+  function ForgedObject() {}
+  Object.setPrototypeOf(ForgedObject.prototype, null);
+  ForgedObject.prototype.constructor = ForgedObject;
+
+  /* The real Object handed over as somebody else's constructor. */
+  const borrowedConstructor = Object.create(null);
+  Object.defineProperty(borrowedConstructor, "constructor", { value: Object });
+
+  /* A constructor whose own toString claims to be native. */
+  const lyingConstructor = function ObjectLookalike() {};
+  Object.defineProperty(lyingConstructor, "toString", { value: () => "function Object() { [native code] }" });
+  const lyingPrototype = Object.create(null);
+  Object.defineProperty(lyingPrototype, "constructor", { value: lyingConstructor });
+  lyingConstructor.prototype = lyingPrototype;
+
+  const PLAIN_CASES = [
+    ["P1 a plain object from this realm", {}, true],
+    ["P2 a plain object from another realm", CrossRealm.Plain, true],
+    ["P3 a direct null-prototype record", Object.create(null), true],
+    ["P4 a nested plain object from another realm", CrossRealm.nested, true],
+    ["N1 an ordinary class instance", new OrdinaryClass(), false],
+    ["N2 a class instance whose prototype was null-rooted", new NullRootedClass(), false],
+    ["N3 a value inheriting from a caller's null-root prototype", Object.create(callerNullRoot), false],
+    ["N4 a value inheriting from an ordinary custom prototype", Object.create(callerOrdinaryProto), false],
+    ["N5 a Date", new Date(0), false],
+    ["N6 a prototype forged with its own constructor", new ForgedObject(), false],
+    ["N6 the real Object borrowed as somebody's constructor", Object.create(borrowedConstructor), false],
+    ["N6 a constructor whose own toString claims to be native", Object.create(lyingPrototype), false],
+  ];
+
+  /* EVERY CASE IS REPORTED, not just the first to go wrong. A predicate that fixed one
+     of these readings and left the other would otherwise be caught by whichever case
+     happened to be listed first, and the surviving hole would look like the same
+     defect. */
+  const misread = PLAIN_CASES.filter(([, value, plain]) => api.braidyPlainObject(value) !== plain)
+    .map(([label, , plain]) => `${label} (${plain ? "must be carried" : "must be refused"})`);
+  assert.deepStrictEqual(misread, [],
+    `the plain-record predicate misreads: ${misread.join("; ")}`);
+  for (const [label, value, plain] of PLAIN_CASES) {
+    if (plain) accept({ intent: "ask", target: { kind: "project" }, facts: { probe: value } }, `${label} was refused`);
+    else assert.throws(() => api.braidyHandoff({ intent: "ask", target: { kind: "project" }, facts: { probe: value } }),
+      /Braidy cannot carry/, `${label} was accepted as a fact`);
+  }
+
+  /* A cross-realm graph is COPIED, not merely tolerated. Nothing of the other realm's
+     survives into the frozen record. */
+  const foreign = accept({ intent: "ask", target: { kind: "project" }, facts: CrossRealm.nested },
+    "a nested plain object from another realm was refused").facts;
+  assert.notStrictEqual(foreign.deep, CrossRealm.nested.deep, "a cross-realm array must be copied, not adopted");
+  assert.ok(Array.isArray(foreign.deep) && Object.isFrozen(foreign.deep));
+  assert.deepStrictEqual([...foreign.deep], [1, 2]);
+  assert.ok(!Object.isFrozen(CrossRealm.nested.deep), "the other realm's array must be left alone");
+
   /* A null prototype is still a plain record and is carried. */
   const bare = Object.assign(Object.create(null), { x: 1 });
   assert.strictEqual(accept({ intent: "ask", target: { kind: "project" }, facts: { bare } },
@@ -413,7 +491,7 @@ function checkFactsAreReadOnlyContext(sources = SOURCES) {
   assert.throws(() => api.braidyHandoff({ intent: "ask", target: { kind: "project" }, facts: tower }),
     /nested deeper than/, "facts are a bounded record; an unbounded graph must be refused");
 
-  note("Facts: the whole graph is copied and frozen independently — nested objects, arrays, objects inside arrays and arrays inside arrays all identity-distinct, the caller's own nodes left unfrozen and mutable, cycles and unsupported shapes refused where they are handed over with the path named, and the record framed to the model as CineBraid's answer rather than as raw material");
+  note("Facts: the whole graph is copied and frozen independently — nested objects, arrays, objects inside arrays and arrays inside arrays all identity-distinct, the caller's own nodes left unfrozen and mutable, cycles and unsupported shapes refused where they are handed over with the path named, a plain record recognised by authenticating the intrinsic Object.prototype of whichever realm it came from so that null-rooted class prototypes, caller-made null-root prototypes and forged constructors are all refused, and the record framed to the model as CineBraid's answer rather than as raw material");
 }
 
 /* ===========================================================================
