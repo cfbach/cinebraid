@@ -567,6 +567,10 @@ async function embed(texts, modelOverride) {
 }
 module.exports = {
   llm,
+  /* Exported so a route that must REPORT which provider answered reads the same
+     resolution llm() dispatched on, rather than re-deriving it from cfg and
+     drifting the moment routing changes. */
+  providerForTask,
   embed,
   vision,
   customRequestBody,

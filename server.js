@@ -11,7 +11,7 @@ const fs = require("fs");
 const path = require("path");
 const crypto = require("crypto");
 const { spawnSync } = require("child_process");
-const { llm, embed, vision, isLocalProviderEndpoint, resolveVisionTarget } = require("./llm");
+const { llm, embed, vision, isLocalProviderEndpoint, resolveVisionTarget, providerForTask } = require("./llm");
 const {
   configHealth,
   maskSecretValue,
@@ -2607,11 +2607,27 @@ app.post("/api/project/ask", async (req, res) => {
     if (!question)
       return res.status(400).json({ error: "Write a project question first." });
     const cfg = readConfig();
-    const provider = cfg.assistant?.provider || "ollama";
-    if (provider === "none" || projectAIPolicy() === "disabled")
+    if ((cfg.assistant?.provider || "ollama") === "none" || projectAIPolicy() === "disabled")
       return res
         .status(400)
         .json({ error: "AI assistance is disabled for this project." });
+    /* THROUGH THE SHIPPED OVERRIDE, like every other assistant route.
+     *
+     * This route used to read cfg.assistant.provider directly, which quietly skipped
+     * BOTH things aiProviderOverride() decides: per-task routing, and — the one that
+     * matters — a project set to local-only. A local-only project is asking for its
+     * material to stay on this machine, and this route would have posted its whole
+     * compact record to a configured remote API anyway.
+     *
+     * Nothing had ever called it, so nothing had ever hit that. Braidy calls it, which
+     * is what turns a latent hole into a live one; it is repaired here rather than
+     * worked around in the rail, because the policy belongs to the route that sends
+     * the material and not to whichever surface happens to ask.
+     *
+     * null is the normal answer and means "resolve the task the way llm() always
+     * does". Under local-only it resolves to a local provider or throws, which is a
+     * refusal rather than a send. */
+    const provider = aiProviderOverride();
     const P = readProject();
     const mediaScan = scanProject();
     const compact = {
@@ -2700,7 +2716,7 @@ ${question}`,
       5000,
       provider,
     );
-    res.json({ ok: true, provider, answer: String(answer || "").trim() });
+    res.json({ ok: true, provider: providerForTask(cfg, "prompt", provider), answer: String(answer || "").trim() });
   } catch (e) {
     res.status(500).json({ error: e.message });
   }

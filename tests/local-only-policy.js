@@ -154,6 +154,17 @@ async function compile(port, useLLM) {
   });
 }
 
+/* THE BRAIDY RAIL'S QUESTION, which reaches /api/project/ask.
+
+   That route resolved its provider from cfg.assistant.provider directly and never
+   consulted the policy, so a local-only project's compact record would have been
+   posted to a configured remote API. Nothing had ever called the route, so nothing had
+   ever hit it; the Braidy rail calls it, which is what makes it worth pinning here
+   beside the compile path it now matches. */
+async function ask(port, question = "What is left to do on this shot?") {
+  return request(port, "/api/project/ask", { method: "POST", body: { question } });
+}
+
 async function main() {
   /* ---- 1. what counts as an endpoint on this machine ---- */
   const { isLocalProviderEndpoint } = require("../llm");
@@ -262,6 +273,37 @@ async function main() {
       "the compiled prompt must say why the assistant was not used",
     );
 
+    /* THE SAME THREE ANSWERS FOR A PROJECT QUESTION.
+
+       Asserted against the mocks rather than against the response, because what is
+       being pinned is which host the material reached — a 200 that quietly went to a
+       remote API is the failure, not a shape. */
+    reset();
+    writeProject("local-only");
+    writeConfigFile({ customBaseUrl: localBase, ollamaUrl });
+    response = await ask(port);
+    assert.strictEqual(response.status, 200, "a loopback custom endpoint must be allowed to answer a local-only project's question");
+    assert(customChat.length > 0, "the loopback custom endpoint must be the one that answered");
+
+    reset();
+    writeConfigFile({ customBaseUrl: REMOTE_BASE, ollamaUrl });
+    response = await ask(port);
+    /* THE POSITIVE CLAIM FIRST, because it is the one that can fail for the right
+       reason. REMOTE_BASE is an unresolvable name rather than a mock, so
+       `customChat.length === 0` is satisfied both by a policy that redirected the
+       request and by one that sent it to the remote and got DNS failure. Only "Ollama
+       answered" separates them. */
+    assert(ollamaChat.length > 0,
+      "a local-only project's question must be re-pointed at the local Ollama endpoint; the configured remote custom endpoint was used instead");
+    assert.strictEqual(customChat.length, 0, "the loopback custom mock must not have served this case at all");
+
+    reset();
+    writeConfigFile({ customBaseUrl: REMOTE_BASE, ollamaUrl: "http://192.168.68.116:11434" });
+    response = await ask(port);
+    assert.strictEqual(customChat.length + ollamaChat.length, 0,
+      "with no local provider a local-only project's question must be refused rather than sent");
+    assert.notStrictEqual(response.status, 200, "the refusal must be reported rather than answered around");
+
     /* a project without the policy keeps its configured routing */
     reset();
     writeProject("project-default");
@@ -285,7 +327,7 @@ async function main() {
     );
     assert.strictEqual(customChat.length + ollamaChat.length, 0, "useLLM:false must contact no provider at all");
 
-    console.log("Local-only policy suite passed: loopback endpoints qualify, remote custom and remote Ollama endpoints do not, a project with no local provider refuses rather than sends, and deterministic compilation is untouched.");
+    console.log("Local-only policy suite passed: loopback endpoints qualify, remote custom and remote Ollama endpoints do not, a project with no local provider refuses rather than sends on both the compile path and the Braidy rail's question path, and deterministic compilation is untouched.");
   } finally {
     await stopServer();
     fs.rmSync(TEMP, { recursive: true, force: true });
