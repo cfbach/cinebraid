@@ -1045,7 +1045,161 @@ async function shippedBuildIsGreen() {
   equal(repairCard.repair, true, "shipped: and is declared as one");
   ok(repairCard.markup.includes("Before"), "shipped: with its parent on the card");
 
-  note("the shipped build is green on every claim the nineteen controls broke");
+  note("the shipped build is green on every claim these controls broke");
+}
+
+
+/* ===========================================================================
+   NC-RM20 — AN APPROVAL CLAIMS AN ASSIGNMENT IT DID NOT MAKE.
+
+   The shipped approval dialog names a target, and the frame it names can stop existing
+   before the click completes — Remove Frame is a shipped control. Both canon branches
+   wrote under `if (f)` / `if (c)` and then ran the entire success path regardless. This
+   restores that, and requires the product to be caught saying so.
+   =========================================================================== */
+
+const APPROVAL_FILE = "public/library-tools.js";
+const NC20_ANCHOR = `      if (!f) throw new Error("That frame is no longer part of this shot, so nothing was approved");
+      canonTarget = { kind: "shot-frame", shotId: id, frameId: f.id };
+      approveFrameCanon(P, { shotId: id, frameId: f.id, value: name, assetId: displayedAssetId, at, via: "shot-take-approval" });`;
+const NC20_BREAK = `      if (f) canonTarget = { kind: "shot-frame", shotId: id, frameId: f.id };
+      if (f) approveFrameCanon(P, { shotId: id, frameId: f.id, value: name, assetId: displayedAssetId, at, via: "shot-take-approval" });`;
+
+async function ncRM20() {
+  anchorIn(APPROVAL_FILE, NC20_ANCHOR, "NC-RM20");
+  const project = projectOf([{
+    id: "L1-01",
+    frames: [{ id: "frame-a", label: "A", winner: "A-CANON.png" }, { id: "frame-b", label: "B" }],
+    candidates: [candidate("A-CANON.png", { decision: "shortlist" }), candidate("B1.png", { frameId: "frame-b" })],
+  }]);
+  const scan = scanWith(project, { "L1-01": ["A-CANON.png", "B1.png"] });
+  const broken = await render("#/shot/L1-01", project, { scan, mutateSource: replacing(APPROVAL_FILE, NC20_ANCHOR, NC20_BREAK) });
+  broken.context.approveGuidedFrame("L1-01", "frame-b", "B1.png");
+  broken.context.document.getElementById("approve-target").value = "frame:frame-b";
+  broken.context.document.getElementById("approve-name").value = "B1.png";
+  vm.runInContext(`P.shots[0].keyframes = P.shots[0].keyframes.filter((frame) => frame.id !== "frame-b");`, broken.context);
+  await broken.gesture.act(() => broken.context.confirmApproveTake());
+  await new Promise((resolve) => setTimeout(resolve, 20));
+
+  const seen = evaluate(broken.context, `
+    const row = P.shots[0].candidateFiles.find((item) => item.stored === "B1.png");
+    return {
+      spoken: document.getElementById("toast").textContent,
+      receipts: (P.productionAuthority.receipts || []).filter((entry) => entry.kind === "shot-frame" && entry.status === "current").map((entry) => entry.frameId + "=" + entry.value),
+      approvedTarget: row.approvedTarget || "",
+      workflowStatus: P.shots[0].workflowStatus,
+      status: P.shots[0].status,
+    };
+  `);
+
+  /* THE MUTATION LANDED AND THE WRONG BEHAVIOUR IS OBSERVABLE. */
+  equal(seen.receipts.join(","), "frame-a=A-CANON.png", "NC-RM20: the broken build mints no receipt for the frame that is gone");
+  ok(/added to the live Bible|remaining frame or motion decisions/.test(seen.spoken),
+    "NC-RM20: and still speaks a success sentence: " + seen.spoken);
+  equal(seen.approvedTarget, "frame:frame-b", "NC-RM20: recording a durable approval target with no receipt behind it");
+  equal(seen.workflowStatus, "APPROVED", "NC-RM20: and reporting the shot approved");
+  equal(seen.status, "LOCKED", "NC-RM20: and locked");
+
+  /* AND THE INTENDED DETECTOR CATCHES IT FOR THE RIGHT REASON. */
+  await mustFail("NC-RM20", "success sentence", () => {
+    assert(!/added to the live Bible|remaining frame or motion decisions/.test(seen.spoken),
+      "AS1: and never speaks either success sentence: " + seen.spoken);
+  });
+  await mustFail("NC-RM20", "records no approval target", () => {
+    assert.strictEqual(seen.approvedTarget, "", "AS1: and the candidate row records no approval target");
+  });
+
+  note("NC-RM20 restored the silent fallthrough: nothing was approved, and the product said the required outputs were approved, locked the shot and recorded the target");
+}
+
+/* ===========================================================================
+   NC-RM21 — REJECT IS OFFERED ON AN APPROVED CANDIDATE.
+
+   `reject` applied whenever the row was not already REJECTED, so an APPROVED one — a
+   file holding a current human receipt — still declared it, and the Inspector renders
+   the declared list.
+   =========================================================================== */
+
+const MEDIA_FILE = "public/shared-production-media.js";
+const NC21_ANCHOR = `      appliesWhen: "undecided",`;
+const NC21_BREAK = `      appliesWhen: "not-rejected",`;
+
+async function ncRM21() {
+  anchorIn(MEDIA_FILE, NC21_ANCHOR, "NC-RM21");
+  const project = projectOf([{
+    id: "L1-01",
+    frames: [{ id: "frame-a", label: "A", winner: "C1.png" }],
+    candidates: [candidate("C1.png", { decision: "shortlist" })],
+  }]);
+  const scan = scanWith(project, { "L1-01": ["C1.png"] });
+  const broken = await render("#/shot/L1-01", project, { scan, mutateSource: replacing(MEDIA_FILE, NC21_ANCHOR, NC21_BREAK) });
+  const seen = evaluate(broken.context, `
+    const media = productionMediaRecords({ project: P, scan: SCAN });
+    const row = media.records.find((item) => item.file.name === "C1.png");
+    return { role: row.disposition.role, actions: row.actions };
+  `);
+
+  equal(seen.role, "approved", "NC-RM21: the candidate still holds the frame's approval");
+  ok(seen.actions.includes("reject"), "NC-RM21: and the broken build declares reject on it: " + seen.actions.join(","));
+  ok(!seen.actions.includes("approve"), "NC-RM21: while still withholding a second approve — the asymmetry this control is about");
+
+  await mustFail("NC-RM21", "declares no reject on it", () => {
+    assert(!seen.actions.includes("reject"), "RJ1: so production-media declares no reject on it: " + seen.actions.join(","));
+  });
+
+  note("NC-RM21 restored the asymmetry: an approved candidate declared reject while withholding approve, so the Inspector drew Keep looking on the shot's own approved frame");
+}
+
+/* ===========================================================================
+   NC-RM22 — AND THE WRITE GOES THROUGH, so the contradiction becomes durable.
+
+   Both halves are reverted together on purpose. The writer refuses on the disposition
+   AND on the declared action list, which is defence in depth rather than duplication:
+   with only one restored the other still refuses, and a control that could not tell
+   which guard held would be proving nothing about either.
+   =========================================================================== */
+
+const NC22_ANCHOR = `  if (item && item.candidate.disposition === "approved")
+    return toast("That take is approved for this shot. Reset the frame approval to change it.");`;
+const NC22_BREAK = `  if (false)
+    return toast("That take is approved for this shot. Reset the frame approval to change it.");`;
+
+async function ncRM22() {
+  anchorIn(CARD_FILE, NC22_ANCHOR, "NC-RM22");
+  anchorIn(MEDIA_FILE, NC21_ANCHOR, "NC-RM22");
+  const project = projectOf([{
+    id: "L1-01",
+    frames: [{ id: "frame-a", label: "A", winner: "C1.png" }],
+    candidates: [candidate("C1.png", { decision: "shortlist" })],
+  }]);
+  const scan = scanWith(project, { "L1-01": ["C1.png"] });
+  const broken = await render("#/shot/L1-01", project, {
+    scan,
+    mutateSource: replacingAll([
+      [CARD_FILE, NC22_ANCHOR, NC22_BREAK],
+      [MEDIA_FILE, NC21_ANCHOR, NC21_BREAK],
+    ]),
+  });
+  await broken.gesture.act(() => broken.context.rejectReturnedResult("L1-01", "C1.png"));
+  await new Promise((resolve) => setTimeout(resolve, 20));
+  const seen = evaluate(broken.context, `
+    const projection = returnedReviewProjectionForBrowser();
+    return {
+      decision: P.shots[0].candidateFiles[0].decision,
+      canon: hasCurrentHumanAuthority(P, { kind: "shot-frame", shotId: "L1-01", frameId: "frame-a" }),
+      disposition: projection.items.map((row) => row.candidate.name + ":" + row.candidate.disposition),
+    };
+  `);
+
+  equal(seen.decision, "rejected", "NC-RM22: the broken build records the rejection on the row");
+  equal(seen.canon, true, "NC-RM22: while the receipt it holds still says approved");
+  equal(seen.disposition.join(","), "C1.png:approved", "NC-RM22: so one file reports two dispositions at once");
+
+  await mustFail("NC-RM22", "records no rejection", () => {
+    assert.strictEqual(seen.decision, "shortlist", "RJ2: the candidate row records no rejection");
+  });
+
+  note("NC-RM22 restored the durable contradiction: the same file recorded REJECTED on its candidate row while holding a current approval receipt");
 }
 
 /* =========================================================================== */
@@ -1069,6 +1223,9 @@ async function main() {
   await ncRM16();
   await ncRM18();
   await ncRM19();
+  await ncRM20();
+  await ncRM21();
+  await ncRM22();
   await shippedBuildIsGreen();
 
   for (const line of notes) console.log(line);

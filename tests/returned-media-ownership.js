@@ -1776,6 +1776,183 @@ async function browserFixtureIsTheShapeItClaims() {
   note("FIXTURE the project the real-browser half drives is the shape it claims, checked here rather than only in Chromium");
 }
 
+
+/* ===========================================================================
+   AS — AN APPROVAL AND ITS ASSIGNMENT SAY THE SAME THING.
+
+   The shipped approval dialog names a TARGET, and the frame or motion unit it names can
+   stop existing between the render that drew the dialog and the click that completes it
+   — Remove Frame is a shipped control and does exactly that. Both canon branches wrote
+   under `if (f)` / `if (c)` and then ran the whole success path regardless, so a click
+   that approved NOTHING reported "Required outputs approved and added to the live
+   Bible", stamped the ceremony, set the shot APPROVED/LOCKED and recorded
+   `approvedTarget` on the candidate row: a durable claim of an approval with no receipt
+   behind it.
+
+   The interface must not claim success if the canonical assignment failed. This drives
+   the shipped modal and the shipped confirm inside a real gesture, and asks the ledger
+   rather than the toast.
+   =========================================================================== */
+
+async function as_approvalCannotClaimAnAssignmentItDidNotMake() {
+  /* THE FRAME HALF. Frame B is removed after its approval dialog is open. */
+  const frameProject = projectOf([{
+    id: "L1-01",
+    frames: [{ id: "frame-a", label: "A", winner: "A-CANON.png" }, { id: "frame-b", label: "B" }],
+    candidates: [candidate("A-CANON.png", { decision: "shortlist" }), candidate("B1.png", { frameId: "frame-b" })],
+  }]);
+  const framePage = await render("#/shot/L1-01", frameProject, { scan: scanWith(frameProject, { "L1-01": ["A-CANON.png", "B1.png"] }) });
+  framePage.context.approveGuidedFrame("L1-01", "frame-b", "B1.png");
+  /* The hidden inputs the shipped dialog carries. The harness element stands in for the
+     real markup, which is why the target is stated here rather than assumed. */
+  framePage.context.document.getElementById("approve-target").value = "frame:frame-b";
+  framePage.context.document.getElementById("approve-name").value = "B1.png";
+  vm.runInContext(`P.shots[0].keyframes = P.shots[0].keyframes.filter((frame) => frame.id !== "frame-b");`, framePage.context);
+  await framePage.gesture.act(() => framePage.context.confirmApproveTake());
+  await new Promise((resolve) => setTimeout(resolve, 20));
+
+  const frameSeen = evaluate(framePage.context, `
+    const row = P.shots[0].candidateFiles.find((item) => item.stored === "B1.png");
+    return {
+      spoken: document.getElementById("toast").textContent,
+      receipts: (P.productionAuthority.receipts || []).filter((entry) => entry.kind === "shot-frame" && entry.status === "current").map((entry) => entry.frameId + "=" + entry.value),
+      approvedTarget: row.approvedTarget || "",
+      decision: row.decision,
+      workflowStatus: P.shots[0].workflowStatus,
+      status: P.shots[0].status,
+    };
+  `);
+  ok(/no longer part of this shot/.test(frameSeen.spoken), "AS1: the refusal says the target is gone: " + frameSeen.spoken);
+  ok(!/added to the live Bible|remaining frame or motion decisions/.test(frameSeen.spoken),
+    "AS1: and never speaks either success sentence: " + frameSeen.spoken);
+  deepEqual(frameSeen.receipts, ["frame-a=A-CANON.png"], "AS1: no receipt was minted for the frame that no longer exists");
+  equal(frameSeen.approvedTarget, "", "AS1: and the candidate row records no approval target");
+  equal(frameSeen.decision, "unreviewed", "AS1: the row's own decision is untouched");
+  equal(frameSeen.workflowStatus, "IN PROGRESS", "AS1: the shot is not reported approved");
+  equal(frameSeen.status, "BUILT", "AS1: nor locked");
+
+  /* THE MOTION HALF, through the same writer and the other branch. */
+  const motionProject = projectOf([{
+    id: "L1-02",
+    frames: [{ id: "frame-a", label: "A", winner: "A-CANON.png" }],
+    clips: [{ id: "clip-1", suffix: "M1", kind: "i2v", label: "M1", title: "Move in", fromFrame: "frame-a", toFrame: "", dur: 5, motionPrompt: "He turns.", generationPackages: [] }],
+    candidates: [candidate("A-CANON.png", { decision: "shortlist" }), candidate("V1.mp4", { frameId: "" })],
+  }]);
+  const motionPage = await render("#/shot/L1-02", motionProject, { scan: scanWith(motionProject, { "L1-02": ["A-CANON.png", "V1.mp4"] }) });
+  motionPage.context.approveTake("L1-02", "V1.mp4");
+  motionPage.context.document.getElementById("approve-target").value = "segment:clip-1";
+  motionPage.context.document.getElementById("approve-name").value = "V1.mp4";
+  vm.runInContext(`P.shots[0].clips = [];`, motionPage.context);
+  await motionPage.gesture.act(() => motionPage.context.confirmApproveTake());
+  await new Promise((resolve) => setTimeout(resolve, 20));
+
+  const motionSeen = evaluate(motionPage.context, `
+    const row = P.shots[0].candidateFiles.find((item) => item.stored === "V1.mp4");
+    return {
+      spoken: document.getElementById("toast").textContent,
+      motionReceipts: (P.productionAuthority.receipts || []).filter((entry) => entry.kind === "shot-motion" && entry.status === "current").map((entry) => entry.value),
+      approvedTarget: row.approvedTarget || "",
+      workflowStatus: P.shots[0].workflowStatus,
+    };
+  `);
+  ok(/no longer part of this shot/.test(motionSeen.spoken), "AS2: the motion branch refuses in the same words: " + motionSeen.spoken);
+  deepEqual(motionSeen.motionReceipts, [], "AS2: and mints no motion receipt");
+  equal(motionSeen.approvedTarget, "", "AS2: with no durable approval claim on the row");
+  equal(motionSeen.workflowStatus, "IN PROGRESS", "AS2: and no approved shot");
+
+  /* AND THE ORDINARY APPROVAL STILL LANDS. A refusal that also refused the valid case
+     would be a regression wearing a fix's clothes. */
+  const goodProject = projectOf([{
+    id: "L1-01",
+    frames: [{ id: "frame-a", label: "A", winner: "A-CANON.png" }, { id: "frame-b", label: "B" }],
+    candidates: [candidate("A-CANON.png", { decision: "shortlist" }), candidate("B1.png", { frameId: "frame-b" })],
+  }]);
+  const goodPage = await render("#/shot/L1-01", goodProject, { scan: scanWith(goodProject, { "L1-01": ["A-CANON.png", "B1.png"] }) });
+  goodPage.context.approveGuidedFrame("L1-01", "frame-b", "B1.png");
+  goodPage.context.document.getElementById("approve-target").value = "frame:frame-b";
+  goodPage.context.document.getElementById("approve-name").value = "B1.png";
+  await goodPage.gesture.act(() => goodPage.context.confirmApproveTake());
+  await new Promise((resolve) => setTimeout(resolve, 20));
+  const goodSeen = evaluate(goodPage.context, `
+    return {
+      receipts: (P.productionAuthority.receipts || []).filter((entry) => entry.kind === "shot-frame" && entry.status === "current").map((entry) => entry.frameId + "=" + entry.value),
+      canon: hasCurrentHumanAuthority(P, { kind: "shot-frame", shotId: "L1-01", frameId: "frame-b" }),
+    };
+  `);
+  ok(goodSeen.receipts.includes("frame-b=B1.png"), "AS3: a target that IS declared still approves through the kernel");
+  equal(goodSeen.canon, true, "AS3: and holds current human authority");
+
+  note("AS an approval onto a frame or motion unit the shot no longer declares is refused in words, mints no receipt and records no approval — and the declared target still approves");
+}
+
+/* ===========================================================================
+   RJ — REJECT IS WITHHELD ONCE THE DISPOSITION IS TAKEN.
+
+   `approve` was already dropped from an approved row; `reject` was dropped only from a
+   REJECTED one. So the shipped Inspector offered Keep looking on the shot's own approved
+   frame, and the shot decision writer TOGGLES on `row.decision` — which is `shortlist`
+   on an approved candidate, never `approved` — so the already-rejected guard let it
+   through. The row then read REJECTED in candidate details while the receipt, the
+   lifecycle preview and this projection all read APPROVED: one file, two answers, and
+   no act in between that a filmmaker could point at.
+   =========================================================================== */
+
+async function rj_rejectIsWithheldFromAnApprovedCandidate() {
+  const project = projectOf([{
+    id: "L1-01",
+    frames: [{ id: "frame-a", label: "A", winner: "C1.png" }],
+    candidates: [candidate("C1.png", { decision: "shortlist" })],
+  }]);
+  const page = await render("#/shot/L1-01", project, { scan: scanWith(project, { "L1-01": ["C1.png"] }) });
+
+  const declared = evaluate(page.context, `
+    const media = productionMediaRecords({ project: P, scan: SCAN });
+    const row = media.records.find((item) => item.file.name === "C1.png");
+    return { role: row.disposition.role, actions: row.actions };
+  `);
+  equal(declared.role, "approved", "RJ1: the candidate holds the frame's approval");
+  ok(!declared.actions.includes("reject"), "RJ1: so production-media declares no reject on it: " + declared.actions.join(","));
+  ok(!declared.actions.includes("approve"), "RJ1: as it already declared no second approve");
+  ok(!declared.actions.includes("restore"), "RJ1: and restore belongs to a rejected row");
+
+  /* THE WRITE IS REFUSED TOO, because a global on `window` is reachable without the
+     control that draws it. */
+  await page.gesture.act(() => page.context.rejectReturnedResult("L1-01", "C1.png"));
+  await new Promise((resolve) => setTimeout(resolve, 20));
+  const after = evaluate(page.context, `
+    const projection = returnedReviewProjectionForBrowser();
+    return {
+      spoken: document.getElementById("toast").textContent,
+      decision: P.shots[0].candidateFiles[0].decision,
+      canon: hasCurrentHumanAuthority(P, { kind: "shot-frame", shotId: "L1-01", frameId: "frame-a" }),
+      disposition: projection.items.map((row) => row.candidate.name + ":" + row.candidate.disposition),
+    };
+  `);
+  ok(/approved for this shot/.test(after.spoken), "RJ2: the refusal names the state it refused for: " + after.spoken);
+  ok(/[Rr]eset the frame approval/.test(after.spoken), "RJ2: and names the act that DOES undo it: " + after.spoken);
+  equal(after.decision, "shortlist", "RJ2: the candidate row records no rejection");
+  equal(after.canon, true, "RJ2: the approval it holds is untouched");
+  deepEqual(after.disposition, ["C1.png:approved"], "RJ2: and one file still reports exactly one disposition");
+
+  /* AN UNDECIDED CANDIDATE IS UNAFFECTED. */
+  const openProject = projectOf([{ id: "L1-01", frames: [{ id: "frame-a", label: "A" }], candidates: [candidate("C1.png")] }]);
+  const openPage = await render("#/shot/L1-01", openProject, { scan: scanWith(openProject, { "L1-01": ["C1.png"] }) });
+  const openActions = evaluate(openPage.context, `
+    const media = productionMediaRecords({ project: P, scan: SCAN });
+    return media.records.find((item) => item.file.name === "C1.png").actions;
+  `);
+  ok(openActions.includes("reject"), "RJ3: an undecided candidate still declares reject");
+  await openPage.gesture.act(() => openPage.context.rejectReturnedResult("L1-01", "C1.png"));
+  await new Promise((resolve) => setTimeout(resolve, 20));
+  const openAfter = evaluate(openPage.context, `
+    return { decision: P.shots[0].candidateFiles[0].decision, awaiting: returnedReviewProjectionForBrowser().counts.awaiting };
+  `);
+  equal(openAfter.decision, "rejected", "RJ3: and Keep looking still records the rejection");
+  equal(openAfter.awaiting, 0, "RJ3: which settles it");
+
+  note("RJ reject is declared and written only on an undecided candidate: an approved one offers neither decision, and the writer refuses in words that name the reset");
+}
+
 /* =========================================================================== */
 
 async function main() {
@@ -1796,6 +1973,8 @@ async function main() {
   await rm10_historyIsDurable();
   await rm11_approvingTheRepair();
   await rm15_integrityOutranksReview();
+  await as_approvalCannotClaimAnAssignmentItDidNotMake();
+  await rj_rejectIsWithheldFromAnApprovedCandidate();
   await agreement_oneQueueEverywhere();
   await archive_reviewIsNotAStore();
   await browserFixtureIsTheShapeItClaims();

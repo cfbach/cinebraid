@@ -1035,7 +1035,20 @@
       paid: false,
       destructive: false,
       invoke: "decision-handler",
-      appliesWhen: "not-rejected",
+      /* APPROVE AND REJECT ARE TWO HALVES OF ONE DISPOSITION, AND BOTH ARE WITHHELD
+         ONCE IT IS TAKEN. `approve` was already dropped from an approved row; `reject`
+         was dropped only from a REJECTED one, so an approved candidate — one holding a
+         current human receipt — still offered Keep looking. The Inspector rendered it,
+         the shipped decision writer recorded `decision: "rejected"` on the row, and the
+         partition went on reading the receipt: the same file reported REJECTED in
+         candidate details and APPROVED as the frame's canon, with no act in between
+         that a filmmaker could point at.
+
+         Undoing an approval is its own act with its own control — the frame approval
+         reset — which revokes the receipt rather than leaving two owners disagreeing
+         about one file. The control is DROPPED rather than disabled, which is the rule
+         the two undecidable kinds below are dropped by. */
+      appliesWhen: "undecided",
     },
     {
       id: "restore",
@@ -1066,6 +1079,9 @@
       if (action.paid || action.destructive) continue;
       if (action.appliesWhen === "not-approved" && dispositionRole === "approved") continue;
       if (action.appliesWhen === "not-rejected" && dispositionRole === "rejected") continue;
+      /* The partition resolves every item to exactly one of three roles, so `undecided`
+         is `candidate` — never a second opinion here about what the other two mean. */
+      if (action.appliesWhen === "undecided" && dispositionRole !== "candidate") continue;
       if (action.appliesWhen === "rejected" && dispositionRole !== "rejected") continue;
       if (action.appliesWhen === "has-owner" && scope === "project") continue;
       if (action.appliesWhen === "decidable" && !decidable) continue;

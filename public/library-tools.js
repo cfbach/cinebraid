@@ -466,14 +466,32 @@ window.confirmApproveTake = async () => {
       }
     } else if (target.startsWith("frame:")) {
       const f = frameById(s, target.slice(6));
-      if (f) canonTarget = { kind: "shot-frame", shotId: id, frameId: f.id };
-      if (f) approveFrameCanon(P, { shotId: id, frameId: f.id, value: name, assetId: displayedAssetId, at, via: "shot-take-approval" });
+      /* A TARGET THAT NO LONGER EXISTS IS A REFUSAL, NOT A SKIPPED LINE.
+       *
+       * These two branches wrote canon under `if (f)` / `if (c)` and then fell
+       * through to the whole success path regardless. When the slot had gone —
+       * the dialog names a target and the frame list can change under it, which
+       * is what Remove Frame does — NOTHING was approved and the product said
+       * "Required outputs approved and added to the live Bible", stamped
+       * FRAME APPROVED, set the shot to APPROVED/LOCKED and recorded
+       * `approvedTarget` on the candidate row. A durable claim of an approval
+       * with no receipt behind it: the one thing the receipt model exists to
+       * make impossible, reintroduced by an if with no else.
+       *
+       * Throwing hands it to the catch below, which is already the shipped
+       * refusal for "the kernel would not take this" — so an unwritable target
+       * and a refused write now fail the same way, before the rename, the row
+       * write and the ceremony. */
+      if (!f) throw new Error("That frame is no longer part of this shot, so nothing was approved");
+      canonTarget = { kind: "shot-frame", shotId: id, frameId: f.id };
+      approveFrameCanon(P, { shotId: id, frameId: f.id, value: name, assetId: displayedAssetId, at, via: "shot-take-approval" });
       label = "FRAME APPROVED";
     } else if (target.startsWith("segment:")) {
       const unitId = target.slice(8);
       const c = (s.clips || []).find((x) => unitKey(x) === unitId);
-      if (c) canonTarget = { kind: "shot-motion", shotId: id, unitKey: c.id || unitId };
-      if (c) approveMotionCanon(P, { shotId: id, unitKey: c.id || unitId, value: name, assetId: displayedAssetId, at, via: "shot-take-approval" });
+      if (!c) throw new Error("That motion unit is no longer part of this shot, so nothing was approved");
+      canonTarget = { kind: "shot-motion", shotId: id, unitKey: c.id || unitId };
+      approveMotionCanon(P, { shotId: id, unitKey: c.id || unitId, value: name, assetId: displayedAssetId, at, via: "shot-take-approval" });
       label = "MOTION APPROVED";
     }
   } catch (error) {

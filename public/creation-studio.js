@@ -2616,6 +2616,32 @@ window.rejectReturnedResult = (shotId, name) => {
   const row = typeof candidateRecord === "function" ? candidateRecord(s, name, false) : null;
   if (!row) return toast("That candidate is no longer in this shot");
   if (row.decision === "rejected") return toast("That candidate is already rejected");
+  /* AND IT ASKS THE PROJECTION BEFORE IT WRITES, because `row.decision` is not the
+     disposition. The candidate row's token and the authority receipt are different
+     owners, and the partition reads the receipt: a take approved through the kernel
+     still holds `decision: "shortlist"`, so the already-rejected guard above let a
+     rejection be recorded against the shot's own approved frame. The row then said
+     REJECTED in candidate details while canon, the lifecycle preview and this very
+     projection all said APPROVED — one file, two answers, and no act in between that
+     a filmmaker could point at.
+
+     production-media now withholds `reject` from an approved row, so the control is
+     not rendered; this is the same rule applied at the write, because a global on
+     `window` is reachable without the control that draws it. The sentence names the
+     act that DOES undo an approval rather than refusing blankly. */
+  const projection = typeof returnedReviewProjectionForBrowser === "function" ? returnedReviewProjectionForBrowser() : null;
+  const item = projection && projection.available
+    ? (projection.items || []).find((entry) => entry.shotId === shotId && entry.candidate.name === name) || null
+    : null;
+  if (item && item.candidate.disposition === "approved")
+    return toast("That take is approved for this shot. Reset the frame approval to change it.");
+  /* `rejection`, not `verdict`: tests/returned-media-ownership-negative-controls.js
+     anchors NC-RM16 on the revise refusal's exact line, and a second identical one here
+     would leave that control mutating whichever it matched first. */
+  if (item && typeof returnedReviewActionRefusal === "function") {
+    const rejection = returnedReviewActionRefusal(item, "reject");
+    if (!rejection.allowed) return toast(returnedReviewRefusalWords(rejection.reason));
+  }
   setCandidateDecision(shotId, name, "rejected");
 };
 function canonicalShotReadinessCardMarkup(s, neighbors, readiness, next, action, media, available, status, note = "") {
