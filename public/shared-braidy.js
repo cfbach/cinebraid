@@ -302,16 +302,111 @@
     });
   }
 
-  function braidyFacts(input) {
+  /* ==========================================================================
+     WHAT A FACT MAY BE, and why copying it is a validation rather than a clone.
+
+     The handoff's promise is that CineBraid's answers are copied and then frozen
+     INDEPENDENTLY of the caller. The first version copied one level: a nested object
+     kept the caller's identity, an array inside an object kept the caller's identity,
+     and the deepFreeze() that followed therefore reached out of Braidy and froze the
+     caller's own live objects. A surface that had handed over a shot block would find
+     its next push() throwing. An array inside an array fared worse still: it was
+     spread as an object and arrived as {"0":"deep"}, which is not aliasing but silent
+     corruption of the evidence the model was about to be given.
+
+     So this walks the whole graph, and it REFUSES rather than repairs. Every value
+     below is one the record can actually carry to the request and back out again in
+     the same shape:
+
+       null / undefined   omitted from an object, refused inside an array
+       boolean, string    carried
+       finite number      carried; NaN and Infinity are refused, because
+                          JSON.stringify turns them into null and the model would be
+                          told a fact CineBraid never recorded
+       array              of permitted values
+       plain object       Object.prototype or a null prototype, of permitted values
+
+     Everything else is refused where it is handed over, not where it fails. A
+     function, a symbol or a Date would have been carried into the facts and quietly
+     dropped or emptied by JSON.stringify; a BigInt would have thrown at request time,
+     a long way from the caller that supplied it. A Map or a Set would have arrived as
+     {}. None of those is a fact CineBraid can state.
+
+     THIS IS NOT A CLONE FRAMEWORK and must not become one. It knows six shapes,
+     bounds the graph's depth, and refuses a cycle outright — a record cannot contain
+     itself, and the alternative to refusing is either an infinite walk or a
+     half-copied graph with one caller-owned node still in it. */
+  const BRAIDY_FACT_MAX_DEPTH = 8;
+
+  function braidyFactPath(path) {
+    return path.length ? `facts.${path.join(".")}` : "facts";
+  }
+
+  function braidyFactRefusal(path, said) {
+    return new Error(`Braidy cannot carry ${braidyFactPath(path)}: ${said}`);
+  }
+
+  /* PLAIN, ASKED IN A WAY THAT SURVIVES A REALM BOUNDARY.
+
+     `proto === Object.prototype` is the obvious spelling and it is wrong here: a suite
+     evaluates this file in a vm context with its own Object, and a fact object built
+     by the host would be refused as exotic. The same holds for anything reaching a
+     browser from another frame. What is actually being asked is "does the prototype
+     chain stop one step up", which is true of Object.prototype in every realm and of a
+     null prototype, and false of a Date, a Map, a Set or a class instance. */
+  function braidyPlainObject(value) {
+    const proto = Object.getPrototypeOf(value);
+    return proto === null || Object.getPrototypeOf(proto) === null;
+  }
+
+  function braidyFactValue(value, path, ancestors) {
+    if (path.length > BRAIDY_FACT_MAX_DEPTH)
+      throw braidyFactRefusal(path, `it is nested deeper than ${BRAIDY_FACT_MAX_DEPTH} levels. Facts are a bounded record of what CineBraid knows, not a document.`);
+
+    const type = typeof value;
+    if (type === "boolean" || type === "string") return value;
+    if (type === "number") {
+      if (!Number.isFinite(value))
+        throw braidyFactRefusal(path, `it is ${String(value)}, which reaches the model as null. Braidy would be told a number CineBraid never recorded.`);
+      return value;
+    }
+    if (value === null || value === undefined)
+      throw braidyFactRefusal(path, "an array element cannot be empty. Dropping it would move every fact after it, and a fact whose position moved is not the fact CineBraid handed over.");
+    if (type !== "object")
+      throw braidyFactRefusal(path, `a ${type} is not something CineBraid can state.`);
+    /* ANCESTORS, not "everything seen". The same object appearing twice in different
+       branches is a value used twice and is copied twice; only a value that contains
+       itself is a cycle. */
+    if (ancestors.has(value))
+      throw braidyFactRefusal(path, "it refers back to something that contains it. A record cannot contain itself.");
+
+    const within = new Set(ancestors);
+    within.add(value);
+    if (Array.isArray(value))
+      return value.map((item, index) => braidyFactValue(item, [...path, String(index)], within));
+    if (!braidyPlainObject(value))
+      throw braidyFactRefusal(path, `a ${value.constructor?.name || "non-plain object"} is not a fact. It would arrive as an empty object or be dropped, and neither is what CineBraid meant.`);
+    return braidyFactObject(value, path, within);
+  }
+
+  /* NULL AND UNDEFINED ARE OMITTED FROM AN OBJECT, which is what this contract has
+     always done at the top level and now does at every depth. A key CineBraid has no
+     answer for is a key Braidy is not told about, rather than one it is told is
+     empty. */
+  function braidyFactObject(input, path, ancestors) {
     const facts = {};
-    if (!input || typeof input !== "object") return facts;
     for (const [key, value] of Object.entries(input)) {
       if (value === null || value === undefined) continue;
-      if (Array.isArray(value)) facts[key] = value.map((item) => (typeof item === "object" && item ? { ...item } : item));
-      else if (typeof value === "object") facts[key] = { ...value };
-      else facts[key] = value;
+      facts[key] = braidyFactValue(value, [...path, key], ancestors);
     }
     return facts;
+  }
+
+  function braidyFacts(input) {
+    if (!input || typeof input !== "object" || Array.isArray(input)) return {};
+    if (!braidyPlainObject(input))
+      throw braidyFactRefusal([], `a ${input.constructor?.name || "non-plain object"} is not a record of facts.`);
+    return braidyFactObject(input, [], new Set([input]));
   }
 
   /* THE ONLY SOURCE OF A CONTROL IN THE RAIL. It takes a handoff and nothing else —

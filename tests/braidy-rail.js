@@ -265,13 +265,24 @@ function checkRailIsBraidyNotActivity(sources = SOURCES) {
 
 function checkFactsAreReadOnlyContext(sources = SOURCES) {
   const api = loadContract(sources.contract);
-  const handoff = api.braidyHandoff({
+  /* EVERY HANDOFF IN THIS CHECK IS BUILT THROUGH HERE, so a contract that has started
+     refusing ordinary facts fails an assertion that says so rather than throwing a
+     refusal out of the suite. Refusing the wrong things and copying the wrong things
+     are both defects, and both belong to this check. */
+  const accept = (input, said) => {
+    try {
+      return api.braidyHandoff(input);
+    } catch (error) {
+      return assert.fail(`${said}: ${error.message}`);
+    }
+  };
+  const handoff = accept({
     intent: "plan",
     origin: { surface: "creator-rail-stage", route: "#/shot/L1-01" },
     target: { kind: "shot", id: "L1-01", label: "L1-01" },
     stageId: "frames",
     facts: { stage: "Frames", availability: "blocked", blockedReason: "Confirm the required production reference", references: ["ref-a"] },
-  });
+  }, "the stage block CineBraid actually hands over was refused");
 
   assert.ok(Object.isFrozen(handoff), "a handoff must be frozen");
   assert.ok(Object.isFrozen(handoff.facts), "the deterministic facts must be frozen");
@@ -296,20 +307,111 @@ function checkFactsAreReadOnlyContext(sources = SOURCES) {
   assert.ok(/may rely on and must not contradict/i.test(question),
     "the facts must be framed as CineBraid's answer rather than as raw material");
 
-  /* And the copy is a copy, in both directions.
+  /* And the copy is a copy, in both directions, ALL THE WAY DOWN.
 
-     The caller's own object must come back UNFROZEN. A handoff that froze what it was
-     handed would reach out of Braidy and immobilise a caller's live state — the shot
-     block a surface is still rendering from — which is a much worse bug than the one
-     the freeze exists to prevent, and it would look like a Braidy feature working. */
-  const original = { stage: "Frames" };
-  const second = api.braidyHandoff({ intent: "review", target: { kind: "shot", id: "L1-02" }, facts: original });
-  assert.ok(!Object.isFrozen(original),
-    "handing facts over froze the caller's own object; the handoff must take a copy rather than claim what it was given");
-  original.stage = "Motion";
-  assert.strictEqual(second.facts.stage, "Frames", "the handoff must hold its own copy of the facts it was given");
+     The first version of this copied one level. A nested object kept the caller's
+     identity, an array inside an object kept the caller's identity, and the deepFreeze
+     that followed therefore reached out of Braidy and froze the caller's own live
+     objects — a surface that handed over a shot block would find its next push()
+     throwing. An array inside an array was worse than aliased: it was spread as an
+     object and arrived as {"0":"deep"}, silently corrupting the evidence.
 
-  note("Facts: frozen through the handoff including nested lists, copied from the caller, and framed to the model as CineBraid's answer rather than as raw material");
+     The wired stage payload is flat, so none of that was reachable in the product
+     today. It was reachable through the public contract, which is what a contract is
+     for, so the whole graph is proved here rather than the one shape a caller happens
+     to use. */
+  const nestedObject = { reason: "reference-unconfirmed" };
+  const nestedArray = ["ref-a"];
+  const inArray = { id: "CHAR-1" };
+  const graph = {
+    stage: "Frames",
+    block: { detail: nestedObject, list: nestedArray },
+    entities: [inArray],
+    matrix: [["deep"]],
+  };
+  const deep = accept({ intent: "review", target: { kind: "shot", id: "L1-02" }, facts: graph },
+    "a record of strings, objects and arrays was refused; these are the fact types the contract exists to carry");
+
+  /* 1-4. Nothing in the copied graph is anything the caller still holds. */
+  assert.notStrictEqual(deep.facts, graph, "the fact record itself must be a copy");
+  assert.notStrictEqual(deep.facts.block, graph.block, "a nested object must be a copy");
+  assert.notStrictEqual(deep.facts.block.detail, nestedObject, "an object nested two deep must be a copy");
+  assert.notStrictEqual(deep.facts.block.list, nestedArray, "an array inside an object must be a copy");
+  assert.notStrictEqual(deep.facts.entities[0], inArray, "an object inside an array must be a copy");
+  assert.ok(Array.isArray(deep.facts.matrix[0]),
+    "an array inside an array must still be an array; spreading it as an object turns a list into {\"0\":…} and corrupts the fact");
+  assert.deepStrictEqual([...deep.facts.matrix[0]], ["deep"]);
+
+  /* 5-7. And the caller keeps everything it handed over, unfrozen. Braidy freezes its
+     OWN copy; freezing a caller's live object is a worse bug than the one the freeze
+     exists to prevent, and it looks exactly like the feature working. */
+  for (const [label, held] of [["the record", graph], ["a nested object", nestedObject],
+    ["a nested array", nestedArray], ["an object inside an array", inArray]]) {
+    assert.ok(!Object.isFrozen(held), `handing facts over froze ${label} the caller still owns`);
+  }
+  /* Said as the caller would find out: by using its own object afterwards. */
+  nestedArray.push("ref-b");
+  nestedObject.reason = "MUTATED BY CALLER";
+  inArray.id = "MUTATED";
+  graph.stage = "Motion";
+
+  /* 8. The copy is frozen through. */
+  assert.ok(Object.isFrozen(deep.facts.block) && Object.isFrozen(deep.facts.block.detail)
+    && Object.isFrozen(deep.facts.block.list) && Object.isFrozen(deep.facts.entities[0])
+    && Object.isFrozen(deep.facts.matrix[0]),
+    "every node of the copied graph must be frozen, not only the root");
+
+  /* 9-10. And none of the caller's edits reached it. */
+  assert.strictEqual(deep.facts.stage, "Frames");
+  assert.strictEqual(deep.facts.block.detail.reason, "reference-unconfirmed");
+  assert.strictEqual([...deep.facts.block.list].length, 1);
+  assert.strictEqual(deep.facts.entities[0].id, "CHAR-1");
+
+  /* 11. A shape the record cannot carry is REFUSED where it is handed over, not
+     silently dropped at JSON.stringify time or thrown much later at request time. */
+  const UNSUPPORTED = [
+    ["a function", () => {}], ["a symbol", Symbol("s")], ["a BigInt", 10n],
+    ["a Date", new Date(0)], ["a Map", new Map()], ["a Set", new Set()],
+    ["a class instance", new (class Thing { constructor() { this.x = 1; } })()],
+    ["NaN", NaN], ["Infinity", Infinity],
+  ];
+  for (const [label, value] of UNSUPPORTED) {
+    assert.throws(() => api.braidyHandoff({ intent: "ask", target: { kind: "project" }, facts: { probe: value } }),
+      /Braidy cannot carry/,
+      `${label} was accepted as a fact; it cannot survive the request in the shape CineBraid recorded it`);
+  }
+  /* Refused wherever it is, not only at the top. */
+  assert.throws(() => api.braidyHandoff({ intent: "ask", target: { kind: "project" }, facts: { a: { b: [{ c: new Date(0) }] } } }),
+    /facts\.a\.b\.0\.c/, "the refusal must name where the unsupported fact is, not just that there was one");
+
+  /* A null prototype is still a plain record and is carried. */
+  const bare = Object.assign(Object.create(null), { x: 1 });
+  assert.strictEqual(accept({ intent: "ask", target: { kind: "project" }, facts: { bare } },
+    "a null-prototype record is a plain record and must be carried").facts.bare.x, 1);
+
+  /* 12. A cycle is refused deterministically. Copying it is not an option — the walk
+     would not terminate — and aliasing it would leave a caller-owned node inside the
+     frozen graph, which is the whole defect. */
+  const cycle = { name: "self" };
+  cycle.self = cycle;
+  assert.throws(() => api.braidyHandoff({ intent: "ask", target: { kind: "project" }, facts: { cycle } }),
+    /refers back to something that contains it/, "a cycle must be refused rather than walked or aliased");
+  assert.ok(!Object.isFrozen(cycle), "a refused cycle must leave the caller's object untouched");
+  /* The same value used twice in different branches is not a cycle and is carried. */
+  const shared = { tag: "used-twice" };
+  const twice = accept({ intent: "ask", target: { kind: "project" }, facts: { left: shared, right: shared } },
+    "a value used twice in different branches is not a cycle and must be carried");
+  assert.strictEqual(twice.facts.left.tag, "used-twice");
+  assert.notStrictEqual(twice.facts.left, twice.facts.right, "a value used twice is copied twice; only a value containing itself is a cycle");
+  assert.ok(!Object.isFrozen(shared));
+
+  /* And a graph deeper than the record is bounded to is refused rather than walked. */
+  let tower = { end: true };
+  for (let i = 0; i < 12; i += 1) tower = { down: tower };
+  assert.throws(() => api.braidyHandoff({ intent: "ask", target: { kind: "project" }, facts: tower }),
+    /nested deeper than/, "facts are a bounded record; an unbounded graph must be refused");
+
+  note("Facts: the whole graph is copied and frozen independently — nested objects, arrays, objects inside arrays and arrays inside arrays all identity-distinct, the caller's own nodes left unfrozen and mutable, cycles and unsupported shapes refused where they are handed over with the path named, and the record framed to the model as CineBraid's answer rather than as raw material");
 }
 
 /* ===========================================================================

@@ -158,12 +158,58 @@ async function factControls() {
         "C4") },
     "An interpretation would be able to edit its own evidence, which is the one thing that makes handing CineBraid's answers over unsafe.");
 
-  await control("C5 the handoff keeps the caller's object instead of copying it", "checkFactsAreReadOnlyContext",
+  await control("C5 the walker hands back the caller's object instead of a copy", "checkFactsAreReadOnlyContext",
     { contract: mutate(SOURCES.contract,
-        "  function braidyFacts(input) {\n    const facts = {};\n    if (!input || typeof input !== \"object\") return facts;",
-        "  function braidyFacts(input) {\n    const facts = input && typeof input === \"object\" ? input : {};\n    if (!input || typeof input !== \"object\") return facts;",
+        "  function braidyFactObject(input, path, ancestors) {\n    const facts = {};",
+        "  function braidyFactObject(input, path, ancestors) {\n    const facts = input;",
         "C5") },
-    "A caller mutating its own object after handing it over would silently change what Braidy was told, and the two would never be compared.");
+    "A caller mutating its own object after handing it over would silently change what Braidy was told, and the deepFreeze that follows would immobilise the caller's live state.");
+
+  /* THE SHALLOW-COPY DEFECT, PUT BACK EXACTLY AS IT WAS. This is the shape the
+     reviewer found: one level of spread, arrays mapped through an object spread. It
+     copies the top level convincingly, so every assertion that only looked at the
+     first level passed against it for as long as it shipped. */
+  await control("C5b the copier stops after one level, as it originally did", "checkFactsAreReadOnlyContext",
+    { contract: mutate(SOURCES.contract,
+        "    return braidyFactObject(value, path, within);",
+        "    return { ...value };",
+        "C5b") },
+    "A nested object would keep the caller's identity and be frozen underneath them — the caller's own next write throws — while the top level looked correctly copied.");
+
+  await control("C5c an array's elements are copied by spread rather than walked", "checkFactsAreReadOnlyContext",
+    { contract: mutate(SOURCES.contract,
+        "      return value.map((item, index) => braidyFactValue(item, [...path, String(index)], within));",
+        "      return value.map((item) => (typeof item === \"object\" && item ? { ...item } : item));",
+        "C5c") },
+    "An array inside an array would be spread as an object and arrive as {\"0\":…}: not aliasing but silent corruption of the evidence the model is about to be given.");
+
+  await control("C5d a cycle is aliased instead of refused", "checkFactsAreReadOnlyContext",
+    { contract: mutate(SOURCES.contract,
+        "      throw braidyFactRefusal(path, \"it refers back to something that contains it. A record cannot contain itself.\");",
+        "      return value;",
+        "C5d") },
+    "The graph would be accepted with one caller-owned node still inside it, and the freeze that follows would reach through that node into the caller's live object.");
+
+  await control("C5e a number that cannot survive the request is carried", "checkFactsAreReadOnlyContext",
+    { contract: mutate(SOURCES.contract,
+        "      if (!Number.isFinite(value))",
+        "      if (false)",
+        "C5e") },
+    "NaN and Infinity reach the model as null, so Braidy would be told a number CineBraid never recorded and could not be shown to have been told it.");
+
+  await control("C5f anything object-shaped is accepted as a fact", "checkFactsAreReadOnlyContext",
+    { contract: mutate(SOURCES.contract,
+        "    if (!braidyPlainObject(value))\n      throw braidyFactRefusal(path,",
+        "    if (false)\n      throw braidyFactRefusal(path,",
+        "C5f") },
+    "A Date, a Map or a Set would be copied into the record and arrive at the model as {}, which is a fact CineBraid never stated rather than a fact it stated badly.");
+
+  await control("C5g the plain-object test is written so a realm boundary refuses everything", "checkFactsAreReadOnlyContext",
+    { contract: mutate(SOURCES.contract,
+        "    return proto === null || Object.getPrototypeOf(proto) === null;",
+        "    return proto === null || proto === Object.prototype;",
+        "C5g") },
+    "Every fact object built outside this file's realm — a suite's, another frame's — would be refused as exotic, which is a working contract failing for a reason that has nothing to do with the facts.");
 
   await control("C6 the facts stop being given to the model at all", "checkFactsAreReadOnlyContext",
     { contract: mutate(SOURCES.contract,
