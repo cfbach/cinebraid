@@ -5078,33 +5078,57 @@ body[data-focused-workspace="1"] .guided-frame-body,
    deterministic sections beneath it: Braidy is where a filmmaker asks something, and
    a surface that is competing for attention is a surface they stop asking.
 
-   THE PRESENCE IS A PLACEHOLDER and says so in the markup — data-braidy-art="absent".
-   There is no approved Braidy sprite in this repository, so what renders is a small
-   neutral double-loop carrying the presentation state. It is NOT a character and NOT
-   a redesign; when the braided-rope frames arrive they replace what is inside
-   .cb-braidy-presence and every state selector below already means what it will mean.
+   THE PRESENCE IS THE V3.2 CHARACTER, adopted unedited. Six exported strips live in
+   public/assets/assistant-character/ and public/braidy-rail.js writes the sheet URL
+   and its width inline from BRAIDY_SPRITES; this file owns only when frames advance.
 
-   MOTION IS RESTRAINED BY CONSTRUCTION. Idle drifts, listening and attention do not
-   move at all, thinking turns one ring slowly, and acknowledge runs ONCE. Nothing
-   bounces, nothing loops in the filmmaker's peripheral vision while they work, and
-   both the stamped data-braidy-motion="none" and the reduced-motion query below stop
-   all of it. */
+   MOTION IS RESTRAINED BECAUSE THE ART IS. IDLE_SOFT is five slow holds and one fast
+   blink, LISTENING and PROCESSING are quiet ambient loops, and the two event cues run
+   exactly once. Nothing bounces and nothing celebrates: the package's EXCITED, BOUNCE,
+   WIGGLE and DANCE tags exist and are deliberately not shipped, because a mascot
+   moving in the corner of a working editor is a mascot that gets closed. */
 .cb-braidy{display:grid;gap:10px;padding-bottom:13px;border-bottom:1px solid var(--line)}
 .cb-braidy-head{display:flex;align-items:center;gap:10px;min-width:0}
 .cb-braidy-id{display:grid;gap:2px;min-width:0}
 .cb-braidy-id b{font-family:var(--display);font-size:14px;letter-spacing:-.005em;color:var(--ink)}
 .cb-braidy-id small{font-size:10.5px;line-height:1.4;color:var(--muted);overflow-wrap:anywhere}
-.cb-braidy-presence{position:relative;flex:0 0 auto;width:26px;height:26px;display:grid;place-items:center}
-.cb-braidy-loop{position:absolute;width:17px;height:17px;border:2px solid color-mix(in srgb,var(--acc) 62%,transparent);border-radius:50%;opacity:.8}
-.cb-braidy-loop:first-child{transform:translate(-3px,2px)}
-.cb-braidy-loop:last-child{transform:translate(3px,-2px)}
-.cb-braidy[data-braidy-state="idle"] .cb-braidy-loop{animation:cb-braidy-breathe 6.5s ease-in-out infinite}
-.cb-braidy[data-braidy-state="listening"] .cb-braidy-loop{opacity:1;border-color:var(--acc)}
-.cb-braidy[data-braidy-state="thinking"] .cb-braidy-loop:last-child{animation:cb-braidy-turn 2.6s linear infinite;transform-origin:50% 50%}
-.cb-braidy[data-braidy-state="acknowledge"] .cb-braidy-presence{animation:cb-braidy-ack .42s ease-out 1}
-.cb-braidy[data-braidy-state="attention"] .cb-braidy-loop{border-color:color-mix(in srgb,var(--amber) 70%,transparent);opacity:1}
-/* The stamped answer, honoured before any stylesheet preference. */
-.cb-braidy[data-braidy-motion="none"] .cb-braidy-loop,.cb-braidy[data-braidy-motion="none"] .cb-braidy-presence{animation:none}
+/* THE PRESENCE IS A 32px WINDOW ONTO A STRIP, and every number in this block comes
+   from the V3.2 package rather than from taste. The canonical frame is 64x64, so a
+   32px box is exact at a device pixel ratio of 2 and a clean halving at 1;
+   `pixelated` keeps the nearest-neighbour rendering the package requires. The sheet
+   URL and its width are written inline by public/braidy-rail.js from the closed
+   sprite table, so this file owns only WHEN frames advance. */
+.cb-braidy-presence{flex:0 0 auto;width:32px;height:32px;background-repeat:no-repeat;background-position:0 0;image-rendering:pixelated}
+
+/* AUTHORED TIMING, NOT EVEN TIMING. Each stop is the cumulative start of one frame as
+   a percentage of the tag's own total, taken from braidy_sheet_v32.json — which is why
+   IDLE_SOFT's blink is still 65ms and 75ms rather than an eighth of three seconds.
+   step-end holds each frame until the next stop, so there is no interpolation between
+   sprite cells. tests/braidy-rail.js regenerates every line below from BRAIDY_SPRITES
+   and requires an exact match, so the stylesheet cannot drift from the art. */
+@keyframes cb-braidy-idle{0%{background-position-x:0px}18.1818%{background-position-x:-32px}32.8671%{background-position-x:-64px}50.3497%{background-position-x:-96px}65.035%{background-position-x:-128px}86.014%{background-position-x:-160px}88.2867%{background-position-x:-192px}90.9091%{background-position-x:-224px}}
+@keyframes cb-braidy-listening{0%{background-position-x:0px}16.0714%{background-position-x:-32px}30.3571%{background-position-x:-64px}49.1071%{background-position-x:-96px}65.1786%{background-position-x:-128px}79.4643%{background-position-x:-160px}}
+@keyframes cb-braidy-thinking{0%{background-position-x:0px}12.037%{background-position-x:-32px}23.1481%{background-position-x:-64px}35.1852%{background-position-x:-96px}49.0741%{background-position-x:-128px}61.1111%{background-position-x:-160px}72.2222%{background-position-x:-192px}84.2593%{background-position-x:-224px}}
+@keyframes cb-braidy-acknowledge{0%{background-position-x:0px}16.4557%{background-position-x:-32px}28.481%{background-position-x:-64px}37.9747%{background-position-x:-96px}50.6329%{background-position-x:-128px}67.0886%{background-position-x:-160px}}
+@keyframes cb-braidy-attention{0%{background-position-x:0px}13.1783%{background-position-x:-32px}22.4806%{background-position-x:-64px}32.5581%{background-position-x:-96px}52.7132%{background-position-x:-128px}65.1163%{background-position-x:-160px}75.1938%{background-position-x:-192px}83.7209%{background-position-x:-224px}}
+
+/* LOOPS AND ONE-SHOTS ARE THE PACKAGE'S OWN CLASSIFICATION. idle, listening and
+   processing are ambient and repeat; ACKNOWLEDGE and NEEDS_DECISION are event cues
+   that play ONCE and hold their last cel, which is the "plays once and gets out of the
+   way" behaviour the V3.2 production notes describe. Nothing here bounces, and nothing
+   that is not currently happening is moving. */
+.cb-braidy[data-braidy-state="idle"] .cb-braidy-presence{animation:cb-braidy-idle 2860ms step-end infinite}
+.cb-braidy[data-braidy-state="listening"] .cb-braidy-presence{animation:cb-braidy-listening 2240ms step-end infinite}
+.cb-braidy[data-braidy-state="thinking"] .cb-braidy-presence{animation:cb-braidy-thinking 2160ms step-end infinite}
+.cb-braidy[data-braidy-state="acknowledge"] .cb-braidy-presence{animation:cb-braidy-acknowledge 790ms step-end 1 forwards}
+.cb-braidy[data-braidy-state="attention"] .cb-braidy-presence{animation:cb-braidy-attention 2580ms step-end 1 forwards}
+
+/* REDUCED MOTION, TWICE. The rail has already swapped the strip for the single static
+   FRONT frame by the time this matters — data-braidy-still="1" says so — and these two
+   rules make certain nothing is cycling a one-frame sheet regardless. The stamped
+   answer is honoured before any stylesheet preference, so a reader who asked for less
+   movement is served even where the media query is not consulted. */
+.cb-braidy[data-braidy-motion="none"] .cb-braidy-presence,.cb-braidy-presence[data-braidy-still="1"]{animation:none}
 .cb-braidy-thread{display:grid;gap:9px;min-width:0}
 .cb-braidy-turn{display:grid;gap:5px;min-width:0}
 .cb-braidy-turn p{font-size:12px;line-height:1.5;color:var(--ink);overflow-wrap:anywhere}
@@ -5120,10 +5144,7 @@ body[data-focused-workspace="1"] .guided-frame-body,
 .cb-braidy-compose textarea{width:100%;min-width:0;resize:vertical;padding:7px 9px;border:1px solid var(--line-2);border-radius:var(--r-sm);background:var(--panel-2);color:var(--ink);font:inherit;font-size:12px;line-height:1.45}
 .cb-braidy-send{padding:7px 11px;border:1px solid var(--line-2);border-radius:var(--r-sm);background:var(--panel-2);font-size:11px;font-weight:600;color:var(--ink)}
 .cb-braidy-send:disabled{opacity:.55}
-@keyframes cb-braidy-breathe{0%,100%{opacity:.68}50%{opacity:.9}}
-@keyframes cb-braidy-turn{to{transform:translate(3px,-2px) rotate(360deg)}}
-@keyframes cb-braidy-ack{0%{transform:scale(1)}45%{transform:scale(1.11)}100%{transform:scale(1)}}
-@media(prefers-reduced-motion:reduce){.cb-braidy-loop,.cb-braidy-presence{animation:none!important}}
+@media(prefers-reduced-motion:reduce){.cb-braidy-presence{animation:none!important}}
 
 /* ---- the Activity Terminal ------------------------------------------------- */
 .cb-terminal{display:flex;flex-direction:column;min-width:0;min-height:0}

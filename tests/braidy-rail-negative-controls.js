@@ -22,6 +22,9 @@
  */
 
 const assert = require("assert");
+const fs = require("fs");
+const os = require("os");
+const path = require("path");
 
 const suite = require("./braidy-rail.js");
 const { SOURCES } = suite;
@@ -35,6 +38,41 @@ function mutate(source, needle, replacement, label, expected = 1) {
     `probe receipt: ${label} expected ${expected} occurrence(s) of its anchor, found ${hits}. `
     + "The control is no longer mutating the live path and must be rewritten.");
   return source.split(needle).join(replacement);
+}
+
+/* THE ASSET DIRECTORY, MUTATED ON DISK BUT NOT IN THE REPOSITORY. Two controls need a
+   tree rather than a source string - a file that is not there, and a file whose bytes
+   are not the ones that were verified - so each builds a throwaway copy under the OS
+   temp directory and hands checkSpriteAssets its path. Nothing in public/ is touched,
+   which is the same reason every other control mutates a string in memory. */
+const TEMP_ROOT = fs.mkdtempSync(path.join(os.tmpdir(), "cinebraid-braidy-art-"));
+const REAL_ART = path.join(__dirname, "..", "public", "assets", "assistant-character");
+let TEMP_SEQ = 0;
+
+function copyArt() {
+  const dir = path.join(TEMP_ROOT, `art-${(TEMP_SEQ += 1)}`);
+  fs.mkdirSync(dir, { recursive: true });
+  for (const name of fs.readdirSync(REAL_ART)) fs.copyFileSync(path.join(REAL_ART, name), path.join(dir, name));
+  return dir;
+}
+function missingOne(name) {
+  const dir = copyArt();
+  const file = path.join(dir, name);
+  assert.ok(fs.existsSync(file), `probe receipt: ${name} was not in the adopted set to begin with`);
+  fs.unlinkSync(file);
+  return dir;
+}
+function tamperedOne(name) {
+  const dir = copyArt();
+  const file = path.join(dir, name);
+  const bytes = fs.readFileSync(file);
+  /* One byte, deep inside the compressed image data. The PNG header survives, so the
+     file is still a readable strip of the right geometry - which is exactly the kind
+     of change a hash catches and a shape check does not. */
+  const at = bytes.length - 24;
+  bytes[at] = bytes[at] ^ 0xff;
+  fs.writeFileSync(file, bytes);
+  return dir;
 }
 
 const EXERCISED = new Set();
@@ -310,12 +348,26 @@ async function presentationControls() {
         "C22") },
     "A reader who asked for less movement would be told less truth: a running request would be drawn as idle.");
 
-  await control("C23 the acknowledge animation loops", "checkReducedMotion",
+  await control("C23 the acknowledge cue loops forever", "checkReducedMotion",
     { styles: mutate(SOURCES.styles,
-        ".cb-braidy[data-braidy-state=\"acknowledge\"] .cb-braidy-presence{animation:cb-braidy-ack .42s ease-out 1}",
-        ".cb-braidy[data-braidy-state=\"acknowledge\"] .cb-braidy-presence{animation:cb-braidy-ack .42s ease-out infinite}",
+        "animation:cb-braidy-acknowledge 790ms step-end 1 forwards",
+        "animation:cb-braidy-acknowledge 790ms step-end infinite",
         "C23") },
-    "A mascot bouncing continuously beside the work is the failure mode the brief named first.");
+    "A one-shot acknowledgement repeating every 790ms is a mascot celebrating at the filmmaker until they close the rail — the failure mode the brief named first.");
+
+  await control("C23b the decision cue loops instead of getting out of the way", "checkReducedMotion",
+    { styles: mutate(SOURCES.styles,
+        "animation:cb-braidy-attention 2580ms step-end 1 forwards",
+        "animation:cb-braidy-attention 2580ms step-end infinite",
+        "C23b") },
+    "NEEDS_DECISION was authored to play once and settle; looping it turns a subdued cue into the alarm the V3.2 production notes exist to avoid.");
+
+  await control("C23c reduced motion keeps the animated strip", "checkReducedMotion",
+    { contract: mutate(SOURCES.contract,
+        "    const sprite = options.reducedMotion ? BRAIDY_STATIC_SPRITE : BRAIDY_SPRITES[key];",
+        "    const sprite = BRAIDY_SPRITES[key];",
+        "C23c") },
+    "A reader who asked for less movement would be handed an eight-frame sheet and left relying on one stylesheet rule to stop it.");
 }
 
 /* ===========================================================================
@@ -394,6 +446,88 @@ async function mintingControls() {
 }
 
 /* ===========================================================================
+   THE ART. Adopted bytes, a closed table, and timing that is the animator's.
+   =========================================================================== */
+
+async function artControls() {
+  note("The art is the package's, unedited, and only the five states can reach it:");
+
+  await control("C35 the sprite table builds a path from its caller", "checkSpriteAssets",
+    { contract: mutate(SOURCES.contract,
+        "    if (!Object.prototype.hasOwnProperty.call(BRAIDY_SPRITES, key)) return null;",
+        "    if (!Object.prototype.hasOwnProperty.call(BRAIDY_SPRITES, key)) return deepFreeze({ state: key, tag: \"\", file: key, url: BRAIDY_SPRITE_BASE + key, frames: 1, sheetWidth: 32, size: 32, durations: [], totalMs: 0, loop: false, still: true });",
+        "C35") },
+    "Any string would become a URL under the asset directory, and a name that climbed out of it would become a request for whatever it pointed at.");
+
+  await control("C36 an adopted asset is missing from the build", "checkSpriteAssets",
+    { assetDir: missingOne("braidy-processing-v32.png") },
+    "The rail would ask for a file that is not there and draw nothing at all while a request was running.");
+
+  await control("C37 an asset was re-exported rather than adopted", "checkSpriteAssets",
+    { assetDir: tamperedOne("braidy-idle-soft-v32.png") },
+    "The shipped art would no longer be the art that was reviewed and verified, and the geometry checks would still pass.");
+
+  await control("C38 idle draws the busy ambient loop", "checkSpriteAssets",
+    { contract: mutate(SOURCES.contract,
+        "    idle: { tag: \"IDLE_SOFT\", file: \"braidy-idle-soft-v32.png\"",
+        "    idle: { tag: \"IDLE\", file: \"braidy-idle-soft-v32.png\"",
+        "C38") },
+    "The package maps its creator-facing idle to IDLE_SOFT deliberately; the busier IDLE is ambient personality and would move in the corner of the editor all day.");
+
+  await control("C39 a request in flight draws the contemplative pose", "checkSpriteAssets",
+    { contract: mutate(SOURCES.contract,
+        "    thinking: { tag: \"PROCESSING\", file: \"braidy-processing-v32.png\"",
+        "    thinking: { tag: \"THINKING\", file: \"braidy-processing-v32.png\"",
+        "C39") },
+    "CineBraid is executing a request, not pondering one. THINKING belongs to the package's cognitive mix and reads as Braidy being unsure of itself.");
+
+  await control("C40 a celebration animation is mapped to a rail state", "checkSpriteAssets",
+    { contract: mutate(SOURCES.contract,
+        "    acknowledge: { tag: \"ACKNOWLEDGE\"",
+        "    acknowledge: { tag: \"EXCITED\"",
+        "C40") },
+    "Bounce, wiggle, dance and celebration tags exist in the package and are not ambient UI; one of them in the rail is a mascot performing at somebody who is working.");
+
+  await control("C41 the stylesheet averages the frame timing", "checkSpriteAssets",
+    { styles: mutate(SOURCES.styles,
+        "18.1818%{background-position-x:-32px}",
+        "12.5%{background-position-x:-32px}",
+        "C41") },
+    "IDLE_SOFT's blink is 65ms and 75ms inside a 2860ms loop; evenly spaced stops turn it into a slow eye-close, which is a different performance from the one that was approved.");
+
+  await control("C41b the project-media route is declared ahead of the static mount", "checkSpriteAssets",
+    { server: (() => {
+        const marker = 'app.get("/assets/*"';
+        const at = SOURCES.server.indexOf(marker);
+        assert.notStrictEqual(at, -1, "probe receipt: C41b could not find the project-media route");
+        const end = SOURCES.server.indexOf("\n});", at);
+        assert.notStrictEqual(end, -1, "probe receipt: C41b could not find the end of the project-media route");
+        const route = SOURCES.server.slice(at, end + 4);
+        /* Moved, not duplicated: the route is lifted out and re-inserted above the
+           static mount, which is exactly what a well-meaning reorder would do. */
+        const without = SOURCES.server.slice(0, at) + SOURCES.server.slice(end + 4);
+        const mount = "app.use(\n  \"/\",\n  express.static(";
+        assert.ok(without.includes(mount), "probe receipt: C41b could not find the static mount");
+        return without.replace(mount, route + "\n" + mount);
+      })() },
+    "Every Braidy frame would 404 behind a route whose allowlist has never heard of the character, and nothing in this suite that reads files from disk would notice.");
+
+  await control("C42 the public-exposure detector is relaxed to suit an asset path", "checkSpriteAssets",
+    { exposure: mutate(SOURCES.exposure,
+        'p.startsWith("braidy/") || p.startsWith("research/")',
+        'p.startsWith("braidy-research-only/")',
+        "C42") },
+    "The historical research namespace would become publishable — the one thing that control exists to prevent — weakened for the convenience of a directory name.");
+
+  await control("C43 the release drops a Braidy asset", "checkSpriteAssets",
+    { release: mutate(SOURCES.release,
+        '  "public/assets/assistant-character/braidy-needs-decision-v32.png",\n',
+        "",
+        "C43") },
+    "A packaged release would either omit the sprite and render an empty box on a first run, or fail its own stray-media rule for carrying an unlisted PNG.");
+}
+
+/* ===========================================================================
    OPTIONALITY, COMPACTION, REGISTER, BACKEND.
    =========================================================================== */
 
@@ -457,6 +591,7 @@ async function runAll() {
   await presentationControls();
   await stalenessControls();
   await mintingControls();
+  await artControls();
   await remainingControls();
 
   /* EVERY CHECK THE MAIN SUITE PUBLISHES MUST HAVE BEEN WATCHED FAIL. A check with no

@@ -103,6 +103,84 @@
   }
 
   /* ==========================================================================
+     1b. THE SPRITE TABLE — a second closed table, for the same reason as the first.
+
+     The art is Braidy V3.2, the knot-forward production library. Its master is a
+     64x64 Aseprite document outside this repository; what ships here is six exported
+     PNG strips, byte-for-byte, whose SHA-256 are recorded in that package's
+     BRAIDY_PACKAGE_MANIFEST_V32.sha256 and re-checked by tests/braidy-rail.js. The
+     master, the build scripts, the review boards, the GIF QA previews and the 2x/4x/8x
+     packs are deliberately not here: the runtime needs five strips and one static
+     frame, and 15 KB of it.
+
+     WHY 1x IS THE HiDPI ANSWER. The canonical frame is 64 x 64 and the rail draws
+     Braidy in a 32 CSS px box — the smallest size the package's own UI-size QA board
+     covers. At a device pixel ratio of 2 that is 64 device pixels from a 64 pixel
+     source: exact, one to one, no filtering. At ratio 1 it is a clean 2:1. Shipping
+     the 2x pack as well would buy nothing above ratio 2 and would double the bytes.
+
+     THE MAPPING IS THE PACKAGE'S OWN, not filename guessing. exports/braidy_state_map_v32.json
+     maps its creator-facing `idle` to the IDLE_SOFT tag — the restrained one — and
+     keeps the busier IDLE for `ambient_idle`. `working` and the `reviewing` alias both
+     resolve to PROCESSING, which is why a request in flight draws PROCESSING and not
+     THINKING: THINKING belongs to the package's "cognitive" mix and would have Braidy
+     look contemplative while CineBraid is simply executing.
+
+     AND IT IS A TABLE, so a state cannot name a file. braidySprite() reads own
+     properties of this object only. There is no concatenation of caller input into a
+     path, no traversal to escape the directory, and nothing outside these six files is
+     addressable — which is what makes free-form model output unable to point the rail
+     at anything at all. */
+  const BRAIDY_SPRITE_BASE = "assets/assistant-character/";
+  /* The box the rail draws Braidy in, and the divisor every sheet offset is computed
+     from. One number, so the markup and the stylesheet cannot disagree about it. */
+  const BRAIDY_SPRITE_SIZE = 32;
+  /* What reduced motion shows, for every state. The package specifies the static FRONT
+     view and this is it — one frame, no strip, nothing to cycle. It is deliberately
+     NOT "frame zero of whichever animation was selected": that would make the still
+     image depend on an animation nobody is playing. Which state the rail is in stays
+     legible in words, which is where a presentation-only mascot should never have been
+     carrying it. */
+  const BRAIDY_STATIC_SPRITE = deepFreeze({ tag: "FRONT", file: "braidy-front-v32.png", frames: 1, durations: [], totalMs: 0, loop: false });
+
+  const BRAIDY_SPRITES = deepFreeze({
+    idle: { tag: "IDLE_SOFT", file: "braidy-idle-soft-v32.png", frames: 8, durations: [520, 420, 500, 420, 600, 65, 75, 260], totalMs: 2860, loop: true },
+    listening: { tag: "LISTENING", file: "braidy-listening-v32.png", frames: 6, durations: [360, 320, 420, 360, 320, 460], totalMs: 2240, loop: true },
+    thinking: { tag: "PROCESSING", file: "braidy-processing-v32.png", frames: 8, durations: [260, 240, 260, 300, 260, 240, 260, 340], totalMs: 2160, loop: true },
+    acknowledge: { tag: "ACKNOWLEDGE", file: "braidy-acknowledge-v32.png", frames: 6, durations: [130, 95, 75, 100, 130, 260], totalMs: 790, loop: false },
+    attention: { tag: "NEEDS_DECISION", file: "braidy-needs-decision-v32.png", frames: 8, durations: [340, 240, 260, 520, 320, 260, 220, 420], totalMs: 2580, loop: false },
+  });
+
+  /* THE ONE WAY A STATE BECOMES AN IMAGE. Unknown states, prototype-chain names and
+     anything that is not one of the five resolve to null rather than to a file. */
+  function braidySprite(state, options = {}) {
+    const key = braidyText(state);
+    if (!Object.prototype.hasOwnProperty.call(BRAIDY_SPRITES, key)) return null;
+    const sprite = options.reducedMotion ? BRAIDY_STATIC_SPRITE : BRAIDY_SPRITES[key];
+    return deepFreeze({
+      state: key,
+      tag: sprite.tag,
+      file: sprite.file,
+      url: BRAIDY_SPRITE_BASE + sprite.file,
+      frames: sprite.frames,
+      /* The strip's rendered width. A one-frame static sprite is one box wide, so the
+         same expression covers both without a branch anywhere downstream. */
+      sheetWidth: sprite.frames * BRAIDY_SPRITE_SIZE,
+      size: BRAIDY_SPRITE_SIZE,
+      /* The authored per-frame durations, carried rather than averaged. They are what
+         the stylesheet's keyframe stops are derived from, and tests/braidy-rail.js
+         re-derives them from here — so the CSS cannot quietly become even timing and
+         turn IDLE_SOFT's 65ms blink into a slow eye-close. */
+      durations: sprite.durations,
+      totalMs: sprite.totalMs,
+      loop: sprite.loop,
+      /* True only when there is nothing to cycle. The rail stamps it so a suite can
+         tell "reduced motion is being honoured" from "this state happens to be still". */
+      still: sprite.frames === 1,
+    });
+  }
+
+  /* ==========================================================================
      2. THE HANDOFF.
 
      What a contextual "… with Braidy" control hands the rail. Five intents, because
@@ -448,6 +526,11 @@
   return {
     BRAIDY_PRESENTATION_STATES,
     BRAIDY_PRESENTATION_TOKENS,
+    BRAIDY_SPRITE_BASE,
+    BRAIDY_SPRITE_SIZE,
+    BRAIDY_SPRITES,
+    BRAIDY_STATIC_SPRITE,
+    braidySprite,
     BRAIDY_INTENTS,
     BRAIDY_TARGET_KINDS,
     BRAIDY_ACTIONS,

@@ -38,22 +38,32 @@
                         to motion, and none from prose to a control.
 
    ---------------------------------------------------------------------------
-   THE ART. There is no Braidy sprite in this repository — the only images are the
-   CineBraid brand mark and its logo, which are the product's mark and not a
-   character. So the presence renders as an explicit PLACEHOLDER: a neutral loop
-   carrying the presentation state, stamped data-braidy-art="absent". It is
-   deliberately not a face and deliberately not a redesign of Braidy; when the
-   approved braided-rope frames arrive, they replace the placeholder inside this one
-   element and every state below already means what it will mean then. */
+   THE ART is Braidy V3.2, the knot-forward production library, adopted whole and
+   unedited: six exported PNG strips under public/assets/assistant-character/, byte
+   identical to the authoring package and checked against its own SHA-256 manifest by
+   tests/braidy-rail.js. Nothing was drawn, redrawn, rescaled or re-exported here.
+
+   Which strip a state draws is decided by BRAIDY_SPRITES in public/shared-braidy.js,
+   using the mapping the package itself publishes rather than by matching names: its
+   creator-facing `idle` is the restrained IDLE_SOFT, and a request in flight is
+   PROCESSING rather than THINKING because THINKING is a cognitive pose and CineBraid
+   is executing, not pondering.
+
+   The strips are the whole runtime. The 64x64 master, the build scripts, the review
+   boards, the GIF QA previews and the 2x/4x/8x packs stayed in the authoring package:
+   the rail draws Braidy in a 32 CSS px box, where the 1x frame is exact at a device
+   pixel ratio of 2 and a clean halving below it. */
 
 (function () {
   if (typeof document === "undefined") return;
 
   const INPUT_ID = "cb-braidy-input";
-  /* How long "acknowledge" lasts. A one-shot settle, not a clock: it is scheduled by
-     an answer arriving and by nothing else, and the rail is repainted by the same
-     paint() every other creator surface uses. */
-  const ACKNOWLEDGE_MS = 1600;
+  /* How long "acknowledge" lasts, and it is the art's own number rather than a taste.
+     The V3.2 ACKNOWLEDGE tag is six frames totalling 790ms, so the pose lasts exactly
+     as long as the animation and settles the moment it finishes. A one-shot settle,
+     not a clock: it is scheduled by an answer arriving and by nothing else, and the
+     rail is repainted by the same paint() every other creator surface uses. */
+  const ACKNOWLEDGE_MS = 790;
   /* A request cannot outlive this. The assistant route's own timeouts are longer than
      anything a rail should hold a filmmaker's attention for, and a request that never
      returns is the exact way a mascot gets stuck thinking. */
@@ -302,12 +312,28 @@
     return typeof attr === "function" ? attr(value) : esc_(value);
   }
 
+  /* BRAIDY, DRAWN. One element, one image, and the image comes from the closed table
+     in public/shared-braidy.js rather than from anything on this side.
+
+     THE SHEET IS SET HERE AND THE TIMING IS SET IN THE STYLESHEET, which is the split
+     that makes both halves checkable: the table decides WHICH strip a state draws, and
+     tests/braidy-rail.js re-derives the stylesheet's keyframes from the same table's
+     frame durations, so the two cannot drift apart quietly. Nothing here runs a clock —
+     a CSS animation is owned by the compositor, pauses with the tab, and cannot be left
+     running by a request that went away, because a closed rail has no element at all.
+
+     `data-braidy-art` carries the asset generation, so "is the placeholder still here"
+     is a question the markup answers. */
   function presenceMarkup(state) {
-    /* data-braidy-art="absent" is the honest part: this is a placeholder for the
-       approved braided-rope frames, not a character. One element, so supplying the
-       art later is a change inside it and not a change to any state below. */
-    return `<span class="cb-braidy-presence" data-braidy-art="absent" data-braidy-pose="${attr_(state)}" aria-hidden="true">`
-      + `<i class="cb-braidy-loop"></i><i class="cb-braidy-loop"></i></span>`;
+    const shared = contract();
+    const sprite = shared ? shared.braidySprite(state, { reducedMotion: reducedMotion() }) : null;
+    if (!sprite)
+      return `<span class="cb-braidy-presence" data-braidy-art="unresolved" data-braidy-pose="${attr_(state)}" aria-hidden="true"></span>`;
+    return `<span class="cb-braidy-presence" data-braidy-art="v32" data-braidy-pose="${attr_(state)}"`
+      + ` data-braidy-sprite="${attr_(sprite.file)}" data-braidy-frames="${attr_(sprite.frames)}"`
+      + ` data-braidy-still="${sprite.still ? "1" : "0"}"`
+      + ` style="background-image:url(&quot;${attr_(sprite.url)}&quot;);background-size:${attr_(sprite.sheetWidth)}px ${attr_(sprite.size)}px"`
+      + ` aria-hidden="true"></span>`;
   }
 
   function actionsMarkup(actions) {

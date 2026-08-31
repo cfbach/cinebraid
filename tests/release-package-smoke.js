@@ -19,10 +19,25 @@ const NOT_SHIPPED = new Set(["node_modules", ".venv-browser", ".git", "dist"]);
 /* Media that ships on purpose, named one file at a time.
 
    The rule this list qualifies exists to stop a private project's media reaching a
-   release, so it is deliberately not relaxed into "anything under public/". The
-   application's own brand mark is the one image outside the sanitized sample that
-   belongs in a release; a stray PNG anywhere else still fails. */
-const SHIPPED_MEDIA = new Set(["public/cinebraid-logo-xs.png"]);
+   release, so it is deliberately not relaxed into "anything under public/" - and
+   pointedly not into "anything under public/assets/" either, which would let a future
+   directory of anything ride along under a Braidy-shaped exemption. The application's
+   own brand mark and the six Braidy V3.2 sprite exports the Assistant rail draws are
+   the images outside the sanitized sample that belong in a release; a stray PNG
+   anywhere else still fails.
+
+   These six are also the release's proof that Braidy is not broken art in a shipped
+   build: the loop below requires every allowlisted file to be present, so dropping one
+   fails here rather than rendering an empty box on somebody's first run. */
+const SHIPPED_MEDIA = new Set([
+  "public/cinebraid-logo-xs.png",
+  "public/assets/assistant-character/braidy-idle-soft-v32.png",
+  "public/assets/assistant-character/braidy-listening-v32.png",
+  "public/assets/assistant-character/braidy-processing-v32.png",
+  "public/assets/assistant-character/braidy-acknowledge-v32.png",
+  "public/assets/assistant-character/braidy-needs-decision-v32.png",
+  "public/assets/assistant-character/braidy-front-v32.png",
+]);
 
 function walkFiles(root, current = root, out = []) {
   if (!fs.existsSync(current)) return out;

@@ -21,6 +21,7 @@
  */
 
 const assert = require("assert");
+const crypto = require("crypto");
 const fs = require("fs");
 const path = require("path");
 const vm = require("vm");
@@ -34,6 +35,12 @@ const SOURCES = {
   surfaces: readSource("public/creator-surfaces.js"),
   styles: readSource("public/styles.css"),
   index: readSource("public/index.html"),
+  /* The two registries the art has to be named in. Carried as sources so a control can
+     hand the check a relaxed detector or a release that dropped a sprite, rather than
+     editing either file on disk. */
+  exposure: readSource("tests/public-exposure.js"),
+  release: readSource("tests/release-package-smoke.js"),
+  server: readSource("server.js"),
 };
 
 const notes = [];
@@ -638,26 +645,60 @@ function checkReducedMotion(sources = SOURCES) {
   assert.strictEqual(api.braidyPresentation({ pending: true }).motion, "on");
 
   const still = loadRail(sources, { reducedMotion: true });
-  assert.ok(still.braidy.railMarkup().includes('data-braidy-motion="none"'),
+  const stillMarkup = still.braidy.railMarkup();
+  assert.ok(stillMarkup.includes('data-braidy-motion="none"'),
     "a reduced-motion reader must be served by the markup");
   const moving = loadRail(sources);
   assert.ok(moving.braidy.railMarkup().includes('data-braidy-motion="on"'));
 
+  /* THE STRIP IS REPLACED, not merely stopped. A stopped animation on an eight-frame
+     sheet still shows whichever cel it froze on; the reduced-motion answer is the
+     package's single static FRONT frame, and the sheet is one box wide so there is
+     nothing left to cycle even if something tried. */
+  for (const state of [...api.BRAIDY_PRESENTATION_STATES]) {
+    const sprite = api.braidySprite(state, { reducedMotion: true });
+    assert.strictEqual(sprite.file, api.BRAIDY_STATIC_SPRITE.file,
+      `reduced motion on "${state}" resolves to ${sprite.file}; every state must fall back to the one static frame`);
+    assert.strictEqual(sprite.frames, 1, "the reduced-motion sprite must be a single frame, not a stopped strip");
+    assert.strictEqual(sprite.still, true);
+  }
+  assert.ok(stillMarkup.includes(`background-image:url(&quot;${api.BRAIDY_SPRITE_BASE}${api.BRAIDY_STATIC_SPRITE.file}&quot;)`),
+    "the rendered rail must actually load the static frame under reduced motion");
+  assert.ok(stillMarkup.includes('data-braidy-still="1"'), "the markup must say the sprite is a still");
+  assert.ok(!stillMarkup.includes('data-braidy-still="0"'));
+
+  /* And the state stays legible without motion, in the two places that do not depend
+     on the sprite at all. */
+  assert.ok(/data-braidy-state="[a-z]+"/.test(stillMarkup), "the state must remain stamped under reduced motion");
+  const pendingStill = loadRail(sources, { reducedMotion: true });
+  pendingStill.braidy.ask("Anything?");
+  const pendingMarkup = pendingStill.braidy.railMarkup();
+  assert.ok(pendingMarkup.includes('data-braidy-state="thinking"') && /Thinking about it\./.test(pendingMarkup),
+    "with no movement to read, the words must still say what Braidy is doing");
+
   const styles = sources.styles;
-  assert.ok(/@media\(prefers-reduced-motion:reduce\)\{[^}]*cb-braidy/.test(styles.replace(/\s+/g, "")) ||
-    /prefers-reduced-motion:reduce\)\{\.cb-braidy-loop/.test(styles.replace(/\s+/g, "")),
+  assert.ok(/@media\(prefers-reduced-motion:reduce\)\{[^}]*cb-braidy-presence/.test(styles.replace(/\s+/g, "")),
     "the stylesheet must also stop Braidy's animation under a reduced-motion preference");
-  assert.ok(styles.includes('.cb-braidy[data-braidy-motion="none"]'),
+  assert.ok(styles.includes('.cb-braidy[data-braidy-motion="none"] .cb-braidy-presence'),
     "the stamped answer must be honoured by the stylesheet, not only recorded in the markup");
+  assert.ok(styles.includes('.cb-braidy-presence[data-braidy-still="1"]{animation:none}')
+    || /\.cb-braidy-presence\[data-braidy-still="1"\]\{animation:none\}/.test(styles.replace(/\s+/g, "")),
+    "a one-frame sheet must be declared unanimated, so a future state selector cannot start cycling it");
 
-  /* Nothing loops forever in the filmmaker's eye line. The two infinite animations are
-     the idle drift and the thinking turn, both of which are the states they belong to;
-     acknowledge runs once by declaration. */
-  assert.ok(/cb-braidy-ack\s+\.?[\d.]+s\s+ease-out\s+1\b/.test(styles),
-    "the acknowledge animation must be declared as a single run rather than a loop");
-  assert.ok(!/cb-braidy-ack[^}]*infinite/.test(styles), "acknowledge must never loop");
+  /* THE TWO EVENT CUES RUN ONCE. This is the package's own classification — an
+     ACKNOWLEDGE or NEEDS_DECISION that looped would be the demanding mascot the V3.2
+     production notes were written to avoid. */
+  for (const state of ["acknowledge", "attention"]) {
+    const rule = new RegExp(`\\.cb-braidy\\[data-braidy-state="${state}"\\] \\.cb-braidy-presence\\{animation:cb-braidy-${state} \\d+ms step-end 1 forwards\\}`);
+    assert.ok(rule.test(styles), `the ${state} cue must be declared as a single run that holds its last cel`);
+    assert.ok(!new RegExp(`cb-braidy-${state} [^}]*infinite`).test(styles), `${state} must never loop`);
+  }
+  for (const state of ["idle", "listening", "thinking"]) {
+    assert.ok(new RegExp(`animation:cb-braidy-${state} \\d+ms step-end infinite`).test(styles),
+      `${state} is an ambient state and must repeat`);
+  }
 
-  note("Reduced motion: the derivation returns motion \"none\" without changing the state, the rail stamps it, and the stylesheet honours both the stamp and the media query; acknowledge is declared as one run");
+  note("Reduced motion: the derivation returns motion \"none\" without changing the state, every state falls back to the one static FRONT frame rather than a frozen strip, the words still say what Braidy is doing, and the two event cues are declared as single runs while the three ambient states repeat");
 }
 
 /* ===========================================================================
@@ -809,6 +850,17 @@ async function checkModelCannotMintAnAction(sources = SOURCES) {
   assert.ok(!markup.includes('data-braidy-action="open-stage-task"'),
     "the answer named a stage action the handoff did not declare; it must not appear");
 
+  /* AND IT CANNOT CHOOSE A SPRITE EITHER. The answer above asked for a file by name;
+     the drawn sprite is whatever the closed table returns for the presentation state,
+     which is derived from request tokens the answer cannot reach. */
+  const drawn = /data-braidy-sprite="([^"]+)"/.exec(markup);
+  assert.ok(drawn, "the rail must record which sprite it drew");
+  const drawnState = /data-braidy-state="([a-z]+)"/.exec(markup)[1];
+  assert.strictEqual(drawn[1], api.braidySprite(drawnState).file,
+    "the rendered sprite is not the one the table returns for the rendered state; something other than the presentation state chose the image");
+  assert.ok(!/braidy-(excited|bounce|wiggle|dance|angry)/.test(markup),
+    "no sprite outside the five mapped states may be referenced from a rendered rail");
+
   note("Action minting: the producer of controls cannot see a response, unknown and prototype-chain identifiers resolve to null, an unsafe id is refused rather than escaped, and an answer full of controls renders as escaped text with the handoff's own two destinations");
 }
 
@@ -956,6 +1008,205 @@ function checkRecommendationVersusRequirement(sources = SOURCES) {
 }
 
 /* ===========================================================================
+   16. THE ART IS REAL, IT IS THE PACKAGE'S, AND IT IS UNEDITED.
+
+   Braidy V3.2 — the knot-forward production library — is authored outside this
+   repository. Six exported PNG strips were copied in and nothing else: not the 64x64
+   Aseprite master, not the build or verification scripts, not the review boards, not
+   the GIF QA previews, not the 2x/4x/8x packs. Fifteen kilobytes.
+
+   THE LEDGER BELOW IS THE PROVENANCE RECORD. Each row is the file's path inside the
+   authoring package and the SHA-256 that package's own
+   docs/BRAIDY_PACKAGE_MANIFEST_V32.sha256 records for it. The copied bytes are hashed
+   here and must equal it, so "unedited" is a measurement rather than a claim — and an
+   asset re-exported, rescaled or touched up to make something pass fails this before
+   it reaches anything else.
+   =========================================================================== */
+
+/* source path in C:/CineBraid/Braidy_Sprites, and that package's manifest hash. */
+const ADOPTED_ART = Object.freeze([
+  Object.freeze({ file: "braidy-idle-soft-v32.png", source: "exports/v32/animations/idle_soft.png", sha256: "cce5a67a3987db995f0d57ac85203b1107fc718290a9a055b6808d182e2b366d", tag: "IDLE_SOFT" }),
+  Object.freeze({ file: "braidy-listening-v32.png", source: "exports/v32/animations/listening.png", sha256: "b5a7b656b3a2dbd633c922a9d5e9542416e169b973f87aa0b989b62f9e4f28a1", tag: "LISTENING" }),
+  Object.freeze({ file: "braidy-processing-v32.png", source: "exports/v32/animations/processing.png", sha256: "81ac5119960cbd943e7da47207bc64202b1845d2fe17dcbce6a74026a8e82f78", tag: "PROCESSING" }),
+  Object.freeze({ file: "braidy-acknowledge-v32.png", source: "exports/v32/animations/acknowledge.png", sha256: "d8384fa81d274075d2ea394cf2b455ad459a8581ff9fcd5dca0e7c87dd068d99", tag: "ACKNOWLEDGE" }),
+  Object.freeze({ file: "braidy-needs-decision-v32.png", source: "exports/v32/animations/needs_decision.png", sha256: "82582272ddeda72bc38f4c35932d2017499446acea351fce45ab4abaf85b3b76", tag: "NEEDS_DECISION" }),
+  Object.freeze({ file: "braidy-front-v32.png", source: "previews/v32/braidy_front_v32.png", sha256: "3dd9026268806b020deac50370d621c30f2b22bac134cd32e632aa34921f887d", tag: "FRONT" }),
+]);
+
+/* The canonical frame the whole package is authored at, and the box the rail draws in.
+   64 into 32 is exactly one device pixel per source pixel at a ratio of 2. */
+const CANONICAL_FRAME = 64;
+
+/* Enough of a PNG header to answer three questions without a decoder: how wide the
+   strip is, whether it carries an alpha channel, and whether it is a PNG at all. */
+function pngHeader(file) {
+  const head = Buffer.alloc(33);
+  const handle = fs.openSync(file, "r");
+  try { fs.readSync(handle, head, 0, 33, 0); } finally { fs.closeSync(handle); }
+  assert.strictEqual(head.subarray(0, 8).toString("hex"), "89504e470d0a1a0a", `${file} is not a PNG`);
+  assert.strictEqual(head.subarray(12, 16).toString("ascii"), "IHDR", `${file} does not start with IHDR`);
+  return { width: head.readUInt32BE(16), height: head.readUInt32BE(20), depth: head[24], colorType: head[25] };
+}
+
+function checkSpriteAssets(sources = SOURCES) {
+  const api = loadContract(sources.contract);
+  const dir = sources.assetDir || path.join(ROOT, "public", "assets", "assistant-character");
+
+  /* ---- the bytes are the package's ---- */
+  const shipped = fs.existsSync(dir) ? fs.readdirSync(dir).sort() : [];
+  assert.deepStrictEqual(shipped, ADOPTED_ART.map((row) => row.file).sort(),
+    "the runtime asset directory must hold exactly the six adopted files and nothing else; a stray export is an asset nobody verified");
+  for (const row of ADOPTED_ART) {
+    const file = path.join(dir, row.file);
+    const digest = crypto.createHash("sha256").update(fs.readFileSync(file)).digest("hex");
+    assert.strictEqual(digest, row.sha256,
+      `${row.file} does not match the hash BRAIDY_PACKAGE_MANIFEST_V32.sha256 records for ${row.source}. The art is adopted unedited; a re-export or a touch-up is not the approved asset.`);
+    const png = pngHeader(file);
+    assert.strictEqual(png.height, CANONICAL_FRAME, `${row.file} is not ${CANONICAL_FRAME}px tall; it is not the canonical frame`);
+    assert.strictEqual(png.colorType, 6, `${row.file} carries no alpha channel; the rail composites Braidy over the panel and an opaque sprite would render a box`);
+    assert.strictEqual(png.width % CANONICAL_FRAME, 0, `${row.file} is not a whole number of ${CANONICAL_FRAME}px frames wide`);
+  }
+
+  /* ---- every product state resolves to one of them ---- */
+  const states = [...api.BRAIDY_PRESENTATION_STATES];
+  assert.deepStrictEqual(Object.keys(api.BRAIDY_SPRITES).sort(), [...states].sort(),
+    "the sprite table and the presentation states must be the same five; a state with no art renders nothing and art with no state ships for nobody");
+  for (const state of states) {
+    const sprite = api.braidySprite(state);
+    assert.ok(sprite, `state "${state}" resolves to no sprite`);
+    const row = ADOPTED_ART.find((entry) => entry.file === sprite.file);
+    assert.ok(row, `state "${state}" names ${sprite.file}, which is not one of the adopted files`);
+    assert.strictEqual(sprite.tag, row.tag, `state "${state}" claims tag ${sprite.tag} but its file is the ${row.tag} export`);
+    /* The frame count is read off the actual image rather than trusted from the table,
+       so a metadata edit cannot silently describe a strip that is not there. */
+    const png = pngHeader(path.join(dir, sprite.file));
+    assert.strictEqual(sprite.frames, png.width / CANONICAL_FRAME,
+      `the table says "${state}" has ${sprite.frames} frames; ${sprite.file} contains ${png.width / CANONICAL_FRAME}`);
+    assert.strictEqual(sprite.durations.length, sprite.frames, `"${state}" has one duration per frame or the timing is not the art's`);
+    assert.strictEqual(sprite.totalMs, sprite.durations.reduce((sum, ms) => sum + ms, 0));
+    assert.strictEqual(sprite.sheetWidth, sprite.frames * api.BRAIDY_SPRITE_SIZE);
+  }
+
+  /* ---- no placeholder survives anywhere ---- */
+  const everywhere = [sources.contract, sources.rail, sources.surfaces, sources.styles].join("\n");
+  for (const token of ["data-braidy-art=\"absent\"", "cb-braidy-loop", "BRAIDY_ASSET_NEEDED"]) {
+    assert.ok(!everywhere.includes(token),
+      `the placeholder token ${token} survives; the art is here and nothing may still be standing in for it`);
+  }
+  const markup = loadRail(sources).braidy.railMarkup();
+  assert.ok(markup.includes('data-braidy-art="v32"'), "the rendered rail must declare which asset generation it is drawing");
+  assert.ok(!markup.includes('data-braidy-art="unresolved"'), "no state may render without art");
+
+  /* ---- the mapping is the package's, and it is the restrained reading ---- */
+  assert.strictEqual(api.BRAIDY_SPRITES.idle.tag, "IDLE_SOFT",
+    "idle must draw the restrained IDLE_SOFT the package maps its own creator-facing idle to, not the busier ambient IDLE");
+  assert.strictEqual(api.BRAIDY_SPRITES.thinking.tag, "PROCESSING",
+    "a request in flight is work, so it draws PROCESSING; THINKING belongs to the package's cognitive mix and would have Braidy look contemplative while CineBraid is simply executing");
+  assert.strictEqual(api.BRAIDY_SPRITES.attention.tag, "NEEDS_DECISION",
+    "attention must draw the dedicated point-and-beacon cue rather than an alarm");
+  assert.strictEqual(api.BRAIDY_SPRITES.acknowledge.loop, false, "acknowledge is an event cue and plays once");
+  assert.strictEqual(api.BRAIDY_SPRITES.attention.loop, false, "the decision cue plays once and gets out of the way");
+  for (const ambient of ["idle", "listening", "thinking"]) {
+    assert.strictEqual(api.BRAIDY_SPRITES[ambient].loop, true, `${ambient} is an ambient state and repeats`);
+  }
+  /* None of the loud library is reachable. The package ships EXCITED, BOUNCE, WIGGLE,
+     DANCE and ANGRY; a working editor is not the place for any of them. */
+  for (const loud of ["EXCITED", "BOUNCE", "WIGGLE", "DANCE_SWAY", "DANCE_STEP", "ANGRY", "SURPRISED", "EXCITED_BIG", "HAPPY"]) {
+    assert.ok(!Object.values(api.BRAIDY_SPRITES).some((sprite) => sprite.tag === loud),
+      `the ${loud} animation is mapped to a rail state; celebration and personality tags are not ambient UI`);
+  }
+
+  /* ---- a name cannot become a path ---- */
+  for (const hostile of ["../../server.js", "/etc/passwd", "braidy-idle-soft-v32.png", "constructor", "toString",
+    "__proto__", "excited", "", "  ", "assets/assistant-character/braidy-front-v32.png"]) {
+    assert.strictEqual(api.braidySprite(hostile), null,
+      `braidySprite accepted "${hostile}"; only the five declared states may resolve to an image, and never a caller-supplied path`);
+  }
+  const railCode = codeOnly(sources.rail);
+  assert.ok(!/BRAIDY_SPRITE_BASE\s*\+/.test(railCode) && !/assets\/assistant-character\/\$\{/.test(railCode),
+    "the rail must not build a sprite path itself; the only path in the runtime is the one the closed table returns");
+
+  /* ---- the stylesheet's timing IS the art's timing ---- */
+  const flat = sources.styles.replace(/\s+/g, "");
+  for (const state of states) {
+    const sprite = api.braidySprite(state);
+    const block = new RegExp(`@keyframescb-braidy-${state}\\{([^}]*\\}[^@]*?)\\}(?=@|\\.|/|$)`);
+    const start = flat.indexOf(`@keyframescb-braidy-${state}{`);
+    assert.notStrictEqual(start, -1, `the stylesheet declares no keyframes for "${state}"`);
+    let depth = 0, end = -1;
+    for (let i = flat.indexOf("{", start); i < flat.length; i += 1) {
+      if (flat[i] === "{") depth += 1;
+      else if (flat[i] === "}") { depth -= 1; if (!depth) { end = i; break; } }
+    }
+    const body = flat.slice(flat.indexOf("{", start) + 1, end);
+    const stops = [...body.matchAll(/([\d.]+)%\{background-position-x:(-?\d+)px\}/g)]
+      .map((m) => ({ pct: Number(m[1]), x: Number(m[2]) }));
+    assert.strictEqual(stops.length, sprite.frames,
+      `"${state}" has ${sprite.frames} frames but ${stops.length} keyframe stops; the stylesheet and the art disagree about the animation`);
+    let elapsed = 0;
+    stops.forEach((stop, index) => {
+      const expected = (elapsed * 100) / sprite.totalMs;
+      assert.ok(Math.abs(stop.pct - expected) < 0.01,
+        `"${state}" frame ${index} starts at ${stop.pct}% and the art says ${expected.toFixed(4)}%. The stops are the authored durations or the motion is not the one that was approved.`);
+      /* `|| 0` because -0 is what `-0 * size` produces and assert distinguishes it
+         from the 0 parsed out of the stylesheet. */
+      assert.strictEqual(stop.x, -(index * api.BRAIDY_SPRITE_SIZE) || 0,
+        `"${state}" frame ${index} is offset ${stop.x}px; the window must advance exactly one ${api.BRAIDY_SPRITE_SIZE}px cell per frame`);
+      elapsed += sprite.durations[index];
+    });
+    assert.ok(flat.includes(`animation:cb-braidy-${state}${sprite.totalMs}msstep-end`),
+      `"${state}" must run for the ${sprite.totalMs}ms the art was authored at, with step-end so cels do not blend`);
+  }
+  assert.ok(flat.includes("image-rendering:pixelated"), "the package requires nearest-neighbour rendering; anything else blurs 64px art");
+  /* Read from the unflattened source: `flex:0 0 auto` loses its spaces in `flat`. */
+  assert.ok(/\.cb-braidy-presence\{[^}]*width:32px;height:32px/.test(sources.styles),
+    "the presence must be the 32px box the 64px frame divides into exactly");
+
+  /* ---- the acknowledge state lasts exactly as long as its animation ---- */
+  const ackMs = /const ACKNOWLEDGE_MS = (\d+);/.exec(codeOnly(sources.rail));
+  assert.ok(ackMs, "the rail must declare how long the acknowledge pose lasts");
+  assert.strictEqual(Number(ackMs[1]), api.BRAIDY_SPRITES.acknowledge.totalMs,
+    "the acknowledge pose must last exactly as long as the ACKNOWLEDGE animation; a longer state holds a finished cel and a shorter one cuts the cue off");
+
+  /* ---- the research namespace stays out of the product ---- */
+  for (const row of ADOPTED_ART) {
+    const repoPath = `public/assets/assistant-character/${row.file}`;
+    assert.ok(!repoPath.startsWith("braidy/") && !repoPath.startsWith("research/"),
+      `${repoPath} sits in the historical research namespace that tests/public-exposure.js forbids`);
+  }
+  assert.ok(!fs.existsSync(path.join(ROOT, "braidy")), "a top-level braidy/ directory is the research namespace and must never exist in the product");
+  assert.ok(!fs.existsSync(path.join(ROOT, "research")), "a top-level research/ directory must never exist in the product");
+  assert.ok(sources.exposure.includes('p.startsWith("braidy/") || p.startsWith("research/")'),
+    "the public-exposure detector must still forbid the research namespaces; adopting art is not a reason to relax it");
+
+  /* ---- the URL the browser asks for actually reaches them ----
+
+     public/assets/ and the project-media route share the /assets/ prefix. The static
+     mount is declared FIRST, so a request for a shipped sprite is answered from
+     public/ before the media handler ever sees it — and that handler would refuse it
+     anyway, because its allowlist names anchors, plates, props, vehicles, audio, media
+     and shot takes and nothing else. Reordering those two declarations would 404 every
+     frame of Braidy while every unit test in this file still passed, which is why the
+     order is asserted here rather than left to be rediscovered in a browser. */
+  const staticAt = sources.server.indexOf('express.static(path.join(__dirname, "public")');
+  const mediaAt = sources.server.indexOf('app.get("/assets/*"');
+  assert.notStrictEqual(staticAt, -1, "server.js must serve public/ statically");
+  assert.notStrictEqual(mediaAt, -1, "server.js must still have its project-media route");
+  assert.ok(staticAt < mediaAt,
+    "the project-media /assets/* route is declared before the static mount; it would intercept every Braidy sprite request and answer 404");
+  assert.ok(!/anchors\|plates\|props\|vehicles\|audio\|media\|assistant-character/.test(sources.server),
+    "the project-media route must not be widened to serve the character; the sprites are static files and are served as static files");
+
+  /* ---- and a release actually carries them ---- */
+  for (const row of ADOPTED_ART) {
+    assert.ok(sources.release.includes(`public/assets/assistant-character/${row.file}`),
+      `${row.file} is not named in the release media allowlist; a release would either drop it or fail on it as stray media`);
+  }
+
+  note(`Art: six V3.2 exports adopted byte-for-byte against BRAIDY_PACKAGE_MANIFEST_V32.sha256, all RGBA 64px-tall strips; five states map to the package's own tags with idle on IDLE_SOFT and thinking on PROCESSING; no name can become a path; every keyframe stop is the authored duration; the research namespace stays absent and the release carries all six`);
+}
+
+/* ===========================================================================
    15. ONE ASSISTANT PATH, NOT A SECOND ONE.
    =========================================================================== */
 
@@ -1001,6 +1252,7 @@ async function runAll() {
   checkBraidyIsNotAGate();
   await checkCompactionIsNotTruncation();
   checkRecommendationVersusRequirement();
+  checkSpriteAssets();
   checkNoSecondBackend();
   return notes;
 }
@@ -1028,6 +1280,8 @@ module.exports = {
   checkBraidyIsNotAGate,
   checkCompactionIsNotTruncation,
   checkRecommendationVersusRequirement,
+  checkSpriteAssets,
+  ADOPTED_ART,
   checkNoSecondBackend,
 };
 
