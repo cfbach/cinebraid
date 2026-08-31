@@ -471,11 +471,29 @@ function testPublicationPreflight() {
 
   /* And the preflight refuses the things it says it refuses. Run here against
      this repository, which is not at `main`, so it must refuse rather than clear. */
-  const refused = spawnSync(process.execPath, [path.join(ROOT, "scripts", "publication-preflight.js"), "--first-publication"], {
-    cwd: ROOT, encoding: "utf8", timeout: 300000,
-  });
-  assert.strictEqual(refused.status, 2, `the preflight must refuse when the checkout is not at the candidate, got ${refused.status}`);
-  assert(/REFUSED/.test(`${refused.stdout}${refused.stderr}`), "a refusal must say so");
+  /* Refusals asserted on conditions that hold in ANY checkout. An earlier version
+     of this ran the preflight with no --candidate and expected a refusal because
+     the default is `main` and this worktree sits on a feature branch - which is
+     true here and false in a fresh clone of the published repository, where HEAD
+     IS main and the preflight correctly clears. The suite has to describe the
+     software, not the branch it happens to be read from. */
+  const script = path.join(ROOT, "scripts", "publication-preflight.js");
+  const runPreflight = (args) => {
+    const r = spawnSync(process.execPath, [script, ...args], { cwd: ROOT, encoding: "utf8", timeout: 300000 });
+    return { status: r.status, output: `${r.stdout || ""}${r.stderr || ""}` };
+  };
+
+  const noBaseline = runPreflight([]);
+  assert.strictEqual(noBaseline.status, 2, `the preflight must refuse without a baseline, got ${noBaseline.status}`);
+  assert(/name the baseline/.test(noBaseline.output), "the refusal must say what is missing");
+
+  /* HEAD~1 exists in any clone with history and is never HEAD, so the
+     checkout-mismatch refusal is reachable everywhere. */
+  const mismatched = runPreflight(["--first-publication", "--candidate", "HEAD~1"]);
+  assert.strictEqual(mismatched.status, 2, `publishing a commit the checkout is not on must be refused, got ${mismatched.status}`);
+  assert(/REFUSED/.test(mismatched.output) && /checkout is at/.test(mismatched.output),
+    `the refusal must name its reason: ${mismatched.output.split("\n").slice(-2).join(" ")}`);
+  assert(!/git push/.test(mismatched.output), "a refused preflight must not print the push command");
 
   /* CI scans the range a pull request adds, which is the cheapest moment to
      notice - and it needs full history to have a range at all. It is an early
