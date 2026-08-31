@@ -75,6 +75,31 @@ function tamperedOne(name) {
   return dir;
 }
 
+/* MOVE THE PROJECT-MEDIA ROUTE ABOVE THE STATIC MOUNT, in the source, so a check that
+   builds a real route stack from that source gets the collision rather than a
+   description of it. Cut at the route's own closing statement rather than at a line
+   offset, and asserted to be a MOVE: the registration must appear exactly once
+   afterwards, before the mount instead of after it. */
+function movedMediaRouteAhead() {
+  const source = SOURCES.server;
+  const marker = 'app.get("/assets/*"';
+  const at = source.indexOf(marker);
+  assert.notStrictEqual(at, -1, "probe receipt: C41b could not find the project-media route");
+  const end = source.indexOf("\n});", at);
+  assert.notStrictEqual(end, -1, "probe receipt: C41b could not find the end of the project-media route");
+  const route = source.slice(at, end + 4);
+  const mount = 'app.use(\n  "/",\n  express.static(';
+  const without = source.slice(0, at) + source.slice(end + 4);
+  assert.strictEqual(without.indexOf(marker), -1, "probe receipt: C41b left a second copy of the route behind");
+  assert.ok(without.includes(mount), "probe receipt: C41b could not find the static mount");
+  const moved = without.replace(mount, route + "\n" + mount);
+  assert.ok(moved.indexOf(marker) < moved.indexOf(mount),
+    "probe receipt: C41b did not actually place the route ahead of the mount");
+  assert.strictEqual(moved.split(marker).length - 1, source.split(marker).length - 1,
+    "probe receipt: C41b changed how many times the route is registered; it must move it, not add one");
+  return moved;
+}
+
 const EXERCISED = new Set();
 let CONTROL_COUNT = 0;
 
@@ -555,22 +580,22 @@ async function artControls() {
         "C41") },
     "IDLE_SOFT's blink is 65ms and 75ms inside a 2860ms loop; evenly spaced stops turn it into a slow eye-close, which is a different performance from the one that was approved.");
 
+  /* THE ROUTE ORDER, MOVED AND THEN ACTUALLY REQUESTED.
+
+     `movedMediaRouteAhead()` lifts the project-media registration out of server.js and
+     re-inserts it above the static mount — a move, not a duplicate, which is exactly
+     what a well-meaning reorder would do. checkAssetRouteBehaviour then builds a real
+     Express stack from that source and fetches the sprite over loopback, so what fails
+     is a request, not a string comparison. The structural index check in
+     checkSpriteAssets stays as the cheap guard beside it. */
+  const reordered = movedMediaRouteAhead();
   await control("C41b the project-media route is declared ahead of the static mount", "checkSpriteAssets",
-    { server: (() => {
-        const marker = 'app.get("/assets/*"';
-        const at = SOURCES.server.indexOf(marker);
-        assert.notStrictEqual(at, -1, "probe receipt: C41b could not find the project-media route");
-        const end = SOURCES.server.indexOf("\n});", at);
-        assert.notStrictEqual(end, -1, "probe receipt: C41b could not find the end of the project-media route");
-        const route = SOURCES.server.slice(at, end + 4);
-        /* Moved, not duplicated: the route is lifted out and re-inserted above the
-           static mount, which is exactly what a well-meaning reorder would do. */
-        const without = SOURCES.server.slice(0, at) + SOURCES.server.slice(end + 4);
-        const mount = "app.use(\n  \"/\",\n  express.static(";
-        assert.ok(without.includes(mount), "probe receipt: C41b could not find the static mount");
-        return without.replace(mount, route + "\n" + mount);
-      })() },
-    "Every Braidy frame would 404 behind a route whose allowlist has never heard of the character, and nothing in this suite that reads files from disk would notice.");
+    { server: reordered },
+    "The cheap structural guard must still notice the reorder even before anything is served.");
+
+  await control("C41c and the reordered stack really intercepts the sprite", "checkAssetRouteBehaviour",
+    { server: reordered },
+    "A Braidy sprite request would be answered by a route whose allowlist has never heard of the character, and every frame of the rail would 404 in a browser while every source-reading assertion in this suite still passed.");
 
   await control("C42 the public-exposure detector is relaxed to suit an asset path", "checkSpriteAssets",
     { exposure: mutate(SOURCES.exposure,
@@ -664,7 +689,7 @@ async function runAll() {
   return { notes, count: CONTROL_COUNT, published: published.length };
 }
 
-module.exports = { runAll, mutate, control };
+module.exports = { runAll, mutate, control, movedMediaRouteAhead };
 
 if (require.main === module) {
   runAll()

@@ -23,6 +23,8 @@
 const assert = require("assert");
 const crypto = require("crypto");
 const fs = require("fs");
+const http = require("http");
+const os = require("os");
 const path = require("path");
 const vm = require("vm");
 
@@ -1335,6 +1337,147 @@ function checkSpriteAssets(sources = SOURCES) {
 }
 
 /* ===========================================================================
+   17. THE URL THE BROWSER ASKS FOR, ANSWERED BY A REAL ROUTE STACK.
+
+   public/assets/ and the project-media route share the /assets/ prefix, and which of
+   them answers is decided by nothing but the order two lines appear in server.js.
+   Section 16 asserts that order by reading indexes, which is a cheap structural guard
+   and is not evidence: it would go on passing if Express resolved the collision some
+   other way, and it proves nothing about what a browser receives.
+
+   So this executes it. The two registrations are lifted VERBATIM out of server.js and
+   applied, in the order they appear in that source, to a disposable Express app
+   listening on 127.0.0.1 with an ephemeral port. Then a Braidy sprite and a
+   representative project-media file are actually fetched over loopback.
+
+   Because the app is built from the source text, a control that MOVES the route in
+   `sources.server` gets a route stack that is genuinely in the other order, and the
+   404 it produces is the real interception rather than a description of one. Nothing
+   leaves the machine, and no configuration, project or port of the real server is
+   touched.
+   =========================================================================== */
+
+/* The exact bytes of the two registrations, cut at their own braces rather than at a
+   line count, so a control that moves one of them moves the whole thing. */
+function serverRegistration(source, start, label) {
+  const at = source.indexOf(start);
+  assert.notStrictEqual(at, -1, `server.js no longer contains ${label}; this check is reading a file it does not recognise`);
+  let depth = 0;
+  let index = source.indexOf("(", at);
+  assert.notStrictEqual(index, -1, `${label} has no argument list`);
+  for (; index < source.length; index += 1) {
+    if (source[index] === "(") depth += 1;
+    else if (source[index] === ")") {
+      depth -= 1;
+      if (!depth) break;
+    }
+  }
+  assert.ok(depth === 0, `${label} does not close`);
+  const end = source.indexOf(";", index);
+  assert.notStrictEqual(end, -1, `${label} does not end in a statement`);
+  return { at, text: source.slice(at, end + 1) };
+}
+
+const STATIC_MOUNT = 'app.use(\n  "/",\n  express.static(path.join(__dirname, "public")';
+const MEDIA_ROUTE = 'app.get("/assets/*", (req, res) => {';
+
+/* A project directory shaped the way the media route's own allowlist requires:
+   `anchors/<one file>` with a media extension. Built once, outside the repository. */
+let MEDIA_FIXTURE = null;
+function mediaFixture() {
+  if (MEDIA_FIXTURE) return MEDIA_FIXTURE;
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "cinebraid-braidy-route-"));
+  fs.mkdirSync(path.join(root, "anchors"), { recursive: true });
+  /* Real PNG bytes, so `res.sendFile` has something honest to send. The Braidy static
+     frame is the smallest one to hand and its provenance is already established. */
+  const bytes = fs.readFileSync(path.join(ROOT, "public", "assets", "assistant-character", "braidy-front-v32.png"));
+  fs.writeFileSync(path.join(root, "anchors", "probe.png"), bytes);
+  MEDIA_FIXTURE = { root, rel: "anchors/probe.png", sha256: crypto.createHash("sha256").update(bytes).digest("hex") };
+  return MEDIA_FIXTURE;
+}
+
+/* Build the stack the source describes, ask it two questions over loopback, close it. */
+async function serveRouteStack(source) {
+  const express = require("express");
+  const fixture = mediaFixture();
+  const staticMount = serverRegistration(source, STATIC_MOUNT, "the static public/ mount");
+  const mediaRoute = serverRegistration(source, MEDIA_ROUTE, "the project-media /assets/* route");
+  const app = express();
+  const sandbox = {
+    app,
+    express,
+    path,
+    fs,
+    __dirname: ROOT,
+    PROJECT_DIR: () => fixture.root,
+    MEDIA_EXT: new Set([".png", ".jpg", ".jpeg", ".webp", ".gif", ".mp4", ".webm", ".mov", ".wav", ".mp3", ".m4a", ".flac", ".ogg"]),
+  };
+  const apply = (registration) =>
+    vm.runInNewContext(registration.text, { ...sandbox, console }, { filename: "server.js (registration)" });
+  /* IN THE ORDER THE SOURCE PUTS THEM. This is the entire point: the control moves one
+     line and the stack really changes. */
+  for (const registration of [staticMount, mediaRoute].sort((a, b) => a.at - b.at)) apply(registration);
+
+  const server = await new Promise((resolve, reject) => {
+    const listening = app.listen(0, "127.0.0.1", () => resolve(listening));
+    listening.on("error", reject);
+  });
+  const port = server.address().port;
+  const get = (url) => new Promise((resolve, reject) => {
+    const request = http.get({ host: "127.0.0.1", port, path: url }, (response) => {
+      const chunks = [];
+      response.on("data", (chunk) => chunks.push(chunk));
+      response.on("end", () => {
+        const body = Buffer.concat(chunks);
+        resolve({ status: response.statusCode, body, sha256: crypto.createHash("sha256").update(body).digest("hex") });
+      });
+    });
+    request.on("error", reject);
+    request.setTimeout(5000, () => request.destroy(new Error(`GET ${url} timed out`)));
+  });
+  try {
+    return {
+      order: staticMount.at < mediaRoute.at ? "static-first" : "media-first",
+      sprite: await get("/assets/assistant-character/braidy-idle-soft-v32.png"),
+      media: await get(`/assets/${fixture.rel}`),
+      fixture,
+    };
+  } finally {
+    await new Promise((resolve) => server.close(resolve));
+  }
+}
+
+async function checkAssetRouteBehaviour(sources = SOURCES) {
+  const api = loadContract(sources.contract);
+  const served = await serveRouteStack(sources.server);
+  const expected = crypto.createHash("sha256")
+    .update(fs.readFileSync(path.join(ROOT, "public", "assets", "assistant-character", "braidy-idle-soft-v32.png")))
+    .digest("hex");
+
+  /* THE OTHER OWNER OF THE PREFIX FIRST, and the order of these two assertions is the
+     point. A stack that failed to start and a stack that intercepted the sprite both
+     produce a failing sprite request; proving the media route answered first is what
+     separates them, and it is why the sprite's failure below can name it. It also
+     stops this check passing if the media route were simply deleted. */
+  assert.strictEqual(served.media.status, 200,
+    `a project-media request returned ${served.media.status} from a stack registered ${served.order}; either the stack did not come up or the /assets/* owner stopped answering for the paths it owns`);
+  assert.strictEqual(served.media.sha256, served.fixture.sha256,
+    "the project-media route answered with something other than the file it was asked for");
+
+  /* THE SPRITE. Not "a 200" — the exact bytes the sprite table names, because a route
+     stack that answered with something else would also be a 200. */
+  assert.strictEqual(served.sprite.status, 200,
+    `a Braidy sprite request returned ${served.sprite.status} from a stack registered ${served.order}, while a project-media request on the same stack returned 200. The server is up and the other owner of /assets/ is answering, so this is the prefix collision: every frame of the rail would 404 in a browser.`);
+  assert.strictEqual(served.sprite.sha256, expected,
+    "the sprite URL answered with bytes that are not the shipped strip");
+  assert.strictEqual(served.sprite.sha256,
+    crypto.createHash("sha256").update(fs.readFileSync(path.join(ROOT, "public", api.braidySprite("idle").url))).digest("hex"),
+    "the bytes served are not the ones braidySprite() points the rail at");
+
+  note(`Routing: a real Express stack built from server.js's own two registrations, ${served.order}, listening on loopback — the Braidy sprite returns 200 with the exact shipped bytes and a project-media file returns 200 through its own owner`);
+}
+
+/* ===========================================================================
    15. ONE ASSISTANT PATH, NOT A SECOND ONE.
    =========================================================================== */
 
@@ -1381,6 +1524,7 @@ async function runAll() {
   await checkCompactionIsNotTruncation();
   checkRecommendationVersusRequirement();
   checkSpriteAssets();
+  await checkAssetRouteBehaviour();
   checkNoSecondBackend();
   return notes;
 }
@@ -1409,6 +1553,7 @@ module.exports = {
   checkCompactionIsNotTruncation,
   checkRecommendationVersusRequirement,
   checkSpriteAssets,
+  checkAssetRouteBehaviour,
   ADOPTED_ART,
   checkNoSecondBackend,
 };
