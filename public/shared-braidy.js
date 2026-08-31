@@ -512,7 +512,23 @@
      It runs FIRST, before any prototype is trusted. Cycles, BigInt, non-finite numbers
      and the unsupported built-ins all clone successfully, so each of those still
      reaches its own refusal with its own words; only a Proxy, a function and a symbol
-     are stopped here, and only the first of those could otherwise have lied. */
+     are stopped here, and only the first of those could otherwise have lied.
+
+     WHERE THIS GUARANTEE ENDS, so nobody later reads it as absolute. The preflight and
+     the walker each read the record's own properties, which means an ACCESSOR is
+     invoked twice and is free to answer differently:
+
+       let reads = 0;
+       const facts = { get probe() { return (reads += 1) === 1 ? {} : someProxy; } };
+
+     The preflight sees an ordinary object; the walker is handed the Proxy, and it
+     lands in the record. Measured, not theorised. It is not a regression — the same
+     Proxy crossed before this preflight existed — but it is the edge of what the
+     preflight can promise, and closing it means deciding whether a fact record may
+     contain accessors at all. That is a contract decision about what a fact IS, so it
+     is left to the review that owns the contract rather than taken here. The narrowest
+     closure is to refuse accessor properties in braidyFactObject(): a fact is a
+     recorded answer, not a computation. */
   function braidyPlatform() {
     return typeof globalThis !== "undefined" ? globalThis : null;
   }
