@@ -74,9 +74,10 @@ const BINARY = /\.(png|jpe?g|webp|gif|mp4|webm|mov|wav|mp3|m4a|flac|ogg|zip|gz|t
         A stale entry is a dead entry, and a dead entry is how an allowlist grows
         into a blanket.
 
-   There is deliberately no "anything under tests/" rule. Two entries below are
-   ordinary source files rather than fixtures, and they are listed one value at a
-   time for the same reason everything else is. */
+   There is deliberately no "anything under tests/" rule, and the list is not a
+   tests-only list either: the last entry is production source, `ofp/ofp-migrate-scan.js`,
+   whose comment names the already-elided shape of the leak that module exists to
+   catch. It is listed one exact value at a time like everything else. */
 const ALLOW = [
   {
     file: "tests/automation-diagnostics.js",

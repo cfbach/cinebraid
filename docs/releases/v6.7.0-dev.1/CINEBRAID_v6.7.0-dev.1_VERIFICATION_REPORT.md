@@ -95,8 +95,8 @@ After, `npm run check:secrets` scans two targets and both are clean:
 
 ```
 scanner validated against a synthetic positive control: 9/9 rules fired
-clean working tree (tracked files) (706 files)
-clean publication tree (git archive HEAD) (699 files)
+clean working tree (tracked files) (715 files)
+clean publication tree (git archive HEAD) (708 files)
 credential/privacy scan passed
 ```
 
@@ -181,7 +181,61 @@ Run on this candidate, all green:
 | `check:api` | pass |
 | `check:browser` | pass |
 | `release:build` | pass, archives built and scanned |
+| `check:ofp-overfit` | pass after the goldens were re-pinned |
+| `check:ofp-overfit-negative` | pass, 21 defects caught |
+
+`npm run check:ci` expands to 167 leaves. It was run as one chain until it
+aborted, then leaf by leaf so that every remaining suite reported its own exit
+code rather than being skipped by the `&&`. **165 of 167 pass.**
+
+### The version change re-pinned three OFP goldens
+
+`check:ofp-overfit` failed on the first pass and the failure was real, not
+inherited: it passes on the pristine foundation. The OFP migration writes the
+producing application's version into `format.generator.version`
+(`ofp/ofp-migrate.js:41`, `APPLICATION_VERSION` from `package.json`), and three
+overfit goldens pin a full migrated document.
+
+Re-pinned with the command the suite itself names,
+`node scripts/build-overfit-golden-fixtures.js --goldens-only`, and the result was
+compared field by field against the previous goldens: the only leaves that moved
+are `candidateSha256` (18) and `candidateBytes` (18), every byte count lower by
+exactly 4 — the difference between `6.7.0-private.1` and `6.7.0-dev.1`. No
+migration behaviour changed, no statement count moved, and no other field
+differs. Both `check:ofp-overfit` and `check:ofp-overfit-negative` pass
+afterwards.
+
+Two other files still carry `6.7.0-private.1` and correctly keep it:
+`tests/fixtures/ofp-legacy/clean.json` and
+`tests/fixtures/ofp/continuity-bindings-broken.ofp.json` are legacy *input*
+documents describing the application that wrote them. A fixture that tracked the
+current application version would be exactly the drift `check:version` exists to
+forbid.
+
+### Inherited, not introduced
+
+`check:authority-server` fails on this candidate and fails identically on the
+pristine foundation `25054fa1dde7979b66186f144a5fc84b77e591f4`, measured by
+extracting that commit with `git archive` into a separate directory and running
+the suite there: same error (`CineBraid has no record of what kind of image
+ENTITY.png is`), the same four stack frames, the same last passing control
+(`[bounded review] F1-04 PASS`), and the same exit code. It is not this change's.
+
+### Not runnable here
+
+`check:authority-browser` refuses to skip when Python Playwright is absent, and
+this checkout has no `.venv-browser`; provisioning one needs a network download,
+which this work did not make. `npm run check` aborts there for the same reason,
+which is why the broad standing above was measured leaf by leaf.
+
+The three HTML pages this version edited were verified in a real browser instead:
+`login.html` (pre-authentication), `index.html` and `bible.html` each render with
+no console errors, the computed font stacks resolve to the local chain
+(`"IBM Plex Sans", system-ui, "Segoe UI", …`), and
+`performance.getEntriesByType("resource")` lists **zero** off-origin entries on
+every one.
 
 No suite in this repository contacts a provider, and none was given a credential.
 No network call was made while preparing this version: `node_modules` was taken
-from an existing local install of the same lockfile version rather than fetched.
+from an existing local install of the same lockfile version rather than fetched,
+so `npm ci` was never run and its behaviour on this candidate is unverified.
