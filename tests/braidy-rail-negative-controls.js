@@ -407,6 +407,14 @@ async function remainingControls() {
         "C30") },
     "An assistant nobody is required to use would be able to stop the rail that works without it — the definition of a gate.");
 
+  /* Not a source mutation but a TREE mutation: one production file that has learned
+     Braidy exists. That is how the optionality is actually lost — not by the rail
+     changing, but by a generation or review path acquiring a reference and, one repair
+     later, a dependency. */
+  await control("C30b a production path learns that Braidy exists", "checkBraidyIsNotAGate",
+    { clientFiles: { ...suite.readClientFiles(), "creation-studio.js": "if (window.CineBraidBraidy) blockGeneration();" } },
+    "A shot workflow that can see Braidy is a shot workflow that can come to need it, and the whole claim that Braidy is optional rests on none of them being able to.");
+
   await control("C31 the compact register truncates instead of splitting", "checkCompactionIsNotTruncation",
     { contract: mutate(SOURCES.contract,
         "    const rest = paragraphs.slice(lead.length);",

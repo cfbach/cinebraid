@@ -153,6 +153,21 @@ function loadRail(sources = SOURCES, options = {}) {
   };
 }
 
+/* Every file a production path could live in, by name. Read once here so a control
+   in the negative-control suite can hand this check a tree with one extra reacher in
+   it — a guarantee about what is NOT in the source is only a guarantee once something
+   has been seen to put it there. */
+function readClientFiles() {
+  const clientDir = path.join(ROOT, "public");
+  const files = {};
+  for (const name of fs.readdirSync(clientDir)) {
+    if (!/\.(js|html)$/.test(name)) continue;
+    files[name] = fs.readFileSync(path.join(clientDir, name), "utf8");
+  }
+  files["server.js"] = fs.readFileSync(path.join(ROOT, "server.js"), "utf8");
+  return files;
+}
+
 /* The deterministic rail, so Braidy's effect on it can be measured rather than
    asserted. tests/creator-state.js already owns that realm; this borrows it. */
 function loadRailOwner(sources = SOURCES) {
@@ -844,7 +859,21 @@ function checkBraidyIsNotAGate(sources = SOURCES) {
   assert.ok(surfaceCode.includes('localStorage.getItem(RAIL_OPEN_KEY) === "1"'),
     "the rail must remain closed until the filmmaker opens it");
 
-  note("Optional: with Braidy absent the deterministic rail is unchanged, with Braidy throwing it is byte-identical, with Braidy working it is the same bytes plus the block, and the rail is still opt-in");
+  /* AND NO PRODUCTION PATH CAN REACH BRAIDY AT ALL.
+
+     Measured across the whole client and the server rather than argued from the
+     rail's behaviour: creating a project, importing one, producing a shot,
+     generating, reviewing and finishing are carried out by files that do not know
+     Braidy exists, so none of them can come to depend on it. The rail owner and the
+     markup that loads the two files are the entire surface. */
+  const REACH = /\b(CineBraidBraidy|braidy(?:Plan|Improve|Review|Fix|Ask|With|Block|Signal|StageAction|Handoff|Capability|Presentation))\b|braidy-rail|shared-braidy/;
+  const ALLOWED = new Set(["braidy-rail.js", "shared-braidy.js", "creator-surfaces.js", "index.html"]);
+  const files = sources.clientFiles || readClientFiles();
+  const reached = Object.keys(files).filter((name) => !ALLOWED.has(name) && REACH.test(files[name])).sort();
+  assert.deepStrictEqual(reached, [],
+    `Braidy is reachable from ${reached.join(", ")}. A production path that knows Braidy exists is a production path that can come to need it.`);
+
+  note("Optional: with Braidy absent the deterministic rail is unchanged, with Braidy throwing it is byte-identical, with Braidy working it is the same bytes plus the block, the rail is still opt-in, and no file outside the rail owner and the markup can reach Braidy at all");
 }
 
 /* ===========================================================================
@@ -983,6 +1012,7 @@ module.exports = {
   loadContract,
   loadRail,
   loadRailOwner,
+  readClientFiles,
   runAll,
   checkRailIsBraidyNotActivity,
   checkFactsAreReadOnlyContext,
