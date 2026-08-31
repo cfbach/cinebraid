@@ -225,7 +225,42 @@ function isLoopbackIpv4(host) {
   if (!octets.every((part) => /^\d{1,3}$/.test(part) && Number(part) <= 255)) return false;
   return octets[0] === "127";
 }
+/* ENDPOINTS A TEST MAY DESIGNATE AS LOGICALLY REMOTE, and the one direction this is
+   allowed to point.
+ *
+ * Proving that a local-only project never discloses its record to a remote provider
+ * needs a provider that is remote to the POLICY and reachable to the TEST. Those are
+ * ordinarily the same question. A real hostname would put the proof at the mercy of
+ * DNS and would send a project record off this machine if it ever resolved; an
+ * unreachable name proves nothing at all, because a refusal and a failed connection
+ * look identical from the client. So a suite may name a loopback origin here and have
+ * the policy treat it as somewhere else, while the packets stay on the loopback
+ * interface and a spy on the other end can say whether anything arrived.
+ *
+ * IT CAN ONLY EVER SUBTRACT LOCALITY. This function is consulted once, to return
+ * false; there is no branch anywhere that lets it make an endpoint local. The worst a
+ * malformed or hostile value can do is cause CineBraid to refuse to send something,
+ * which is the safe direction and the only direction. Unset — which is every install
+ * and every run that does not deliberately set it — nothing below executes and the
+ * answer is exactly what it was.
+ *
+ * Origins, compared after parsing, so a value cannot match by substring. */
+function designatedRemoteEndpoint(baseUrl) {
+  const declared = String(process.env.CINEBRAID_TEST_REMOTE_ENDPOINTS || "").trim();
+  if (!declared) return false;
+  let origin = "";
+  try { origin = new URL(String(baseUrl || "").trim()).origin; } catch { return false; }
+  return declared
+    .split(/[\s,]+/)
+    .filter(Boolean)
+    .some((entry) => {
+      try { return new URL(entry).origin === origin; } catch { return false; }
+    });
+}
+
 function isLocalProviderEndpoint(baseUrl) {
+  /* Before anything else, and only ever to say "not local". */
+  if (designatedRemoteEndpoint(baseUrl)) return false;
   let host = "";
   try {
     host = new URL(String(baseUrl || "").trim()).hostname.toLowerCase();
@@ -576,6 +611,9 @@ module.exports = {
   customRequestBody,
   structuredVisionBody,
   isLocalProviderEndpoint,
+  /* Exported so a suite can prove the seam only ever subtracts locality, and that with
+     nothing declared it changes no answer at all. */
+  designatedRemoteEndpoint,
   resolveVisionTarget,
   resolveProviderConnection,
   openAiProviderDialect,
