@@ -442,6 +442,9 @@
   function braidyCycleRefusal(path) {
     return braidyFactRefusal(path, "it refers back to something that contains it. A record cannot contain itself.");
   }
+  function braidySparseRefusal(path) {
+    return braidyFactRefusal(path, "the array has no value at this position. A fact array is an explicit sequence, and a hole is not an absent fact but an unwritten one: it serialises as null, or as whatever Array.prototype happens to hold at that index when the request is built.");
+  }
   function braidyAccessorRefusal(path) {
     return braidyFactRefusal(path, "it is an accessor. A fact is an inert recorded value and not behaviour, so a getter is refused rather than run: a property that answers with code can answer differently every time it is asked, and CineBraid would be handing the model something it never recorded.");
   }
@@ -500,17 +503,30 @@
     return facts;
   }
 
-  /* THE SAME, FOR AN ARRAY. `value.map()` reads each index through the object, which
-     is a getter-capable lookup: an accessor installed at an index would have run.
-     A hole has no descriptor and stays a hole, which is what map() did and is not
-     changed here. */
+  /* THE SAME, FOR AN ARRAY, AND EVERY POSITION MUST BE WRITTEN.
+
+     `value.map()` reads each index through the object, which is a getter-capable
+     lookup: an accessor installed at an index would have run. So the indices are read
+     by descriptor, and an index with no OWN descriptor is a hole and is refused.
+
+     A hole is not an absent fact, it is an unwritten one, and the difference matters
+     at the only moment that counts — serialisation. `JSON.stringify([1, , 3])` is
+     "[1,null,3]", so a position CineBraid never recorded arrives at the model as an
+     explicit null. Worse, and measured: the copy is an ordinary array, so a hole reads
+     through to Array.prototype. With a value parked at index 1 there, [1, , 3] was
+     carried as ["1","inherited","3"] — something that was never in the record at all.
+
+     This is the rule the contract already applies to an explicit null or undefined in
+     an array, for the same reason: array position is semantic, and a slot must say
+     what is in it. OWN descriptors only, so an inherited numeric property does not
+     fill a hole; that is the case above. */
   function braidyFactArray(input, path, ancestors) {
     const facts = [];
     facts.length = input.length;
     for (let index = 0; index < input.length; index += 1) {
       const key = String(index);
       const descriptor = Object.getOwnPropertyDescriptor(input, key);
-      if (!descriptor) continue;
+      if (!descriptor) throw braidySparseRefusal([...path, key]);
       if (!("value" in descriptor)) throw braidyAccessorRefusal([...path, key]);
       facts[index] = braidyFactValue(descriptor.value, [...path, key], ancestors);
     }
@@ -551,8 +567,26 @@
   /* Own enumerable string-keyed properties — the same surface the copier reads, and
      the same one structured clone serialises. A non-enumerable or symbol-keyed
      accessor is outside it: never copied, never cloned, never run, and deliberately
-     not refused, because refusing it would widen a contract nothing reads. */
+     not refused, because refusing it would widen a contract nothing reads.
+
+     AN ARRAY'S SURFACE IS ITS INDICES, which is not what Object.keys() would give: a
+     named property hung on an array is enumerable and would be inspected here while
+     the copier ignores it entirely. The two passes have to agree about what they are
+     looking at — that agreement is the whole reason the shape pass makes the clone
+     preflight sound — so this walks 0..length-1 by descriptor exactly as the copier
+     does. Density is not asked here; whether a position may be empty is a question
+     about the VALUE, and braidyFactArray owns it. */
   function braidyFactShapeSurface(input, path, ancestors) {
+    if (Array.isArray(input)) {
+      for (let index = 0; index < input.length; index += 1) {
+        const key = String(index);
+        const descriptor = Object.getOwnPropertyDescriptor(input, key);
+        if (!descriptor) continue;
+        if (!("value" in descriptor)) throw braidyAccessorRefusal([...path, key]);
+        braidyFactShapeValue(descriptor.value, [...path, key], ancestors);
+      }
+      return;
+    }
     for (const key of Object.keys(input)) {
       const descriptor = Object.getOwnPropertyDescriptor(input, key);
       if (!descriptor) continue;

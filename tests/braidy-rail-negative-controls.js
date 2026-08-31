@@ -348,6 +348,26 @@ async function accessorControls() {
 }
 
 /* ===========================================================================
+   ARRAY DENSITY. An unwritten position is not an absent fact.
+   =========================================================================== */
+
+async function densityControls() {
+  note("A fact array is an explicit sequence:");
+
+  /* C5p RESTORES THE HOLE, which is the only mutation available here — the pre-density
+     copier skipped an index with no own descriptor and left the copy holey. What makes
+     this a semantic control rather than a hasOwnProperty check is what the detector
+     reports: the accepted record is serialised, and the position CineBraid never wrote
+     comes back as an explicit value. */
+  await control("C5p an array position with no value is skipped and left as a hole", "checkFactsAreReadOnlyContext",
+    { contract: mutate(SOURCES.contract,
+        "      if (!descriptor) throw braidySparseRefusal([...path, key]);\n      if (!(\"value\" in descriptor)) throw braidyAccessorRefusal([...path, key]);\n      facts[index] = braidyFactValue(descriptor.value, [...path, key], ancestors);",
+        "      if (!descriptor) continue;\n      if (!(\"value\" in descriptor)) throw braidyAccessorRefusal([...path, key]);\n      facts[index] = braidyFactValue(descriptor.value, [...path, key], ancestors);",
+        "C5p") },
+    "[1, , 3] would be carried, and JSON.stringify writes the empty position out as null — or, because the copy is an ordinary array, as whatever Array.prototype holds at that index when the request is built. Either way the model is told a fact CineBraid never recorded.");
+}
+
+/* ===========================================================================
    AUTHORITY. The line the whole slice exists to hold.
    =========================================================================== */
 
@@ -774,6 +794,7 @@ async function runAll() {
   await factControls();
   await preflightControls();
   await accessorControls();
+  await densityControls();
   await authorityControls();
   await handoffControls();
   await qualificationControls();

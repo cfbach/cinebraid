@@ -580,6 +580,92 @@ function checkFactsAreReadOnlyContext(sources = SOURCES) {
   assert.deepStrictEqual({ ...kept.facts }, { ok: 1 });
   assert.strictEqual(offSurface.n, 0, "a non-enumerable accessor must not be run either");
 
+  /* A FACT ARRAY IS AN EXPLICIT SEQUENCE, and every position must be written.
+
+     A hole is not an absent fact, it is an unwritten one, and the difference only
+     shows at serialisation. `JSON.stringify([1, , 3])` is "[1,null,3]", so a position
+     CineBraid never recorded reaches the model as an explicit null — the same silent
+     conversion the contract already refuses for an explicit null or undefined in an
+     array, arrived at by a different route.
+
+     And it is worse than null, measured rather than argued: the copy is an ordinary
+     array, so a hole reads through to Array.prototype. That case is S6 below. */
+  const deletedIndex = [1, 2, 3];
+  delete deletedIndex[1];
+  const SPARSE_CASES = [
+    ["S1 a literal hole", { rows: [1, , 3] }, "facts.rows.1"],
+    ["S2 new Array(3)", { rows: new Array(3) }, "facts.rows.0"],
+    ["S3 a deleted index", { rows: deletedIndex }, "facts.rows.1"],
+    ["S4 a hole in an array inside a record", { block: { rows: [1, , 3] } }, "facts.block.rows.1"],
+    ["S5 a hole two levels down", { rows: [{ values: ["a", , "c"] }] }, "facts.rows.0.values.1"],
+  ];
+  for (const [label, facts, where] of SPARSE_CASES) {
+    let carried = null;
+    try { carried = api.braidyHandoff({ intent: "ask", target: { kind: "project" }, facts }); } catch { carried = null; }
+    /* THE FAILURE IS STATED AS WHAT THE MODEL WOULD BE TOLD, because that is the harm.
+       A record that was accepted is serialised here and the empty position is shown
+       filled in — which is the whole reason a hole is not a fact. */
+    assert.strictEqual(carried, null,
+      `${label} was accepted, and the request would have carried ${JSON.stringify(carried && carried.facts)} — a position CineBraid never recorded, written out as an explicit value`);
+    let said = "";
+    try { api.braidyHandoff({ intent: "ask", target: { kind: "project" }, facts }); } catch (error) { said = error.message; }
+    assert.ok(/the array has no value at this position/.test(said),
+      `${label} was refused for the wrong reason: "${said}"`);
+    assert.ok(said.includes(where), `${label} must name the position that is empty; it said "${said}"`);
+  }
+
+  /* S6 — AN INHERITED INDEX DOES NOT FILL A HOLE, which is the case that shows why the
+     test has to be for an OWN descriptor. With a value parked at Array.prototype[1],
+     the pre-density copier carried [1, , 3] as ["1","inherited","3"]: a fact that was
+     never in the record, supplied by the prototype at serialisation time.
+
+     The prototype is restored in `finally` and the restoration is asserted, because a
+     stray own property on Array.prototype would quietly change how every later test in
+     this process behaves. */
+  const priorArrayIndex = Object.getOwnPropertyDescriptor(Array.prototype, "1");
+  try {
+    Object.defineProperty(Array.prototype, "1", { value: "inherited", writable: true, enumerable: false, configurable: true });
+    const inherited = [1, , 3];
+    assert.strictEqual(inherited[1], "inherited", "the premise of S6 is that the prototype is visible through the hole");
+    assert.strictEqual(Object.getOwnPropertyDescriptor(inherited, "1"), undefined, "and that the array still has no own value there");
+    assert.throws(() => api.braidyHandoff({ intent: "ask", target: { kind: "project" }, facts: { rows: inherited } }),
+      /the array has no value at this position/,
+      "a hole filled by Array.prototype was accepted; the fact would be whatever the prototype held when the request was built");
+  } finally {
+    if (priorArrayIndex) Object.defineProperty(Array.prototype, "1", priorArrayIndex);
+    else delete Array.prototype[1];
+  }
+  assert.strictEqual(Object.getOwnPropertyDescriptor(Array.prototype, "1"), priorArrayIndex,
+    "S6 left a property on Array.prototype; every array in this process would carry it");
+
+  /* DENSE ARRAYS ARE UNTOUCHED, including the empty one. */
+  for (const [label, rows, expected] of [
+    ["P1 an empty array", [], []],
+    ["P2 one element", [1], [1]],
+    ["P3 three elements", [1, 2, 3], [1, 2, 3]],
+  ]) {
+    const carried = accept({ intent: "ask", target: { kind: "project" }, facts: { rows } }, `${label} was refused`);
+    assert.deepStrictEqual([...carried.facts.rows], expected, `${label} must survive unchanged`);
+    assert.strictEqual(carried.facts.rows.length, rows.length);
+  }
+  const mixed = accept({ intent: "ask", target: { kind: "project" }, facts: { rows: [{ a: 1 }, ["x", "y"]] } },
+    "P4 a record and an array inside an array was refused").facts;
+  assert.ok(Array.isArray(mixed.rows[1]), "an array inside an array is still an array");
+  assert.deepStrictEqual({ ...mixed.rows[0] }, { a: 1 });
+  assert.deepStrictEqual([...mixed.rows[1]], ["x", "y"]);
+
+  /* P5 — AND AN EXPLICIT EMPTY VALUE IS STILL REFUSED FOR ITS OWN REASON. Density did
+     not replace that rule or reword it; the two failures are told apart by what they
+     say. */
+  for (const empty of [null, undefined]) {
+    let said = "";
+    try { api.braidyHandoff({ intent: "ask", target: { kind: "project" }, facts: { rows: [1, empty, 3] } }); }
+    catch (error) { said = error.message; }
+    assert.ok(/an array element cannot be empty/.test(said),
+      `an explicit ${String(empty)} in an array must keep its own refusal, not be reported as a hole: "${said}"`);
+    assert.ok(!/no value at this position/.test(said));
+  }
+
   /* THE LAUNDERING REGRESSION, and it is load-bearing.
 
      structuredClone is BROADER than this contract: it clones a class instance happily
@@ -632,7 +718,7 @@ function checkFactsAreReadOnlyContext(sources = SOURCES) {
   assert.throws(() => api.braidyHandoff({ intent: "ask", target: { kind: "project" }, facts: tower }),
     /nested deeper than/, "facts are a bounded record; an unbounded graph must be refused");
 
-  note("Facts: the whole graph is copied and frozen independently — nested objects, arrays, objects inside arrays and arrays inside arrays all identity-distinct, the caller's own nodes left unfrozen and mutable, cycles and unsupported shapes refused where they are handed over with the path named, a plain record recognised by authenticating the intrinsic Object.prototype of whichever realm it came from so that null-rooted class prototypes, caller-made null-root prototypes and forged constructors are all refused, accessors refused at every depth without ever being run, and the record framed to the model as CineBraid's answer rather than as raw material");
+  note("Facts: the whole graph is copied and frozen independently — nested objects, arrays, objects inside arrays and arrays inside arrays all identity-distinct, the caller's own nodes left unfrozen and mutable, cycles and unsupported shapes refused where they are handed over with the path named, a plain record recognised by authenticating the intrinsic Object.prototype of whichever realm it came from so that null-rooted class prototypes, caller-made null-root prototypes and forged constructors are all refused, accessors refused at every depth without ever being run, fact arrays required to be dense so an unwritten position cannot arrive as null or as whatever Array.prototype held, and the record framed to the model as CineBraid's answer rather than as raw material");
 }
 
 /* ===========================================================================
