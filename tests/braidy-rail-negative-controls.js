@@ -394,6 +394,13 @@ async function stalenessControls() {
   /* The two halves of the project-switch guard, separately. A conversation that
      survives a switch and a subscription that can never fire are different defects
      with the same symptom, and one control cannot tell them apart. */
+  await control("C25b the strip keeps running after the state that selected it is gone", "checkStaleRequestCannotStick",
+    { rail: mutate(SOURCES.rail,
+        "    const sprite = shared ? shared.braidySprite(state, { reducedMotion: reducedMotion() }) : null;",
+        "    const sprite = shared ? shared.braidySprite(PENDING || FAILURE ? \"thinking\" : state, { reducedMotion: reducedMotion() }) : null;",
+        "C25b") },
+    "Braidy would go on visibly working on a question that had been cancelled, because the drawn strip stopped following the presentation state and started following a flag that outlives it.");
+
   await control("C26a a conversation survives a switch to another production", "checkStaleRequestCannotStick",
     { rail: mutate(SOURCES.rail,
         "    if (slug === PROJECT_KEY) return;\n    PROJECT_KEY = slug;\n    reset();",

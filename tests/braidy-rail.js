@@ -711,11 +711,25 @@ function checkReducedMotion(sources = SOURCES) {
    =========================================================================== */
 
 async function checkStaleRequestCannotStick(sources = SOURCES) {
+  const api = loadContract(sources.contract);
   /* Closed. */
   const closed = loadRail(sources);
   closed.braidy.ask("What now?");
   assert.strictEqual(closed.braidy.presentation().state, "thinking");
+
+  /* THE SPRITE IS PART OF THIS. A presentation state that left thinking while the
+     rendered strip stayed on PROCESSING would keep Braidy visibly working on a
+     question nobody is waiting for — the same defect one layer down, and invisible to
+     every assertion about tokens. */
+  const working = api.braidySprite("thinking").file;
+  assert.ok(closed.braidy.railMarkup().includes(`data-braidy-sprite="${working}"`),
+    "a live request must actually draw the working animation");
   closed.braidy.abort("That question was stopped when the rail was closed.");
+  const afterAbort = closed.braidy.railMarkup();
+  assert.ok(!afterAbort.includes(`data-braidy-sprite="${working}"`),
+    "the working animation is still on screen after the request was aborted; the strip must stop with the state that selected it");
+  assert.ok(afterAbort.includes(`data-braidy-sprite="${api.braidySprite("attention").file}"`),
+    "a stopped question settles onto the decision cue, not onto nothing");
   assert.strictEqual(closed.braidy.presentationTokens().pending, false, "aborting must clear the pending flag");
   assert.notStrictEqual(closed.braidy.presentation().state, "thinking",
     "a rail nobody can see must not still be thinking");
@@ -785,7 +799,7 @@ async function checkStaleRequestCannotStick(sources = SOURCES) {
   assert.ok(/!context\.hasProject\) \{ braidySignal\("reset"\)/.test(surfaces),
     "a production going away must clear Braidy's session");
 
-  note("Staleness: aborting clears pending and discards the late answer, a superseded question's answer never lands while the live one still does, closing the rail aborts, losing the production resets, a project switch clears the conversation, and every signal Braidy subscribes to is one CineBraid dispatches");
+  note("Staleness: aborting clears pending, stops the working strip and discards the late answer, a superseded question's answer never lands while the live one still does, closing the rail aborts, losing the production resets, a project switch clears the conversation, and every signal Braidy subscribes to is one CineBraid dispatches");
 }
 
 /* ===========================================================================
