@@ -366,10 +366,11 @@
        below is a claim about configuration. */
     champion: null,
     standing: "none",
-    /* Named so the rail can be honest about what the reference runtime is FOR. It is
-       research standing, not a shipped promise, and it is not what "configured"
-       means either. */
-    referenceRuntime: "DGX Spark reference runtime (research standing, not a product qualification)",
+    /* THERE IS NO THIRD FIELD, and that is deliberate. A research runtime does have a
+       name, and naming it here would put a string one edit away from being rendered as
+       a capability — which is precisely how a lab control becomes a product promise.
+       What a qualification WAS run against belongs in the research record; what the
+       product may claim belongs here, and today it is nothing. */
   });
 
   function braidyCapability(capability = {}, qualification = BRAIDY_QUALIFICATION) {
