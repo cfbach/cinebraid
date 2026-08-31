@@ -354,17 +354,30 @@ async function accessorControls() {
 async function densityControls() {
   note("A fact array is an explicit sequence:");
 
-  /* C5p RESTORES THE HOLE, which is the only mutation available here — the pre-density
-     copier skipped an index with no own descriptor and left the copy holey. What makes
-     this a semantic control rather than a hasOwnProperty check is what the detector
+  /* C5p RESTORES THE HOLE, at BOTH guards. Density is asked in the shape preflight and
+     again in the copier, so removing one leaves the property true and the control
+     would prove nothing — the same reason C5d has to take out both cycle guards. What
+     makes this semantic rather than a hasOwnProperty check is what the detector
      reports: the accepted record is serialised, and the position CineBraid never wrote
      comes back as an explicit value. */
   await control("C5p an array position with no value is skipped and left as a hole", "checkFactsAreReadOnlyContext",
     { contract: mutate(SOURCES.contract,
-        "      if (!descriptor) throw braidySparseRefusal([...path, key]);\n      if (!(\"value\" in descriptor)) throw braidyAccessorRefusal([...path, key]);\n      facts[index] = braidyFactValue(descriptor.value, [...path, key], ancestors);",
-        "      if (!descriptor) continue;\n      if (!(\"value\" in descriptor)) throw braidyAccessorRefusal([...path, key]);\n      facts[index] = braidyFactValue(descriptor.value, [...path, key], ancestors);",
-        "C5p") },
+        "if (!descriptor) throw braidySparseRefusal([...path, key]);",
+        "if (!descriptor) continue;",
+        "C5p", 2) },
     "[1, , 3] would be carried, and JSON.stringify writes the empty position out as null — or, because the copy is an ordinary array, as whatever Array.prototype holds at that index when the request is built. Either way the model is told a fact CineBraid never recorded.");
+
+  /* C5q IS THE REGRESSION THE REVIEW FOUND, restored exactly: a shape pass that looks
+     only at the indices, on the reasoning that the copier reads nothing else. The
+     reasoning is true and beside the point — structured clone visits own enumerable
+     NAMED properties too, so the getter runs during the clone with nothing having
+     examined it, and what it does while running is change an indexed fact. */
+  await control("C5q the shape pass ignores an array's named enumerable properties", "checkFactsAreReadOnlyContext",
+    { contract: mutate(SOURCES.contract,
+        "      for (const key of Object.keys(input)) {\n        if (!braidyCanonicalIndex(key, length)) throw braidyArrayShapeRefusal(path, key);\n      }\n",
+        "",
+        "C5q") },
+    "An enumerable `meta` getter on a fact array executes during the cloneability preflight and rewrites rows[1] from 2 to 99. The copier then records [1,99,3] — a fact no caller wrote, produced by a property the payload does not even include.");
 }
 
 /* ===========================================================================

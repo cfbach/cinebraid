@@ -638,6 +638,84 @@ function checkFactsAreReadOnlyContext(sources = SOURCES) {
   assert.strictEqual(Object.getOwnPropertyDescriptor(Array.prototype, "1"), priorArrayIndex,
     "S6 left a property on Array.prototype; every array in this process would carry it");
 
+  /* A FACT ARRAY IS A CANONICAL SEQUENCE — 0..length-1 on its own enumerable
+     string-keyed surface, and nothing else.
+
+     This is stricter than "the copier ignores named properties", and the difference is
+     the defect it was written for. Structured clone visits own enumerable NAMED
+     properties, so a getter hung on an array runs during the clone even though the
+     payload never reads it — and what it does while running is change an indexed fact:
+
+       const rows = [1, 2, 3];
+       Object.defineProperty(rows, "meta", { enumerable: true, get() { rows[1] = 99; } });
+
+     was carried as [1, 99, 3]. A property outside the payload rewrote the payload. So
+     the surface this pass inspects is not "what the copier reads" but "what anything
+     downstream can observe", and a property only one of them can see means the array
+     is refused rather than the property ignored. */
+  const namedArray = (define) => {
+    const seen = { reads: 0 };
+    const rows = [1, 2, 3];
+    define(rows, seen);
+    return { rows, seen };
+  };
+  const NAMED_ARRAY_CASES = [
+    ["N1 an enumerable named getter that rewrites an index", (rows, seen) =>
+      Object.defineProperty(rows, "meta", { enumerable: true, configurable: true, get() { seen.reads += 1; rows[1] = 99; return "ignored"; } })],
+    ["N2 an enumerable named setter-only property", (rows, seen) =>
+      Object.defineProperty(rows, "meta", { enumerable: true, configurable: true, set() { seen.reads += 1; } })],
+    ["N3 an enumerable named data property", (rows) => { rows.meta = "x"; }],
+    ['N4 an enumerable "01"', (rows) => Object.defineProperty(rows, "01", { value: "x", enumerable: true, configurable: true, writable: true })],
+    ['N5 an enumerable "-1"', (rows) => { rows["-1"] = "x"; }],
+    ['N5b an enumerable "1.0"', (rows) => { rows["1.0"] = "x"; }],
+    ['N5c an enumerable "1e2"', (rows) => { rows["1e2"] = "x"; }],
+  ];
+  for (const [label, define] of NAMED_ARRAY_CASES) {
+    for (const [where, wrap] of [["at the top", (rows) => ({ rows })],
+      ["N6 nested one deep", (rows) => ({ block: { rows } })],
+      ["N7 nested two deep", (rows) => ({ a: { b: { rows } } })]]) {
+      const { rows, seen } = namedArray(define);
+      let carried = null;
+      try { carried = api.braidyHandoff({ intent: "ask", target: { kind: "project" }, facts: wrap(rows) }); } catch { carried = null; }
+      assert.strictEqual(carried, null,
+        `${label} ${where} was accepted, and the request would have carried ${JSON.stringify(carried && carried.facts)}`);
+      assert.strictEqual(seen.reads, 0, `${label} ${where}: its accessor ran ${seen.reads} time(s)`);
+      /* AND THE SEQUENCE IS UNTOUCHED. The getter's whole purpose is to rewrite an
+         index; a refusal that happened after it ran would leave this changed. */
+      assert.deepStrictEqual([rows[0], rows[1], rows[2]], [1, 2, 3],
+        `${label} ${where}: the caller's array is now ${JSON.stringify([rows[0], rows[1], rows[2]])}, so something read the named property before refusing`);
+    }
+    const { rows } = namedArray(define);
+    let said = "";
+    try { api.braidyHandoff({ intent: "ask", target: { kind: "project" }, facts: { rows } }); } catch (error) { said = error.message; }
+    assert.ok(/is not one of its positions/.test(said), `${label} was refused for the wrong reason: "${said}"`);
+  }
+
+  /* A KEY THAT GENUINELY IS A POSITION IS STILL A POSITION. defineProperty("3") on a
+     three-element array raises its length to four, so it is a dense four-element
+     sequence rather than a named property, and it is carried. The canonical test is
+     about spelling and range, not about how the element got there. */
+  const extended = [1, 2, 3];
+  Object.defineProperty(extended, "3", { value: "x", enumerable: true, configurable: true, writable: true });
+  assert.strictEqual(extended.length, 4, "the premise is that defining index 3 extends the array");
+  assert.deepStrictEqual([...accept({ intent: "ask", target: { kind: "project" }, facts: { rows: extended } },
+    "an array extended through its own index was refused").facts.rows], [1, 2, 3, "x"]);
+
+  /* THE NON-ENUMERABLE AND SYMBOL SURFACE IS OUTSIDE ALL OF THIS, and stays outside
+     because structured clone does not visit it either. Asserted rather than assumed:
+     if the runtime ever did run one of these, the payload and the preflight would be
+     looking at different objects again. */
+  const offSurfaceArray = { reads: 0 };
+  const quiet = [1, 2, 3];
+  Object.defineProperty(quiet, "hidden", { enumerable: false, configurable: true, get() { offSurfaceArray.reads += 1; return 1; } });
+  Object.defineProperty(quiet, Symbol("meta"), { enumerable: true, configurable: true, get() { offSurfaceArray.reads += 1; return 1; } });
+  structuredClone(quiet);
+  assert.strictEqual(offSurfaceArray.reads, 0,
+    "structured clone executed a non-enumerable or symbol-keyed accessor; the fact surface and the clone surface would no longer agree");
+  assert.deepStrictEqual([...accept({ intent: "ask", target: { kind: "project" }, facts: { rows: quiet } },
+    "an array whose only extra properties are non-enumerable or symbol-keyed was refused").facts.rows], [1, 2, 3]);
+  assert.strictEqual(offSurfaceArray.reads, 0, "and the handoff must not run them either");
+
   /* DENSE ARRAYS ARE UNTOUCHED, including the empty one. */
   for (const [label, rows, expected] of [
     ["P1 an empty array", [], []],
@@ -718,7 +796,7 @@ function checkFactsAreReadOnlyContext(sources = SOURCES) {
   assert.throws(() => api.braidyHandoff({ intent: "ask", target: { kind: "project" }, facts: tower }),
     /nested deeper than/, "facts are a bounded record; an unbounded graph must be refused");
 
-  note("Facts: the whole graph is copied and frozen independently — nested objects, arrays, objects inside arrays and arrays inside arrays all identity-distinct, the caller's own nodes left unfrozen and mutable, cycles and unsupported shapes refused where they are handed over with the path named, a plain record recognised by authenticating the intrinsic Object.prototype of whichever realm it came from so that null-rooted class prototypes, caller-made null-root prototypes and forged constructors are all refused, accessors refused at every depth without ever being run, fact arrays required to be dense so an unwritten position cannot arrive as null or as whatever Array.prototype held, and the record framed to the model as CineBraid's answer rather than as raw material");
+  note("Facts: the whole graph is copied and frozen independently — nested objects, arrays, objects inside arrays and arrays inside arrays all identity-distinct, the caller's own nodes left unfrozen and mutable, cycles and unsupported shapes refused where they are handed over with the path named, a plain record recognised by authenticating the intrinsic Object.prototype of whichever realm it came from so that null-rooted class prototypes, caller-made null-root prototypes and forged constructors are all refused, accessors refused at every depth without ever being run, fact arrays required to be dense and canonical — 0..length-1 and nothing else on the enumerable surface, so a named property structured clone can see but the payload cannot is refused rather than ignored — and the record framed to the model as CineBraid's answer rather than as raw material");
 }
 
 /* ===========================================================================

@@ -442,6 +442,19 @@
   function braidyCycleRefusal(path) {
     return braidyFactRefusal(path, "it refers back to something that contains it. A record cannot contain itself.");
   }
+  function braidyArrayShapeRefusal(path, key) {
+    return braidyFactRefusal(path, `a fact array is a sequence and "${key}" is not one of its positions. An enumerable property hung on an array is not part of the payload — but structured clone sees it, so the two would be looking at different objects. Named fields belong in a record around the array.`);
+  }
+
+  /* A CANONICAL POSITION, tested by round-trip rather than by parsing. `Number(key)`
+     followed by `String()` returns the one spelling the language calls that index, so
+     "01", "1.0", "1e2", " 1" and "" all fail by not coming back as themselves, and
+     "-1" fails the range instead. */
+  function braidyCanonicalIndex(key, length) {
+    const index = Number(key);
+    return Number.isInteger(index) && index >= 0 && index < length && String(index) === key;
+  }
+
   function braidySparseRefusal(path) {
     return braidyFactRefusal(path, "the array has no value at this position. A fact array is an explicit sequence, and a hole is not an absent fact but an unwritten one: it serialises as null, or as whatever Array.prototype happens to hold at that index when the request is built.");
   }
@@ -569,19 +582,36 @@
      accessor is outside it: never copied, never cloned, never run, and deliberately
      not refused, because refusing it would widen a contract nothing reads.
 
-     AN ARRAY'S SURFACE IS ITS INDICES, which is not what Object.keys() would give: a
-     named property hung on an array is enumerable and would be inspected here while
-     the copier ignores it entirely. The two passes have to agree about what they are
-     looking at — that agreement is the whole reason the shape pass makes the clone
-     preflight sound — so this walks 0..length-1 by descriptor exactly as the copier
-     does. Density is not asked here; whether a position may be empty is a question
-     about the VALUE, and braidyFactArray owns it. */
+     A FACT ARRAY IS A CANONICAL SEQUENCE, and getting this wrong once is what made the
+     rule explicit. An earlier pass narrowed this to the indices, on the reasoning that
+     the copier reads nothing else — which was true and beside the point. Structured
+     clone visits own enumerable NAMED properties too, so an enumerable getter hung on
+     an array ran during the clone while this pass was looking the other way:
+
+       const rows = [1, 2, 3];
+       Object.defineProperty(rows, "meta", { enumerable: true, get() { rows[1] = 99; } });
+
+     was accepted as [1, 99, 3]. The getter executed once, changed an indexed fact, and
+     nothing here had examined it. The lesson is that the surface this pass inspects is
+     not "what the copier reads" but "what anything downstream can observe" — and the
+     answer to a property that only one of them can see is to refuse the array, not to
+     ignore the property. So an accepted fact array carries exactly 0..length-1 on its
+     own enumerable string-keyed surface and nothing else. Named fields belong in a
+     record around the array.
+
+     Density is asked here as well as in braidyFactArray. Both are reachable, so a
+     control has to remove both to make a hole observable; neither alone is decorative. */
   function braidyFactShapeSurface(input, path, ancestors) {
     if (Array.isArray(input)) {
-      for (let index = 0; index < input.length; index += 1) {
+      const length = input.length;
+      /* THE KEY SET FIRST, and no value is read to decide it. */
+      for (const key of Object.keys(input)) {
+        if (!braidyCanonicalIndex(key, length)) throw braidyArrayShapeRefusal(path, key);
+      }
+      for (let index = 0; index < length; index += 1) {
         const key = String(index);
         const descriptor = Object.getOwnPropertyDescriptor(input, key);
-        if (!descriptor) continue;
+        if (!descriptor) throw braidySparseRefusal([...path, key]);
         if (!("value" in descriptor)) throw braidyAccessorRefusal([...path, key]);
         braidyFactShapeValue(descriptor.value, [...path, key], ancestors);
       }
