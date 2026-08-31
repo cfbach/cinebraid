@@ -203,16 +203,19 @@ async function factControls() {
 
   await control("C5c an array's elements are copied by spread rather than walked", "checkFactsAreReadOnlyContext",
     { contract: mutate(SOURCES.contract,
-        "      return value.map((item, index) => braidyFactValue(item, [...path, String(index)], within));",
-        "      return value.map((item) => (typeof item === \"object\" && item ? { ...item } : item));",
+        "    if (Array.isArray(value)) return braidyFactArray(value, path, within);",
+        "    if (Array.isArray(value)) return value.map((item) => (typeof item === \"object\" && item ? { ...item } : item));",
         "C5c") },
     "An array inside an array would be spread as an object and arrive as {\"0\":…}: not aliasing but silent corruption of the evidence the model is about to be given.");
 
+  /* BOTH GUARDS, because there are two walkers now and either one alone would keep the
+     property true. A control that removed only the copier's would prove nothing: the
+     shape preflight runs first and refuses the cycle before the copier is reached. */
   await control("C5d a cycle is aliased instead of refused", "checkFactsAreReadOnlyContext",
     { contract: mutate(SOURCES.contract,
-        "      throw braidyFactRefusal(path, \"it refers back to something that contains it. A record cannot contain itself.\");",
-        "      return value;",
-        "C5d") },
+        "throw braidyCycleRefusal(path);",
+        "void braidyCycleRefusal;",
+        "C5d", 2) },
     "The graph would be accepted with one caller-owned node still inside it, and the freeze that follows would reach through that node into the caller's live object.");
 
   await control("C5e a number that cannot survive the request is carried", "checkFactsAreReadOnlyContext",
@@ -305,6 +308,43 @@ async function preflightControls() {
         "    braidyFactsCloneabilityPreflight(input);\n    const laundered = braidyPlatform().structuredClone(input);\n    return braidyFactObject(laundered, [], new Set([laundered]));",
         "C5m") },
     "structured clone is broader than this contract: it flattens a class instance into an ordinary object and would launder every refused type into a plain record with its methods quietly gone. The clone proves one thing and must be discarded unread.");
+}
+
+/* ===========================================================================
+   ACCESSORS. A fact is an inert recorded value; behaviour is not one.
+   =========================================================================== */
+
+async function accessorControls() {
+  note("An accessor-bearing record is refused, and refused without being run:");
+
+  /* C5n AND C5o BREAK DIFFERENT RULES with different mutations, and it matters which.
+     C5n removes the refusal entirely, so an accessor is read — twice, once by the
+     cloneability preflight and once by the copier — and the alternating getter puts a
+     prototype-spoofing Proxy into the record that the preflight never saw. C5o keeps
+     the refusal but moves it AFTER the clone, which accepts nothing it should not and
+     still runs the getter. One protects the record's contents; the other protects the
+     promise that the accessor never executes. */
+
+  /* THE WHOLE PRE-V4 PATH, because half of it is not the defect. Removing only the
+     shape preflight's refusal leaves the copier's own accessor branch to catch the
+     record late — which is C5o's defect, not this one. This control restores both
+     halves: no refusal, and the copier reading through `input[key]` again, which is
+     exactly what the record looked like before this contract existed. */
+  await control("C5n the accessor refusal and the descriptor read are both removed", "checkFactsAreReadOnlyContext",
+    { contract: mutate(SOURCES.contract,
+        "      if (!(\"value\" in descriptor)) throw braidyAccessorRefusal([...path, key]);\n      braidyFactShapeValue(descriptor.value, [...path, key], ancestors);",
+        "      if (!(\"value\" in descriptor)) continue;\n      braidyFactShapeValue(descriptor.value, [...path, key], ancestors);",
+        "C5n").replace(
+        "    for (const key of Object.keys(input)) {\n      const descriptor = Object.getOwnPropertyDescriptor(input, key);\n      if (!descriptor) continue;\n      if (!(\"value\" in descriptor)) throw braidyAccessorRefusal([...path, key]);\n      const value = descriptor.value;\n      if (value === null || value === undefined) continue;",
+        "    for (const [key, value] of Object.entries(input)) {\n      if (value === null || value === undefined) continue;") },
+    "A getter answering `{ harmless: true }` to the cloneability preflight and a prototype-spoofing Proxy to the copier puts { secret: 7 } into the facts. The two passes would be reading different graphs, and only one of them was checked.");
+
+  await control("C5o the accessor is refused only after the clone has already run it", "checkCloneabilityPreflight",
+    { contract: mutate(SOURCES.contract,
+        "    braidyFactShapeSurface(input, [], new Set([input]));\n    /* Then, before a single prototype is trusted. */\n    braidyFactsCloneabilityPreflight(input);",
+        "    braidyFactsCloneabilityPreflight(input);\n    braidyFactShapeSurface(input, [], new Set([input]));",
+        "C5o") },
+    "The record is still refused, so nothing wrong reaches the model — and the getter has already executed, because structuredClone reads enumerable properties. `reads === 0` is the contract, not `the answer was discarded`.");
 }
 
 /* ===========================================================================
@@ -733,6 +773,7 @@ async function runAll() {
   await railRoleControls();
   await factControls();
   await preflightControls();
+  await accessorControls();
   await authorityControls();
   await handoffControls();
   await qualificationControls();

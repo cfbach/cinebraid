@@ -434,9 +434,21 @@
     return proto === null || braidyIntrinsicObjectPrototype(proto);
   }
 
+  /* The two refusals both walkers can reach, worded once so the order they run in
+     cannot change what a caller is told. */
+  function braidyDepthRefusal(path) {
+    return braidyFactRefusal(path, `it is nested deeper than ${BRAIDY_FACT_MAX_DEPTH} levels. Facts are a bounded record of what CineBraid knows, not a document.`);
+  }
+  function braidyCycleRefusal(path) {
+    return braidyFactRefusal(path, "it refers back to something that contains it. A record cannot contain itself.");
+  }
+  function braidyAccessorRefusal(path) {
+    return braidyFactRefusal(path, "it is an accessor. A fact is an inert recorded value and not behaviour, so a getter is refused rather than run: a property that answers with code can answer differently every time it is asked, and CineBraid would be handing the model something it never recorded.");
+  }
+
   function braidyFactValue(value, path, ancestors) {
     if (path.length > BRAIDY_FACT_MAX_DEPTH)
-      throw braidyFactRefusal(path, `it is nested deeper than ${BRAIDY_FACT_MAX_DEPTH} levels. Facts are a bounded record of what CineBraid knows, not a document.`);
+      throw braidyDepthRefusal(path);
 
     const type = typeof value;
     if (type === "boolean" || type === "string") return value;
@@ -453,12 +465,11 @@
        branches is a value used twice and is copied twice; only a value that contains
        itself is a cycle. */
     if (ancestors.has(value))
-      throw braidyFactRefusal(path, "it refers back to something that contains it. A record cannot contain itself.");
+      throw braidyCycleRefusal(path);
 
     const within = new Set(ancestors);
     within.add(value);
-    if (Array.isArray(value))
-      return value.map((item, index) => braidyFactValue(item, [...path, String(index)], within));
+    if (Array.isArray(value)) return braidyFactArray(value, path, within);
     if (!braidyPlainObject(value))
       throw braidyFactRefusal(path, `a ${value.constructor?.name || "non-plain object"} is not a fact. It would arrive as an empty object or be dropped, and neither is what CineBraid meant.`);
     return braidyFactObject(value, path, within);
@@ -468,13 +479,86 @@
      always done at the top level and now does at every depth. A key CineBraid has no
      answer for is a key Braidy is not told about, rather than one it is told is
      empty. */
+  /* COPIED FROM THE DESCRIPTOR, never re-read through `input[key]`.
+
+     By the time this runs the shape preflight has already established that every
+     property on this surface is a data property, and reading through the object again
+     would be a second observable property access for no reason. The key set is
+     unchanged — own enumerable string-keyed, exactly what Object.entries gave — and
+     the accessor branch below is defence in depth rather than the place accessors are
+     caught. */
   function braidyFactObject(input, path, ancestors) {
     const facts = {};
-    for (const [key, value] of Object.entries(input)) {
+    for (const key of Object.keys(input)) {
+      const descriptor = Object.getOwnPropertyDescriptor(input, key);
+      if (!descriptor) continue;
+      if (!("value" in descriptor)) throw braidyAccessorRefusal([...path, key]);
+      const value = descriptor.value;
       if (value === null || value === undefined) continue;
       facts[key] = braidyFactValue(value, [...path, key], ancestors);
     }
     return facts;
+  }
+
+  /* THE SAME, FOR AN ARRAY. `value.map()` reads each index through the object, which
+     is a getter-capable lookup: an accessor installed at an index would have run.
+     A hole has no descriptor and stays a hole, which is what map() did and is not
+     changed here. */
+  function braidyFactArray(input, path, ancestors) {
+    const facts = [];
+    facts.length = input.length;
+    for (let index = 0; index < input.length; index += 1) {
+      const key = String(index);
+      const descriptor = Object.getOwnPropertyDescriptor(input, key);
+      if (!descriptor) continue;
+      if (!("value" in descriptor)) throw braidyAccessorRefusal([...path, key]);
+      facts[index] = braidyFactValue(descriptor.value, [...path, key], ancestors);
+    }
+    return facts;
+  }
+
+  /* ==========================================================================
+     THE SHAPE PREFLIGHT — descriptors only, and the first thing that walks.
+
+     A Braidy fact is an INERT RECORDED VALUE. A getter is not one: it is behaviour,
+     and behaviour asked twice can answer twice differently. That is not hypothetical
+     here. Before this existed, the cloneability preflight read the record once and the
+     copier read it again, and a getter alternating between a harmless object and a
+     prototype-spoofing Proxy put `{ secret: 7 }` into the facts — the preflight saw one
+     graph and the walker copied another.
+
+     So accessors are refused, and refused WITHOUT BEING RUN. That is why this pass
+     exists separately and runs first: `structuredClone` itself reads enumerable
+     properties, so an accessor rejected after it would already have executed. Nothing
+     here reads a value through `input[key]`; it asks for the descriptor and descends
+     only through `descriptor.value`.
+
+     WHAT THIS PASS DOES NOT CLAIM. It is not a Proxy detector — a Proxy traps
+     `ownKeys` and `getOwnPropertyDescriptor` as readily as anything else, and
+     inspecting one runs its handler code. Browser JavaScript cannot promise otherwise
+     through ordinary reflection. The jobs stay separate: this pass owns "does this
+     surface present data or behaviour", the structured-clone preflight owns the
+     Proxy/uncloneable boundary, and braidyFactValue owns which types are facts. */
+  function braidyFactShapeValue(value, path, ancestors) {
+    if (path.length > BRAIDY_FACT_MAX_DEPTH) throw braidyDepthRefusal(path);
+    if (value === null || typeof value !== "object") return;
+    if (ancestors.has(value)) throw braidyCycleRefusal(path);
+    const within = new Set(ancestors);
+    within.add(value);
+    braidyFactShapeSurface(value, path, within);
+  }
+
+  /* Own enumerable string-keyed properties — the same surface the copier reads, and
+     the same one structured clone serialises. A non-enumerable or symbol-keyed
+     accessor is outside it: never copied, never cloned, never run, and deliberately
+     not refused, because refusing it would widen a contract nothing reads. */
+  function braidyFactShapeSurface(input, path, ancestors) {
+    for (const key of Object.keys(input)) {
+      const descriptor = Object.getOwnPropertyDescriptor(input, key);
+      if (!descriptor) continue;
+      if (!("value" in descriptor)) throw braidyAccessorRefusal([...path, key]);
+      braidyFactShapeValue(descriptor.value, [...path, key], ancestors);
+    }
   }
 
   /* ==========================================================================
@@ -514,21 +598,11 @@
      reaches its own refusal with its own words; only a Proxy, a function and a symbol
      are stopped here, and only the first of those could otherwise have lied.
 
-     WHERE THIS GUARANTEE ENDS, so nobody later reads it as absolute. The preflight and
-     the walker each read the record's own properties, which means an ACCESSOR is
-     invoked twice and is free to answer differently:
-
-       let reads = 0;
-       const facts = { get probe() { return (reads += 1) === 1 ? {} : someProxy; } };
-
-     The preflight sees an ordinary object; the walker is handed the Proxy, and it
-     lands in the record. Measured, not theorised. It is not a regression — the same
-     Proxy crossed before this preflight existed — but it is the edge of what the
-     preflight can promise, and closing it means deciding whether a fact record may
-     contain accessors at all. That is a contract decision about what a fact IS, so it
-     is left to the review that owns the contract rather than taken here. The narrowest
-     closure is to refuse accessor properties in braidyFactObject(): a fact is a
-     recorded answer, not a computation. */
+     IT IS NOT ASKED FIRST. The shape preflight above it is, because structured clone
+     reads enumerable properties and would therefore RUN an accessor before this
+     boundary had a chance to refuse the record. Braidy fact records are inert data:
+     accessor properties are refused and never evaluated, which is what makes "the
+     graph the preflight saw" and "the graph the copier walks" the same graph. */
   function braidyPlatform() {
     return typeof globalThis !== "undefined" ? globalThis : null;
   }
@@ -556,7 +630,10 @@
     if (!input || typeof input !== "object" || Array.isArray(input)) return {};
     if (!braidyPlainObject(input))
       throw braidyFactRefusal([], `a ${input.constructor?.name || "non-plain object"} is not a record of facts.`);
-    /* Before a single prototype is read. */
+    /* FIRST, because structuredClone reads enumerable properties and an accessor
+       refused after it would already have run. */
+    braidyFactShapeSurface(input, [], new Set([input]));
+    /* Then, before a single prototype is trusted. */
     braidyFactsCloneabilityPreflight(input);
     return braidyFactObject(input, [], new Set([input]));
   }
@@ -789,6 +866,7 @@
        rather than only through a handoff. */
     braidyPlainObject,
     braidyFactsCloneabilityPreflight,
+    braidyFactShapeSurface,
     braidyPresentation,
     braidyHandoff,
     braidyResolveAction,

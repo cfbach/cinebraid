@@ -508,6 +508,78 @@ function checkFactsAreReadOnlyContext(sources = SOURCES) {
   assert.deepStrictEqual(crossed, [],
     `a value that lies about its prototype reached the record: ${crossed.join("; ")}`);
 
+  /* AN ACCESSOR IS NOT A FACT, and it is refused without being run.
+
+     A fact is an inert recorded value. A getter is behaviour, and behaviour asked
+     twice can answer twice differently — which is not hypothetical: the cloneability
+     preflight reads the record and so does the copier, and a getter alternating
+     between a harmless object and a prototype-spoofing Proxy used to put
+     { secret: 7 } into the facts because the two passes were looking at different
+     graphs. The read count is the assertion that matters. "Refused" is not enough;
+     the accessor must never execute. */
+  /* A7 FIRST, and its first assertion is about the CONTENTS rather than the read count.
+
+     Losing the refusal and merely delaying it are different defects with different
+     consequences, and each needs an assertion the other cannot trigger. Without the
+     refusal the Proxy's contents cross the boundary; with the refusal merely late,
+     nothing crosses and only the read count is wrong. */
+  const alternating = { n: 0 };
+  const exploit = {
+    get probe() {
+      alternating.n += 1;
+      return alternating.n === 1 ? { harmless: true } : proxiedInstance;
+    },
+  };
+  let smuggled = null;
+  try { smuggled = api.braidyHandoff({ intent: "ask", target: { kind: "project" }, facts: exploit }); } catch { smuggled = null; }
+  assert.strictEqual(smuggled, null,
+    `the alternating getter put ${JSON.stringify(smuggled && smuggled.facts)} into the record: it answers the cloneability preflight with a harmless object and the copier with a prototype-spoofing Proxy, so the two passes read different graphs`);
+  alternating.n = 0;
+  assert.throws(() => api.braidyHandoff({ intent: "ask", target: { kind: "project" }, facts: exploit }),
+    /it is an accessor/, "the alternating getter must be refused as an accessor, not for some later reason");
+  assert.strictEqual(alternating.n, 0,
+    `the exploit's getter ran ${alternating.n} time(s); it must be refused before it is ever asked`);
+
+  const ACCESSOR_CASES = [
+    ["A1 an enumerable getter", (count) => ({ get probe() { count.n += 1; return 1; } })],
+    ["A2 a setter-only property", (count) => {
+      const record = {};
+      Object.defineProperty(record, "probe", { set() { count.n += 1; }, enumerable: true, configurable: true });
+      return record;
+    }],
+    ["A3 a getter and a setter", (count) => {
+      const record = {};
+      Object.defineProperty(record, "probe", { get() { count.n += 1; return 1; }, set() {}, enumerable: true, configurable: true });
+      return record;
+    }],
+    ["A4 an accessor one object deep", (count) => ({ block: { get probe() { count.n += 1; return 1; } } })],
+    ["A5 an accessor inside an object in an array", (count) => ({ list: [{ get probe() { count.n += 1; return 1; } }] })],
+    ["A6 an accessor two levels deep", (count) => ({ a: { b: { get probe() { count.n += 1; return 1; } } } })],
+    ["A8 an accessor installed at an array index", (count) => {
+      const list = [];
+      Object.defineProperty(list, "0", { get() { count.n += 1; return 1; }, enumerable: true, configurable: true });
+      return { list };
+    }],
+  ];
+  for (const [label, build] of ACCESSOR_CASES) {
+    const count = { n: 0 };
+    assert.throws(() => api.braidyHandoff({ intent: "ask", target: { kind: "project" }, facts: build(count) }),
+      /it is an accessor/, `${label} was accepted; a fact record may hold data only`);
+    assert.strictEqual(count.n, 0,
+      `${label} was refused, but its accessor ran ${count.n} time(s) first. Refusing after the value has been produced is not the contract.`);
+  }
+
+  /* A9 — and the surface is exactly the one that was always copied. A non-enumerable
+     accessor is outside it: never copied, never cloned, never run, and deliberately
+     not refused, because refusing it would widen a contract nothing reads. */
+  const offSurface = { n: 0 };
+  const withHidden = { ok: 1 };
+  Object.defineProperty(withHidden, "hidden", { get() { offSurface.n += 1; return 1; }, enumerable: false, configurable: true });
+  const kept = accept({ intent: "ask", target: { kind: "project" }, facts: withHidden },
+    "a record whose only accessor is non-enumerable is outside the fact surface and must still be carried");
+  assert.deepStrictEqual({ ...kept.facts }, { ok: 1 });
+  assert.strictEqual(offSurface.n, 0, "a non-enumerable accessor must not be run either");
+
   /* THE LAUNDERING REGRESSION, and it is load-bearing.
 
      structuredClone is BROADER than this contract: it clones a class instance happily
@@ -560,7 +632,7 @@ function checkFactsAreReadOnlyContext(sources = SOURCES) {
   assert.throws(() => api.braidyHandoff({ intent: "ask", target: { kind: "project" }, facts: tower }),
     /nested deeper than/, "facts are a bounded record; an unbounded graph must be refused");
 
-  note("Facts: the whole graph is copied and frozen independently — nested objects, arrays, objects inside arrays and arrays inside arrays all identity-distinct, the caller's own nodes left unfrozen and mutable, cycles and unsupported shapes refused where they are handed over with the path named, a plain record recognised by authenticating the intrinsic Object.prototype of whichever realm it came from so that null-rooted class prototypes, caller-made null-root prototypes and forged constructors are all refused, and the record framed to the model as CineBraid's answer rather than as raw material");
+  note("Facts: the whole graph is copied and frozen independently — nested objects, arrays, objects inside arrays and arrays inside arrays all identity-distinct, the caller's own nodes left unfrozen and mutable, cycles and unsupported shapes refused where they are handed over with the path named, a plain record recognised by authenticating the intrinsic Object.prototype of whichever realm it came from so that null-rooted class prototypes, caller-made null-root prototypes and forged constructors are all refused, accessors refused at every depth without ever being run, and the record framed to the model as CineBraid's answer rather than as raw material");
 }
 
 /* ===========================================================================
@@ -1692,7 +1764,22 @@ function checkCloneabilityPreflight(sources = SOURCES) {
   assert.ok(!/DataCloneError|could not be cloned/i.test(said),
     `the refusal repeats the engine's prose, which is not a product contract: ${said}`);
 
-  note("Preflight: present in this runtime, passes every legitimate record including a cross-realm one and the shipped stage block, leaves the cycle and non-finite refusals their own words, refuses in CineBraid's own prose without claiming to have identified a Proxy, and fails closed when the primitive is absent");
+  /* THE ORDER, PROVED BY WHAT DOES NOT HAPPEN. structuredClone reads enumerable
+     properties, so an accessor refused after it would already have run. The shape
+     preflight goes first, and the evidence is a read count of zero on a record that
+     the clone would have been perfectly happy to serialise. */
+  const ordering = { n: 0 };
+  const readable = { get probe() { ordering.n += 1; return 1; } };
+  assert.doesNotThrow(() => structuredClone(readable),
+    "the premise of this ordering proof is that structured clone accepts this record");
+  assert.ok(ordering.n > 0, "and that serialising it runs the getter");
+  ordering.n = 0;
+  assert.throws(() => api.braidyHandoff({ intent: "ask", target: { kind: "project" }, facts: readable }),
+    /it is an accessor/);
+  assert.strictEqual(ordering.n, 0,
+    "the getter ran during the handoff, so the cloneability preflight reached the record before the shape preflight refused it");
+
+  note("Preflight: present in this runtime, passes every legitimate record including a cross-realm one and the shipped stage block, leaves the cycle and non-finite refusals their own words, refuses in CineBraid's own prose without claiming to have identified a Proxy, fails closed when the primitive is absent, and runs only after the shape preflight has refused an accessor-bearing record — proved by the getter never executing on a record structured clone would happily have serialised");
 }
 
 /* ===========================================================================
