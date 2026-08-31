@@ -477,10 +477,71 @@
     return facts;
   }
 
+  /* ==========================================================================
+     THE PREFLIGHT, and why authenticating the prototype was not enough.
+
+     Everything above trusts `Object.getPrototypeOf(value)`. That is an OPERATION, not
+     a fact, and a Proxy can trap it:
+
+       class Exotic { constructor() { this.secret = 7; } }
+       new Proxy(new Exotic(), { getPrototypeOf: () => Object.prototype })
+
+     The trap hands back the genuine intrinsic Object.prototype, so the authentication
+     above authenticates it — correctly — and the class instance crosses the boundary
+     and is copied out as `{ secret: 7 }`. The invariant that would normally force a
+     Proxy to tell the truth about its prototype only applies when the target is
+     non-extensible, and an ordinary instance is extensible. Measured, not assumed.
+
+     There is no way to ask an object whether it is a Proxy, and every surface that
+     might hint at it — the prototype, the constructor, the own keys, the descriptors,
+     `instanceof`, `toString` — is a surface a Proxy virtualises. So this does not try.
+     It asks the PLATFORM instead: structured clone refuses a Proxy outright, at every
+     depth, and refuses it whether the prototype it reports is this realm's, another
+     realm's, or a lie. That is a decision made below the language, by machinery a
+     handler cannot reach.
+
+     THE CLONE IS THROWN AWAY, and that is the whole design rather than an economy.
+     Structured clone is BROADER than this contract: `structuredClone(new Exotic())`
+     succeeds and yields `{ secret: 7 }`, a Date becomes a Date, a Map becomes a Map.
+     Using its output as the facts would launder every one of those into something the
+     strict walker below would then wave through. So the clone proves one thing —
+     "nothing in this graph is uncloneable" — and is discarded unread. What a fact may
+     BE is still decided entirely by braidyFactValue() and braidyPlainObject(), against
+     the ORIGINAL values.
+
+     It runs FIRST, before any prototype is trusted. Cycles, BigInt, non-finite numbers
+     and the unsupported built-ins all clone successfully, so each of those still
+     reaches its own refusal with its own words; only a Proxy, a function and a symbol
+     are stopped here, and only the first of those could otherwise have lied. */
+  function braidyPlatform() {
+    return typeof globalThis !== "undefined" ? globalThis : null;
+  }
+
+  function braidyFactsCloneabilityPreflight(input) {
+    const platform = braidyPlatform();
+    /* FAIL CLOSED. A missing check is not a passed one: without this primitive there
+       is no way to establish that a value has not virtualised its own identity, and
+       the honest answer is to refuse the record rather than fall back to the weaker
+       validation this exists to backstop. */
+    if (!platform || typeof platform.structuredClone !== "function")
+      throw braidyFactRefusal([], "the platform's structured-clone primitive is unavailable, and Braidy will not accept a fact record it cannot first prove is ordinary data.");
+    try {
+      platform.structuredClone(input);
+    } catch {
+      /* Deliberately not the platform's own prose, which varies by engine and is not a
+         product contract. And deliberately not a claim that this WAS a Proxy: the
+         platform reports one failure for a family of exotic values and CineBraid does
+         not pretend to have distinguished them. */
+      throw braidyFactRefusal([], "it holds a value the platform cannot clone — a Proxy, or another exotic object. A fact is plain data, and a value that can lie about what it is cannot be one.");
+    }
+  }
+
   function braidyFacts(input) {
     if (!input || typeof input !== "object" || Array.isArray(input)) return {};
     if (!braidyPlainObject(input))
       throw braidyFactRefusal([], `a ${input.constructor?.name || "non-plain object"} is not a record of facts.`);
+    /* Before a single prototype is read. */
+    braidyFactsCloneabilityPreflight(input);
     return braidyFactObject(input, [], new Set([input]));
   }
 
@@ -711,6 +772,7 @@
     /* Exported so a suite can put the predicate under every prototype shape directly,
        rather than only through a handoff. */
     braidyPlainObject,
+    braidyFactsCloneabilityPreflight,
     braidyPresentation,
     braidyHandoff,
     braidyResolveAction,

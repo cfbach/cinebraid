@@ -54,8 +54,13 @@ const codeOnly = (source) =>
 /* ---------------------------------------------------------------------------
    REALMS. */
 
+/* structuredClone is on the sandbox because it is on every runtime this module is
+   supported in — Node since 17, and every Chromium CineBraid runs in. The contract
+   fails CLOSED without it, which checkCloneabilityPreflight proves separately by
+   taking it away; a realm that quietly lacked it would turn every check in this file
+   into a check of the refusal path. */
 function loadContract(source = SOURCES.contract) {
-  const sandbox = { module: { exports: {} }, console };
+  const sandbox = { module: { exports: {} }, console, structuredClone };
   sandbox.globalThis = sandbox;
   vm.createContext(sandbox);
   vm.runInContext(source, sandbox, { filename: "shared-braidy.js" });
@@ -80,6 +85,7 @@ function loadRail(sources = SOURCES, options = {}) {
   const sandbox = {
     console,
     JSON,
+    structuredClone,
     esc: (t) => String(t == null ? "" : t).replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" })[c]),
     location: { hash: options.hash || "#/shot/L1-01" },
     P: { meta: { title: "Sample Production" } },
@@ -454,6 +460,69 @@ function checkFactsAreReadOnlyContext(sources = SOURCES) {
     else assert.throws(() => api.braidyHandoff({ intent: "ask", target: { kind: "project" }, facts: { probe: value } }),
       /Braidy cannot carry/, `${label} was accepted as a fact`);
   }
+
+  /* AND A VALUE THAT LIES ABOUT ITS PROTOTYPE, which is the one thing everything above
+     cannot catch. `Object.getPrototypeOf` is an operation, not a fact: a Proxy traps
+     it and hands back the genuine intrinsic Object.prototype, so the authentication is
+     correct and the answer is still wrong. The invariant that would force the truth
+     applies only to a non-extensible target, and an ordinary instance is extensible.
+
+     Measured against the predicate directly AND through the handoff, because these are
+     refused by the cloneability preflight rather than by braidyPlainObject — which is
+     exactly the point: the prototype is never consulted. */
+  class Secretive { constructor() { this.secret = 7; } }
+  const liesAboutItsPrototype = { getPrototypeOf: () => Object.prototype };
+  const proxiedInstance = new Proxy(new Secretive(), liesAboutItsPrototype);
+
+  assert.strictEqual(Object.getPrototypeOf(proxiedInstance), Object.prototype,
+    "the reproduction requires a proxy that actually reports the intrinsic prototype");
+  assert.strictEqual(api.braidyPlainObject(proxiedInstance), true,
+    "the prototype predicate is expected to be fooled here; the preflight is what refuses it, and this records why the preflight has to exist");
+
+  const PROXY_CASES = [
+    ["a Proxy wrapping a class instance", { probe: proxiedInstance }],
+    ["a Proxy wrapping a Date", { probe: new Proxy(new Date(0), liesAboutItsPrototype) }],
+    ["a Proxy wrapping an ordinary plain object", { probe: new Proxy({ a: 1 }, liesAboutItsPrototype) }],
+    ["a Proxy reporting another realm's genuine Object.prototype",
+      { probe: new Proxy(new Secretive(), { getPrototypeOf: () => vm.runInNewContext("Object.prototype") }) }],
+    ["a Proxy nested inside an ordinary record", { safe: "x", nested: proxiedInstance }],
+    ["a Proxy inside an array", { list: ["safe", proxiedInstance] }],
+    ["a Proxy two levels down inside an array of records", { a: [{ b: proxiedInstance }] }],
+  ];
+  /* EVERY POSITION IS REPORTED TOGETHER. The preflight is one mechanism covering the
+     whole graph — structured clone is deep by construction, so there is no version of
+     it that inspects only the record it was handed — and the way to show that is to
+     fail naming every depth at once rather than stopping at the first. A control that
+     removes it therefore has to answer for the nested cases too, and the receipt shows
+     them. */
+  const crossed = [];
+  for (const [label, facts] of PROXY_CASES) {
+    let carried = null;
+    try { carried = api.braidyHandoff({ intent: "ask", target: { kind: "project" }, facts }); }
+    catch (error) {
+      if (!/cannot clone/.test(error.message)) crossed.push(`${label} was refused for the wrong reason (${error.message})`);
+      continue;
+    }
+    crossed.push(`${label} crossed the fact boundary and was copied out as ${JSON.stringify(carried.facts)}`);
+  }
+  assert.deepStrictEqual(crossed, [],
+    `a value that lies about its prototype reached the record: ${crossed.join("; ")}`);
+
+  /* THE LAUNDERING REGRESSION, and it is load-bearing.
+
+     structuredClone is BROADER than this contract: it clones a class instance happily
+     and yields an ordinary-looking object. If its output were used as the facts, every
+     type refused above would arrive as a plain record with its methods quietly gone.
+     So the clone is discarded unread, and the ORIGINAL is what the strict walker sees. */
+  const launderable = new Secretive();
+  const cloned = structuredClone(launderable);
+  assert.deepStrictEqual({ ...cloned }, { secret: 7 },
+    "the premise of this regression is that structured clone SUCCEEDS on a class instance and flattens it");
+  assert.strictEqual(Object.getPrototypeOf(cloned), Object.prototype,
+    "and that what it produces looks like an ordinary record");
+  assert.throws(() => api.braidyHandoff({ intent: "ask", target: { kind: "project" }, facts: { probe: launderable } }),
+    /is not a fact/,
+    "the class instance was accepted; the preflight's clone must never become the record, or every refused type is laundered into a plain one");
 
   /* A cross-realm graph is COPIED, not merely tolerated. Nothing of the other realm's
      survives into the frozen record. */
@@ -1556,6 +1625,77 @@ async function checkAssetRouteBehaviour(sources = SOURCES) {
 }
 
 /* ===========================================================================
+   18. THE PREFLIGHT ITSELF: present, fail-closed, and never the source of the record.
+   =========================================================================== */
+
+/* The contract, loaded into a realm that is missing the platform primitive. */
+function loadContractWithoutClone(source = SOURCES.contract) {
+  const sandbox = { module: { exports: {} }, console };
+  sandbox.globalThis = sandbox;
+  vm.createContext(sandbox);
+  vm.runInContext(source, sandbox, { filename: "shared-braidy.js" });
+  return sandbox.module.exports;
+}
+
+function checkCloneabilityPreflight(sources = SOURCES) {
+  const api = loadContract(sources.contract);
+
+  /* IT IS ACTUALLY THERE, in the runtimes this module is supported in. Asserted rather
+     than assumed, because everything below rests on it. */
+  assert.strictEqual(typeof structuredClone, "function",
+    "this runtime has no structuredClone; the preflight cannot be exercised here and the contract would refuse every record");
+
+  /* A LEGITIMATE RECORD PASSES IT. The preflight must not be the thing that starts
+     refusing ordinary facts. */
+  for (const [label, facts] of [
+    ["a plain record", { a: 1, b: "two", c: true }],
+    ["nested arrays and records", { a: [{ b: [1, 2] }], c: { d: { e: "f" } } }],
+    ["a null-prototype record", Object.assign(Object.create(null), { x: 1 })],
+    ["a record from another realm", vm.runInNewContext("({ nested: { deep: [1,2] } })")],
+    ["the stage block CineBraid actually hands over", {
+      stage: "Frames", purpose: "Create and approve the shot's still frames, required and optional.",
+      availability: "available", blockedReason: "", completion: "needs-review", optional: false,
+    }],
+  ]) {
+    api.braidyFactsCloneabilityPreflight(facts);
+    assert.ok(api.braidyHandoff({ intent: "ask", target: { kind: "project" }, facts }),
+      `${label} must survive the preflight and the strict walker`);
+  }
+
+  /* CYCLES, BIGINT AND NON-FINITE NUMBERS CLONE FINE, so each still reaches its own
+     refusal with its own words rather than being swallowed by a generic one. */
+  const cyclic = { name: "self" };
+  cyclic.self = cyclic;
+  api.braidyFactsCloneabilityPreflight({ cyclic });
+  assert.throws(() => api.braidyHandoff({ intent: "ask", target: { kind: "project" }, facts: { cyclic } }),
+    /refers back to something that contains it/, "the cycle refusal must keep its own words");
+  api.braidyFactsCloneabilityPreflight({ n: NaN });
+  assert.throws(() => api.braidyHandoff({ intent: "ask", target: { kind: "project" }, facts: { n: NaN } }),
+    /reaches the model as null/, "the non-finite refusal must keep its own words");
+
+  /* AND IT FAILS CLOSED. A realm without the primitive refuses the record; it does not
+     fall back to the weaker validation the preflight exists to backstop. */
+  const blind = loadContractWithoutClone(sources.contract);
+  assert.throws(() => blind.braidyHandoff({ intent: "ask", target: { kind: "project" }, facts: { a: 1 } }),
+    /structured-clone primitive is unavailable/,
+    "without the primitive the contract must refuse; a missing check is not a passed one");
+  assert.throws(() => blind.braidyFactsCloneabilityPreflight({ a: 1 }), /unavailable/);
+
+  /* The refusal is CineBraid's own words, not the engine's, and does not claim to have
+     identified a Proxy specifically — the platform reports one failure for a family of
+     exotic values. */
+  class Secretive { constructor() { this.secret = 7; } }
+  let said = "";
+  try { api.braidyHandoff({ intent: "ask", target: { kind: "project" }, facts: { p: new Proxy(new Secretive(), { getPrototypeOf: () => Object.prototype }) } }); }
+  catch (error) { said = error.message; }
+  assert.ok(/^Braidy cannot carry/.test(said), `the refusal must be a Braidy fact-boundary error: ${said}`);
+  assert.ok(!/DataCloneError|could not be cloned/i.test(said),
+    `the refusal repeats the engine's prose, which is not a product contract: ${said}`);
+
+  note("Preflight: present in this runtime, passes every legitimate record including a cross-realm one and the shipped stage block, leaves the cycle and non-finite refusals their own words, refuses in CineBraid's own prose without claiming to have identified a Proxy, and fails closed when the primitive is absent");
+}
+
+/* ===========================================================================
    15. ONE ASSISTANT PATH, NOT A SECOND ONE.
    =========================================================================== */
 
@@ -1603,6 +1743,7 @@ async function runAll() {
   checkRecommendationVersusRequirement();
   checkSpriteAssets();
   await checkAssetRouteBehaviour();
+  checkCloneabilityPreflight();
   checkNoSecondBackend();
   return notes;
 }
@@ -1632,6 +1773,7 @@ module.exports = {
   checkRecommendationVersusRequirement,
   checkSpriteAssets,
   checkAssetRouteBehaviour,
+  checkCloneabilityPreflight,
   ADOPTED_ART,
   checkNoSecondBackend,
 };

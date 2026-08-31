@@ -266,6 +266,48 @@ async function factControls() {
 }
 
 /* ===========================================================================
+   THE PREFLIGHT. What the prototype authentication cannot do on its own.
+   =========================================================================== */
+
+async function preflightControls() {
+  note("A value that lies about its prototype is stopped before the prototype is read:");
+
+  /* ONE CONTROL FOR ONE MECHANISM, and the nesting is proved by what it has to answer
+     for rather than by running the same mutation twice.
+
+     The brief asked for a second control against "an implementation that only checks
+     the top-level fact object". There is no such implementation to write: structured
+     clone is deep by construction, so a preflight that examines the record examines
+     everything reachable from it. Writing C5k as a second copy of this mutation would
+     have proved one thing twice and nothing once. Instead checkFactsAreReadOnlyContext
+     reports EVERY Proxy position together — top level, nested in a record, inside an
+     array, and two levels down inside an array of records — so removing the preflight
+     fails naming all of them, and the receipt shows the depths. */
+  await control("C5j the preflight is skipped and a Proxy reports the intrinsic prototype", "checkFactsAreReadOnlyContext",
+    { contract: mutate(SOURCES.contract,
+        "    braidyFactsCloneabilityPreflight(input);",
+        "    void braidyFactsCloneabilityPreflight;",
+        "C5j") },
+    "`new Proxy(new Exotic(), { getPrototypeOf: () => Object.prototype })` hands back the genuine intrinsic prototype, so the authentication authenticates it and a class instance is copied out as { secret: 7 } — at every depth. The prototype predicate cannot catch this and is not expected to; this is what shows the preflight is the mechanism closing it.");
+
+  await control("C5l a missing platform primitive falls back to the weaker validation", "checkCloneabilityPreflight",
+    { contract: mutate(SOURCES.contract,
+        "    if (!platform || typeof platform.structuredClone !== \"function\")\n      throw braidyFactRefusal([], \"the platform's structured-clone primitive is unavailable, and Braidy will not accept a fact record it cannot first prove is ordinary data.\");",
+        "    if (!platform || typeof platform.structuredClone !== \"function\") return;",
+        "C5l") },
+    "A missing check would become a passed one, and the whole boundary would silently degrade to the prototype authentication it exists to backstop — in exactly the runtime where something was already unusual.");
+
+  /* The laundering regression lives with the fact types it protects, not with the
+     preflight, because what breaks is which SEMANTIC types get through. */
+  await control("C5m the preflight's clone becomes the record", "checkFactsAreReadOnlyContext",
+    { contract: mutate(SOURCES.contract,
+        "    braidyFactsCloneabilityPreflight(input);\n    return braidyFactObject(input, [], new Set([input]));",
+        "    braidyFactsCloneabilityPreflight(input);\n    const laundered = braidyPlatform().structuredClone(input);\n    return braidyFactObject(laundered, [], new Set([laundered]));",
+        "C5m") },
+    "structured clone is broader than this contract: it flattens a class instance into an ordinary object and would launder every refused type into a plain record with its methods quietly gone. The clone proves one thing and must be discarded unread.");
+}
+
+/* ===========================================================================
    AUTHORITY. The line the whole slice exists to hold.
    =========================================================================== */
 
@@ -690,6 +732,7 @@ async function remainingControls() {
 async function runAll() {
   await railRoleControls();
   await factControls();
+  await preflightControls();
   await authorityControls();
   await handoffControls();
   await qualificationControls();
