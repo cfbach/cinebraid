@@ -1953,6 +1953,129 @@ async function rj_rejectIsWithheldFromAnApprovedCandidate() {
   note("RJ reject is declared and written only on an undecided candidate: an approved one offers neither decision, and the writer refuses in words that name the reset");
 }
 
+
+/* ===========================================================================
+   PV — REMOVING A FRAME DOES NOT REASSIGN WHAT CAME BACK FOR IT.
+
+   A returned candidate carries the frame it was generated for. Removing that frame used
+   to `delete row.frameId`, and a row with no stamp defaults to frame one — so deleting
+   Frame B silently made B's returned results answer for Frame A. Nothing said so, and
+   the images had been generated against a composition that no longer exists.
+
+   The projection already states the rule: frameOwnerFor() refuses to re-home a stamped
+   id naming a frame the shot no longer declares, and reports `frame-no-longer-declared`
+   instead. Deleting the stamp destroyed the evidence that rule reads, then satisfied it
+   vacuously. Both removal controls now leave the stamp alone, so both reach the same
+   answer — which is the property this checks, on each of them.
+   =========================================================================== */
+
+function frameRemovalProject() {
+  /* Frame A is deliberately UNPICKED: a pick would settle B1 as an alternate and hide a
+     re-home behind a legitimate rule. Frame C holds canon so the case can also show
+     that an unrelated approval is not disturbed. */
+  return projectOf([{
+    id: "L1-01",
+    frames: [
+      { id: "frame-a", label: "A" },
+      { id: "frame-b", label: "B" },
+      { id: "frame-c", label: "C", winner: "C1.png" },
+    ],
+    candidates: [
+      candidate("B1.png", { frameId: "frame-b" }),
+      candidate("C1.png", { frameId: "frame-c", decision: "shortlist" }),
+    ],
+  }]);
+}
+
+async function pv_removingAFrameKeepsItsCandidatesProvenance() {
+  for (const [label, control] of [
+    ["removeGuidedFrame", (context) => context.removeGuidedFrame("L1-01", "frame-b")],
+    ["removeKeyframe", (context) => context.removeKeyframe("L1-01", 1)],
+  ]) {
+    const project = frameRemovalProject();
+    const page = await render("#/shot/L1-01", project, { scan: scanWith(project, { "L1-01": ["B1.png", "C1.png"] }) });
+
+    const before = evaluate(page.context, `
+      const projection = returnedReviewProjectionForBrowser();
+      return { queue: projection.queue.map((row) => row.candidate.name + "@" + row.owner.unitId) };
+    `);
+    deepEqual(before.queue, ["B1.png@frame-b"], `PV/${label}: the candidate starts out waiting on the frame it was made for`);
+
+    /* Through the shipped control and its shipped confirmation, inside a real gesture. */
+    await page.gesture.act(() => control(page.context));
+    await new Promise((resolve) => setTimeout(resolve, 10));
+    await page.gesture.act(() => page.context.document.getElementById("modal-confirm-action").onclick());
+    await new Promise((resolve) => setTimeout(resolve, 25));
+
+    const after = evaluate(page.context, `
+      const projection = returnedReviewProjectionForBrowser();
+      const row = P.shots[0].candidateFiles.find((item) => item.stored === "B1.png");
+      const item = projection.items.find((entry) => entry.candidate.name === "B1.png") || null;
+      return {
+        frames: P.shots[0].keyframes.map((frame) => frame.id),
+        stamp: row.frameId === undefined ? "<deleted>" : row.frameId,
+        decision: row.decision,
+        present: !!item,
+        ownerUnit: item ? item.owner.unitId : "",
+        unreviewable: item ? item.unreviewable : "",
+        awaitingReview: item ? item.awaitingReview : null,
+        actions: item ? item.actions : null,
+        workflows: item ? item.workflows : null,
+        mediaAvailable: item ? item.mediaAvailable : null,
+        blocking: item ? item.blocking : null,
+        queue: projection.queue.map((entry) => entry.candidate.name + "@" + entry.owner.unitId),
+        awaiting: projection.counts.awaiting,
+        /* Rows carrying THIS reason, not projection.counts.unreviewable — that count
+           also includes settled candidates, which report decision-not-supported
+           because no declared decision remains open on them. */
+        undeclaredRows: projection.items.filter((entry) => entry.unreviewable === "frame-no-longer-declared").map((entry) => entry.candidate.name),
+        /* WHERE IT REMAINS VISIBLE. Not the shot's frame cards — it belongs to no
+           frame, so those correctly do not list it. Generated Media and the Inspector
+           both draw from productionMediaRecords(), which still carries it. */
+        inGeneratedMedia: (() => {
+          const media = productionMediaRecords({ project: P, scan: SCAN });
+          const found = media.records.find((entry) => entry.file.name === "B1.png") || null;
+          return found ? { role: found.disposition.role, url: !!found.file.url, key: !!found.key } : null;
+        })(),
+        canonC: hasCurrentHumanAuthority(P, { kind: "shot-frame", shotId: "L1-01", frameId: "frame-c" }),
+        canonCValue: P.shots[0].keyframes.find((frame) => frame.id === "frame-c").winner,
+        cRow: P.shots[0].candidateFiles.find((item) => item.stored === "C1.png").decision,
+        entityReceipts: (P.productionAuthority.receipts || []).filter((entry) => entry.kind === "entity-state" && entry.status === "current").length,
+      };
+    `);
+
+    deepEqual(after.frames, ["frame-a", "frame-c"], `PV/${label}: the frame really was removed`);
+    /* 3 — THE PROVENANCE SURVIVES. */
+    equal(after.stamp, "frame-b", `PV/${label}: the candidate still names the frame it was generated for`);
+    equal(after.decision, "unreviewed", `PV/${label}: and its own decision is untouched`);
+    /* 4 — IT IS STILL THERE. */
+    ok(after.present, `PV/${label}: it is reported by the projection rather than dropped`);
+    equal(after.mediaAvailable, true, `PV/${label}: its media is still available`);
+    ok(after.inGeneratedMedia && after.inGeneratedMedia.role === "candidate",
+      `PV/${label}: Generated Media still carries it, undecided`);
+    ok(after.inGeneratedMedia.url && after.inGeneratedMedia.key,
+      `PV/${label}: with a url to render and a key the Inspector can open it by`);
+    /* 5 — AND IT IS UNREVIEWABLE, FOR THE DECLARED REASON. */
+    equal(after.unreviewable, "frame-no-longer-declared", `PV/${label}: with the existing reason, not a new one`);
+    deepEqual(after.undeclaredRows, ["B1.png"], `PV/${label}: and it is the only row reporting an undeclared frame`);
+    equal(after.awaitingReview, false, `PV/${label}: it asks for no decision`);
+    deepEqual(after.actions, [], `PV/${label}: and offers none`);
+    deepEqual(after.workflows, [], `PV/${label}: including no workflow`);
+    equal(after.blocking, false, `PV/${label}: it is not an integrity blocker — its bytes are fine`);
+    /* 6 — IT DID NOT MOVE TO THE SURVIVING FRAME. */
+    equal(after.ownerUnit, "frame-b", `PV/${label}: it still belongs to frame-b, not to whichever frame is left`);
+    deepEqual(after.queue, [], `PV/${label}: so nothing is waiting on a frame it was never made for`);
+    equal(after.awaiting, 0, `PV/${label}: and the actionable queue is empty`);
+    /* AND NOTHING UNRELATED WAS CLEARED. */
+    equal(after.canonC, true, `PV/${label}: Frame C keeps its approval`);
+    equal(after.canonCValue, "C1.png", `PV/${label}: pointing at the same file`);
+    equal(after.cRow, "shortlist", `PV/${label}: and that candidate's own row is untouched`);
+    equal(after.entityReceipts, 3, `PV/${label}: every entity approval survives too`);
+  }
+
+  note("PV both frame-removal controls keep the returned candidate's frame stamp: it stays visible, reports frame-no-longer-declared, offers nothing, and never becomes a candidate for the frame that happens to remain");
+}
+
 /* =========================================================================== */
 
 async function main() {
@@ -1975,6 +2098,7 @@ async function main() {
   await rm15_integrityOutranksReview();
   await as_approvalCannotClaimAnAssignmentItDidNotMake();
   await rj_rejectIsWithheldFromAnApprovedCandidate();
+  await pv_removingAFrameKeepsItsCandidatesProvenance();
   await agreement_oneQueueEverywhere();
   await archive_reviewIsNotAStore();
   await browserFixtureIsTheShapeItClaims();

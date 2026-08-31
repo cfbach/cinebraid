@@ -1202,6 +1202,83 @@ async function ncRM22() {
   note("NC-RM22 restored the durable contradiction: the same file recorded REJECTED on its candidate row while holding a current approval receipt");
 }
 
+
+/* ===========================================================================
+   NC-RM23 — REMOVING A FRAME SILENTLY REASSIGNS WHAT CAME BACK FOR IT.
+
+   The shipped behaviour until this correction: removeGuidedFrame() deleted the frame
+   stamp from every candidate generated for the frame it removed. A row with no stamp
+   falls to frame one, so B's returned results became A's — an implicit reassignment
+   with no control behind it, onto a composition they were never generated against.
+
+   This restores the delete and requires the re-home to become visible. It is the
+   provenance invariant specifically: the mutation puts the candidate back in the
+   ACTIONABLE queue, under a different frame, still reporting nothing wrong.
+   =========================================================================== */
+
+const NC23_ANCHOR = `      frames.splice(index, 1);`;
+const NC23_BREAK = `      frames.splice(index, 1);
+      for (const row of s.candidateFiles || []) if (row.frameId === frameId) delete row.frameId;`;
+
+async function ncRM23() {
+  anchorIn(CARD_FILE, NC23_ANCHOR, "NC-RM23");
+  const project = projectOf([{
+    id: "L1-01",
+    /* Frame A unpicked on purpose: a pick would settle the candidate as an alternate
+       and the re-home would hide behind a rule that is legitimately doing its job. */
+    frames: [{ id: "frame-a", label: "A" }, { id: "frame-b", label: "B" }],
+    candidates: [candidate("B1.png", { frameId: "frame-b" })],
+  }]);
+  const scan = scanWith(project, { "L1-01": ["B1.png"] });
+  const broken = await render("#/shot/L1-01", project, { scan, mutateSource: replacing(CARD_FILE, NC23_ANCHOR, NC23_BREAK) });
+
+  await broken.gesture.act(() => broken.context.removeGuidedFrame("L1-01", "frame-b"));
+  await new Promise((resolve) => setTimeout(resolve, 10));
+  await broken.gesture.act(() => broken.context.document.getElementById("modal-confirm-action").onclick());
+  await new Promise((resolve) => setTimeout(resolve, 25));
+
+  const seen = evaluate(broken.context, `
+    const projection = returnedReviewProjectionForBrowser();
+    const row = P.shots[0].candidateFiles.find((item) => item.stored === "B1.png");
+    const item = projection.items.find((entry) => entry.candidate.name === "B1.png") || null;
+    return {
+      frames: P.shots[0].keyframes.map((frame) => frame.id),
+      stamp: row.frameId === undefined ? "<deleted>" : row.frameId,
+      ownerUnit: item ? item.owner.unitId : "",
+      unreviewable: item ? item.unreviewable : "",
+      awaitingReview: item ? item.awaitingReview : null,
+      actions: item ? item.actions : [],
+      queue: projection.queue.map((entry) => entry.candidate.name + "@" + entry.owner.unitId),
+      undeclaredRows: projection.items.filter((entry) => entry.unreviewable === "frame-no-longer-declared").length,
+    };
+  `);
+
+  /* THE MUTATION LANDED, AND THE REASSIGNMENT IS OBSERVABLE. */
+  equal(seen.frames.join(","), "frame-a", "NC-RM23: frame-b really was removed");
+  equal(seen.stamp, "<deleted>", "NC-RM23: and the broken build erased the candidate's provenance");
+  equal(seen.ownerUnit, "frame-a", "NC-RM23: so the candidate now answers for frame-a, which it was never generated for");
+  equal(seen.unreviewable, "", "NC-RM23: reporting nothing unusual about itself");
+  equal(seen.awaitingReview, true, "NC-RM23: and asking for a decision");
+  equal(seen.queue.join(","), "B1.png@frame-a", "NC-RM23: from inside the actionable queue, under the wrong frame");
+  equal(seen.undeclaredRows, 0, "NC-RM23: with no row left saying its frame is gone");
+
+  /* AND THE INTENDED DETECTORS CATCH IT, EACH FOR ITS OWN REASON. */
+  await mustFail("NC-RM23", "still names the frame it was generated for", () => {
+    assert.strictEqual(seen.stamp, "frame-b", "PV/removeGuidedFrame: the candidate still names the frame it was generated for");
+  });
+  await mustFail("NC-RM23", "not to whichever frame is left", () => {
+    assert.strictEqual(seen.ownerUnit, "frame-b", "PV/removeGuidedFrame: it still belongs to frame-b, not to whichever frame is left");
+  });
+  await mustFail("NC-RM23", "with the existing reason", () => {
+    assert.strictEqual(seen.unreviewable, "frame-no-longer-declared", "PV/removeGuidedFrame: with the existing reason, not a new one");
+  });
+  await mustFail("NC-RM23", "nothing is waiting on a frame it was never made for", () => {
+    assert.deepStrictEqual(seen.queue, [], "PV/removeGuidedFrame: so nothing is waiting on a frame it was never made for");
+  });
+
+  note("NC-RM23 restored the silent reassignment: removing Frame B deleted its candidates' provenance and they re-entered the queue as Frame A's, reporting nothing wrong");
+}
+
 /* =========================================================================== */
 
 async function main() {
@@ -1226,6 +1303,7 @@ async function main() {
   await ncRM20();
   await ncRM21();
   await ncRM22();
+  await ncRM23();
   await shippedBuildIsGreen();
 
   for (const line of notes) console.log(line);

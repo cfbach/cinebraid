@@ -5146,8 +5146,31 @@ window.removeGuidedFrame = (id, frameId) => {
     `Remove Frame ${frame.label}? Uploaded files remain available in Advanced review.`,
     () => {
       frames.splice(index, 1);
+      /* The frame's own WORKING state goes with the frame — its prompt drafts, its
+         selections, its mode. That is scaffolding for a composition that no longer
+         exists and belongs to nobody once it is gone. */
       delete ensureShotCreation(s).frameWorkflows[frameId];
-      for (const row of s.candidateFiles || []) if (row.frameId === frameId) delete row.frameId;
+      /* BUT THE CANDIDATES KEEP THEIR STAMP, AND THAT IS THE WHOLE POINT.
+       *
+       * This used to `delete row.frameId` on every candidate generated for the frame
+       * being removed. A row with no stamp defaults to frame one — so removing Frame B
+       * silently made B's returned results answer for Frame A. The filmmaker never
+       * asked for that, no control said it, and the images had been generated against a
+       * composition that no longer exists.
+       *
+       * public/shared-returned-review.js states the rule and frameOwnerFor() implements
+       * it: a stamped id naming a frame the shot no longer declares belongs to NO frame,
+       * and is reported `frame-no-longer-declared` rather than re-homed. The stamp is
+       * what lets it say that. Deleting the stamp destroyed the evidence and then
+       * satisfied the rule vacuously — the candidate looked like it had never been
+       * bound to anything.
+       *
+       * So the row is left exactly as it is. The file stays on disk, stays visible in
+       * Generated Media and the workspace, and stops claiming a frame. Reusing it on a
+       * surviving frame is a real thing a filmmaker might want, and when it exists it
+       * will be an act with a name — not a side effect of deleting something else.
+       * public/app.js removeKeyframe() has always left the stamp alone; this is the
+       * same rule, in the surface that was contradicting it. */
       normalizeShotV5(s);
       const nextFrame = frames[Math.max(0, index - 1)] || frames[0];
       ensureShotCreation(s).activeGuidedFrameId = nextFrame?.id || "";
