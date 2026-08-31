@@ -362,6 +362,13 @@ async function presentationControls() {
         "C23b") },
     "NEEDS_DECISION was authored to play once and settle; looping it turns a subdued cue into the alarm the V3.2 production notes exist to avoid.");
 
+  await control("C23d the still guard is written so the state rules outrank it", "checkReducedMotion",
+    { styles: mutate(SOURCES.styles,
+        '.cb-braidy .cb-braidy-presence[data-braidy-still="1"]{animation:none}',
+        '.cb-braidy-presence[data-braidy-still="1"]{animation:none}',
+        "C23d") },
+    "The selector would read as a safeguard and lose to all five state rules, leaving an eight-frame keyframe walking a one-frame sheet and painting blank cells in the one mode whose purpose is to hold still.");
+
   await control("C23c reduced motion keeps the animated strip", "checkReducedMotion",
     { contract: mutate(SOURCES.contract,
         "    const sprite = options.reducedMotion ? BRAIDY_STATIC_SPRITE : BRAIDY_SPRITES[key];",

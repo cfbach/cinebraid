@@ -677,13 +677,25 @@ function checkReducedMotion(sources = SOURCES) {
     "with no movement to read, the words must still say what Braidy is doing");
 
   const styles = sources.styles;
+  const states = [...api.BRAIDY_PRESENTATION_STATES];
   assert.ok(/@media\(prefers-reduced-motion:reduce\)\{[^}]*cb-braidy-presence/.test(styles.replace(/\s+/g, "")),
     "the stylesheet must also stop Braidy's animation under a reduced-motion preference");
   assert.ok(styles.includes('.cb-braidy[data-braidy-motion="none"] .cb-braidy-presence'),
     "the stamped answer must be honoured by the stylesheet, not only recorded in the markup");
-  assert.ok(styles.includes('.cb-braidy-presence[data-braidy-still="1"]{animation:none}')
-    || /\.cb-braidy-presence\[data-braidy-still="1"\]\{animation:none\}/.test(styles.replace(/\s+/g, "")),
-    "a one-frame sheet must be declared unanimated, so a future state selector cannot start cycling it");
+  /* THE GUARD HAS TO OUTRANK THE STATE RULES, not merely exist. Every state selector
+     is three compound parts; a bare `.cb-braidy-presence[data-braidy-still="1"]` is
+     two and loses to all five, which would leave an eight-frame keyframe walking a
+     one-frame sheet and painting blank cells in the mode that exists to hold still.
+     Equal weight plus later position is what makes it bite. */
+  const guardAt = styles.indexOf('.cb-braidy .cb-braidy-presence[data-braidy-still="1"]{animation:none}');
+  assert.notStrictEqual(guardAt, -1,
+    "the still guard must be scoped under .cb-braidy so it weighs the same as the state rules it has to override");
+  for (const state of states) {
+    const ruleAt = styles.indexOf(`.cb-braidy[data-braidy-state="${state}"] .cb-braidy-presence{animation:`);
+    assert.notStrictEqual(ruleAt, -1, `the stylesheet has no animation rule for "${state}"`);
+    assert.ok(ruleAt < guardAt,
+      `the "${state}" animation is declared after the still guard; at equal specificity it would win and cycle a one-frame sheet`);
+  }
 
   /* THE TWO EVENT CUES RUN ONCE. This is the package's own classification — an
      ACKNOWLEDGE or NEEDS_DECISION that looped would be the demanding mascot the V3.2

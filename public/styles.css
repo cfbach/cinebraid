@@ -5123,12 +5123,17 @@ body[data-focused-workspace="1"] .guided-frame-body,
 .cb-braidy[data-braidy-state="acknowledge"] .cb-braidy-presence{animation:cb-braidy-acknowledge 790ms step-end 1 forwards}
 .cb-braidy[data-braidy-state="attention"] .cb-braidy-presence{animation:cb-braidy-attention 2580ms step-end 1 forwards}
 
-/* REDUCED MOTION, TWICE. The rail has already swapped the strip for the single static
-   FRONT frame by the time this matters — data-braidy-still="1" says so — and these two
-   rules make certain nothing is cycling a one-frame sheet regardless. The stamped
-   answer is honoured before any stylesheet preference, so a reader who asked for less
-   movement is served even where the media query is not consulted. */
-.cb-braidy[data-braidy-motion="none"] .cb-braidy-presence,.cb-braidy-presence[data-braidy-still="1"]{animation:none}
+/* REDUCED MOTION, TWICE, AND BOTH HALVES ACTUALLY WIN.
+
+   The rail has already swapped the strip for the single static FRONT frame by the time
+   this matters, and data-braidy-still="1" says so. Both selectors below carry three
+   compound parts, the same weight as the five state rules above them, so they take
+   effect by coming after — which is the whole reason the still guard is written with
+   the .cb-braidy ancestor it does not otherwise need. Without it the selector would
+   weigh less than `.cb-braidy[data-braidy-state="idle"] .cb-braidy-presence`, lose to
+   it, and leave an eight-frame keyframe walking a sheet one frame wide: blank cells,
+   in the one mode whose whole purpose is to hold still. */
+.cb-braidy[data-braidy-motion="none"] .cb-braidy-presence,.cb-braidy .cb-braidy-presence[data-braidy-still="1"]{animation:none}
 .cb-braidy-thread{display:grid;gap:9px;min-width:0}
 .cb-braidy-turn{display:grid;gap:5px;min-width:0}
 .cb-braidy-turn p{font-size:12px;line-height:1.5;color:var(--ink);overflow-wrap:anywhere}
