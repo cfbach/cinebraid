@@ -544,14 +544,34 @@ function testExactExitCodes() {
       caught(() => preflight(["--repo", repo.dir, "--candidate", "HEAD", "--public-sha", repo.C], quiet)) ? 2 : 0,
       2, "an empty publication range must be a refusal",
     );
-    const notAncestor = caught(() => preflight(["--repo", repo.dir, "--candidate", repo.A, "--public-sha", repo.C], quiet));
-    assert(notAncestor && /not an ancestor|checkout is at/.test(notAncestor.message),
-      `a non-ancestor baseline must be refused, got: ${notAncestor && notAncestor.message}`);
+    /* Each refusal is asserted on its OWN reason. Accepting "any refusal" is how a
+       control passes without ever reaching the check it exists to prove: the
+       first draft of the ancestry case below refused on the checkout mismatch
+       and never evaluated ancestry at all. */
+    const mismatch = caught(() => preflight(["--repo", repo.dir, "--candidate", repo.A, "--public-sha", repo.B], quiet));
+    assert(mismatch && /checkout is at/.test(mismatch.message),
+      `publishing a commit the checkout is not on must be refused, got: ${mismatch && mismatch.message}`);
+
+    /* Check A out, so HEAD IS the candidate and the ancestry check is the thing
+       that gets to speak. C is not an ancestor of A. */
+    repo.git("checkout", "-q", repo.A);
+    try {
+      const notAncestor = caught(() => preflight(["--repo", repo.dir, "--candidate", repo.A, "--public-sha", repo.C], quiet));
+      assert(notAncestor, "a non-ancestor baseline must be refused");
+      assert(/not an ancestor/.test(notAncestor.message),
+        `the ancestry check must be what refuses, got: ${notAncestor.message}`);
+    } finally {
+      repo.git("checkout", "-q", "main");
+    }
+
     const unknownBase = caught(() => preflight(["--repo", repo.dir, "--candidate", "HEAD", "--public-sha", "0".repeat(40)], quiet));
-    assert(unknownBase, "an unknown baseline must be refused");
+    assert(unknownBase && /public baseline/.test(unknownBase.message),
+      `an unresolvable baseline must be refused as such, got: ${unknownBase && unknownBase.message}`);
     const noBase = caught(() => preflight(["--repo", repo.dir, "--candidate", "HEAD"], quiet));
     assert(noBase && /name the baseline/.test(noBase.message), "the preflight must refuse without a baseline");
-    notes.push("preflight refusals: empty range, non-ancestor baseline, unknown baseline and absent baseline all refuse rather than clear");
+    const bothBases = caught(() => preflight(["--repo", repo.dir, "--first-publication", "--public-sha", repo.A], quiet));
+    assert(bothBases && /mutually exclusive/.test(bothBases.message), "two baselines at once must be refused");
+    notes.push("preflight refusals, each on its own reason: empty range, checkout mismatch, non-ancestor baseline, unresolvable baseline, absent baseline, two baselines");
   } finally {
     fs.rmSync(dir, { recursive: true, force: true });
     fs.rmSync(repo.dir, { recursive: true, force: true });

@@ -6,6 +6,12 @@ documentation, the network requests its shell makes — and it repairs the
 credential scan that had never run. The evidence below is therefore about two
 things: that the corrections are real, and that nothing else moved with them.
 
+Two of the sections below record a **second** round of correction. Independent
+review held the first version and was right to: the credential scan protected the
+current bytes and left the history a `main` push would make readable unprotected,
+and its exit codes reported three different operational failures as if they were
+findings. Both were reproduced here before either was changed.
+
 ## Version identity
 
 `package.json` "version" is the only hand-edited version. It moved from
@@ -107,6 +113,85 @@ Three were genuine personal Windows paths in prose — a real account name in tw
 audit documents and one in a Git diagnostic — and those were redacted to
 `C:\Users\<user>\…` rather than allowlisted. No detector was removed or widened.
 
+### A secret deleted before the tip is still published
+
+Independent review found the first version of this work insufficient, and the
+reproduction is short enough to state in full: commit a fake key, delete the file,
+commit the deletion. The working tree is clean, `git archive HEAD` is clean, and
+`npm run check:secrets` reported clean — and pushing that branch into a bare
+repository produced one from which `git cat-file` still returned the key. A public
+`main` push transfers **history**, so a tip-only scan was never the publication
+gate; it only looked like one. Measured here before any change was made.
+
+`--history-range <base>..<head>` closes it. It scans every file version made newly
+reachable by publishing `head` over `base`, base exclusive, including content
+deleted again before the tip.
+
+**Algorithm.** For each commit newly reachable in the range, enumerate its whole
+tree and subtract the (path, blob) pairs the baseline already contained. Whole
+tree rather than a diff against a chosen parent: a merge has no single parent that
+is the right one to diff against, so this is independent of merge shape by
+construction. De-duplication is keyed on **(path, blob)** and never on the blob
+alone — the allowlist forgives an exact value at an exact path, and
+`rev-list --objects` prints one path per object, which is the under-counting the
+original audit already ran into. Two paths sharing one blob are two questions, and
+a control proves both get asked: the same content is suppressed at the allowlisted
+path and reported at the other.
+
+**Measured cost.** 4 commits / 3,621 tree rows in 0.3s; 147 commits / 101,592 tree
+rows in 6s; the whole history, 411 commits / 225,820 tree rows, in 14s.
+
+**First-publication baseline.** `cfbach/cinebraid` has no published `main`, so the
+baseline is the audited foundation `25054fa1dde7979b66186f144a5fc84b77e591f4`,
+whose reachable history was the subject of the independent full-history audit.
+Rescanning everything instead is supported and was measured: it reports four
+`personal-path` hits in documentation prose — an account name in two audit records
+and the literal placeholder `C:\Users\<name>\My CineBraid Builds\` in a v6.6.5
+install note. None is a credential; all four were reviewed and accepted as
+low-risk developer identifiers not warranting a history rewrite. The only ways to
+make a full rescan pass would be to rewrite history or widen the allowlist, so the
+baseline is recorded with its evidence instead. After that foundation the range is
+clean.
+
+**Subsequent-publication baseline.** The SHA the public repository actually holds,
+read at publication time rather than remembered, passed as `--public-sha`.
+
+`scripts/publication-preflight.js` is the seam. It resolves the candidate, refuses
+a checkout that is not at it or is dirty, resolves the baseline, requires
+ancestry, requires a non-empty range, scans current bytes and newly exposed
+history, and then **prints** the push command. It contains no push, no remote
+configuration and no network call — a script that could push is a script that can
+push by accident — and a suite asserts that.
+
+### The exit contract is real now
+
+Reported and reproduced: clean `0`, finding `1`, and then an existing-but-empty
+target `1`, a missing target `1` and an invalid ref `1`. Three operational
+failures arriving dressed as findings, and `assert(status !== 0)` could not see
+the difference.
+
+| Invocation | Before | After |
+|---|---|---|
+| clean target | 0 | 0 |
+| target containing a fake secret | 1 | 1 |
+| non-empty history range, nothing disallowed | — | 0 |
+| history range containing a deleted secret | — | 1 |
+| existing but empty target | 1 | **2** |
+| missing target | 1 | **2** |
+| invalid publication ref | 1 | **2** |
+| invalid history range | — | 2 |
+| malformed history range | — | 2 |
+| empty history range | — | 2 |
+| missing `--repo` | — | 2 |
+| no target | 2 | 2 |
+| unknown option | 2 | 2 |
+
+Every inability now raises a `ScanError`, and the CLI maps that — and any
+unexpected throw — to 2. Nothing reaches 1 except a scan that ran to completion
+and found something. Thirteen invocations are asserted against one exact code
+each, and every 2 is additionally asserted not to have printed a passing or clean
+line.
+
 The scan is now gated in two places:
 
 - `scripts/build-release.js` reads the tar buffer that is about to become both
@@ -173,7 +258,8 @@ Run on this candidate, all green:
 | `check:behavior` | pass |
 | `check:secrets` | pass, both targets clean |
 | `check:public-exposure` | pass |
-| `check:public-exposure-negative` | pass, 13 receipts |
+| `check:public-exposure-negative` | pass, 24 receipts |
+| `publication:preflight` | clears the candidate; refuses a dirty checkout, an unknown or non-ancestor baseline, and an empty range |
 | `check:local-only` | pass |
 | `check:environment` | pass |
 | `check:package` | pass |
