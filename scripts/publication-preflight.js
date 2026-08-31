@@ -119,16 +119,47 @@ function preflight(argv, log = console.log) {
 
   log("CineBraid publication preflight — read-only; this script cannot push.");
 
-  /* 1. the exact candidate. */
-  const candidate = scanner.revParse(options.candidate, repo, `candidate ${options.candidate}`);
-  step(1, `candidate         ${candidate}  (${options.candidate})`);
+  /* 1. the exact commit that will travel.
 
-  /* The working-tree scan below only means something if the checkout IS the
-     candidate, and a dirty checkout is not any commit at all. */
+     The push is `main:refs/heads/main`. The commit that reaches the public
+     repository is therefore whatever local `refs/heads/main` points at - not the
+     candidate, and not HEAD. Scanning one commit and printing a command that
+     publishes another is not a smaller version of the right thing; it is the
+     whole failure. It happened here: an earlier build of this script scanned a
+     reviewed branch tip, cleared it, and printed a command that would have
+     published an unrelated `main` that nothing had looked at.
+
+     So all three must be the same commit before anything is cleared. That also
+     makes the executable behaviour match the documented sequence, in which the
+     accepted SHA is fast-forwarded into private `main` FIRST and the preflight
+     runs against that - it is a post-acceptance gate, and it is supposed to
+     refuse an unmerged implementation branch.
+
+     `--candidate` survives as an assertion rather than a lever: naming the SHA
+     you believe you are publishing lets the preflight contradict you. It cannot
+     select what gets published, because it has to equal `main` to clear. */
+  const candidate = scanner.revParse(options.candidate, repo, `candidate ${options.candidate}`);
   const head = scanner.revParse("HEAD", repo, "HEAD");
-  if (head !== candidate) {
-    fail(`the checkout is at ${head} but the candidate is ${candidate}; check out the candidate before publishing from it`);
+  const mainRef = scanner.revParse("refs/heads/main", repo, "local refs/heads/main");
+
+  const mismatches = [];
+  if (head !== candidate) mismatches.push(`the checkout is at ${head}`);
+  if (mainRef !== candidate) mismatches.push(`local main is at ${mainRef}`);
+  if (mismatches.length) {
+    fail(
+      "the candidate, the checkout and local main must be the same commit — publication pushes local main, "
+      + "so anything else clears one commit and publishes another.\n"
+      + `  candidate        ${candidate}\n`
+      + `  HEAD             ${head}\n`
+      + `  refs/heads/main  ${mainRef}\n`
+      + `${mismatches.join("; ")}. `
+      + "Fast-forward the accepted SHA into main and check main out, then run this again.",
+    );
   }
+  step(1, `publishing        ${candidate}  (candidate = HEAD = refs/heads/main)`);
+
+  /* And a dirty checkout is not any commit at all, so the working-tree scan
+     below would be describing something that will never be published. */
   const dirty = git(["status", "--porcelain"], repo, "checkout state");
   if (dirty) fail(`refusing to publish from a dirty checkout:\n${dirty}`);
 

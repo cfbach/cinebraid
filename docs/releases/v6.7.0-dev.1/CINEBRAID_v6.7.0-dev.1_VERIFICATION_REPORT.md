@@ -6,11 +6,12 @@ documentation, the network requests its shell makes — and it repairs the
 credential scan that had never run. The evidence below is therefore about two
 things: that the corrections are real, and that nothing else moved with them.
 
-Two of the sections below record a **second** round of correction. Independent
-review held the first version and was right to: the credential scan protected the
-current bytes and left the history a `main` push would make readable unprotected,
-and its exit codes reported three different operational failures as if they were
-findings. Both were reproduced here before either was changed.
+Three of the sections below record later rounds of correction. Independent review
+held this work twice and was right both times: the credential scan protected the
+current bytes and left the history a `main` push would make readable unprotected;
+its exit codes reported operational failures as if they were findings; and the
+publication preflight scanned one commit while printing a command that publishes
+another. Each was reproduced here before anything was changed.
 
 ## Version identity
 
@@ -156,12 +157,49 @@ clean.
 **Subsequent-publication baseline.** The SHA the public repository actually holds,
 read at publication time rather than remembered, passed as `--public-sha`.
 
-`scripts/publication-preflight.js` is the seam. It resolves the candidate, refuses
-a checkout that is not at it or is dirty, resolves the baseline, requires
-ancestry, requires a non-empty range, scans current bytes and newly exposed
-history, and then **prints** the push command. It contains no push, no remote
-configuration and no network call — a script that could push is a script that can
-push by accident — and a suite asserts that.
+`scripts/publication-preflight.js` is the seam. It binds the candidate, `HEAD`
+and `refs/heads/main` to one commit, refuses a dirty checkout, resolves the
+baseline, requires ancestry, requires a non-empty range, scans current bytes and
+newly exposed history, and then **prints** the push command. It contains no push,
+no remote configuration and no network call — a script that could push is a script
+that can push by accident — and a suite asserts that.
+
+### What is scanned must be what is published
+
+A third round of correction, and the sharpest of the three. The push is
+`main:refs/heads/main`, so the commit that travels is whatever local
+`refs/heads/main` points at — not the candidate, and not `HEAD`. The preflight
+scanned the candidate and printed that command regardless.
+
+The evidence submitted for the previous round was itself the defect. Running
+`--first-publication --candidate HEAD` in the implementation worktree printed
+`CLEARED` after scanning `7890d63`, and the command it printed would have
+published `25054fa` — seven commits behind, and not the thing that had just been
+scanned. The dangerous direction was then reproduced deliberately: a clean
+reviewed candidate checked out as `HEAD`, a different local `main` carrying a
+synthetic key, and a preflight that cleared the clean one while printing a command
+that publishes the unscanned one.
+
+Before anything is scanned and before any command is printed, three refs are now
+resolved and required to be the same exact commit:
+
+```
+candidate^{commit}  ==  HEAD^{commit}  ==  refs/heads/main^{commit}
+```
+
+Any difference is a refusal naming the mismatch, with no push command printed —
+including a missing or unresolvable `refs/heads/main`, which is an inability
+rather than an absence-and-fine. `--candidate` survives as an assertion, not a
+lever: it lets an operator state the SHA they believe they are publishing so the
+preflight can contradict them, and it cannot select what ships because it has to
+equal `main` to clear.
+
+This also makes the executable behaviour match the documented sequence, in which
+the accepted SHA is fast-forwarded into private `main` **before** the preflight
+runs. **The preflight now refuses in this implementation worktree**, because this
+branch is not merged into `main`. That is the correct answer, not a regression:
+the positive case is proved in throwaway repositories where `HEAD`, the candidate
+and `main` are one commit.
 
 ### The exit contract is real now
 
@@ -259,7 +297,8 @@ Run on this candidate, all green:
 | `check:secrets` | pass, both targets clean |
 | `check:public-exposure` | pass |
 | `check:public-exposure-negative` | pass, 24 receipts |
-| `publication:preflight` | clears the candidate; refuses a dirty checkout, an unknown or non-ancestor baseline, and an empty range |
+| `publication:preflight` | refuses in this worktree — `main` is not the candidate, which is the correct answer for an unmerged branch |
+| `publication:preflight` (bound throwaway repo) | clears, and prints exactly `main:refs/heads/main` |
 | `check:local-only` | pass |
 | `check:environment` | pass |
 | `check:package` | pass |

@@ -552,15 +552,20 @@ function testExactExitCodes() {
     assert(mismatch && /checkout is at/.test(mismatch.message),
       `publishing a commit the checkout is not on must be refused, got: ${mismatch && mismatch.message}`);
 
-    /* Check A out, so HEAD IS the candidate and the ancestry check is the thing
-       that gets to speak. C is not an ancestor of A. */
+    /* Bind A as candidate, HEAD and main together, so the binding check passes
+       and the ANCESTRY check is the thing that gets to speak. C is not an
+       ancestor of A. Without binding main the refusal below would be the binding
+       one, and this control would pass while never evaluating ancestry - which is
+       exactly the way it was wrong once already. */
     repo.git("checkout", "-q", repo.A);
+    repo.git("branch", "-f", "main", repo.A);
     try {
       const notAncestor = caught(() => preflight(["--repo", repo.dir, "--candidate", repo.A, "--public-sha", repo.C], quiet));
       assert(notAncestor, "a non-ancestor baseline must be refused");
       assert(/not an ancestor/.test(notAncestor.message),
         `the ancestry check must be what refuses, got: ${notAncestor.message}`);
     } finally {
+      repo.git("branch", "-f", "main", repo.C);
       repo.git("checkout", "-q", "main");
     }
 
@@ -601,6 +606,155 @@ function testInabilityIsNeverClean() {
       assert(failure instanceof scanner.ScanError, `${label} raised ${failure.name}, not a ScanError`);
     }
     notes.push("inability: five failure modes each raise ScanError rather than returning an empty, clean-looking result");
+  } finally {
+    fs.rmSync(repo.dir, { recursive: true, force: true });
+  }
+}
+
+/* ---- 11. what is scanned must be what is published ---------------------- */
+
+/* The push is `main:refs/heads/main`, so the commit that travels is whatever
+   local main points at. An earlier build of the preflight scanned the CANDIDATE,
+   cleared it, and printed that command anyway - so a reviewed clean commit could
+   clear while an unrelated, unscanned main was what actually shipped. Measured in
+   this repository at the time: it cleared HEAD and printed a command that would
+   have published a main seven commits behind it.
+
+   Every case below is about that one binding. */
+
+/* A baseline A, a clean reviewed candidate C on its own branch, and a main that
+   moved somewhere else and carries a synthetic key nobody scanned. */
+function buildBindingRepo() {
+  const repo = makeRepo("binding");
+  repo.write("a.md", "baseline\n");
+  const A = repo.commit("A: baseline");
+  repo.git("checkout", "-q", "-b", "reviewed");
+  repo.write("clean.md", "nothing to see\n");
+  const C = repo.commit("C: the reviewed candidate");
+  repo.git("checkout", "-q", "main");
+  repo.write("secrets.env", `OPENAI_API_KEY=${FAKE_KEY}\n`);
+  const M = repo.commit("M: an unreviewed main");
+  return { ...repo, A, C, M };
+}
+
+function testScannedCommitIsThePublishedCommit() {
+  const repo = buildBindingRepo();
+  const say = () => { const lines = []; const log = (l) => lines.push(l); log.lines = lines; return log; };
+  try {
+    /* The exact reported case: clean candidate checked out, main elsewhere. */
+    repo.git("checkout", "-q", repo.C);
+    const codex = say();
+    const refusal = caught(() => preflight(["--repo", repo.dir, "--candidate", repo.C, "--public-sha", repo.A], codex));
+    assert(refusal, "a candidate that is not local main must be refused");
+    assert(/must be the same commit/.test(refusal.message),
+      `the refusal must name the binding, got: ${refusal.message}`);
+    assert(refusal.message.includes(`local main is at ${repo.M}`),
+      `the refusal must name the commit main would actually publish, got: ${refusal.message}`);
+    assert(!codex.lines.join("\n").includes("git push"), "a refused preflight must print no push command");
+    notes.push("binding: a clean candidate with main elsewhere is refused, naming the commit main would have published");
+
+    /* main == candidate, but the checkout is somewhere else. */
+    repo.git("checkout", "-q", repo.A);
+    repo.git("branch", "-f", "main", repo.C);
+    const detached = say();
+    const wrongHead = caught(() => preflight(["--repo", repo.dir, "--candidate", repo.C, "--public-sha", repo.A], detached));
+    assert(wrongHead && /must be the same commit/.test(wrongHead.message), "a checkout away from the candidate must be refused");
+    assert(wrongHead.message.includes(`the checkout is at ${repo.A}`),
+      `the refusal must name the checkout, got: ${wrongHead.message}`);
+    assert(!detached.lines.join("\n").includes("git push"), "a refused preflight must print no push command");
+    notes.push("binding: main == candidate but the checkout elsewhere is refused, naming the checkout");
+
+    /* All three different. */
+    repo.git("branch", "-f", "main", repo.M);
+    repo.git("checkout", "-q", repo.C);
+    const allThree = say();
+    const spread = caught(() => preflight(["--repo", repo.dir, "--candidate", repo.A, "--public-sha", repo.A], allThree));
+    assert(spread && /must be the same commit/.test(spread.message), "three different commits must be refused");
+    assert(spread.message.includes("the checkout is at") && spread.message.includes("local main is at"),
+      `both mismatches must be named, got: ${spread.message}`);
+    assert(!allThree.lines.join("\n").includes("git push"), "a refused preflight must print no push command");
+    notes.push("binding: candidate, HEAD and main all different — both mismatches named, no push command");
+
+    /* No local main at all. */
+    repo.git("checkout", "-q", repo.C);
+    repo.git("branch", "-D", "main");
+    const noMain = say();
+    const missing = caught(() => preflight(["--repo", repo.dir, "--candidate", repo.C, "--public-sha", repo.A], noMain));
+    assert(missing, "a missing local main must be refused");
+    assert(/refs\/heads\/main/.test(missing.message),
+      `an unresolvable main must be named as such, got: ${missing.message}`);
+    assert(!noMain.lines.join("\n").includes("git push"), "a refused preflight must print no push command");
+    notes.push("binding: an unresolvable refs/heads/main is refused rather than treated as absent-and-fine");
+  } finally {
+    fs.rmSync(repo.dir, { recursive: true, force: true });
+  }
+}
+
+/* And the shape that IS allowed to publish: one commit, wearing all three hats. */
+function testBoundPreflightClears() {
+  const repo = makeRepo("bound");
+  try {
+    repo.write("a.md", "baseline\n");
+    const A = repo.commit("A: baseline");
+    repo.write("clean.md", "nothing to see\n");
+    const C = repo.commit("C: accepted, fast-forwarded into main");
+
+    assert.strictEqual(repo.git("rev-parse", "HEAD").trim(), C, "HEAD must be the candidate");
+    assert.strictEqual(repo.git("rev-parse", "refs/heads/main").trim(), C, "main must be the candidate");
+
+    const lines = [];
+    const code = preflight(["--repo", repo.dir, "--candidate", C, "--public-sha", A], (l) => lines.push(l));
+    const printed = lines.join("\n");
+    assert.strictEqual(code, 0, `a properly bound candidate must clear, got ${code}:\n${printed}`);
+    assert(/CLEARED/.test(printed), "a clearance must say so");
+    assert(printed.includes("candidate = HEAD = refs/heads/main"), "the clearance must record what it bound");
+
+    /* Exactly the safe refspec, and nothing that could publish anything else. */
+    const pushes = printed.split("\n").map((l) => l.trim()).filter((l) => l.startsWith("git push"));
+    assert.strictEqual(pushes.length, 2, `expected a dry run and the push, got ${pushes.length}`);
+    for (const line of pushes) {
+      assert(/^git push (--dry-run )?\S+ main:refs\/heads\/main$/.test(line), `unsafe push form printed: ${line}`);
+      assert(!/--mirror|--all|--force|-f\b|--tags|refs\/\*|\*:/.test(line), `bulk push form printed: ${line}`);
+    }
+    notes.push("binding: HEAD == candidate == main clears and prints exactly `main:refs/heads/main`, dry run first");
+  } finally {
+    fs.rmSync(repo.dir, { recursive: true, force: true });
+  }
+}
+
+/* Remove the binding and the reported failure comes straight back. */
+function testRemovingTheBindingIsObservable() {
+  const repo = buildBindingRepo();
+  try {
+    repo.git("checkout", "-q", repo.C);
+
+    const unbound = compilePreflight(mutate(
+      PREFLIGHT_SOURCE,
+      "  if (mismatches.length) {",
+      "  if (false) {",
+      "main-binding bypass",
+    ));
+    const cleared = [];
+    const code = unbound.preflight(["--repo", repo.dir, "--candidate", repo.C, "--public-sha", repo.A], (l) => cleared.push(l));
+    const printed = cleared.join("\n");
+    assert.strictEqual(code, 0, "the bypass mutation did not change behaviour, so it is not proving anything");
+    assert(/git push \S+ main:refs\/heads\/main/.test(printed),
+      "the unbound preflight should have printed the push command for a commit it never scanned");
+
+    /* That command publishes M. Nothing in the run looked at M. */
+    const scannedRange = scanner.historyRangeEntries(repo.A, repo.C, repo.dir);
+    const scannedPaths = new Set(scannedRange.entries.map((e) => e.name));
+    assert(!scannedPaths.has("secrets.env"),
+      "the control needs main's secret to be outside what the candidate scan covers");
+    const wouldPublish = scanner.scanEntries(scanner.historyRangeEntries(repo.A, repo.M, repo.dir).entries);
+    assert.strictEqual(wouldPublish.findings.length, 1,
+      "main must actually carry something the scan would have caught, or the bypass proves nothing");
+    assert.strictEqual(wouldPublish.findings[0].file, "secrets.env", "the wrong file was found on main");
+
+    /* The shipped one refuses the same configuration. */
+    assert(caught(() => preflight(["--repo", repo.dir, "--candidate", repo.C, "--public-sha", repo.A], () => {})),
+      "the shipped preflight must refuse this configuration");
+    notes.push("binding removed: the preflight clears and prints a push for a commit whose secret it never scanned; the shipped one refuses");
   } finally {
     fs.rmSync(repo.dir, { recursive: true, force: true });
   }
@@ -649,6 +803,9 @@ testRemovingTheHistoryGateIsObservable();
 testPathIdentityInHistory();
 testExactExitCodes();
 testInabilityIsNeverClean();
+testScannedCommitIsThePublishedCommit();
+testBoundPreflightClears();
+testRemovingTheBindingIsObservable();
 testNothingWasWritten();
 
 console.log(`Public exposure negative controls passed (${notes.length} receipts):`);

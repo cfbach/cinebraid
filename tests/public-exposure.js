@@ -487,13 +487,32 @@ function testPublicationPreflight() {
   assert.strictEqual(noBaseline.status, 2, `the preflight must refuse without a baseline, got ${noBaseline.status}`);
   assert(/name the baseline/.test(noBaseline.output), "the refusal must say what is missing");
 
-  /* HEAD~1 exists in any clone with history and is never HEAD, so the
-     checkout-mismatch refusal is reachable everywhere. */
+  /* HEAD~1 exists in any clone with history and is never HEAD or main, so the
+     binding refusal is reachable everywhere. */
   const mismatched = runPreflight(["--first-publication", "--candidate", "HEAD~1"]);
-  assert.strictEqual(mismatched.status, 2, `publishing a commit the checkout is not on must be refused, got ${mismatched.status}`);
-  assert(/REFUSED/.test(mismatched.output) && /checkout is at/.test(mismatched.output),
+  assert.strictEqual(mismatched.status, 2, `publishing a commit that is not the checkout and not main must be refused, got ${mismatched.status}`);
+  assert(/REFUSED/.test(mismatched.output) && /must be the same commit/.test(mismatched.output),
     `the refusal must name its reason: ${mismatched.output.split("\n").slice(-2).join(" ")}`);
   assert(!/git push/.test(mismatched.output), "a refused preflight must not print the push command");
+
+  /* The binding itself: the push is `main:refs/heads/main`, so the commit that
+     travels is whatever local main points at. Scanning the candidate and printing
+     that command regardless is how a reviewed commit clears while an unreviewed
+     main is what actually ships — measured in this repository before it was
+     fixed. All three refs are resolved and compared before anything clears.
+
+     Asserted on the source and on behaviour, because the behavioural half is
+     environment-dependent: in this worktree main is behind HEAD and the preflight
+     refuses, while in a clone of published main all three already agree. The
+     throwaway-repository controls in the negative suite cover both shapes. */
+  assert(/revParse\(\s*["']refs\/heads\/main["']/.test(source),
+    "the preflight must resolve local refs/heads/main, which is the commit a push actually publishes");
+  assert(/mismatches\.length/.test(source), "the preflight must refuse on a candidate/HEAD/main mismatch");
+  const bindAt = source.indexOf("mismatches.length");
+  const scanAt = source.indexOf("scanner.workingTreeEntries");
+  const printAt = source.indexOf("CLEARED");
+  assert(bindAt > 0 && bindAt < scanAt && bindAt < printAt,
+    "the binding must be checked before anything is scanned or printed");
 
   /* CI scans the range a pull request adds, which is the cheapest moment to
      notice - and it needs full history to have a range at all. It is an early

@@ -36,12 +36,20 @@ of the refspec.
 
 ## When it may happen
 
-A commit is publishable only after all four of these are true:
+A commit is publishable only after all five of these are true:
 
 1. The candidate has been independently reviewed for public exposure.
 2. The exact SHA has been accepted as `PUBLIC_SAFE`.
-3. That accepted SHA has been fast-forwarded, unchanged, into private `main`.
-4. The push below is performed deliberately, by a human, against that SHA.
+3. That accepted SHA has been fast-forwarded, unchanged, into private `main`,
+   and `main` is the branch checked out.
+4. The publication preflight has been run **against that merged `main`** and
+   cleared it.
+5. The push below is performed deliberately, by a human, against that SHA.
+
+The preflight is a **post-acceptance** gate. Step 3 comes before step 4 on
+purpose, and the preflight enforces that ordering rather than trusting it: it
+refuses an unmerged implementation branch, because a branch that is not `main`
+is not what a `main:refs/heads/main` push would send.
 
 History is never rewritten to prepare a publication: no new root commit, no
 squash, no regenerated commits for presentation. Private `main` and public `main`
@@ -112,10 +120,32 @@ Every publication after the first:
 npm run publication:preflight -- --public-sha <sha the public repository holds>
 ```
 
+### What is scanned must be what is published
+
+The push is `main:refs/heads/main`, so the commit that reaches the public
+repository is whatever local `refs/heads/main` points at — not the candidate,
+and not `HEAD`. A preflight that scans one commit and prints that command
+regardless would clear a reviewed commit while an entirely different, unscanned
+`main` is what actually ships. That is not a smaller version of the right
+thing; it is the whole failure, and an earlier build of this script had it.
+
+So before anything is scanned and before any command is printed, the preflight
+resolves three things and requires them to be the **same exact commit**:
+
+```
+candidate^{commit}  ==  HEAD^{commit}  ==  refs/heads/main^{commit}
+```
+
+Any difference — including a missing or unresolvable `refs/heads/main` — is a
+refusal that names the mismatch and prints no push command. `--candidate` is an
+assertion, not a lever: naming the SHA you believe you are publishing lets the
+preflight contradict you, and it cannot select what gets published because it
+has to equal `main` to clear anything.
+
 It runs these in order, and stops at the first one it cannot answer:
 
-1. resolve the exact candidate (`main` unless `--candidate` says otherwise), and
-   refuse unless the checkout is at it and clean;
+1. resolve the candidate, `HEAD` and `refs/heads/main`, and refuse unless all
+   three are the same commit and the checkout is clean;
 2. resolve the baseline — the audited foundation, or the published SHA;
 3. verify the baseline is an ancestor of the candidate — publication is
    fast-forward only, and anything else is a force push wearing a different hat;
@@ -126,9 +156,9 @@ It runs these in order, and stops at the first one it cannot answer:
 
 Its exit codes are the scanner's, and mean the same things: **0** cleared,
 **1** something disallowed was found, **2** it could not decide. `2` is not a
-softer `1` — an unknown baseline, a non-ancestor baseline, a dirty checkout, an
-empty range or a git enumeration failure all land there, because refusing to
-answer is safe and guessing is not.
+softer `1` — a candidate that is not local `main`, an unknown baseline, a
+non-ancestor baseline, a dirty checkout, an empty range or a git enumeration
+failure all land there, because refusing to answer is safe and guessing is not.
 
 ### The individual commands, if you want to run them by hand
 
