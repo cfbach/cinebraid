@@ -31,8 +31,12 @@ jobs:
     timeout-minutes: 30
 
     steps:
+      # fetch-depth: 0 because the secret scan below reads the commit RANGE this
+      # pull request adds, and a shallow clone has no range to read.
       - name: Check out the branch under test
         uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
 
       # package.json declares engines.node >= 18 and SETUP.md documents "Node.js 18
       # or newer". Node 18, 20 and 25 are end of life and Node 26 is still Current,
@@ -56,6 +60,24 @@ jobs:
       # repository secrets, no real browser, and no writes to projects/ or data/.
       - name: Run the CI-safe validation suite
         run: npm run check:ci
+
+      # An EARLY WARNING, not the gate.
+      #
+      # A public `main` push transfers history, so a credential committed and then
+      # deleted before the tip still ships. This scans the commits this pull request
+      # would add, which is the cheapest moment to notice - but it is deliberately
+      # NOT what makes publication safe. Public safety is decided at publication
+      # time by scripts/publication-preflight.js, which knows the SHA the public
+      # repository actually holds and therefore exactly what is about to become
+      # readable. A job here can be cancelled, superseded, or simply never run on
+      # the commit that gets published; the preflight cannot be skipped by timing.
+      #
+      # base.sha and head.sha come from the pull_request event, so nothing is
+      # inferred. Exit 2 means the scan could not run and fails the job, exactly as
+      # exit 1 does: an unanswered question is not a clean answer.
+      - name: Scan the history this pull request would add
+        run: node scripts/scan-secrets.js --history-range ${{ github.event.pull_request.base.sha }}..${{ github.event.pull_request.head.sha }}
+        if: github.event_name == 'pull_request'
 
   # The real-browser gate, deliberately a SECOND job rather than more steps in the
   # first. The frontend is a set of plain <script> tags in one global scope, so a

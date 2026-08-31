@@ -48,9 +48,91 @@ squash, no regenerated commits for presentation. Private `main` and public `main
 are meant to sit at the **same exact SHAs**, because that is what makes the
 review traceable afterwards.
 
+## What a push makes readable
+
+A public `main` push transfers **history**, not a snapshot. Everything reachable
+from the published commit becomes readable, including file versions that were
+deleted again before the tip.
+
+That was measured, not assumed. Commit a fake key, delete the file, commit the
+deletion: the working tree is clean, `git archive HEAD` is clean, a tip-only scan
+reports clean — and `git cat-file` in the repository you just published still
+returns the key. **A tip-only scan cannot be the publication gate.** Deleting a
+secret before the tip does not unpublish it.
+
+So the gate scans two different boundaries, and neither replaces the other:
+
+| Boundary | Scan | Protects |
+|---|---|---|
+| current bytes | `--working-tree`, `--publication-tree`, and the archive scan inside `npm run release:build` | what a downloader gets |
+| newly readable history | `--history-range <base>..<head>` | what a cloner can recover |
+
+### Which baseline the history range starts from
+
+**First publication.** `cfbach/cinebraid` has no published `main`, so there is no
+public SHA to diff against. The baseline is the audited foundation
+`25054fa1dde7979b66186f144a5fc84b77e591f4`, whose reachable history was the
+subject of an independent full-history exposure audit (2026-08-30 — 505 commits,
+5,089 unique blobs, 16,036 paths across 88 refs and 3 tags) that found no
+credential, private key or token anywhere in it. Every commit after that
+foundation is scanned.
+
+Rescanning *all* history instead is equally sound and the scanner supports it
+(`--history-range ..<candidate>`), but measured on this repository it reports four
+`personal-path` hits in documentation prose — an account name in two audit records
+and the literal placeholder `C:\Users\<name>\My CineBraid Builds\` in a v6.6.5
+install note. None is a credential; all four were reviewed and accepted as
+low-risk developer identifiers that do not warrant a history rewrite. The only
+ways to make a full rescan pass would be to rewrite history or to widen the
+allowlist, and both are worse than naming the evidence this baseline rests on.
+
+**Every publication after the first.** The baseline is the SHA the public
+repository actually holds — read from it at publication time, not remembered.
+The range is `<published main>..<newly accepted private main>`.
+
+`scripts/publication-preflight.js` freezes both rules, and
+`tests/public-exposure.js` fails if either drifts.
+
 ## Preflight — read-only, run before every publication
 
-None of these commands writes anything, locally or remotely.
+One command performs the whole gate. It reads the repository, runs every scan,
+and prints the push command. **It cannot push**: it contains no push, no remote
+configuration and no network call, because a script that could push is a script
+that can push by accident.
+
+First publication:
+
+```bash
+npm run publication:preflight -- --first-publication
+```
+
+Every publication after the first:
+
+```bash
+npm run publication:preflight -- --public-sha <sha the public repository holds>
+```
+
+It runs these in order, and stops at the first one it cannot answer:
+
+1. resolve the exact candidate (`main` unless `--candidate` says otherwise), and
+   refuse unless the checkout is at it and clean;
+2. resolve the baseline — the audited foundation, or the published SHA;
+3. verify the baseline is an ancestor of the candidate — publication is
+   fast-forward only, and anything else is a force push wearing a different hat;
+4. verify the range is non-empty — nothing to publish is a refusal, not a pass;
+5. scan the current tracked tree and the candidate's publication tree;
+6. scan every file version newly readable across the range;
+7. print the push command for a human to run.
+
+Its exit codes are the scanner's, and mean the same things: **0** cleared,
+**1** something disallowed was found, **2** it could not decide. `2` is not a
+softer `1` — an unknown baseline, a non-ancestor baseline, a dirty checkout, an
+empty range or a git enumeration failure all land there, because refusing to
+answer is safe and guessing is not.
+
+### The individual commands, if you want to run them by hand
+
+None of these writes anything, locally or remotely.
 
 Confirm what the public repository would receive:
 
@@ -70,10 +152,16 @@ Confirm no research material is reachable from `main` — this must print `0`:
 git log --pretty=format: --name-only main | grep -c "^braidy/"
 ```
 
-Confirm the publication tree is clean of credentials and personal paths:
+Confirm the current bytes are clean of credentials and personal paths:
 
 ```bash
 npm run check:secrets
+```
+
+Confirm the history this push would make newly readable is clean:
+
+```bash
+node scripts/scan-secrets.js --history-range 25054fa1dde7979b66186f144a5fc84b77e591f4..main
 ```
 
 Prove locally, without contacting GitHub, that publishing only `main` carries

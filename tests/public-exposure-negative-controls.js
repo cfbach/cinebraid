@@ -6,8 +6,8 @@
    `npm run check:secrets` invoked the scanner with no target, printed usage and
    exited 2, and no gate noticed because 2 looks like "nothing to say".
 
-   Five things are proved here, each by making the guarantee false and watching
-   the right thing fail for the right reason:
+   Each control makes the guarantee false and watches the right thing fail for
+   the right reason:
 
      1. a known synthetic fixture value does NOT fail the scan;
      2. a fake secret in a location the allowlist does not cover IS detected -
@@ -17,7 +17,17 @@
         control fail;
      4. an invocation failure is distinguishable from a clean result;
      5. the publication-tree target really reads `git archive` output, not the
-        working tree.
+        working tree;
+     6. a credential committed and then DELETED before the tip is still published
+        by a `main` push, and the history range is what sees it;
+     7. removing that history scan makes the publication guard clear an unsafe
+        candidate;
+     8. path identity survives history enumeration, so one blob at two paths is
+        forgiven at the allowlisted one and reported at the other;
+     9. every exit code is asserted exactly - 0 clean, 1 findings, 2 could not
+        scan - because the defect being fixed was three operational failures
+        arriving dressed as findings, which "assert non-zero" cannot see;
+    10. an inability is never rewritten into a clean answer.
 
    No mutation is written into this repository. Source mutations are compiled in
    memory under the real filename, and the two git-backed targets are proved
@@ -45,6 +55,11 @@ const SCANNER_BYTES = fs.readFileSync(SCANNER_FILE, "utf8");
 const SCANNER_SOURCE = SCANNER_BYTES.replace(/\r\n/g, "\n");
 const scanner = require(SCANNER_FILE);
 
+const PREFLIGHT_FILE = path.join(ROOT, "scripts", "publication-preflight.js");
+const PREFLIGHT_BYTES = fs.readFileSync(PREFLIGHT_FILE, "utf8");
+const PREFLIGHT_SOURCE = PREFLIGHT_BYTES.replace(/\r\n/g, "\n");
+const { preflight } = require(PREFLIGHT_FILE);
+
 const notes = [];
 
 /* Fake credentials, assembled so that no line of this source is itself a match. */
@@ -70,6 +85,14 @@ function compile(source) {
   compiled.filename = SCANNER_FILE;
   compiled.paths = Module._nodeModulePaths(path.dirname(SCANNER_FILE));
   compiled._compile(source, SCANNER_FILE);
+  return compiled.exports;
+}
+
+function compilePreflight(source) {
+  const compiled = new Module(PREFLIGHT_FILE, null);
+  compiled.filename = PREFLIGHT_FILE;
+  compiled.paths = Module._nodeModulePaths(path.dirname(PREFLIGHT_FILE));
+  compiled._compile(source, PREFLIGHT_FILE);
   return compiled.exports;
 }
 
@@ -281,6 +304,288 @@ function testPublicationTargetReadsTheArchive() {
   }
 }
 
+/* ---- 6. a secret deleted before the tip is still published --------------- */
+
+/* The gap this section exists for, reproduced exactly:
+
+     A  clean baseline
+     B  commit a fake credential
+     C  delete the file and commit the deletion
+
+   At C the working tree is clean and `git archive HEAD` is clean, so a tip-only
+   scan certifies the branch - and pushing A..C hands the reader a repository from
+   which `git cat-file` still returns the credential. Every assertion below is
+   about that one fact. */
+
+function makeRepo(label) {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), `cinebraid-${label}-`));
+  const git = (...args) => execFileSync("git", args, { cwd: dir, encoding: "utf8", maxBuffer: 1 << 26 });
+  git("init", "-q", "-b", "main");
+  git("config", "user.name", "CineBraid Control");
+  git("config", "user.email", "control@example.invalid");
+  git("config", "commit.gpgsign", "false");
+  /* Byte comparisons below, so no line-ending translation. */
+  git("config", "core.autocrlf", "false");
+  const write = (rel, text) => {
+    fs.mkdirSync(path.dirname(path.join(dir, rel)), { recursive: true });
+    fs.writeFileSync(path.join(dir, rel), text);
+  };
+  const commit = (message) => { git("add", "-A"); git("commit", "-q", "-m", message); return git("rev-parse", "HEAD").trim(); };
+  return { dir, git, write, commit };
+}
+
+function buildABC() {
+  const repo = makeRepo("abc");
+  repo.write("shipped.md", "clean baseline\n");
+  const A = repo.commit("A: clean baseline");
+  repo.write("leaked.env", `OPENAI_API_KEY=${FAKE_KEY}\n`);
+  const B = repo.commit("B: a credential lands");
+  fs.rmSync(path.join(repo.dir, "leaked.env"));
+  const C = repo.commit("C: and is deleted again");
+  return { ...repo, A, B, C };
+}
+
+function testDeletedSecretIsStillPublished() {
+  const repo = buildABC();
+  try {
+    /* The tip is genuinely clean, which is what makes this dangerous. */
+    const working = scanner.scanEntries(scanner.workingTreeEntries(repo.dir));
+    assert.deepStrictEqual(working.findings, [], "the working tree at C should be clean; the control is not set up as described");
+    const archive = scanner.scanEntries(scanner.publicationTreeEntries("HEAD", repo.dir));
+    assert.deepStrictEqual(archive.findings, [], "the HEAD archive at C should be clean; the control is not set up as described");
+    notes.push("A→B→C: working tree and HEAD archive at C both clean — a tip-only scan certifies this branch");
+
+    /* And the credential is one command away in the repository a push produces. */
+    const blob = repo.git("rev-parse", `${repo.B}:leaked.env`).trim();
+    const recovered = execFileSync("git", ["cat-file", "blob", blob], { cwd: repo.dir, encoding: "utf8" });
+    assert(recovered.includes(FAKE_KEY), "the planted credential is not recoverable from C; the control proves nothing");
+
+    /* The history range is what sees it. */
+    const range = scanner.historyRangeEntries(repo.A, repo.C, repo.dir);
+    const history = scanner.scanEntries(range.entries);
+    const hits = history.findings.filter((f) => f.file === "leaked.env");
+    assert.strictEqual(hits.length, 1, `the history scan of A..C did not report the deleted credential (${history.findings.length} findings)`);
+    assert.strictEqual(hits[0].rule, "openai-key", `the wrong rule fired: ${hits[0].rule}`);
+    assert.strictEqual(hits[0].commit, repo.B, "the finding must name commit B, which is the only place the content exists");
+    notes.push("A→B→C: the history range A..C reports leaked.env as openai-key and names commit B");
+
+    /* Deleting it before the tip changed nothing about what publishing exposes. */
+    const bare = fs.mkdtempSync(path.join(os.tmpdir(), "cinebraid-abc-bare-"));
+    try {
+      execFileSync("git", ["init", "-q", "--bare", bare]);
+      execFileSync("git", ["push", "-q", bare, "main:refs/heads/main"], { cwd: repo.dir });
+      const published = execFileSync("git", ["cat-file", "blob", blob], { cwd: bare, encoding: "utf8" });
+      assert(published.includes(FAKE_KEY), "the pushed repository did not carry the deleted blob; the premise is wrong");
+      notes.push("A→B→C: pushing main:refs/heads/main into a bare repository transfers the deleted blob intact");
+    } finally {
+      fs.rmSync(bare, { recursive: true, force: true });
+    }
+
+    /* And the preflight refuses C, which is the seam that matters. */
+    const lines = [];
+    const code = preflight(["--repo", repo.dir, "--candidate", "HEAD", "--public-sha", repo.A], (line) => lines.push(line));
+    assert.strictEqual(code, 1, `the publication preflight cleared an unsafe candidate (exit ${code})`);
+    const printed = lines.join("\n");
+    assert(/REFUSED/.test(printed), "the preflight refusal must say so");
+    assert(printed.includes("leaked.env"), "the preflight must name the file it refused for");
+    assert(!/git push https/.test(printed), "a refused preflight must not print the push command");
+    notes.push("A→B→C: the publication preflight exits 1 on C, names leaked.env, and prints no push command");
+  } finally {
+    fs.rmSync(repo.dir, { recursive: true, force: true });
+  }
+}
+
+/* ---- 7. removing the history gate makes the guard accept C --------------- */
+
+function testRemovingTheHistoryGateIsObservable() {
+  const repo = buildABC();
+  try {
+    /* Bypass the history scan the way a well-meaning refactor would: keep every
+       other step, drop the one that reads history. */
+    const bypassed = compilePreflight(mutate(
+      PREFLIGHT_SOURCE,
+      "  const history = scanner.scanEntries(range.entries);",
+      "  const history = { findings: [], suppressed: [], files: 0 };",
+      "history gate bypass",
+    ));
+    const cleared = [];
+    const code = bypassed.preflight(["--repo", repo.dir, "--candidate", "HEAD", "--public-sha", repo.A], (l) => cleared.push(l));
+    assert.strictEqual(code, 0, "the bypass mutation did not change behaviour, so it is not proving anything");
+    assert(/CLEARED/.test(cleared.join("\n")), "the bypassed preflight should have cleared the unsafe candidate");
+
+    /* The shipped one does not. */
+    const shipped = [];
+    assert.strictEqual(
+      preflight(["--repo", repo.dir, "--candidate", "HEAD", "--public-sha", repo.A], (l) => shipped.push(l)),
+      1,
+      "the shipped preflight must refuse C",
+    );
+    notes.push("removing the history scan clears an unsafe candidate; the shipped preflight refuses it");
+
+    /* And the same for the enumeration itself: a range that only looks at the tip
+       tree - the mistake the first version of this work shipped - sees nothing. */
+    const tipOnly = scanner.scanEntries(scanner.publicationTreeEntries(repo.C, repo.dir));
+    assert.deepStrictEqual(tipOnly.findings, [], "the tip tree at C is clean, which is the whole point");
+    const full = scanner.scanEntries(scanner.historyRangeEntries(repo.A, repo.C, repo.dir).entries);
+    assert.strictEqual(full.findings.length, 1, "the history range must see what the tip cannot");
+    notes.push("tip tree: 0 findings; newly exposed history: 1 — the two boundaries are not interchangeable");
+  } finally {
+    fs.rmSync(repo.dir, { recursive: true, force: true });
+  }
+}
+
+/* ---- 8. path identity survives history enumeration ---------------------- */
+
+/* The allowlist forgives an exact value at an exact path. `rev-list --objects`
+   prints one path per blob, so an enumeration built on it would forgive the
+   allowlisted path and then stay silent about the identical content sitting
+   somewhere it is not allowed. */
+function testPathIdentityInHistory() {
+  const repo = makeRepo("path-identity");
+  const ALLOWED = "tests/fixtures/ofp-legacy/secret-traps.json";
+  try {
+    repo.write("README.md", "baseline\n");
+    const A = repo.commit("A: baseline");
+
+    /* One blob, two paths: the allowlisted fixture and an ordinary source file. */
+    const body = `{"apiKey": "${ALLOWED_VALUE}"}\n`;
+    repo.write(ALLOWED, body);
+    repo.write("server.js", body);
+    const B = repo.commit("B: the same content at an allowed path and an ordinary one");
+
+    const range = scanner.historyRangeEntries(A, B, repo.dir);
+    const paths = range.entries.map((e) => e.name).sort();
+    assert(paths.includes(ALLOWED) && paths.includes("server.js"),
+      `both paths must be enumerated separately, got: ${paths.join(", ")}`);
+    const blobs = new Set(range.entries.filter((e) => e.name === ALLOWED || e.name === "server.js").map((e) => e.blob));
+    assert.strictEqual(blobs.size, 1, "the control needs one blob at two paths to be meaningful");
+
+    const scanned = scanner.scanEntries(range.entries);
+    assert.strictEqual(scanned.findings.filter((f) => f.file === ALLOWED).length, 0,
+      "the allowlisted path must stay suppressed inside a history scan");
+    assert.strictEqual(scanned.suppressed.filter((s) => s.file === ALLOWED).length, 1,
+      "the allowlisted path's suppression must be recorded");
+    assert.strictEqual(scanned.findings.filter((f) => f.file === "server.js").length, 1,
+      "identical content at a path the allowlist does not cover must still be reported");
+    notes.push("history: one blob at two paths — suppressed at the allowlisted path, reported at the other");
+
+    /* And a second, different secret at the allowed path is still reported. */
+    repo.write(ALLOWED, `{"a": "${ALLOWED_VALUE}", "b": "${OTHER_FAKE_KEY}"}\n`);
+    const C = repo.commit("C: a second, unlisted key at the allowed path");
+    const later = scanner.scanEntries(scanner.historyRangeEntries(B, C, repo.dir).entries);
+    assert.strictEqual(later.findings.filter((f) => f.file === ALLOWED).length, 1,
+      "a NEW key at an allowlisted path must be reported in history, exactly as it is at the tip");
+    assert.strictEqual(later.suppressed.length, 1, "the forgiven value must still be suppressed on that line");
+    notes.push("history: a second unlisted key at the allowlisted path is reported, the forgiven one suppressed");
+  } finally {
+    fs.rmSync(repo.dir, { recursive: true, force: true });
+  }
+}
+
+/* ---- 9. exact exit codes, not "non-zero" -------------------------------- */
+
+/* The defect this replaces: clean 0, finding 1, and then an empty directory, a
+   missing directory and an invalid ref ALSO 1 - so every operational failure
+   arrived dressed as a finding. Asserting `!== 0` would have passed throughout. */
+function testExactExitCodes() {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "cinebraid-exit-"));
+  const repo = buildABC();
+  /* A second repository whose range is non-empty AND clean, so exit 0 is proved
+     over real history rather than over an empty range - which is exit 2. */
+  const calm = makeRepo("exit-clean");
+  calm.write("one.md", "first\n");
+  const calmA = calm.commit("first");
+  calm.write("two.md", "second\n");
+  const calmB = calm.commit("second");
+  try {
+    const clean = path.join(dir, "clean");
+    fs.mkdirSync(clean);
+    fs.writeFileSync(path.join(clean, "a.txt"), "nothing here\n");
+
+    const dirty = path.join(dir, "dirty");
+    fs.mkdirSync(dirty);
+    fs.writeFileSync(path.join(dirty, "a.txt"), `key: ${FAKE_KEY}\n`);
+
+    const empty = path.join(dir, "empty");
+    fs.mkdirSync(empty);
+
+    const cases = [
+      [0, "a clean target", [clean]],
+      [1, "a target containing a fake secret", [dirty]],
+      [1, "a history range containing a deleted secret", ["--repo", repo.dir, "--history-range", `${repo.A}..${repo.C}`]],
+      [0, "a non-empty history range containing nothing disallowed", ["--repo", calm.dir, "--history-range", `${calmA}..${calmB}`]],
+      [2, "a missing target", [path.join(dir, "not-here")]],
+      [2, "an existing but empty target", [empty]],
+      [2, "an invalid publication ref", ["--publication-tree", "no-such-ref-at-all"]],
+      [2, "an invalid history range", ["--repo", repo.dir, "--history-range", "nope..alsonope"]],
+      [2, "a malformed history range", ["--history-range", "notarange"]],
+      [2, "an empty history range", ["--repo", repo.dir, "--history-range", `${repo.C}..${repo.C}`]],
+      [2, "a missing --repo", ["--repo", path.join(dir, "not-here"), "--working-tree"]],
+      [2, "no target at all", []],
+      [2, "an unknown option", ["--not-a-flag"]],
+    ];
+
+    for (const [want, label, args] of cases) {
+      const result = runScanner(args);
+      assert.strictEqual(result.status, want,
+        `${label} must exit ${want}, got ${result.status}\n${result.output.split("\n").slice(-4).join("\n")}`);
+      if (want === 2) {
+        assert(!/scan passed/.test(result.output), `${label} exited 2 but printed a passing line`);
+        assert(!/^clean /m.test(result.output), `${label} exited 2 but printed a clean line`);
+      }
+      if (want === 0) assert(/scan passed/.test(result.output), `${label} exited 0 without saying it passed`);
+      if (want === 1) assert(/scan failed with/.test(result.output), `${label} exited 1 without naming its findings`);
+    }
+    notes.push(`exact exit codes: ${cases.length} invocations, each asserted against one code — 0 clean, 1 findings, 2 could not scan`);
+
+    /* The preflight speaks the same three codes. */
+    const quiet = () => {};
+    assert.strictEqual(
+      caught(() => preflight(["--repo", repo.dir, "--candidate", "HEAD", "--public-sha", repo.C], quiet)) ? 2 : 0,
+      2, "an empty publication range must be a refusal",
+    );
+    const notAncestor = caught(() => preflight(["--repo", repo.dir, "--candidate", repo.A, "--public-sha", repo.C], quiet));
+    assert(notAncestor && /not an ancestor|checkout is at/.test(notAncestor.message),
+      `a non-ancestor baseline must be refused, got: ${notAncestor && notAncestor.message}`);
+    const unknownBase = caught(() => preflight(["--repo", repo.dir, "--candidate", "HEAD", "--public-sha", "0".repeat(40)], quiet));
+    assert(unknownBase, "an unknown baseline must be refused");
+    const noBase = caught(() => preflight(["--repo", repo.dir, "--candidate", "HEAD"], quiet));
+    assert(noBase && /name the baseline/.test(noBase.message), "the preflight must refuse without a baseline");
+    notes.push("preflight refusals: empty range, non-ancestor baseline, unknown baseline and absent baseline all refuse rather than clear");
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true });
+    fs.rmSync(repo.dir, { recursive: true, force: true });
+    fs.rmSync(calm.dir, { recursive: true, force: true });
+  }
+}
+
+/* ---- 10. inability is never rewritten as a clean answer ----------------- */
+
+function testInabilityIsNeverClean() {
+  /* Every failure mode the scanner can hit inside a completed run must raise,
+     not return an empty result that scanEntries would happily call clean. */
+  const repo = makeRepo("inability");
+  try {
+    repo.write("a.md", "x\n");
+    repo.commit("only commit");
+
+    for (const [label, fn] of [
+      ["an invalid ref", () => scanner.publicationTreeEntries("no-such-ref", repo.dir)],
+      ["an invalid history head", () => scanner.historyRangeEntries(null, "no-such-ref", repo.dir)],
+      ["an invalid history base", () => scanner.historyRangeEntries("no-such-base", "HEAD", repo.dir)],
+      ["a directory that does not exist", () => scanner.directoryEntries(path.join(repo.dir, "nope"))],
+      ["a working tree outside any repository", () => scanner.workingTreeEntries(os.tmpdir())],
+    ]) {
+      const failure = caught(fn);
+      assert(failure, `${label} returned a value instead of raising; an empty answer would read as clean`);
+      assert(failure instanceof scanner.ScanError, `${label} raised ${failure.name}, not a ScanError`);
+    }
+    notes.push("inability: five failure modes each raise ScanError rather than returning an empty, clean-looking result");
+  } finally {
+    fs.rmSync(repo.dir, { recursive: true, force: true });
+  }
+}
+
 /* ---- the repository was not modified ------------------------------------- */
 
 /* Compared against a snapshot taken before the controls ran, not against an empty
@@ -301,6 +606,11 @@ function testNothingWasWritten() {
     SCANNER_BYTES,
     "the scanner on disk was modified; every mutation in this suite must be compiled in memory",
   );
+  assert.strictEqual(
+    fs.readFileSync(PREFLIGHT_FILE, "utf8"),
+    PREFLIGHT_BYTES,
+    "the preflight on disk was modified; every mutation in this suite must be compiled in memory",
+  );
   assert.deepStrictEqual(
     sourceStatus(),
     STATUS_BEFORE,
@@ -314,6 +624,11 @@ testPlantedSecretIsDetected();
 testDetectorRemovalFails();
 testInvocationFailureIsNotClean();
 testPublicationTargetReadsTheArchive();
+testDeletedSecretIsStillPublished();
+testRemovingTheHistoryGateIsObservable();
+testPathIdentityInHistory();
+testExactExitCodes();
+testInabilityIsNeverClean();
 testNothingWasWritten();
 
 console.log(`Public exposure negative controls passed (${notes.length} receipts):`);

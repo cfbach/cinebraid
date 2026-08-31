@@ -3,7 +3,9 @@
    Usage:
      node scripts/scan-secrets.js --working-tree
      node scripts/scan-secrets.js --publication-tree [<commit-ish>]
+     node scripts/scan-secrets.js --history-range <base>..<head>
      node scripts/scan-secrets.js <dir> [<dir> ...]
+     ... any of the above with --repo <dir> to act on another repository
 
    Any combination may be given; every named target is scanned and the process
    exits non-zero if any of them reports a finding.
@@ -17,10 +19,35 @@
                          is what scripts/build-release.js ships and what a public
                          push would carry. This honours .gitattributes export-ignore,
                          so it is the publication tree rather than the source tree.
+     --history-range     every file version made newly reachable by publishing
+                         <head> when <base> is already published. Base exclusive,
+                         head inclusive. See "history range" below for why the two
+                         targets above cannot stand in for this one.
      <dir>               a staged package or an extracted archive on disk.
 
-   Exit codes: 0 clean, 1 findings, 2 the scan could not be performed. A caller
-   must treat 2 as a failure - "no target" is not "nothing to report".
+   THE TWO BOUNDARIES ARE DIFFERENT, and both are needed.
+
+   The working tree and the publication tree answer "what do the current bytes
+   contain". A public `main` push transfers HISTORY, so it also answers for every
+   commit it makes reachable. Measured: commit a fake key, delete the file, commit
+   the deletion. The working tree is clean, `git archive HEAD` is clean, and both
+   scans report clean - yet pushing that branch hands the reader a repository from
+   which `git cat-file` still returns the key. Deleting a secret before HEAD does
+   not unpublish it, so a HEAD-only scan cannot be the publication gate.
+
+   Exit codes, and they are load-bearing:
+
+     0  the requested scan completed and found nothing disallowed
+     1  the requested scan completed and found something disallowed
+     2  the scan could not truthfully be completed
+
+   2 covers an invalid or missing target, an invalid ref or range, a git
+   enumeration failure, an unreadable source, and a target that resolved to no
+   content when the request said content must exist. Anything unexpected is also
+   2. A caller may treat 1 as "there is something to fix" only because 2 exists to
+   mean "I do not know" - collapsing the two, which this scanner used to do, turns
+   every operational failure into a finding and every reader into someone who
+   stops reading exit codes.
 
    A scanner that reports "clean" is worthless unless it can be shown to report
    anything at all, so every run first proves itself against a synthetic
@@ -159,13 +186,44 @@ const ALLOW = [
   },
 ];
 
+/* ---- inability is not a finding ------------------------------------------ */
+
+/* Everything that means "I could not do what you asked" is this error, and the
+   CLI maps it - and any other unexpected throw - to exit 2. Nothing may reach
+   exit 1 except a scan that ran to completion and found something. */
+class ScanError extends Error {
+  constructor(message) {
+    super(message);
+    this.name = "ScanError";
+  }
+}
+
 /* ---- reading targets ----------------------------------------------------- */
 
 /* `cwd` is a parameter because the negative controls prove the difference between
-   the two git-backed targets against a throwaway repository, rather than by
-   mutating this one while other suites are reading it. */
+   the git-backed targets against a throwaway repository, rather than by mutating
+   this one while other suites are reading it. */
+/* stderr is captured rather than inherited, so a deliberately invalid ref in a
+   control does not print `fatal:` into a passing suite's output as if something
+   had gone wrong. gitOrFail reads it back out of the error. */
 function git(args, cwd = ROOT, opts = {}) {
-  return execFileSync("git", args, { cwd, maxBuffer: 512 * 1024 * 1024, ...opts });
+  return execFileSync("git", args, { cwd, maxBuffer: 512 * 1024 * 1024, stdio: ["pipe", "pipe", "pipe"], ...opts });
+}
+
+/* Any git failure is an inability to scan, never a finding. The stderr is kept
+   because "invalid ref" and "not a repository" need different fixes. */
+function gitOrFail(args, cwd, what, opts = {}) {
+  try {
+    return git(args, cwd, opts);
+  } catch (error) {
+    const detail = String(error.stderr || error.message || "").trim().split("\n")[0];
+    throw new ScanError(`${what}: git ${args.slice(0, 2).join(" ")} failed — ${detail}`);
+  }
+}
+
+function revParse(rev, cwd, what) {
+  return gitOrFail(["rev-parse", "--verify", "--end-of-options", `${rev}^{commit}`], cwd, what)
+    .toString("utf8").trim();
 }
 
 function readText(file) {
@@ -191,8 +249,15 @@ function walk(root, current = root, out = []) {
 
 /* A directory on disk: a staged package, or an extracted archive. */
 function directoryEntries(root) {
+  if (!fs.existsSync(root)) throw new ScanError(`scan target does not exist: ${root}`);
+  let files;
+  try {
+    files = walk(root);
+  } catch (error) {
+    throw new ScanError(`scan target could not be read: ${root} — ${error.message}`);
+  }
   const entries = [];
-  for (const file of walk(root)) {
+  for (const file of files) {
     const text = readText(file);
     if (text == null) continue;
     entries.push({ name: path.relative(root, file).replace(/\\/g, "/"), text });
@@ -202,7 +267,8 @@ function directoryEntries(root) {
 
 /* Every tracked file as it currently sits on disk. */
 function workingTreeEntries(root = ROOT) {
-  const listed = git(["ls-files", "-z"], root, { encoding: "utf8" }).split("\0").filter(Boolean);
+  const listed = gitOrFail(["ls-files", "-z"], root, "working tree")
+    .toString("utf8").split("\0").filter(Boolean);
   const entries = [];
   for (const rel of listed) {
     if (BINARY.test(rel)) continue;
@@ -240,7 +306,123 @@ function tarTextEntries(buffer, stripPrefix = "") {
 
 /* Exactly what `git archive` would ship for a commit. */
 function publicationTreeEntries(ref = "HEAD", root = ROOT) {
-  return tarTextEntries(git(["archive", "--format=tar", ref], root));
+  return tarTextEntries(gitOrFail(["archive", "--format=tar", ref], root, `publication tree ${ref}`));
+}
+
+/* ---- history range ------------------------------------------------------- */
+
+/* Every (path, blob) pair in one commit's whole tree.
+
+   Whole tree, not a diff. A merge commit's diff against a chosen parent hides
+   whatever the other parent brought, and there is no parent choice that is right
+   for every topology - so the enumeration below asks each newly reachable commit
+   what it CONTAINS and subtracts what the base already contained. That is
+   independent of merge shape by construction. */
+function treePairs(commit, root) {
+  const out = [];
+  /* The default `<mode> SP <type> SP <object> TAB <path>` form, not --format,
+     which git only learned in 2.36. --full-tree so paths are repository-relative
+     whatever directory this was invoked from - the allowlist is written in
+     repository-relative paths and nothing else would match it. */
+  const listing = gitOrFail(["ls-tree", "-r", "-z", "--full-tree", commit], root, `tree of ${commit}`)
+    .toString("utf8");
+  for (const row of listing.split("\0")) {
+    if (!row) continue;
+    const tab = row.indexOf("\t");
+    if (tab < 0) throw new ScanError(`unreadable tree row for ${commit}: ${row.slice(0, 60)}`);
+    const [, type, blob] = row.slice(0, tab).split(/\s+/);
+    if (type !== "blob") continue;
+    out.push({ blob, path: row.slice(tab + 1) });
+  }
+  return out;
+}
+
+/* Blob contents, one git process per chunk rather than one per blob. */
+function catFileBatch(shas, root) {
+  const out = new Map();
+  const unique = [...new Set(shas)];
+  const CHUNK = 512;
+  for (let i = 0; i < unique.length; i += CHUNK) {
+    const batch = unique.slice(i, i + CHUNK);
+    const buffer = gitOrFail(["cat-file", "--batch"], root, "reading historical blobs", { input: `${batch.join("\n")}\n` });
+    let off = 0;
+    while (off < buffer.length) {
+      const nl = buffer.indexOf(0x0a, off);
+      if (nl < 0) break;
+      const [sha, type, size] = buffer.toString("utf8", off, nl).split(" ");
+      /* `<sha> missing` means the enumeration and the object store disagree. That
+         is an inability to scan, not an empty answer. */
+      if (type !== "blob") throw new ScanError(`git cat-file could not read ${sha}: ${type || "unknown"}`);
+      const start = nl + 1;
+      const length = Number(size);
+      if (!Number.isFinite(length)) throw new ScanError(`git cat-file returned an unreadable size for ${sha}`);
+      out.set(sha, buffer.toString("utf8", start, start + length));
+      off = start + length + 1;
+    }
+    for (const sha of batch) {
+      if (!out.has(sha)) throw new ScanError(`git cat-file returned nothing for ${sha}`);
+    }
+  }
+  return out;
+}
+
+/* Every file version made newly reachable by publishing `head` over `base`.
+
+   Keyed by (path, blob), never by blob alone. The allowlist forgives an exact
+   value at an exact path, so two paths sharing one blob are two different
+   questions and de-duplicating on the blob would answer only one of them - the
+   same flaw the earlier audit found in `rev-list --objects`, which prints one
+   path per object. (path, blob) is safe to de-duplicate on because a finding is a
+   function of exactly those two things.
+
+   `base` may be null, which means "no published baseline": everything reachable
+   from head is newly exposed. */
+function historyRangeEntries(base, head, root = ROOT) {
+  const headSha = revParse(head, root, `history head ${head}`);
+  const baseSha = base ? revParse(base, root, `history base ${base}`) : null;
+
+  const range = baseSha ? `${baseSha}..${headSha}` : headSha;
+  const commits = gitOrFail(["rev-list", "--reverse", range], root, `history range ${range}`)
+    .toString("utf8").split("\n").map((s) => s.trim()).filter(Boolean);
+
+  /* Seed with what the baseline already published, so an established public
+     repository is not re-reported for content it has carried for months. */
+  const seen = new Set();
+  let treeRows = 0;
+  if (baseSha) {
+    for (const { blob, path: p } of treePairs(baseSha, root)) {
+      seen.add(`${p}\0${blob}`);
+      treeRows += 1;
+    }
+  }
+
+  const wanted = [];
+  for (const commit of commits) {
+    const rows = treePairs(commit, root);
+    treeRows += rows.length;
+    for (const { blob, path: p } of rows) {
+      const key = `${p}\0${blob}`;
+      if (seen.has(key)) continue;
+      seen.add(key);
+      if (BINARY.test(p)) continue;
+      wanted.push({ blob, path: p, commit });
+    }
+  }
+
+  /* A range with commits in it must have produced tree rows. Zero here means the
+     enumeration failed quietly, which must never read as a clean scan. */
+  if (commits.length && !treeRows) {
+    throw new ScanError(`history range ${range} enumerated ${commits.length} commit(s) and no tree content`);
+  }
+
+  const texts = catFileBatch(wanted.map((w) => w.blob), root);
+  return {
+    base: baseSha,
+    head: headSha,
+    commits,
+    treeRows,
+    entries: wanted.map((w) => ({ name: w.path, text: texts.get(w.blob), commit: w.commit, blob: w.blob })),
+  };
 }
 
 /* ---- scanning ------------------------------------------------------------ */
@@ -277,7 +459,10 @@ function scanEntries(entries) {
         for (const match of line.matchAll(global)) {
           const text = match[0];
           const entryFor = allowed.find((a) => a.values.includes(text));
-          const hit = { file: rel, line: i + 1, rule: rule.id, why: rule.why };
+          /* `commit` is present only for history entries; it tells an operator
+             which commit to look at, which matters most for content that no
+             longer exists at the tip. */
+          const hit = { file: rel, line: i + 1, rule: rule.id, why: rule.why, ...(entry.commit ? { commit: entry.commit } : {}) };
           if (entryFor) suppressed.push({ ...hit, allowedBecause: entryFor.why, value: text });
           else findings.push(hit);
         }
@@ -342,74 +527,152 @@ module.exports = {
   ALLOW,
   BINARY,
   CONTROL_CORPUS,
+  ScanError,
   scanEntries,
   scanDirectory,
   directoryEntries,
   workingTreeEntries,
   publicationTreeEntries,
+  historyRangeEntries,
+  treePairs,
+  revParse,
   tarTextEntries,
   positiveControl,
+  run,
 };
 
 /* ---- run ----------------------------------------------------------------- */
 
-function usage(message) {
-  if (message) console.error(message);
-  console.error("usage: node scripts/scan-secrets.js [--working-tree] [--publication-tree [<commit-ish>]] [<dir> ...]");
-  process.exit(2);
-}
+const USAGE =
+  "usage: node scripts/scan-secrets.js [--repo <dir>] [--working-tree] " +
+  "[--publication-tree [<commit-ish>]] [--history-range <base>..<head>] [<dir> ...]";
 
 function parseTargets(argv) {
   const targets = [];
+  let repo = ROOT;
+
+  /* --repo is read first, so it applies to every target however they are
+     ordered on the command line. */
+  const repoAt = argv.indexOf("--repo");
+  if (repoAt >= 0) {
+    const value = argv[repoAt + 1];
+    if (!value || value.startsWith("--")) throw new ScanError("--repo needs a directory");
+    repo = path.resolve(value);
+    if (!fs.existsSync(repo)) throw new ScanError(`--repo does not exist: ${repo}`);
+    argv = argv.filter((_, i) => i !== repoAt && i !== repoAt + 1);
+  }
+
   for (let i = 0; i < argv.length; i += 1) {
     const arg = argv[i];
     if (arg === "--working-tree") {
-      targets.push({ label: "working tree (tracked files)", read: workingTreeEntries });
+      targets.push({
+        label: "working tree (tracked files)",
+        read: () => ({ entries: workingTreeEntries(repo) }),
+        requiresContent: true,
+      });
       continue;
     }
     if (arg === "--publication-tree") {
       const next = argv[i + 1];
       const ref = next && !next.startsWith("--") ? (i += 1, next) : "HEAD";
-      targets.push({ label: `publication tree (git archive ${ref})`, read: () => publicationTreeEntries(ref) });
+      targets.push({
+        label: `publication tree (git archive ${ref})`,
+        read: () => ({ entries: publicationTreeEntries(ref, repo) }),
+        requiresContent: true,
+      });
       continue;
     }
-    if (arg.startsWith("--")) usage(`unknown option: ${arg}`);
-    const root = path.resolve(arg);
-    targets.push({ label: root, read: () => directoryEntries(root), exists: root });
+    if (arg === "--history-range") {
+      const spec = argv[i + 1];
+      if (!spec || spec.startsWith("--")) throw new ScanError("--history-range needs <base>..<head>");
+      i += 1;
+      const parts = spec.split("..");
+      if (parts.length !== 2 || !parts[1]) throw new ScanError(`--history-range must be <base>..<head>, got: ${spec}`);
+      const [base, head] = parts;
+      targets.push({
+        label: `newly exposed history (${spec})`,
+        read: () => {
+          const range = historyRangeEntries(base || null, head, repo);
+          /* An empty range is not a clean answer: nothing was examined, so there
+             is nothing to certify. Asking to scan history means expecting some. */
+          if (!range.commits.length) {
+            throw new ScanError(`history range ${spec} contains no commits; there is nothing to scan`);
+          }
+          return { entries: range.entries, note: `${range.commits.length} commit(s), ${range.treeRows} tree rows` };
+        },
+        /* A range CAN legitimately introduce no new text - a run of commits that
+           only touch images, say - so content is not required here. `treeRows`
+           inside the reader is what proves the enumeration actually ran. */
+        requiresContent: false,
+      });
+      continue;
+    }
+    if (arg.startsWith("--")) throw new ScanError(`unknown option: ${arg}`);
+    const dir = path.resolve(arg);
+    targets.push({
+      label: dir,
+      read: () => ({ entries: directoryEntries(dir) }),
+      requiresContent: true,
+    });
   }
   return targets;
 }
 
-function main() {
-  const targets = parseTargets(process.argv.slice(2));
-  if (!targets.length) usage();
+function run(argv) {
+  const targets = parseTargets(argv);
+  if (!targets.length) throw new ScanError("no scan target was named");
 
   const proven = positiveControl();
   console.log(`scanner validated against a synthetic positive control: ${proven}/${RULES.length} rules fired`);
 
   let total = 0;
   for (const target of targets) {
-    if (target.exists) assert(fs.existsSync(target.exists), `scan target does not exist: ${target.exists}`);
-    const { findings, suppressed, files } = target.read ? scanEntries(target.read()) : { findings: [], suppressed: [], files: 0 };
-    /* A clean answer over zero files is the failure this line exists to catch. */
-    assert(files > 0, `scan target read no files: ${target.label}`);
+    const { entries, note } = target.read();
+    const { findings, suppressed, files } = scanEntries(entries);
+    /* A clean answer over zero files is the failure this line exists to catch,
+       and it is an inability rather than a finding: nothing was read, so nothing
+       is known. */
+    if (target.requiresContent && !files) {
+      throw new ScanError(`scan target read no files: ${target.label}`);
+    }
     total += findings.length;
     for (const s of suppressed) {
       console.log(`  allowed ${s.file}:${s.line}  ${s.rule} — ${s.allowedBecause}`);
     }
+    const scope = note ? `${files} files, ${note}` : `${files} files`;
     if (findings.length) {
-      console.error(`FAIL ${target.label} (${files} files)`);
-      for (const f of findings) console.error(`  ${f.file}:${f.line}  ${f.rule} — ${f.why}`);
+      console.error(`FAIL ${target.label} (${scope})`);
+      for (const f of findings) {
+        const where = f.commit ? `${f.file}:${f.line} in ${f.commit.slice(0, 8)}` : `${f.file}:${f.line}`;
+        console.error(`  ${where}  ${f.rule} — ${f.why}`);
+      }
     } else {
-      console.log(`clean ${target.label} (${files} files)`);
+      console.log(`clean ${target.label} (${scope})`);
     }
   }
 
   if (total) {
     console.error(`credential/privacy scan failed with ${total} finding(s)`);
-    process.exit(1);
+    return 1;
   }
   console.log("credential/privacy scan passed");
+  return 0;
+}
+
+function main() {
+  let code;
+  try {
+    code = run(process.argv.slice(2));
+  } catch (error) {
+    /* Every path out of here is 2. A ScanError is an inability we named; anything
+       else is an inability we did not, and guessing "clean" or "findings" about
+       an unknown failure is exactly the habit this contract exists to break. */
+    console.error(error instanceof ScanError ? error.message : `scan aborted: ${error && error.message}`);
+    if (!(error instanceof ScanError)) console.error(error && error.stack);
+    console.error(USAGE);
+    process.exit(2);
+  }
+  process.exit(code);
 }
 
 if (require.main === module) main();

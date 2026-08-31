@@ -25,7 +25,7 @@ const assert = require("assert");
 const crypto = require("crypto");
 const fs = require("fs");
 const path = require("path");
-const { execFileSync } = require("child_process");
+const { execFileSync, spawnSync } = require("child_process");
 
 const ROOT = path.resolve(__dirname, "..");
 const lf = (text) => text.replace(/\r\n/g, "\n");
@@ -39,6 +39,10 @@ const exists = (rel) => fs.existsSync(path.join(ROOT, rel));
 const pkg = JSON.parse(read("package.json"));
 const { releaseIdentity } = require(path.join(ROOT, "release-identity"));
 const scanner = require(path.join(ROOT, "scripts", "scan-secrets"));
+
+/* The commit whose whole reachable history was independently audited for public
+   exposure, and therefore the baseline the first publication may start from. */
+const FOUNDATION = "25054fa1dde7979b66186f144a5fc84b77e591f4";
 
 function git(args) {
   return execFileSync("git", args, { cwd: ROOT, encoding: "utf8", maxBuffer: 256 * 1024 * 1024 });
@@ -358,6 +362,138 @@ function testSecretScanContract() {
   assert(pkg.scripts["check:ci"].includes("check:secrets"), "check:ci must run the credential scan");
 }
 
+/* ---- 7b. the history a push makes readable is scanned too ---------------- */
+
+/* A public `main` push transfers history. A file version deleted before the tip
+   is still one `git cat-file` away in the repository the reader clones, so a
+   tip-only scan cannot be the publication gate - which is exactly what the first
+   version of this work shipped. */
+function testHistoryRangeScan() {
+  const range = scanner.historyRangeEntries(FOUNDATION, "HEAD", ROOT);
+  assert(range.commits.length > 0, "the candidate introduces no commits over the audited foundation");
+  assert(range.treeRows > 0, "the history enumeration produced no tree content");
+  assert(range.entries.length > 0, "the candidate introduces no file versions over the audited foundation");
+
+  /* Path identity, not blob identity. The allowlist forgives an exact value at an
+     exact path, so an enumeration that collapsed two paths sharing one blob into
+     one row - which `rev-list --objects` does - would answer only one of the two
+     questions the allowlist asks. */
+  for (const entry of range.entries) {
+    assert(entry.name && !entry.name.startsWith("/"), `history entry has no repository-relative path: ${entry.name}`);
+    assert(typeof entry.text === "string", `history entry ${entry.name} carries no content`);
+    assert(/^[0-9a-f]{40}$/.test(entry.commit), `history entry ${entry.name} names no commit`);
+  }
+  /* Matched on the argument list rather than on the prose, which explains why
+     `rev-list --objects` is the wrong tool and would otherwise trip this. */
+  const source = read("scripts/scan-secrets.js");
+  assert(!/\[\s*"rev-list"[^\]]*"--objects"/.test(source),
+    "the history enumeration must not pass --objects to rev-list: it prints one path per blob and loses path identity");
+
+  /* Behaviourally: one blob at two paths is two questions, and the enumeration
+     must ask both. Proved here on the candidate's own history, and again against
+     a purpose-built repository in the negative controls. */
+  const byBlob = new Map();
+  for (const entry of range.entries) {
+    if (!byBlob.has(entry.blob)) byBlob.set(entry.blob, new Set());
+    byBlob.get(entry.blob).add(entry.name);
+  }
+  /* JSON.stringify rather than a separator character: a path may contain almost
+     anything, and a key built by concatenation can collide across two different
+     pairs that happen to line up around the separator. */
+  const pairs = range.entries.map((e) => JSON.stringify([e.name, e.blob]));
+  assert.strictEqual(new Set(pairs).size, pairs.length, "the history enumeration returned a duplicate (path, blob) pair");
+
+  const scanned = scanner.scanEntries(range.entries);
+  assert.deepStrictEqual(
+    scanned.findings.map((f) => `${f.file}:${f.line} ${f.rule} in ${f.commit}`),
+    [],
+    "the history this candidate would newly expose carries credential or privacy findings",
+  );
+
+  /* A finding found in history must say which commit to look at, because the
+     whole point is content that is no longer at the tip. */
+  const planted = scanner.scanEntries([{ name: "docs/x.md", text: `k: ${["sk", "HISTORYSHAPE", "0".repeat(18)].join("-")}\n`, commit: "0".repeat(40) }]);
+  assert.strictEqual(planted.findings.length, 1, "a planted history entry was not reported");
+  assert.strictEqual(planted.findings[0].commit, "0".repeat(40), "a history finding must name its commit");
+}
+
+/* One stray NUL byte makes git call a source file binary. `.gitattributes` sets
+   `* text=auto`, and git skips LF normalisation on anything it thinks is binary -
+   so the file stops being normalised, a CRLF checkout starts differing from what
+   the author wrote, and the line-ending defect this suite already had to fix once
+   comes back with nothing pointing at it. It cost a real debugging session here;
+   the four files this work owns are checked so it cannot cost another. */
+function testNoStrayNulBytes() {
+  for (const rel of [
+    "scripts/scan-secrets.js",
+    "scripts/publication-preflight.js",
+    "tests/public-exposure.js",
+    "tests/public-exposure-negative-controls.js",
+  ]) {
+    const bytes = fs.readFileSync(path.join(ROOT, rel));
+    const at = bytes.indexOf(0);
+    assert.strictEqual(at, -1,
+      `${rel} carries a NUL byte at offset ${at}; git will treat it as binary and stop normalising its line endings`);
+  }
+}
+
+/* ---- 7c. the publication preflight, and the baselines it freezes --------- */
+
+function testPublicationPreflight() {
+  assert(pkg.scripts["publication:preflight"], "package.json must expose the publication preflight");
+
+  const source = read("scripts/publication-preflight.js");
+
+  /* It prints the push command; it must not be able to run it. A script that
+     could push is a script that can push by accident. */
+  assert(!/execFileSync\(\s*["']git["']\s*,\s*\[\s*["']push["']/.test(source),
+    "the preflight must not be able to push");
+  assert(!/["']--mirror["']|["']--all["']|spawnSync\(\s*["']git["']\s*,\s*\[\s*["']push["']/.test(source),
+    "the preflight must not carry a bulk push form");
+  for (const forbidden of ["require(\"https\")", "require(\"http\")", "fetch("]) {
+    assert(!source.includes(forbidden), `the preflight must make no network call: ${forbidden}`);
+  }
+
+  /* Both baseline rules are frozen here and in the document, and they must agree. */
+  const { AUDITED_BASELINE, PUBLIC_REPOSITORY } = require(path.join(ROOT, "scripts", "publication-preflight"));
+  assert.strictEqual(AUDITED_BASELINE.sha, FOUNDATION, "the first-publication baseline is not the audited foundation");
+  assert(AUDITED_BASELINE.why && AUDITED_BASELINE.why.length > 40, "the audited baseline carries no stated evidence");
+  assert(PUBLIC_REPOSITORY.includes("cfbach/cinebraid.git"), "the preflight names the wrong public repository");
+
+  const doc = read("docs/PUBLICATION.md");
+  assert(doc.includes(FOUNDATION), "PUBLICATION.md must name the audited first-publication baseline");
+  assert(/--public-sha/.test(doc), "PUBLICATION.md must say what the baseline is after the first publication");
+  assert(/history/i.test(doc) && /--history-range/.test(doc), "PUBLICATION.md must document the history-range gate");
+  /* The ordered steps, so the document cannot drift from what the script does. */
+  for (const step of ["ancestor", "non-empty", "publication tree", "newly readable"]) {
+    assert(new RegExp(step, "i").test(doc), `PUBLICATION.md must document the "${step}" step`);
+  }
+
+  /* And the preflight refuses the things it says it refuses. Run here against
+     this repository, which is not at `main`, so it must refuse rather than clear. */
+  const refused = spawnSync(process.execPath, [path.join(ROOT, "scripts", "publication-preflight.js"), "--first-publication"], {
+    cwd: ROOT, encoding: "utf8", timeout: 300000,
+  });
+  assert.strictEqual(refused.status, 2, `the preflight must refuse when the checkout is not at the candidate, got ${refused.status}`);
+  assert(/REFUSED/.test(`${refused.stdout}${refused.stderr}`), "a refusal must say so");
+
+  /* CI scans the range a pull request adds, which is the cheapest moment to
+     notice - and it needs full history to have a range at all. It is an early
+     warning, not the gate: a CI job can be cancelled, superseded, or never run on
+     the commit that actually gets published, which is why the authoritative scan
+     happens at publication time. Both halves are asserted so neither can drift
+     into claiming to be the other. */
+  const workflow = read(".github/workflows/windows-ci.yml");
+  assert(/--history-range/.test(workflow), "CI must scan the history a pull request would add");
+  assert(/fetch-depth: 0/.test(workflow), "a range scan needs full history; a shallow checkout has no range to read");
+  assert(/pull_request\.base\.sha/.test(workflow) && /pull_request\.head\.sha/.test(workflow),
+    "the CI range must come from the pull_request event rather than being inferred");
+  assert(/NOT what makes publication safe|not the gate/i.test(workflow),
+    "the CI step must say it is not the authoritative gate");
+  assert(/publication.time|publication-preflight/i.test(doc),
+    "PUBLICATION.md must locate the authoritative scan at publication time");
+}
+
 /* ---- 8. only main travels, and main carries no research material --------- */
 
 function testPublicationContract() {
@@ -402,6 +538,9 @@ testNoRemoteAssets();
 testPublicIdentity();
 testReadmeTruth();
 testSecretScanContract();
+testHistoryRangeScan();
+testNoStrayNulBytes();
+testPublicationPreflight();
 testPublicationContract();
 
 console.log(
@@ -409,5 +548,6 @@ console.log(
   "coordinated disclosure, trademark carve-out for both brand assets, no NOTICE obligation, " +
   "no remote font or CDN in any shell page including pre-auth login, non-private release identity, " +
   "README runtime truth, the credential scan wired to the working tree and the publication tree, " +
-  "and only main reachable with no research material.",
+  "only main reachable with no research material, the history a push would newly expose scanned " +
+  "from the audited baseline, and a publication preflight that refuses rather than guesses.",
 );
