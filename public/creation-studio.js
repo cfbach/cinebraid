@@ -2480,12 +2480,35 @@ const RETURNED_REVIEW_STALE_WORDS = {
   "kept-as-alternate": "it was kept as an alternate",
   "unit-already-picked": "another take was picked for that unit",
 };
+/* AND THE SAME, FOR A CANDIDATE THAT IS NOT SETTLED BUT CANNOT BE REVIEWED. One clause
+   per declared reason, because the reasons are not the same fact and a filmmaker acts on
+   them differently.
+
+   This was a single sentence — "its media is no longer available" — printed for every
+   reason that reached it. For a candidate whose FRAME was removed that is simply false:
+   the file is on disk, it is in Generated Media, and the Inspector opens it. Only its
+   production target is gone. Telling somebody their result had disappeared, when what
+   disappeared was the frame they deleted, sends them to look for a lost file and invites
+   them to regenerate something they still have.
+
+   Each clause completes "<name> was the result this link was for, and ...", says what is
+   actually true, and claims nothing about where the candidate went instead — it went
+   nowhere; re-homing it onto a surviving frame is exactly what this slice stopped. */
+const RETURNED_REVIEW_UNREVIEWABLE_WORDS = {
+  "media-not-available": "its media is no longer available",
+  "frame-no-longer-declared": "the frame it was generated for is no longer part of this shot",
+  "decision-not-supported": "no review decision applies to it",
+};
 function returnedReviewStaleCardMarkup(s, neighbors, review, readiness, next) {
   const claimed = review.claimed;
   const nextItem = review.next;
   const named = claimed ? claimed.candidate.name : "";
   const why = claimed
-    ? (RETURNED_REVIEW_STALE_WORDS[claimed.settled] || (claimed.unreviewable ? "its media is no longer available" : "it is no longer waiting"))
+    ? (RETURNED_REVIEW_STALE_WORDS[claimed.settled]
+      || RETURNED_REVIEW_UNREVIEWABLE_WORDS[claimed.unreviewable]
+      /* An unrecognised reason still says something TRUE. The old default claimed the
+         media was gone, which is the one thing a fallback here must not assert. */
+      || (claimed.unreviewable ? "it is not available for review" : "it is no longer waiting"))
     : "";
   const sentence = claimed
     ? `${named} was the result this link was for, and ${why}.`

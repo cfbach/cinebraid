@@ -2076,6 +2076,216 @@ async function pv_removingAFrameKeepsItsCandidatesProvenance() {
   note("PV both frame-removal controls keep the returned candidate's frame stamp: it stays visible, reports frame-no-longer-declared, offers nothing, and never becomes a candidate for the frame that happens to remain");
 }
 
+
+/* ===========================================================================
+   SN — A SETTLED CANDIDATE IS FINISHED, NOT UNREVIEWABLE.
+
+   `unreviewable` says: this candidate still owes a disposition and cannot be given one.
+   A candidate that has been approved or rejected owes nothing, and `settled` already
+   names why. The two were derived in the wrong order, so the moment production-media
+   stopped offering `reject` on an approved row — correct in itself — an approved,
+   receipt-backed candidate had no declared decision left and reported
+   `decision-not-supported`: "cannot be reviewed", said about a file somebody had already
+   reviewed, and counted in `counts.unreviewable`.
+
+   Deriving settlement first and gating on it is the whole correction. The token keeps its
+   job for a candidate that is genuinely unsettled and genuinely has no valid decision.
+   =========================================================================== */
+
+async function sn_settledIsNotUnreviewable() {
+  const project = projectOf([{
+    id: "L1-01",
+    frames: [{ id: "frame-a", label: "A", winner: "C1.png" }, { id: "frame-b", label: "B" }],
+    candidates: [
+      candidate("C1.png", { decision: "shortlist" }),
+      candidate("R1.png", { frameId: "frame-b", decision: "rejected" }),
+    ],
+  }]);
+  const page = await render("#/shot/L1-01", project, { scan: scanWith(project, { "L1-01": ["C1.png", "R1.png"] }) });
+
+  const seen = evaluate(page.context, `
+    const projection = returnedReviewProjectionForBrowser();
+    const media = productionMediaRecords({ project: P, scan: SCAN });
+    const of = (name) => projection.items.find((row) => row.candidate.name === name);
+    return {
+      approved: of("C1.png"),
+      rejected: of("R1.png"),
+      countsUnreviewable: projection.counts.unreviewable,
+      approvedActions: media.records.find((row) => row.file.name === "C1.png").actions,
+      canon: hasCurrentHumanAuthority(P, { kind: "shot-frame", shotId: "L1-01", frameId: "frame-a" }),
+      receipts: (P.productionAuthority.receipts || []).filter((row) => row.kind === "shot-frame" && row.status === "current").map((row) => row.value),
+    };
+  `);
+
+  /* 1 — NO CONTRADICTORY REASON, on either settled disposition. */
+  equal(seen.approved.settled, "human-approved", "SN1: the approved candidate is settled by its own decision");
+  equal(seen.approved.candidate.disposition, "approved", "SN1: its approved disposition is preserved");
+  equal(seen.approved.unreviewable, "", "SN1: and it carries no unreviewable reason — it is finished, not unreviewable");
+  equal(seen.approved.awaitingReview, false, "SN1: it asks for nothing");
+  equal(seen.approved.blocking, false, "SN1: and blocks nothing");
+  equal(seen.rejected.settled, "human-rejected", "SN1: the rejected candidate is settled too");
+  equal(seen.rejected.unreviewable, "", "SN1: and is likewise not reclassified as unreviewable");
+
+  /* 2 — AND NEITHER IS COUNTED. */
+  equal(seen.countsUnreviewable, 0, "SN2: no settled candidate is counted as unreviewable");
+
+  /* 3 — REJECT IS STILL UNAVAILABLE ON THE APPROVED ROW. This correction must not have
+     bought its consistency back by restoring the action. */
+  ok(!seen.approvedActions.includes("reject"), "SN3: reject is still withheld from the approved row: " + seen.approvedActions.join(","));
+  ok(!seen.approvedActions.includes("approve"), "SN3: as is a second approve");
+  deepEqual(seen.approved.actions, [], "SN3: so the projection declares no decision on it");
+
+  /* AND THE WRITER STILL REFUSES, unweakened. */
+  await page.gesture.act(() => page.context.rejectReturnedResult("L1-01", "C1.png"));
+  await new Promise((resolve) => setTimeout(resolve, 20));
+  const afterWrite = evaluate(page.context, `
+    return {
+      spoken: document.getElementById("toast").textContent,
+      decision: P.shots[0].candidateFiles.find((row) => row.stored === "C1.png").decision,
+    };
+  `);
+  ok(/approved for this shot/.test(afterWrite.spoken), "SN3: and the writer still refuses in words: " + afterWrite.spoken);
+  equal(afterWrite.decision, "shortlist", "SN3: recording no rejection");
+
+  /* 4 — THE RECEIPT IS UNTOUCHED. */
+  equal(seen.canon, true, "SN4: the approval still holds current human authority");
+  deepEqual(seen.receipts, ["C1.png"], "SN4: on the same file");
+
+  /* 5 — AND THE TOKEN STILL WORKS WHERE IT BELONGS.
+     A candidate that is genuinely UNSETTLED and genuinely has no valid decision. The
+     module accepts an already-derived media answer as a declared input, so this hands
+     back the SHIPPED answer with one row's declared actions removed — the shape is the
+     real one and the single fact under test is the only thing changed. Nothing here
+     computes a queue. */
+  const unsupported = evaluate(page.context, `
+    const media = productionMediaRecords({ project: P, scan: SCAN });
+    const stripped = {
+      ...media,
+      records: media.records.map((row) => (row.file.name === "R1.png"
+        ? { ...row, actions: [], disposition: { ...row.disposition, role: "candidate", rejected: false }, humanDecision: { state: "undecided" } }
+        : row)),
+    };
+    const projection = returnedReviewProjection({ project: P, media: stripped });
+    const row = projection.items.find((item) => item.candidate.name === "R1.png");
+    return { settled: row.settled, unreviewable: row.unreviewable, awaiting: row.awaitingReview, actions: row.actions, counts: projection.counts.unreviewable };
+  `);
+  equal(unsupported.settled, "", "SN5: the row is genuinely unsettled");
+  equal(unsupported.unreviewable, "decision-not-supported", "SN5: so it DOES receive the unsupported reason");
+  equal(unsupported.awaiting, false, "SN5: it cannot be reviewed, so it is not awaiting one");
+  deepEqual(unsupported.actions, [], "SN5: with no decision to offer");
+  equal(unsupported.counts, 1, "SN5: and it IS counted — this is what the count is for");
+
+  note("SN settlement is derived before unreviewability: an approved or rejected candidate carries no unreviewable reason and is not counted, reject stays withheld, the receipt stands, and decision-not-supported still fires for a genuinely unsettled candidate with no valid decision");
+}
+
+/* ===========================================================================
+   RC — A FRAME THAT WAS REMOVED IS NOT A FILE THAT WENT MISSING.
+
+   The stale-route card printed one sentence — "its media is no longer available" — for
+   every unreviewable reason that reached it. For a candidate whose FRAME was removed
+   that is false: the file is on disk, it is in Generated Media, and the Inspector opens
+   it. Only its production target is gone. Saying the result disappeared sends a
+   filmmaker looking for a lost file and invites them to pay to regenerate one they
+   still have.
+
+   One clause per declared reason. The missing-media sentence is unchanged, because for
+   a row whose bytes really are gone it was always right.
+   =========================================================================== */
+
+async function rc_removedFrameIsNotMissingMedia() {
+  /* The route claims a candidate; the card that answers a claim is the stale one. */
+  async function claimCard(spec, takes) {
+    const project = projectOf([spec]);
+    const scan = scanWith(project, { "L1-01": takes });
+    const first = await render("#/shot/L1-01", project, { scan });
+    const found = evaluate(first.context, `
+      const projection = returnedReviewProjectionForBrowser();
+      const row = projection.items.find((item) => item.candidate.name === "${spec.claimName}");
+      return row ? { key: row.key, unreviewable: row.unreviewable, settled: row.settled, owner: row.owner.unitId } : null;
+    `);
+    ok(found, `RC: the fixture produces a ${spec.claimName} row to claim`);
+    const page = await render(`#/shot/L1-01/review/${encodeURIComponent(found.key)}`, project, { scan });
+    const markup = cardOf(page.context.document.getElementById("main").innerHTML);
+    return { found, markup, sentence: (markup.markup.match(/<p>([^<]*)<\/p>/) || [])[1] || "" };
+  }
+
+  /* 1 — THE REMOVED FRAME, said accurately. */
+  const removed = await claimCard({
+    id: "L1-01", claimName: "B1.png",
+    frames: [{ id: "frame-a", label: "A" }],
+    candidates: [candidate("B1.png", { frameId: "frame-b" })],
+  }, ["B1.png"]);
+  equal(removed.found.unreviewable, "frame-no-longer-declared", "RC1: the row reports the removed frame");
+  equal(removed.markup.stale, true, "RC1: and the route's claim renders the stale card");
+  ok(/frame it was generated for is no longer part of this shot/.test(removed.sentence),
+    "RC1: which says the frame is gone: " + removed.sentence);
+  /* AND SAYS NONE OF THE FOUR THINGS THAT WOULD BE FALSE. */
+  ok(!/no longer available|not available|missing|disappear/i.test(removed.sentence),
+    "RC1: it never says the media is gone: " + removed.sentence);
+  ok(!/fail/i.test(removed.sentence), "RC1: nor that generation failed: " + removed.sentence);
+  ok(!/reassign|moved|now belongs|instead/i.test(removed.sentence), "RC1: nor that it was reassigned: " + removed.sentence);
+  ok(!/Frame A|frame-a/.test(removed.sentence), "RC1: and never offers it for the frame that remains: " + removed.sentence);
+  /* 4 — AND THE ROW ITSELF STILL NAMES ITS OWN FRAME. */
+  equal(removed.found.owner, "frame-b", "RC1: the candidate still belongs to the frame it was generated for");
+
+  /* 2 — GENUINELY MISSING MEDIA KEEPS ITS OWN SENTENCE. */
+  const missing = await claimCard({
+    id: "L1-01", claimName: "GONE.png",
+    frames: [{ id: "frame-a", label: "A" }],
+    candidates: [candidate("GONE.png", { frameId: "frame-a" })],
+  }, []);
+  equal(missing.found.unreviewable, "media-not-available", "RC2: a row whose bytes are gone reports that instead");
+  ok(/its media is no longer available/.test(missing.sentence),
+    "RC2: and keeps the shipped missing-media sentence: " + missing.sentence);
+  ok(!/frame it was generated for/.test(missing.sentence),
+    "RC2: without borrowing the removed-frame one: " + missing.sentence);
+
+  /* 3 — AND BOTH REMOVAL CONTROLS REACH THE SAME SENTENCE, because they now reach the
+     same state. Driven through each shipped control and its shipped confirmation. */
+  for (const [label, control] of [
+    ["removeGuidedFrame", (context) => context.removeGuidedFrame("L1-01", "frame-b")],
+    ["removeKeyframe", (context) => context.removeKeyframe("L1-01", 1)],
+  ]) {
+    const project = projectOf([{
+      id: "L1-01",
+      frames: [{ id: "frame-a", label: "A" }, { id: "frame-b", label: "B" }],
+      candidates: [candidate("B1.png", { frameId: "frame-b" })],
+    }]);
+    const scan = scanWith(project, { "L1-01": ["B1.png"] });
+    const page = await render("#/shot/L1-01", project, { scan });
+    await page.gesture.act(() => control(page.context));
+    await new Promise((resolve) => setTimeout(resolve, 10));
+    await page.gesture.act(() => page.context.document.getElementById("modal-confirm-action").onclick());
+    await new Promise((resolve) => setTimeout(resolve, 25));
+    const after = evaluate(page.context, `
+      const projection = returnedReviewProjectionForBrowser();
+      const row = projection.items.find((item) => item.candidate.name === "B1.png");
+      return {
+        key: row.key,
+        stamp: P.shots[0].candidateFiles[0].frameId || "",
+        owner: row.owner.unitId,
+        unreviewable: row.unreviewable,
+        queue: projection.queue.map((item) => item.candidate.name),
+      };
+    `);
+    equal(after.stamp, "frame-b", `RC3/${label}: the provenance stamp survives the removal`);
+    equal(after.owner, "frame-b", `RC3/${label}: the candidate is not re-homed onto the surviving frame`);
+    equal(after.unreviewable, "frame-no-longer-declared", `RC3/${label}: with the same reason from either control`);
+    deepEqual(after.queue, [], `RC3/${label}: and it stays out of the actionable queue`);
+
+    /* The removal happened inside this page's own copy — the harness clones what it is
+       handed — so the claim must be opened against the project AS IT NOW IS, not against
+       the fixture that still declares frame-b. */
+    const removedProject = evaluate(page.context, `return P;`);
+    const claimed = await render(`#/shot/L1-01/review/${encodeURIComponent(after.key)}`, removedProject, { scan });
+    const sentence = (cardOf(claimed.context.document.getElementById("main").innerHTML).markup.match(/<p>([^<]*)<\/p>/) || [])[1] || "";
+    ok(/frame it was generated for is no longer part of this shot/.test(sentence),
+      `RC3/${label}: and the same accurate sentence: ` + sentence);
+  }
+
+  note("RC the stale card speaks one clause per declared reason: a removed frame says the frame is gone and never that the media is, missing media keeps its own sentence, and both removal controls reach the same state and the same words");
+}
+
 /* =========================================================================== */
 
 async function main() {
@@ -2099,6 +2309,8 @@ async function main() {
   await as_approvalCannotClaimAnAssignmentItDidNotMake();
   await rj_rejectIsWithheldFromAnApprovedCandidate();
   await pv_removingAFrameKeepsItsCandidatesProvenance();
+  await sn_settledIsNotUnreviewable();
+  await rc_removedFrameIsNotMissingMedia();
   await agreement_oneQueueEverywhere();
   await archive_reviewIsNotAStore();
   await browserFixtureIsTheShapeItClaims();

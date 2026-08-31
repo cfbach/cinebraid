@@ -1279,6 +1279,111 @@ async function ncRM23() {
   note("NC-RM23 restored the silent reassignment: removing Frame B deleted its candidates' provenance and they re-entered the queue as Frame A's, reporting nothing wrong");
 }
 
+
+/* ===========================================================================
+   NC-RM24 — A SETTLED CANDIDATE IS RECLASSIFIED AS UNREVIEWABLE.
+
+   Removes exactly the settled guard from the derivation, which is the state the
+   projection was in between the approve/reject convergence and its correction: an
+   approved, receipt-backed candidate has no declared decision left, so it reported
+   `decision-not-supported` and was counted as something that could not be reviewed.
+   =========================================================================== */
+
+const NC24_ANCHOR = `      const unreviewable = settled`;
+const NC24_BREAK = `      const unreviewable = false`;
+
+async function ncRM24() {
+  anchorIn(PROJECTION_FILE, NC24_ANCHOR, "NC-RM24");
+  const project = projectOf([{
+    id: "L1-01",
+    frames: [{ id: "frame-a", label: "A", winner: "C1.png" }],
+    candidates: [candidate("C1.png", { decision: "shortlist" })],
+  }]);
+  const scan = scanWith(project, { "L1-01": ["C1.png"] });
+  const broken = await render("#/shot/L1-01", project, { scan, mutateSource: replacing(PROJECTION_FILE, NC24_ANCHOR, NC24_BREAK) });
+  const seen = evaluate(broken.context, `
+    const projection = returnedReviewProjectionForBrowser();
+    const row = projection.items.find((item) => item.candidate.name === "C1.png");
+    return {
+      settled: row.settled,
+      disposition: row.candidate.disposition,
+      unreviewable: row.unreviewable,
+      counts: projection.counts.unreviewable,
+      canon: hasCurrentHumanAuthority(P, { kind: "shot-frame", shotId: "L1-01", frameId: "frame-a" }),
+    };
+  `);
+
+  /* THE MUTATION LANDED AND THE CONTRADICTION IS OBSERVABLE: one row, settled AND
+     unreviewable at the same time, with a live receipt behind it. */
+  equal(seen.settled, "human-approved", "NC-RM24: the candidate is still settled by a real approval");
+  equal(seen.canon, true, "NC-RM24: whose receipt is still current");
+  equal(seen.disposition, "approved", "NC-RM24: and still reads approved");
+  equal(seen.unreviewable, "decision-not-supported", "NC-RM24: yet the broken build also calls it unreviewable");
+  equal(seen.counts, 1, "NC-RM24: and counts it as such");
+
+  await mustFail("NC-RM24", "carries no unreviewable reason", () => {
+    assert.strictEqual(seen.unreviewable, "", "SN1: and it carries no unreviewable reason — it is finished, not unreviewable");
+  });
+  await mustFail("NC-RM24", "no settled candidate is counted", () => {
+    assert.strictEqual(seen.counts, 0, "SN2: no settled candidate is counted as unreviewable");
+  });
+
+  note("NC-RM24 restored the contradiction: an approved, receipt-backed candidate reported decision-not-supported and was counted as unreviewable");
+}
+
+/* ===========================================================================
+   NC-RM25 — A REMOVED FRAME IS REPORTED AS MISSING MEDIA.
+
+   Restores the single generic sentence the stale card used to print for every reason,
+   and requires the misinformation to become visible: a candidate whose file is on disk
+   told the filmmaker its media was gone.
+   =========================================================================== */
+
+const NC25_ANCHOR = `    ? (RETURNED_REVIEW_STALE_WORDS[claimed.settled]
+      || RETURNED_REVIEW_UNREVIEWABLE_WORDS[claimed.unreviewable]`;
+const NC25_BREAK = `    ? (RETURNED_REVIEW_STALE_WORDS[claimed.settled]
+      || (claimed.unreviewable ? "its media is no longer available" : "")`;
+
+async function ncRM25() {
+  anchorIn(CARD_FILE, NC25_ANCHOR, "NC-RM25");
+  const project = projectOf([{
+    id: "L1-01",
+    frames: [{ id: "frame-a", label: "A" }],
+    candidates: [candidate("B1.png", { frameId: "frame-b" })],
+  }]);
+  const scan = scanWith(project, { "L1-01": ["B1.png"] });
+  const mutate = replacing(CARD_FILE, NC25_ANCHOR, NC25_BREAK);
+
+  const first = await render("#/shot/L1-01", project, { scan, mutateSource: mutate });
+  const found = evaluate(first.context, `
+    const projection = returnedReviewProjectionForBrowser();
+    const row = projection.items.find((item) => item.candidate.name === "B1.png");
+    return { key: row.key, unreviewable: row.unreviewable, url: row.candidate.url, available: row.mediaAvailable };
+  `);
+  equal(found.unreviewable, "frame-no-longer-declared", "NC-RM25: the row still reports the removed frame");
+  equal(found.available, true, "NC-RM25: and its media is genuinely still there");
+  ok(found.url, "NC-RM25: with a url that still resolves");
+
+  const broken = await render(`#/shot/L1-01/review/${encodeURIComponent(found.key)}`, project, { scan, mutateSource: mutate });
+  const sentence = (cardOf(broken.context.document.getElementById("main").innerHTML).markup.match(/<p>([^<]*)<\/p>/) || [])[1] || "";
+
+  ok(/its media is no longer available/.test(sentence),
+    "NC-RM25: the broken build tells the filmmaker the media is gone: " + sentence);
+  ok(!/frame it was generated for/.test(sentence),
+    "NC-RM25: and never mentions the frame that actually went: " + sentence);
+
+  await mustFail("NC-RM25", "says the frame is gone", () => {
+    assert(/frame it was generated for is no longer part of this shot/.test(sentence),
+      "RC1: which says the frame is gone: " + sentence);
+  });
+  await mustFail("NC-RM25", "never says the media is gone", () => {
+    assert(!/no longer available|not available|missing|disappear/i.test(sentence),
+      "RC1: it never says the media is gone: " + sentence);
+  });
+
+  note("NC-RM25 restored the generic sentence: a candidate whose file is on disk and whose FRAME was removed was told its media no longer existed");
+}
+
 /* =========================================================================== */
 
 async function main() {
@@ -1304,6 +1409,8 @@ async function main() {
   await ncRM21();
   await ncRM22();
   await ncRM23();
+  await ncRM24();
+  await ncRM25();
   await shippedBuildIsGreen();
 
   for (const line of notes) console.log(line);

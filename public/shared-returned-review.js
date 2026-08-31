@@ -563,17 +563,37 @@
       const parentRow = parentName ? byName.get(parentName) || null : null;
       const actions = reviewActionsFor(row);
       const workflows = reviewWorkflowsFor(row, owner.kind);
-      const unreviewable = !text(file.url)
-        ? "media-not-available"
-        : !actions.length
-          ? "decision-not-supported"
-          : "";
       /* THE CANDIDATE'S OWN DECISION IS THE MORE SPECIFIC FACT and is reported first: a
          file somebody approved says `human-approved`, not `unit-already-picked`, even
          though both are true of it. The unit's pick is the reason the alternates it was
          chosen OVER stopped asking — and only those. The decision itself is
          candidateSettlement(), which the missing-media path below asks in the same words. */
       const settled = candidateSettlement(row, pickRow, byName);
+      /* SETTLED IS NOT UNREVIEWABLE, AND THE ORDER OF THESE TWO IS THE REASON.
+       *
+       * `unreviewable` says: this candidate STILL OWES A DISPOSITION and cannot be given
+       * one. A candidate that has been approved or rejected owes nothing — it is
+       * finished, and `settled` already says so with the specific reason.
+       *
+       * These were derived the other way round, which made the two contradict each other
+       * the moment production-media stopped offering `reject` on an approved row: with no
+       * declared decision left, an approved, receipt-backed candidate reported
+       * `decision-not-supported` and was counted in `counts.unreviewable` — "cannot be
+       * reviewed" said about a file somebody had already reviewed. Deriving settlement
+       * first and gating on it costs nothing and cannot drift: there is no state in which
+       * a finished candidate needs a reason it cannot be actioned.
+       *
+       * `decision-not-supported` keeps its job for the UNSETTLED candidate no valid
+       * decision exists for, and `media-not-available` for the unsettled row whose bytes
+       * are gone. A settled row whose bytes are gone is ordinary history, which is the
+       * same answer the missing-media pass below reaches by skipping settled rows. */
+      const unreviewable = settled
+        ? ""
+        : !text(file.url)
+          ? "media-not-available"
+          : !actions.length
+            ? "decision-not-supported"
+            : "";
       items.push(deepFreeze({
         contract: RETURNED_REVIEW_CONTRACT,
         /* The candidate's durable projection key. It is the deep-link identity and it
