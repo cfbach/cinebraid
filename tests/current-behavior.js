@@ -352,6 +352,8 @@ async function main() {
     "bible-canon-export.js",
     "blocking-automation-discoverability.js",
     "bounded-rendering.js",
+    "braidy-rail-negative-controls.js",
+    "braidy-rail.js",
     "brand-logo-asset.js",
     "brand-logo-real-browser.py",
     "browser-requirements.txt",

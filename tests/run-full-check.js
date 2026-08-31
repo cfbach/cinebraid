@@ -129,6 +129,11 @@ const nodeSuites = [
   "check:workspace-shell-negative",
   "check:creator-state",
   "check:creator-state-negative",
+  /* Braidy. Listed beside the rail suite it extends, because a failure in either
+     is a failure about the same surface and naming them together is what makes
+     "which half broke" readable from the run. */
+  "check:braidy",
+  "check:braidy-negative",
   "check:quiet-shell",
   "check:project-entry",
   "check:project-entry-negative",

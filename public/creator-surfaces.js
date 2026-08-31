@@ -33,9 +33,14 @@
      calling v641UpdateActivityButton(). O3 repaints from the event that function now
      emits, so a second clock over the same data never exists.
 
-   * IT MAKES NO REQUEST. No fetch, no provider call, no LLM call. The rail is
-     deterministic and is fully useful with no assistant model configured — which is
-     the state most installs are in, and the state every test below runs in.
+   * IT MAKES NO REQUEST. No fetch, no provider call, no LLM call. Everything THIS file
+     renders is deterministic and is fully useful with no assistant model configured —
+     which is the state most installs are in, and the state every test below runs in.
+
+     Braidy, which public/braidy-rail.js owns and this file composes into the top of
+     the rail, does make one request. That is the whole of the difference and it is
+     kept on the far side of braidyBlock(): the block returns "" when Braidy is absent
+     or throws, so every section below it renders byte-identically either way.
 
    * IT WRITES NOTHING TO A PROJECT. The only things persisted anywhere are whether
      the Terminal is collapsed and whether the Assistant rail is open, both in
@@ -73,8 +78,13 @@
    Only a project going away clears them, and that is not lifecycle economy: a Terminal
    describing a production that is not open is a stale claim, not retained context.
 
-   The rule for the future: an expensive or model-backed part of the Assistant is what
-   gets suspended when hidden, never the deterministic view. O3 has no such part. */
+   The rule stated here for the future was that an expensive or model-backed part of the
+   Assistant is what gets suspended when hidden, never the deterministic view. Braidy is
+   that part, and it is held to it: closing the rail ABORTS its outstanding question
+   rather than leaving it to land on a surface nobody can see, and a production going
+   away clears its conversation for the same reason it clears the Terminal. Both are
+   called from paint() and setRail() through braidySignal(), because this file is the
+   only thing that knows either event happened. */
 
 (function () {
   if (typeof document === "undefined") return;
@@ -524,6 +534,49 @@
       + `<header><b>${esc(title)}</b><span>${rows.length}</span></header>${rows.join("")}</section>`;
   }
 
+  /* THE ONE CONVERGENCE POINT, and the reason it is here rather than everywhere.
+
+     "Plan with Braidy" hands over the declared stage block: which step this is, what
+     it is for, whether it is blocked and why, and the shot it belongs to. Those are
+     O1's answers, copied verbatim — the handoff carries CineBraid's facts so Braidy
+     interprets them instead of guessing at them, and public/shared-braidy.js freezes
+     them on the way through so an interpretation cannot edit its own evidence.
+
+     The existing contextual AI actions are NOT rerouted through here. Improving a
+     prompt, reviewing a candidate and building scene audio each already have an owner,
+     a working request and an explicit filmmaker choice at the end of it; a Braidy
+     button that re-implemented any of them would be a second way to do one thing.
+     Braidy's job beside them is the part none of them does — reading the situation
+     out loud — and its destinations lead back to those owners. */
+  function braidyStageAction(state) {
+    const braidy = window.CineBraidBraidy;
+    if (!braidy || typeof braidyPlan !== "function") return "";
+    /* NOT OFFERED WHEN THERE IS NOTHING TO ANSWER WITH. Asked of Braidy rather than of
+       AGENT_STATUS, because the claim about what Braidy can do has one owner and this
+       file is not it. A control whose only outcome is the assistant refusing is worse
+       than no control: the rail already says, in its own words, what is missing. */
+    try { if (typeof braidy.capability === "function" && !braidy.capability().available) return ""; } catch { return ""; }
+    const stage = state.stage;
+    const shotId = state.context.target.id;
+    if (!stage || !shotId) return "";
+    const payload = {
+      origin: { surface: "creator-rail-stage", route: `#/shot/${shotId}` },
+      target: { kind: "shot", id: shotId, label: shotId },
+      stageId: stage.id || "",
+      task: `Where this shot stands at ${stage.label}.`,
+      facts: {
+        stage: stage.label,
+        purpose: stage.purpose,
+        availability: stage.availability,
+        blockedReason: stage.blockedReason || "",
+        completion: stage.completion,
+        optional: !!stage.optional,
+      },
+      destinations: stage.id ? ["open-stage-task", "open-activity"] : ["open-activity"],
+    };
+    return `<button type="button" class="cb-assistant-action" onclick="${attr(`braidyPlan(${JSON.stringify(payload)})`)}">Plan with Braidy</button>`;
+  }
+
   /* THE STAGE BLOCK, written from O1's answer and nothing else. `availability`,
      `blockedReason` and `completion` are printed as the declaration returned them: a
      rail that softened a blocked stage into "not started yet" would be describing a
@@ -542,7 +595,8 @@
     return `<section class="cb-assistant-section tone-stage" data-cb-section="stage">`
       + `<header><b>Current step</b><span>${esc(stage.label)}</span></header>`
       + `<article class="cb-assistant-row"><b>${esc(stage.label)}</b><p>${esc(stage.purpose)}</p>`
-      + `<small>${esc(status)}${stage.optional ? " · optional" : ""}</small></article></section>`
+      + `<small>${esc(status)}${stage.optional ? " · optional" : ""}</small>`
+      + `<div class="cb-assistant-row-actions">${braidyStageAction(state)}</div></article></section>`
       + assistantNextSection(state, jump);
   }
 
@@ -567,6 +621,20 @@
       + `<article class="cb-assistant-row cb-assistant-quiet"><p>No recommendation is available yet. CineBraid only recommends a next step when the shot has said what it is being delivered as.</p></article></section>`;
   }
 
+  /* BRAIDY SITS ABOVE THE DETERMINISTIC RAIL, and is composed rather than merged.
+
+     public/braidy-rail.js owns everything inside the block; this file owns only where
+     it goes and that it is FIRST, so a filmmaker who opened the rail to ask something
+     is not scrolling past a status list to reach the composer. It returns "" whenever
+     Braidy is not loaded, which is every Node realm and every install where the file
+     is absent, and the sections beneath it are unchanged in that case — which is the
+     mechanism by which Braidy cannot become a gate on anything below it. */
+  function braidyBlock() {
+    const braidy = window.CineBraidBraidy;
+    if (!braidy || typeof braidy.railMarkup !== "function") return "";
+    try { return braidy.railMarkup(); } catch { return ""; }
+  }
+
   function assistantMarkup(state) {
     const kind = state.headline.kind;
     const attention = state.attention.map((fact) => assistantRow(fact, ATTENTION_SENTENCE[fact.reason] || ""));
@@ -579,6 +647,7 @@
       ? `<p class="cb-assistant-omitted">${esc(`${state.omitted.attention} older item${state.omitted.attention === 1 ? "" : "s"} needing attention are not shown here.`)}</p>`
       : "";
     return `<div class="cb-assistant" data-cb-assistant="1" data-headline="${attr(kind)}">`
+      + braidyBlock()
       + `<header class="cb-assistant-head"><span>${esc(HEADLINE_EYEBROW[kind] || "ASSISTANT")}</span>`
       + `<b>${esc(headlineSentence(state))}</b><small>${esc(contextLine(state))}</small></header>`
       + `<div class="cb-assistant-body">`
@@ -763,6 +832,20 @@
     try { return localStorage.getItem(RAIL_OPEN_KEY) === "1"; } catch { return false; }
   }
 
+  /* A CLOSED RAIL IS NOT A PLACE A QUESTION IS STILL WAITING.
+
+     Braidy's request is aborted when the rail closes and its session is cleared when
+     the production goes away. Both are this file's to call because both are events
+     this file already owns: nothing else knows the rail was closed, and Braidy has no
+     poll of its own to notice it. Without this an in-flight question would keep its
+     "thinking" pose alive behind a surface nobody can see, and land on a rail that is
+     no longer mounted. */
+  function braidySignal(name, reason) {
+    const braidy = window.CineBraidBraidy;
+    if (!braidy || typeof braidy[name] !== "function") return;
+    try { braidy[name](reason); } catch {}
+  }
+
   /* Takes the rail slot back, and ONLY when this file is the thing occupying it.
 
      clearSlot() empties whatever is in the slot, so an unconditional call on every
@@ -813,7 +896,7 @@
        a Terminal describing a production that is not open is a stale claim, and there
        is no conversation or scroll position worth keeping when there is nothing to
        have been talking about. */
-    if (!context.hasProject) { unmount(); syncRailToggle(false); STALE = false; return null; }
+    if (!context.hasProject) { braidySignal("reset"); unmount(); syncRailToggle(false); STALE = false; return null; }
     syncRailToggle(context.shellPresent);
     if (!ensureMounted()) return null;
     /* Retained, subscribed, not painted. See the lifecycle note at the top. */
@@ -886,7 +969,7 @@
 
   function setRail(open) {
     try { localStorage.setItem(RAIL_OPEN_KEY, open ? "1" : "0"); } catch {}
-    if (!open) closeRailMount();
+    if (!open) { braidySignal("abort", "That question was stopped when the rail was closed."); closeRailMount(); }
     paint();
     /* Opening takes width from the centre and closing gives it back, and the shell's
        own measurement is what the dock reservation and the bar both depend on. Ask it

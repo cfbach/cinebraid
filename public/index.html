@@ -123,6 +123,11 @@
 <script src="shared-returned-review.js?v=6.7.0-dev.1"></script>
 <script src="shared-workspace-shell.js?v=6.7.0-dev.1"></script>
 <script src="shared-creator-state.js?v=6.7.0-dev.1"></script>
+<!-- Braidy's contract: presentation state, the handoff shape, the closed action
+     table, and the one place a capability claim about Braidy is composed. Pure, so
+     Node runs it; loaded here so public/braidy-rail.js and any contextual control can
+     read it. -->
+<script src="shared-braidy.js?v=6.7.0-dev.1"></script>
 <script src="shared-stage-actions.js?v=6.7.0-dev.1"></script>
 <script src="bounded-rendering.js?v=6.7.0-dev.1"></script>
 <script src="app.js?v=6.7.0-dev.1"></script>
@@ -152,6 +157,10 @@
 <script src="media-results.js?v=6.7.0-dev.1"></script>
 <script src="focused-workspaces.js?v=6.7.0-dev.1"></script>
 <script src="workspace-shell.js?v=6.7.0-dev.1"></script>
+<!-- BEFORE creator-surfaces.js, which composes Braidy into the rail on its very
+     first paint. Loaded after it, that paint would render a rail with no Braidy in it
+     and wait for an unrelated event to correct itself. -->
+<script src="braidy-rail.js?v=6.7.0-dev.1"></script>
 <script src="creator-surfaces.js?v=6.7.0-dev.1"></script>
 <script src="stage-surfaces.js?v=6.7.0-dev.1"></script>
 <script src="bootstrap.js?v=6.7.0-dev.1"></script>

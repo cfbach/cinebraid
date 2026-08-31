@@ -5073,6 +5073,58 @@ body[data-focused-workspace="1"] .guided-frame-body,
 .cb-assistant-foot{display:grid;gap:8px;justify-items:start;padding-top:12px;border-top:1px solid var(--line)}
 .cb-assistant-omitted{font-size:10.5px;color:var(--faint)}
 
+/* ---- Braidy ----------------------------------------------------------------
+   The creator-facing half of the rail. It is deliberately quieter than the
+   deterministic sections beneath it: Braidy is where a filmmaker asks something, and
+   a surface that is competing for attention is a surface they stop asking.
+
+   THE PRESENCE IS A PLACEHOLDER and says so in the markup — data-braidy-art="absent".
+   There is no approved Braidy sprite in this repository, so what renders is a small
+   neutral double-loop carrying the presentation state. It is NOT a character and NOT
+   a redesign; when the braided-rope frames arrive they replace what is inside
+   .cb-braidy-presence and every state selector below already means what it will mean.
+
+   MOTION IS RESTRAINED BY CONSTRUCTION. Idle drifts, listening and attention do not
+   move at all, thinking turns one ring slowly, and acknowledge runs ONCE. Nothing
+   bounces, nothing loops in the filmmaker's peripheral vision while they work, and
+   both the stamped data-braidy-motion="none" and the reduced-motion query below stop
+   all of it. */
+.cb-braidy{display:grid;gap:10px;padding-bottom:13px;border-bottom:1px solid var(--line)}
+.cb-braidy-head{display:flex;align-items:center;gap:10px;min-width:0}
+.cb-braidy-id{display:grid;gap:2px;min-width:0}
+.cb-braidy-id b{font-family:var(--display);font-size:14px;letter-spacing:-.005em;color:var(--ink)}
+.cb-braidy-id small{font-size:10.5px;line-height:1.4;color:var(--muted);overflow-wrap:anywhere}
+.cb-braidy-presence{position:relative;flex:0 0 auto;width:26px;height:26px;display:grid;place-items:center}
+.cb-braidy-loop{position:absolute;width:17px;height:17px;border:2px solid color-mix(in srgb,var(--acc) 62%,transparent);border-radius:50%;opacity:.8}
+.cb-braidy-loop:first-child{transform:translate(-3px,2px)}
+.cb-braidy-loop:last-child{transform:translate(3px,-2px)}
+.cb-braidy[data-braidy-state="idle"] .cb-braidy-loop{animation:cb-braidy-breathe 6.5s ease-in-out infinite}
+.cb-braidy[data-braidy-state="listening"] .cb-braidy-loop{opacity:1;border-color:var(--acc)}
+.cb-braidy[data-braidy-state="thinking"] .cb-braidy-loop:last-child{animation:cb-braidy-turn 2.6s linear infinite;transform-origin:50% 50%}
+.cb-braidy[data-braidy-state="acknowledge"] .cb-braidy-presence{animation:cb-braidy-ack .42s ease-out 1}
+.cb-braidy[data-braidy-state="attention"] .cb-braidy-loop{border-color:color-mix(in srgb,var(--amber) 70%,transparent);opacity:1}
+/* The stamped answer, honoured before any stylesheet preference. */
+.cb-braidy[data-braidy-motion="none"] .cb-braidy-loop,.cb-braidy[data-braidy-motion="none"] .cb-braidy-presence{animation:none}
+.cb-braidy-thread{display:grid;gap:9px;min-width:0}
+.cb-braidy-turn{display:grid;gap:5px;min-width:0}
+.cb-braidy-turn p{font-size:12px;line-height:1.5;color:var(--ink);overflow-wrap:anywhere}
+.cb-braidy-muted p,.cb-braidy-asked p{color:var(--muted)}
+.cb-braidy-asked{padding-left:9px;border-left:2px solid var(--line-2)}
+.cb-braidy-trouble{padding:8px 10px;border-left:2px solid var(--amber);border-radius:0 var(--r-sm) var(--r-sm) 0;background:color-mix(in srgb,var(--amber) 8%,transparent)}
+.cb-braidy-trouble p{color:var(--amber)}
+.cb-braidy-more{display:grid;gap:5px}
+.cb-braidy-turn-foot,.cb-braidy-actions{display:flex;flex-wrap:wrap;gap:6px}
+.cb-braidy-action{padding:5px 9px;border:1px solid var(--line-2);border-radius:var(--r-pill);background:var(--panel-2);font-size:10.5px;font-weight:600;color:var(--muted);white-space:nowrap}
+.cb-braidy-action:hover{border-color:var(--acc);color:var(--ink)}
+.cb-braidy-compose{display:grid;grid-template-columns:minmax(0,1fr) auto;gap:6px;align-items:end}
+.cb-braidy-compose textarea{width:100%;min-width:0;resize:vertical;padding:7px 9px;border:1px solid var(--line-2);border-radius:var(--r-sm);background:var(--panel-2);color:var(--ink);font:inherit;font-size:12px;line-height:1.45}
+.cb-braidy-send{padding:7px 11px;border:1px solid var(--line-2);border-radius:var(--r-sm);background:var(--panel-2);font-size:11px;font-weight:600;color:var(--ink)}
+.cb-braidy-send:disabled{opacity:.55}
+@keyframes cb-braidy-breathe{0%,100%{opacity:.68}50%{opacity:.9}}
+@keyframes cb-braidy-turn{to{transform:translate(3px,-2px) rotate(360deg)}}
+@keyframes cb-braidy-ack{0%{transform:scale(1)}45%{transform:scale(1.11)}100%{transform:scale(1)}}
+@media(prefers-reduced-motion:reduce){.cb-braidy-loop,.cb-braidy-presence{animation:none!important}}
+
 /* ---- the Activity Terminal ------------------------------------------------- */
 .cb-terminal{display:flex;flex-direction:column;min-width:0;min-height:0}
 /* Sticky inside the dock's own scroller, so the counts and the two controls stay
