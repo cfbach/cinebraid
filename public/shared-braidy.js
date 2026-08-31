@@ -455,6 +455,13 @@
     return Number.isInteger(index) && index >= 0 && index < length && String(index) === key;
   }
 
+  /* AN INDEX THE CLONE CANNOT SEE. Kept separate from the sparse refusal because the
+     position is not missing — it is present and hidden, which is a different mistake
+     with a different fix. */
+  function braidyHiddenIndexRefusal(path) {
+    return braidyFactRefusal(path, "this position is not enumerable. structured clone only visits enumerable properties, so a value hidden here would never be offered to the cloneability preflight while the copier read it anyway — the two stages would be looking at different sequences.");
+  }
+
   function braidySparseRefusal(path) {
     return braidyFactRefusal(path, "the array has no value at this position. A fact array is an explicit sequence, and a hole is not an absent fact but an unwritten one: it serialises as null, or as whatever Array.prototype happens to hold at that index when the request is built.");
   }
@@ -541,6 +548,7 @@
       const descriptor = Object.getOwnPropertyDescriptor(input, key);
       if (!descriptor) throw braidySparseRefusal([...path, key]);
       if (!("value" in descriptor)) throw braidyAccessorRefusal([...path, key]);
+      if (!descriptor.enumerable) throw braidyHiddenIndexRefusal([...path, key]);
       facts[index] = braidyFactValue(descriptor.value, [...path, key], ancestors);
     }
     return facts;
@@ -599,8 +607,22 @@
      own enumerable string-keyed surface and nothing else. Named fields belong in a
      record around the array.
 
-     Density is asked here as well as in braidyFactArray. Both are reachable, so a
-     control has to remove both to make a hole observable; neither alone is decorative. */
+     EVERY POSITION MUST ALSO BE ENUMERABLE, and that is the same lesson a third time.
+     Object.keys() returns enumerable keys, so the canonical key-set check above never
+     sees a hidden index; the density walk uses descriptors and did. A value parked at
+     a non-enumerable index was therefore consumed by the copier without structured
+     clone ever being offered it:
+
+       Object.defineProperty(rows, "1", { value: proxy, enumerable: false });
+
+     `Object.keys(rows)` is ["0","2"], the clone sees ["0","2"], and [1, 2, 3] was
+     accepted as [1, { secret: 7 }, 3]. The Proxy did not defeat the preflight; it was
+     never shown to it. So an accepted fact array's indexed payload is exactly what the
+     clone can observe: own, enumerable, data, dense and canonically named.
+
+     Density and enumerability are both asked here AND in braidyFactArray. Both are
+     reachable, so a control has to remove both to make either observable; neither
+     alone is decorative. */
   function braidyFactShapeSurface(input, path, ancestors) {
     if (Array.isArray(input)) {
       const length = input.length;
@@ -613,6 +635,7 @@
         const descriptor = Object.getOwnPropertyDescriptor(input, key);
         if (!descriptor) throw braidySparseRefusal([...path, key]);
         if (!("value" in descriptor)) throw braidyAccessorRefusal([...path, key]);
+        if (!descriptor.enumerable) throw braidyHiddenIndexRefusal([...path, key]);
         braidyFactShapeValue(descriptor.value, [...path, key], ancestors);
       }
       return;

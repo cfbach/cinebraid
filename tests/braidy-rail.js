@@ -691,6 +691,77 @@ function checkFactsAreReadOnlyContext(sources = SOURCES) {
     assert.ok(/is not one of its positions/.test(said), `${label} was refused for the wrong reason: "${said}"`);
   }
 
+  /* AND EVERY POSITION MUST BE ENUMERABLE, which is the same lesson a third time.
+
+     Object.keys() returns enumerable keys, so the canonical key-set check above never
+     sees a hidden index; the density walk uses descriptors and did. A value parked at
+     a non-enumerable index was therefore consumed by the copier without structured
+     clone ever being offered it — the Proxy did not defeat the preflight, it was never
+     shown to it:
+
+       Object.defineProperty(rows, "1", { value: proxy, enumerable: false });
+       // Object.keys(rows) === ["0","2"]; accepted as [1, { secret: 7 }, 3]
+
+     The rule is not Proxy-specific and E1 is the case that says so: an ordinary 2
+     hidden at index 1 is refused too, because the two stages would still be reading
+     different sequences. */
+  const hiddenIndex = (value) => {
+    const rows = [1, 2, 3];
+    Object.defineProperty(rows, "1", { value, enumerable: false, configurable: true, writable: true });
+    return rows;
+  };
+  /* The premise, stated as an observation rather than assumed. */
+  {
+    const rows = hiddenIndex(2);
+    assert.deepStrictEqual(Object.keys(rows), ["0", "2"], "a non-enumerable index must be absent from the enumerable key set");
+    assert.deepStrictEqual(Object.keys(structuredClone(rows)), ["0", "2"],
+      "and structured clone must be unable to see it — which is what makes accepting it a surface disagreement");
+    assert.strictEqual(rows.length, 3, "while length still claims the position exists");
+  }
+  /* THE PROXY FIRST, because it is the harm: a value the copier consumed that the
+     cloneability preflight was never shown. E1 follows it to say the rule is not
+     Proxy-specific — an ordinary 2 hidden at index 1 is refused for the same reason. */
+  const HIDDEN_INDEX_CASES = [
+    ["E2 a prototype-spoofing Proxy", () => proxiedInstance],
+    ["E1 an ordinary value", () => 2],
+    ["E3 a class instance", () => new OrdinaryClass()],
+    ["E4 a Date", () => new Date(0)],
+  ];
+  for (const [label, make] of HIDDEN_INDEX_CASES) {
+    for (const [where, wrap, at] of [
+      ["at the top", (rows) => ({ rows }), "facts.rows.1"],
+      ["E5 nested one deep", (rows) => ({ block: { rows } }), "facts.block.rows.1"],
+      ["E6 nested two deep", (rows) => ({ a: { b: { rows } } }), "facts.a.b.rows.1"],
+    ]) {
+      let carried = null;
+      try { carried = api.braidyHandoff({ intent: "ask", target: { kind: "project" }, facts: wrap(hiddenIndex(make())) }); }
+      catch { carried = null; }
+      assert.strictEqual(carried, null,
+        `${label} ${where} was accepted, and the request would have carried ${JSON.stringify(carried && carried.facts)} — an indexed fact the cloneability preflight was never shown`);
+      let said = "";
+      try { api.braidyHandoff({ intent: "ask", target: { kind: "project" }, facts: wrap(hiddenIndex(make())) }); }
+      catch (error) { said = error.message; }
+      assert.ok(/this position is not enumerable/.test(said), `${label} ${where} was refused for the wrong reason: "${said}"`);
+      assert.ok(said.includes(at), `${label} ${where} must name the position; it said "${said}"`);
+    }
+  }
+
+  /* THE SURFACE-EQUALITY INVARIANT, anchored to what the two stages can actually
+     observe rather than to a second copy of the rule. For every accepted fact array,
+     the keys structured clone can see and the keys the copier produced are the same
+     canonical sequence — so there is no indexed value one stage read and the other
+     could not. */
+  for (const rows of [[], [1], [1, 2, 3], [{ a: 1 }, ["x", "y"]]]) {
+    const carried = accept({ intent: "ask", target: { kind: "project" }, facts: { rows } },
+      `a dense enumerable array of length ${rows.length} was refused`).facts.rows;
+    const canonical = rows.map((_, index) => String(index));
+    assert.deepStrictEqual(Object.keys(structuredClone(rows)), canonical,
+      "structured clone must observe exactly the canonical positions");
+    assert.deepStrictEqual(Object.keys(carried), canonical,
+      "and the copier must have produced exactly those positions — no more, and none the clone could not see");
+    assert.strictEqual(carried.length, rows.length);
+  }
+
   /* A KEY THAT GENUINELY IS A POSITION IS STILL A POSITION. defineProperty("3") on a
      three-element array raises its length to four, so it is a dense four-element
      sequence rather than a named property, and it is carried. The canonical test is
@@ -796,7 +867,7 @@ function checkFactsAreReadOnlyContext(sources = SOURCES) {
   assert.throws(() => api.braidyHandoff({ intent: "ask", target: { kind: "project" }, facts: tower }),
     /nested deeper than/, "facts are a bounded record; an unbounded graph must be refused");
 
-  note("Facts: the whole graph is copied and frozen independently — nested objects, arrays, objects inside arrays and arrays inside arrays all identity-distinct, the caller's own nodes left unfrozen and mutable, cycles and unsupported shapes refused where they are handed over with the path named, a plain record recognised by authenticating the intrinsic Object.prototype of whichever realm it came from so that null-rooted class prototypes, caller-made null-root prototypes and forged constructors are all refused, accessors refused at every depth without ever being run, fact arrays required to be dense and canonical — 0..length-1 and nothing else on the enumerable surface, so a named property structured clone can see but the payload cannot is refused rather than ignored — and the record framed to the model as CineBraid's answer rather than as raw material");
+  note("Facts: the whole graph is copied and frozen independently — nested objects, arrays, objects inside arrays and arrays inside arrays all identity-distinct, the caller's own nodes left unfrozen and mutable, cycles and unsupported shapes refused where they are handed over with the path named, a plain record recognised by authenticating the intrinsic Object.prototype of whichever realm it came from so that null-rooted class prototypes, caller-made null-root prototypes and forged constructors are all refused, accessors refused at every depth without ever being run, fact arrays required to be dense and canonical and every position own, enumerable and data — 0..length-1 and nothing else — so neither a named property the clone can see and the payload cannot, nor a hidden index the payload can read and the clone cannot, survives; and the record framed to the model as CineBraid's answer rather than as raw material");
 }
 
 /* ===========================================================================

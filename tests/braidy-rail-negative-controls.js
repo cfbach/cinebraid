@@ -367,6 +367,17 @@ async function densityControls() {
         "C5p", 2) },
     "[1, , 3] would be carried, and JSON.stringify writes the empty position out as null — or, because the copy is an ordinary array, as whatever Array.prototype holds at that index when the request is built. Either way the model is told a fact CineBraid never recorded.");
 
+  /* C5r REMOVES ONLY THE ENUMERABILITY REQUIREMENT, at both guards — density and
+     enumerability are each asked in the shape pass and again in the copier, so one
+     alone leaves the property true. What the detector reports is the bypass itself: a
+     value the copier consumed that structured clone was never shown. */
+  await control("C5r a fact-array index need not be enumerable", "checkFactsAreReadOnlyContext",
+    { contract: mutate(SOURCES.contract,
+        "if (!descriptor.enumerable) throw braidyHiddenIndexRefusal([...path, key]);",
+        "void braidyHiddenIndexRefusal;",
+        "C5r", 2) },
+    "Object.keys() skips a non-enumerable index and so does structured clone, while the copier reads its descriptor anyway. A prototype-spoofing Proxy parked at index 1 is never offered to the cloneability preflight and is copied out as { secret: 7 } — not because it defeated the boundary, but because it was never shown to it.");
+
   /* C5q IS THE REGRESSION THE REVIEW FOUND, restored exactly: a shape pass that looks
      only at the indices, on the reasoning that the copier reads nothing else. The
      reasoning is true and beside the point — structured clone visits own enumerable
