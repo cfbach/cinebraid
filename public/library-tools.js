@@ -668,7 +668,22 @@ window.approveEntityFile = (list, id, name, stateId = "") => {
      without this, the fallback is `requestedState.approvedFile`, which for the
      entity that needs correcting IS the sheet, so the modal opened offering the
      wrong image back as its own replacement. */
-  const eligiblePool = media.filter((item) => !entityCandidateIsCoverageSheet(x, item.name));
+  /* ELIGIBILITY IS ASKED OF THE SHARED PREDICATE, NOT INFERRED FROM "NOT A SHEET".
+     `!isCoverageSheet` is the retired fail-OPEN shape: it treats `undeclared` as
+     eligible, so this pool would offer back a candidate the authority kernel then
+     refuses with AUTHORITY_ARTIFACT_UNDECLARED — which is exactly the sequence the
+     2026-09-01 dogfood recorded, an APPROVE FOR DEFAULT button followed by a
+     refusal. artifactMayHoldPrimaryAuthority() is the same predicate the kernel
+     applies, so the pre-write offer and the write now agree.
+     THIS IS NOT THE AUTHORITY DECISION. The kernel remains the boundary; this only
+     stops the UI proposing a fallback it knows would be refused, and the explicit
+     `name` argument is still honoured below exactly as before — including a sheet,
+     because "use as sheet source" opens this same modal deliberately. */
+  const eligiblePool = media.filter((item) => (
+    typeof referenceArtifactStructureOf === "function" && typeof artifactMayHoldPrimaryAuthority === "function"
+      ? artifactMayHoldPrimaryAuthority(referenceArtifactStructureOf(x, item.name)) === true
+      : !entityCandidateIsCoverageSheet(x, item.name)
+  ));
   const pool = eligiblePool.length ? eligiblePool : media;
   const selected = media.find((item) => item.name === name)
     || pool.find((item) => item.name === requestedState?.approvedFile)

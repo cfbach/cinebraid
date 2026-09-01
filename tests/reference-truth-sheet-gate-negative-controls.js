@@ -696,6 +696,142 @@ controlAsync({
 
 /* ---------------------------------------------------------------------------
    NO CATCH-AS-SUCCESS. Enforced, not promised. */
+/* ===========================================================================
+   S1 — CONTROLS FOR THE PRODUCER CINEBRAID ITSELF.
+
+   The controls above break the READER and the GATE. These break the WRITER,
+   which is where the 2026-09-01 defect actually lived: CineBraid generated a
+   reference for one continuity state and then could not approve it, because
+   nothing on the path recorded WHAT it had asked for.
+
+   WHY THESE DO NOT BUILD THEIR MODULE. `fal-generation.js` is an express
+   registrar and `public/fal-generation.js` is a browser module full of DOM
+   reads; building either here would prove the mutation still parsed, not that
+   it changed behaviour, and `ingestEntity` is not exported to be called. So
+   each control mutates the shipped source under the same probe receipt, and
+   then carries the consequence to the REAL authority kernel — which is the
+   thing that refused the filmmaker. The end-to-end path through the shipped
+   route and the shipped ingest is proved in tests/fal-generation.js.
+   =========================================================================== */
+const generatedProject = (row) => ({
+  characters: [{
+    id: "CHAR-A", prefix: "CHAR-A",
+    candidateFiles: [{ stored: "CHAR-A-CANDIDATE-M9X-01.png", targetStateId: "state-default", targetStateName: "Default", ...row }],
+    continuityStates: [{ id: "state-default", isDefault: true, approvedFile: "" }],
+  }],
+});
+
+function approveGenerated(kernel, project) {
+  const manual = installTestManualActionSource(kernel);
+  try {
+    manual.gesture(() => kernel.approveEntityStateCanon(project, {
+      list: "characters", entityId: "CHAR-A", stateId: "state-default",
+      value: "CHAR-A-CANDIDATE-M9X-01.png", assetId: "", at: AT,
+    }));
+    return { wrote: true, code: "" };
+  } catch (error) { return { wrote: false, code: error.code || "" }; }
+}
+
+/* The row the SHIPPED ingest line would write, evaluated from that line itself
+   so the control cannot drift onto a paraphrase of it. */
+function ingestDeclarationFrom(text, label) {
+  const line = toLF(text).split("\n").find((row) => /^\s*coverageJobType: job\./.test(row));
+  if (!line) throw new Error(`${label}: the ingest declaration line was not found in the shipped source`);
+  const expression = line.trim().replace(/^coverageJobType:\s*/, "").replace(/,\s*$/, "");
+  return (job) => vm.runInNewContext(`(job) => (${expression})`, {})(job);
+}
+
+function controlWriter(spec) {
+  const { label, file, anchor, replacement, probe, reason, explain } = spec;
+  controls += 1;
+  const real = probe(source(file));
+  assert.ok(real && real.reached === true, `${label}: the probe did not reach its checkpoint against the REAL source`);
+  assert.strictEqual(real.held, true, `${label}: the invariant does not hold in the shipped implementation`);
+  const after = probe(mutate(source(file), anchor, replacement, label));
+  assert.ok(after && after.reached === true, `${label}: the probe did not reach its checkpoint against the MUTATED source`);
+  assert.strictEqual(after.held, false, `${label}: the invariant SURVIVED the break. ${explain}`);
+  assert.strictEqual(after.reason, reason,
+    `${label}: failed for the wrong reason (expected ${JSON.stringify(reason)}, got ${JSON.stringify(after.reason)})`);
+  notes.push(`  ${label} — held under the real source, failed as ${JSON.stringify(after.reason)} under the mutation`);
+}
+
+/* S1-C1 — THE CARRIAGE. Ingest copies the dispatch's declaration into the field
+   the classifier reads. Take that copy away and the candidate CineBraid made
+   for Default is refused by CineBraid, which is verbatim the dogfood. */
+controlWriter({
+  label: "S1-C1 ingest carries the generated declaration",
+  file: "fal-generation.js",
+  anchor: 'coverageJobType: job.coverageJobType || job.artifactStructure || "",',
+  replacement: 'coverageJobType: job.coverageJobType || "",',
+  probe: (text) => {
+    const declare = ingestDeclarationFrom(text, "S1-C1");
+    const job = { coverageJobType: "", artifactStructure: "single-reference", continuityStateId: "state-default" };
+    const kernel = build(KERNEL_FILE, null);
+    const project = generatedProject({ coverageJobType: declare(job) });
+    const result = approveGenerated(kernel, project);
+    return { reached: true, held: result.wrote === true, reason: result.wrote ? "approved" : `refused(${result.code})` };
+  },
+  reason: "refused(AUTHORITY_ARTIFACT_UNDECLARED)",
+  explain: "Ingest is the only hop that turns what CineBraid asked for into what the classifier can read.",
+});
+
+/* S1-C2 — THE DIRECT PRODUCER. */
+controlWriter({
+  label: "S1-C2 the assisted dispatch declares",
+  file: "public/fal-generation.js",
+  anchor: '    artifactStructure: "single-reference",\n',
+  replacement: "",
+  probe: (text) => {
+    const body = toLF(text).slice(toLF(text).indexOf("window.startFalEntityGeneration"), toLF(text).indexOf("window.cancelFalJob"));
+    const declares = /artifactStructure:\s*"single-reference"/.test(body);
+    /* The consequence, not just the absence: an undeclared dispatch yields an
+       undeclared job, and the kernel refuses the candidate it produced. */
+    const kernel = build(KERNEL_FILE, null);
+    const result = approveGenerated(kernel, generatedProject({ coverageJobType: declares ? "single-reference" : "" }));
+    return { reached: true, held: declares && result.wrote === true, reason: result.wrote ? "approved" : `refused(${result.code})` };
+  },
+  reason: "refused(AUTHORITY_ARTIFACT_UNDECLARED)",
+  explain: "The dispatch is the only place that knows CineBraid asked for one single view of one state.",
+});
+
+/* S1-C3 — THE SIBLING PRODUCER. Fixing one writer and leaving the other silent
+   would make approval depend on which button started the run. */
+controlWriter({
+  label: "S1-C3 the automation dispatch declares",
+  file: "public/automation.js",
+  anchor: 'artifactStructure: "single-reference", continuityStateId: state.id,',
+  replacement: "continuityStateId: state.id,",
+  probe: (text) => {
+    const declares = /purpose: "entity-reference"[\s\S]{0,400}?artifactStructure: "single-reference"/.test(toLF(text));
+    const kernel = build(KERNEL_FILE, null);
+    const result = approveGenerated(kernel, generatedProject({ coverageJobType: declares ? "single-reference" : "" }));
+    return { reached: true, held: declares && result.wrote === true, reason: result.wrote ? "approved" : `refused(${result.code})` };
+  },
+  reason: "refused(AUTHORITY_ARTIFACT_UNDECLARED)",
+  explain: "Two producers make this class of candidate; a fix that covers one leaves the other refusing.",
+});
+
+/* S1-C4 — THE ACCOUNTING BOUNDARY. The declaration must never become coverage-run
+   membership. Widen the job's coverage field to accept it and a manual paid
+   generation is enrolled in a run the filmmaker never started. */
+controlWriter({
+  label: "S1-C4 the declaration stays out of coverage-run membership",
+  file: "fal-generation.js",
+  anchor: 'coverageJobType: ["sheet", "slot", ""].includes(String(req.body?.coverageJobType || "")) ? String(req.body?.coverageJobType || "") : "",',
+  replacement: 'coverageJobType: String(req.body?.coverageJobType || req.body?.artifactStructure || ""),',
+  probe: (text) => {
+    const line = toLF(text).split("\n").find((row) => /^\s*coverageJobType: \[?"?sheet|^\s*coverageJobType: String\(req\.body/.test(row));
+    if (!line) return { reached: false };
+    const expression = line.trim().replace(/^coverageJobType:\s*/, "").replace(/,\s*$/, "");
+    const membership = vm.runInNewContext(`(req) => (${expression})`, {})({ body: { artifactStructure: "single-reference" } });
+    /* Empty means: this manual generation is NOT a member of any coverage run.
+       coverageRunJobs() and the ingest projection both key on exactly this. */
+    return { reached: true, held: membership === "", reason: membership === "" ? "not-a-member" : `enrolled(${membership})` };
+  },
+  reason: "enrolled(single-reference)",
+  explain: "coverageRunJobs() treats any non-empty value as membership, and ingest mints a coverageAutomation projection from it.",
+});
+
 function testNoCatchAsSuccess() {
   const text = toLF(fs.readFileSync(__filename, "utf8"));
   assert.ok(!/catch\s*\([^)]*\)\s*\{[^}]*controls\s*\+\+/.test(text),

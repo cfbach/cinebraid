@@ -206,6 +206,122 @@ function approveThrough(kernel, manual, project, list = "characters", id = "CHAR
   } catch (error) { return { wrote: false, code: error.code || "", message: error.message || "" }; }
 }
 
+/* ==========================================================================
+   S1 — THE PRODUCER CINEBRAID FORGOT TO TEACH.
+
+   §A above establishes that structure is DECLARED and that manual intake
+   declares it. There are three producers of an entity candidate, not two:
+   manual intake, the import mapper, and CINEBRAID ITSELF. The third was never
+   wired, so the 2026-09-01 dogfood generated a reference for one continuity
+   state, reviewed it 92/PASS, offered APPROVE FOR DEFAULT, and was refused by
+   its own gate under AUTHORITY_ARTIFACT_UNDECLARED.
+
+   The gate was right. This is the writer being taught to speak.
+
+   The end-to-end proof — real route, real ingest, real project.json — lives in
+   tests/fal-generation.js, where the dispatch and the ingest already are. What
+   is proved here is the half that suite cannot reach: that BOTH client
+   producers declare, that the server keeps the declaration OUT of coverage-run
+   membership, and that the kernel then writes canon for the state the image was
+   made for.
+   ========================================================================== */
+function testGeneratedReferenceDeclaresStructure() {
+  const dispatch = fs.readFileSync(path.join(ROOT, "public/fal-generation.js"), "utf8");
+  const automation = fs.readFileSync(path.join(ROOT, "public/automation.js"), "utf8");
+  const server = fs.readFileSync(path.join(ROOT, "fal-generation.js"), "utf8");
+
+  /* BOTH SIBLING PRODUCERS, because fixing one and leaving the other undeclared
+     would make approval succeed or refuse depending on which button was pressed. */
+  const body = dispatch.slice(dispatch.indexOf("window.startFalEntityGeneration"), dispatch.indexOf("window.cancelFalJob"));
+  ok(/artifactStructure:\s*"single-reference"/.test(body),
+    "the direct assisted reference dispatch must declare what it is asking for");
+  ok(/purpose:\s*"entity-reference"[\s\S]{0,400}?artifactStructure:\s*"single-reference"/.test(automation),
+    "the automation-driven reference dispatch must declare the same fact");
+
+  /* NOTHING IS INFERRED. The declaration is authored by the caller that knows,
+     not recovered from the bytes that came back. */
+  ok(!/naturalWidth|naturalHeight/.test(body), "the dispatch must not infer structure from dimensions");
+  ok(!/SHEET\|TURNAROUND\|CONTACT/.test(body), "and must not infer it from a filename");
+
+  /* THE ACCOUNTING BOUNDARY IS THE POINT OF THE SEPARATE FIELD. On a JOB,
+     coverageJobType is coverage-RUN MEMBERSHIP: coverageRunJobs() treats any
+     non-empty value as membership and ingestEntity() mints a projection from it.
+     The declaration therefore travels in its own whitelisted field. */
+  ok(/artifactStructure:\s*\["single-reference",\s*"sheet",\s*""\]\.includes/.test(server),
+    "the server must whitelist the declaration to the values the classifier understands");
+  ok(/coverageJobType:\s*job\.coverageJobType\s*\|\|\s*job\.artifactStructure\s*\|\|\s*""/.test(server),
+    "ingest must copy the declaration into the candidate row's existing structural field");
+  ok(/if \(job\.coverageJobType\) \{/.test(server),
+    "and the coverage-run projection must still be keyed on the JOB's coverage membership, not on the declaration");
+
+  /* THE ROW THE SHIPPED INGEST WRITES, classified by the shipped reader. */
+  const generated = { stored: "CHAR-REX_FAL_CANDIDATE_2.png", coverageJobType: "single-reference", targetStateId: "state-default", targetStateName: "Default" };
+  eq(Coverage.referenceArtifactStructure(generated), "single",
+    "a candidate CineBraid generated for one continuity state classifies SINGLE");
+  eq(Coverage.artifactMayHoldPrimaryAuthority(Coverage.referenceArtifactStructure(generated)), true,
+    "and is eligible to become that state's identity");
+
+  /* WHERE AND WHAT REMAIN TWO FACTS. Structure did not replace the target, and
+     the target is still not readable as a structure — the distinction
+     public/library-tools.js:165 draws for intake holds for generation too. */
+  eq(generated.targetStateId, "state-default", "the deterministic target survives beside the structural fact");
+  eq(Coverage.referenceArtifactStructure({ stored: "X.png", targetStateId: "state-default" }), "undeclared",
+    "and a target alone is still NOT a structural declaration — WHERE is not WHAT");
+}
+
+function testGeneratedReferenceReachesCanon() {
+  const kernel = kernelRealm();
+  const manual = installTestManualActionSource(kernel);
+
+  /* THE DOGFOOD PATH, END TO END AT THE BOUNDARY THAT REFUSED IT. */
+  const project = entityProject({
+    coverageJobType: "single-reference", targetStateId: "state-default", targetStateName: "Default",
+    generationProvider: "fal", generationJobId: "fal-job-rex-default",
+  });
+  const approved = approveThrough(kernel, manual, project);
+  eq(approved.wrote, true, "S1: the reference CineBraid generated for Default may now become Default's identity");
+  eq(approved.code, "", "S1: and it is not refused under any code");
+  eq(project.characters[0].continuityStates[0].approvedFile, "CHAR-A-CANDIDATE-M9X-01.png",
+    "S1: the live edge is written for the state the image was made for");
+  eq(kernel.entityProductionTruth(project, "characters", "CHAR-A").canon.length, 1,
+    "S1: and canon carries exactly one entry");
+  ok((project.productionAuthority || {}).receipts?.length > 0, "S1: with a normal authority receipt behind it");
+
+  /* THE SAME BYTES WITH THE DECLARATION REMOVED. This is the exact refusal the
+     dogfood hit, and it must still be reachable — the fix is a writer speaking,
+     not a gate softening. */
+  const stripped = entityProject({ targetStateId: "state-default", targetStateName: "Default", generationProvider: "fal" });
+  const refused = approveThrough(kernel, manual, stripped);
+  eq(refused.wrote, false, "S1: remove the declaration and the same candidate is refused again");
+  eq(refused.code, "AUTHORITY_ARTIFACT_UNDECLARED", "S1: under the same named code the dogfood recorded");
+  eq(stripped.characters[0].continuityStates[0].approvedFile, "", "S1: and nothing is written");
+
+  /* THE TWO GUARDS THE FIX MUST NOT HAVE LOOSENED. */
+  eq(Coverage.artifactMayHoldPrimaryAuthority("undeclared"), false,
+    "S1: a bare hand-dropped row with no declaration stays fail-closed");
+  const sheet = approveThrough(kernel, manual, entityProject({ coverageJobType: "sheet", coverageSheetType: "angles" }));
+  eq(sheet.wrote, false, "S1: and a coverage sheet still cannot hold single-reference primary authority");
+  eq(sheet.code, "AUTHORITY_ARTIFACT_NOT_IDENTITY_ELIGIBLE", "S1: under its own distinct code");
+}
+
+/* THE OFFER AND THE WRITE MUST AGREE. The dogfood's sharpest edge was not the
+   refusal itself — it was being offered APPROVE FOR DEFAULT and then refused.
+   The approval pool asked "is this not a sheet", which is the retired fail-OPEN
+   shape: it treats `undeclared` as eligible. It now asks the same predicate the
+   kernel applies. The kernel is still the authority; this only stops the UI
+   proposing a fallback it knows would be refused. */
+function testApprovalOfferMatchesTheGate() {
+  const tools = fs.readFileSync(path.join(ROOT, "public/library-tools.js"), "utf8");
+  const approve = tools.slice(tools.indexOf("window.approveEntityFile"), tools.indexOf("window.confirmApproveEntity"));
+  ok(/artifactMayHoldPrimaryAuthority\(referenceArtifactStructureOf\(/.test(approve),
+    "the approval pool must ask the shared predicate the kernel applies");
+  ok(!/const eligiblePool = media\.filter\(\(item\) => !entityCandidateIsCoverageSheet/.test(approve),
+    "and must no longer treat 'not a sheet' as eligible, which passed undeclared rows through");
+  /* THE AUTHORITY DECISION DID NOT MOVE INTO THE UI. */
+  ok(!/approveEntityStateCanon[\s\S]{0,200}artifactMayHoldPrimaryAuthority/.test(approve),
+    "the UI must not re-decide authority; it only filters what it offers");
+}
+
 function testTheBoundaryRefusesASheet() {
   const kernel = kernelRealm();
   const manual = installTestManualActionSource(kernel);
@@ -793,6 +909,9 @@ async function main() {
   testStructuralClassification();
   testFilenameHeuristicIsGoneAndWasWrongBothWays();
   testManualIntakeDeclaresStructure();
+  testGeneratedReferenceDeclaresStructure();
+  testGeneratedReferenceReachesCanon();
+  testApprovalOfferMatchesTheGate();
   testImportedMappingIsReadAsEvidence();
   testTheBoundaryRefusesASheet();
   testUnresolvableClassifierFailsClosed();

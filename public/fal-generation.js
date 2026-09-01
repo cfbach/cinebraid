@@ -676,6 +676,21 @@ window.startFalEntityGeneration = async () => {
     entityList: request.list,
     entityId: entity.id,
     entityType: { characters: "character", locations: "location", props: "prop", vehicles: "vehicle" }[request.list] || "entity",
+    /* WHAT CINEBRAID IS ASKING FOR, declared by the caller that knows.
+       `continuityStateId` below is WHERE the image is going; this is WHAT it is,
+       and library-tools.js:165 already establishes that those are two different
+       facts — a filmmaker can drop a turnaround onto a state slot, which is why
+       intake asks even when a state is the target.
+       CineBraid is not being asked here: this dispatch composes one prompt for one
+       continuity state and requests single images from it, so the answer is known
+       at the point of the request rather than guessed from the bytes that come
+       back. Without it the candidate CineBraid itself generated arrives
+       `undeclared` and the authority kernel refuses it, which is the defect the
+       2026-09-01 dogfood recorded.
+       The vocabulary is INTAKE_STRUCTURES', because this value is copied verbatim
+       into the candidate row's existing declaration field at ingest, so nothing new
+       has to be taught to read it. */
+    artifactStructure: "single-reference",
     continuityStateId: state?.id || "",
     continuityStateName: state?.name || "",
     parentStateId: parentInfo?.parent?.id || "",

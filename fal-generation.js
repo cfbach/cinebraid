@@ -2135,7 +2135,17 @@ function registerFalGeneration(app, context) {
           parentStateName: job.parentStateName || "",
           parentApprovedFile: job.parentApprovedFile || "",
           derivationMode: job.derivationMode || "independent",
-          coverageJobType: job.coverageJobType || "",
+          /* THE ROW'S STRUCTURAL DECLARATION. On a candidate row this field is what
+             shared-coverage.js's referenceArtifactStructure() keys on, and it is the
+             same field manual intake writes (public/library-tools.js). A coverage job
+             already answers it — "sheet" or "slot" — and keeps precedence. Anything
+             else takes the dispatch's own declaration, so a reference CineBraid
+             generated for one continuity state no longer arrives `undeclared` and
+             refused by its own authority gate.
+             The job's coverage membership is NOT widened to make this work: the
+             branch below still reads job.coverageJobType, which stays empty for a
+             manual reference generation. */
+          coverageJobType: job.coverageJobType || job.artifactStructure || "",
           coverageSheetType: job.coverageSheetType || "",
           targetCoverageSlotId: job.targetCoverageSlotId || "",
           targetCoverageSlotName: job.targetCoverageSlotName || "",
@@ -2826,6 +2836,18 @@ function registerFalGeneration(app, context) {
       sourceCandidate: String(req.body?.sourceCandidate || ""),
       guideAssetId: String(req.body?.guideAssetId || ""),
       coverageJobType: ["sheet", "slot", ""].includes(String(req.body?.coverageJobType || "")) ? String(req.body?.coverageJobType || "") : "",
+      /* WHAT THE RETURNED ARTIFACTS ARE, kept deliberately separate from
+         `coverageJobType` above even though both end up describing structure.
+         `coverageJobType` on a JOB is coverage-RUN MEMBERSHIP: coverageRunJobs()
+         treats any non-empty value as "this job belongs to a coverage run", and
+         ingestEntity() mints an entity.coverageAutomation projection from it. A
+         manual reference generation that borrowed that field to say "single image"
+         would be charged to a run the filmmaker never started.
+         So the declaration travels in its own field, is whitelisted to the values
+         the shared classifier already understands, and is copied into the CANDIDATE
+         ROW at ingest — where `coverageJobType` means something else entirely and
+         is the field library-tools.js's manual intake has always written. */
+      artifactStructure: ["single-reference", "sheet", ""].includes(String(req.body?.artifactStructure || "")) ? String(req.body?.artifactStructure || "") : "",
       coverageSheetType: String(req.body?.coverageSheetType || ""),
       targetCoverageSlotId: String(req.body?.targetCoverageSlotId || ""),
       targetCoverageSlotName: String(req.body?.targetCoverageSlotName || ""),

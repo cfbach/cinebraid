@@ -4,6 +4,7 @@ const os = require("os");
 const path = require("path");
 const express = require("express");
 const { registerFalGeneration } = require("../fal-generation");
+const Coverage = require("../public/shared-coverage.js");
 const { addMotionPromptBuild } = require("./h3-execution-fixture");
 const { declaredRequestInit } = require("./generation-request-fixture");
 
@@ -400,6 +401,7 @@ async function main() {
       entityJobIds.push(submitted.data.job.id);
     }
 
+
     const coverageSheetSubmit = await json(`${appOrigin}/api/generation/fal/jobs`, {
       method: "POST",
       headers: { "content-type": "application/json" },
@@ -735,6 +737,110 @@ async function main() {
     assert(!projectText.includes("fal-secret-test-key"), "project data must not contain the API key");
 
     console.log("FAL generation suite passed server-side secrets, blocking, frame edits, executable corrections, character/location/prop/vehicle reference generation, coverage-sheet provenance and idempotency, parent-derived continuity-state edits, candidate-only ingestion, job persistence, provenance, and C0-1 — a sole malformed frame-presence declaration refuses at the paid boundary with zero provider contact and no durable job row, while a readable declaration still dispatches.");
+    /* ======================================================================
+       S1 — WHAT CINEBRAID GENERATED SURVIVES TO THE APPROVAL IT WAS MADE FOR.
+
+       The 2026-09-01 dogfood generated a reference for Rex / Default, reviewed
+       it 92/PASS, offered APPROVE FOR DEFAULT, and was then refused by its own
+       authority gate because nothing had recorded WHAT the image was. The gate
+       is right to fail closed; the writer was the one not speaking.
+
+       This runs the shipped route and the shipped ingest — no provider is
+       contacted, the stub answers — and reads the row that actually lands in
+       project.json. The pair of cases isolates one variable: the same request,
+       with and without the declaration.
+       ====================================================================== */
+    /* The dispatch refuses a target that does not exist, which is correct and is
+       why this is given a real one rather than a plausible string. Added here
+       rather than in the shared fixture so the cases above keep exercising the
+       stateless entity path they were written for. */
+    const s1Seed = JSON.parse(fs.readFileSync(projectFile, "utf8"));
+    const s1Character = s1Seed.characters.find((row) => row.id === "CHAR-ONE");
+    s1Character.continuityStates = [
+      { id: "state-default", name: "Default", isDefault: true, approvedFile: "" },
+    ];
+    fs.writeFileSync(projectFile, JSON.stringify(s1Seed, null, 2));
+    /* The coverage-run projection as it stands BEFORE any S1 job, so the accounting
+       guard below compares against reality rather than against an assumption that
+       this entity has no coverage history. It does. */
+    const s1CoverageBefore = JSON.stringify(s1Character.coverageAutomation ?? null);
+
+    const s1Request = (extra) => ({
+      purpose: "entity-reference",
+      entityList: "characters", entityId: "CHAR-ONE", entityType: "character",
+      continuityStateId: "state-default", continuityStateName: "Default",
+      prompt: "Clean full-body character reference for the default state.",
+      aspectRatio: "3:4", outputCount: 1, quality: "high",
+      ...extra,
+    });
+    const s1Land = async (body, tag) => {
+      const posted = await json(`${appOrigin}/api/generation/fal/jobs`, {
+        method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(body),
+      });
+      assert(posted.response.ok, `${tag}: ${JSON.stringify(posted.data)}`);
+      const done = await json(`${appOrigin}/api/generation/fal/jobs/${posted.data.job.id}/refresh`, { method: "POST" });
+      assert(done.response.ok, `${tag}: ${JSON.stringify(done.data)}`);
+      const project = JSON.parse(fs.readFileSync(projectFile, "utf8"));
+      const entity = project.characters.find((row) => row.id === "CHAR-ONE");
+      const row = entity.candidateFiles.find((item) => item.generationJobId === posted.data.job.id);
+      assert(row, `${tag}: ingest wrote no candidate row`);
+      return { job: posted.data.job, row, entity };
+    };
+
+    /* DECLARED — the shipped dispatch says single-reference, and it survives. */
+    const declaredGen = await s1Land(s1Request({
+      sourceBuildId: "s1-build-declared", artifactStructure: "single-reference",
+    }), "S1 declared");
+    assert.strictEqual(declaredGen.job.artifactStructure, "single-reference",
+      "S1: the job row must record what the dispatch asked for");
+    assert.strictEqual(Coverage.referenceArtifactStructure(declaredGen.row), "single",
+      "S1: a candidate CineBraid generated for one continuity state must classify SINGLE");
+    assert.strictEqual(Coverage.artifactMayHoldPrimaryAuthority(Coverage.referenceArtifactStructure(declaredGen.row)), true,
+      "S1: and must therefore be eligible to become that state's identity");
+
+    /* WHERE AND WHAT STAY SEPARATE. The declaration must not have been achieved
+       by overwriting the target, and the target must not have been read as the
+       structure — library-tools.js:165 makes that distinction explicitly. */
+    assert.strictEqual(declaredGen.row.targetStateId, "state-default",
+      "S1: the deterministic target survives unchanged beside the structural fact");
+    assert.strictEqual(declaredGen.row.targetStateName, "Default", "S1: and so does its name");
+
+    /* THE ACCOUNTING BOUNDARY. `coverageJobType` on a JOB is coverage-run
+       membership; borrowing it to say "single image" would charge a manual paid
+       generation to a run the filmmaker never started.
+       CHAR-ONE genuinely HAS a coverage projection by now — the sheet case above
+       built one — so the guard is not "no projection exists". It is that this
+       manual generation did not JOIN it: the projection is byte-identical to what
+       it was before these jobs ran, timestamps included, so it was not even
+       rebuilt, and no S1 job id appears in its membership. */
+    assert.strictEqual(declaredGen.job.coverageJobType, "",
+      "S1: declaring structure must NOT give the job a coverage-run membership");
+    assert.strictEqual(JSON.stringify(declaredGen.entity.coverageAutomation ?? null), s1CoverageBefore,
+      "S1: a manual reference generation must leave the coverage-run projection untouched");
+    assert.strictEqual((declaredGen.entity.coverageAutomation?.jobs || []).includes(declaredGen.job.id), false,
+      "S1: and must never be enrolled as a member of a coverage run");
+
+    /* OMITTED — the same request without the declaration. The row is undeclared,
+       which is what the authority gate refuses. This is the negative half: it
+       isolates the declaration as the thing that made the difference. */
+    const undeclaredGen = await s1Land(s1Request({ sourceBuildId: "s1-build-undeclared" }), "S1 undeclared");
+    assert.strictEqual(undeclaredGen.job.artifactStructure, "",
+      "S1: a request that declares nothing records nothing");
+    assert.strictEqual(Coverage.referenceArtifactStructure(undeclaredGen.row), "undeclared",
+      "S1: and its candidate row stays UNDECLARED — no evidence is not evidence of eligibility");
+    assert.strictEqual(Coverage.artifactMayHoldPrimaryAuthority(Coverage.referenceArtifactStructure(undeclaredGen.row)), false,
+      "S1: so the gate still refuses it, exactly as it refused the dogfood candidate");
+
+    /* AN UNRECOGNISED VALUE IS NOT A DECLARATION. The whitelist must drop it
+       rather than let a caller invent a structure the classifier would trust. */
+    const bogusGen = await s1Land(s1Request({
+      sourceBuildId: "s1-build-bogus", artifactStructure: "definitely-single-trust-me",
+    }), "S1 bogus");
+    assert.strictEqual(bogusGen.job.artifactStructure, "",
+      "S1: an unrecognised structure is dropped at the boundary, not stored");
+    assert.strictEqual(Coverage.referenceArtifactStructure(bogusGen.row), "undeclared",
+      "S1: and the row fails closed rather than inheriting an invented claim");
+
   } finally {
     await new Promise((resolve) => appServer.close(resolve));
     await new Promise((resolve) => mockServer.close(resolve));

@@ -2982,7 +2982,13 @@ async function v626AutomateEntityState(run, list, entityId, stateId) {
       const derivationMode = dispatchDerivation && dispatchDerivation.canDerive ? "derive" : "independent";
       const references = state.isDefault ? [] : entityGenerationReferences(list, entity, { state, mode: derivationMode });
       const prompt = state.isDefault ? build.prompt : entityGenerationPrompt(list, entity, build, references, { state, mode: derivationMode });
-      const job = await v626WaitFalJob(run, genStep, { purpose: "entity-reference", entityList: list, entityId, entityType: { characters: "character", locations: "location", props: "prop", vehicles: "vehicle" }[list] || "entity", continuityStateId: state.id, continuityStateName: state.name || "", parentStateId: parentInfo?.parent?.id || "", parentStateName: parentInfo?.parent?.name || "", parentApprovedFile: dispatchDerivation ? dispatchDerivation.file : "", derivationMode, sourceBuildId: build.id, prompt, references, outputCount: v640OutputsPerRequest(run), quality: v6211RunGenerationSettings(run).frameQuality, resolution: v6211RunGenerationSettings(run).frameResolution, aspectRatio: referenceAspectLabel(list) });
+      /* THE SIBLING PRODUCER DECLARES THE SAME FACT. This path and
+         startFalEntityGeneration() are the two writers that produce an
+         entity-reference candidate for a known continuity state; fixing one and
+         leaving the other undeclared would make approval work or refuse depending
+         on which button started the run. See public/fal-generation.js for why the
+         declaration is authored here rather than inferred at ingest. */
+      const job = await v626WaitFalJob(run, genStep, { purpose: "entity-reference", entityList: list, entityId, entityType: { characters: "character", locations: "location", props: "prop", vehicles: "vehicle" }[list] || "entity", artifactStructure: "single-reference", continuityStateId: state.id, continuityStateName: state.name || "", parentStateId: parentInfo?.parent?.id || "", parentStateName: parentInfo?.parent?.name || "", parentApprovedFile: dispatchDerivation ? dispatchDerivation.file : "", derivationMode, sourceBuildId: build.id, prompt, references, outputCount: v640OutputsPerRequest(run), quality: v6211RunGenerationSettings(run).frameQuality, resolution: v6211RunGenerationSettings(run).frameResolution, aspectRatio: referenceAspectLabel(list) });
       /* BATCH 1B: THE RUN RECORDS WHAT IT ASKED FOR, ON BEHALF OF WHOM.
 
          Ownership authority requires a durable claim, and a file CineBraid
