@@ -26,9 +26,27 @@
  */
 
 const assert = require("assert");
+const fs = require("fs");
 
 const suite = require("./stage-surfaces.js");
 const { SOURCES } = suite;
+const { releaseIdentity } = require("../release-identity.js");
+
+/* THE ASSET STAMP IS DERIVED, NEVER TYPED. index.html's cache-busting stamps are
+   re-written from package.json by scripts/sync-version.js on every release, so a
+   control that anchors on the literal `?v=<version>` stops matching the moment the
+   version moves — and because the probe receipt below is an assertion, that control
+   does not merely go quiet, it ABORTS the file before the controls after it run.
+   That is exactly what happened between 6.7.0-private.1 and 6.7.0-dev.1 (commit
+   407ee0a): C31 threw, and C32/C33/C34 never executed, while `check:ci` stayed green
+   because this suite is not in that chain.
+
+   release-identity.js is the same single source tests/version-consistency.js and
+   tests/public-exposure.js already derive from, so this control now follows the
+   version by construction. The receipt keeps its real job — catching a rename or a
+   refactor of the script tag itself — and loses only the brittleness that had
+   nothing to do with what C31 controls. */
+const ASSET_STAMP = releaseIdentity().version;
 
 const notes = [];
 const note = (line) => notes.push(line);
@@ -317,7 +335,7 @@ function integrationControls() {
 
   control("C31 the contract loads after the runtime that reads it", "checkShellIntegration",
     { markup: mutate(SOURCES.markup,
-        "<script src=\"shared-stage-actions.js?v=6.7.0-private.1\"></script>\n",
+        `<script src="shared-stage-actions.js?v=${ASSET_STAMP}"></script>\n`,
         "",
         "C31") },
     "A runtime whose contract has not loaded renders no actions at all, silently, on the very first paint of every cold start.");
@@ -348,11 +366,41 @@ function integrationControls() {
    RUN
    =========================================================================== */
 
+/* THE STALE-LITERAL GUARD, and why it is two assertions rather than one.
+
+   The first proves the derivation is LIVE: a stamp that no longer occurs in the
+   shipped markup means sync-version.js and this file have diverged, and it says so
+   in those terms instead of surfacing as an unexplained probe-receipt miss.
+
+   The second proves the CLASS cannot come back: any future control that types a
+   version into an asset stamp is caught here, in this file, at the moment it is
+   written — rather than at the next release, silently, by aborting the run. The
+   pattern deliberately matches `?v=` followed by a DIGIT, so the derived
+   `?v=${ASSET_STAMP}` form above is not itself a hit. */
+function assetStampGuard() {
+  note("The asset stamp:");
+
+  assert.ok(SOURCES.markup.includes(`?v=${ASSET_STAMP}`),
+    `the derived asset stamp ?v=${ASSET_STAMP} does not occur in public/index.html. `
+    + "release-identity.js and the shipped cache-busting stamps have diverged; "
+    + "run `npm run sync:version` and re-check tests/version-consistency.js.");
+  note(`  the derived stamp ?v=${ASSET_STAMP} is present in the shipped markup`);
+
+  const self = fs.readFileSync(__filename, "utf8");
+  const typed = self.match(/\?v=\d[^"'\s`]*/g) || [];
+  assert.deepStrictEqual(typed, [],
+    `these controls type a release version into an asset stamp instead of deriving it: ${typed.join(", ")}. `
+    + "A typed stamp stops matching at the next version bump, and because the probe "
+    + "receipt is an assertion it aborts this file rather than going quiet. Use ASSET_STAMP.");
+  note("  no control types a release version into an asset stamp");
+}
+
 contractControls();
 stripControls();
 actionRenderControls();
 runtimeControls();
 integrationControls();
+assetStampGuard();
 
 for (const line of notes) console.log(line);
 
