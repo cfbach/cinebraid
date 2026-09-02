@@ -1011,8 +1011,13 @@ window.requestHumanEntityCandidateApproval = (list, id, fileName, stateId = "sta
   if (!entity) return toast("Candidate is unavailable");
   const row = entityCandidateRow(entity, fileName, false) || {};
   if (continuation === "coverage") return approveCoverageCandidate(list, id, fileName, row.targetCoverageSlotId, true);
-  if (continuation === "extract") return approveEntityFile(list, id, fileName, stateId);
-  return approveEntityFile(list, id, fileName, stateId);
+  /* THE INTENT TRAVELS THE LAST HOP. This card already decided which operation
+     the filmmaker pressed — the button reads USE AS SHEET SOURCE and sets
+     `extract` — and that answer used to stop here, leaving the modal to guess
+     from the file's classification. Guessing turns an eligibility failure into a
+     workflow; naming the mode does not. */
+  if (continuation === "extract") return approveEntityFile(list, id, fileName, stateId, "sheet-source");
+  return approveEntityFile(list, id, fileName, stateId, "primary-authority");
 };
 
 window.setEntityCandidateDecision = (list, id, fileName, decision) => {

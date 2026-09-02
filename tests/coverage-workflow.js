@@ -118,7 +118,12 @@ async function testCoverageSubmissionAndPersistentOpenState() {
 async function testSheetApprovalDoesNotSeedAngleAndRemainsExtractable() {
   const project = coverageFixture();
   const rendered = await render("#/character/CHAR-IREN", project, { scan: coverageScan(), storage: { "cinebraid-focused:fixture:entity-task:characters:CHAR-IREN": "primary" } });
-  rendered.context.approveEntityFile("characters", "CHAR-IREN", "CHAR-IREN-SHEET.png", "state-default");
+  /* THE OPERATION THE CARD STARTS. USE AS SHEET SOURCE routes through
+     requestHumanEntityCandidateApproval with continuation "extract"; that INTENT
+     is what admits a sheet, not the file happening to classify as one. A bare
+     approveEntityFile call is a primary-authority request, which a sheet is
+     correctly refused for. */
+  rendered.context.requestHumanEntityCandidateApproval("characters", "CHAR-IREN", "CHAR-IREN-SHEET.png", "state-default", "extract");
   rendered.context.document.getElementById("entity-approve-file").value = "CHAR-IREN-SHEET.png";
   rendered.context.document.getElementById("entity-approve-target").value = "state-default";
   rendered.context.document.getElementById("entity-approve-name").value = "CHAR-IREN-SHEET.png";

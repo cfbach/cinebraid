@@ -396,15 +396,129 @@ async function testApprovalOfferFailsClosed() {
   eq(offer(five), "CHAR-IREN-GEN.png", "UI-5: an eligible generated single reference is still offered");
   eq(offer(five, "CHAR-IREN-GEN.png"), "CHAR-IREN-GEN.png", "UI-5: and naming it explicitly still works");
 
-  /* THE DELIBERATE EXCEPTION IS NOT AN ELIGIBILITY HOLE. Naming a DECLARED sheet
-     still opens the modal — "use as sheet source" routes through here and the
-     identity write is suppressed downstream (proved in
-     testSheetSourceIsNotIdentityApproval). It is reachable only when NAMED. */
+  /* UI-S5 / SHEET-7 — A SHEET UNDER PRIMARY INTENT IS REFUSED, NAMED OR NOT.
+     The exception belongs to the OPERATION, not to the file: "this classifies as
+     a sheet, so the filmmaker must have meant sheet source" would turn an
+     eligibility failure into a workflow nobody chose. */
   const six = await withMedia([sheet]);
-  eq(offer(six, "CHAR-IREN-SHEET.png"), "CHAR-IREN-SHEET.png",
-    "the named sheet-source path survives, because it offers no primary authority");
+  eq(offer(six, "CHAR-IREN-SHEET.png"), "",
+    "UI-S5: a declared sheet under PRIMARY intent is not offered, even when named");
   const seven = await withMedia([sheet]);
   eq(offer(seven), "", "an unnamed sheet is NOT silently promoted into the approval offer");
+
+  /* UI-P1..UI-P5 — THE SELECTOR, WHICH IS WHERE THE HOLE ACTUALLY WAS. Entry
+     filtered correctly and then rendered a dropdown of every file, so switching
+     it re-opened the same hole one click later. `selectorOptions` reads the
+     rendered modal, so this is what a filmmaker can actually choose. */
+  const selectorOptions = (rendered) => vm.runInContext(
+    `(() => { const html = document.getElementById('modal').innerHTML;
+       const block = (html.match(/<select id="entity-approve-file"[^>]*>([\\s\\S]*?)<\\/select>/) || [])[1] || "";
+       return (block.match(/value="([^"]*)"/g) || []).map(v => v.slice(7, -1)); })()`,
+    rendered.context);
+
+  const p1 = await withMedia([undeclared, declared]);
+  offer(p1);
+  const p1Options = selectorOptions(p1);
+  eq(p1Options.includes("CHAR-IREN-GEN.png"), true, "UI-P1: the eligible single is selectable");
+  eq(p1Options.includes("CHAR-IREN-PRIMARY.png"), false, "UI-P1: the undeclared file is NOT in the selector");
+
+  const declaredB = { stored: "CHAR-IREN-GEN-B.png", original: "CHAR-IREN-GEN-B.png", decision: "unreviewed", coverageJobType: "single-reference", targetStateId: "state-default" };
+  const p2 = await withMedia([declared, declaredB, undeclared]);
+  offer(p2);
+  const p2Options = selectorOptions(p2);
+  eq(p2Options.slice().sort().join(","), "CHAR-IREN-GEN-B.png,CHAR-IREN-GEN.png",
+    "UI-P2: both eligible singles are selectable and only those");
+
+  /* UI-P3 — INJECTION THROUGH THE REFRESH PATH. Setting the element directly is
+     how a value reaches this function without passing the dropdown that built it. */
+  const p3 = await withMedia([declared, undeclared]);
+  offer(p3);
+  const p3After = vm.runInContext(
+    `(() => { const sel = document.getElementById('entity-approve-file');
+       sel.value = 'CHAR-IREN-PRIMARY.png';
+       syncEntityApprovalModal();
+       return { selection: window._entityApproval.name, element: sel.value }; })()`,
+    p3.context);
+  eq(p3After.selection, "CHAR-IREN-GEN.png", "UI-P3: an injected undeclared file does not become the selection");
+  eq(p3After.element, "CHAR-IREN-GEN.png", "UI-P3: and the control is put back to the eligible file it left");
+
+  const p4 = await withMedia([sheet, declared]);
+  offer(p4);
+  const p4Options = selectorOptions(p4);
+  eq(p4Options.includes("CHAR-IREN-GEN.png"), true, "UI-P4: the single is selectable");
+  eq(p4Options.includes("CHAR-IREN-SHEET.png"), false, "UI-P4: the sheet is NOT in the primary selector");
+
+  const p5 = await withMedia([undeclared]);
+  offer(p5);
+  eq(vm.runInContext("document.getElementById('modal').innerHTML.includes('entity-approve-file')", p5.context), false,
+    "UI-P5: with nothing eligible the primary approval modal does not open at all");
+}
+
+/* THE SHEET-SOURCE OPERATION IS A DIFFERENT OPERATION, AND NOW SAYS SO.
+   It used to borrow the approval modal wholesale, so accepting a turnaround as
+   extraction material was announced as "Approve reference", "ASSIGN ONE CANDIDATE
+   TO ONE CONTINUITY STATE" and a button reading APPROVE — an authority it has
+   never written. */
+async function testSheetSourceSpeaksForItself() {
+  const project = gateFixture();
+  const character = project.characters[0];
+  character.approvedFile = "";
+  character.continuityStates = [{ id: "state-default", name: "Default", isDefault: true, approvedFile: "" }];
+  character.candidateFiles = [
+    { stored: "CHAR-IREN-SHEET.png", decision: "unreviewed", coverageJobType: "sheet", coverageSheetType: "angles" },
+    { stored: "CHAR-IREN-PRIMARY.png", decision: "unreviewed" },
+  ];
+  delete project.productionAuthority;
+  const rendered = await render("#/character/CHAR-IREN", project, { scan: gateScan() });
+
+  /* The card's own intent, not a hand-typed mode: entities.js decides `extract`
+     from the sheet and renders USE AS SHEET SOURCE, and this is the hop that
+     used to drop it. */
+  rendered.context.requestHumanEntityCandidateApproval("characters", "CHAR-IREN", "CHAR-IREN-SHEET.png", "state-default", "extract");
+  const modal = vm.runInContext("document.getElementById('modal').innerHTML", rendered.context);
+
+  /* UI-S1 — the wording is the operation's own. */
+  ok(/Use reference sheet/.test(modal), "UI-S1: the sheet-source modal is titled for what it does");
+  ok(/data-approval-mode="sheet-source"/.test(modal), "UI-S1: and declares its mode");
+  for (const claim of ["Approve reference", "Approve for continuity state", "ASSIGN ONE CANDIDATE TO ONE CONTINUITY STATE"]) {
+    ok(!modal.includes(claim), `UI-S1: the sheet-source modal must not claim "${claim}"`);
+  }
+  ok(!/>APPROVE</.test(modal), "UI-S1: and must not offer a bare APPROVE");
+  /* UI-S2 — the action is sheet-specific. */
+  ok(/USE SHEET/.test(modal), "UI-S2: the primary action is USE SHEET");
+  /* SHEET-4 — nothing is asked that has no answer to give. */
+  ok(!/<select id="entity-approve-target"/.test(modal),
+    "SHEET-4: no continuity-state authority selector, because this writes no state authority");
+  ok(!/<select id="entity-approve-file"/.test(modal),
+    "SHEET-4: and no candidate chooser, because the sheet is the one that was named");
+
+  /* UI-S3 — confirming it writes no primary authority. */
+  await rendered.gesture.act(() => rendered.context.confirmEntityApproval(false));
+  await new Promise((resolve) => setTimeout(resolve, 60));
+  const after = vm.runInContext(
+    `(() => { const e = P.characters.find(x => x.id === 'CHAR-IREN');
+       const truth = entityProductionTruth(P, 'characters', 'CHAR-IREN');
+       const row = (e.candidateFiles || []).find(r => (r.stored || r.name) === 'CHAR-IREN-SHEET.png') || {};
+       return { approved: e.approvedFile || '', state: e.continuityStates[0].approvedFile || '', canon: truth.canon.length, decision: row.decision }; })()`,
+    rendered.context);
+  eq(after.canon, 0, "UI-S3: using a sheet as a source writes no Canon");
+  eq(after.approved, "", "UI-S3: and no primary pointer");
+  eq(after.state, "", "UI-S3: and no state pointer");
+  eq(after.decision, "approved-sheet-source", "UI-S3: it records the sheet-source decision it actually made");
+
+  /* UI-S4 — the exception is the operation's, not the file's. An UNDECLARED file
+     cannot borrow it. */
+  const second = await render("#/character/CHAR-IREN", (() => {
+    const p = gateFixture();
+    p.characters[0].approvedFile = "";
+    p.characters[0].continuityStates = [{ id: "state-default", name: "Default", isDefault: true, approvedFile: "" }];
+    p.characters[0].candidateFiles = [{ stored: "CHAR-IREN-PRIMARY.png", decision: "unreviewed" }];
+    delete p.productionAuthority;
+    return p;
+  })(), { scan: gateScan() });
+  second.context.approveEntityFile("characters", "CHAR-IREN", "CHAR-IREN-PRIMARY.png", "state-default", "sheet-source");
+  eq(vm.runInContext("document.getElementById('modal').innerHTML.includes('Use reference sheet')", second.context), false,
+    "UI-S4: an undeclared file cannot invoke the sheet-source operation");
 }
 
 function testTheBoundaryRefusesASheet() {
@@ -710,7 +824,12 @@ async function testSheetSourceIsNotIdentityApproval() {
   delete project.productionAuthority;
 
   const rendered = await render("#/character/CHAR-IREN", project, { scan: gateScan() });
-  rendered.context.approveEntityFile("characters", "CHAR-IREN", "CHAR-IREN-SHEET.png", "state-default");
+  /* THE OPERATION THE CARD ACTUALLY STARTS. USE AS SHEET SOURCE routes through
+     requestHumanEntityCandidateApproval with continuation "extract", and that
+     intent is what admits a sheet here — the file classifying as one does not.
+     Calling approveEntityFile directly with no mode is a primary-authority
+     request, which a sheet is correctly refused for. */
+  rendered.context.requestHumanEntityCandidateApproval("characters", "CHAR-IREN", "CHAR-IREN-SHEET.png", "state-default", "extract");
   vm.runInContext("document.getElementById('entity-approve-file').value='CHAR-IREN-SHEET.png';"
     + "document.getElementById('entity-approve-target').value='state-default';"
     + "document.getElementById('entity-approve-name').value='CHAR-IREN-SHEET.png';"
@@ -968,7 +1087,12 @@ async function testCoverageQuoteMatchesTheRateOwner() {
 async function testSheetSourceLeavesPrimaryUntouched() {
   const project = gateFixture();
   const rendered = await render("#/character/CHAR-IREN", project, { scan: gateScan() });
-  rendered.context.approveEntityFile("characters", "CHAR-IREN", "CHAR-IREN-SHEET.png", "state-default");
+  /* THE OPERATION THE CARD ACTUALLY STARTS. USE AS SHEET SOURCE routes through
+     requestHumanEntityCandidateApproval with continuation "extract", and that
+     intent is what admits a sheet here — the file classifying as one does not.
+     Calling approveEntityFile directly with no mode is a primary-authority
+     request, which a sheet is correctly refused for. */
+  rendered.context.requestHumanEntityCandidateApproval("characters", "CHAR-IREN", "CHAR-IREN-SHEET.png", "state-default", "extract");
   vm.runInContext(`document.getElementById('entity-approve-file').value='CHAR-IREN-SHEET.png';
     document.getElementById('entity-approve-target').value='state-default';
     document.getElementById('entity-approve-name').value='CHAR-IREN-SHEET.png';
@@ -999,6 +1123,7 @@ async function main() {
   testApprovalOfferPolicyIsNotDuplicated();
   testImportedMappingIsReadAsEvidence();
   await testApprovalOfferFailsClosed();
+  await testSheetSourceSpeaksForItself();
   testTheBoundaryRefusesASheet();
   testUnresolvableClassifierFailsClosed();
   await testExistingBadPrimaryIsReportedNotRevoked();

@@ -453,6 +453,22 @@ async function main() {
     const coverageSheetRefresh = await json(`${appOrigin}/api/generation/fal/jobs/${coverageSheetSubmit.data.job.id}/refresh`, { method: "POST" });
     assert(coverageSheetRefresh.response.ok, JSON.stringify(coverageSheetRefresh.data));
 
+    /* WHAT A NON-EMPTY coverageJobType ACTUALLY DOES, observed rather than assumed.
+       This is the behavioural half of the S1 accounting boundary: a real coverage
+       job, dispatched through the shipped route and ingested by the shipped
+       ingest, enrolls itself in a coverage run. The other half — that a manual
+       reference generation's structural declaration can never reach this field —
+       is asserted in the S1 block below and guarded by S1-C4 in
+       tests/reference-truth-sheet-gate-negative-controls.js. Neither claims the
+       other's half; together they are the whole boundary. */
+    const enrolled = JSON.parse(fs.readFileSync(projectFile, "utf8")).characters.find((row) => row.id === "CHAR-ONE");
+    assert(enrolled.coverageAutomation, "a coverage job must establish the entity's coverage-run projection");
+    assert.strictEqual(enrolled.coverageAutomation.mode, "sheet", "and record the mode it ran in");
+    assert.strictEqual(enrolled.coverageAutomation.status, "sheet-ready-for-review", "and the status that mode reaches on ingest");
+    assert(Array.isArray(enrolled.coverageAutomation.jobs), "the projection must carry its run membership");
+    assert(enrolled.coverageAutomation.jobs.includes(coverageSheetSubmit.data.job.id),
+      `the coverage job ${coverageSheetSubmit.data.job.id} must be enrolled as a member of the run it created`);
+
     const stateDerivedSubmit = await json(`${appOrigin}/api/generation/fal/jobs`, {
       method: "POST",
       headers: { "content-type": "application/json" },

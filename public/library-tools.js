@@ -656,10 +656,26 @@ function revealEntityContinuityState(stateId) {
     setTimeout(() => card.querySelector?.(".continuity-state-delta textarea")?.focus?.(), 80);
   }, 50);
 }
-window.approveEntityFile = (list, id, name, stateId = "") => {
+/* TWO OPERATIONS, ONE FUNCTION, AND THE MODE SAYS WHICH.
+
+   `primary-authority` assigns one single reference as an entity state's identity.
+   `sheet-source` accepts a multi-view sheet as material to extract from. It
+   writes no identity, and confirmEntityApproval() has always skipped the canon
+   call for it.
+
+   THE MODE IS PASSED IN, NOT INFERRED FROM THE FILE. Deciding "this file
+   classifies as a sheet, therefore the filmmaker must have meant sheet source"
+   turns an eligibility FAILURE into an operation, which is how an undeclared
+   candidate would eventually find its way into a workflow nobody chose. The
+   caller already knows: the card renders USE AS SHEET SOURCE and sets
+   `continuation = "extract"` (public/entities.js), and that intent now travels
+   the last hop instead of being dropped here. */
+const ENTITY_APPROVAL_MODES = ["primary-authority", "sheet-source"];
+window.approveEntityFile = (list, id, name, stateId = "", mode = "primary-authority") => {
   const x = P[list].find((e) => e.id === id),
     states = entityStateListRead(x, true),
     media = entityMedia(list, x);
+  const sheetSource = ENTITY_APPROVAL_MODES.includes(mode) && mode === "sheet-source";
   if (!media.length) return toast("Add or generate a candidate before approving a reference");
   const requestedState = entityStateById(x, stateId || "state-default") || states[0];
   /* AN EXPLICIT NAME IS HONOURED — including a sheet, because "use as sheet
@@ -689,26 +705,27 @@ window.approveEntityFile = (list, id, name, stateId = "") => {
   };
   const eligiblePool = media.filter((item) => eligibleForPrimary(item.name));
   const namedMedia = name ? media.find((item) => item.name === name) : null;
-  /* THE DELIBERATE EXCEPTION, AND IT IS NOT AN ELIGIBILITY EXCEPTION. Naming a
-     DECLARED SHEET opens this modal on purpose: "use as sheet source" routes
-     through here and confirmEntityApproval() suppresses the identity write and
-     sends the filmmaker to extraction instead. That path offers no primary
-     authority, so letting it through offers nothing the kernel would refuse.
-     An UNDECLARED file gets no such exception — it is exactly the dogfood case. */
-  const namedIsDeclaredSheet = Boolean(namedMedia)
-    && typeof referenceArtifactStructureOf === "function"
-    && referenceArtifactStructureOf(x, namedMedia.name) === "sheet";
-  if (!eligiblePool.length && !namedIsDeclaredSheet) {
-    return toast(media.length
-      ? "None of these files is recorded as a single reference image, so none can become this reference's identity. Say which one is a single reference when you import it, or map it to a state or view first."
-      : "Add or generate a candidate before approving a reference");
+  /* THE SHEET-SOURCE OPERATION CARRIES ITS OWN ENTRY CONDITION, and it is a
+     POSITIVE one: the named file must be a DECLARED sheet. An undeclared file is
+     not "close enough to a sheet" — it is a file nothing has classified, and
+     handing it to an extractor would be the same guess this whole seam removes. */
+  const namedStructure = namedMedia && typeof referenceArtifactStructureOf === "function"
+    ? String(referenceArtifactStructureOf(x, namedMedia.name) || "") : "";
+  if (sheetSource) {
+    if (!namedMedia) return toast("Choose which sheet to use as a source");
+    if (namedStructure !== "sheet") {
+      return toast(`${namedMedia.name} is not recorded as a coverage sheet, so it cannot be used as one. Say which it is when you import it.`);
+    }
+  } else if (!eligiblePool.length) {
+    return toast("None of these files is recorded as a single reference image, so none can become this reference's identity. Say which one is a single reference when you import it, or map it to a state or view first.");
   }
-  const selected = (namedIsDeclaredSheet ? namedMedia : null)
-    || eligiblePool.find((item) => item.name === name)
-    || eligiblePool.find((item) => item.name === requestedState?.approvedFile)
-    || eligiblePool.find((item) => item.name === x.approvedFile)
-    || eligiblePool[eligiblePool.length - 1];
-  window._entityApproval = { list, id, name: selected.name, stateId: requestedState?.id || "state-default" };
+  const selected = sheetSource
+    ? namedMedia
+    : eligiblePool.find((item) => item.name === name)
+      || eligiblePool.find((item) => item.name === requestedState?.approvedFile)
+      || eligiblePool.find((item) => item.name === x.approvedFile)
+      || eligiblePool[eligiblePool.length - 1];
+  window._entityApproval = { list, id, name: selected.name, stateId: requestedState?.id || "state-default", mode: sheetSource ? "sheet-source" : "primary-authority" };
   /* SINGLE-STATE APPROVAL — A CHOICE WITH ONE OPTION IS NOT A CHOICE.
    *
    * Most references have exactly one continuity state: Default. This modal asked
@@ -741,16 +758,55 @@ window.approveEntityFile = (list, id, name, stateId = "") => {
   const approvalActions = singleState
     ? `<button class="cancel" onclick="closeModal()">Cancel</button><button class="approve-btn large" onclick="confirmEntityApproval(false)">APPROVE</button>`
     : `<button class="cancel" onclick="closeModal()">Cancel</button><button class="ghost-btn" onclick="confirmEntityApproval(false)">APPROVE ONLY</button><button id="entity-approve-continue" class="approve-btn large" onclick="confirmEntityApproval(true)">APPROVE & EDIT NEXT STATE</button>`;
-  openModal(
-    `<div class="entity-approval-modal"><h3>Approve reference — ${esc(x.name || id)}</h3><div class="modal-sub">ASSIGN ONE CANDIDATE TO ONE CONTINUITY STATE</div><div class="entity-approval-modal-layout"><figure><div id="entity-approval-preview">${isVideo(selected.name) ? `<video muted controls src="${attr(selected.url)}"></video>` : `<img src="${attr(selected.url)}" alt="Candidate to approve">`}</div><figcaption id="entity-approval-file-caption">${esc(selected.name)}</figcaption></figure><div class="entity-approval-fields"><div class="form-field"><label>Candidate file</label><select id="entity-approve-file" onchange="syncEntityApprovalModal()">${media.map((item) => `<option value="${attr(item.name)}" ${item.name === selected.name ? "selected" : ""}>${esc(item.name)}</option>`).join("")}</select></div>${stateField}<div class="entity-approval-target-summary" id="entity-approval-target-summary"></div><input type="hidden" id="entity-approve-name" value="${attr(entityCanonicalSuggestion(list, id, selected.name, requestedState?.id || "state-default"))}"><p class="hint">The selected state will show this image in the live Project Bible. Other states and candidates are unchanged.</p>${continuationField}</div></div><div class="modal-actions entity-approval-actions"><button class="changes-btn" onclick="closeModal();requestEntityChanges('${list}','${id}')">Request changes</button><div>${approvalActions}</div></div></div>`,
-  );
+  /* THE SHEET-SOURCE MODAL SAYS WHAT IT DOES.
+     It used to borrow the approval modal wholesale: "Approve reference", "ASSIGN
+     ONE CANDIDATE TO ONE CONTINUITY STATE", "Approve for continuity state" and a
+     button reading APPROVE — four statements of an authority this operation has
+     never written. The words are now the operation's own.
+     The FIELDS are hidden rather than removed: confirmEntityApproval() reads the
+     same three element ids in both shapes, so the command it issues is unchanged
+     and this stays a presentation convergence rather than a second writer.
+     There is nothing to choose here — the sheet is the one that was named and the
+     operation targets no state authority — so nothing is asked twice. */
+  const sheetSourceMarkup = `<div class="entity-approval-modal entity-sheet-source-modal" data-approval-mode="sheet-source"><h3>Use reference sheet — ${esc(x.name || id)}</h3><div class="modal-sub">USE THIS SHEET AS A SOURCE FOR EXTRACTING REFERENCE VIEWS</div><div class="entity-approval-modal-layout"><figure><div id="entity-approval-preview">${isVideo(selected.name) ? `<video muted controls src="${attr(selected.url)}"></video>` : `<img src="${attr(selected.url)}" alt="Reference sheet to use as a source">`}</div><figcaption id="entity-approval-file-caption">${esc(selected.name)}</figcaption></figure><div class="entity-approval-fields"><div class="form-field entity-sheet-source-readout"><label>Reference sheet</label><div class="entity-approval-single-state-readout"><b>${esc(selected.name)}</b><small>Several views in one image. CineBraid will open the extractor so you can cut single views out of it.</small></div></div><input type="hidden" id="entity-approve-file" value="${attr(selected.name)}"><input type="hidden" id="entity-approve-target" value="${attr(targetState.id)}"><input type="hidden" id="entity-approve-name" value="${attr(selected.name)}"><p class="hint">This does not make the sheet ${esc(x.name || id)}'s identity reference, and it changes no approved image. Extracted views can be approved individually afterwards.</p></div></div><div class="modal-actions entity-approval-actions"><button class="cancel" onclick="closeModal()">Cancel</button><button class="approve-btn large" onclick="confirmEntityApproval(false)">USE SHEET</button></div></div>`;
+
+  /* THE PRIMARY SELECTOR IS THE ELIGIBLE POOL, NOT `media`.
+     Entry filtered correctly and then handed the filmmaker a dropdown of every
+     file on the reference, so switching it re-opened the exact hole the entry
+     check had just closed: an undeclared row presented as approvable, refused a
+     click later by the kernel. One list, one predicate, both ends. */
+  const primaryMarkup = `<div class="entity-approval-modal" data-approval-mode="primary-authority"><h3>Approve reference — ${esc(x.name || id)}</h3><div class="modal-sub">ASSIGN ONE CANDIDATE TO ONE CONTINUITY STATE</div><div class="entity-approval-modal-layout"><figure><div id="entity-approval-preview">${isVideo(selected.name) ? `<video muted controls src="${attr(selected.url)}"></video>` : `<img src="${attr(selected.url)}" alt="Candidate to approve">`}</div><figcaption id="entity-approval-file-caption">${esc(selected.name)}</figcaption></figure><div class="entity-approval-fields"><div class="form-field"><label>Candidate file</label><select id="entity-approve-file" onchange="syncEntityApprovalModal()">${eligiblePool.map((item) => `<option value="${attr(item.name)}" ${item.name === selected.name ? "selected" : ""}>${esc(item.name)}</option>`).join("")}</select></div>${stateField}<div class="entity-approval-target-summary" id="entity-approval-target-summary"></div><input type="hidden" id="entity-approve-name" value="${attr(entityCanonicalSuggestion(list, id, selected.name, requestedState?.id || "state-default"))}"><p class="hint">The selected state will show this image in the live Project Bible. Other states and candidates are unchanged.</p>${continuationField}</div></div><div class="modal-actions entity-approval-actions"><button class="changes-btn" onclick="closeModal();requestEntityChanges('${list}','${id}')">Request changes</button><div>${approvalActions}</div></div></div>`;
+
+  openModal(sheetSource ? sheetSourceMarkup : primaryMarkup);
   syncEntityApprovalModal();
 };
 window.syncEntityApprovalModal = () => {
   const current = window._entityApproval || {};
   const x = P[current.list]?.find((item) => item.id === current.id);
   if (!x) return;
-  const fileName = document.getElementById("entity-approve-file")?.value || current.name || "";
+  const requestedFile = document.getElementById("entity-approve-file")?.value || current.name || "";
+  /* THE SAME BOUNDARY ON THE WAY BACK IN.
+     A dropdown built from the eligible pool cannot OFFER an ineligible file, but
+     this refresh runs on every change and reads whatever the element now holds —
+     so a value set from anywhere else would walk straight past the entry check.
+     Under primary-authority intent the answer comes from the same shared
+     predicate, and a file that fails it is not adopted: the selection stays where
+     it was. Sheet-source has one file and no selector, so there is nothing to
+     re-check. This decides what is OFFERED; the kernel still decides what is
+     written. */
+  const primaryIntent = current.mode !== "sheet-source";
+  const eligibleNow = (candidate) => (
+    typeof referenceArtifactStructureOf === "function"
+    && typeof artifactMayHoldPrimaryAuthority === "function"
+    && artifactMayHoldPrimaryAuthority(referenceArtifactStructureOf(x, candidate)) === true
+  );
+  const fileName = primaryIntent && requestedFile && requestedFile !== current.name && !eligibleNow(requestedFile)
+    ? String(current.name || "")
+    : requestedFile;
+  if (fileName !== requestedFile) {
+    const revert = document.getElementById("entity-approve-file");
+    if (revert) revert.value = fileName;
+  }
   const stateId = document.getElementById("entity-approve-target")?.value || current.stateId || "state-default";
   const targetChanged = current.stateId && current.stateId !== stateId;
   const state = entityStateById(x, stateId);
