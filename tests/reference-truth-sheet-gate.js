@@ -521,6 +521,172 @@ async function testSheetSourceSpeaksForItself() {
     "UI-S4: an undeclared file cannot invoke the sheet-source operation");
 }
 
+/* ==========================================================================
+   S1 V3 — THE MODAL IS A LIVE SURFACE, NOT A SNAPSHOT.
+
+   Two facts can change under an open approval modal: what the row IS, and what
+   the operation was FOR. The first version of this correction checked the first
+   only when the FILENAME changed, and let the second be re-decided from the row's
+   class at confirmation time. So a row that turned into a sheet while the modal
+   sat open kept its selection (same name) and then silently converted a primary
+   approval into a sheet-source acceptance — announced, either way, as APPROVED.
+
+   Everything below drives the shipped functions on a rendered page.
+   ========================================================================== */
+const V3_SINGLE = { stored: "CHAR-IREN-GEN.png", decision: "unreviewed", coverageJobType: "single-reference", targetStateId: "state-default" };
+const V3_SINGLE_B = { stored: "CHAR-IREN-GEN-B.png", decision: "unreviewed", coverageJobType: "single-reference", targetStateId: "state-default" };
+const V3_SHEET = { stored: "CHAR-IREN-SHEET.png", decision: "unreviewed", coverageJobType: "sheet", coverageSheetType: "angles" };
+
+async function v3Page(rows) {
+  const project = gateFixture();
+  const character = project.characters[0];
+  character.approvedFile = "";
+  character.continuityStates = [{ id: "state-default", name: "Default", isDefault: true, approvedFile: "" }];
+  character.candidateFiles = rows.map((row) => ({ ...row }));
+  delete project.productionAuthority;
+  const rendered = await render("#/character/CHAR-IREN", project, {
+    scan: { ...gateScan(), anchors: rows.map((row) => ({ name: row.stored, url: `/assets/anchors/${row.stored}` })) },
+  });
+  /* Completion feedback is captured at its two writers rather than chased through
+     a disappearing overlay. */
+  vm.runInContext(`window.__stamps = []; window.__toasts = [];
+    window.stampCeremony = (text) => { window.__stamps.push(String(text)); };
+    const priorToast = window.toast;
+    window.toast = (text) => { window.__toasts.push(String(text)); return priorToast ? priorToast(text) : undefined; };`, rendered.context);
+  return rendered;
+}
+/* Re-declare a row under the open modal: same file, different structural truth. */
+const v3Restructure = (rendered, file, patch) => vm.runInContext(
+  `(() => { const e = P.characters.find(x => x.id === 'CHAR-IREN');
+     const row = e.candidateFiles.find(r => (r.stored || r.name) === ${JSON.stringify(file)});
+     delete row.coverageJobType; delete row.coverageSheetType;
+     Object.assign(row, ${JSON.stringify(patch)});
+     return referenceArtifactStructureOf(e, ${JSON.stringify(file)}); })()`,
+  rendered.context);
+const v3State = (rendered) => vm.runInContext(
+  `(() => { const e = P.characters.find(x => x.id === 'CHAR-IREN');
+     const truth = entityProductionTruth(P, 'characters', 'CHAR-IREN');
+     const confirm = document.getElementById('entity-approve-confirm');
+     return { selection: (window._entityApproval && window._entityApproval.name) || '',
+       mode: (window._entityApproval && window._entityApproval.mode) || '',
+       confirmDisabled: confirm ? confirm.disabled === true : null,
+       canon: truth.canon.length, approved: e.approvedFile || '',
+       state: e.continuityStates[0].approvedFile || '',
+       decisions: (e.candidateFiles || []).map(r => r.decision),
+       stamps: window.__stamps.slice(), toasts: window.__toasts.slice() }; })()`,
+  rendered.context);
+
+async function testStaleSelectionIsRevalidated() {
+  /* STALE-P1 — same filename, structure withdrawn. */
+  const p1 = await v3Page([V3_SINGLE]);
+  p1.context.approveEntityFile("characters", "CHAR-IREN", "CHAR-IREN-GEN.png", "state-default", "primary-authority");
+  eq(v3State(p1).selection, "CHAR-IREN-GEN.png", "STALE-P1: the eligible single opens as the selection");
+  eq(v3Restructure(p1, "CHAR-IREN-GEN.png", {}), "undeclared", "STALE-P1: the row is now undeclared");
+  p1.context.syncEntityApprovalModal();
+  const p1After = v3State(p1);
+  eq(p1After.selection, "", "STALE-P1: an undeclared row does not remain the selection even under the same filename");
+  eq(p1After.confirmDisabled, true, "STALE-P1: and the approval control is withdrawn");
+
+  /* STALE-P4 — the writer refuses independently of the visual state. */
+  await p1.gesture.act(() => p1.context.confirmEntityApproval(false));
+  await new Promise((resolve) => setTimeout(resolve, 40));
+  const p1Confirm = v3State(p1);
+  eq(p1Confirm.canon, 0, "STALE-P4: confirming after invalidation writes no canon");
+  eq(p1Confirm.approved, "", "STALE-P4: and no primary pointer");
+
+  /* STALE-P2 — same filename, becomes a sheet. The mode must not follow it. */
+  const p2 = await v3Page([V3_SINGLE]);
+  p2.context.approveEntityFile("characters", "CHAR-IREN", "CHAR-IREN-GEN.png", "state-default", "primary-authority");
+  eq(v3Restructure(p2, "CHAR-IREN-GEN.png", { coverageJobType: "sheet", coverageSheetType: "angles" }), "sheet",
+    "STALE-P2: the row is now a sheet");
+  p2.context.syncEntityApprovalModal();
+  const p2After = v3State(p2);
+  eq(p2After.selection, "", "STALE-P2: a sheet cannot remain a primary-authority selection");
+  eq(p2After.mode, "primary-authority", "STALE-P2: and the operation is still the one that was started");
+
+  /* STALE-P3 — a second eligible candidate exists, so the modal moves to it and
+     says so rather than holding something it cannot write. */
+  const p3 = await v3Page([V3_SINGLE, V3_SINGLE_B]);
+  p3.context.approveEntityFile("characters", "CHAR-IREN", "CHAR-IREN-GEN.png", "state-default", "primary-authority");
+  eq(v3State(p3).selection, "CHAR-IREN-GEN.png", "STALE-P3: opens on A");
+  v3Restructure(p3, "CHAR-IREN-GEN.png", {});
+  p3.context.syncEntityApprovalModal();
+  const p3After = v3State(p3);
+  eq(p3After.selection, "CHAR-IREN-GEN-B.png", "STALE-P3: it moves to the candidate that is still eligible");
+  eq(p3After.confirmDisabled, false, "STALE-P3: and approval remains available for that one");
+  ok(p3After.toasts.some((line) => /no longer recorded as a single reference/.test(line)),
+    "STALE-P3: and the move is stated rather than silent");
+}
+
+async function testOperationModeIsSticky() {
+  /* MODE-P1 — the ordinary path still works. */
+  const m1 = await v3Page([V3_SINGLE]);
+  m1.context.approveEntityFile("characters", "CHAR-IREN", "CHAR-IREN-GEN.png", "state-default", "primary-authority");
+  await m1.gesture.act(() => m1.context.confirmEntityApproval(false));
+  await new Promise((resolve) => setTimeout(resolve, 60));
+  const m1After = v3State(m1);
+  eq(m1After.canon, 1, "MODE-P1: an eligible single still reaches Canon");
+  eq(m1After.state, "CHAR-IREN-GEN.png", "MODE-P1: and the state points at it");
+  /* COPY-P1 — and still says so truthfully. */
+  ok(m1After.stamps.some((line) => /^APPROVED · /.test(line)), "COPY-P1: a real approval still stamps APPROVED");
+
+  /* MODE-P2 — primary intent, row becomes a sheet, confirm called directly. */
+  const m2 = await v3Page([V3_SINGLE]);
+  m2.context.approveEntityFile("characters", "CHAR-IREN", "CHAR-IREN-GEN.png", "state-default", "primary-authority");
+  v3Restructure(m2, "CHAR-IREN-GEN.png", { coverageJobType: "sheet", coverageSheetType: "angles" });
+  await m2.gesture.act(() => m2.context.confirmEntityApproval(false));
+  await new Promise((resolve) => setTimeout(resolve, 60));
+  const m2After = v3State(m2);
+  eq(m2After.canon, 0, "MODE-P2: a sheet under primary intent writes no authority");
+  eq(m2After.decisions.includes("approved-sheet-source"), false,
+    "MODE-P2: and must NOT be converted into a sheet-source acceptance nobody asked for");
+  eq(m2After.stamps.length, 0, "MODE-P2: a refusal stamps nothing");
+
+  /* MODE-P3 — primary intent, row becomes undeclared. */
+  const m3 = await v3Page([V3_SINGLE]);
+  m3.context.approveEntityFile("characters", "CHAR-IREN", "CHAR-IREN-GEN.png", "state-default", "primary-authority");
+  v3Restructure(m3, "CHAR-IREN-GEN.png", {});
+  await m3.gesture.act(() => m3.context.confirmEntityApproval(false));
+  await new Promise((resolve) => setTimeout(resolve, 60));
+  eq(v3State(m3).canon, 0, "MODE-P3: an undeclared row under primary intent writes no authority");
+
+  /* MODE-S1 / COPY-S1 — the sheet-source operation, and what it says afterwards. */
+  const s1 = await v3Page([V3_SHEET]);
+  s1.context.requestHumanEntityCandidateApproval("characters", "CHAR-IREN", "CHAR-IREN-SHEET.png", "state-default", "extract");
+  await s1.gesture.act(() => s1.context.confirmEntityApproval(false));
+  await new Promise((resolve) => setTimeout(resolve, 60));
+  const s1After = v3State(s1);
+  eq(s1After.canon, 0, "MODE-S1: a sheet source writes no Canon");
+  eq(s1After.approved, "", "MODE-S1: and no primary pointer");
+  eq(s1After.decisions.includes("approved-sheet-source"), true, "MODE-S1: it records the decision it made");
+  const s1Feedback = [...s1After.stamps, ...s1After.toasts].join(" | ");
+  for (const claim of ["APPROVED · ", "APPROVED FOR", "CANON", "PRIMARY", "Approved "]) {
+    ok(!s1Feedback.includes(claim), `COPY-S1: sheet-source completion must not claim "${claim}" — said: ${s1Feedback}`);
+  }
+  ok(s1After.stamps.includes("SHEET SOURCE SELECTED"), "COPY-S1: it names what it actually did");
+
+  /* MODE-S2 — sheet intent, row becomes a single. It must not become an approval. */
+  const s2 = await v3Page([V3_SHEET]);
+  s2.context.requestHumanEntityCandidateApproval("characters", "CHAR-IREN", "CHAR-IREN-SHEET.png", "state-default", "extract");
+  v3Restructure(s2, "CHAR-IREN-SHEET.png", { coverageJobType: "single-reference" });
+  await s2.gesture.act(() => s2.context.confirmEntityApproval(false));
+  await new Promise((resolve) => setTimeout(resolve, 60));
+  const s2After = v3State(s2);
+  eq(s2After.canon, 0, "MODE-S2: a sheet-source operation never becomes a primary approval");
+  eq(s2After.approved, "", "MODE-S2: and writes no primary pointer");
+  eq(s2After.decisions.includes("approved-sheet-source"), false, "MODE-S2: and records no sheet decision either");
+
+  /* MODE-S3 — sheet intent, row becomes undeclared. */
+  const s3 = await v3Page([V3_SHEET]);
+  s3.context.requestHumanEntityCandidateApproval("characters", "CHAR-IREN", "CHAR-IREN-SHEET.png", "state-default", "extract");
+  v3Restructure(s3, "CHAR-IREN-SHEET.png", {});
+  await s3.gesture.act(() => s3.context.confirmEntityApproval(false));
+  await new Promise((resolve) => setTimeout(resolve, 60));
+  const s3After = v3State(s3);
+  eq(s3After.canon, 0, "MODE-S3: an undeclared row under sheet intent writes nothing");
+  eq(s3After.decisions.includes("approved-sheet-source"), false, "MODE-S3: and records no sheet decision");
+}
+
 function testTheBoundaryRefusesASheet() {
   const kernel = kernelRealm();
   const manual = installTestManualActionSource(kernel);
@@ -1124,6 +1290,8 @@ async function main() {
   testImportedMappingIsReadAsEvidence();
   await testApprovalOfferFailsClosed();
   await testSheetSourceSpeaksForItself();
+  await testStaleSelectionIsRevalidated();
+  await testOperationModeIsSticky();
   testTheBoundaryRefusesASheet();
   testUnresolvableClassifierFailsClosed();
   await testExistingBadPrimaryIsReportedNotRevoked();

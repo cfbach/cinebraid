@@ -755,9 +755,11 @@ window.approveEntityFile = (list, id, name, stateId = "", mode = "primary-author
   const continuationField = singleState
     ? ""
     : `<div class="form-field entity-approval-continuation"><label>Continue to another version after approval</label><select id="entity-approve-next" onchange="syncEntityApprovalContinuation()"></select><small id="entity-approve-next-note">Approve only, or continue directly into another continuity-state editor.</small></div>`;
+  /* The confirm control carries an id so the refresh below can withdraw it when
+     the selection stops being eligible under this modal's own feet. */
   const approvalActions = singleState
-    ? `<button class="cancel" onclick="closeModal()">Cancel</button><button class="approve-btn large" onclick="confirmEntityApproval(false)">APPROVE</button>`
-    : `<button class="cancel" onclick="closeModal()">Cancel</button><button class="ghost-btn" onclick="confirmEntityApproval(false)">APPROVE ONLY</button><button id="entity-approve-continue" class="approve-btn large" onclick="confirmEntityApproval(true)">APPROVE & EDIT NEXT STATE</button>`;
+    ? `<button class="cancel" onclick="closeModal()">Cancel</button><button id="entity-approve-confirm" class="approve-btn large" onclick="confirmEntityApproval(false)">APPROVE</button>`
+    : `<button class="cancel" onclick="closeModal()">Cancel</button><button id="entity-approve-confirm" class="ghost-btn" onclick="confirmEntityApproval(false)">APPROVE ONLY</button><button id="entity-approve-continue" class="approve-btn large" onclick="confirmEntityApproval(true)">APPROVE & EDIT NEXT STATE</button>`;
   /* THE SHEET-SOURCE MODAL SAYS WHAT IT DOES.
      It used to borrow the approval modal wholesale: "Approve reference", "ASSIGN
      ONE CANDIDATE TO ONE CONTINUITY STATE", "Approve for continuity state" and a
@@ -785,27 +787,54 @@ window.syncEntityApprovalModal = () => {
   const x = P[current.list]?.find((item) => item.id === current.id);
   if (!x) return;
   const requestedFile = document.getElementById("entity-approve-file")?.value || current.name || "";
-  /* THE SAME BOUNDARY ON THE WAY BACK IN.
+  /* THE SAME BOUNDARY ON THE WAY BACK IN, AND ON EVERY PASS.
      A dropdown built from the eligible pool cannot OFFER an ineligible file, but
-     this refresh runs on every change and reads whatever the element now holds —
-     so a value set from anywhere else would walk straight past the entry check.
-     Under primary-authority intent the answer comes from the same shared
-     predicate, and a file that fails it is not adopted: the selection stays where
-     it was. Sheet-source has one file and no selector, so there is nothing to
-     re-check. This decides what is OFFERED; the kernel still decides what is
+     this refresh reads whatever the element now holds, so a value set from
+     anywhere else would walk past the entry check.
+     IT RE-ASKS ABOUT THE CURRENT SELECTION TOO, which is the part that was
+     missing: the first version only checked a file whose NAME had changed, so a
+     row that turned undeclared or into a sheet while the modal sat open kept its
+     selection simply because it was still called the same thing. Eligibility is
+     a fact about the row, not about the filename, and it is recomputed here every
+     time rather than cached from when the modal opened.
+     Sheet-source has one file and no selector; its own structure is re-checked at
+     the writer. This decides what is OFFERED; the kernel still decides what is
      written. */
   const primaryIntent = current.mode !== "sheet-source";
   const eligibleNow = (candidate) => (
     typeof referenceArtifactStructureOf === "function"
     && typeof artifactMayHoldPrimaryAuthority === "function"
+    && Boolean(candidate)
     && artifactMayHoldPrimaryAuthority(referenceArtifactStructureOf(x, candidate)) === true
   );
-  const fileName = primaryIntent && requestedFile && requestedFile !== current.name && !eligibleNow(requestedFile)
-    ? String(current.name || "")
-    : requestedFile;
+  let fileName = requestedFile;
+  let lostSelection = false;
+  if (primaryIntent && !eligibleNow(fileName)) {
+    /* The entry pool's own rule, applied again: another currently eligible
+       candidate may take over, and if there is none this modal has nothing left
+       to approve and says so rather than holding a selection it cannot write. */
+    const stillEligible = (typeof entityMedia === "function" ? entityMedia(current.list, x) : [])
+      .filter((item) => item.name !== fileName && eligibleNow(item.name));
+    fileName = stillEligible.length ? stillEligible[stillEligible.length - 1].name : "";
+    lostSelection = true;
+  }
   if (fileName !== requestedFile) {
     const revert = document.getElementById("entity-approve-file");
     if (revert) revert.value = fileName;
+  }
+  const confirmButton = document.getElementById("entity-approve-confirm");
+  const continueButton = document.getElementById("entity-approve-continue");
+  if (primaryIntent) {
+    /* FAIL CLOSED VISIBLY. Nothing eligible left means no approval is available
+       from this modal; confirmEntityApproval() refuses the same request on its
+       own, so this is the offer agreeing with the writer rather than guarding it. */
+    if (confirmButton) confirmButton.disabled = !fileName;
+    if (continueButton) continueButton.disabled = !fileName;
+  }
+  if (lostSelection) {
+    toast(fileName
+      ? `That file is no longer recorded as a single reference image. Showing ${fileName} instead.`
+      : "None of these files is recorded as a single reference image any more, so there is nothing here to approve as this reference's identity.");
   }
   const stateId = document.getElementById("entity-approve-target")?.value || current.stateId || "state-default";
   const targetChanged = current.stateId && current.stateId !== stateId;
@@ -894,7 +923,32 @@ window.confirmEntityApproval = async (continueToNext = false) => {
        argument, and the shape is identical here. */
     to = document.getElementById("entity-approve-name")?.value.trim();
   const originalApprovalRow = entityCandidateRow(x, name, false);
-  const approvedIsCoverageSheet = typeof entityCandidateIsCoverageSheet === "function" && entityCandidateIsCoverageSheet(x, name);
+  /* THE MODE CHOOSES THE WORKFLOW. THE STRUCTURE ONLY SAYS WHETHER IT IS ALLOWED.
+     This used to read the artifact's class and pick a workflow from it, so a row
+     that became a sheet while the modal was open silently converted a primary
+     approval into a sheet-source acceptance — an operation the filmmaker never
+     asked for, announced as one they did. Structure is now a precondition
+     checked INSIDE the operation that was already chosen, and it can only refuse;
+     it can no longer switch.
+     Both arms re-read the row NOW rather than trusting what was true when the
+     modal opened, which is the same reason syncEntityApprovalModal() re-asks. */
+  const approvalMode = window._entityApproval?.mode === "sheet-source" ? "sheet-source" : "primary-authority";
+  const structureNow = typeof referenceArtifactStructureOf === "function"
+    ? String(referenceArtifactStructureOf(x, name) || "") : "";
+  const approvedIsCoverageSheet = approvalMode === "sheet-source";
+  if (approvedIsCoverageSheet) {
+    if (structureNow !== "sheet") {
+      return toast(`${name || "That file"} is no longer recorded as a coverage sheet, so it cannot be used as one. Nothing was changed.`);
+    }
+  } else {
+    const mayHoldPrimary = typeof artifactMayHoldPrimaryAuthority === "function"
+      && artifactMayHoldPrimaryAuthority(structureNow) === true;
+    if (!mayHoldPrimary) {
+      return toast(structureNow === "sheet"
+        ? `${name || "That file"} is a coverage sheet — several views in one image — so it cannot be this reference's identity. Use it as a sheet source instead. Nothing was changed.`
+        : `${name || "That file"} is not recorded as a single reference image, so it cannot become this reference's identity. Nothing was changed.`);
+    }
+  }
   if (continueToNext && !nextState && !approvedIsCoverageSheet) {
     return toast(requestedNextStateId
       ? "That state cannot follow this one — it is what this state derives from. Choose a state further down the chain."
@@ -1047,9 +1101,14 @@ window.confirmEntityApproval = async (continueToNext = false) => {
     rememberWorkspaceSection?.(entityCoverageSectionKey?.(list, id, originalApprovalRow?.coverageSheetType === "expressions" ? "expressions" : "angles"), true);
     setTimeout(() => openCoverageSheetExtractor(list, id, finalName), 50);
   } else if (nextState) revealEntityContinuityState(nextState.id);
-  stampCeremony(`APPROVED · ${targetState?.name || "DEFAULT"}`);
+  /* THE COMPLETION NAMES THE AUTHORITY THAT WAS WRITTEN, AND A SHEET SOURCE
+     WROTE NONE. Both lines used to say APPROVED regardless — the stamp
+     unconditionally, and the toast in its own words — so accepting extraction
+     material was reported as an approval for a continuity state that had not
+     changed. */
+  stampCeremony(approvedIsCoverageSheet ? "SHEET SOURCE SELECTED" : `APPROVED · ${targetState?.name || "DEFAULT"}`);
   toast(approvedIsCoverageSheet
-    ? `Approved ${finalName} as a sheet source — extract its individual views next`
+    ? `${finalName} is ready as a reference sheet — extract its individual views next`
     : nextState
       ? `Approved ${finalName} for ${targetState?.name || "Default"} — editing ${nextState.name || "next state"}`
       : `Approved ${finalName} for ${targetState?.name || "Default"}`);
