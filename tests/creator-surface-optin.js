@@ -74,6 +74,10 @@ async function main() {
        error a suite gets for forgetting it. Neither is a migrated suite, and both
        would be a surprise if they were absent. */
     "creator-surface-optin.js", "terminal-view.js",
+    /* The A1 visual dogfood corrections and their controls. Both render the real
+       Terminal and Assistant to assert what a reader would have seen, so both need the
+       surfaces in their realm — and neither may change what the other 91 suites see. */
+    "terminal-visual-corrections.js", "terminal-visual-corrections-negative-controls.js",
   ];
   const actual = fs.readdirSync(path.join(ROOT, "tests"))
     .filter((name) => name.endsWith(".js"))

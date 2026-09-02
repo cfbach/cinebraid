@@ -662,7 +662,7 @@
     const counts = assistantCountLine(state);
     const quiet = counts
       ? `<section class="cb-assistant-section tone-idle" data-cb-section="counts"><article class="cb-assistant-row cb-assistant-counts"><p>${esc(counts)}</p></article></section>`
-      : `<section class="cb-assistant-section tone-quiet" data-cb-section="quiet"><article class="cb-assistant-row cb-assistant-quiet"><p>No runs or generation jobs are active. Decisions that need you are shown in Production.</p></article></section>`;
+      : `<section class="cb-assistant-section tone-quiet" data-cb-section="quiet"><article class="cb-assistant-row cb-assistant-quiet"><p>Decisions that need you are shown in Production.</p></article></section>`;
     const omitted = state.omitted.attention
       ? `<p class="cb-assistant-omitted">${esc(`${state.omitted.attention} older item${state.omitted.attention === 1 ? "" : "s"} needing attention are not shown here.`)}</p>`
       : "";
@@ -783,6 +783,62 @@
       + `<div class="cb-terminal-meta">${meta.map((part) => `<span>${esc(part)}</span>`).join("")}${fact.elapsed ? `<span>${esc(fact.elapsed)}</span>` : ""}${resolve}${report}${dismiss}</div></article>`;
   }
 
+  /* C-1 — EQUIVALENT FAILURES COLLAPSE; NOTHING ELSE DOES.
+     Six identical corrections filled the dock with the same sentence six times, which
+     is the density the retired drawer's ×N was controlling. The grouping is
+     PRESENTATION ONLY: creatorState, the run records, project scoping and Reports are
+     untouched, every underlying row is still rendered inside the group, and each keeps
+     its own report target and its own dismiss.
+
+     THE SIGNATURE IS WHAT MAKES TWO FAILURES THE SAME FAILURE, not the fact that both
+     say FAILED. It is deliberately narrow: same bucket AND reason, same owning target,
+     same step and system, same error text. Anything that differs — a different shot, a
+     different provider, a different message — stays its own row, because collapsing
+     those would hide work rather than tidy it. */
+  function groupSignature(fact) {
+    return [
+      fact.kind, fact.reason,
+      fact.target && fact.target.id, fact.target && fact.target.kind,
+      fact.step && fact.step.label, fact.step && fact.step.system,
+      fact.technical && fact.technical.error && fact.technical.error.state === "known"
+        ? fact.technical.error.value : "",
+    ].map((part) => String(part == null ? "" : part)).join(" ");
+  }
+  /* Only attention rows group. A running row is one live thing and a completed row is
+     one finished thing; neither floods, and collapsing them would hide progress. */
+  const GROUPABLE = new Set(["needs-attention"]);
+  function groupRows(facts) {
+    const order = [];
+    const byKey = new Map();
+    for (const fact of facts) {
+      if (!GROUPABLE.has(fact.kind)) { order.push({ lead: fact, members: [fact] }); continue; }
+      const key = groupSignature(fact);
+      if (!byKey.has(key)) {
+        const entry = { lead: fact, members: [fact] };
+        byKey.set(key, entry);
+        order.push(entry);
+      } else {
+        byKey.get(key).members.push(fact);
+      }
+    }
+    return order;
+  }
+  function terminalGroupMarkup(entry) {
+    if (entry.members.length < 2) return terminalRow(entry.lead);
+    const tone = TERMINAL_TONE[entry.lead.kind] || "idle";
+    const context = [entry.lead.target.id, entry.lead.step.system, entry.lead.step.label].filter(Boolean).join(" · ");
+    /* NO GROUP-LEVEL DISMISS. A control that dismissed six runs from one click would be
+       a bulk authority action wearing a tidy-up's clothes, and each run's dismiss is
+       already on its own row inside. */
+    return `<details class="cb-terminal-group tone-${attr(tone)}" data-cb-group="${attr(entry.members.length)}">`
+      + `<summary><em>${esc(terminalStatus(entry.lead))}</em>`
+      + `<div class="cb-terminal-body"><b>${esc(entry.lead.label)}</b>`
+      + `${context ? `<small>${esc(context)}</small>` : ""}`
+      + `${entry.lead.technical.error.state === "known" ? `<small class="cb-terminal-error">${esc(entry.lead.technical.error.value)}</small>` : ""}</div>`
+      + `<span class="cb-terminal-group-count">×${esc(String(entry.members.length))}</span></summary>`
+      + `<div class="cb-terminal-group-rows">${entry.members.map(terminalRow).join("")}</div></details>`;
+  }
+
   function terminalMarkup(state, collapsed, foreignProject = "") {
     const rows = [...state.working, ...state.waiting, ...state.attention, ...state.recent];
     /* A COUNT OF NOTHING IS NOT NEWS.
@@ -812,9 +868,13 @@
     ].filter(Boolean).join(" · ");
     const body = collapsed
       ? ""
-      : `<div class="cb-terminal-rows">${rows.map(terminalRow).join("")
+      : `<div class="cb-terminal-rows">${groupRows(rows).map(terminalGroupMarkup).join("")
         || `<div class="cb-terminal-empty"><span>No recorded activity in this project yet.</span></div>`}</div>`
-        + `<footer class="cb-terminal-foot"><span>${esc(omitted ? `Not shown: ${omitted}.` : `Showing the ${rows.length} most recent event${rows.length === 1 ? "" : "s"}.`)}</span>`
+        /* C-3: with nothing recorded there is no bound to explain, and "Showing the 0
+           most recent events" is a sentence about nothing. The honesty this line exists
+           for — a bounded surface must not read as a complete one — only applies once
+           there is something to bound. */
+        + `<footer class="cb-terminal-foot">${omitted ? `<span>${esc(`Not shown: ${omitted}.`)}</span>` : rows.length ? `<span>${esc(`Showing the ${rows.length} most recent event${rows.length === 1 ? "" : "s"}.`)}</span>` : ""}`
         + `<a href="${attr(state.history.deepHistoryRoute)}">Full run history in Reports</a></footer>`;
     /* THE TWO GLOBAL AFFORDANCES THE DRAWER USED TO OWN, on the same conditions it
        offered them: RECHECK STATUS only when something is parked on a human, DISMISS

@@ -2229,7 +2229,11 @@ body[data-focused-workspace="1"] #main{max-width:none;padding:18px 22px 80px;ove
 .focused-inspector-facts b{display:block;margin-top:5px;font-size:14px;overflow-wrap:anywhere}
 .focused-inspector section{display:grid;gap:6px;padding:12px;border-radius:12px;background:rgba(255,255,255,.025)}
 .focused-inspector section p{margin:0;color:var(--muted);line-height:1.45;overflow-wrap:anywhere}
-.focused-inspector-alert{border:1px solid rgba(244,170,75,.45)!important}
+.focused-inspector-alert{border:1px solid color-mix(in srgb,var(--op-idle) 45%,var(--line))!important}
+.focused-inspector-alert.state-active{border-color:color-mix(in srgb,var(--op-working) 55%,var(--line))!important}
+.focused-inspector-alert.state-review,.focused-inspector-alert.state-pending{border-color:color-mix(in srgb,var(--op-waiting) 55%,var(--line))!important}
+.focused-inspector-alert.state-failed{border-color:color-mix(in srgb,var(--op-attention) 55%,var(--line))!important}
+.focused-inspector-alert.state-done{border-color:color-mix(in srgb,var(--op-done) 55%,var(--line))!important}
 .focused-inspector button{width:100%}
 .focused-taskbar{position:sticky;top:58px;z-index:20;display:flex;gap:7px;padding:8px;margin:0 0 12px;border:1px solid var(--line);border-radius:15px;background:rgba(19,23,26,.97);overflow-x:auto;box-shadow:0 8px 20px rgba(0,0,0,.18)}
 .focused-task-button{flex:0 0 minmax(146px,1fr);min-width:140px;display:grid!important;grid-template-columns:8px minmax(0,1fr);grid-template-areas:"dot title" "dot state";align-items:center;text-align:left;gap:2px 8px;padding:9px 10px!important;border:1px solid transparent!important;border-radius:10px!important;background:transparent!important;color:var(--text)!important}
@@ -5165,6 +5169,35 @@ body[data-focused-workspace="1"] .guided-frame-body,
 .cb-terminal-row.tone-done{border-left-color:color-mix(in srgb,var(--op-done) 55%,transparent)}
 /* Completed work recedes rather than competing with what is still live. */
 .cb-terminal-row.tone-done{opacity:.72}
+/* A1 correction — THE GROUP HEADER IS A ROW. Six identical failures collapse into one
+   <details>, and its summary has to sit in the same four columns as everything around
+   it or the dock stops reading as one log. Column 1 carries the disclosure marker where
+   a row carries its clock, and the multiplier takes the trailing column the row actions
+   use, so the count lands at the right edge instead of wrapping under the message. */
+.cb-terminal-group{border-left:3px solid transparent;border-bottom:1px solid var(--line-soft)}
+.cb-terminal-group.tone-working{border-left-color:var(--op-working)}
+.cb-terminal-group.tone-waiting{border-left-color:var(--op-waiting)}
+.cb-terminal-group.tone-attention{border-left-color:var(--op-attention)}
+.cb-terminal-group.tone-done{border-left-color:color-mix(in srgb,var(--op-done) 55%,transparent)}
+.cb-terminal-group>summary{display:grid;grid-template-columns:56px 96px minmax(0,1fr) minmax(0,auto);align-items:baseline;gap:10px;padding:7px 15px;min-width:0;cursor:pointer;list-style:none}
+.cb-terminal-group>summary::-webkit-details-marker{display:none}
+/* The marker is drawn rather than inherited so it can sit in the clock column and turn
+   with the disclosure without depending on the browser's default triangle. */
+.cb-terminal-group>summary::before{content:"▸";font:500 10.5px var(--mono);color:var(--faint);transition:transform .12s ease;display:inline-block}
+.cb-terminal-group[open]>summary::before{transform:rotate(90deg)}
+.cb-terminal-group>summary>em{font:700 9.5px var(--mono);letter-spacing:.07em;font-style:normal;color:var(--muted)}
+.cb-terminal-group.tone-attention>summary>em{color:var(--op-attention)}
+.cb-terminal-group.tone-working>summary>em{color:var(--op-working)}
+.cb-terminal-group.tone-waiting>summary>em{color:var(--op-waiting)}
+.cb-terminal-group.tone-done>summary>em{color:var(--op-done)}
+.cb-terminal-group>summary:hover{background:var(--line-soft)}
+/* The count is the whole point of the collapse, so it is legible on its own. */
+.cb-terminal-group-count{font:700 10.5px var(--mono);color:var(--muted);white-space:nowrap}
+/* Opened, the members are visibly INSIDE the group rather than back in the flat list:
+   indented, on a slightly recessed ground, and without a second stripe each. */
+.cb-terminal-group-rows{background:color-mix(in srgb,var(--line-soft) 45%,transparent);padding-left:12px}
+.cb-terminal-group-rows>.cb-terminal-row{border-left-color:transparent}
+.cb-terminal-group-rows>.cb-terminal-row:last-child{border-bottom:none}
 /* A1 zero state: one quiet line, not a large empty box. */
 .cb-terminal-empty{padding:9px 15px}
 /* A1 — the foreign-project warning the retired drawer used to carry. It sits above
@@ -5222,6 +5255,10 @@ body[data-focused-workspace="1"] .guided-frame-body,
   .cb-assistant{padding:14px 13px 16px}
   .cb-terminal-row{grid-template-columns:52px minmax(0,1fr);row-gap:3px}
   .cb-terminal-row>em{grid-column:2}
+  /* The group header collapses the same way, and the count keeps the trailing column
+     on the first line so it is never pushed under the message. */
+  .cb-terminal-group>summary{grid-template-columns:22px minmax(0,1fr) minmax(0,auto);row-gap:3px}
+  .cb-terminal-group>summary>.cb-terminal-body{grid-column:1 / -1}
   .cb-terminal-body,.cb-terminal-meta{grid-column:1 / -1}
   .cb-terminal-meta{justify-content:flex-start}
 }

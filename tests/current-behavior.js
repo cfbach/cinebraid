@@ -598,6 +598,8 @@ async function main() {
     "state-lineage-safety.js",
     "studio-repair.js",
     "terminal-view.js",
+    "terminal-visual-corrections-negative-controls.js",
+    "terminal-visual-corrections.js",
     "ui-state-stability-real-browser.py",
     "untrusted-import-exclusive-publish-negative-controls.js",
     "untrusted-import-exclusive-publish.js",
