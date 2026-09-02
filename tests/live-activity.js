@@ -48,7 +48,10 @@ assert(activity.includes("PAID REQUEST ACCEPTED"), "provider state must clearly 
 assert(activity.includes("PREPARING · NO CREDITS SUBMITTED"), "provider state must clearly identify pre-submission work");
 assert(activity.includes("v641StandaloneFalJobs"), "manual FAL jobs must appear globally");
 assert(activity.includes("v641StartManualActivity"), "manual AI and review calls must be globally visible");
-assert(styles.includes(".automation-activity-drawer"), "activity drawer must have dedicated responsive styling");
+/* A1: the drawer is retired, so its styling must be gone too — a rule with no
+   element is how a retired surface comes back looking finished. */
+assert(!styles.includes(".automation-activity-drawer"),
+  "the retired activity drawer must leave no styling behind");
 assert(creation.includes("v641StartManualActivity"), "manual prompt-advisor calls must register global activity");
 assert(review.includes("v641StartManualActivity"), "manual vision review must register global activity");
 assert(provenance.includes("v641StartManualActivity"), "manual candidate review must register global activity");

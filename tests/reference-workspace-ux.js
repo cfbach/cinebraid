@@ -41,9 +41,12 @@ assert(css.includes('.automation-activity-backdrop'));
    the single persistent global activity indicator now. */
 assert(!css.includes('#automation-global-live-strip'), 'the retired global live strip must leave no styling behind');
 assert(activity.includes('Activity · Idle'));
-assert(activity.includes('event.key === "Escape"'));
-assert(activity.includes('backdrop.onclick = () => closeGlobalAutomationActivity()'));
-assert(activity.includes('V641_ACTIVITY_TRIGGER = document.activeElement'));
+assert(!activity.includes('backdrop.onclick = () => closeGlobalAutomationActivity()'),
+  'the retired activity overlay must leave no backdrop behind');
+assert(!activity.includes('V641_ACTIVITY_TRIGGER'),
+  'a docked Terminal never takes focus away, so it must keep no focus-return trigger');
+assert(!activity.includes('automation-activity-drawer'),
+  'the retired Global Activity drawer must leave no renderer behind');
 assert(app.includes('normalizedCoverageAlias'));
 assert(app.includes('Imported view detail:'), 'descriptive imported coverage requirements must become slot notes rather than duplicate required slots');
 

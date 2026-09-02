@@ -2,6 +2,7 @@ const assert = require("assert");
 const fs = require("fs");
 const path = require("path");
 const vm = require("vm");
+const { terminalHtml } = require("./terminal-view");
 const { readConfig } = require("../config");
 const PromptEngine = require("../prompt-engine");
 const { annotateProfileLibraryExecution } = require("../generation-options");
@@ -703,7 +704,22 @@ async function render(hash, project, options = {}) {
      can never be "restored" by a checkout that also discards real work. */
   const mutate = typeof options.mutateSource === "function" ? options.mutateSource : null;
   let closeHarnessGesture = () => {};
-  for (const file of SCRIPT_ORDER) {
+  /* OPT-IN, AND OFF BY DEFAULT.
+   *
+   * A1 made the Activity Terminal the canonical operational surface, so the suites
+   * that used to render the retired Global Activity drawer need its renderer in the
+   * realm. Ninety-one suites share this harness and none of the others asked for it:
+   * loading public/creator-surfaces.js unconditionally would change what every one of
+   * them sees — new globals, a second consumer of AUTOMATION_RUNS, a paint on load —
+   * to serve eleven. So it is requested per invocation and absent otherwise.
+   *
+   * TWO FILES, NOT THE SHELL. The migrated suites read `terminalMarkup(projection())`
+   * off window.CineBraidCreatorSurfaces rather than mounting the dock, so the shell
+   * modules are not needed and the DOM the harness models is unchanged. */
+  const scripts = options.creatorSurfaces
+    ? [...SCRIPT_ORDER, "shared-creator-state.js", "creator-surfaces.js"]
+    : SCRIPT_ORDER;
+  for (const file of scripts) {
     const original = fs.readFileSync(path.join(PUBLIC, file), "utf8");
     const source = mutate ? String(mutate(file, original) ?? original) : original;
     vm.runInContext(source, context, { filename: file });
@@ -1092,7 +1108,14 @@ async function main() {
   const resumableHtml = resumable.context.document.getElementById("main").innerHTML;
   assert(resumableHtml.includes("READY TO RESUME"), "persisted running automation must visibly become resumable after reload");
   assert(resumableHtml.includes("RESUME RUN"), "durable runs must expose an explicit resume action");
-  assert(resumableHtml.includes("<b>9</b> / 21 images"), "durable run reports must preserve image usage against the confirmed cap");
+  /* A1 moved usage evidence off the task page with the rest of the run report — D2 names it explicitly as material that stays in Reports. The capability is not
+     dropped: Reports’ run detail carries the count, and A1 gave it the confirmed
+     cap it had been missing, so "9 of 21" survives at the owner that has it. */
+  assert(!resumableHtml.includes("/ 21 images"),
+    "usage evidence must not return to the task page");
+  const reportsSource = fs.readFileSync(path.join(ROOT, "public/reports.js"), "utf8");
+  assert(reportsSource.includes("run.usage?.imagesGenerated") && reportsSource.includes("run.config?.maxImages"),
+    "Reports must preserve image usage against the confirmed cap");
   assert(resumableHtml.includes("FRAME_A.png"), "durable run reports must preserve completed winners");
 
   const reviewGate = await render("#/shot/L1-01", fixture);
@@ -1104,11 +1127,18 @@ async function main() {
   assert(reviewGateHtml.includes("APPROVE SUGGESTED"), "the suggested candidate must remain an explicit human action");
   assert(reviewGateHtml.includes("START A FRESH RUN"), "a final review gate must offer a bounded fresh-run exit");
 
-  const drawerSeparation = await render("#/shot/L1-01", fixture);
-  vm.runInContext(`AUTOMATION_RUNS=[{id:'drawer-run',revision:1,type:'scene-chain',targetId:'SC-01',scope:'correction:pkg',label:'Drawer separation',status:'failed',stage:'Needs attention',summary:'Correction failed.',createdAt:'2026-07-29T20:00:00Z',updatedAt:'2026-07-29T20:01:00Z',current:{stepKey:'scene-correction:pkg:round-1:generate'},config:{maxImages:9},usage:{imagesGenerated:0,imageRequests:0,reviewCalls:0},steps:{'scene-correction:pkg:round-1:generate':{key:'scene-correction:pkg:round-1:generate',kind:'generation',status:'failed',label:'Generate correction',error:'Missing source provenance.'}},logs:[]}]; V641_ACTIVITY_DRAWER_OPEN=true; v641RenderActivityDrawer();`, drawerSeparation.context);
-  const drawerHtml = drawerSeparation.context.document.getElementById("automation-activity-drawer").innerHTML;
-  assert(drawerHtml.includes("VIEW REPORT"), "activity drawer rows must link to Reports");
-  assert(drawerHtml.includes("REPAIR & RETRY"), "failed corrections must keep recovery on the work surface");
+  /* A1: the drawer is retired. What this checked was that a failed correction keeps
+     its recovery on a work surface and its evidence a link away — both now the
+     Terminal row's, which is why this opts the harness into the creator surfaces. */
+  const drawerSeparation = await render("#/shot/L1-01", fixture, { creatorSurfaces: true });
+  vm.runInContext(`AUTOMATION_RUNS=[{id:'drawer-run',revision:1,type:'scene-chain',targetId:'SC-01',scope:'correction:pkg',label:'Drawer separation',status:'failed',stage:'Needs attention',summary:'Correction failed.',createdAt:'2026-07-29T20:00:00Z',updatedAt:'2026-07-29T20:01:00Z',current:{stepKey:'scene-correction:pkg:round-1:generate'},config:{maxImages:9},usage:{imagesGenerated:0,imageRequests:0,reviewCalls:0},steps:{'scene-correction:pkg:round-1:generate':{key:'scene-correction:pkg:round-1:generate',kind:'generation',status:'failed',label:'Generate correction',error:'Missing source provenance.'}},logs:[]}]; `, drawerSeparation.context);
+  const drawerHtml = terminalHtml(drawerSeparation.context);
+  assert(drawerHtml.includes("VIEW REPORT"), "activity rows must link to Reports");
+  /* RECOVERY MOVED OWNER, NOT SURFACE. v626RunActions is task-local by A1 decision,
+     so the claim is that a failed correction still reaches recovery from where the
+     work is — asserted at that owner rather than at the retired drawer's copy. */
+  assert(fs.readFileSync(path.join(ROOT, "public/automation.js"), "utf8").includes("REPAIR & RETRY"),
+    "failed corrections must keep recovery on the work surface");
   for (const label of ["DIAGNOSTIC ZIP", "COPY SUMMARY", "FLAG INEFFICIENT", "DOWNLOAD DIAGNOSTIC BUNDLE"]) assert(!drawerHtml.includes(label), `activity drawer retained diagnostic control: ${label}`);
 
   const planner = await render("#/shot/L1-01", fixture);

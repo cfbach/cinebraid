@@ -136,6 +136,7 @@ const nodeSuites = [
   "check:braidy-negative",
   "check:quiet-shell",
   "check:shell-ownership",
+  "check:creator-surface-optin",
   "check:project-entry",
   "check:project-entry-negative",
   "check:reference-reframe",

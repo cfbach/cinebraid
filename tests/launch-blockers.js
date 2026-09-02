@@ -245,7 +245,7 @@ assert.strictEqual(
   'var(--text)',
   'the headline Production metrics still read --text; if that changes, the token contract above stops covering them',
 );
-for (const selector of ['.production-next', '.board-list-controls', '.shot-command-summary article', '.focused-taskbar', '.automation-activity-drawer']) {
+for (const selector of ['.production-next', '.board-list-controls', '.shot-command-summary article', '.focused-taskbar']) {
   const scoped = declaration(`${LIGHT} ${selector}`, 'background');
   assert(scoped, `${selector} paints a dark literal and needs a light-surface background`);
   assert(

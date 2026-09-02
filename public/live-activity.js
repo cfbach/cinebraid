@@ -107,10 +107,6 @@ window.v670AdmitActivityRows = v670AdmitActivityRows;
 /* Is a dialog currently on top of the drawer? The shipped modal host is a single
    `#modal` element that carries `hidden` when closed, so this is a read of the
    product's own state rather than a second flag to keep in step. */
-function v670DialogIsOpen() {
-  const modal = typeof document !== "undefined" ? document.getElementById("modal") : null;
-  return !!(modal && modal.classList && !modal.classList.contains("hidden"));
-}
 function v641SelectorValue(value) { return String(value || "").replace(/["\\]/g, "\\$&"); }
 function v641RunById(id) {
   return (Array.isArray(AUTOMATION_RUNS) ? AUTOMATION_RUNS : []).find((run) => run.id === id) || null;
@@ -764,17 +760,6 @@ function v670WaitingDetail(run, step) {
 function v670RunTone(run) {
   return v670WaitingForHumanRun(run) ? "review" : v641StatusTone(run?.status);
 }
-function v641ActiveAndRecentRuns() {
-  const runs = [...(AUTOMATION_RUNS || [])].filter((run) => run.status !== "archived");
-  /* Unsettled work sorts first - both the machine's and the director's, because a run
-     waiting on a person is just as much "still open" as one mid-request. Which of the
-     two it is gets said in the section it lands in, not by hiding it down the list. */
-  return runs.sort((a, b) => {
-    const openA = v670RunUnsettled(a) ? 1 : 0;
-    const openB = v670RunUnsettled(b) ? 1 : 0;
-    return openB - openA || String(b.updatedAt || b.createdAt || "").localeCompare(String(a.updatedAt || a.createdAt || ""));
-  }).slice(0, 12);
-}
 function v6602ActivityStatus() {
   const runs = Array.isArray(AUTOMATION_RUNS) ? AUTOMATION_RUNS : [];
   const activeRuns = runs.filter(v670MachineActiveRun);
@@ -890,12 +875,6 @@ function v670DomCanReconcile(document_) {
    fell through to a whole-body rewrite. Unchanged rows still survived - but only
    because the rewrite was skipped when the markup matched - and a row whose content
    changed was destroyed along with its controls. */
-function v670SectionRows(node) {
-  return [...(node?.children || [])].filter((row) => row.nodeName !== "HEADER");
-}
-function v670KeyedRows(rows) {
-  return rows.length && rows.every((row) => row.getAttribute?.("data-activity-key")) ? rows : null;
-}
 /* Make `live` look like `next` WITHOUT replacing `live`.
 
    Attributes are synced in both directions - one that disappeared from the new markup
@@ -929,43 +908,6 @@ function v670PatchElement(live, next) {
     if (liveKid.nodeValue !== nextKid.nodeValue) liveKid.nodeValue = nextKid.nodeValue;
   }
   for (let index = nextKids.length; index < liveKids.length; index += 1) live.removeChild(liveKids[index]);
-}
-function v670PatchSection(current, next) {
-  const currentHeader = current.querySelector(":scope > header"), nextHeader = next.querySelector(":scope > header");
-  if (currentHeader && nextHeader && currentHeader.outerHTML !== nextHeader.outerHTML) v670PatchElement(currentHeader, nextHeader);
-  const currentRowNodes = v670SectionRows(current), nextRowNodes = v670SectionRows(next);
-  const currentRows = v670KeyedRows(currentRowNodes), nextRows = v670KeyedRows(nextRowNodes);
-  /* An empty-state placeholder carries no key and no control. Sections holding one on
-     either side swap their body wholesale - never their header, which carries the
-     section's own count and, in the shell, its controls. */
-  if (!currentRows || !nextRows) {
-    const currentBody = currentRowNodes.map((row) => row.outerHTML).join("");
-    const nextBody = nextRowNodes.map((row) => row.outerHTML).join("");
-    if (currentBody === nextBody) return;
-    for (const row of currentRowNodes) current.removeChild(row);
-    for (const row of nextRowNodes) current.appendChild(row);
-    return;
-  }
-  const existing = new Map(currentRows.map((row) => [row.getAttribute("data-activity-key"), row]));
-  const keep = new Set();
-  let anchor = currentHeader || null;
-  for (const nextRow of nextRows) {
-    const key = nextRow.getAttribute("data-activity-key");
-    const found = existing.get(key);
-    let live = found;
-    if (found) {
-      /* The row keeps its node whatever changed inside it. This is the line that stops
-         a DISMISS button vanishing while the run's own label or error is rewritten. */
-      if (found.outerHTML !== nextRow.outerHTML) v670PatchElement(found, nextRow);
-    } else {
-      current.insertBefore(nextRow, anchor ? anchor.nextSibling : current.firstChild);
-      live = nextRow;
-    }
-    if (anchor && live.previousSibling !== anchor) current.insertBefore(live, anchor.nextSibling);
-    anchor = live;
-    keep.add(key);
-  }
-  for (const [key, row] of existing) if (!keep.has(key)) row.remove();
 }
 /* THE FLOATING GLOBAL ACTIVITY STRIP IS RETIRED. Batch 2, Slice 1.
 

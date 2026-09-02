@@ -44,6 +44,7 @@ const assert = require("assert");
 const fs = require("fs");
 const path = require("path");
 const vm = require("vm");
+const { terminalHtml } = require("./terminal-view");
 const Module = require("module");
 
 const ROOT = path.join(__dirname, "..");
@@ -185,9 +186,9 @@ const CONTROLS = [
           title: "Smuggled from another project", detail: "", projectSlug: "somewhere-else", status: "completed",
           startedAt: "2026-08-17T00:00:00.000Z", updatedAt: "2026-08-17T00:00:00.000Z" });
         v641StartManualActivity("VISION AI · CANDIDATE REVIEW", "Local review", "");
-        V641_ACTIVITY_DRAWER_OPEN = true; v641RenderActivityDrawer();
+        
       `, app.context);
-      const html = app.context.document.getElementById("automation-activity-drawer").innerHTML;
+      const html = terminalHtml(app.context);
       assert(html.includes("Local review"), "the fixture must produce a current-project row");
       assert(!html.includes("Smuggled from another project"),
         "a row belonging to another project rendered as current-project activity");
@@ -251,10 +252,10 @@ const CONTROLS = [
       await app.context.refreshGlobalAutomationActivity(true);
       const ids = vm.runInContext("JSON.stringify(FAL_GENERATION_JOBS.map((job) => job.id))", app.context);
       assert.strictEqual(ids, "[]", `this window adopted another project's generation ledger: ${ids}`);
-      vm.runInContext("V641_ACTIVITY_DRAWER_OPEN = true; v641RenderActivityDrawer();", app.context);
-      const drawer = app.context.document.getElementById("automation-activity-drawer").innerHTML;
+      vm.runInContext("", app.context);
+      const drawer = terminalHtml(app.context);
       assert(!drawer.includes("Project A reference render"),
-        "another project's generation ledger was rendered in this project's drawer");
+        "another project's generation ledger was rendered in this project's activity");
       const button = app.context.document.getElementById("automation-activity-toggle").innerHTML;
       assert(!/active/.test(button), `another project's generation ledger was counted as this project's: ${button}`);
     },
@@ -716,7 +717,8 @@ function arm(control, mutated) {
   const state = { applied: !mutated };
   const run = (options = {}) => {
     const { project, hash, ...rest } = options;
-    const renderOptions = { ...rest };
+    /* A1: these controls read the Activity Terminal, which is the operational owner. */
+    const renderOptions = { creatorSurfaces: true, ...rest };
     if (mutated) {
       renderOptions.mutateSource = (name, original) => {
         if (name !== file) return original;

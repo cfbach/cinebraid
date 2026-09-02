@@ -773,7 +773,13 @@
     return `<article class="cb-terminal-row tone-${attr(tone)}" data-activity-key="${attr(fact.key)}" data-cb-kind="${attr(fact.kind)}">`
       + `<time>${esc(clock)}</time><em>${esc(terminalStatus(fact))}</em>`
       + `<div class="cb-terminal-body">${label}${context ? `<small>${esc(context)}</small>` : ""}`
-      + `${fact.technical.error.state === "known" ? `<small class="cb-terminal-error">${esc(fact.technical.error.value)}</small>` : ""}</div>`
+      /* THE MESSAGE IS EVIDENCE; THE ERROR STYLE IS A VERDICT.
+         A run that is still working can carry a step that failed and was retried, and
+         painting that in the failure colour hands the director a fault the run does not
+         have — the defect the retired drawer guarded with `failed?.error && unhealthy`.
+         The message is still shown either way, because it is what happened; only the
+         styling follows the run's own tone. */
+      + `${fact.technical.error.state === "known" ? `<small class="${tone === "attention" ? "cb-terminal-error" : "cb-terminal-note"}">${esc(fact.technical.error.value)}</small>` : ""}</div>`
       + `<div class="cb-terminal-meta">${meta.map((part) => `<span>${esc(part)}</span>`).join("")}${fact.elapsed ? `<span>${esc(fact.elapsed)}</span>` : ""}${resolve}${report}${dismiss}</div></article>`;
   }
 

@@ -2,6 +2,7 @@ const assert = require("assert");
 const fs = require("fs");
 const path = require("path");
 const vm = require("vm");
+const { terminalHtml } = require("./terminal-view");
 const { render, buildFixture, withCanon } = require("./render-harness");
 
 const delay = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
@@ -128,9 +129,11 @@ async function testStaleReviewCannotAssign() {
 
 async function testActivityDismissControls() {
   const project = buildFixture();
-  const rendered = await render("#/production", project);
-  vm.runInContext(`AUTOMATION_RUNS=[{id:'old-failure',type:'entity-chain',targetId:'props:PROP-MURAL',label:'Mural continuity references',status:'failed',stage:'Needs attention',updatedAt:'2026-07-30T20:00:00Z',steps:{prompt:{key:'prompt',kind:'prompt',status:'failed',error:'Prompt was not built'}}}];V641_ACTIVITY_DRAWER_OPEN=true;v641RenderActivityDrawer();`, rendered.context);
-  const html = rendered.context.document.getElementById("automation-activity-drawer").innerHTML;
+  const rendered = await render("#/production", project, { creatorSurfaces: true });
+  vm.runInContext(`AUTOMATION_RUNS=[{id:'old-failure',type:'entity-chain',targetId:'props:PROP-MURAL',label:'Mural continuity references',status:'failed',stage:'Needs attention',updatedAt:'2026-07-30T20:00:00Z',steps:{prompt:{key:'prompt',kind:'prompt',status:'failed',error:'Prompt was not built'}}}];`, rendered.context);
+  /* A1 moved both dismiss affordances to the expanded Terminal — the header action
+     and the attention row. The capability is unchanged, and so are its writers. */
+  const html = terminalHtml(rendered.context);
   assert(html.includes("DISMISS PREVIOUS ALERTS"));
   assert(html.includes("DISMISS"));
   assert.strictEqual(typeof rendered.context.dismissAutomationActivityRun, "function");

@@ -106,14 +106,6 @@ function v640RunDispatch(run) {
   if (run.type === "scene-chain" && typeof runSceneAutomation === "function") return runSceneAutomation(run.id);
   return runEntityAutomation(run.id);
 }
-function v6211GenerationLabel(settings, kind = "frame") {
-  const quality = kind === "blocking" ? settings.blockingQuality : settings.frameQuality;
-  const resolution = kind === "blocking" ? settings.blockingResolution : settings.frameResolution;
-  return `${String(resolution || "1k").toUpperCase()} / ${String(quality || "low").replace(/^./, (c) => c.toUpperCase())}`;
-}
-function v6211GenerationProfileMarkup(settings) {
-  return `<div class="automation-generation-profile"><span><b>Blocking</b>${esc(v6211GenerationLabel(settings, "blocking"))}</span><span><b>Frames & references</b>${esc(v6211GenerationLabel(settings, "frame"))}</span></div>`;
-}
 
 /* THE PLANNER'S CONTROLS, tiered by the same rule as every other generation surface.
  *
@@ -592,7 +584,6 @@ async function v626CheckCancelled(run) {
     throw error;
   }
 }
-function v626ToneClass(tone) { return tone === "success" ? "ok" : tone === "warn" ? "warn" : tone === "error" ? "danger" : ""; }
 function v626StatusLabel(run) {
   if (!run) return "IDLE";
   if (V628_AUTOMATION_LEASE_LOST_RUNS.has(run.id) || run.current?.leaseLost) return "LEASE LOST — RESUME REQUIRED";
@@ -604,13 +595,6 @@ function v626StatusLabel(run) {
 /* ONE RATE READER for the whole application. This used to reach into CONFIG itself,
    which meant the automation planner, the motion dialog and the ledger were three
    readers of two different numbers. */
-function v628EstimatedCostPerImage() {
-  const rate = configuredImageRate(typeof CONFIG === "object" ? CONFIG : {});
-  return rate.configured ? Number(rate.amount) : 0;
-}
-function v628Usd(value) {
-  return formatRateUsd(value);
-}
 /* v628CostEstimateText() USED TO LIVE HERE and has been deleted rather than kept.
  *
  * It appended " · estimated worst case $X at $Y per image" to five different planner
@@ -621,38 +605,6 @@ function v628Usd(value) {
  *
  * Deleted rather than left unused because a dormant second cost renderer is one a future
  * caller finds; check:behavior enforces that rule and caught this on the first run. */
-function v626RunUsageMarkup(run) {
-  const usage = run?.usage || {};
-  const max = Number(run?.config?.maxImages || 0);
-  const rate = v628EstimatedCostPerImage();
-  /* A LIVE PROJECTION AT TODAY'S RATE, and worded so it cannot be mistaken for the
-     historical record. This multiplies the CURRENT Settings rate by the run's image
-     count, so it moves when that setting moves. For a run in progress that is the
-     useful question — "what is this about to cost me" — and for history it is exactly
-     the defect that was fixed elsewhere: the recorded figure is the estimate each job
-     stored at submission, it lives in Reports, and it does not move. Two different
-     numbers answering two different questions, so they must not share a word. */
-  const estimate = rate ? `<span title="Projected from the current Settings rate — not the estimate recorded when each job was submitted. Reports shows the recorded figure."><b>${v628Usd(Number(usage.imagesGenerated || 0) * rate)}</b>${max ? ` / ${v628Usd(max * rate)}` : ""} projected at today's rate</span>` : "";
-  return `<div class="automation-usage"><span><b>${Number(usage.imagesGenerated || 0)}</b>${max ? ` / ${max}` : ""} images</span><span><b>${Number(usage.imageRequests || 0)}</b> paid request${Number(usage.imageRequests || 0) === 1 ? "" : "s"}</span><span><b>${Number(usage.reviewCalls || 0)}</b> review call${Number(usage.reviewCalls || 0) === 1 ? "" : "s"}</span>${estimate}</div>`;
-}
-function v626RunWinners(run) {
-  return Object.values(run?.steps || {}).filter((step) => step.status === "completed" && step.winner).sort((a, b) => String(a.completedAt || "").localeCompare(String(b.completedAt || "")));
-}
-function v627StepSystem(step) {
-  return { prompt: "Prompt Advisor", generation: "FAL Image Generation", review: "Vision Review", "frame-review": "Vision Review", "entity-review": "Vision Review", "frame-approval": "Saving Approval", "entity-approval": "Saving Approval", "blocking-approval": "Saving Guide" }[step?.kind] || "CineBraid Runner";
-}
-function v627StepTone(step) {
-  if (step.status === "completed" || step.status === "skipped") return "done";
-  if (step.status === "running") return "active";
-  if (step.status === "needs-review") return "review";
-  if (step.status === "failed") return "failed";
-  return "pending";
-}
-function v627RunConsoleMarkup(run) {
-  const steps = Object.values(run?.steps || {}).sort((a, b) => String(a.startedAt || a.updatedAt || "").localeCompare(String(b.startedAt || b.updatedAt || "")));
-  if (!steps.length) return `<div class="automation-console-empty"><b>Run plan ready</b><span>Steps will appear here as prompting, generation, review, and approval begin.</span></div>`;
-  return `<div class="automation-run-console">${steps.map((step) => { const tone = v627StepTone(step); return `<article class="${tone}"><i>${tone === "done" ? "✓" : tone === "active" ? "●" : tone === "review" ? "!" : tone === "failed" ? "×" : "○"}</i><div><b>${esc(step.label || step.key)}</b><span>${esc(v627StepSystem(step))}${Number(step.attempt || 0) ? ` · attempt ${Number(step.attempt)}` : ""}</span></div><small>${tone === "active" ? "WORKING" : tone === "review" ? "APPROVAL" : tone.toUpperCase()}</small></article>`; }).join("")}</div>`;
-}
 function v627AwaitingReviewStep(run) {
   const current = run?.steps?.[run?.current?.stepKey || ""];
   if (current?.status === "needs-review") return current;
@@ -854,10 +806,27 @@ function v626AutomationPanel(run, title, description, type, targetId, scope, sta
      v626RunActions is untouched and stays here: it is the only thing that holds this
      run's type/targetId/scope and its lease, and it is not duplicated anywhere. */
   const persistence = `<details class="automation-persistence-fold"><summary>What happens if I close this tab?</summary><p class="automation-persistence-note">Progress is saved to this project. Closing the tab pauses browser orchestration; reopen the same target and choose Resume Run.</p></details>`;
-  const status = run
-    ? (typeof v670CompactRunStatusMarkup === "function" ? v670CompactRunStatusMarkup(run) : "")
-    : `<div class="automation-run-status"><b>${esc(v626StatusLabel(run))}</b><span>Ready to plan an automation run</span></div>`;
-  return `<section class="creation-card automation-card durable-automation-card"><div class="creation-card-head"><div><h3>${esc(title)}</h3><p>${esc(description)}</p></div></div>${status}${extra}${persistence}<div class="creation-actions automation-actions">${v626RunActions(run, type, targetId, scope, startMarkup)}</div></section>`;
+  /* THE STATE TOKEN STAYS. It is one phrase — READY TO RESUME, HUMAN REVIEW REQUIRED,
+     ACTIVE IN ANOTHER WINDOW — and it is the first thing a filmmaker reads to know
+     where this run stands. The first pass of A1 removed it along with the console
+     around it, which took the answer with the furniture. */
+  const status = `<div class="automation-run-status"><b>${esc(v626StatusLabel(run))}</b><span>${esc(run?.stage || "Ready to plan an automation run")}</span></div>`;
+  /* THE OUTCOME SENTENCE, KEPT AS A SENTENCE. `run.summary` is the one piece of the
+     retired full-width block that told a filmmaker what actually happened, so it
+     survives as a concise line beside the state rather than as a tone-filled panel.
+     Rendered only when there is one: an empty outcome must not reserve a block. */
+  const outcome = run?.summary
+    ? `<p class="automation-run-outcome">${esc(run.summary)}</p>`
+    : "";
+  const live = run && typeof v670CompactRunStatusMarkup === "function" ? v670CompactRunStatusMarkup(run) : "";
+  /* THE HUMAN REVIEW GATE IS NOT A REPORT, AND IT STAYS.
+     It was bundled inside v626RunReportMarkup with six things that genuinely belong
+     to Reports — the generation profile, usage evidence, the run console, pass
+     progression, the winners table and the log — so retiring the bundle took the
+     director's approval gate with it. That gate is the creative human decision this
+     page exists for, which is precisely what A1 says a task surface keeps. */
+  const reviewGate = run && typeof v627HumanReviewMarkup === "function" ? v627HumanReviewMarkup(run) : "";
+  return `<section class="creation-card automation-card durable-automation-card"><div class="creation-card-head"><div><h3>${esc(title)}</h3><p>${esc(description)}</p></div></div>${status}${outcome}${live}${reviewGate}${extra}${persistence}<div class="creation-actions automation-actions">${v626RunActions(run, type, targetId, scope, startMarkup)}</div></section>`;
 }
 
 

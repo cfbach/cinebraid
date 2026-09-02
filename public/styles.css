@@ -2183,7 +2183,6 @@ body:not([data-help="minimal"]) [data-tip]:focus-visible::before{content:"";posi
 .entity-state-sheet-ribbon{position:absolute;left:10px;bottom:10px;padding:5px 7px;border-radius:999px;background:rgba(7,10,13,.88);border:1px solid color-mix(in srgb,var(--blue) 55%,var(--line));color:var(--blue);font:800 8px var(--mono);letter-spacing:.08em}
 .coverage-inline-activity{display:grid;grid-template-columns:auto minmax(0,1fr) auto;align-items:center;gap:10px;margin:0 18px 14px;padding:10px 12px;border:1px solid color-mix(in srgb,var(--blue) 50%,var(--line));border-radius:11px;background:color-mix(in srgb,var(--blue) 7%,rgb(25 28 31));}
 .coverage-inline-activity>div{display:grid;gap:2px}.coverage-inline-activity small{color:var(--muted)}
-.automation-drawer-run{background:rgb(35 39 42 / .985)}
 @media(max-width:760px){
   .modal-box:has(.coverage-automation-modal),.modal-box:has(.coverage-extractor-modal),.modal-box:has(.coverage-sheet-picker){width:100%;max-height:calc(100dvh - 12px);padding:16px}
   .coverage-automation-modal .two-col{grid-template-columns:1fr}
@@ -2304,7 +2303,6 @@ body[data-focused-workspace="1"] .coverage-slot-card.focused-slot-selected>heade
 body[data-focused-workspace="1"] .coverage-slot-card.focused-slot-selected .coverage-slot-preview img,body[data-focused-workspace="1"] .coverage-slot-card.focused-slot-selected .coverage-slot-preview video{max-height:440px;object-fit:contain}
 .entity-candidate-review-overlay{z-index:5}
 .automation-activity-backdrop{position:fixed;z-index:var(--z-activity-backdrop);inset:0;width:100vw;height:100vh;border:0;border-radius:0;background:rgba(0,0,0,.48);backdrop-filter:blur(2px);cursor:default}.automation-activity-backdrop[hidden]{display:none!important}
-body.automation-activity-open{overflow:hidden}
 @media(max-width:1180px){.reference-creation-actions{grid-template-columns:repeat(2,minmax(0,1fr))}body[data-focused-workspace="1"] .coverage-slot-card.focused-slot-selected,body[data-focused-workspace="1"] .expression-slot-card.focused-slot-selected{grid-template-columns:1fr;grid-template-areas:"head" "preview" "file" "notes"}.coverage-slot-card.focused-slot-selected>.coverage-slot-preview{min-height:220px}}
 @media(max-width:700px){.reference-creation-actions{grid-template-columns:1fr}.reference-creation-hub{padding:14px}.reference-creation-hub>header{display:grid}.focused-slot-rail button{min-width:126px!important}}
 
@@ -2675,14 +2673,10 @@ body.automation-activity-open{overflow:hidden}
 .coverage-assignment-notice>div{display:grid;gap:3px}.coverage-assignment-notice span{font:800 8px var(--mono);letter-spacing:.11em;color:var(--green)}.coverage-assignment-notice b{font-size:12px}.coverage-assignment-notice small{color:var(--muted)}
 .imported-reference-mapper{display:grid;gap:14px;min-width:min(760px,92vw)}.imported-reference-mapper>header{display:flex;justify-content:space-between;gap:18px}.imported-reference-mapper>header>div{display:grid;gap:4px}.imported-reference-mapper>header span{font:800 8px var(--mono);letter-spacing:.12em;color:var(--accent)}.imported-reference-mapper h3,.imported-reference-mapper p{margin:0}.imported-reference-mapper p{color:var(--muted);line-height:1.45}
 .imported-reference-preview{display:grid;grid-template-columns:180px minmax(0,1fr);gap:12px;align-items:center;padding:10px;border:1px solid var(--line);border-radius:10px;background:var(--surface)}.imported-reference-preview img{width:100%;height:130px;object-fit:contain;background:#111;border-radius:7px}.imported-reference-preview div{display:grid;gap:5px}.imported-reference-preview span{color:var(--muted)}
-.automation-drawer-header-actions{display:flex;gap:8px;align-items:center}.automation-drawer-run footer{flex-wrap:wrap}
 /* The drawer's foreign-project notice. Warning-toned rather than decorative: it is
    shown only when the run ledger this window polled belongs to a different project,
    and it explains why the list below has stopped moving. */
-.automation-drawer-foreign{display:grid;gap:6px;margin-top:10px;padding:10px 12px;border:1px solid color-mix(in srgb,var(--amber) 55%,var(--line));border-radius:10px;background:color-mix(in srgb,var(--amber) 8%,var(--panel))}
-.automation-drawer-foreign b{font-size:12px}.automation-drawer-foreign span{color:var(--muted);line-height:1.45}.automation-drawer-foreign em{font-style:normal;font-weight:700;color:var(--text,inherit)}
-.automation-drawer-foreign button{justify-self:start}
-@media(max-width:720px){.entity-review-hard-checks article{grid-template-columns:1fr}.declared-state-line{grid-template-columns:1fr;gap:1px}.entity-review-provenance{flex-direction:column}.coverage-assignment-notice{align-items:stretch;flex-direction:column}.imported-reference-mapper{min-width:0}.imported-reference-mapper>header{align-items:flex-start}.imported-reference-preview{grid-template-columns:1fr}.imported-reference-preview img{height:180px}.automation-drawer-header-actions{align-items:stretch;flex-direction:column-reverse}.automation-drawer-header-actions button{min-height:40px}}
+@media(max-width:720px){.entity-review-hard-checks article{grid-template-columns:1fr}.declared-state-line{grid-template-columns:1fr;gap:1px}.entity-review-provenance{flex-direction:column}.coverage-assignment-notice{align-items:stretch;flex-direction:column}.imported-reference-mapper{min-width:0}.imported-reference-mapper>header{align-items:flex-start}.imported-reference-preview{grid-template-columns:1fr}.imported-reference-preview img{height:180px}}
 
 /* v6.6.3.1 manual-first production workflow */
 .reference-manual-hub{display:grid;gap:14px;padding:16px;border:1px solid color-mix(in srgb,var(--green) 42%,var(--line));border-radius:14px;background:color-mix(in srgb,var(--green) 4%,var(--panel));margin-bottom:14px}
@@ -3044,7 +3038,7 @@ body::before{content:"";position:fixed;inset:0;pointer-events:none;background:li
 .workspace-tabs{gap:8px;padding-bottom:14px;border-bottom-color:rgba(196,214,235,.10)}
 .workspace-tab{border-radius:999px;padding:10px 14px;border-color:rgba(196,214,235,.10);background:rgba(255,255,255,.02)}
 .workspace-tab.on{background:linear-gradient(180deg, rgba(79,216,204,.16), rgba(79,216,204,.08));border-color:rgba(79,216,204,.22)}
-.slate,.scene-card,.production-inbox,.production-active,.production-scenes,.production-summary article,.work-summary>a,.work-summary>div,.settings-block,.opt-card,.compact-entity-section,.reference-manual-hub,.reference-assisted-tools,.guided-assisted-tools,.coverage-assisted-actions,.bible-block,.bible-entity-card,.bible-shot,.modal-box,.coverage-sheet-picker-grid button,.coverage-automation-summary,.coverage-mode-note,.coverage-crop-provenance,.coverage-slot-card,.coverage-review-gate,.coverage-spend-plan,.entity-review-hard-checks article,.coverage-assignment-notice,.imported-reference-preview,.queue-row,.automation-drawer-run,.automation-drawer-shell,.automation-drawer-list{
+.slate,.scene-card,.production-inbox,.production-active,.production-scenes,.production-summary article,.work-summary>a,.work-summary>div,.settings-block,.opt-card,.compact-entity-section,.reference-manual-hub,.reference-assisted-tools,.guided-assisted-tools,.coverage-assisted-actions,.bible-block,.bible-entity-card,.bible-shot,.modal-box,.coverage-sheet-picker-grid button,.coverage-automation-summary,.coverage-mode-note,.coverage-crop-provenance,.coverage-slot-card,.coverage-review-gate,.coverage-spend-plan,.entity-review-hard-checks article,.coverage-assignment-notice,.imported-reference-preview,.queue-row{
   background:linear-gradient(180deg, rgba(17,24,34,.94), rgba(12,18,27,.96));
   border-color:rgba(196,214,235,.12);
   box-shadow:var(--shadow-panel);
@@ -3311,7 +3305,7 @@ input,textarea,select{background:var(--bg);color:var(--ink);border-color:var(--l
 input::placeholder,textarea::placeholder{color:var(--faint)}
 input:focus,textarea:focus,select:focus{border-color:var(--acc);box-shadow:0 0 0 3px var(--acc-soft)}
 .add-btn,.topbar-add,.approve-btn{background:var(--acc)!important;color:#041217!important;border-color:var(--acc)!important;font-weight:700}
-.slate,.scene-card,.production-inbox,.production-active,.production-scenes,.production-summary article,.work-summary>a,.work-summary>div,.settings-block,.opt-card,.compact-entity-section,.reference-manual-hub,.reference-assisted-tools,.guided-assisted-tools,.coverage-assisted-actions,.bible-block,.bible-entity-card,.bible-shot,.modal-box,.coverage-sheet-picker-grid button,.coverage-automation-summary,.coverage-mode-note,.coverage-crop-provenance,.coverage-slot-card,.coverage-review-gate,.coverage-spend-plan,.entity-review-hard-checks article,.coverage-assignment-notice,.imported-reference-preview,.queue-row,.automation-drawer-run,.automation-drawer-shell,.automation-drawer-list,.state-editor,.coverage-board,.shot-stepper,.shot-head,.top-hero,.project-card,.log-strip,.settings-nav-shell,.workspace-settings-note,.filename-preview,.settings-preview-card{
+.slate,.scene-card,.production-inbox,.production-active,.production-scenes,.production-summary article,.work-summary>a,.work-summary>div,.settings-block,.opt-card,.compact-entity-section,.reference-manual-hub,.reference-assisted-tools,.guided-assisted-tools,.coverage-assisted-actions,.bible-block,.bible-entity-card,.bible-shot,.modal-box,.coverage-sheet-picker-grid button,.coverage-automation-summary,.coverage-mode-note,.coverage-crop-provenance,.coverage-slot-card,.coverage-review-gate,.coverage-spend-plan,.entity-review-hard-checks article,.coverage-assignment-notice,.imported-reference-preview,.queue-row,.state-editor,.coverage-board,.shot-stepper,.shot-head,.top-hero,.project-card,.log-strip,.settings-nav-shell,.workspace-settings-note,.filename-preview,.settings-preview-card{
   background:var(--panel)!important;border-color:var(--line)!important;color:var(--ink)
 }
 .settings-block,.settings-nav-shell{box-shadow:none}
@@ -4557,9 +4551,6 @@ body[data-focused-workspace="1"] .guided-frame-body,
   background:linear-gradient(180deg,var(--panel),var(--panel-2));
   border-color:var(--line)}
 #app[data-surf="light"] .focused-taskbar{background:var(--panel)}
-#app[data-surf="light"] .automation-activity-drawer{background:var(--panel)}
-#app[data-surf="light"] .automation-drawer-list,
-#app[data-surf="light"] .automation-drawer-section>header{background:var(--panel-2)}
 /* An overlay chip that has to sit on top of judgement imagery, so it keeps its own
    surface rather than the card's — but on a light canvas that surface is light. */
 #app[data-surf="light"] .win-badge{background:var(--panel)!important;border-color:var(--line-2)}
@@ -5183,11 +5174,16 @@ body[data-focused-workspace="1"] .guided-frame-body,
 .cb-terminal-foreign b{font-size:12px;color:var(--op-waiting)}
 .cb-terminal-foreign span{font-size:11px;color:var(--muted);line-height:1.45}
 .cb-terminal-foreign button{justify-self:start}
+/* A1 — the run outcome as a sentence beside the state, not the retired full-width
+   tone panel. Absent entirely when there is no outcome to report. */
+.automation-run-outcome{margin:6px 0 0;font-size:11.5px;line-height:1.45;color:var(--muted)}
 .cb-terminal-body{display:grid;gap:2px;min-width:0}
 .cb-terminal-body>b,.cb-terminal-open{font-size:12px;font-weight:600;color:var(--ink);text-align:left;overflow-wrap:anywhere}
 .cb-terminal-open:hover{color:var(--acc)}
 .cb-terminal-body>small{font-size:10.5px;color:var(--muted);overflow-wrap:anywhere}
-.cb-terminal-error{color:var(--red)}
+.cb-terminal-error{color:var(--op-attention)}
+/* A step that failed inside a run that is still healthy: evidence, not a verdict. */
+.cb-terminal-note{color:var(--muted)}
 .cb-terminal-meta{display:flex;flex-wrap:wrap;justify-content:flex-end;gap:4px 8px;min-width:0}
 .cb-terminal-meta>span{font:500 10px var(--mono);color:var(--faint);overflow-wrap:anywhere}
 .cb-terminal-empty{padding:18px 15px;font-size:11.5px;color:var(--faint)}

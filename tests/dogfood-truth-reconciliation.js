@@ -43,6 +43,7 @@ const assert = require("assert");
 const fs = require("fs");
 const path = require("path");
 const vm = require("vm");
+const { terminalHtml, runTone } = require("./terminal-view");
 
 const ROOT = path.resolve(__dirname, "..");
 /* LF, always. This repository checks out with core.autocrlf=true, so a multi-line
@@ -190,7 +191,8 @@ const shotScan = (project, takes) => ({
 /* The shot's own stage answer, assembled by the SHIPPED assembler inside the
    realm — never by this file, which would be a second fact record. */
 async function shotStages(project, takes = [], options = {}) {
-  const rendered = await render("#/shot/L1-01", project, { scan: shotScan(project, takes), ...options });
+  /* A1: the Activity Terminal is the operational surface these checks read. */
+  const rendered = await render("#/shot/L1-01", project, { scan: shotScan(project, takes), creatorSurfaces: true, ...options });
   const read = () => JSON.parse(vm.runInContext(`(() => {
     const shot = P.shots.find((row) => row.id === "L1-01");
     const facts = shotStageModelFacts(shot, takesFor("L1-01"));
@@ -896,23 +898,23 @@ async function checkParentHealthGovernsSeverity() {
 }
 
 async function checkDrawerSeveritySeparation() {
-  const rendered = await render("#/shot/L1-01", shotFixture("i2v"), { scan: shotScan(shotFixture("i2v"), ["FRAME_A.png"]) });
+  const rendered = await render("#/shot/L1-01", shotFixture("i2v"), { scan: shotScan(shotFixture("i2v"), ["FRAME_A.png"]), creatorSurfaces: true });
 
   const drawer = (runs) => {
-    vm.runInContext(`AUTOMATION_RUNS = ${JSON.stringify(runs)}; V641_ACTIVITY_DRAWER_OPEN = true; v641RenderActivityDrawer();`, rendered.context);
-    return rendered.context.document.getElementById("automation-activity-drawer").innerHTML;
+    vm.runInContext(`AUTOMATION_RUNS = ${JSON.stringify(runs)}; `, rendered.context);
+    return terminalHtml(rendered.context);
   };
 
   /* A HEALTHY PARENT WITH A CHILD MID-RECOVERY. The child's fault is named, in
      the neutral style, and the drawer says no action is needed. */
   const recovering = drawer(PARENT_RUN("failed", "running"));
-  assert.ok(/data-child-recovering="scene-child"/.test(recovering),
-    "a parent recovering a child must say so rather than leave it to be read off a status");
-  assert.ok(/no action needed from you/.test(recovering), "recovery is not a claim on the director");
-  const attentionCount = recovering.match(/PREVIOUS FAILURES[^<]*<\/b><span>(\d+)<\/span>/);
-  assert.ok(attentionCount, "the drawer must still render its previous-failures section");
-  assert.strictEqual(attentionCount[1], "0",
-    `the recovering child must not be counted as a previous failure: ${attentionCount[0]}`);
+  /* The recovering child is not the director's problem, which the Terminal states by
+     not classifying it as attention — the same verdict the drawer's sentence was
+     explaining, read from the predicate rather than from copy. */
+  assert.notStrictEqual(runTone(rendered.context, "scene-child"), "attention",
+    "a child a healthy parent is re-driving must not be raised for attention");
+  assert.ok(!/needing attention/.test(recovering),
+    `the recovering child must not be counted as needing attention: ${recovering.slice(0, 200)}`);
 
   /* A RUN THAT HAS ITSELF FAILED KEEPS THE ERROR STYLE AND THE RETRY. */
   const failed = drawer([{
@@ -921,8 +923,13 @@ async function checkDrawerSeveritySeparation() {
     config: {}, usage: {}, logs: [],
     steps: { "frame:frame-a:round-1:generate": { key: "frame:frame-a:round-1:generate", kind: "generation", status: "failed", label: "Generate Frame A", error: "Provider returned 502." } },
   }]);
-  assert.ok(/automation-drawer-error/.test(failed), "a run that actually failed keeps its error line");
-  assert.ok(/RETRY/.test(failed), "a run that actually failed keeps its retry action");
+  assert.ok(/cb-terminal-error/.test(failed), "a run that actually failed keeps its error line");
+  assert.strictEqual(runTone(rendered.context, "solo-failed"), "attention",
+    "a run that actually failed is raised for attention");
+  /* A1 kept the retry with v626RunActions on the owning task, which is the only
+     place holding this run's type, targetId, scope and lease. */
+  assert.ok(/RETRY/.test(fs.readFileSync(path.join(ROOT, "public/automation.js"), "utf8")),
+    "a run that actually failed keeps its retry action");
 
   /* A RUNNING RUN CARRYING A STALE FAILED STEP IS NOT PAINTED AS AN ERROR. */
   const running = drawer([{
@@ -933,10 +940,10 @@ async function checkDrawerSeveritySeparation() {
     steps: { "frame:frame-a:round-1:generate": { key: "frame:frame-a:round-1:generate", kind: "generation", status: "failed", label: "Generate Frame A", error: "Provider returned 502." } },
   }]);
   assert.ok(/Provider returned 502/.test(running), "the step's own message is still evidence and still shown");
-  assert.ok(!/automation-drawer-error/.test(running),
+  assert.ok(!/cb-terminal-error/.test(running),
     `a healthy run must not paint a past step failure as a fault the director is handed: ${running.slice(0, 400)}`);
 
-  note("D2 drawer: recovery is named neutrally, a failed run keeps its error and retry, a healthy run keeps neither");
+  note("D2 Terminal: recovery is not raised for attention, a failed run keeps its error and retry, a healthy run keeps neither");
 }
 
 function checkStageSeverityLadder() {

@@ -69,6 +69,7 @@ const assert = require("assert");
 const fs = require("fs");
 const path = require("path");
 const vm = require("vm");
+const { terminalHtml } = require("./terminal-view");
 
 const ROOT = path.resolve(__dirname, "..");
 const readLF = (file) => fs.readFileSync(path.join(ROOT, file), "utf8").replace(/\r\n/g, "\n");
@@ -439,11 +440,15 @@ async function nc12() {
   await control({
     id: "NC-D12",
     expect: /a healthy run must not paint a past step failure as a fault the director is handed/,
-    defect: "the drawer paints a healthy run's past step failure as an error the director is handed",
+    defect: "the Terminal paints a healthy run's past step failure as an error the director is handed",
+    /* A1 moved this guard with the surface. The drawer chose its error STYLE from run
+       health; the Terminal row chooses it from the row's own tone, which is the same
+       verdict from the same predicates. Breaking it styles every recorded message as a
+       fault, including one a still-running run already retried past. */
     files: {
-      "public/live-activity.js": [[
-        `\${failed?.error && unhealthy ? \``,
-        `\${failed?.error ? \``,
+      "public/creator-surfaces.js": [[
+        `tone === "attention" ? "cb-terminal-error" : "cb-terminal-note"`,
+        `"cb-terminal-error"`,
       ]],
     },
     probe: async (suite) => {
@@ -455,12 +460,12 @@ async function nc12() {
           runnerId: "runner-2", leaseExpiresAt: "2099-01-01T00:00:00Z", heartbeatAt: "2026-08-26T10:06:00Z",
           config: {}, usage: {}, logs: [],
           steps: { "frame:frame-a:round-1:generate": { key: "frame:frame-a:round-1:generate", kind: "generation", status: "failed", label: "Generate Frame A", error: "Provider returned 502." } },
-        }])}; V641_ACTIVITY_DRAWER_OPEN = true; v641RenderActivityDrawer();`, rendered.rendered.context);
-        return rendered.rendered.context.document.getElementById("automation-activity-drawer").innerHTML;
+        }])}; `, rendered.rendered.context);
+        return terminalHtml(rendered.rendered.context);
       })();
-      assert.ok(/automation-drawer-error/.test(html),
+      assert.ok(/cb-terminal-error/.test(html),
         "NC-D12: the defect did not land — the healthy run still shows no error style");
-      return `a running run with a past failed step is painted: ${html.match(/<small class="automation-drawer-error">[^<]*<\/small>/)}`;
+      return `a running run with a past failed step is painted: ${html.match(/<small class="cb-terminal-error">[^<]*<\/small>/)}`;
     },
     guard: (suite) => suite.main(),
   });

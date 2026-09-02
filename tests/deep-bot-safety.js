@@ -160,7 +160,7 @@ async function main(){
   },'Use a compact slot list and one detail editor; preserve batch status at a glance.');
 
   await probe('UI density','Activity drawer is bounded','high',async()=>{
-    const p=fixture(),r=await render('#/production',p);vm.runInContext(`AUTOMATION_RUNS=Array.from({length:100},(_,i)=>({id:'f'+i,type:'scene-chain',targetId:'SC-'+i,label:'Failure '+i,status:'failed',stage:'Needs attention',updatedAt:new Date(2026,0,1,0,i).toISOString(),steps:{['s'+i]:{key:'s'+i,status:'failed',kind:'generation',error:'Unique '+i}}}));V641_ACTIVITY_DRAWER_OPEN=true;v641RenderActivityDrawer();`,r.context);const html=r.context.document.getElementById('automation-activity-drawer').innerHTML,cards=(html.match(/automation-drawer-run/g)||[]).length;assert(cards<=12,`${cards} cards`);return `${cards} cards / ${Math.round(html.length/1024)} KB.`;
+    const p=fixture(),r=await render('#/production',p);vm.runInContext(`AUTOMATION_RUNS=Array.from({length:100},(_,i)=>({id:'f'+i,type:'scene-chain',targetId:'SC-'+i,label:'Failure '+i,status:'failed',stage:'Needs attention',updatedAt:new Date(2026,0,1,0,i).toISOString(),steps:{['s'+i]:{key:'s'+i,status:'failed',kind:'generation',error:'Unique '+i}}}));`,r.context);const html=r.context.document.getElementById('automation-activity-drawer').innerHTML,cards=(html.match(/automation-drawer-run/g)||[]).length;assert(cards<=12,`${cards} cards`);return `${cards} cards / ${Math.round(html.length/1024)} KB.`;
   });
 
   await probe('UI density','Reports history is paginated','medium',async()=>{

@@ -2,6 +2,7 @@ const assert = require("assert");
 const fs = require("fs");
 const path = require("path");
 const vm = require("vm");
+const { terminalHtml } = require("./terminal-view");
 const { render, buildFixture, withCanon } = require("./render-harness");
 
 const delay = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
@@ -160,15 +161,24 @@ async function testSheetApprovalDoesNotSeedAngleAndRemainsExtractable() {
 
 async function testLegacyFailureGroupingAndOpaqueUI() {
   const project = coverageFixture();
-  const rendered = await render("#/character/CHAR-IREN", project, { scan: coverageScan(), storage: { "cinebraid-focused:fixture:entity-task:characters:CHAR-IREN": "candidates" } });
-  vm.runInContext(`AUTOMATION_RUNS=[1,2,3,4,5,6].map((n)=>({id:'legacy-'+n,type:'scene-chain',targetId:'SC-01',label:'The Repair correction',status:'failed',stage:'Needs attention',updatedAt:'2026-07-29T20:0'+n+':00Z',steps:{['step-'+n]:{key:'step-'+n,kind:'generation',status:'failed',error:'Correction generation requires sourceCandidate provenance.'}}})); V641_ACTIVITY_DRAWER_OPEN=true; v641RenderActivityDrawer();`, rendered.context);
-  const drawer = rendered.context.document.getElementById("automation-activity-drawer").innerHTML;
-  assert(drawer.includes("PREVIOUS FAILURES / NEEDS ATTENTION"), "drawer must distinguish previous failures from the active job");
-  assert(drawer.includes("×6"), "identical legacy failures must be grouped instead of flooding the drawer");
-  assert.strictEqual((drawer.match(/The Repair correction/g) || []).length, 1, "grouped legacy failures should render as one card");
+  const rendered = await render("#/character/CHAR-IREN", project, { scan: coverageScan(), storage: { "cinebraid-focused:fixture:entity-task:characters:CHAR-IREN": "candidates" }, creatorSurfaces: true });
+  vm.runInContext(`AUTOMATION_RUNS=[1,2,3,4,5,6].map((n)=>({id:'legacy-'+n,type:'scene-chain',targetId:'SC-01',label:'The Repair correction',status:'failed',stage:'Needs attention',updatedAt:'2026-07-29T20:0'+n+':00Z',steps:{['step-'+n]:{key:'step-'+n,kind:'generation',status:'failed',error:'Correction generation requires sourceCandidate provenance.'}}})); `, rendered.context);
+  const drawer = terminalHtml(rendered.context);
+  /* A1: the section headings are gone; the verdict they presented is on each row. */
+  assert(drawer.includes("cb-terminal-row tone-attention"),
+    "the Terminal must distinguish work needing attention from the active job");
+  /* Flooding is bounded rather than grouped. Six is under the cap, so six rows is
+     correct here; what must hold is that the surface is bounded and says so when it
+     truncates, which is the honesty the grouped card was standing in for. */
+  assert(/Showing the \d+ most recent event|Not shown:/.test(drawer),
+    "the Terminal must state the bound it is showing within");
   const css = fs.readFileSync(path.join(__dirname, "..", "public", "styles.css"), "utf8");
   assert(css.includes(".modal-box:has(.coverage-automation-modal)"), "coverage automation must expand the actual modal shell, not overflow a narrow box");
-  assert(css.includes("rgb(21 24 27 / .985)"), "global activity drawer must use an opaque background layer");
+  /* A1: the drawer's opaque overlay layer went with the overlay. A docked Terminal
+     sits in the page rather than over it, so what matters is that the retired
+     overlay left no styling behind to paint over a workspace nobody dismissed. */
+  assert(!css.includes(".automation-activity-drawer{"),
+    "the retired activity overlay must leave no drawer styling behind");
 }
 
 

@@ -23,6 +23,7 @@ const assert = require("assert");
 const fs = require("fs");
 const path = require("path");
 const vm = require("vm");
+const { terminalHtml } = require("./terminal-view");
 
 const ROOT = path.join(__dirname, "..");
 const { render, buildFixture, withCanon } = require("./render-harness");
@@ -58,7 +59,7 @@ async function testCrossProjectActivityIsolation() {
     return null;
   };
 
-  const app = await render("#/production", projects[active], { fetch: customFetch });
+  const app = await render("#/production", projects[active], { fetch: customFetch, creatorSurfaces: true });
   assert.strictEqual(vm.runInContext("ACTIVE_PROJECT_SLUG", app.context), "project-a");
 
   /* Project A's work: a completed continuity review and a failed reference review. */
@@ -70,18 +71,18 @@ async function testCrossProjectActivityIsolation() {
       v641StartManualActivity("VISION AI · REFERENCE REVIEW", "Review ROOFTOP_STATE.png", "Comparing candidate."),
       "failed", "The review could not complete.");
   `, app.context);
-  vm.runInContext("V641_ACTIVITY_DRAWER_OPEN = true; v641RenderActivityDrawer();", app.context);
-  const drawerA = app.context.document.getElementById("automation-activity-drawer").innerHTML;
-  assert(drawerA.includes("Review scene SC-01"), "the fixture must actually put project A's work in the drawer, or this test is vacuous");
-  assert(drawerA.includes("Review ROOFTOP_STATE.png"), "the fixture must actually put project A's failed review in the drawer");
+  vm.runInContext("", app.context);
+  const drawerA = terminalHtml(app.context);
+  assert(drawerA.includes("Review scene SC-01"), "the fixture must actually put project A's work in the Terminal, or this test is vacuous");
+  assert(drawerA.includes("Review ROOFTOP_STATE.png"), "the fixture must actually put project A's failed review in the Terminal");
 
   await app.context.switchProject("project-b");
   assert.strictEqual(vm.runInContext("ACTIVE_PROJECT_SLUG", app.context), "project-b");
 
-  vm.runInContext("V641_ACTIVITY_DRAWER_OPEN = true; v641RenderActivityDrawer();", app.context);
-  const drawerB = app.context.document.getElementById("automation-activity-drawer").innerHTML;
-  assert(!drawerB.includes("Review scene SC-01"), "project B's activity drawer still shows project A's continuity review");
-  assert(!drawerB.includes("Review ROOFTOP_STATE.png"), "project B's PREVIOUS FAILURES section still shows project A's failed review");
+  vm.runInContext("", app.context);
+  const drawerB = terminalHtml(app.context);
+  assert(!drawerB.includes("Review scene SC-01"), "project B's Terminal still shows project A's continuity review");
+  assert(!drawerB.includes("Review ROOFTOP_STATE.png"), "project B's Terminal still shows project A's failed review");
   assert.strictEqual(vm.runInContext("V641_MANUAL_ACTIVITIES.size", app.context), 0, "the previous project's activity rows must be dropped, not merely hidden");
 
   /* The Activity button and the persistent rail read the same scoped answer. */
@@ -100,9 +101,9 @@ async function testCrossProjectActivityIsolation() {
     V641_MANUAL_ACTIVITIES.set("smuggled", { id: "smuggled", system: "VISION AI · SCENE CONTINUITY",
       title: "Smuggled from project A", detail: "", projectSlug: "project-a", status: "completed",
       startedAt: "2026-08-17T00:00:00.000Z", updatedAt: "2026-08-17T00:00:00.000Z" });
-    v641RenderActivityDrawer();
+    
   `, app.context);
-  const drawerC = app.context.document.getElementById("automation-activity-drawer").innerHTML;
+  const drawerC = terminalHtml(app.context);
   assert(drawerC.includes("Review B candidate"), "project B's own activity must still appear");
   assert(!drawerC.includes("Smuggled from project A"), "a row stamped with another project must never render as current-project activity");
 
@@ -121,8 +122,8 @@ async function testCrossProjectActivityIsolation() {
   await app.context.refreshGlobalAutomationActivity(true);
   assert.strictEqual(vm.runInContext("JSON.stringify(AUTOMATION_RUNS.map((run) => run.id))", app.context), '["b-run"]',
     "a run ledger belonging to a different project must not be adopted as this window's");
-  vm.runInContext("v641RenderActivityDrawer();", app.context);
-  const drawerD = app.context.document.getElementById("automation-activity-drawer").innerHTML;
+  vm.runInContext("", app.context);
+  const drawerD = terminalHtml(app.context);
   assert(drawerD.includes("project-a"), "the drawer must name the project the server switched to instead of silently going stale");
   record("P0-1", "project A's continuity and reference reviews leave with project A; a foreign run ledger is refused and named");
 }
@@ -142,6 +143,7 @@ async function testFalLedgerOwnership() {
   const ownJob = { id: "b-job", status: "IN_QUEUE", purpose: "Project B reference render", outputCount: 0, model: "gpt-image-2", createdAt: "2026-08-17T09:30:00Z" };
   let falOwner = active, falJobs = [ownJob], falStatesOwner = true;
   const app = await render("#/production", projects[active], {
+    creatorSurfaces: true,
     fetch: async (url, _options, response) => {
       if (url === "/api/project") return response(projects[active], 200, { "x-cinebraid-project-slug": active });
       /* The RUN ledger always agrees. Only the FAL ledger moves — which is exactly
@@ -156,8 +158,8 @@ async function testFalLedgerOwnership() {
   await app.context.refreshGlobalAutomationActivity(true);
   assert.strictEqual(vm.runInContext("JSON.stringify(FAL_GENERATION_JOBS.map((job) => job.id))", app.context), '["b-job"]',
     "this project's own generation ledger must still be adopted on every poll");
-  vm.runInContext("V641_ACTIVITY_DRAWER_OPEN = true; v641RenderActivityDrawer();", app.context);
-  assert(app.context.document.getElementById("automation-activity-drawer").innerHTML.includes("Project B reference render"),
+  vm.runInContext("", app.context);
+  assert(terminalHtml(app.context).includes("Project B reference render"),
     "this project's own live render must appear, or the refusal below proves nothing");
 
   /* Now the machine's active project moves under this window. */
@@ -165,10 +167,10 @@ async function testFalLedgerOwnership() {
   await app.context.refreshGlobalAutomationActivity(true);
   assert.strictEqual(vm.runInContext("JSON.stringify(FAL_GENERATION_JOBS.map((job) => job.id))", app.context), '["b-job"]',
     "a generation ledger belonging to another project must not be adopted");
-  vm.runInContext("v641RenderActivityDrawer();", app.context);
-  const drawer = app.context.document.getElementById("automation-activity-drawer").innerHTML;
-  assert(!drawer.includes("Project A reference render"), "another project's render must not appear in this project's drawer");
-  assert(drawer.includes("project-a"), "the drawer must name the project the server switched to");
+  vm.runInContext("", app.context);
+  const drawer = terminalHtml(app.context);
+  assert(!drawer.includes("Project A reference render"), "another project's render must not appear in this project's activity");
+  assert(drawer.includes("project-a"), "the Terminal must name the project the server switched to");
   const button = app.context.document.getElementById("automation-activity-toggle").innerHTML;
   assert(!/Project A/.test(button), "another project's render must not reach the Activity button");
   /* The rail and the Terminal read the same ledger, so they cannot disagree. */

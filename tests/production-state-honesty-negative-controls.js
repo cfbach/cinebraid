@@ -18,6 +18,7 @@
 
 const assert = require("assert");
 const vm = require("vm");
+const { runTone, terminalHtml } = require("./terminal-view");
 const { render, buildFixture } = require("./render-harness");
 
 const notes = [];
@@ -129,25 +130,22 @@ async function main() {
 
   /* ---- 3. drop WAITING FOR YOU back into ACTIVE NOW ---- */
   await mustFail(
-    "merging the waiting section back into ACTIVE NOW",
-    "an approval gate must stay out of ACTIVE NOW",
+    "merging waiting-for-a-person back into machine-active",
+    "an approval gate must not be classified as machine work",
     async () => {
       const view = await render("#/shot/L1-01", buildFixture(), {
-        mutateSource: replacing("live-activity.js", "control 3",
-          "  const activeRuns = runs.filter(v670MachineActiveRun);\n  const waitingRuns = runs.filter(v670WaitingForHumanRun);",
-          "  const activeRuns = runs.filter((run) => v670MachineActiveRun(run) || v670WaitingForHumanRun(run));\n  const waitingRuns = [];",
-          /* The same two lines open v6602ActivityStatus and v641RenderActivityDrawer.
-             Both are mutated on purpose: merging the two notions in one reader and not
-             the other is a state the product never had. */
-          2),
+        creatorSurfaces: true,
+        mutateSource: replacing("creator-surfaces.js", "control 3",
+          "    const machineActive = typeof v670MachineActiveRun === \"function\" ? v670MachineActiveRun : () => false;",
+          "    const machineActive = (run) => (typeof v670MachineActiveRun === \"function\" && v670MachineActiveRun(run)) || (typeof v670WaitingForHumanRun === \"function\" && v670WaitingForHumanRun(run));",
+          /* The Terminal asks the predicate per run rather than filtering into
+             sections, so this is where the two notions would merge: a gate the
+             projection is told nothing is waiting on becomes machine work. */
+          1),
       });
       vm.runInContext(`AUTOMATION_RUNS = ${JSON.stringify(RUNS)};`, view.context);
-      const html = vm.runInContext(
-        `V641_ACTIVITY_DRAWER_OPEN = true; v641RenderActivityDrawer();
-         document.getElementById("automation-activity-drawer").innerHTML`, view.context);
-      const activeSection = html.split("ACTIVE NOW")[1].split("WAITING FOR YOU")[0];
-      assert(!activeSection.includes("run-waiting"),
-        "an approval gate must stay out of ACTIVE NOW");
+      assert.notStrictEqual(runTone(view.context, "run-waiting"), "working",
+        "an approval gate must not be classified as machine work");
     });
 
   /* ---- 4. let the elapsed clock fall back to now for a parked step ---- */
@@ -195,23 +193,21 @@ async function main() {
 
   /* ---- 6. take the reconciliation keys off the drawer rows ---- */
   await mustFail(
-    "removing the drawer reconciliation keys",
-    "every drawer run row must carry a reconciliation key",
+    "removing the Terminal reconciliation keys",
+    "every Terminal row must carry a reconciliation key",
     async () => {
       const view = await render("#/shot/L1-01", buildFixture(), {
-        mutateSource: replacing("live-activity.js", "control 6",
-          ' data-activity-key="run:${attr(run.id)}"', ""),
+        creatorSurfaces: true,
+        mutateSource: replacing("creator-surfaces.js", "control 6",
+          ' data-activity-key="${attr(fact.key)}"', ""),
       });
       vm.runInContext(`AUTOMATION_RUNS = ${JSON.stringify(RUNS)};`, view.context);
-      const html = vm.runInContext(
-        `V641_ACTIVITY_DRAWER_OPEN = true; v641RenderActivityDrawer();
-         document.getElementById("automation-activity-drawer").innerHTML`, view.context);
-      const runRows = [...html.matchAll(/data-run-id="([^"]+)"/g)].map((match) => match[1]);
-      assert(runRows.length, "the control needs at least one drawer row to check");
-      for (const id of runRows) {
-        assert(html.includes(`data-activity-key="run:${id}"`),
-          "every drawer run row must carry a reconciliation key");
-      }
+      const html = terminalHtml(view.context);
+      const rowCount = (html.match(/<article class="cb-terminal-row/g) || []).length;
+      assert(rowCount, "the control needs at least one Terminal row to check");
+      const keys = (html.match(/data-activity-key="/g) || []).length;
+      assert.strictEqual(keys, rowCount,
+        "every Terminal row must carry a reconciliation key");
     });
 
   /* ---- 6b. go back to replacing a keyed row whose content changed ----

@@ -2,6 +2,7 @@ const assert = require("assert");
 const fs = require("fs");
 const path = require("path");
 const vm = require("vm");
+const { terminalHtml } = require("./terminal-view");
 const { render, buildFixture, withCanon } = require("./render-harness");
 const RELEASE_VERSION = require("../package.json").version;
 
@@ -254,7 +255,13 @@ async function main() {
   assert(read("prompt-engine.js").includes("referenceAwarePromptSpec"), "image and video compilation must replace ungrounded character names with reference-aware visual language");
   assert(creationStudio.includes("assistantWorkingCard"), "prompt workflows must expose the visual assistant working state");
   assert(styles.includes(".assistant-working-card"), "visual assistant working state must be styled");
-  assert(automation.includes("automation-run-summary"), "automation completion summaries must use a full-width readable block");
+  /* A1 retired the full-width tone panel; D2 kept the information. The contract is
+     now the SEMANTICS — a run's own summary reaches the filmmaker on the owning
+     task, as a sentence — rather than the layout that used to carry it. */
+  assert(automation.includes("run?.summary") && automation.includes("automation-run-outcome"),
+    "a run's completion summary must still reach the filmmaker on the owning task");
+  assert(!automation.includes("automation-run-summary"),
+    "the retired full-width summary panel must not return");
   assert(styles.includes(".automation-run-summary"), "automation completion summary styling must prevent one-word-per-line wrapping");
   assert(styles.includes(".modal-box:has(.automation-plan-modal)"), "automation planners must size the dialog shell against the viewport");
   assert(styles.includes(".automation-plan-modal{box-sizing:border-box;width:100%;min-width:0"), "automation planner content must not force the old 760px overflow");
@@ -392,6 +399,7 @@ async function main() {
     "coverage-workflow.js",
     "creator-state-negative-controls.js",
     "creator-state.js",
+    "creator-surface-optin.js",
     "creator-surfaces-real-browser.py",
     "current-behavior.js",
     "custom-provider-routing.js",
@@ -556,6 +564,7 @@ async function main() {
     "run-python-check.js",
     "safety-integrity.js",
     "settings-consistency.js",
+    "shell-activity-ownership-negative-controls.js",
     "shot-execution-tier0-negative-controls.js",
     "shot-execution-tier0.js",
     "shot-intent-compiler-integrity-negative-controls.js",
@@ -588,6 +597,7 @@ async function main() {
     "state-interleaving.js",
     "state-lineage-safety.js",
     "studio-repair.js",
+    "terminal-view.js",
     "ui-state-stability-real-browser.py",
     "untrusted-import-exclusive-publish-negative-controls.js",
     "untrusted-import-exclusive-publish.js",
@@ -891,12 +901,16 @@ async function main() {
   assert(controls.visible <= 10, `default-visible shot controls: ${controls.visible}`);
   assert(controls.total <= 30, `total reachable shot controls: ${controls.total}`);
 
-  const activityRender = await render("#/shot/L1-01", fixture);
-  vm.runInContext(`AUTOMATION_RUNS=[{id:'budget-run',revision:1,type:'shot-chain',targetId:'L1-01',scope:'stills',label:'Budget run',status:'running',stage:'Generating',summary:'Working',createdAt:'2026-07-29T10:00:00Z',updatedAt:'2026-07-29T10:00:10Z',config:{maxImages:9},usage:{imagesGenerated:0,imageRequests:0,reviewCalls:0},current:{stepKey:'frame:a:generate'},steps:{'frame:a:generate':{key:'frame:a:generate',kind:'generation',status:'running',label:'Generate Frame A',attempt:1,maxAttempts:3,startedAt:'2026-07-29T10:00:00Z',updatedAt:'2026-07-29T10:00:10Z',activity:{system:'FAL · GPT IMAGE 2',state:'preparing'}}},logs:[]}]; V641_ACTIVITY_DRAWER_OPEN=true; v641RenderActivityDrawer();`, activityRender.context);
-  /* The floating live strip was retired in Batch 2 Slice 1, so the globally injected
-     chrome is now the drawer alone. The budget is unchanged, which is the point: one
-     persistent global indicator did not cost the drawer any controls. */
-  const globalChromeMarkup = activityRender.context.document.getElementById("automation-activity-drawer").innerHTML;
+  const activityRender = await render("#/shot/L1-01", fixture, { creatorSurfaces: true });
+  vm.runInContext(`AUTOMATION_RUNS=[{id:'budget-run',revision:1,type:'shot-chain',targetId:'L1-01',scope:'stills',label:'Budget run',status:'running',stage:'Generating',summary:'Working',createdAt:'2026-07-29T10:00:00Z',updatedAt:'2026-07-29T10:00:10Z',config:{maxImages:9},usage:{imagesGenerated:0,imageRequests:0,reviewCalls:0},current:{stepKey:'frame:a:generate'},steps:{'frame:a:generate':{key:'frame:a:generate',kind:'generation',status:'running',label:'Generate Frame A',attempt:1,maxAttempts:3,startedAt:'2026-07-29T10:00:00Z',updatedAt:'2026-07-29T10:00:10Z',activity:{system:'FAL · GPT IMAGE 2',state:'preparing'}}},logs:[]}];  `, activityRender.context);
+  /* A1 retired the drawer, so the globally injected chrome is the Activity Terminal.
+     THE BUDGET IS THE POINT AND IT MOVED, so it is restated rather than quietly
+     relaxed: the Terminal is now the operational OWNER, not a read-only mirror, and
+     it carries the four affordances the drawer alone used to have — recheck, dismiss
+     previous alerts, per-row dismiss and the Reports handoff — plus its collapse
+     control. What must not happen is the budget drifting further, which is what a
+     pinned number catches. */
+  const globalChromeMarkup = terminalHtml(activityRender.context);
   const globalControls = shotControlCounts(globalChromeMarkup);
   assert(globalControls.visible <= 4, `globally injected activity controls: ${globalControls.visible}`);
   assert(globalControls.total <= 4, `globally injected activity controls total: ${globalControls.total}`);

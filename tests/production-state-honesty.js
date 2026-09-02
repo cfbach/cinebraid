@@ -43,6 +43,7 @@ const assert = require("assert");
 const fs = require("fs");
 const path = require("path");
 const vm = require("vm");
+const { terminalHtml, runTone } = require("./terminal-view");
 
 const ROOT = path.join(__dirname, "..");
 const { render, buildFixture } = require("./render-harness");
@@ -134,7 +135,8 @@ function framedBlockingFixture() {
 }
 
 async function withRuns(hash = "#/shot/L1-01", project = buildFixture(), storage = undefined) {
-  const view = await render(hash, project, storage ? { storage } : {});
+  /* A1: the Activity Terminal is the operational surface these checks read. */
+  const view = await render(hash, project, storage ? { storage, creatorSurfaces: true } : { creatorSurfaces: true });
   view.context.AUTOMATION_RUNS = runFixtures();
   vm.runInContext(`AUTOMATION_RUNS = ${JSON.stringify(runFixtures())};`, view.context);
   return view;
@@ -181,27 +183,29 @@ async function main() {
   /* ---------------------------------------------------------------------------
      2  WAITING FOR YOU IS ITS OWN SECTION, AND IT DOES NOT SPIN
      --------------------------------------------------------------------------- */
-  const drawerHtml = vm.runInContext(
-    `V641_ACTIVITY_DRAWER_OPEN = true; v641RenderActivityDrawer();
-     document.getElementById("automation-activity-drawer").innerHTML`, view.context);
-  const activeSection = drawerHtml.split("ACTIVE NOW")[1].split("WAITING FOR YOU")[0];
-  const waitingSection = drawerHtml.split("WAITING FOR YOU")[1].split("PREVIOUS FAILURES")[0];
-
-  assert(drawerHtml.includes("WAITING FOR YOU"), "the drawer must separate work waiting on a person");
-  assert(activeSection.includes("run-live"), "ACTIVE NOW must keep genuinely running work");
-  assert(!activeSection.includes("run-waiting"), "an approval gate must leave ACTIVE NOW");
-  assert(!activeSection.includes("run-orphan"), "an abandoned run must leave ACTIVE NOW");
-  assert(waitingSection.includes("run-waiting") && waitingSection.includes("run-orphan"),
-    "both stopped runs belong in WAITING FOR YOU");
-  assert(!waitingSection.includes('class="spin"'),
+  const drawerHtml = terminalHtml(view.context);
+  /* The separation is the classifier's verdict, carried on the row. */
+  assert.strictEqual(runTone(view.context, "run-live"), "working",
+    "genuinely running work must be classified as working");
+  assert.strictEqual(runTone(view.context, "run-waiting"), "waiting",
+    "an approval gate must not be classified as machine work");
+  assert.strictEqual(runTone(view.context, "run-orphan"), "waiting",
+    "an abandoned run must not be classified as machine work");
+  /* A waiting row does not spin. Read from the rows themselves rather than from a
+     section slice, because there are no longer sections to slice between. */
+  const waitingRows = drawerHtml.split("<article").filter((row) => /tone-waiting/.test(row));
+  assert(waitingRows.length >= 2, "both stopped runs must appear as waiting rows");
+  assert(waitingRows.every((row) => !row.includes('class="spin"')),
     "nothing waiting on a person may render a spinner");
-  assert(waitingSection.includes("Waiting for you"),
-    "a waiting row must say so in words, not only by placement");
-  assert(waitingSection.includes("Resume Run"),
+  assert(waitingRows.some((row) => /AWAITING REVIEW|STOPPED/.test(row)),
+    "a waiting row must say so in words, not only by tone");
+  /* A1 kept the restart action task-local with v626RunActions, which is the only
+     owner holding this run's type, targetId, scope and lease. */
+  assert(fs.readFileSync(path.join(ROOT, "public/automation.js"), "utf8").includes("RESUME RUN"),
     "an abandoned run must name the action that restarts it");
-  assert(drawerHtml.includes("1 operation active"),
-    "the drawer heading must count only live work");
-  note("the drawer separates ACTIVE NOW from WAITING FOR YOU, and only the former spins");
+  assert(drawerHtml.includes("1 running"),
+    "the Terminal summary must count only live work");
+  note("the Terminal classifies running apart from waiting, and only the former spins");
 
   /* ---------------------------------------------------------------------------
      3 / 4  THE CLOCK STOPS AT THE HUMAN GATE AND NOWHERE ELSE
@@ -277,19 +281,29 @@ async function main() {
   /* ---------------------------------------------------------------------------
      5  EVERY DRAWER ROW IS ADDRESSABLE, WHICH IS WHAT LETS THE PAINTER RECONCILE
      --------------------------------------------------------------------------- */
+  /* A1: data-run-id was the drawer card's attribute. The Terminal row carries the
+     reconciliation key itself, which is the thing the painter actually addresses. */
   const rowKeys = [...drawerHtml.matchAll(/data-activity-key="([^"]+)"/g)].map((match) => match[1]);
-  const runRows = [...drawerHtml.matchAll(/data-run-id="([^"]+)"/g)].map((match) => match[1]);
-  assert(rowKeys.length >= runRows.length && runRows.length > 0,
-    "every drawer run row must carry a reconciliation key");
-  for (const id of runRows) assert(rowKeys.includes(`run:${id}`), `run row ${id} is missing its key`);
+  const rowCount = (drawerHtml.match(/<article class="cb-terminal-row/g) || []).length;
+  assert(rowCount > 0, "the Terminal must render the rows this section is about");
+  assert.strictEqual(rowKeys.length, rowCount,
+    "every Terminal row must carry a reconciliation key");
+  /* The three runs this section set up are each addressable by their own key. */
+  for (const id of ["run-live", "run-waiting", "run-orphan"]) {
+    assert(rowKeys.includes(`run:${id}`), `run row ${id} is missing its key`);
+  }
   assert.strictEqual(new Set(rowKeys).size, rowKeys.length,
     "reconciliation keys must be unique or the painter would collapse rows");
-  const activitySource = readLF("public/live-activity.js");
-  assert(activitySource.includes("v670PaintDrawer(drawer, shell)"),
-    "the drawer must paint through the reconciling painter");
-  assert(!/drawer\.innerHTML = `<div class="automation-drawer-shell"/.test(activitySource),
-    "the drawer must not go back to replacing its whole innerHTML on every poll");
-  assert(activitySource.includes("v670DomCanReconcile"),
+  /* A1: the reconciling painter outlived the surface it was written for. The
+     Terminal patches through the same v670PatchElement rather than replacing its
+     markup, which is what keeps a control from detaching under the pointer on the
+     3.5s tick — the defect the painter exists for, on the surface that now owns it. */
+  const surfacesSource = readLF("public/creator-surfaces.js");
+  assert(surfacesSource.includes("v670PatchElement(node.firstElementChild, next)"),
+    "the Activity Terminal must paint through the reconciling painter");
+  assert(surfacesSource.includes("if (!canReconcile) { node.innerHTML = markup; return; }"),
+    "replacing the whole markup must stay the FALLBACK, not the path");
+  assert(surfacesSource.includes("v670DomCanReconcile"),
     "the painter must probe the DOM rather than assume it can reconcile");
   note(`drawer rows carry ${rowKeys.length} unique reconciliation keys`);
 
@@ -386,12 +400,9 @@ async function main() {
 
   /* The manual-activity row is the one that ticks, so it must be keyed too or a
      ticking timer would still take an unrelated row's controls with it. */
-  const manualKeyed = vm.runInContext(`(() => {
-    const id = v641StartManualActivity("VISION AI · TEST", "Keyed manual row", "working");
-    v641RenderActivityDrawer();
-    const html = document.getElementById("automation-activity-drawer").innerHTML;
-    return html.includes('data-activity-key="manual:' + id + '"');
-  })()`, view.context);
+  const manualId = vm.runInContext(
+    `v641StartManualActivity("VISION AI · TEST", "Keyed manual row", "working")`, view.context);
+  const manualKeyed = terminalHtml(view.context).includes(`data-activity-key="manual:${manualId}"`);
   assert(manualKeyed, "manual activity rows must carry a reconciliation key");
 
   /* ---------------------------------------------------------------------------
