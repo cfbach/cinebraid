@@ -525,13 +525,29 @@ function checkRailWidthBands(sources = SOURCES) {
      of the navigation and of whatever the scrollbar took — and publishes ONE answer.
      This checks that CSS consumes that answer and derives nothing, and that the
      arithmetic behind it holds. */
-  for (const [what, rule] of [
+  const GRANTED_BY_MEASUREMENT = "must be granted by the measured #workspace[data-rail-width], not by a width band";
+  for (const [what, rule, why = GRANTED_BY_MEASUREMENT] of [
     ["the rail's own display", '#workspace[data-rail-width][data-creator-shell="1"]#cb-shell-rail[data-occupied]{display:block}'],
     ["the rail's grid track", '#workspace[data-rail-width].cb-shell-main:has(>#cb-shell-rail[data-occupied]){grid-template-columns:'],
-    ["the open control", '#workspace[data-rail-width].creator-rail-toggle{display:inline-flex}'],
+    /* AMENDED BY FOUNDER SPOT-CHECK, 2026-09-02. The two rules above stay tied to the
+       measured attribute, because both decide LAYOUT: whether the rail paints in the grid
+       and how wide its track is. Those are the facts a viewport band cannot be trusted
+       with, because it cannot see the scrollbar.
+
+       The open control is not one of them. It is a topbar button; it takes no width from
+       the centre and cannot push it under the floor. Tying it to [data-rail-width] meant
+       that below roughly a 1400px viewport — a 1366 laptop, a 1920 panel at 150% Windows
+       scaling — the Assistant had no entry point at all, which is what the founder found
+       running the real build. So the control is granted by the shell being present, which
+       is the same condition paint() applies to it in JavaScript. */
+    ["the open control", '#workspace[data-creator-shell="1"].creator-rail-toggle{display:inline-flex}',
+      "must be granted by the creator shell being present, so it survives every width the shell does"],
+    /* And where it cannot dock it must be OUT OF FLOW, so that decoupling the control
+       from the measured width can never become a second way to squeeze the centre. */
+    ["the undocked rail", '#workspace[data-creator-shell="1"]:not([data-rail-width])#cb-shell-rail[data-occupied]{display:block;position:fixed',
+      "must be taken out of flow where it cannot dock, so it never takes width from the centre"],
   ]) {
-    assert.ok(flat.includes(rule),
-      `${what} must be granted by the measured #workspace[data-rail-width], not by a width band`);
+    assert.ok(flat.includes(rule), `${what} ${why}`);
   }
 
   /* No media query may decide any of the three, and none may state a rail width. */
@@ -548,8 +564,8 @@ function checkRailWidthBands(sources = SOURCES) {
     const body = flat.slice(media.lastIndex, index - 1);
     assert.ok(!/#cb-shell-rail\[data-occupied\]\{display:/.test(body),
       `a media block (${match[1]}) still decides whether the rail paints; a width band cannot see the scrollbar`);
-    assert.ok(!/\.creator-rail-toggle\{display:/.test(body),
-      `a media block (${match[1]}) still decides whether the rail's control is offered`);
+    assert.ok(!/\.creator-rail-toggle\{display:(?!none[;}])/.test(body),
+      `a media block (${match[1]}) still GRANTS the rail's control; a width band cannot see the scrollbar (withdrawing it at phone widths is allowed)`);
     assert.ok(!/--cb-shell-rail-width:/.test(body),
       `a media block (${match[1]}) still states a rail width; the runtime publishes it from measurement`);
   }

@@ -215,8 +215,85 @@ async function main() {
   ok(/--op-waiting/.test(declarationsFor(".focused-inspector-alert.state-review")),
     "TONE-1: and waiting-on-a-person keeps the waiting token");
 
+  /* =======================================================================
+     FOUNDER SPOT-CHECK — THE ASSISTANT ENTRY POINT.
+
+     Reported from the founder's own start.bat runtime: the topbar had Add, Idle,
+     Saved and Search canon, and no Assistant control at all. The button was in the
+     markup and paint() had enabled it; ONE CSS rule hid it, gated on whether there
+     was room for a 240px rail beside a 900px centre. Below roughly a 1400px viewport
+     there is not — a 1366 laptop, or any 1920 panel at 150% Windows scaling — so the
+     deterministic Assistant became unreachable with nothing said about why.
+
+     Room to DOCK and the existence of the Assistant are different questions. These
+     checks hold them apart.
+     ======================================================================= */
+
+  /* ENTRY-1 — the control is gated on the shell, and on nothing narrower. */
+  ok(/display:\s*inline-flex/.test(declarationsFor('#workspace[data-creator-shell="1"] .creator-rail-toggle')),
+    "ENTRY-1: the Assistant control must be shown whenever the creator shell is present");
+  const toggleRules = CSS.split("}").filter((chunk) => /\.creator-rail-toggle/.test(chunk.split("{")[0] || ""));
+  const widthGated = toggleRules.filter((chunk) => /\[data-rail-width\]/.test(chunk.split("{")[0] || ""));
+  eq(widthGated.length, 0,
+    "ENTRY-1: no rule may gate the Assistant control on there being room to dock the rail");
+
+  /* ENTRY-6 — the one floor, and it is a phone floor rather than a laptop one. Showing
+     the control at every width overflowed the topbar below about 500px. The rule that
+     takes it away again must therefore sit in the phone regime: a floor that crept back
+     up into laptop territory would be the original defect returning by another route. */
+  /* Matched on the SCOPED rule, not on ".creator-rail-toggle{display:none". The base
+     rule at the top of the control's styling opens with exactly that declaration, and a
+     looser pattern reads it as the floor and reports whatever @media block it happens to
+     sit after. */
+  const WITHDRAWN = /\[data-creator-shell="1"\]\s*\.creator-rail-toggle\s*\{\s*display:\s*none/;
+  const floors = CSS.split("@media").filter((block) => WITHDRAWN.test(block))
+    .map((block) => Number((block.match(/max-width:\s*(\d+)px/) || [])[1]))
+    .filter((width) => width > 0);
+  eq(floors.length, 1, "ENTRY-6: the control must be withdrawn in exactly one place, and by a max-width");
+  ok(floors[0] <= 760,
+    `ENTRY-6: the control must survive every laptop width; it is withdrawn at ${floors[0]}px`);
+
+  /* ENTRY-2 — and the stylesheet agrees with the code. paint() enables the button on
+     context.shellPresent; a CSS gate that is stricter than that is how the control went
+     missing while every JavaScript-level test still passed. */
+  const surfaces = fs.readFileSync(path.join(ROOT, "public", "creator-surfaces.js"), "utf8");
+  ok(/syncRailToggle\(context\.shellPresent\)/.test(surfaces),
+    "ENTRY-2: the code must enable the control on shell presence");
+
+  /* ENTRY-3 — where it cannot dock, it opens OVER the workspace. Docking a 240px rail
+     beside a centre already at its 900px floor would push the centre under the floor
+     the shell declares, so at those widths the rail is taken out of flow instead. */
+  const overlay = declarationsFor('#workspace[data-creator-shell="1"]:not([data-rail-width]) #cb-shell-rail[data-occupied]');
+  ok(/position:\s*fixed/.test(overlay),
+    "ENTRY-3: below the docking width the rail must not take width from the centre");
+  ok(/display:\s*block/.test(overlay), "ENTRY-3: and must actually be shown there");
+  /* The two-column grid stays gated on the docking width, so this cannot become a
+     second way to shrink the centre. */
+  ok(/\[data-rail-width\]/.test(
+    CSS.split("}").find((chunk) => /grid-template-columns:minmax\(0,1fr\) var\(--cb-shell-rail-width/.test(chunk)) || ""),
+    "ENTRY-3: the docked two-column layout must remain gated on the docking width");
+
+  /* ENTRY-4 — WITH NO MODEL CONFIGURED, THE DETERMINISTIC ASSISTANT IS STILL A
+     SURFACE. The harness realm has no Braidy at all, which is the same condition as
+     the founder's assistant.provider = "none": braidyBlock() contributes nothing and
+     everything below it must render byte-for-byte as it always did. */
+  const withRun = assistantHtml(await realm([runningRun("entry-run")]));
+  ok(!/braidy/i.test(withRun), "ENTRY-4: the model block is absent in this realm, as it is with no provider");
+  ok(/class="cb-assistant"/.test(withRun), "ENTRY-4: the deterministic Assistant still renders");
+  ok(/<header class="cb-assistant-head">[\s\S]*?<b>[^<]+<\/b>/.test(withRun),
+    "ENTRY-4: with a headline sentence interpreting the current state");
+  ok(/data-cb-section="counts"[\s\S]*?1 running/.test(withRun),
+    "ENTRY-4: and useful counts");
+
+  /* ENTRY-5 — and it is still NOT the operational ledger. The Assistant may not regrow
+     a per-run feed, and it may not offer an unconditional way into Activity. */
+  eq(countOf(withRun, "cb-terminal-row"), 0, "ENTRY-5: no per-run rows may return to the Assistant");
+  eq(countOf(withRun, "data-activity-key"), 0, "ENTRY-5: nor per-run activity keys");
+  ok(!/Open Activity/i.test(withRun), "ENTRY-5: and no unconditional Open Activity control");
+
   console.log(`A1 visual dogfood corrections: ${checks} checks.`);
-  console.log("Scroll ownership, failure grouping, idle copy, empty bound, inspector tone.");
+  console.log("Scroll ownership, failure grouping, idle copy, empty bound, inspector tone,");
+  console.log("Assistant entry point reachable with no model configured.");
   console.log("No project data was touched. Provider calls made: 0.");
 }
 

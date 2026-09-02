@@ -139,8 +139,8 @@ function overflowControls() {
 
   control("C6b the stylesheet states a rail width of its own", "checkRailWidthBands",
     { styles: mutate(SOURCES.styles,
-        '#workspace[data-rail-width] .creator-rail-toggle{display:inline-flex}',
-        '#workspace[data-rail-width] .creator-rail-toggle{display:inline-flex}\n#app{--cb-shell-rail-width:340px}',
+        '#workspace[data-creator-shell="1"] .creator-rail-toggle{display:inline-flex}',
+        '#workspace[data-creator-shell="1"] .creator-rail-toggle{display:inline-flex}\n#app{--cb-shell-rail-width:340px}',
         "C6b") },
     "A width declared here is a second opinion about a measured quantity: the grid would use one number while the decision to show a rail at all used another.");
 

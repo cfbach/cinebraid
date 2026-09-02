@@ -4967,7 +4967,34 @@ body[data-focused-workspace="1"] .guided-frame-body,
    public/shared-workspace-shell.js. This file paints the answer and derives nothing. */
 #workspace[data-rail-width] .cb-shell-main:has(>#cb-shell-rail[data-occupied]){grid-template-columns:minmax(0,1fr) var(--cb-shell-rail-width,240px)}
 #workspace[data-rail-width][data-creator-shell="1"] #cb-shell-rail[data-occupied]{display:block}
-#workspace[data-rail-width] .creator-rail-toggle{display:inline-flex}
+/* A1 correction — THE ENTRY POINT IS NOT THE LAYOUT.
+   This was gated on [data-rail-width], which answers "is there room for a 240px rail
+   BESIDE a 900px centre". Below roughly a 1400px viewport there is not, so the control
+   vanished entirely: on a 1366 laptop, and on any 1920 panel at 150% Windows scaling,
+   the deterministic Assistant had no way in and nothing said why. Room to DOCK the rail
+   and the existence of the Assistant are different questions, so the control is gated
+   on the creator shell being present — which is the condition paint() already applies
+   to it in JavaScript, via syncRailToggle(context.shellPresent). The two agree now. */
+#workspace[data-creator-shell="1"] .creator-rail-toggle{display:inline-flex}
+/* ...with ONE floor, and a measured one. Showing the control at every width overflowed
+   the topbar at phone sizes: clean to 560px and broken by 480px, measured against the
+   short "Idle" status — a longer one ("6 need attention") reaches the edge sooner. 720px
+   is the phone breakpoint the rest of this stylesheet already uses, and it leaves that
+   margin. This is not the bug being fixed here in a smaller font: that hid the control
+   on 1366 laptops, where the Assistant is entirely usable; this is the regime where the
+   nav itself collapses to a hamburger and the bar has no room for a fourth control. */
+@media(max-width:720px){#workspace[data-creator-shell="1"] .creator-rail-toggle{display:none}}
+/* ...and where it cannot dock, it opens OVER the workspace rather than taking width
+   from a centre that is already at its floor. The centre is never resized at these
+   widths, so closing restores it by having never changed it. Below the dock in the
+   stack (z-index 45) and above it in the layout, so the Activity ledger stays put. */
+#workspace[data-creator-shell="1"]:not([data-rail-width]) #cb-shell-rail[data-occupied]{
+  display:block;position:fixed;z-index:44;
+  top:calc(var(--cb-topbar-stop) + var(--cb-bar-height,0px));right:0;
+  width:min(340px,calc(100vw - var(--cb-nav-width,0px) - 24px));
+  max-height:calc(100vh - var(--cb-topbar-stop) - var(--cb-bar-height,0px) - var(--cb-dock-reserve,0px));
+  overflow-y:auto;overscroll-behavior:contain;
+  background:var(--panel);border-left:1px solid var(--line);box-shadow:-14px 0 34px rgba(0,0,0,.34)}
 @media(max-width:900px){
   #cb-shell-dock{max-height:min(42vh,260px)}
 }

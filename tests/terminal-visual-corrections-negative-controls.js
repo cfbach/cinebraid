@@ -294,6 +294,56 @@ async function main() {
     });
   }
 
+  /* NC-V12 — THE ASSISTANT ENTRY POINT GOES BACK BEHIND THE DOCKING WIDTH. This is the
+     exact rule the founder hit: the control was in the markup, paint() had enabled it,
+     and one stylesheet line removed it from every viewport under roughly 1400px. */
+  {
+    const broken = anchored(css,
+      '#workspace[data-creator-shell="1"] .creator-rail-toggle{display:inline-flex}',
+      "#workspace[data-rail-width] .creator-rail-toggle{display:inline-flex}",
+      "NC-V12");
+    const gatedOnDockingWidth = (text) => text.replace(/\/\*[\s\S]*?\*\//g, "").split("}")
+      .filter((chunk) => /\.creator-rail-toggle/.test(chunk.split("{")[0] || ""))
+      .some((chunk) => /\[data-rail-width\]/.test(chunk.split("{")[0] || ""));
+    await control("NC-V12 ENTRY-1: the control is not gated on room to dock", {
+      before: !gatedOnDockingWidth(css),
+      after: gatedOnDockingWidth(broken),
+    });
+  }
+
+  /* NC-V13 — the rail stops being taken out of flow where it cannot dock, so opening it
+     at 1280 would either push the centre under its declared 900px floor or land the
+     Assistant below the whole page. */
+  {
+    const selector = '#workspace[data-creator-shell="1"]:not([data-rail-width]) #cb-shell-rail[data-occupied]';
+    const broken = anchored(css, "display:block;position:fixed;z-index:44;", "display:block;", "NC-V13");
+    await control("NC-V13 ENTRY-3: where it cannot dock, the rail leaves the flow", {
+      before: /position:\s*fixed/.test(declarationsFor(css, selector)),
+      after: !/position:\s*fixed/.test(declarationsFor(broken, selector)),
+    });
+  }
+
+  /* NC-V14 — the phone floor creeps back up into laptop territory. This is the original
+     defect wearing a media query: at max-width:1400px the control would be gone from
+     exactly the 1366 and 1280 machines the founder reported it missing from. */
+  {
+    const broken = anchored(css,
+      '@media(max-width:720px){#workspace[data-creator-shell="1"] .creator-rail-toggle{display:none}}',
+      '@media(max-width:1400px){#workspace[data-creator-shell="1"] .creator-rail-toggle{display:none}}',
+      "NC-V14");
+    /* Scoped rule only: the control's BASE rule also opens with display:none, and a
+       looser pattern would read that instead and never notice the mutation. */
+    const floorOf = (text) => {
+      const block = text.replace(/\/\*[\s\S]*?\*\//g, "").split("@media")
+        .find((b) => /\[data-creator-shell="1"\]\s*\.creator-rail-toggle\s*\{\s*display:\s*none/.test(b));
+      return block ? Number((block.match(/max-width:\s*(\d+)px/) || [])[1]) : 0;
+    };
+    await control("NC-V14 ENTRY-6: the withdrawal point stays in the phone regime", {
+      before: floorOf(css) > 0 && floorOf(css) <= 760,
+      after: floorOf(broken) > 760,
+    });
+  }
+
   console.log(`A1 visual dogfood negative controls: ${controls} controls, all fired.`);
   for (const note of notes) console.log(`  - ${note}`);
   console.log("Nothing on disk was modified. No project data was touched. Provider calls made: 0.");
