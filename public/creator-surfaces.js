@@ -128,6 +128,14 @@
   function activeProject() {
     return typeof P === "undefined" ? null : P;
   }
+  /* Set by public/live-activity.js when the server answers for a DIFFERENT project
+     than this window is showing. It is a scalar fact about this window, not activity
+     data, and the drawer that used to announce it is gone — so the Terminal says it.
+     Read here rather than in the renderer for the same reason every other app binding
+     is: the two surfaces must not be in a position to hold an opinion. */
+  function foreignActivityProject() {
+    return typeof V641_ACTIVITY_FOREIGN_PROJECT === "undefined" ? "" : String(V641_ACTIVITY_FOREIGN_PROJECT || "");
+  }
   function automationRuns() {
     const rows = typeof AUTOMATION_RUNS === "undefined" ? null : AUTOMATION_RUNS;
     return Array.isArray(rows) ? rows : [];
@@ -511,28 +519,6 @@
     return state.context.projectTitle || "This production";
   }
 
-  function assistantRow(fact, sentence) {
-    const detail = [fact.step.system, fact.step.label].filter(Boolean).join(" · ");
-    const unresolved = fact.reason === "submission-unresolved";
-    const open = fact.source === "automation-run"
-      ? `<button type="button" class="cb-assistant-action" onclick="openGlobalAutomationActivity('${attr(fact.id)}')">Open activity</button>`
-      : "";
-    const go = fact.route
-      ? `<button type="button" class="cb-assistant-action" onclick="location.hash='${attr(fact.route)}'">Take me there</button>`
-      : "";
-    const resolve = unresolved
-      ? `<button type="button" class="cb-assistant-action" onclick="openFalUnresolvedModal('${attr(fact.id)}')">Check and resolve</button>`
-      : "";
-    return `<article class="cb-assistant-row"><b>${esc(fact.label)}</b>${sentence ? `<p>${esc(sentence)}</p>` : ""}`
-      + `${detail ? `<small>${esc(detail)}${fact.elapsed ? ` · ${esc(fact.elapsed)}` : ""}</small>` : ""}`
-      + `<div class="cb-assistant-row-actions">${go}${resolve}${open}</div></article>`;
-  }
-
-  function assistantSection(tone, title, rows) {
-    if (!rows.length) return "";
-    return `<section class="cb-assistant-section tone-${attr(tone)}" data-cb-section="${attr(tone)}">`
-      + `<header><b>${esc(title)}</b><span>${rows.length}</span></header>${rows.join("")}</section>`;
-  }
 
   /* THE ONE CONVERGENCE POINT, and the reason it is here rather than everywhere.
 
@@ -635,14 +621,48 @@
     try { return braidy.railMarkup(); } catch { return ""; }
   }
 
+  /* THE ASSISTANT INTERPRETS; IT DOES NOT KEEP THE LEDGER.
+     It used to render one row per run in three sections, which is a second
+     chronological feed of the same runs the Terminal below it was already listing —
+     the duplication the 2026-09-01 dogfood read as several competing owners. It now
+     states the situation in counts and offers AT MOST ONE consequential handoff,
+     which is the one thing a rail can say that a ledger cannot.
+     Nothing new is derived: state.counts and state.headline already existed, and the
+     single handoff is picked from the projection's own priority order — attention
+     before waiting — rather than from a second opinion about what matters. */
+  function assistantCountLine(state) {
+    const parts = [
+      state.counts.attention ? `${state.counts.attention} needing attention` : "",
+      state.counts.waiting ? `${state.counts.waiting} waiting for you` : "",
+      state.counts.working ? `${state.counts.working} running` : "",
+    ].filter(Boolean);
+    return parts.join(" · ");
+  }
+  function assistantHandoff(state) {
+    /* One fact, and only one that a person can act on now. A run that is merely
+       working needs no handoff — watching it is the Terminal's job. */
+    const fact = state.attention[0] || state.waiting[0] || null;
+    if (!fact) return "";
+    const sentence = state.attention[0]
+      ? (ATTENTION_SENTENCE[fact.reason] || "")
+      : (WAITING_SENTENCE[fact.reason] || "");
+    const go = fact.route
+      ? `<button type="button" class="cb-assistant-action" onclick="location.hash='${attr(fact.route)}'">Take me there</button>`
+      : "";
+    const resolve = fact.reason === "submission-unresolved"
+      ? `<button type="button" class="cb-assistant-action" onclick="openFalUnresolvedModal('${attr(fact.id)}')">Check and resolve</button>`
+      : "";
+    if (!go && !resolve) return "";
+    return `<section class="cb-assistant-section tone-${attr(state.attention[0] ? "attention" : "waiting")}" data-cb-section="handoff">`
+      + `<article class="cb-assistant-row"><b>${esc(fact.label)}</b>${sentence ? `<p>${esc(sentence)}</p>` : ""}`
+      + `<div class="cb-assistant-row-actions">${go}${resolve}</div></article></section>`;
+  }
   function assistantMarkup(state) {
     const kind = state.headline.kind;
-    const attention = state.attention.map((fact) => assistantRow(fact, ATTENTION_SENTENCE[fact.reason] || ""));
-    const waiting = state.waiting.map((fact) => assistantRow(fact, WAITING_SENTENCE[fact.reason] || ""));
-    const working = state.working.map((fact) => assistantRow(fact, ""));
-    const quiet = !attention.length && !waiting.length && !working.length
-      ? `<section class="cb-assistant-section tone-quiet" data-cb-section="quiet"><article class="cb-assistant-row cb-assistant-quiet"><p>No runs or generation jobs are active. Decisions that need you are shown in Production.</p></article></section>`
-      : "";
+    const counts = assistantCountLine(state);
+    const quiet = counts
+      ? `<section class="cb-assistant-section tone-idle" data-cb-section="counts"><article class="cb-assistant-row cb-assistant-counts"><p>${esc(counts)}</p></article></section>`
+      : `<section class="cb-assistant-section tone-quiet" data-cb-section="quiet"><article class="cb-assistant-row cb-assistant-quiet"><p>No runs or generation jobs are active. Decisions that need you are shown in Production.</p></article></section>`;
     const omitted = state.omitted.attention
       ? `<p class="cb-assistant-omitted">${esc(`${state.omitted.attention} older item${state.omitted.attention === 1 ? "" : "s"} needing attention are not shown here.`)}</p>`
       : "";
@@ -651,14 +671,11 @@
       + `<header class="cb-assistant-head"><span>${esc(HEADLINE_EYEBROW[kind] || "ASSISTANT")}</span>`
       + `<b>${esc(headlineSentence(state))}</b><small>${esc(contextLine(state))}</small></header>`
       + `<div class="cb-assistant-body">`
-      + assistantSection("attention", "Needs attention", attention)
-      + assistantSection("waiting", "Waiting for you", waiting)
-      + assistantSection("working", "Working", working)
       + quiet
+      + assistantHandoff(state)
       + assistantStageSection(state)
       + `</div>`
-      + `<footer class="cb-assistant-foot">${omitted}`
-      + `<button type="button" class="cb-assistant-action" onclick="openGlobalAutomationActivity()">Open activity details</button></footer></div>`;
+      + `<footer class="cb-assistant-foot">${omitted}</footer></div>`;
   }
 
   /* ==========================================================================
@@ -738,6 +755,18 @@
     const resolve = fact.reason === "submission-unresolved"
       ? `<button type="button" class="cb-terminal-action" onclick="openFalUnresolvedModal('${attr(fact.id)}')">CHECK</button>`
       : "";
+    /* THE TWO PER-RUN AFFORDANCES THE RETIRED DRAWER OWNED, and nothing else moved
+       with them. VIEW REPORT is a handoff to the deep-history owner; DISMISS is the
+       attention-row control the drawer offered under exactly the same condition it
+       is offered under here. Both are for runs, so a manual or provider row shows
+       neither rather than being handed a control with no subject. */
+    const isRun = fact.source === "automation-run" && fact.id;
+    const report = isRun && typeof window.openAutomationReport === "function"
+      ? `<button type="button" class="cb-terminal-action" onclick="openAutomationReport('${attr(fact.id)}')">VIEW REPORT</button>`
+      : "";
+    const dismiss = isRun && tone === "attention"
+      ? `<button type="button" class="cb-terminal-action" onclick="dismissAutomationActivityRun('${attr(fact.id)}')">DISMISS</button>`
+      : "";
     const label = fact.route
       ? `<button type="button" class="cb-terminal-open" onclick="location.hash='${attr(fact.route)}'">${esc(fact.label)}</button>`
       : `<b>${esc(fact.label)}</b>`;
@@ -745,10 +774,10 @@
       + `<time>${esc(clock)}</time><em>${esc(terminalStatus(fact))}</em>`
       + `<div class="cb-terminal-body">${label}${context ? `<small>${esc(context)}</small>` : ""}`
       + `${fact.technical.error.state === "known" ? `<small class="cb-terminal-error">${esc(fact.technical.error.value)}</small>` : ""}</div>`
-      + `<div class="cb-terminal-meta">${meta.map((part) => `<span>${esc(part)}</span>`).join("")}${fact.elapsed ? `<span>${esc(fact.elapsed)}</span>` : ""}${resolve}</div></article>`;
+      + `<div class="cb-terminal-meta">${meta.map((part) => `<span>${esc(part)}</span>`).join("")}${fact.elapsed ? `<span>${esc(fact.elapsed)}</span>` : ""}${resolve}${report}${dismiss}</div></article>`;
   }
 
-  function terminalMarkup(state, collapsed) {
+  function terminalMarkup(state, collapsed, foreignProject = "") {
     const rows = [...state.working, ...state.waiting, ...state.attention, ...state.recent];
     /* A COUNT OF NOTHING IS NOT NEWS.
      *
@@ -781,10 +810,27 @@
         || `<div class="cb-terminal-empty"><span>No recorded activity in this project yet.</span></div>`}</div>`
         + `<footer class="cb-terminal-foot"><span>${esc(omitted ? `Not shown: ${omitted}.` : `Showing the ${rows.length} most recent event${rows.length === 1 ? "" : "s"}.`)}</span>`
         + `<a href="${attr(state.history.deepHistoryRoute)}">Full run history in Reports</a></footer>`;
-    return `<div class="cb-terminal" data-cb-terminal="1" data-collapsed="${collapsed ? "1" : "0"}">`
+    /* THE TWO GLOBAL AFFORDANCES THE DRAWER USED TO OWN, on the same conditions it
+       offered them: RECHECK STATUS only when something is parked on a human, DISMISS
+       PREVIOUS ALERTS only when something needs attention. They appear in the
+       EXPANDED terminal because a collapsed one-line bar is a signal, not a console —
+       which is the same reason the drawer had a header at all.
+       OPEN ACTIVITY is gone with the surface it opened: this IS the activity owner,
+       so a button here pointing somewhere else was the duplication. */
+    const globalActions = collapsed ? "" : [
+      state.counts.waiting
+        ? `<button type="button" class="cb-terminal-action" onclick="recheckAutomationGateStatus()" title="Re-derive every parked approval gate against current project truth">RECHECK STATUS</button>`
+        : "",
+      state.counts.attention
+        ? `<button type="button" class="cb-terminal-action" onclick="archivePreviousAutomationFailures()">DISMISS PREVIOUS ALERTS</button>`
+        : "",
+    ].join("");
+    const foreign = foreignProject
+      ? `<div class="cb-terminal-foreign" role="status" data-cb-foreign="1"><b>Activity below is not current.</b><span>${esc(`CineBraid’s active project was switched to ${foreignProject} somewhere else, so this window has stopped taking that project’s activity. Nothing here belongs to it.`)}</span><button type="button" class="cb-terminal-action" onclick="location.reload()">RELOAD THIS WINDOW</button></div>`
+      : "";
+    return `<div class="cb-terminal" data-cb-terminal="1" data-collapsed="${collapsed ? "1" : "0"}">${foreign}`
       + `<header class="cb-terminal-head"><span>ACTIVITY TERMINAL</span><b>${esc(summary)}</b>`
-      + `<div class="cb-terminal-head-actions">`
-      + `<button type="button" class="cb-terminal-action" onclick="openGlobalAutomationActivity()">OPEN ACTIVITY</button>`
+      + `<div class="cb-terminal-head-actions">${globalActions}`
       + `<button type="button" class="cb-terminal-action" onclick="window.CineBraidCreatorSurfaces.toggleTerminal()" aria-expanded="${collapsed ? "false" : "true"}">${collapsed ? "EXPAND" : "COLLAPSE"}</button>`
       + `</div></header>${body}</div>`;
   }
@@ -907,7 +953,7 @@
        painted. It is not painted into a hidden container either - there is no
        container. */
     applyMarkup(RAIL_NODE, assistantMarkup(state));
-    applyMarkup(DOCK_NODE, terminalMarkup(state, terminalCollapsed()));
+    applyMarkup(DOCK_NODE, terminalMarkup(state, terminalCollapsed(), foreignActivityProject()));
     /* TELL THE SHELL ITS DOCK CHANGED HEIGHT, rather than waiting to be noticed.
 
        The dock is position:fixed, so it cannot push the centre and instead hands the
@@ -945,10 +991,32 @@
     if (typeof requestAnimationFrame === "function") requestAnimationFrame(() => shell.syncCreatorShell());
   }
 
+  /* ONE WRITER PER PREFERENCE. Both the toggle and A1's expand set the same key, and
+     two call sites writing one value is how a preference acquires two spellings. */
+  function writeTerminalCollapsed(next) {
+    try { localStorage.setItem(TERMINAL_COLLAPSED_KEY, next ? "1" : "0"); } catch {}
+  }
   function toggleTerminal() {
-    const next = terminalCollapsed() ? "0" : "1";
-    try { localStorage.setItem(TERMINAL_COLLAPSED_KEY, next); } catch {}
+    writeTerminalCollapsed(!terminalCollapsed());
     paint();
+  }
+  /* EXPAND, NOT TOGGLE. The retired Global Activity drawer had one verb — open — and
+     the surfaces that used to call it (the topbar chip, the compact run status, the
+     related-scene block) mean "show me the operational record", not "flip whatever
+     the dock is currently doing". A toggle in those hands closes the Terminal for a
+     filmmaker who already had it open, which is the opposite of the request.
+     Optionally scrolls one row into view, which is the focus the drawer did by
+     rendering with a focusRunId. */
+  function expandTerminal(activityKey = "") {
+    let changed = false;
+    if (terminalCollapsed()) {
+      writeTerminalCollapsed(false);
+      changed = true;
+    }
+    if (changed) paint();
+    if (!activityKey) return;
+    const row = DOCK_NODE?.querySelector?.(`[data-activity-key="run:${String(activityKey).replace(/["\\]/g, "")}"]`);
+    row?.scrollIntoView?.({ block: "nearest" });
   }
 
   /* THE OPEN CONTROL, in the topbar beside the Activity chip.
@@ -999,6 +1067,7 @@
   window.CineBraidCreatorSurfaces = {
     paint,
     toggleTerminal,
+    expandTerminal,
     toggleRail,
     openRail: () => setRail(true),
     closeRail: () => setRail(false),

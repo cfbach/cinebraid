@@ -263,7 +263,6 @@ async function checkCompactAgreesWithDrawer() {
         return {
           headline: v670RunHeadline(r),
           compact: v670CompactRunStatusMarkup(r),
-          drawerRow: v641DrawerRunMarkup(r),
           tone: v670RunTone(r),
           active: v670MachineActiveRun(r),
           waiting: v670WaitingForHumanRun(r),
@@ -272,17 +271,16 @@ async function checkCompactAgreesWithDrawer() {
       })()
     `, page.context);
 
+    /* A1: the drawer that used to be the other half of this pair is retired. The
+       claim that survives is the one that always mattered — the compact status
+       reports the SHIPPED classifier's tone rather than deciding its own. */
     assert.ok(answers.compact.includes(`state-${answers.tone}`),
-      `${name}: the compact status must carry the drawer row's own tone, expected state-${answers.tone}`);
-    assert.ok(answers.drawerRow.includes(`state-${answers.tone}`),
-      `${name}: the drawer row must carry the same tone`);
+      `${name}: the compact status must carry the shipped tone, expected state-${answers.tone}`);
 
     /* The escaped headline appears in both, character for character. */
     const escaped = vm.runInContext(`esc(${JSON.stringify(answers.headline)})`, page.context);
     assert.ok(answers.compact.includes(escaped),
       `${name}: the compact status must print the shared headline "${answers.headline}"`);
-    assert.ok(answers.drawerRow.includes(escaped),
-      `${name}: the drawer row must print the same headline "${answers.headline}"`);
 
     /* And the predicates partition the run exactly once. */
     const claims = [answers.active, answers.waiting, answers.attention].filter(Boolean).length;
@@ -384,8 +382,10 @@ async function checkCompactCarriesNoAuthority() {
     const controls = markup.match(/<button\b[^>]*>/g) || [];
     assert.strictEqual(controls.length, 1,
       `${name}: the compact status must carry exactly one control, found ${controls.length}`);
-    assert.ok(/openGlobalAutomationActivity\(/.test(controls[0]),
-      `${name}: the compact status's one control must open the Activity drawer, got ${controls[0]}`);
+    /* A1 retired the drawer; the Terminal is the activity owner, so the one control
+       expands that instead. The rule is unchanged: one control, navigation only. */
+    assert.ok(/expandTerminal\(/.test(controls[0]),
+      `${name}: the compact status's one control must open the Activity Terminal, got ${controls[0]}`);
     for (const forbidden of ["approveEntityFile", "retryFailedAutomationStep", "resumeAutomationRun", "startFreshAutomationRun", "openFalGenerationModal", "openShotAutomationModal"]) {
       assert.ok(!markup.includes(forbidden),
         `${name}: ${forbidden} must not appear in the compact working-page status`);

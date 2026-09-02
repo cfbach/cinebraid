@@ -413,9 +413,9 @@ function checkMarkup(sources = SOURCES) {
   assert.ok(markup.indexOf("shared-workspace-shell.js") < markup.indexOf('src="workspace-shell.js'),
     "the declaration must load before the runtime that reads it");
 
-  /* The Activity drawer is untouched, and remains a sibling of the workspace rather
-     than anything the shell owns. */
-  assert.ok(/id="automation-activity-drawer"/.test(markup), "the existing Activity drawer must survive O2");
+  /* A1: the Activity drawer is retired. The dock is the activity owner, and this
+     asserts the retired sibling has not been re-mounted beside it. */
+  assert.ok(!/id="automation-activity-drawer"/.test(markup), "the Activity drawer is retired by A1 and must not reappear in the shell");
   assert.ok(!workspace.includes("automation-activity-drawer"),
     "the Activity drawer must NOT be absorbed into the shell — it is a temporary overlay, not the persistent dock");
 

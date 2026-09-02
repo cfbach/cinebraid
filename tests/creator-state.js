@@ -587,7 +587,8 @@ function checkStageIsConsumed(sources = SOURCES) {
 function renderBodies(source) {
   const code = codeOnly(source);
   const bodies = {};
-  for (const name of ["assistantMarkup", "terminalMarkup", "assistantRow", "assistantStageSection",
+  /* A1 removed assistantRow/assistantSection with the per-run ledger they rendered. */
+  for (const name of ["assistantMarkup", "terminalMarkup", "assistantStageSection",
     "assistantNextSection", "terminalRow", "terminalMeta", "terminalStatus", "terminalCost", "headlineSentence"]) {
     const start = code.indexOf(`function ${name}(`);
     assert.notStrictEqual(start, -1, `public/creator-surfaces.js must declare ${name}`);
@@ -653,20 +654,20 @@ function checkAssistantRendering(sources = SOURCES) {
 
   /* It works with no assistant model configured — nothing here consulted one, because
      nothing here can: the realm has no fetch and no capability state. */
-  assert.ok(html.includes("Needs attention"), "the rail must name the attention section");
-  assert.ok(html.includes("Waiting for you"), "the rail must name the waiting section");
-  assert.ok(html.includes("Working"), "the rail must name the working section");
-
-  /* The waiting gate is never described as machine work. */
-  const waitingBlock = html.slice(html.indexOf('data-cb-section="waiting"'), html.indexOf('data-cb-section="working"'));
-  assert.ok(/approve or reject/i.test(waitingBlock), "the waiting section must say what the filmmaker has to do");
-  assert.ok(!/running|generating|in progress/i.test(waitingBlock),
-    "a human gate must never be described as machine work");
-
-  /* Order follows the declared priority. */
-  const positions = ["attention", "waiting", "working"].map((name) => html.indexOf(`data-cb-section="${name}"`));
-  assert.deepStrictEqual(positions, [...positions].sort((a, b) => a - b),
-    "the rail's sections must follow the declared priority order");
+  /* A1 — THE RAIL STOPPED BEING A LEDGER, so it no longer names a section per bucket
+     or orders three of them. What it must still do is state the situation and offer at
+     most one thing to act on, and it must still not describe a human gate as machine
+     work — which is the claim the retired section assertions were really protecting. */
+  assert.ok(/cb-assistant-counts|cb-assistant-quiet/.test(html), "the rail must state the current situation");
+  const handoffs = html.match(/data-cb-section="handoff"/g) || [];
+  assert.ok(handoffs.length <= 1, `the rail must offer at most one handoff, found ${handoffs.length}`);
+  assert.ok(!/cb-assistant-row[sS]*cb-assistant-row[sS]*cb-assistant-row/.test(html),
+    "the rail must not render a row per run — that is the Terminal's ledger");
+  const handoffBlock = handoffs.length ? html.slice(html.indexOf('data-cb-section="handoff"')) : "";
+  if (/tone-waiting/.test(handoffBlock)) {
+    assert.ok(!/running|generating|in progress/i.test(handoffBlock),
+      "a human gate must never be described as machine work");
+  }
   assert.ok(html.indexOf('data-headline="needs-attention"') >= 0,
     "a failure must claim the headline over a running operation");
 
@@ -710,7 +711,9 @@ function checkAssistantRendering(sources = SOURCES) {
     }
   }
   /* What it DOES offer is existing, safe navigation. */
-  assert.ok(html.includes("openGlobalAutomationActivity"), "the rail must be able to open the existing Activity drawer");
+  /* A1: the drawer is retired, so the rail's safe navigation is a route to the work
+     itself. The claim is unchanged — what it offers is navigation, never spend. */
+  assert.ok(/location.hash=|openFalUnresolvedModal/.test(html), "the rail must offer safe navigation");
 
   note("Assistant: renders with no model configured; sections ordered attention -> waiting -> working; a gate never reads as machine work; blocked reason and stage label come from O1; no recommendation is stated rather than invented; no paid, retry or approval control");
 }
@@ -754,11 +757,12 @@ function checkTerminalRendering(sources = SOURCES) {
   assert.ok(/data-activity-key="run:/.test(html) && /data-activity-key="job:/.test(html),
     "Terminal rows must carry reconciliation keys");
   assert.ok(/data-activity-key="run:live"/.test(html) && /data-activity-key="run:live"/.test(readSource(path.join(PUBLIC, "creator-surfaces.js")).length ? html : html),
-    "run rows must use the drawer's own key namespace");
-  const drawerKeys = codeOnly(sources.activity);
-  assert.ok(/data-activity-key="run:/.test(drawerKeys),
-    "the Activity drawer must still key its run rows the same way for the two surfaces to be comparable");
-
+    "run rows must use the run: key namespace");
+  /* A1: the drawer is retired, so there is no second surface to be comparable WITH.
+     The namespace still matters because the Terminal reconciles rows on it, so this
+     asks the surviving owner rather than asserting nothing. */
+  assert.ok(/data-activity-key="run:/.test(codeOnly(readSource(path.join(PUBLIC, "creator-surfaces.js")))),
+    "the Activity Terminal must key its run rows in the run: namespace it reconciles on");
   /* Collapsed shows the header and nothing else, so the dock can get out of the way
      without being destroyed. */
   const collapsed = surfaces.terminalMarkup(state, true);

@@ -25,7 +25,9 @@ const server = read("server.js");
 const audioBuilder = read("public/audio-prompt-builder.js");
 
 assert(index.includes('id="automation-activity-toggle"'), "topbar must expose the global activity button");
-assert(index.includes('id="automation-activity-drawer"'), "workspace must include the activity drawer");
+/* A1 retired the Global Activity drawer as an owner. Inverted rather than removed:
+   an absent assertion would not notice the element coming back. */
+assert(!index.includes('id="automation-activity-drawer"'), "the retired Global Activity drawer must not be in the workspace");
 assert(index.includes(`live-activity.js?v=${RELEASE_VERSION}`), "live activity module must be cache-busted and loaded");
 assert(index.indexOf(`scene-automation.js?v=${RELEASE_VERSION}`) < index.indexOf(`live-activity.js?v=${RELEASE_VERSION}`), "activity module must load after automation modules");
 assert(automation.includes("v641SetStepActivity"), "durable automation must persist operation-level activity");
@@ -117,13 +119,23 @@ assert(scene.includes("reviewOnly"), "scene planning must support review-only co
 assert(audioBuilder.includes("buildSceneAudioPrompts"), "scene audio prompts must have a visible AI build workflow");
 assert(server.includes("/api/llm/build-scene-audio-prompts"), "server must expose the scene audio prompt builder endpoint");
 
-assert(activity.includes("ACTIVE NOW"), "activity drawer must separate active work");
+/* A1: the drawer sections are retired. The separation is now the shipped predicates',
+   and this file must keep asking them rather than re-deriving the split. */
+assert(activity.includes("filter(v670MachineActiveRun)") && activity.includes("filter(v670WaitingForHumanRun)"),
+  "the activity layer must separate active work from human gates through the shipped predicates");
 assert(activity.includes("NEEDS ATTENTION"), "activity drawer must separate failed and blocked work");
 assert(!activity.includes("DIAGNOSTIC ZIP"), "activity drawer must not retain diagnostic export controls");
 assert(!activity.includes("COPY SUMMARY"), "activity drawer must not retain support-summary export controls");
 assert(!activity.includes("FLAG INEFFICIENT"), "activity drawer must not retain efficiency-report controls");
-assert(activity.includes("VIEW REPORT"), "activity drawer rows must link to the dedicated Reports route");
-assert(activity.includes("REPAIR & RETRY"), "scene correction failures must expose repair-and-retry");
+/* A1: VIEW REPORT moved with the other drawer-only affordances to the Activity
+   Terminal row, which is now the owner. Reports still owns the evidence. */
+assert(read("public/creator-surfaces.js").includes("VIEW REPORT"),
+  "activity rows must link to the dedicated Reports route");
+/* A1: the drawer carried a SECOND copy of the run actions. That duplicate is gone —
+   which is the point — and the capability lives where it always really lived, with
+   v626RunActions, the only owner that holds the run's type/targetId/scope and lease. */
+assert(read("public/automation.js").includes("REPAIR & RETRY"),
+  "scene correction failures must expose repair-and-retry from the task-local run actions");
 assert(index.includes('data-view="reports"'), "the primary navigation must expose Reports");
 assert(index.includes(`reports.js?v=${RELEASE_VERSION}`), "the Reports module must be loaded and cache-busted");
 

@@ -95,8 +95,8 @@ function classificationControls() {
 
   control("C3 the activity layer grows a second copy of the attention list", "checkClassificationIsDelegated",
     { activity: mutate(SOURCES.activity,
-        "  const attentionRuns = runs.filter(v670AttentionRun);",
-        `  const attentionRuns = runs.filter((run) => ["failed", "interrupted", "cancelled"].includes(run.status));`,
+        "  const attention = runs.filter(v670AttentionRun);",
+        `  const attention = runs.filter((run) => ["failed", "interrupted", "cancelled"].includes(run.status));`,
         "C3") },
     "Four copies of this list is how the machine-active predicate drifted from its meaning; the drawer and the Terminal would be free to disagree about which runs are broken.");
 
@@ -237,8 +237,12 @@ function isolationControls() {
 
   control("C17 the rail grows a paid generation button", "checkAssistantRendering",
     { surfaces: mutate(SOURCES.surfaces,
-        `      + `.concat(`\`<button type="button" class="cb-assistant-action" onclick="openGlobalAutomationActivity()">Open activity details</button></footer></div>\`;`),
-        `      + `.concat(`\`<button type="button" class="cb-assistant-action" onclick="openFalGenerationModal('frame','','')">Generate</button><button type="button" class="cb-assistant-action" onclick="openGlobalAutomationActivity()">Open activity details</button></footer></div>\`;`),
+        /* Anchored on the footer's opening tag alone. A1 removed the button this
+           control used to mutate, and the replacement must not carry a `${...}` of
+           its own — this file is JavaScript, and the surrounding template would
+           interpolate it here rather than leaving it in the source being broken. */
+        `<footer class="cb-assistant-foot">`,
+        `<footer class="cb-assistant-foot"><button type="button" class="cb-assistant-action" onclick="openFalGenerationModal('frame','','')">Generate</button>`,
         "C17") },
     "A narration surface that can spend money turns an interpretation of state into a purchase, one click from a sentence CineBraid wrote itself.");
 
@@ -256,8 +260,11 @@ function isolationControls() {
      arrives unnoticed. */
   control("C19 the runtime persists a third value beside the two panel preferences", "checkNoPersistenceNoNetworkNoPaid",
     { surfaces: mutate(SOURCES.surfaces,
-        `    try { localStorage.setItem(TERMINAL_COLLAPSED_KEY, next); } catch {}`,
-        `    try { localStorage.setItem(TERMINAL_COLLAPSED_KEY, next); } catch {}\n    try { localStorage.setItem("cinebraid-creator-last-seen-run", "run-1"); } catch {}`,
+        /* A1 gave the collapsed preference a single writer, because the expand verb
+           the retired drawer's callers now use sets the same key. The control follows
+           it there: one writer is exactly what makes a third value visible. */
+        `    try { localStorage.setItem(TERMINAL_COLLAPSED_KEY, next ? "1" : "0"); } catch {}`,
+        `    try { localStorage.setItem(TERMINAL_COLLAPSED_KEY, next ? "1" : "0"); } catch {}\n    try { localStorage.setItem("cinebraid-creator-last-seen-run", "run-1"); } catch {}`,
         "C19") },
     "A panel preference is not production state, but a remembered run id is: the moment the rail persists what it saw, two readers of the same activity can disagree about what is new.");
 

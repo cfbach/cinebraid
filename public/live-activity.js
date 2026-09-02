@@ -1,9 +1,7 @@
 /* CineBraid v6.6.0.2 — live activity and accessible drawer behavior. */
 const V641_ACTIVITY_REFRESH_MS = 3500;
-let V641_ACTIVITY_DRAWER_OPEN = false;
 let V641_ACTIVITY_REFRESHING = false;
 let V641_ACTIVITY_TIMER = null;
-let V641_ACTIVITY_TRIGGER = null;
 const V641_MANUAL_ACTIVITIES = new Map();
 
 /* ==========================================================================
@@ -56,7 +54,7 @@ window.v670ScopeActivityToProject = (slug = v670ActiveProjectSlug()) => {
   V641_MANUAL_ACTIVITIES.clear();
   V641_ACTIVITY_FOREIGN_PROJECT = "";
   v641UpdateActivityButton();
-  if (V641_ACTIVITY_DRAWER_OPEN) v641RenderActivityDrawer();
+ 
   return true;
 };
 /* Set when a ledger the server answers with belongs to a different project than
@@ -447,18 +445,18 @@ function v641TimelineMarkup(run) {
 }
 window.v641LiveActivityMarkup = (run) => {
   if (!run) return "";
-  return `<section class="automation-live-activity" data-automation-live-run="${attr(run.id)}"><div class="automation-live-heading"><div><span>LIVE AUTOMATION ACTIVITY</span><b>Every AI, provider, review, and approval operation</b></div><button class="chip" onclick="openGlobalAutomationActivity('${attr(run.id)}')">OPEN ACTIVITY DRAWER</button></div>${v641CurrentOperationMarkup(run)}<details class="automation-live-details" open><summary>Detailed timeline <span>${Object.keys(run.steps || {}).length}</span></summary>${v641TimelineMarkup(run)}</details></section>`;
+  return `<section class="automation-live-activity" data-automation-live-run="${attr(run.id)}"><div class="automation-live-heading"><div><span>LIVE AUTOMATION ACTIVITY</span><b>Every AI, provider, review, and approval operation</b></div><button class="chip" onclick="window.CineBraidCreatorSurfaces.expandTerminal('${attr(run.id)}')">OPEN ACTIVITY DRAWER</button></div>${v641CurrentOperationMarkup(run)}<details class="automation-live-details" open><summary>Detailed timeline <span>${Object.keys(run.steps || {}).length}</span></summary>${v641TimelineMarkup(run)}</details></section>`;
 };
 window.v641StartManualActivity = (system, title, detail = "", meta = {}) => {
   const id = `manual-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`;
   V641_MANUAL_ACTIVITIES.set(id, { id, system, title, detail, meta, projectSlug: v670ActiveProjectSlug(), status: "running", startedAt: new Date().toISOString(), updatedAt: new Date().toISOString() });
-  v641UpdateActivityButton(); if (V641_ACTIVITY_DRAWER_OPEN) v641RenderActivityDrawer();
+  v641UpdateActivityButton();
   return id;
 };
 window.v641UpdateManualActivity = (id, patch = {}) => {
   const row = V641_MANUAL_ACTIVITIES.get(id); if (!row) return;
   Object.assign(row, patch, { updatedAt: new Date().toISOString() });
-  v641UpdateActivityButton(); if (V641_ACTIVITY_DRAWER_OPEN) v641RenderActivityDrawer();
+  v641UpdateActivityButton();
 };
 /* A finished row stays in the drawer for ten minutes so the user can still read what
    happened, then removes itself. The pending timer is tracked per activity so finishing the
@@ -480,7 +478,7 @@ function v641ScheduleManualRetention(id) {
     V641_MANUAL_RETENTION_TIMERS.delete(id);
     V641_MANUAL_ACTIVITIES.delete(id);
     v641UpdateActivityButton();
-    if (V641_ACTIVITY_DRAWER_OPEN) v641RenderActivityDrawer();
+   
   }, V641_MANUAL_RETENTION_MS);
   if (timer && typeof timer.unref === "function") timer.unref();
   V641_MANUAL_RETENTION_TIMERS.set(id, timer);
@@ -488,18 +486,12 @@ function v641ScheduleManualRetention(id) {
 window.v641FinishManualActivity = (id, status = "completed", detail = "") => {
   const row = V641_MANUAL_ACTIVITIES.get(id); if (!row) return;
   Object.assign(row, { status, detail: detail || row.detail, completedAt: new Date().toISOString(), updatedAt: new Date().toISOString() });
-  v641UpdateActivityButton(); if (V641_ACTIVITY_DRAWER_OPEN) v641RenderActivityDrawer();
+  v641UpdateActivityButton();
   v641ScheduleManualRetention(id);
 };
-function v641ManualActivityMarkup(row) {
-  return `<article class="automation-drawer-run manual state-${attr(v641StatusTone(row.status))}" data-activity-key="manual:${attr(row.id)}"><header><div><span>${esc(row.system || "CINEBRAID ACTIVITY")}</span><b>${esc(row.title || "Manual operation")}</b></div><i>${row.status === "running" ? '<span class="spin">◌</span>' : row.status === "completed" ? "✓" : "!"}</i></header><p>${esc(row.detail || "Working…")}</p><small>${esc(v670ManualElapsedLabel(row))} elapsed</small></article>`;
-}
 function v641StandaloneFalJobs() {
   const runJobIds = new Set((AUTOMATION_RUNS || []).flatMap((run) => Object.values(run.steps || {}).map((step) => step.childJobId).filter(Boolean)));
   return (FAL_GENERATION_JOBS || []).filter((job) => falJobActive(job) && !runJobIds.has(job.id));
-}
-function v641StandaloneFalMarkup(job) {
-  return `<article class="automation-drawer-run state-active" data-activity-key="fal:${attr(job.id)}"><header><div><span>FAL · GPT IMAGE 2</span><b>${esc(job.purpose || "Manual image generation")}</b></div><i><span class="spin">◌</span></i></header><p>${esc(String(job.status || "working").replace(/_/g, " "))}${job.queuePosition != null ? ` · queue ${job.queuePosition}` : ""}</p><small>${esc(job.model || "GPT Image 2")} · ${Number(job.outputCount || 0)} candidate${Number(job.outputCount || 0) === 1 ? "" : "s"}</small></article>`;
 }
 /* The four reference collections an entity-chain run can target, and the route each
    one is read at. Hoisted out of v641RunRoute so that "which collections exist" has ONE
@@ -563,7 +555,7 @@ window.v670CompactRunStatusMarkup = (run) => {
   const waiting = v670WaitingForHumanRun(run);
   const attention = v670AttentionRun(run);
   const glyph = active ? '<span class="spin">◌</span>' : waiting || attention ? "!" : tone === "done" ? "✓" : "○";
-  return `<div class="automation-compact-status state-${attr(tone)}" data-automation-compact-run="${attr(run.id)}" data-compact-tone="${attr(tone)}"><i aria-hidden="true">${glyph}</i><p>${esc(v670RunHeadline(run))}</p><button type="button" class="chip automation-compact-open" onclick="openGlobalAutomationActivity('${attr(run.id)}')">OPEN ACTIVITY →</button></div>`;
+  return `<div class="automation-compact-status state-${attr(tone)}" data-automation-compact-run="${attr(run.id)}" data-compact-tone="${attr(tone)}"><i aria-hidden="true">${glyph}</i><p>${esc(v670RunHeadline(run))}</p><button type="button" class="chip automation-compact-open" onclick="window.CineBraidCreatorSurfaces.expandTerminal('${attr(run.id)}')">OPEN ACTIVITY →</button></div>`;
 };
 
 /* Repainted from the SAME tick that repaints the drawer, so a task page and the drawer
@@ -741,7 +733,6 @@ window.v670RunResultTarget = (run) => {
 window.openRunResult = (runId) => {
   const run = v641RunById(runId);
   const target = v670RunResultTarget(run);
-  closeGlobalAutomationActivity();
   if (target.kind === "shot-stage" && typeof selectGuidedPanelTask === "function" && typeof shotById === "function") {
     const shot = shotById(run.targetId);
     if (shot) selectGuidedPanelTask(shot, target.panel);
@@ -760,33 +751,6 @@ window.openRunResult = (runId) => {
   else if (typeof route === "function") route();
 };
 
-function v641DrawerRunMarkup(run, duplicateCount = 1) {
-  const { displayRun, step, child } = v641DisplayedRunAndStep(run);
-  const active = v670MachineActiveRun(run);
-  const waiting = v670WaitingForHumanRun(run);
-  const failed = Object.values(run.steps || {}).find((item) => item.status === "failed") || null;
-  /* WHOSE FAILURE IS THIS TO REPORT AS AN ERROR? A step marked failed inside a run
-     that is itself healthy is history, not a fault the director is being handed —
-     and painting it in the error style put a red line on a row in ACTIVE NOW. The
-     run's own health decides; the step's message is still shown either way. */
-  const unhealthy = run.status === "failed" || v670AttentionRun(run);
-  /* A CHILD THE MACHINE IS ALREADY PUTTING RIGHT, named rather than left to be read
-     off a status. Its own row is not in PREVIOUS FAILURES while this parent is
-     driving it — see v670RunRecovering — so this line is where the evidence lives.
-     It is resolved from the parent's OWN current step rather than from the display
-     pair above, because v641DisplayedRunAndStep only surfaces a child that has a
-     step of its own to show and a child sitting between a retry POST and its resume
-     has none — which is exactly the window this line exists for. */
-  const ownedChild = run?.type === "scene-chain" ? v641ChildRunForStep(v641CurrentStep(run)) : null;
-  const childRecovering = !!ownedChild && ["failed", "interrupted"].includes(String(ownedChild.status || "")) && active;
-  const repairable = run.status === "failed" && run.type === "scene-chain" && (failed?.kind === "generation" || String(failed?.key || "").includes("scene-correction"));
-  const primary = repairable
-    ? `<button class="approve-btn" onclick="retryFailedAutomationStep('${attr(run.id)}','${attr(failed.key)}')">REPAIR & RETRY</button>`
-    : run.status === "failed" && failed
-      ? `<button onclick="retryFailedAutomationStep('${attr(run.id)}','${attr(failed.key)}')">RETRY</button>`
-      : `<button onclick="openRunResult('${attr(run.id)}')">${v670RunResultTarget(run).resolved ? "OPEN RESULT" : "OPEN WORKSPACE"}</button>`;
-  return `<article class="automation-drawer-run state-${attr(v670RunTone(run))}" data-run-id="${attr(run.id)}" data-activity-key="run:${attr(run.id)}"><header><div><span>${esc(run.type.replace(/-/g, " ").toUpperCase())}</span><b>${esc(run.label || run.targetId)}${duplicateCount > 1 ? ` <em class="automation-duplicate-count">×${duplicateCount}</em>` : ""}</b></div><i>${active ? '<span class="spin">◌</span>' : waiting ? "!" : run.status === "completed" ? "✓" : run.status === "failed" ? "!" : "○"}</i></header><p>${esc(v670RunHeadline(run))}</p>${failed?.error && unhealthy ? `<small class="automation-drawer-error">${esc(failed.error)}</small>` : childRecovering ? `<small data-child-recovering="${attr(ownedChild.id)}">Recovering ${esc(ownedChild.label || ownedChild.targetId)} automatically — no action needed from you.</small>` : failed?.error ? `<small>${esc(failed.error)}</small>` : child ? `<small>Child run: ${esc(child.label || child.targetId)}</small>` : ""}<footer>${primary}<button onclick="closeGlobalAutomationActivity();openAutomationReport('${attr(run.id)}')">VIEW REPORT</button>${v670AttentionRun(run) ? `<button class="ghost-btn" onclick="dismissAutomationActivityRun('${attr(run.id)}')">DISMISS</button>` : ""}</footer></article>`;
-}
 /* WAITING FOR YOU, said in the run's own terms. A run parked at an approval gate and
    a run whose runner went away need different things from the director, and the
    drawer used to describe both as whatever step was last touched. */
@@ -811,32 +775,6 @@ function v641ActiveAndRecentRuns() {
     return openB - openA || String(b.updatedAt || b.createdAt || "").localeCompare(String(a.updatedAt || a.createdAt || ""));
   }).slice(0, 12);
 }
-function v641GroupAttentionRuns(runs) {
-  const groups = new Map();
-  for (const run of runs) {
-    const failed = Object.values(run.steps || {}).find((item) => item.status === "failed") || {};
-    const key = [run.type, run.targetId, failed.kind || "", failed.error || run.summary || run.stage || ""].join("|");
-    const group = groups.get(key) || { run, count: 0 };
-    group.count += 1;
-    if (String(run.updatedAt || run.createdAt || "") > String(group.run.updatedAt || group.run.createdAt || "")) group.run = run;
-    groups.set(key, group);
-  }
-  return [...groups.values()];
-}
-function v6602EnsureActivityBackdrop() {
-  let backdrop = document.getElementById("automation-activity-backdrop");
-  if (!backdrop) {
-    backdrop = document.createElement("button");
-    backdrop.id = "automation-activity-backdrop";
-    backdrop.type = "button";
-    backdrop.className = "automation-activity-backdrop";
-    backdrop.setAttribute("aria-label", "Close activity drawer");
-    backdrop.onclick = () => closeGlobalAutomationActivity();
-    document.body.appendChild(backdrop);
-  }
-  backdrop.hidden = !V641_ACTIVITY_DRAWER_OPEN;
-  return backdrop;
-}
 function v6602ActivityStatus() {
   const runs = Array.isArray(AUTOMATION_RUNS) ? AUTOMATION_RUNS : [];
   const activeRuns = runs.filter(v670MachineActiveRun);
@@ -859,7 +797,6 @@ window.dismissAutomationActivityRun = async (runId) => {
   const index = (AUTOMATION_RUNS || []).findIndex((run) => run.id === runId);
   if (index >= 0) AUTOMATION_RUNS[index] = data.run;
   v641UpdateActivityButton();
-  v641RenderActivityDrawer();
   /* Not "remains available in Reports": archiving moves a run out of the active set and
      into the finished ones, which the server keeps only up to its run-history limit. The
      old sentence promised a permanence CineBraid does not offer. */
@@ -884,7 +821,6 @@ window.recheckAutomationGateStatus = async () => {
   }
   AUTOMATION_RUNS = Array.isArray(data.runs) ? data.runs : AUTOMATION_RUNS;
   v641UpdateActivityButton();
-  v641RenderActivityDrawer();
   v670AnnounceActivityUpdate();
   const resolved = (data.resolvedRunIds || []).length;
   toast(resolved
@@ -905,8 +841,7 @@ window.archivePreviousAutomationFailures = async () => {
       archived += 1;
     }
     v641UpdateActivityButton();
-    v641RenderActivityDrawer();
-    toast(`${archived} previous alert${archived === 1 ? "" : "s"} archived. Nothing was deleted here.`);
+      toast(`${archived} previous alert${archived === 1 ? "" : "s"} archived. Nothing was deleted here.`);
   };
   if (typeof confirmModal === "function") return confirmModal(`Dismiss ${ids.length} previous automation alert${ids.length === 1 ? "" : "s"}?`, apply, { title: "Clear previous alerts", confirmLabel: "DISMISS ALERTS", body: "This removes them from Global Activity. Each run and its diagnostics stay in Reports until they age out of the run history CineBraid keeps." });
   await apply();
@@ -1032,76 +967,6 @@ function v670PatchSection(current, next) {
   }
   for (const [key, row] of existing) if (!keep.has(key)) row.remove();
 }
-function v670PaintDrawer(drawer, shell) {
-  const currentShell = typeof drawer.querySelector === "function" ? drawer.querySelector(".automation-drawer-shell") : null;
-  if (!currentShell || !v670DomCanReconcile(document)) {
-    drawer.innerHTML = shell;
-    return;
-  }
-  const staging = document.createElement("div");
-  staging.innerHTML = shell;
-  const nextShell = staging.querySelector(".automation-drawer-shell");
-  if (!nextShell) { drawer.innerHTML = shell; return; }
-  /* The shell header is not inert either: it holds Close and DISMISS PREVIOUS ALERTS
-     beside a heading that changes whenever a count does. Patched, not rewritten. */
-  const currentHeader = currentShell.querySelector(":scope > header"), nextHeader = nextShell.querySelector(":scope > header");
-  if (currentHeader && nextHeader && currentHeader.outerHTML !== nextHeader.outerHTML) v670PatchElement(currentHeader, nextHeader);
-  const currentList = currentShell.querySelector(".automation-drawer-list"), nextList = nextShell.querySelector(".automation-drawer-list");
-  if (!currentList || !nextList) { drawer.innerHTML = shell; return; }
-  const currentSections = [...currentList.children], nextSections = [...nextList.children];
-  /* The section list is fixed and ordered, so a length change means the markup itself
-     changed shape rather than its contents - repaint rather than guess. */
-  if (currentSections.length !== nextSections.length) { currentList.innerHTML = nextList.innerHTML; return; }
-  nextSections.forEach((nextSection, index) => v670PatchSection(currentSections[index], nextSection));
-}
-function v641RenderActivityDrawer(focusRunId = "") {
-  const drawer = document.getElementById("automation-activity-drawer");
-  if (!drawer) return;
-  const runs = v641ActiveAndRecentRuns();
-  const manual = v670ManualActivityRows().sort((a, b) => String(b.startedAt).localeCompare(String(a.startedAt)));
-  const standaloneFal = v641StandaloneFalJobs();
-  const activeRuns = runs.filter(v670MachineActiveRun);
-  const waitingRuns = runs.filter(v670WaitingForHumanRun);
-  const attentionRuns = runs.filter(v670AttentionRun);
-  const attentionGroups = v641GroupAttentionRuns(attentionRuns);
-  const completedRuns = runs.filter((run) => run.status === "completed");
-  const activeManual = manual.filter((row) => row.status === "running");
-  const recentManual = manual.filter((row) => row.status !== "running");
-  const activeCount = activeRuns.length + activeManual.length + standaloneFal.length;
-  const section = (title, rows, empty = "") => `<section class="automation-drawer-section"><header><b>${esc(title)}</b><span>${rows.length}</span></header>${rows.join("") || (empty ? `<div class="automation-console-empty"><span>${esc(empty)}</span></div>` : "")}</section>`;
-  /* WAITING FOR YOU is its own section rather than a tone inside ACTIVE NOW. The
-     question a director asks the drawer is "is anything happening, or is it me?", and
-     a list that answers both at once is the thing that read as a stalled machine. */
-  const content = [
-    section("ACTIVE NOW", [...activeManual.map(v641ManualActivityMarkup), ...standaloneFal.map(v641StandaloneFalMarkup), ...activeRuns.map(v641DrawerRunMarkup)], "No operation is currently running."),
-    /* The empty phrase names the section's scope, exactly as ACTIVE NOW's does. This
-       drawer lists runs; "Nothing is waiting on you" was a claim about the whole
-       production, made by a surface that cannot see a filmmaker decision. */
-    section("WAITING FOR YOU", waitingRuns.map((run) => v641DrawerRunMarkup(run)), "No run is waiting on you."),
-    section("PREVIOUS FAILURES / NEEDS ATTENTION", [...recentManual.filter((row) => row.status === "failed").map(v641ManualActivityMarkup), ...attentionGroups.map((group) => v641DrawerRunMarkup(group.run, group.count))], "No blocked or failed work."),
-    section("RECENT COMPLETED", [...recentManual.filter((row) => row.status === "completed").map(v641ManualActivityMarkup), ...completedRuns.map(v641DrawerRunMarkup)].slice(0, 12), "No completed activity yet."),
-  ].join("");
-  const heading = activeCount
-    ? `${activeCount} operation${activeCount === 1 ? "" : "s"} active`
-    : waitingRuns.length
-      ? `${waitingRuns.length} run${waitingRuns.length === 1 ? "" : "s"} waiting for you`
-      : attentionRuns.length
-        ? `${attentionRuns.length} previous attempt${attentionRuns.length === 1 ? "" : "s"} need attention`
-        : "No active operation";
-  /* Named, not hidden: the window cannot show the other project's work here without
-     re-attributing it, and it must not pretend its own list is still current. */
-  const foreign = V641_ACTIVITY_FOREIGN_PROJECT
-    ? `<div class="automation-drawer-foreign" role="status"><b>Activity below is not current.</b><span>CineBraid’s active project was switched to <em>${esc(V641_ACTIVITY_FOREIGN_PROJECT)}</em> somewhere else, so this window has stopped taking that project’s activity. Nothing here belongs to it.</span><button class="ghost-btn" onclick="location.reload()">RELOAD THIS WINDOW</button></div>`
-    : "";
-  const shell = `<div class="automation-drawer-shell"><header><div><span>GLOBAL ACTIVITY</span><h2>${heading}</h2><p>Every live local-AI call, paid request, review, retry, approval, and recovery action remains visible from any workspace. Detailed diagnostics live in Reports.</p>${foreign}</div><div class="automation-drawer-header-actions">${waitingRuns.length ? `<button class="ghost-btn" onclick="recheckAutomationGateStatus()" title="Re-derive every parked approval gate against current project truth">RECHECK STATUS</button>` : ""}${attentionRuns.length ? `<button class="ghost-btn" onclick="archivePreviousAutomationFailures()">DISMISS PREVIOUS ALERTS</button>` : ""}<button class="cancel" onclick="closeGlobalAutomationActivity()">Close</button></div></header><div class="automation-drawer-list">${content}</div></div>`;
-  v670PaintDrawer(drawer, shell);
-  drawer.classList.toggle("open", V641_ACTIVITY_DRAWER_OPEN);
-  drawer.setAttribute("aria-hidden", V641_ACTIVITY_DRAWER_OPEN ? "false" : "true");
-  drawer.setAttribute("role", "dialog");
-  drawer.setAttribute("aria-modal", "true");
-  v6602EnsureActivityBackdrop();
-  if (focusRunId) setTimeout(() => drawer.querySelector(`[data-run-id="${v641SelectorValue(focusRunId)}"]`)?.scrollIntoView({ block: "center" }), 20);
-}
 /* THE FLOATING GLOBAL ACTIVITY STRIP IS RETIRED. Batch 2, Slice 1.
 
    `#automation-global-live-strip` and the topbar chip `#automation-activity-toggle`
@@ -1197,7 +1062,7 @@ window.refreshGlobalAutomationActivity = async (force = false) => {
   /* Unsettled, not active: a run parked at an approval gate must keep being polled so
      an approval made in another window lands here. */
   const openExists = (AUTOMATION_RUNS || []).some(v670RunUnsettled);
-  if (!force && !V641_ACTIVITY_DRAWER_OPEN && !openExists) return;
+  if (!force && !openExists) return;
   V641_ACTIVITY_REFRESHING = true;
   try {
     const [runData, falData] = await Promise.all([
@@ -1219,7 +1084,7 @@ window.refreshGlobalAutomationActivity = async (force = false) => {
   finally {
     V641_ACTIVITY_REFRESHING = false;
     v641UpdateActivityButton();
-    if (V641_ACTIVITY_DRAWER_OPEN) v641RenderActivityDrawer();
+   
     document.querySelectorAll("[data-automation-live-run]").forEach((node) => {
       const run = v641RunById(node.dataset.automationLiveRun);
       if (run) node.outerHTML = v641LiveActivityMarkup(run);
@@ -1249,24 +1114,7 @@ window.v641NotifyAutomationActivity = (run) => {
     v670RepaintCompactRunStatuses(run.id);
   }
   v641UpdateActivityButton();
-  if (V641_ACTIVITY_DRAWER_OPEN) v641RenderActivityDrawer();
-};
-window.openGlobalAutomationActivity = (focusRunId = "") => {
-  V641_ACTIVITY_TRIGGER = document.activeElement;
-  V641_ACTIVITY_DRAWER_OPEN = true;
-  document.body.classList.add("automation-activity-open");
-  v641RenderActivityDrawer(focusRunId);
-  const closeButton = document.querySelector("#automation-activity-drawer .cancel");
-  closeButton?.focus?.();
-  refreshGlobalAutomationActivity(true);
-};
-window.closeGlobalAutomationActivity = () => {
-  V641_ACTIVITY_DRAWER_OPEN = false;
-  document.body.classList.remove("automation-activity-open");
-  v641RenderActivityDrawer();
-  const trigger = V641_ACTIVITY_TRIGGER;
-  V641_ACTIVITY_TRIGGER = null;
-  if (trigger && typeof trigger.focus === "function") setTimeout(() => trigger.focus(), 0);
+ 
 };
 function v641TickElapsedLabels() {
   document.querySelectorAll("[data-live-start]").forEach((node) => { node.textContent = v641ElapsedLabel(node.dataset.liveStart, node.dataset.liveEnd || ""); });
@@ -1322,31 +1170,8 @@ function v642InstallUniversalActivityFetch() {
 function v641InitActivity() {
   v642InstallUniversalActivityFetch();
   const toggle = document.getElementById("automation-activity-toggle");
-  if (toggle) toggle.onclick = () => V641_ACTIVITY_DRAWER_OPEN ? closeGlobalAutomationActivity() : openGlobalAutomationActivity();
-  if (!window.__cinebraidActivityEscapeInstalled) {
-    window.__cinebraidActivityEscapeInstalled = true;
-    /* ESCAPE CLOSES THE TOP OF THE STACK, NOT EVERYTHING IN IT.
-     *
-     * A dialog opened from inside this drawer paints above it (--z-dialog in
-     * styles.css), and public/review.js already closes the modal on Escape. Both
-     * handlers used to fire for one keypress, so dismissing a confirmation also
-     * dismissed the drawer that asked for it.
-     *
-     * CAPTURE PHASE, and that is the whole of the fix. review.js's listener is on
-     * the same target and was registered first, so in the bubble phase it had
-     * already closed the modal by the time this ran — the check would read "no
-     * dialog" and close the drawer anyway. A capture-phase listener on `document`
-     * runs before every bubble-phase one, which is where the stack can still be
-     * observed as the user left it. */
-    document.addEventListener("keydown", (event) => {
-      if (event.key === "Escape" && V641_ACTIVITY_DRAWER_OPEN && !v670DialogIsOpen()) {
-        event.preventDefault();
-        closeGlobalAutomationActivity();
-      }
-    }, true);
-  }
+  if (toggle) toggle.onclick = () => window.CineBraidCreatorSurfaces?.expandTerminal?.();
   v641UpdateActivityButton();
-  v641RenderActivityDrawer();
   if (V641_ACTIVITY_TIMER) clearInterval(V641_ACTIVITY_TIMER);
   /* THE UNIVERSAL REVISION WATCH RIDES THIS TIMER. It is not activity and it is
      not a drawer concern; it is here because this is the lightweight tick the
@@ -1373,5 +1198,5 @@ window.v642RelatedShotActivityMarkup = (shotId) => {
     .sort((a, b) => String(b.updatedAt || b.createdAt || "").localeCompare(String(a.updatedAt || a.createdAt || "")));
   const run = runs[0];
   if (!run) return "";
-  return `<section class="shot-related-activity"><header><div><span>RELATED SCENE AUTOMATION</span><b>${esc(run.label || "Scene correction")}</b><small>This work was launched from the scene but targets ${esc(shotId)}. Progress stays visible here.</small></div><button class="chip" onclick="openGlobalAutomationActivity('${attr(run.id)}')">OPEN GLOBAL ACTIVITY</button></header>${typeof v670CompactRunStatusMarkup === "function" ? v670CompactRunStatusMarkup(run) : ""}</section>`;
+  return `<section class="shot-related-activity"><header><div><span>RELATED SCENE AUTOMATION</span><b>${esc(run.label || "Scene correction")}</b><small>This work was launched from the scene but targets ${esc(shotId)}. Progress stays visible here.</small></div><button class="chip" onclick="window.CineBraidCreatorSurfaces.expandTerminal('${attr(run.id)}')">OPEN GLOBAL ACTIVITY</button></header>${typeof v670CompactRunStatusMarkup === "function" ? v670CompactRunStatusMarkup(run) : ""}</section>`;
 };

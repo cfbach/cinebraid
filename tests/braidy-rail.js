@@ -1465,7 +1465,10 @@ function checkBraidyIsNotAGate(sources = SOURCES) {
   });
 
   const without = owner.surfaces.assistantMarkup(state);
-  assert.ok(without.includes("Needs attention") || without.includes("Waiting for you"),
+  /* A1: the rail no longer prints per-run section headings — it states the situation
+     in counts and offers at most one handoff. The claim here is unchanged: Braidy
+     being absent must not stop the deterministic rail from rendering. */
+  assert.ok(without.includes("cb-assistant-body") && /cb-assistant-section/.test(without),
     "the deterministic rail must still render with Braidy absent");
   assert.ok(!without.includes("cb-braidy"), "with Braidy absent nothing of it may appear");
 

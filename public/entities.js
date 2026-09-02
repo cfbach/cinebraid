@@ -354,7 +354,7 @@ function entityCoverageActivityMarkup(list, entity, group = "angles") {
   if (!jobs.length) return entityCoverageRunStatusMarkup(list, entity, group);
   const latest = jobs.at(-1);
   const title = latest.coverageJobType === "slot" ? (latest.targetCoverageSlotName || "Coverage view") : group === "expressions" ? "Expression sheet" : "Coverage sheet";
-  return `<div class="coverage-inline-activity"><span class="spin">◌</span><div><b>${esc(title)} generation in progress</b><small>${esc(String(latest.status || "queued").replace(/_/g, " "))}${latest.queuePosition != null ? ` · queue ${latest.queuePosition}` : ""} · this section will remain open</small></div><button class="ghost-btn" onclick="openGlobalAutomationActivity()">VIEW ACTIVITY</button></div>`;
+  return `<div class="coverage-inline-activity"><span class="spin">◌</span><div><b>${esc(title)} generation in progress</b><small>${esc(String(latest.status || "queued").replace(/_/g, " "))}${latest.queuePosition != null ? ` · queue ${latest.queuePosition}` : ""} · this section will remain open</small></div><button class="ghost-btn" onclick="window.CineBraidCreatorSurfaces.expandTerminal()">VIEW ACTIVITY</button></div>`;
 }
 function entityCandidateReviewBadge(entity, fileName) {
   const row = entityCandidateRow(entity, fileName, false) || {};

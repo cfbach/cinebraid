@@ -214,6 +214,7 @@
     "check:stage-model": "node tests/stage-model.js",
     "check:stage-model-negative": "node tests/stage-model-negative-controls.js",
     "check:stage-model-browser": "node tests/run-python-check.js tests/stage-model-real-browser.py",
+    "check:shell-ownership": "node tests/shell-activity-ownership-negative-controls.js",
     "check:quiet-shell": "node tests/quiet-shell.js",
     "check:quiet-shell-browser": "node tests/run-python-check.js tests/quiet-shell-real-browser.py",
     "check:project-entry": "node tests/project-entry.js",

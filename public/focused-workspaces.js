@@ -206,9 +206,9 @@
     const readyRefs = refs.filter((row) => row.url).length;
     const frames = Array.isArray(shot?.keyframes) ? shot.keyframes : [];
     const approvedFrames = frames.filter((frame) => frame.winner).length;
-    const run = activeAutomationRuns().find((row) => row.targetId === shot?.id && ["running", "awaiting-review", "failed"].includes(row.status));
+    const run = activeAutomationRuns().find((row) => row.targetId === shot?.id && (typeof window.v670RunUnsettled === "function" ? window.v670RunUnsettled(row) : ["running", "awaiting-review", "failed"].includes(row.status)));
     aside.innerHTML = `<header><span>SHOT INSPECTOR</span><b>${escapeText(shot?.id || "Shot")}</b><p>${escapeText(shot?.title || "")}</p></header><div class="focused-inspector-facts"><article><span>References</span><b>${readyRefs}/${refs.length}</b></article><article><span>Frames</span><b>${approvedFrames}/${frames.length || 1}</b></article><article><span>Duration</span><b>${Number(shot?.sec || shot?.duration || 0) || "—"}s</b></article><article><span>Workflow</span><b>${escapeText(window.workflowState?.(shot)?.label || shot?.workflowStatus || "Draft")}</b></article></div><section><b>Current production note</b><p>${escapeText(shot?.desc || shot?.positioning || "No additional shot note.")}</p></section>${run ? `<section class="focused-inspector-alert"><b>${escapeText(run.label || "Automation")}</b><p>${escapeText(run.stage || run.summary || run.status)}</p><button type="button" data-open-activity="${run.id}">Open activity</button></section>` : `<section><b>Activity</b><p>No active operation for this shot.</p></section>`}`;
-    aside.querySelector("[data-open-activity]")?.addEventListener("click", (event) => window.openGlobalAutomationActivity?.(event.currentTarget.dataset.openActivity));
+    aside.querySelector("[data-open-activity]")?.addEventListener("click", (event) => window.CineBraidCreatorSurfaces?.expandTerminal?.(event.currentTarget.dataset.openActivity));
     return aside;
   }
   function disclosureFallbackLabel(element) {

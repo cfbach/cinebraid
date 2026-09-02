@@ -827,13 +827,6 @@ function v666ReferenceProgressionMarkup(run) {
     : "";
   return `<section class="automation-pass-progression"><header><div><span>PASS PROGRESSION</span><b>${passes.length} of ${maxPasses} authorized pass${maxPasses === 1 ? "" : "es"} used${cap ? ` · ${used} of ${cap} candidates` : ""}</b><small>What CineBraid changed between passes, and the review evidence it changed it for.</small></div></header>${championMarkup}${exhaustionMarkup}<ol class="automation-pass-list">${items}</ol></section>`;
 }
-function v626RunReportMarkup(run) {
-  if (!run) return "";
-  const winners = v626RunWinners(run);
-  const report = winners.length ? `<div class="automation-report">${winners.map((step) => `<article><span>${esc(step.label || step.kind || "Result")}</span><b>${esc(step.winner)}</b><small>${Number.isFinite(Number(step.score)) ? `${Math.round(Number(step.score))}/100` : "Approved"}${step.result?.rationale ? ` · ${esc(step.result.rationale)}` : ""}</small></article>`).join("")}</div>` : "";
-  const logs = run.logs?.length ? `<details class="automation-run-log" ${run.status === "running" ? "open" : ""}><summary>Run log <span>${run.logs.length}</span></summary><div>${run.logs.map((entry) => `<p class="${v626ToneClass(entry.tone)}"><b>${esc(new Date(entry.at).toLocaleTimeString())}</b> ${esc(entry.message)}</p>`).join("")}</div></details>` : "";
-  return `${v6211GenerationProfileMarkup(v6211RunGenerationSettings(run))}${v626RunUsageMarkup(run)}${typeof v670CompactRunStatusMarkup === "function" ? "" : v627RunConsoleMarkup(run)}${v666ReferenceProgressionMarkup(run)}${v627HumanReviewMarkup(run)}${report}${logs}<div class="automation-debug-actions"><a class="chip" href="#/reports/${encodeURIComponent(run.id)}">VIEW REPORT</a></div>`;
-}
 function v626RunActions(run, type, targetId, scope, startMarkup) {
   if (!run) return startMarkup;
   const active = V626_ACTIVE_AUTOMATION_RUNS.has(run.id);
@@ -849,7 +842,22 @@ function v626RunActions(run, type, targetId, scope, startMarkup) {
   return `<button class="ghost-btn" onclick="archiveAutomationRun('${run.id}')">ARCHIVE REPORT</button>${startMarkup}`;
 }
 function v626AutomationPanel(run, title, description, type, targetId, scope, startMarkup, extra = "") {
-  return `<section class="creation-card automation-card durable-automation-card"><div class="creation-card-head"><div><span class="creation-kicker">EXPERIMENTAL · DURABLE</span><h3>${esc(title)}</h3><p>${esc(description)}</p></div><span class="creation-state">Stills only</span></div><div class="automation-run-status"><b>${esc(v626StatusLabel(run))}</b><span>${esc(run?.stage || "Ready to plan an automation run")}</span></div>${run?.summary ? `<div class="automation-run-summary ${v626ToneClass(run.status === "completed" ? "success" : run.status === "failed" ? "warn" : "info")}">${esc(run.summary)}</div>` : ""}${run && typeof v670CompactRunStatusMarkup === "function" ? v670CompactRunStatusMarkup(run) : ""}${extra}<div class="automation-persistence-note">Progress is saved to this project. Closing the tab pauses browser orchestration; reopen the same target and choose Resume Run.</div><div class="creation-actions automation-actions">${v626RunActions(run, type, targetId, scope, startMarkup)}</div>${v626RunReportMarkup(run)}</section>`;
+  /* A1 — THE TASK PAGE IS THE TASK.
+     This block used to be a process console: an orchestration kicker, a status line
+     and a summary that the compact status already says, an always-open persistence
+     paragraph, and v626RunReportMarkup() — the full run report, on the creative
+     surface. Starting AI help replaced the workspace with a dashboard, which is what
+     the 2026-09-01 dogfood recorded.
+     What stays is one compact current-run status and the run's own action set. The
+     run report moves to Reports, which already owns deep evidence, and the
+     persistence note keeps its MEANING behind a disclosure instead of a paragraph.
+     v626RunActions is untouched and stays here: it is the only thing that holds this
+     run's type/targetId/scope and its lease, and it is not duplicated anywhere. */
+  const persistence = `<details class="automation-persistence-fold"><summary>What happens if I close this tab?</summary><p class="automation-persistence-note">Progress is saved to this project. Closing the tab pauses browser orchestration; reopen the same target and choose Resume Run.</p></details>`;
+  const status = run
+    ? (typeof v670CompactRunStatusMarkup === "function" ? v670CompactRunStatusMarkup(run) : "")
+    : `<div class="automation-run-status"><b>${esc(v626StatusLabel(run))}</b><span>Ready to plan an automation run</span></div>`;
+  return `<section class="creation-card automation-card durable-automation-card"><div class="creation-card-head"><div><h3>${esc(title)}</h3><p>${esc(description)}</p></div></div>${status}${extra}${persistence}<div class="creation-actions automation-actions">${v626RunActions(run, type, targetId, scope, startMarkup)}</div></section>`;
 }
 
 
@@ -1170,7 +1178,7 @@ window.shotAutomationHub = (shot, placement = "look") => {
         ? `${plural(blockingFramed, "attempt")} reviewed with their frame`
         : "No attempts yet";
   const currentRun = v626LatestRun("shot-chain", shot.id, "stills"), blockingRun = v626LatestRun("shot-chain", shot.id, "blocking-only");
-  const open = !manualFirstWorkflow() || [currentRun?.status, blockingRun?.status].some((status) => ["running","awaiting-review","failed","interrupted"].includes(status));
+  const open = !manualFirstWorkflow() || [currentRun, blockingRun].some((row) => (typeof v670RunUnsettled === "function" ? v670RunUnsettled(row) : ["running","awaiting-review","failed","interrupted"].includes(row?.status)));
   return `<details class="shot-automation-hub" ${open ? "open" : ""}><summary><div><span>OPTIONAL ASSISTED PRODUCTION</span><b>Review blocking, automate this shot, or check the scene</b><small>Manual work remains first-class. These tools reuse approved references and existing results before spending credits.</small></div><span>${currentRun ? esc(String(currentRun.status || "run").replace(/-/g," ").toUpperCase()) : "OPTIONAL"}</span></summary><div class="shot-automation-hub-body"><div class="shot-automation-status-grid"><article><span>BLOCKING</span><b>${active ? "Guide active" : esc(blockingCount)}</b><small>${esc(blockingDetail)}</small></article><article><span>REQUIRED FRAMES</span><b>${esc(stillCard.value)}</b><small>${esc(stillCard.note)}</small></article><article><span>SCENE CONTINUITY</span><b>${sceneReview ? esc(String(sceneReview.verdict || "reviewed").replace(/_/g," ")) : `${sceneApproved} approved still${sceneApproved === 1 ? "" : "s"}`}</b><small>${sceneApproved >= 2 ? "Ready for sequence review" : "Available after two scene stills are approved"}</small></article></div><div class="shot-automation-primary-actions">${blocking.recommended && blocking.recommendation?.pass ? `<button class="approve-btn" onclick="useRecommendedBlockingAttempt('${attr(shot.id)}')">USE RECOMMENDED GUIDE · ${Number(blocking.recommendation.score || 0)}</button>` : ""}<button class="approve-btn large" onclick="openShotAutomationModal('${attr(shot.id)}')">AUTOMATE FULL SHOT</button></div><div class="shot-automation-scene-actions"><a class="text-link-btn" href="#/scene/${attr(shot.scene)}">Scene continuity & automation · ${esc(scene?.title || shot.scene)} →</a></div></div></details>`;
 };
 

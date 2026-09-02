@@ -140,7 +140,7 @@ window.renderSceneAutomationPanel = (scene, shots = []) => {
   const run = v626LatestRun("scene-chain", scene.id, "stills");
   const description = "Build the scene's approved opening stills, carry approved shot context forward, review the assembled sequence, and run bounded continuity corrections without generating video.";
   const panel = v626AutomationPanel(run, "Full scene automation & continuity", description, "scene-chain", scene.id, "stills", `<button class="approve-btn" onclick="openSceneAutomationModal('${attr(scene.id)}')">AUTOMATE / REVIEW SCENE</button>`, v640SceneAutomationExtra(run));
-  const active = ["running", "awaiting-review", "failed", "interrupted"].includes(String(run?.status || ""));
+  const active = typeof v670RunUnsettled === "function" ? v670RunUnsettled(run) : ["running", "awaiting-review", "failed", "interrupted"].includes(String(run?.status || ""));
   if (typeof manualFirstWorkflow !== "function" || !manualFirstWorkflow()) return panel;
   return `<details class="guided-assisted-tools scene-assisted-tools" ${active ? "open" : ""}><summary><div><span>OPTIONAL ASSISTED SCENE</span><b>Automate stills or review scene continuity</b><small>Manual scene organization remains primary. Open this when CineBraid should generate or compare the scene's approved stills.</small></div></summary><div class="guided-assisted-tools-body">${panel}</div></details>`;
 };
@@ -278,7 +278,6 @@ window.startPlannedSceneAutomation = async () => {
   closeModal();
   const saved = await v626CreateRun(run);
   location.hash = `#/scene/${scene.id}`;
-  setTimeout(() => typeof openGlobalAutomationActivity === "function" && openGlobalAutomationActivity(saved.id), 120);
   runSceneAutomation(saved.id);
 };
 
@@ -995,6 +994,5 @@ window.saveSceneFindingCorrectionPackage = async (sceneId, type, ref, automate =
   closeModal();
   const saved = await v626CreateRun(run);
   location.hash = `#/shot/${targetShotId}`;
-  setTimeout(() => typeof openGlobalAutomationActivity === "function" && openGlobalAutomationActivity(saved.id), 150);
   runSceneAutomation(saved.id);
 };

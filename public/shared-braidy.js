@@ -214,7 +214,7 @@
       label: "Open activity",
       /* The Terminal keeps the technical record; this is how the rail points at it
          rather than reprinting it. */
-      call: () => "openGlobalAutomationActivity()",
+      call: () => "window.CineBraidCreatorSurfaces.expandTerminal()",
     },
     "open-shot": {
       id: "open-shot",
