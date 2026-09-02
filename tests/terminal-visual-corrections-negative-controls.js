@@ -364,20 +364,30 @@ async function main() {
     });
   }
 
-  /* NC-RH — the completed run's exact-result handoff is disconnected again: the Terminal
-     assigns a coarse workspace route instead of asking the shipped resolver. That is what
-     it did before this correction, and it looked fine — the button still went somewhere. */
+  /* NC-RH — THE EXACT-RESULT HANDOFF IS DISCONNECTED, AT BOTH DOORS.
+     A completed run offers two ways to the work: the explicit OPEN RESULT control and
+     the run's own name. Review caught the first version of this control removing only
+     the CTA while the label kept calling the resolver — so the mutation landed, the
+     detector fired, and the claim on the tin was still wrong. Disconnecting the row's
+     single guard takes both entry points at once, which is what "the handoff is gone"
+     actually means, and the check requires no openRunResult call to survive anywhere in
+     the row. */
   {
     const done = [runningRun("done-1")].map((run) => ({ ...run, status: "completed", stage: "Finished",
       runnerId: "", leaseExpiresAt: "", heartbeatAt: "", updatedAt: "2026-08-26T10:09:00Z" }));
     const shipped = terminalHtml(await realm(done));
     const broken = terminalHtml(await realm(done, only(SURFACES,
-      `onclick="openRunResult('\${attr(fact.id)}')">\${fact.resultResolved ? "OPEN RESULT" : "OPEN WORKSPACE"}`,
-      `onclick="location.hash='\${attr(fact.route)}'">OPEN WORKSPACE`,
-      "NC-RH")));
+      `typeof window.openRunResult === "function"`, `false`, "NC-RH", 2)));
+    /* Both doors, named separately, so a future half-measure cannot pass this again. */
+    const cta = (html) => /class="cb-terminal-action" onclick="openRunResult\(/.test(html);
+    const labelHandoff = (html) => /class="cb-terminal-open" onclick="openRunResult\(/.test(html);
     await control("NC-RH C1: a completed run reaches its exact result through the shipped resolver", {
-      before: /OPEN RESULT/.test(shipped) && /openRunResult\(/.test(shipped),
-      after: !/OPEN RESULT/.test(broken) && /location\.hash=/.test(broken),
+      before: /OPEN RESULT/.test(shipped) && cta(shipped) && labelHandoff(shipped),
+      after: !/OPEN (RESULT|WORKSPACE)/.test(broken)
+        && !cta(broken) && !labelHandoff(broken)
+        && countOf(broken, "openRunResult(") === 0
+        /* and the row falls back to the coarse route, which is the defect itself */
+        && /class="cb-terminal-open" onclick="location\.hash=/.test(broken),
     });
   }
 

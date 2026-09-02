@@ -255,7 +255,12 @@ const serialSuites = ["check:windows-shutdown"];
    this runner still passes, so a fresh clone can verify everything portable. The tier
    that refuses to accept a skip is `npm run check:browser-gate`, which every one of
    these also belongs to. See docs/qa/BROWSER_TESTS.md. */
-const browserSuites = ["check:manual-browser", "check:browser-real", "check:h3-browser", "check:preview-layout",
+const browserSuites = [
+  /* The only browser suite that needs no Playwright: it drives the Chrome already on the
+     machine over the DevTools Protocol, so the keyed-reconciliation proofs — which are
+     about DOM node identity and cannot be made in Node — actually run here. */
+  "check:terminal-keyed-browser",
+  "check:manual-browser", "check:browser-real", "check:h3-browser", "check:preview-layout",
   "check:ui-state", "check:c2b-browser", "check:brand-logo-browser", "check:lan-passcode-browser",
   "check:focused-browser", "check:alpha-loop-browser", "check:entity-truth-browser",
   "check:shot-readiness-browser", "check:founder-p0-browser", "check:quiet-shell-browser",

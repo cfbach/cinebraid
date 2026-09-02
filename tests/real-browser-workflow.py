@@ -363,9 +363,34 @@ try:
         checkpoint("orphan repair complete")
         page.evaluate("""() => {
           AUTOMATION_RUNS=[{id:'obsolete-reference-failure',type:'entity-chain',targetId:'props:PROP-MURAL',label:'Obsolete mural failure',status:'failed',stage:'Needs attention',summary:'Old prompt was not built',updatedAt:'2026-07-30T20:00:00Z',steps:{prompt:{key:'prompt',kind:'prompt',status:'failed',error:'Old prompt was not built'}}}];
-          V641_ACTIVITY_DRAWER_OPEN=true; v641UpdateActivityButton(); v641RenderActivityDrawer();
+          v641UpdateActivityButton();
+          window.CineBraidCreatorSurfaces.expandTerminal();
+          window.CineBraidCreatorSurfaces.paint();
         }""")
         page.wait_for_selector('[data-activity-key="run:obsolete-reference-failure"]')
+        # THE TOPBAR SIGNAL AND THE TERMINAL MUST AGREE. The retired drawer's setup line
+        # refreshed the chip and then rendered the drawer; only the drawer half was ever
+        # asserted. Both halves are checked now, because the chip is the one persistent
+        # global indicator and a chip that disagreed with the ledger would be the defect
+        # the single-owner rule exists to prevent.
+        signal = page.evaluate("""() => {
+          const chip = document.getElementById('automation-activity-toggle');
+          const rows = [...document.querySelectorAll('.cb-terminal-row')];
+          return {
+            chipLabel: (chip.textContent || '').trim(),
+            chipTitle: chip.getAttribute('title') || '',
+            attentionRows: rows.filter((row) => row.dataset.cbKind === 'needs-attention').length,
+            terminalMounted: !!document.getElementById('cb-terminal-mount'),
+            overlayDrawer: !!document.getElementById('automation-activity-drawer'),
+          };
+        }""")
+        assert signal["terminalMounted"], "the Activity Terminal must be the surface carrying the alert"
+        assert not signal["overlayDrawer"], \
+            "Activity must not have become an overlay drawer again"
+        assert signal["attentionRows"] >= 1, \
+            f"the obsolete failure must appear in the Terminal's attention bucket, got {signal}"
+        assert "Idle" not in signal["chipTitle"], \
+            f"the topbar signal must not read Idle while a run needs attention: {signal['chipTitle']!r}"
         if SCREENSHOT_DIR:
             page.screenshot(path=str(SCREENSHOT_DIR / "dismiss-obsolete-alert.png"), full_page=False)
         page.locator('[data-activity-key="run:obsolete-reference-failure"]').get_by_text("DISMISS", exact=True).click()

@@ -597,6 +597,7 @@ async function main() {
     "state-interleaving.js",
     "state-lineage-safety.js",
     "studio-repair.js",
+    "terminal-keyed-reconciliation-browser.js",
     "terminal-view.js",
     "terminal-visual-corrections-negative-controls.js",
     "terminal-visual-corrections.js",

@@ -217,6 +217,7 @@
     "check:creator-surface-optin": "node tests/creator-surface-optin.js",
     "check:terminal-visual": "node tests/terminal-visual-corrections.js",
     "check:terminal-visual-negative": "node tests/terminal-visual-corrections-negative-controls.js",
+    "check:terminal-keyed-browser": "node tests/terminal-keyed-reconciliation-browser.js",
     "check:shell-ownership": "node tests/shell-activity-ownership-negative-controls.js",
     "check:quiet-shell": "node tests/quiet-shell.js",
     "check:quiet-shell-browser": "node tests/run-python-check.js tests/quiet-shell-real-browser.py",
