@@ -668,27 +668,46 @@ window.approveEntityFile = (list, id, name, stateId = "") => {
      without this, the fallback is `requestedState.approvedFile`, which for the
      entity that needs correcting IS the sheet, so the modal opened offering the
      wrong image back as its own replacement. */
-  /* ELIGIBILITY IS ASKED OF THE SHARED PREDICATE, NOT INFERRED FROM "NOT A SHEET".
-     `!isCoverageSheet` is the retired fail-OPEN shape: it treats `undeclared` as
-     eligible, so this pool would offer back a candidate the authority kernel then
-     refuses with AUTHORITY_ARTIFACT_UNDECLARED — which is exactly the sequence the
-     2026-09-01 dogfood recorded, an APPROVE FOR DEFAULT button followed by a
-     refusal. artifactMayHoldPrimaryAuthority() is the same predicate the kernel
-     applies, so the pre-write offer and the write now agree.
-     THIS IS NOT THE AUTHORITY DECISION. The kernel remains the boundary; this only
-     stops the UI proposing a fallback it knows would be refused, and the explicit
-     `name` argument is still honoured below exactly as before — including a sheet,
-     because "use as sheet source" opens this same modal deliberately. */
-  const eligiblePool = media.filter((item) => (
-    typeof referenceArtifactStructureOf === "function" && typeof artifactMayHoldPrimaryAuthority === "function"
-      ? artifactMayHoldPrimaryAuthority(referenceArtifactStructureOf(x, item.name)) === true
-      : !entityCandidateIsCoverageSheet(x, item.name)
-  ));
-  const pool = eligiblePool.length ? eligiblePool : media;
-  const selected = media.find((item) => item.name === name)
-    || pool.find((item) => item.name === requestedState?.approvedFile)
-    || pool.find((item) => item.name === x.approvedFile)
-    || pool[pool.length - 1];
+  /* THE OFFER FAILS CLOSED, AND IT ASKS THE PREDICATE THE KERNEL ASKS.
+     Three legacy escape hatches used to survive here, and each one could put a
+     candidate the kernel will refuse in front of a filmmaker as APPROVE:
+       1. an empty eligible pool fell back to raw `media`;
+       2. an explicit `name` was resolved against raw `media` before the pool;
+       3. a missing classifier fell back to `!entityCandidateIsCoverageSheet`,
+          the retired fail-OPEN shape that reads `undeclared` as eligible.
+     All three are gone. THIS IS NOT THE AUTHORITY DECISION — the kernel remains
+     the boundary and still refuses independently. This only stops the browser
+     offering an action the shared predicate already knows cannot succeed. */
+  const eligibleForPrimary = (fileName) => {
+    /* NO LOCAL POLICY. If the shared classifier is not in this composition the
+       answer is "cannot confirm", and cannot-confirm is not eligibility — the
+       same discipline shared-authority-kernel.js applies when its resolver is
+       missing. Re-deriving the rule here is how the two copies drifted before. */
+    if (typeof referenceArtifactStructureOf !== "function") return false;
+    if (typeof artifactMayHoldPrimaryAuthority !== "function") return false;
+    return artifactMayHoldPrimaryAuthority(referenceArtifactStructureOf(x, fileName)) === true;
+  };
+  const eligiblePool = media.filter((item) => eligibleForPrimary(item.name));
+  const namedMedia = name ? media.find((item) => item.name === name) : null;
+  /* THE DELIBERATE EXCEPTION, AND IT IS NOT AN ELIGIBILITY EXCEPTION. Naming a
+     DECLARED SHEET opens this modal on purpose: "use as sheet source" routes
+     through here and confirmEntityApproval() suppresses the identity write and
+     sends the filmmaker to extraction instead. That path offers no primary
+     authority, so letting it through offers nothing the kernel would refuse.
+     An UNDECLARED file gets no such exception — it is exactly the dogfood case. */
+  const namedIsDeclaredSheet = Boolean(namedMedia)
+    && typeof referenceArtifactStructureOf === "function"
+    && referenceArtifactStructureOf(x, namedMedia.name) === "sheet";
+  if (!eligiblePool.length && !namedIsDeclaredSheet) {
+    return toast(media.length
+      ? "None of these files is recorded as a single reference image, so none can become this reference's identity. Say which one is a single reference when you import it, or map it to a state or view first."
+      : "Add or generate a candidate before approving a reference");
+  }
+  const selected = (namedIsDeclaredSheet ? namedMedia : null)
+    || eligiblePool.find((item) => item.name === name)
+    || eligiblePool.find((item) => item.name === requestedState?.approvedFile)
+    || eligiblePool.find((item) => item.name === x.approvedFile)
+    || eligiblePool[eligiblePool.length - 1];
   window._entityApproval = { list, id, name: selected.name, stateId: requestedState?.id || "state-default" };
   /* SINGLE-STATE APPROVAL — A CHOICE WITH ONE OPTION IS NOT A CHOICE.
    *

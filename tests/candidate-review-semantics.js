@@ -667,8 +667,19 @@ function uiFixture(reviewOverrides = {}) {
     candidateFiles: [{
       stored: "PROP-ENVELOPE-CANDIDATE.png",
       decision: "unreviewed",
+      /* WHERE it is going. */
       targetStateId: "state-opened",
       targetStateName: "Opened",
+      /* WHAT it is, which is a separate fact and is now written by the producer
+         that made it. Before S1 no generated candidate carried this, so a row
+         like this one was `undeclared` — and the approval control below would
+         open a confirmation for a write the authority kernel then refused. That
+         is the 2026-09-01 dogfood, and it is why the offer now fails closed.
+         Declaring it here keeps this section testing what it is about — that a
+         strong AI pass approves nothing and the human confirmation is what
+         writes — rather than incidentally depending on a candidate CineBraid
+         could not have approved. */
+      coverageJobType: "single-reference",
       structuredReviews: { "state-opened": reviewRecord(reviewOverrides) },
     }],
   }];

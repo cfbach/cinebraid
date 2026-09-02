@@ -775,45 +775,140 @@ controlWriter({
   explain: "Ingest is the only hop that turns what CineBraid asked for into what the classifier can read.",
 });
 
-/* S1-C2 — THE DIRECT PRODUCER. */
-controlWriter({
+/* THE TWO PRODUCER CONTROLS RUN THE PRODUCERS.
+
+   An earlier draft of these asked "does the source still contain the literal"
+   and then SYNTHESISED a candidate row from that boolean. That proves the
+   mutation edited a string; it proves nothing about what the dispatcher emits.
+   Both now render the real page with the mutated source, invoke the shipped
+   producer, and read the body it ACTUALLY posted — then carry that body through
+   the shipped ingest line into the real kernel. */
+const s1DispatchFixture = () => {
+  const project = buildFixture();
+  const character = project.characters[0];
+  character.id = "CHAR-IREN";
+  character.name = "Iren";
+  character.approvedFile = "";
+  character.candidateFiles = [];
+  character.continuityStates = [{
+    id: "state-default", name: "Default", isDefault: true, approvedFile: "",
+    assetPromptBuilds: [{ id: "build-1", prompt: "Clean full-body reference of Iren." }],
+  }];
+  delete project.productionAuthority;
+  return project;
+};
+const S1_EMPTY_SCAN = { anchors: [], plates: [], props: [], vehicles: [], audio: [], media: [] };
+
+/* WHAT THE EMITTED BODY BECOMES, through the shipped hops rather than around
+   them: the server's own whitelist, then the shipped ingest line, then the real
+   authority kernel. */
+function s1CarryEmittedBody(emitted) {
+  const whitelist = ["single-reference", "sheet", ""];
+  const declared = whitelist.includes(String(emitted || "")) ? String(emitted || "") : "";
+  const job = { coverageJobType: "", artifactStructure: declared };
+  const rowDeclaration = ingestDeclarationFrom(source("fal-generation.js"), "S1 carry")(job);
+  const result = approveGenerated(build(KERNEL_FILE, null), generatedProject({ coverageJobType: rowDeclaration }));
+  return { reached: true, held: result.wrote === true, reason: result.wrote ? "approved" : `refused(${result.code})` };
+}
+
+/* S1-C2 — THE DIRECT PRODUCER, EXECUTED. */
+controlAsync({
   label: "S1-C2 the assisted dispatch declares",
-  file: "public/fal-generation.js",
-  anchor: '    artifactStructure: "single-reference",\n',
-  replacement: "",
-  probe: (text) => {
-    const body = toLF(text).slice(toLF(text).indexOf("window.startFalEntityGeneration"), toLF(text).indexOf("window.cancelFalJob"));
-    const declares = /artifactStructure:\s*"single-reference"/.test(body);
-    /* The consequence, not just the absence: an undeclared dispatch yields an
-       undeclared job, and the kernel refuses the candidate it produced. */
-    const kernel = build(KERNEL_FILE, null);
-    const result = approveGenerated(kernel, generatedProject({ coverageJobType: declares ? "single-reference" : "" }));
-    return { reached: true, held: declares && result.wrote === true, reason: result.wrote ? "approved" : `refused(${result.code})` };
+  mutateSource: (file, text) => (file !== "fal-generation.js" ? text
+    : mutate(text, '    artifactStructure: "single-reference",\n', "", "S1-C2", 1)),
+  probe: async (mutateSource) => {
+    const rendered = await render("#/character/CHAR-IREN", s1DispatchFixture(), {
+      scan: S1_EMPTY_SCAN, ...(mutateSource ? { mutateSource } : {}),
+    });
+    /* The real dispatcher runs. Only the network and the post-dispatch redraw are
+       stood in for; the body is built by the shipped function and read back off
+       the request it actually made. */
+    vm.runInContext(`window.__posted = [];
+      window.fetch = async (url, options) => {
+        window.__posted.push({ url: String(url), body: options && options.body ? JSON.parse(options.body) : null });
+        return String(url).includes("paid-permit")
+          ? { ok: true, json: async () => ({ paidPermitId: "permit-1" }) }
+          : { ok: true, json: async () => ({ job: { id: "job-1" } }) };
+      };
+      window.pollFalGeneration = () => {};
+      window.flushPendingProjectSave = async () => {};
+      window._falEntityGenerationRequest = { list: "characters", entityId: "CHAR-IREN", buildId: "build-1", stateId: "state-default", requestedMode: "independent", effectiveMode: "independent" };`,
+    rendered.context);
+    await rendered.context.startFalEntityGeneration();
+    const emitted = vm.runInContext(
+      `(() => { const post = window.__posted.find(p => p.url.includes("/api/generation/fal/jobs"));
+         return post && post.body ? String(post.body.artifactStructure || "") : null; })()`,
+      rendered.context);
+    if (emitted === null) return { reached: false, held: false, reason: "no-dispatch" };
+    return s1CarryEmittedBody(emitted);
   },
   reason: "refused(AUTHORITY_ARTIFACT_UNDECLARED)",
   explain: "The dispatch is the only place that knows CineBraid asked for one single view of one state.",
 });
 
-/* S1-C3 — THE SIBLING PRODUCER. Fixing one writer and leaving the other silent
-   would make approval depend on which button started the run. */
-controlWriter({
+/* S1-C3 — THE SIBLING PRODUCER, EXECUTED. Fixing one writer and leaving the
+   other silent would make approval depend on which button started the run. */
+controlAsync({
   label: "S1-C3 the automation dispatch declares",
-  file: "public/automation.js",
-  anchor: 'artifactStructure: "single-reference", continuityStateId: state.id,',
-  replacement: "continuityStateId: state.id,",
-  probe: (text) => {
-    const declares = /purpose: "entity-reference"[\s\S]{0,400}?artifactStructure: "single-reference"/.test(toLF(text));
-    const kernel = build(KERNEL_FILE, null);
-    const result = approveGenerated(kernel, generatedProject({ coverageJobType: declares ? "single-reference" : "" }));
-    return { reached: true, held: declares && result.wrote === true, reason: result.wrote ? "approved" : `refused(${result.code})` };
+  mutateSource: (file, text) => (file !== "automation.js" ? text
+    : mutate(text, 'artifactStructure: "single-reference", continuityStateId: state.id,', "continuityStateId: state.id,", "S1-C3", 1)),
+  probe: async (mutateSource) => {
+    const rendered = await render("#/character/CHAR-IREN", s1DispatchFixture(), {
+      scan: S1_EMPTY_SCAN, ...(mutateSource ? { mutateSource } : {}),
+    });
+    /* The run's own call site builds the body. v626WaitFalJob is stood in for so
+       the body can be read at the moment the shipped code hands it over, and the
+       run is stopped there rather than continuing into a paid path. Everything
+       before it that needs live run/lease state is stubbed; the object literal
+       under test is still the shipped one. */
+    const emitted = await vm.runInContext(`(async () => {
+      const SENTINEL = "__s1-captured__";
+      let body = null;
+      window.v626WaitFalJob = async (run, step, given) => { body = given; throw new Error(SENTINEL); };
+      window.v626CheckCancelled = async () => {};
+      window.v628RequireAutomationLease = async () => {};
+      window.flushPendingProjectSave = async () => {};
+      window.dirty = () => {};
+      window.v626EntityBuild = async () => ({ id: "build-1", prompt: "Clean full-body reference of Iren." });
+      window.v626Step = () => ({});
+      window.v626SetStep = () => {};
+      window.v641SetStepActivity = async () => {};
+      window.v641UpdateActivityButton = () => {};
+      window.v670RepaintCompactRunStatuses = () => {};
+      window.resumeAuthority = () => null;
+      window.v668EffectiveStateRounds = () => 1;
+      window.v640OutputsPerRequest = () => 1;
+      window.v6211RunGenerationSettings = () => ({ frameQuality: "high", frameResolution: "2k" });
+      const run = { id: "run-1", config: { maxImages: 4 }, usage: { imagesGenerated: 0 }, steps: {}, logs: [] };
+      try { await v626AutomateEntityState(run, "characters", "CHAR-IREN", "state-default"); }
+      catch (error) { if (!String(error.message).includes(SENTINEL)) return { failed: String(error.message) }; }
+      return body ? { structure: String(body.artifactStructure || "") } : { failed: "no-dispatch" };
+    })()`, rendered.context);
+    if (!emitted || emitted.failed) return { reached: false, held: false, reason: emitted ? emitted.failed : "no-result" };
+    return s1CarryEmittedBody(emitted.structure);
   },
   reason: "refused(AUTHORITY_ARTIFACT_UNDECLARED)",
   explain: "Two producers make this class of candidate; a fix that covers one leaves the other refusing.",
 });
 
-/* S1-C4 — THE ACCOUNTING BOUNDARY. The declaration must never become coverage-run
-   membership. Widen the job's coverage field to accept it and a manual paid
-   generation is enrolled in a run the filmmaker never started. */
+/* S1-C4 — THE ACCOUNTING BOUNDARY.
+
+   HONEST SCOPE, STATED RATHER THAN IMPLIED. This control proves ONE link: that
+   the server's whitelist refuses to let `artifactStructure` become the job's
+   `coverageJobType`, so a manual reference generation is never given coverage-run
+   MEMBERSHIP. It does not itself execute the enrollment machinery.
+
+   It does not need to, because the consequence of a non-empty coverageJobType is
+   already proved behaviourally elsewhere, against the shipped server:
+   tests/fal-generation.js dispatches a coverage sheet with `coverageJobType:
+   "sheet"` and observes the resulting `entity.coverageAutomation` projection with
+   its `mode`, `status` and `jobs` membership; and the S1 block in that same suite
+   dispatches a DECLARED manual reference and observes the projection unchanged
+   byte-for-byte, timestamps included, with the job absent from `jobs`.
+
+   So: this control owns "the declaration cannot reach the membership field", and
+   that suite owns "a non-empty membership field enrolls the job". Neither claims
+   the other's half. */
 controlWriter({
   label: "S1-C4 the declaration stays out of coverage-run membership",
   file: "fal-generation.js",

@@ -307,19 +307,104 @@ function testGeneratedReferenceReachesCanon() {
 /* THE OFFER AND THE WRITE MUST AGREE. The dogfood's sharpest edge was not the
    refusal itself — it was being offered APPROVE FOR DEFAULT and then refused.
    The approval pool asked "is this not a sheet", which is the retired fail-OPEN
-   shape: it treats `undeclared` as eligible. It now asks the same predicate the
-   kernel applies. The kernel is still the authority; this only stops the UI
-   proposing a fallback it knows would be refused. */
-function testApprovalOfferMatchesTheGate() {
+   shape: it treats `undeclared` as eligible.
+
+   STATIC GUARD ONLY. This section reads source; it proves the retired policy is
+   gone and that the UI did not acquire an authority decision of its own. The
+   BEHAVIOURAL proof — that the offer actually fails closed — is
+   testApprovalOfferFailsClosed() below, which runs the shipped function. */
+function testApprovalOfferPolicyIsNotDuplicated() {
   const tools = fs.readFileSync(path.join(ROOT, "public/library-tools.js"), "utf8");
   const approve = tools.slice(tools.indexOf("window.approveEntityFile"), tools.indexOf("window.confirmApproveEntity"));
   ok(/artifactMayHoldPrimaryAuthority\(referenceArtifactStructureOf\(/.test(approve),
     "the approval pool must ask the shared predicate the kernel applies");
-  ok(!/const eligiblePool = media\.filter\(\(item\) => !entityCandidateIsCoverageSheet/.test(approve),
-    "and must no longer treat 'not a sheet' as eligible, which passed undeclared rows through");
+  /* MATCHED AS A CALL, NOT AS A MENTION. The retired policy is an inverted
+     invocation — `!entityCandidateIsCoverageSheet(x, item.name)` — and requiring
+     the open paren is what keeps this guard from firing on the comment above the
+     fix that names the thing it removed. A guard that cannot tell prose from a
+     branch is the mistake this suite's own no-catch-as-success rule describes. */
+  ok(!/!entityCandidateIsCoverageSheet\(/.test(approve),
+    "the retired fail-open '!isCoverageSheet' policy must not survive as a call in this function");
+  /* The POSITIVE use is a different question and stays: confirmEntityApproval
+     asks whether the NAMED file is a sheet to route the sheet-source path, which
+     is not an eligibility decision. */
+  ok(!/eligiblePool\.length \? eligiblePool : media/.test(approve),
+    "an empty eligible pool must not fall back to unfiltered media");
   /* THE AUTHORITY DECISION DID NOT MOVE INTO THE UI. */
   ok(!/approveEntityStateCanon[\s\S]{0,200}artifactMayHoldPrimaryAuthority/.test(approve),
     "the UI must not re-decide authority; it only filters what it offers");
+}
+
+/* THE BEHAVIOURAL PROOF, RUN AGAINST THE SHIPPED FUNCTION IN A RENDERED PAGE.
+   Five cases, each isolating one way an ineligible candidate used to reach the
+   filmmaker as APPROVE. `window._entityApproval` is what the modal commits from,
+   so "was it offered" is exactly "did it become the selection". */
+async function testApprovalOfferFailsClosed() {
+  const withMedia = async (rows, canonFile = "") => {
+    const project = gateFixture();
+    const character = project.characters[0];
+    character.approvedFile = canonFile;
+    character.continuityStates = [{ id: "state-default", name: "Default", isDefault: true, approvedFile: canonFile }];
+    character.candidateFiles = rows;
+    delete project.productionAuthority;
+    /* THE MEDIA LIST IS THE SCAN, NOT candidateFiles — entityMedia() reads what is
+       on disk and the rows only DECLARE what those files are. A case whose file is
+       missing from the scan would prove nothing about eligibility, because the
+       candidate would never reach the pool in the first place. */
+    return render("#/character/CHAR-IREN", project, {
+      scan: { ...gateScan(), anchors: rows.map((row) => ({ name: row.stored, url: `/assets/anchors/${row.stored}` })) },
+    });
+  };
+  const offer = (rendered, named = "") => {
+    rendered.context.approveEntityFile("characters", "CHAR-IREN", named, "state-default");
+    return vm.runInContext("(window._entityApproval && window._entityApproval.name) || ''", rendered.context);
+  };
+  const undeclared = { stored: "CHAR-IREN-PRIMARY.png", original: "CHAR-IREN-PRIMARY.png", decision: "unreviewed" };
+  const declared = { stored: "CHAR-IREN-GEN.png", original: "CHAR-IREN-GEN.png", decision: "unreviewed", coverageJobType: "single-reference", targetStateId: "state-default" };
+  const sheet = { stored: "CHAR-IREN-SHEET.png", original: "CHAR-IREN-SHEET.png", decision: "unreviewed", coverageJobType: "sheet", coverageSheetType: "angles" };
+
+  /* UI-1 — ONLY UNDECLARED MEDIA. The old code fell back to raw media and
+     offered it; nothing may be selected now. */
+  const one = await withMedia([undeclared]);
+  eq(offer(one), "", "UI-1: an undeclared-only reference must offer no approval candidate at all");
+
+  /* UI-2 — MIXED. Only the eligible row may be reached, including as the
+     end-of-pool fallback that used to pick whatever was last. */
+  const two = await withMedia([undeclared, declared]);
+  eq(offer(two), "CHAR-IREN-GEN.png", "UI-2: only the declared single reference may become the selection");
+
+  /* UI-3 — AN EXPLICIT UNDECLARED NAME. This was the second escape hatch: the
+     name was resolved against raw media BEFORE the pool was consulted. */
+  const three = await withMedia([undeclared, declared]);
+  eq(offer(three, "CHAR-IREN-PRIMARY.png"), "CHAR-IREN-GEN.png",
+    "UI-3: naming an undeclared file must not bypass eligibility");
+  const threeAlone = await withMedia([undeclared]);
+  eq(offer(threeAlone, "CHAR-IREN-PRIMARY.png"), "",
+    "UI-3: and with nothing eligible to fall back to, it must offer nothing rather than the named file");
+
+  /* UI-4 — NO SHARED PREDICATE. Cannot-confirm is not eligibility, and the
+     retired policy must not be reachable as a substitute. */
+  const four = await withMedia([undeclared, declared]);
+  vm.runInContext("window.referenceArtifactStructureOf = undefined; window.artifactMayHoldPrimaryAuthority = undefined;", four.context);
+  eq(offer(four), "", "UI-4: with the shared predicate unavailable the offer must fail closed");
+  eq(offer(four, "CHAR-IREN-GEN.png"), "",
+    "UI-4: and an explicit name must not reopen it through the retired sheet-only policy");
+
+  /* UI-5 — THE HAPPY PATH IS UNHARMED. A generated single reference still
+     reaches the modal, which is the whole point of S1. */
+  const five = await withMedia([declared]);
+  eq(offer(five), "CHAR-IREN-GEN.png", "UI-5: an eligible generated single reference is still offered");
+  eq(offer(five, "CHAR-IREN-GEN.png"), "CHAR-IREN-GEN.png", "UI-5: and naming it explicitly still works");
+
+  /* THE DELIBERATE EXCEPTION IS NOT AN ELIGIBILITY HOLE. Naming a DECLARED sheet
+     still opens the modal — "use as sheet source" routes through here and the
+     identity write is suppressed downstream (proved in
+     testSheetSourceIsNotIdentityApproval). It is reachable only when NAMED. */
+  const six = await withMedia([sheet]);
+  eq(offer(six, "CHAR-IREN-SHEET.png"), "CHAR-IREN-SHEET.png",
+    "the named sheet-source path survives, because it offers no primary authority");
+  const seven = await withMedia([sheet]);
+  eq(offer(seven), "", "an unnamed sheet is NOT silently promoted into the approval offer");
 }
 
 function testTheBoundaryRefusesASheet() {
@@ -911,8 +996,9 @@ async function main() {
   testManualIntakeDeclaresStructure();
   testGeneratedReferenceDeclaresStructure();
   testGeneratedReferenceReachesCanon();
-  testApprovalOfferMatchesTheGate();
+  testApprovalOfferPolicyIsNotDuplicated();
   testImportedMappingIsReadAsEvidence();
+  await testApprovalOfferFailsClosed();
   testTheBoundaryRefusesASheet();
   testUnresolvableClassifierFailsClosed();
   await testExistingBadPrimaryIsReportedNotRevoked();
