@@ -186,7 +186,7 @@ const CONTROLS = [
           title: "Smuggled from another project", detail: "", projectSlug: "somewhere-else", status: "completed",
           startedAt: "2026-08-17T00:00:00.000Z", updatedAt: "2026-08-17T00:00:00.000Z" });
         v641StartManualActivity("VISION AI · CANDIDATE REVIEW", "Local review", "");
-        
+
       `, app.context);
       const html = terminalHtml(app.context);
       assert(html.includes("Local review"), "the fixture must produce a current-project row");

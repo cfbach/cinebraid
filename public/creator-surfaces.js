@@ -315,7 +315,16 @@
           : { displayRun: run, step: null };
         const step = view.step || null;
         const failedStep = Object.values(run.steps || {}).find((item) => item?.status === "failed") || null;
-        const job = step && typeof v641FalJobForStep === "function" ? v641FalJobForStep(step) : null;
+        /* WHICH STEP THE PROVIDER BLOCK COMES FROM, and why it is not only the displayed
+           one. v641DisplayedRunAndStep returns no step for a run that has already
+           FAILED — there is no current work to display — so a failed run collected no
+           provider, model or mode at all. Nothing looked wrong: the row simply never
+           mentioned which provider had failed, and the failure-group signature, which
+           reads those fields to keep unlike failures apart, had nothing to read. So the
+           failed step is the fallback source: it is the step the row is about, and its
+           job is the request that actually failed. */
+        const providerStep = step || failedStep;
+        const job = providerStep && typeof v641FalJobForStep === "function" ? v641FalJobForStep(providerStep) : null;
         const provider = jobTechnical(job) || {};
         /* NO CLOCK NEXT TO A ROW THAT SAYS THE MACHINE STOPPED.
 
@@ -343,6 +352,23 @@
           reason: bucket.reason,
           target: runTarget(run),
           route: typeof v641RunRoute === "function" ? v641RunRoute(run) : "#/production",
+          /* THE EXACT-RESULT HANDOFF, ASKED ONCE AND ASKED HERE.
+             v670RunResultTarget is the shipped resolver: it consults the declared stage
+             model for a shot-chain and the real entity for an entity-chain, and reports
+             `resolved` only when the thing the run produced actually exists. Asking it
+             from terminalRow would put a classifier back inside a renderer, which is the
+             property this whole file is built on, so the ANSWER is collected and the
+             renderer only reads it. openRunResult() then performs the handoff, including
+             its own fall back to the workspace route when the target cannot be resolved
+             — this records which of the two the filmmaker is about to get, nothing more.
+
+             ASKED ONLY FOR A SETTLED RUN. The resolver consults the declared stage model
+             or looks a real entity up, and doing that for every run in a long ledger on
+             every 3.5s repaint would be work with no reader: the handoff is offered on
+             completed rows and nowhere else. */
+          resultResolved: bucket.kind === "completed" && typeof v670RunResultTarget === "function"
+            ? !!v670RunResultTarget(run).resolved
+            : false,
           at: run.updatedAt || run.createdAt || "",
           startedAt: run.createdAt || "",
           endedAt: run.completedAt || "",
@@ -767,9 +793,29 @@
     const dismiss = isRun && tone === "attention"
       ? `<button type="button" class="cb-terminal-action" onclick="dismissAutomationActivityRun('${attr(fact.id)}')">DISMISS</button>`
       : "";
-    const label = fact.route
-      ? `<button type="button" class="cb-terminal-open" onclick="location.hash='${attr(fact.route)}'">${esc(fact.label)}</button>`
-      : `<b>${esc(fact.label)}</b>`;
+    /* THE PRODUCTION HANDOFF, WHICH IS NOT THE EVIDENCE HANDOFF.
+       VIEW REPORT above opens the run's record. This takes the filmmaker to the WORK —
+       the exact stage and task the run produced, via the shipped resolver, which is what
+       the retired drawer's OPEN RESULT did and what assigning a coarse workspace route
+       here quietly stopped doing. The two are deliberately separate controls: one is
+       "show me what happened", the other is "take me to it".
+
+       Offered on a settled run, which is the same condition the resolver itself applies
+       — it returns an unresolved target for anything still working, still waiting on a
+       person, or sitting in attention. The label says which of the two the filmmaker
+       will get, and openRunResult() falls back to the workspace route on its own when
+       the exact target cannot be resolved. */
+    const openResult = isRun && fact.kind === "completed" && typeof window.openRunResult === "function"
+      ? `<button type="button" class="cb-terminal-action" onclick="openRunResult('${attr(fact.id)}')">${fact.resultResolved ? "OPEN RESULT" : "OPEN WORKSPACE"}</button>`
+      : "";
+    /* The run's own name is the same handoff, so it goes through the same resolver
+       rather than assigning a route beside it. A non-run row has no resolver and keeps
+       the route it was collected with. */
+    const label = isRun && typeof window.openRunResult === "function"
+      ? `<button type="button" class="cb-terminal-open" onclick="openRunResult('${attr(fact.id)}')">${esc(fact.label)}</button>`
+      : fact.route
+        ? `<button type="button" class="cb-terminal-open" onclick="location.hash='${attr(fact.route)}'">${esc(fact.label)}</button>`
+        : `<b>${esc(fact.label)}</b>`;
     return `<article class="cb-terminal-row tone-${attr(tone)}" data-activity-key="${attr(fact.key)}" data-cb-kind="${attr(fact.kind)}">`
       + `<time>${esc(clock)}</time><em>${esc(terminalStatus(fact))}</em>`
       + `<div class="cb-terminal-body">${label}${context ? `<small>${esc(context)}</small>` : ""}`
@@ -780,7 +826,7 @@
          The message is still shown either way, because it is what happened; only the
          styling follows the run's own tone. */
       + `${fact.technical.error.state === "known" ? `<small class="${tone === "attention" ? "cb-terminal-error" : "cb-terminal-note"}">${esc(fact.technical.error.value)}</small>` : ""}</div>`
-      + `<div class="cb-terminal-meta">${meta.map((part) => `<span>${esc(part)}</span>`).join("")}${fact.elapsed ? `<span>${esc(fact.elapsed)}</span>` : ""}${resolve}${report}${dismiss}</div></article>`;
+      + `<div class="cb-terminal-meta">${meta.map((part) => `<span>${esc(part)}</span>`).join("")}${fact.elapsed ? `<span>${esc(fact.elapsed)}</span>` : ""}${resolve}${openResult}${report}${dismiss}</div></article>`;
   }
 
   /* C-1 — EQUIVALENT FAILURES COLLAPSE; NOTHING ELSE DOES.
@@ -794,15 +840,51 @@
      say FAILED. It is deliberately narrow: same bucket AND reason, same owning target,
      same step and system, same error text. Anything that differs — a different shot, a
      different provider, a different message — stays its own row, because collapsing
-     those would hide work rather than tidy it. */
+     those would hide work rather than tidy it.
+
+     THE COMMENT ABOVE SAID "a different provider" BEFORE THE CODE DID. Review found the
+     gap: provider, model and mode were all available on the projected fact and none of
+     them was read, so two failures that a filmmaker would have to fix in two different
+     places collapsed into one line. They are read now.
+
+     WHAT IS DELIBERATELY LEFT OUT. technical.requestId is a per-request transport id: no
+     two runs ever share one, so including it would give every failure its own signature
+     and turn grouping off while appearing to strengthen it. `purpose` is the opposite —
+     the operation the request was FOR — so that is the stable operation identity this
+     signature carries. Timestamps are left out for the same reason as requestId. */
+  /* A projected technical field is {state, value}. "not recorded" and "" are different
+     facts and must not be allowed to collide, so an unknown field contributes its state
+     rather than an empty string. */
+  function signatureField(field) {
+    if (!field || typeof field !== "object") return "~absent";
+    return field.state === "known" ? String(field.value == null ? "" : field.value) : `~${String(field.state || "unknown")}`;
+  }
   function groupSignature(fact) {
+    const tech = (fact && fact.technical) || {};
     return [
       fact.kind, fact.reason,
       fact.target && fact.target.id, fact.target && fact.target.kind,
       fact.step && fact.step.label, fact.step && fact.step.system,
-      fact.technical && fact.technical.error && fact.technical.error.state === "known"
-        ? fact.technical.error.value : "",
-    ].map((part) => String(part == null ? "" : part)).join(" ");
+      signatureField(tech.error),
+      signatureField(tech.provider),
+      signatureField(tech.model),
+      signatureField(tech.mode),
+      signatureField(tech.purpose),
+      /* Unit Separator: a field whose own text contains the join character could
+         otherwise spell out a different field's boundary and make two unlike failures
+         look alike. */
+    ].map((part) => String(part == null ? "" : part)).join("\u001f");
+  }
+  /* THE GROUP'S DOM KEY. The signature itself carries provider strings, model names and
+     raw error text, none of it safe or stable as an attribute value, so the key is a
+     deterministic digest of it (djb2). Same signature, same key, every repaint — which
+     is the whole requirement the reconciler places on it. */
+  function groupKey(signature) {
+    let hash = 5381;
+    for (let index = 0; index < signature.length; index += 1) {
+      hash = (((hash << 5) + hash) ^ signature.charCodeAt(index)) >>> 0;
+    }
+    return `failure-group:${hash.toString(16)}`;
   }
   /* Only attention rows group. A running row is one live thing and a completed row is
      one finished thing; neither floods, and collapsing them would hide progress. */
@@ -811,10 +893,10 @@
     const order = [];
     const byKey = new Map();
     for (const fact of facts) {
-      if (!GROUPABLE.has(fact.kind)) { order.push({ lead: fact, members: [fact] }); continue; }
-      const key = groupSignature(fact);
+      if (!GROUPABLE.has(fact.kind)) { order.push({ key: "", lead: fact, members: [fact] }); continue; }
+      const key = groupKey(groupSignature(fact));
       if (!byKey.has(key)) {
-        const entry = { lead: fact, members: [fact] };
+        const entry = { key, lead: fact, members: [fact] };
         byKey.set(key, entry);
         order.push(entry);
       } else {
@@ -823,19 +905,67 @@
     }
     return order;
   }
+
+  /* WHICH GROUPS THE FILMMAKER HAS OPENED. Disclosure is user interface state, not a
+     fact about the production, so it lives here and not in the projection — and it must
+     survive a repaint, because activity repaints every 3.5 seconds and a group that
+     closed itself twice a minute would be unusable.
+     Written only from a real toggle, so a group's default stays the markup's default
+     until somebody actually opens it. */
+  const GROUP_OPEN = new Map();
+  function rememberDisclosure(event) {
+    const node = event?.target;
+    const key = node?.getAttribute?.("data-activity-key") || "";
+    if (!key.startsWith("failure-group:")) return;
+    GROUP_OPEN.set(key, !!node.open);
+  }
+  /* THE EVENT IS NOT FAST ENOUGH ON ITS OWN. `toggle` is dispatched asynchronously, so a
+     repaint triggered between the click and the event would rebuild the group from a
+     memory that had not been written yet and close it under the filmmaker's hand — which
+     is exactly the defect this is here to prevent, arriving through a different door.
+     The live DOM is the authority at paint time; the listener above still matters for a
+     group that is toggled and then leaves the surface before the next paint. */
+  function readDisclosureFromDom() {
+    const groups = DOCK_NODE?.querySelectorAll?.('details[data-activity-key^="failure-group:"]');
+    if (!groups) return;
+    for (const group of groups) {
+      /* A single-member group is held open by the renderer and shows no summary, so its
+         `open` is not a decision the filmmaker made. Recording it would mean that the
+         moment a second equivalent failure arrived the group would present itself already
+         expanded — the opposite of the collapse it exists for. Only a group that HAS a
+         disclosure control can report user intent. */
+      if (Number(group.getAttribute("data-cb-group") || 0) < 2) continue;
+      GROUP_OPEN.set(group.getAttribute("data-activity-key"), !!group.open);
+    }
+  }
+
+  /* ONE CONTAINER SHAPE FOR A GROUPABLE FAILURE, whatever its member count.
+     A signature that has one member today and six tomorrow used to change from <article>
+     to <details> between repaints, which destroys the node and everything attached to
+     it. The container is now always the same element and always carries the same key;
+     only its treatment changes, and a single-member group is styled to read exactly as
+     the plain row it replaces. */
   function terminalGroupMarkup(entry) {
-    if (entry.members.length < 2) return terminalRow(entry.lead);
+    if (!entry.key) return terminalRow(entry.lead);
     const tone = TERMINAL_TONE[entry.lead.kind] || "idle";
+    const count = entry.members.length;
     const context = [entry.lead.target.id, entry.lead.step.system, entry.lead.step.label].filter(Boolean).join(" · ");
+    /* A LONE FAILURE IS ALWAYS OPEN, and that is not a default — it is the only way its
+       row is visible at all. A closed <details> hides its content through the browser's
+       own content slot, which author CSS cannot reliably reopen, so the first version of
+       this container rendered a single failure that the Terminal counted, footed and
+       announced but never showed. It carries no summary, so nothing about it reads as a
+       disclosure; it simply is the row. */
+    const open = count < 2 || GROUP_OPEN.get(entry.key) === true;
     /* NO GROUP-LEVEL DISMISS. A control that dismissed six runs from one click would be
        a bulk authority action wearing a tidy-up's clothes, and each run's dismiss is
        already on its own row inside. */
-    return `<details class="cb-terminal-group tone-${attr(tone)}" data-cb-group="${attr(entry.members.length)}">`
+    return `<details class="cb-terminal-group tone-${attr(tone)}" data-activity-key="${attr(entry.key)}" data-cb-group="${attr(count)}"${open ? " open" : ""}>`
       + `<summary><em>${esc(terminalStatus(entry.lead))}</em>`
       + `<div class="cb-terminal-body"><b>${esc(entry.lead.label)}</b>`
       + `${context ? `<small>${esc(context)}</small>` : ""}`
       + `${entry.lead.technical.error.state === "known" ? `<small class="cb-terminal-error">${esc(entry.lead.technical.error.value)}</small>` : ""}</div>`
-      + `<span class="cb-terminal-group-count">×${esc(String(entry.members.length))}</span></summary>`
+      + `<span class="cb-terminal-group-count">×${esc(String(count))}</span></summary>`
       + `<div class="cb-terminal-group-rows">${entry.members.map(terminalRow).join("")}</div></details>`;
   }
 
@@ -1019,6 +1149,9 @@
        painted. It is not painted into a hidden container either - there is no
        container. */
     applyMarkup(RAIL_NODE, assistantMarkup(state));
+    /* Read what is open BEFORE the new markup is built, because the new markup has to
+       carry it. */
+    readDisclosureFromDom();
     applyMarkup(DOCK_NODE, terminalMarkup(state, terminalCollapsed(), foreignActivityProject()));
     /* TELL THE SHELL ITS DOCK CHANGED HEIGHT, rather than waiting to be noticed.
 
@@ -1122,6 +1255,11 @@
      The three route/project signals the shell already listens to, plus the one the
      activity layer now emits at the end of every update. No timer of this file's own,
      and no fetch: every repaint is a reaction to work somebody else already did. */
+  /* CAPTURE, because `toggle` does not bubble. A capturing listener on the document
+     still sees it, which is what lets one listener serve every failure group without
+     rebinding one per group on every repaint — the rebinding being the thing that would
+     put us back where we started. */
+  document.addEventListener("toggle", rememberDisclosure, true);
   window.addEventListener("hashchange", paint);
   window.addEventListener("cinebraid:route-rendered", paint);
   window.addEventListener("cinebraid:workspace-updated", paint);

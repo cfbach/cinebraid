@@ -36,7 +36,32 @@ assert(focused.includes('ensureDisclosureLabels(root)'), 'all disclosures must r
 assert(focused.includes('aria-pressed'), 'coverage slot rail must expose selection state');
 assert(css.includes('.coverage-slot-card[hidden]'), 'hidden coverage cards must stay hidden under author CSS');
 assert(css.includes('.reference-creation-hub'));
-assert(css.includes('.automation-activity-backdrop'));
+/* MIGRATED — the Activity drawer is retired, and this asserted its backdrop existed.
+   The invariant underneath it was never about the backdrop: it was the overlay ladder,
+   built after a confirmation raised from the activity surface painted UNDERNEATH that
+   surface. The activity surface is now the Terminal in the dock, so the same rule is
+   read against the numbers that are actually in force. */
+{
+  /* Read DECLARATIONS, not prose. This stylesheet explains its own history at length —
+     including why these two rungs were removed — and a check that searched the raw text
+     would be answered by the explanation instead of by the CSS. */
+  const rules = css.replace(/\/\*[\s\S]*?\*\//g, '');
+  assert(!rules.includes('.automation-activity-backdrop'),
+    'the retired Activity drawer must leave no backdrop styling behind');
+  assert(!rules.includes('--z-activity-drawer') && !rules.includes('--z-activity-backdrop'),
+    'the retired drawer must leave no rungs on the overlay ladder');
+  const rung = (name) => {
+    const match = rules.match(new RegExp(`${name}:\\s*(\\d+)`));
+    return match ? Number(match[1]) : null;
+  };
+  const dock = rules.match(/#cb-shell-dock\{[^}]*z-index:\s*(\d+)/);
+  assert(rung('--z-dialog') !== null && dock,
+    'the dialog rung and the dock level must both be declared');
+  assert(rung('--z-dialog') > Number(dock[1]),
+    `a confirmation (${rung('--z-dialog')}) must still paint above the Activity Terminal (${dock[1]})`);
+  assert(rung('--z-side-drawer') !== null,
+    'the shot-detail .drawer keeps its rung; it is a different panel from the retired Activity drawer');
+}
 /* The floating global live strip was retired in Batch 2, Slice 1 — the topbar chip is
    the single persistent global activity indicator now. */
 assert(!css.includes('#automation-global-live-strip'), 'the retired global live strip must leave no styling behind');

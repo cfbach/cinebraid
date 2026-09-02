@@ -580,52 +580,65 @@ try:
             f"under-reserves hides the bottom of the workspace and one that over-reserves leaves a dead band"
         findings.append(f"11. the dock reserves exactly the {flooded['dockHeight']}px it covers")
 
-        # ---- 12. the drawer and the Terminal agree, run for run ------------------------
+        # ---- 12. the Terminal's buckets ARE the shipped predicates ---------------------
+        # This compared the Activity drawer with the Terminal, because two surfaces over
+        # one production must not disagree. A1 retired the drawer, so the risk changed
+        # shape: with a single surface nothing contradicts it, and a bucket it decided for
+        # itself would simply be believed. The check therefore asks the predicates that
+        # own the answer and requires the rendered buckets to match them exactly.
         agreement = page.evaluate("""() => {
-            openGlobalAutomationActivity();
-            const section = (title) => [...document.querySelectorAll('.automation-drawer-section')]
-              .find((node) => node.querySelector('header b').textContent.includes(title));
-            const keys = (title) => [...(section(title)?.querySelectorAll('[data-activity-key]') || [])]
-              .map((row) => row.getAttribute('data-activity-key'));
-            const drawer = { active: keys('ACTIVE NOW'), waiting: keys('WAITING FOR YOU'),
-                             attention: keys('PREVIOUS FAILURES') };
-            closeGlobalAutomationActivity();
-            const terminal = {};
-            for (const row of document.querySelectorAll('.cb-terminal-row')) {
-              (terminal[row.dataset.cbKind] = terminal[row.dataset.cbKind] || []).push(row.dataset.activityKey);
+            const runs = (AUTOMATION_RUNS || []).filter((run) => run && run.status !== 'archived');
+            const predicate = {
+              'machine-active': (run) => v670MachineActiveRun(run),
+              'waiting-human': (run) => !v670MachineActiveRun(run) && v670WaitingForHumanRun(run),
+            };
+            const expected = {};
+            for (const [bucket, test] of Object.entries(predicate)) {
+              expected[bucket] = runs.filter(test).map((run) => 'run:' + run.id).sort();
             }
-            return { drawer, terminal, drawerOpened: true };
+            const rendered = {};
+            for (const row of document.querySelectorAll('.cb-terminal-row')) {
+              (rendered[row.dataset.cbKind] = rendered[row.dataset.cbKind] || []).push(row.dataset.activityKey);
+            }
+            for (const bucket of Object.keys(rendered)) {
+              rendered[bucket] = rendered[bucket].filter((key) => key.startsWith('run:')).sort();
+            }
+            return { expected, rendered };
         }""")
-        drawer, terminal = agreement["drawer"], agreement["terminal"]
-        for label, drawer_keys, terminal_keys in [
-            ("running", drawer["active"], terminal.get("machine-active", [])),
-            ("waiting for the filmmaker", drawer["waiting"], terminal.get("waiting-human", [])),
-        ]:
-            runs_in_drawer = sorted(k for k in drawer_keys if k.startswith("run:"))
-            runs_in_terminal = sorted(k for k in terminal_keys if k.startswith("run:"))
-            assert runs_in_drawer == runs_in_terminal, \
-                f"12. the Activity drawer and the Terminal disagree about which runs are {label}: " \
-                f"drawer {runs_in_drawer} vs terminal {runs_in_terminal}. Two surfaces over one production must " \
-                f"read the same predicates."
-        assert drawer["waiting"], "12. the fixture must actually populate WAITING FOR YOU or this check is vacuous"
-        findings.append(f"12. drawer and Terminal agree run-for-run on running {sorted(k for k in drawer['active'] if k.startswith('run:'))} "
-                        f"and waiting {sorted(k for k in drawer['waiting'] if k.startswith('run:'))}")
+        expected, rendered = agreement["expected"], agreement["rendered"]
+        for label, bucket in [("running", "machine-active"), ("waiting for the filmmaker", "waiting-human")]:
+            assert expected[bucket] == rendered.get(bucket, []), \
+                f"12. the Terminal disagrees with the shipped predicate about which runs are {label}: " \
+                f"predicate {expected[bucket]} vs terminal {rendered.get(bucket, [])}. The operational " \
+                f"surface must render the classifier's answer, never its own."
+        assert expected["waiting-human"], \
+            "12. the fixture must actually park a run on a human or this check is vacuous"
+        findings.append(f"12. the Terminal renders the predicates' own buckets: running "
+                        f"{expected['machine-active']} and waiting {expected['waiting-human']}")
 
-        # The drawer still opens and closes over the dock, unchanged by O3.
-        drawer_state = page.evaluate("""() => {
-            openGlobalAutomationActivity();
-            const el = document.getElementById('automation-activity-drawer');
+        # The Assistant rail is what opens over the workspace now, and it must not cover
+        # the operational ledger: the dock stays above it.
+        layering = page.evaluate("""() => {
+            const z = (node) => node ? Number(getComputedStyle(node).zIndex) || 0 : null;
+            const toggle = document.getElementById('creator-rail-toggle');
+            const opened = !!toggle && getComputedStyle(toggle).display !== 'none';
+            if (opened && !window.CineBraidCreatorSurfaces.railOpen()) toggle.click();
+            const rail = document.getElementById('cb-shell-rail');
             const dock = document.getElementById('cb-shell-dock');
-            const layers = [Number(getComputedStyle(el).zIndex), Number(getComputedStyle(dock).zIndex)];
-            const open = el.classList.contains('open') && el.getAttribute('aria-modal') === 'true';
-            document.querySelector('#automation-activity-drawer .cancel').click();
-            return { open, layers, closed: !el.classList.contains('open') };
+            const result = { opened, railOpen: window.CineBraidCreatorSurfaces.railOpen(),
+                             rail: z(rail), dock: z(dock),
+                             railPosition: rail ? getComputedStyle(rail).position : null };
+            if (window.CineBraidCreatorSurfaces.railOpen()) window.CineBraidCreatorSurfaces.closeRail();
+            return result;
         }""")
-        assert drawer_state["open"] and drawer_state["closed"], "12. the Activity drawer must still open and close"
-        assert drawer_state["layers"][0] > drawer_state["layers"][1], \
-            f"12. the drawer must still paint above the dock, got {drawer_state['layers']}"
-        findings.append(f"12. the Activity drawer still opens modally above the dock "
-                        f"(z {drawer_state['layers'][0]} > {drawer_state['layers'][1]}) and closes")
+        assert layering["opened"] and layering["railOpen"], \
+            "12. the Assistant entry point must be present and must open the rail"
+        if layering["railPosition"] == "fixed":
+            assert layering["dock"] > layering["rail"], \
+                f"12. the Assistant overlay ({layering['rail']}) must not paint over the Activity " \
+                f"Terminal ({layering['dock']}); the operational ledger stays visible"
+        findings.append(f"12. the Assistant opens from the topbar and stays below the Activity dock "
+                        f"(rail {layering['rail']} < dock {layering['dock']})")
 
         # ---- 13. lifecycle: retained, not painted, restored ----------------------------
         page.evaluate("() => window.CineBraidCreatorSurfaces.paint()")
@@ -851,31 +864,28 @@ try:
         findings.append(f"N2. an unbounded dock grows the page by {unbounded_height - bounded_height}px and is caught")
 
         # N3: make the Terminal call an approval gate RUNNING in the running page, and
-        # require section 12's drawer/Terminal agreement to notice.
+        # require section 12's predicate agreement to notice.
         page.evaluate("""() => {
             document.querySelectorAll('.cb-terminal-row').forEach((row) => {
               if (row.dataset.cbKind === 'waiting-human') row.dataset.cbKind = 'machine-active';
             });
         }""")
         drifted = page.evaluate("""() => {
-            openGlobalAutomationActivity();
-            const section = (title) => [...document.querySelectorAll('.automation-drawer-section')]
-              .find((node) => node.querySelector('header b').textContent.includes(title));
-            const drawerActive = [...(section('ACTIVE NOW')?.querySelectorAll('[data-activity-key]') || [])]
-              .map((row) => row.getAttribute('data-activity-key')).filter((k) => k.startsWith('run:')).sort();
-            closeGlobalAutomationActivity();
+            const runs = (AUTOMATION_RUNS || []).filter((run) => run && run.status !== 'archived');
+            const predicateActive = runs.filter((run) => v670MachineActiveRun(run))
+              .map((run) => 'run:' + run.id).sort();
             const terminalActive = [...document.querySelectorAll('.cb-terminal-row')]
               .filter((row) => row.dataset.cbKind === 'machine-active')
               .map((row) => row.dataset.activityKey).filter((k) => k.startsWith('run:')).sort();
-            return { drawerActive, terminalActive };
+            return { predicateActive, terminalActive };
         }""")
-        assert drifted["drawerActive"] != drifted["terminalActive"], \
-            "N3: moving the waiting rows into the Terminal's active bucket did not make the two surfaces " \
-            "disagree, so section 12's agreement check is not comparing anything."
+        assert drifted["predicateActive"] != drifted["terminalActive"], \
+            "N3: moving the waiting rows into the Terminal's active bucket did not make it disagree " \
+            "with the predicate, so section 12's agreement check is not comparing anything."
         page.evaluate("() => window.CineBraidCreatorSurfaces.paint()")
         page.wait_for_timeout(250)
-        findings.append(f"N3. a Terminal that calls an approval gate active disagrees with the drawer "
-                        f"({drifted['terminalActive']} vs {drifted['drawerActive']}) and is caught")
+        findings.append(f"N3. a Terminal that calls an approval gate active disagrees with the predicate "
+                        f"({drifted['terminalActive']} vs {drifted['predicateActive']}) and is caught")
 
         # N4: make an unknown cost print as a zero, and require section 10 to notice.
         zeroed = page.evaluate("""() => {

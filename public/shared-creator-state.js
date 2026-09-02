@@ -416,6 +416,12 @@
       reason: CREATOR_REASONS.includes(reason) ? reason : "",
       target: creatorTarget(raw.target),
       route: creatorText(raw.route),
+      /* Whether the shipped result resolver found the exact result this run produced.
+         A boolean rather than the target itself: the surfaces need to know which of
+         OPEN RESULT and OPEN WORKSPACE they are offering, and openRunResult() resolves
+         the destination again for itself at the moment of the handoff. Carrying the
+         route here as well would be a second copy of a decision with one owner. */
+      resultResolved: raw.resultResolved === true,
       at: creatorText(raw.at),
       startedAt: creatorText(raw.startedAt),
       endedAt: creatorText(raw.endedAt),

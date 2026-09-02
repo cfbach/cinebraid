@@ -558,38 +558,47 @@ try:
         }""")
         findings.append("N3. removing the centre's min-width:0 floor produces horizontal overflow and is caught")
 
-        # ---- 8. the existing Activity drawer still works over the shell ---------------
+        # ---- 8. the Assistant opens over the shell without covering the ledger ---------
+        # This asked whether the Activity drawer, a modal overlay, painted above the dock.
+        # A1 retired that drawer and the Assistant rail is what opens over the shell now —
+        # and it is deliberately NOT modal: it is a companion panel, so it locks nothing,
+        # traps nothing, and sits BELOW the Activity Terminal, which stays readable while
+        # it is open. The subject is the same; the ordering A1 chose is the opposite one.
         page.wait_for_timeout(200)
-        drawer = page.evaluate("""() => {
-            openGlobalAutomationActivity();
-            const el = document.getElementById('automation-activity-drawer');
+        rail = page.evaluate("""() => {
+            const toggle = document.getElementById('creator-rail-toggle');
+            const reachable = !!toggle && getComputedStyle(toggle).display !== 'none';
+            if (reachable && !window.CineBraidCreatorSurfaces.railOpen()) toggle.click();
+            const el = document.getElementById('cb-shell-rail');
             const dock = document.getElementById('cb-shell-dock');
             return {
-              open: el.classList.contains('open'),
-              hidden: el.getAttribute('aria-hidden'),
+              reachable,
+              open: window.CineBraidCreatorSurfaces.railOpen(),
+              occupied: el.hasAttribute('data-occupied'),
               modal: el.getAttribute('aria-modal'),
-              closeButton: !!document.querySelector('#automation-activity-drawer .cancel'),
-              drawerLayer: Number(getComputedStyle(el).zIndex),
-              dockLayer: Number(getComputedStyle(dock).zIndex),
+              railLayer: Number(getComputedStyle(el).zIndex) || 0,
+              dockLayer: Number(getComputedStyle(dock).zIndex) || 0,
+              position: getComputedStyle(el).position,
               bodyLocked: document.body.classList.contains('automation-activity-open'),
             };
         }""")
-        assert drawer["open"] and drawer["hidden"] == "false", "8. the Activity drawer did not open over the shell"
-        assert drawer["modal"] == "true", "8. the Activity drawer lost its modal semantics"
-        assert drawer["closeButton"], "8. the Activity drawer rendered no close control"
-        assert drawer["drawerLayer"] > drawer["dockLayer"], \
-            f"8. the drawer ({drawer['drawerLayer']}) must paint above the dock ({drawer['dockLayer']}) — " \
-            "the drawer is a temporary overlay and the dock is a persistent surface, not the reverse"
-        assert drawer["bodyLocked"], "8. the drawer's scroll lock was lost"
+        assert rail["reachable"], "8. the Assistant entry point must be reachable at this width"
+        assert rail["open"] and rail["occupied"], "8. the Assistant did not open over the shell"
+        assert rail["modal"] != "true", "8. the Assistant is a companion panel and must not claim modal semantics"
+        assert not rail["bodyLocked"], "8. the Assistant must not lock the page behind it"
+        if rail["position"] == "fixed":
+            assert rail["dockLayer"] > rail["railLayer"], \
+                f"8. the Assistant overlay ({rail['railLayer']}) must stay below the Activity Terminal " \
+                f"({rail['dockLayer']}) — the ledger is a persistent surface and must not be covered"
         closed = page.evaluate("""() => {
-            document.querySelector('#automation-activity-drawer .cancel').click();
-            const el = document.getElementById('automation-activity-drawer');
-            return { open: el.classList.contains('open'), hidden: el.getAttribute('aria-hidden'),
-                     bodyLocked: document.body.classList.contains('automation-activity-open') };
+            document.getElementById('creator-rail-toggle').click();
+            const el = document.getElementById('cb-shell-rail');
+            return { open: window.CineBraidCreatorSurfaces.railOpen(),
+                     occupied: el.hasAttribute('data-occupied') };
         }""")
-        assert not closed["open"] and closed["hidden"] == "true" and not closed["bodyLocked"], \
-            "8. the Activity drawer did not close cleanly"
-        findings.append(f"8. Activity drawer still opens modally above the dock (z {drawer['drawerLayer']} > {drawer['dockLayer']}), and closes")
+        assert not closed["open"] and not closed["occupied"], "8. the Assistant did not close cleanly"
+        findings.append(f"8. the Assistant opens from the topbar and closes again, staying below the "
+                        f"Activity Terminal (rail {rail['railLayer']} < dock {rail['dockLayer']})")
 
         # ---- 9. a non-creator surface does not receive the shell ----------------------
         page.goto(f"{base}/#/settings", wait_until="domcontentloaded")

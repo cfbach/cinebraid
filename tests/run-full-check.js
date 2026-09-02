@@ -137,6 +137,12 @@ const nodeSuites = [
   "check:quiet-shell",
   "check:shell-ownership",
   "check:creator-surface-optin",
+  /* The A1 boundary suites. They were registered in package.json and reachable by name,
+     which is not the same as being run: a suite nobody runs is a suite that goes red
+     unnoticed. tests/terminal-visual-corrections.js requires all four of these to appear
+     here, so a future removal is a failure rather than a silence. */
+  "check:terminal-visual",
+  "check:terminal-visual-negative",
   "check:project-entry",
   "check:project-entry-negative",
   "check:reference-reframe",

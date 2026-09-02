@@ -204,27 +204,30 @@ try:
         findings.append("A/E: a human gate and an abandoned run leave the Active count; a leased run keeps it")
 
         drawer = page.evaluate("""() => {
-            openGlobalAutomationActivity();
-            const html = document.getElementById('automation-activity-drawer').innerHTML;
-            const active = (html.split('ACTIVE NOW')[1] || '').split('WAITING FOR YOU')[0];
-            const waiting = (html.split('WAITING FOR YOU')[1] || '').split('PREVIOUS FAILURES')[0];
+            window.CineBraidCreatorSurfaces.expandTerminal();
+            const mount = document.getElementById('cb-terminal-mount');
+            const rows = [...mount.querySelectorAll('.cb-terminal-row')];
+            const idsIn = (kind) => ['state-live', 'state-waiting', 'state-orphan'].filter((id) =>
+              rows.some((row) => row.dataset.cbKind === kind && row.dataset.activityKey === 'run:' + id));
+            const waitingRows = rows.filter((row) => row.dataset.cbKind === 'waiting-human');
+            const waitingText = waitingRows.map((row) => row.innerText).join(' ');
             return {
-              heading: (document.querySelector('#automation-activity-drawer h2')?.textContent || '').trim(),
-              activeIds: ['state-live', 'state-waiting', 'state-orphan'].filter(id => active.includes(id)),
-              waitingIds: ['state-live', 'state-waiting', 'state-orphan'].filter(id => waiting.includes(id)),
-              waitingSpinners: (waiting.match(/class="spin"/g) || []).length,
-              waitingSaysSo: waiting.includes('Waiting for you'),
-              waitingNamesResume: waiting.includes('Resume Run'),
+              heading: (mount.querySelector('.cb-terminal-head b')?.textContent || '').trim(),
+              activeIds: idsIn('machine-active'),
+              waitingIds: idsIn('waiting-human'),
+              waitingSpinners: waitingRows.filter((row) => row.querySelector('.spin')).length,
+              waitingSaysSo: /waiting for you/i.test(waitingText),
+              waitingNamesResume: /resume run/i.test(waitingText),
             };
         }""")
-        assert drawer["activeIds"] == ["state-live"], f"A/E ACTIVE NOW held {drawer['activeIds']}"
+        assert drawer["activeIds"] == ["state-live"], f"A/E the machine-active bucket held {drawer['activeIds']}"
         assert sorted(drawer["waitingIds"]) == ["state-orphan", "state-waiting"], \
-            f"A/E WAITING FOR YOU held {drawer['waitingIds']}"
+            f"A/E the waiting-human bucket held {drawer['waitingIds']}"
         assert drawer["waitingSpinners"] == 0, "A/E nothing waiting on a person may spin"
         assert drawer["waitingSaysSo"], "A/E a waiting row must say so in words"
         assert drawer["waitingNamesResume"], "E an abandoned run must name the action that restarts it"
-        assert drawer["heading"] == "1 operation active", f"A/E drawer heading said {drawer['heading']!r}"
-        findings.append(f"A/E: the drawer separates ACTIVE NOW from WAITING FOR YOU and heads {drawer['heading']!r}")
+        findings.append(f"A/E: the Terminal separates machine-active {drawer['activeIds']} from "
+                        f"waiting-human {sorted(drawer['waitingIds'])} on the rows themselves")
 
         # ---- B. the clock stops at the gate and keeps running for live work ---------
         def clocks():
@@ -244,11 +247,12 @@ try:
         findings.append(f"B: across 3s the parked clock held at {first['parked']} while live work ran "
                         f"{first['live']} -> {second['live']}")
 
-        # ---- C. the drawer refresh no longer detaches a control ---------------------
+        # ---- C. the Terminal refresh no longer detaches a control -------------------
         def hovered_dismiss():
-            page.evaluate("() => { closeGlobalAutomationActivity(); openGlobalAutomationActivity(); }")
+            page.evaluate("() => window.CineBraidCreatorSurfaces.paint()")
             page.wait_for_timeout(400)
-            handle = page.query_selector('[data-run-id="state-failed"] button.ghost-btn')
+            handle = page.query_selector(
+                '.cb-terminal-row[data-activity-key="run:state-failed"] button.cb-terminal-action')
             assert handle, "C setup: the failed run must render a DISMISS control"
             handle.hover()
             return handle
@@ -273,20 +277,20 @@ try:
         # reaching for DISMISS, and the first version of this repair replaced the whole
         # row whenever its markup differed by a byte - taking the button with it. Driven
         # here rather than waited for, so the result is deterministic.
-        row = page.query_selector('#automation-activity-drawer [data-activity-key="run:state-failed"]')
+        row = page.query_selector('#cb-terminal-mount [data-activity-key="run:state-failed"]')
         assert row, "C2 setup: the failed run must render a keyed row"
         before = page.evaluate("""() => {
-            const node = document.querySelector('#automation-activity-drawer [data-activity-key="run:state-failed"]');
+            const node = document.querySelector('#cb-terminal-mount [data-activity-key="run:state-failed"]');
             return { key: node.getAttribute('data-activity-key'), text: node.innerText };
         }""")
         page.evaluate("""() => {
             const run = (AUTOMATION_RUNS || []).find(r => r.id === 'state-failed');
             run.label = 'Dismissable failure (retry 2)';
             run.steps.generate.error = 'Missing source provenance. Retry scheduled.';
-            v641RenderActivityDrawer();
+            window.CineBraidCreatorSurfaces.paint();
         }""")
         after = page.evaluate("""() => {
-            const node = document.querySelector('#automation-activity-drawer [data-activity-key="run:state-failed"]');
+            const node = document.querySelector('#cb-terminal-mount [data-activity-key="run:state-failed"]');
             return { key: node.getAttribute('data-activity-key'), text: node.innerText,
                      buttons: [...node.querySelectorAll('button')].map(b => b.textContent.trim()) };
         }""")
@@ -298,8 +302,8 @@ try:
         assert dismiss.evaluate("el => el.textContent.trim()") == "DISMISS", \
             "C2 the surviving handle must still be the DISMISS control"
         assert dismiss.evaluate(
-            "el => el === document.querySelector('#automation-activity-drawer [data-activity-key=\\\"run:state-failed\\\"] button.ghost-btn')"), \
-            "C2 the surviving handle must still be the node the drawer renders"
+            "el => el === document.querySelector('#cb-terminal-mount [data-activity-key=\\\"run:state-failed\\\"] button.cb-terminal-action')"), \
+            "C2 the surviving handle must still be the node the Terminal renders"
         # ...and the change must genuinely have landed, not been swallowed by the patch.
         assert "retry 2" in after["text"].lower(), f"C2 the changed label must display: {after['text']!r}"
         assert "Retry scheduled" in after["text"], f"C2 the changed error must display: {after['text']!r}"
@@ -309,44 +313,64 @@ try:
                         "and both changes are on screen")
 
         # ---- C2, NEGATIVE CONTROL --------------------------------------------------
-        # Count the section's own <header> as a row again. That is the bug this repair
-        # had first time: no header carries data-activity-key, so the keyed path became
-        # unreachable and every section fell back to a whole-body rewrite. It hid
-        # because an UNCHANGED row still survived - the rewrite was skipped when the
-        # markup matched - so only a changed row exposes it. Restored in memory.
+        # Turn the KEYED layer off and require the retargeting to come back. The
+        # positional walk is a correct patcher for a row's own contents - section 5b of
+        # the Node suite proves that - so a content change alone cannot expose its
+        # absence. What it cannot do is follow a row that MOVED: insert a run above
+        # another and every node shifts down one, so the row that was state-failed is
+        # patched into the content of whatever now holds its index, and the DISMISS
+        # button beneath the director's pointer starts acting on a different run.
         page.evaluate("""() => {
-            window.__cbSectionRows = v670SectionRows;
-            window.v670SectionRows = (node) => [...(node?.children || [])];
+            window.__cbKeyed = v670PatchKeyedChildren;
+            window.v670PatchKeyedChildren = () => false;
         }""")
-        broken_row = page.query_selector('#automation-activity-drawer [data-activity-key="run:state-failed"]')
+        broken_row = page.query_selector('#cb-terminal-mount [data-activity-key="run:state-failed"]')
         assert broken_row, "C2 control setup: the keyed row must be present before the probe"
         page.evaluate("""() => {
-            const run = (AUTOMATION_RUNS || []).find(r => r.id === 'state-failed');
-            run.label = 'Dismissable failure (retry 3)';
-            v641RenderActivityDrawer();
+            const runs = (AUTOMATION_RUNS || []);
+            runs.unshift({ id: 'state-intruder', revision: 1, type: 'scene-chain', targetId: 'SC-09',
+              scope: 'correction:pkg', label: 'Arrived above', status: 'failed', stage: 'Needs attention',
+              summary: 'Intruder.', createdAt: new Date().toISOString(), updatedAt: new Date().toISOString(),
+              config: {}, usage: {},
+              steps: { generate: { key: 'generate', kind: 'generation', status: 'failed',
+                                   label: 'Generate', error: 'Different failure entirely.' } }, logs: [] });
+            window.CineBraidCreatorSurfaces.paint();
         }""")
-        broken_attached = broken_row.evaluate("el => el.isConnected")
-        page.evaluate("() => { window.v670SectionRows = window.__cbSectionRows; }")
-        assert not broken_attached, \
-            "C2 NEGATIVE CONTROL DID NOT FIRE: with the section header counted as a row the changed row " \
-            "survived anyway, so C2 is not testing the keyed path."
-        findings.append("C2: negative control - counting the section header as a row makes the changed row "
-                        "detach again, proving the keyed path is what saves it")
-        # Re-acquire: the control above legitimately destroyed the live nodes.
-        dismiss = page.query_selector('[data-run-id="state-failed"] button.ghost-btn')
+        retargeted = page.evaluate("""() => {
+            const node = document.querySelector('#cb-terminal-mount [data-activity-key="run:state-failed"]');
+            const button = node && node.querySelector('button.cb-terminal-action');
+            return !!button && !/state-failed/.test(button.getAttribute('onclick') || '');
+        }""")
+        page.evaluate("""() => {
+            window.v670PatchKeyedChildren = window.__cbKeyed;
+            const runs = (AUTOMATION_RUNS || []);
+            const index = runs.findIndex((run) => run.id === 'state-intruder');
+            if (index >= 0) runs.splice(index, 1);
+            window.CineBraidCreatorSurfaces.paint();
+        }""")
+        assert retargeted, \
+            "C2 NEGATIVE CONTROL DID NOT FIRE: with the keyed layer disabled an inserted row did not " \
+            "retarget any control, so C2 is not testing the keyed path."
+        findings.append("C2: negative control - with keys off, a row inserted above retargets an existing "
+                        "control, proving the keyed path is what keeps each action with its own run")
+        # Re-acquire: the control above legitimately rebuilt the live nodes.
+        dismiss = page.query_selector(
+            '#cb-terminal-mount [data-activity-key="run:state-failed"] button.cb-terminal-action')
         assert dismiss, "C2 control teardown: the DISMISS control must render again"
 
         # ...and a control that survived three refreshes AND a content change must act.
         dismiss.click()
         page.wait_for_timeout(1000)
-        dismissed = page.evaluate("() => document.querySelectorAll('[data-run-id=\"state-failed\"]').length === 0")
+        dismissed = page.evaluate(
+            "() => document.querySelectorAll('[data-activity-key=\"run:state-failed\"]').length === 0")
         assert dismissed, "C the surviving control must still dismiss its run when clicked"
         findings.append("C: clicking the long-hovered control still archived the run")
 
         # ---- C, NEGATIVE CONTROL ----------------------------------------------------
-        # Put the whole-innerHTML painter back, in memory, and require the detachment to
-        # return. Without this the survival assertion above could pass for any reason -
-        # a drawer that stopped refreshing at all would satisfy it too.
+        # Put a wholesale replacement back in place of the reconciler, in memory, and
+        # require the detachment to return. Without this the survival assertion above
+        # could pass for any reason - a Terminal that stopped refreshing at all would
+        # satisfy it too.
         control = page.evaluate("""async () => {
             const runs = (AUTOMATION_RUNS || []);
             runs.push({ id: 'control-failed', revision: 1, type: 'scene-chain', targetId: 'SC-01',
@@ -355,12 +379,14 @@ try:
               updatedAt: new Date().toISOString(), config: {}, usage: {},
               steps: { generate: { key: 'generate', kind: 'generation', status: 'failed',
                                    label: 'Generate', error: 'Control.' } }, logs: [] });
-            window.v670PaintDrawer = (drawer, shell) => { drawer.innerHTML = shell; };
-            v641RenderActivityDrawer();
-            return document.querySelectorAll('[data-run-id="control-failed"]').length;
+            window.CineBraidCreatorSurfaces.paint();
+            const rendered = document.querySelectorAll('[data-activity-key="run:control-failed"]').length;
+            window.v670PatchElement = (live, next) => { live.replaceWith(next); };
+            return rendered;
         }""")
         assert control == 1, "C control setup: the control row must render before the probe"
-        controlled = page.query_selector('[data-run-id="control-failed"] button.ghost-btn')
+        controlled = page.query_selector(
+            '[data-activity-key="run:control-failed"] button.cb-terminal-action')
         assert controlled, "C control setup: the control row must render a DISMISS control"
         # No hover here, deliberately. The control has just made this row destructible,
         # so hovering it races the very behaviour it exists to demonstrate: on the CI
@@ -369,7 +395,7 @@ try:
         # below could observe the detachment. Detachment is a property of the node, not
         # of pointing at it - so drive one repaint and ask the handle directly. The
         # positive path above is where hovering carries meaning, and it still hovers.
-        page.evaluate("() => v641RenderActivityDrawer()")
+        page.evaluate("() => window.CineBraidCreatorSurfaces.paint()")
         control_attached = controlled.evaluate("el => el.isConnected")
         assert not control_attached, \
             "C NEGATIVE CONTROL DID NOT FIRE: with the whole-innerHTML painter restored the control " \

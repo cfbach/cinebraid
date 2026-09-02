@@ -267,13 +267,15 @@ try:
                 const r = node.getBoundingClientRect();
                 return r.left >= box.left - 1 && r.right <= box.right + 1;
               }),
-              activityReachable: controls.some((node) => /openGlobalAutomationActivity/.test(node.getAttribute('onclick') || '')),
+              activityControls: controls.filter((node) => /Open Activity/i.test(node.textContent || '')).length,
             };
         }""")
         assert usable["controls"] > 0 and usable["inside"], \
             f"2. every Assistant control must render inside the rail, got {usable}"
-        assert usable["activityReachable"], \
-            "2. the Assistant must still reach the Activity drawer with the rail open"
+        assert usable["activityControls"] == 0, \
+            "2. the Assistant must NOT offer a way into Activity: A1 made the Terminal the one " \
+            "operational owner, and a second entry point on a narration surface is the duplication " \
+            "that removed"
         findings.append(f"2. opening the rail restores exactly 340px, costs the centre {reclaimed}px, keeps the centre "
                         f"node and its content, and mounts an Assistant whose {usable['controls']} controls are all "
                         f"inside the rail and still reach Activity")
@@ -319,27 +321,27 @@ try:
         page.wait_for_timeout(300)
 
         page.click("#automation-activity-toggle")
-        page.wait_for_selector("#automation-activity-drawer.open", timeout=10000)
-        page.wait_for_selector(f'#automation-activity-drawer [data-run-id="{COMPLETED_RUN["id"]}"]', timeout=10000)
+        page.wait_for_selector(".cb-terminal-rows", timeout=10000)
+        page.wait_for_selector(f'.cb-terminal-row[data-activity-key="run:{COMPLETED_RUN["id"]}"]', timeout=10000)
         drawer = page.evaluate("""() => {
-            const node = document.getElementById('automation-activity-drawer');
+            const node = document.getElementById('cb-terminal-mount');
             return {
-              open: node.classList.contains('open'),
-              rows: node.querySelectorAll('[data-run-id]').length,
-              sections: [...node.querySelectorAll('.automation-drawer-list h3, .automation-drawer-list header span')]
-                .map((n) => n.textContent.trim()).filter(Boolean),
+              open: !!node.querySelector('.cb-terminal-rows'),
+              rows: node.querySelectorAll('.cb-terminal-row').length,
               text: node.innerText,
             };
         }""")
-        assert drawer["open"] and drawer["rows"] >= 1, f"3. the Activity drawer must open and show the run, got {drawer}"
-        findings.append(f"3. one persistent global indicator (the topbar chip); the drawer opens from it and shows "
-                        f"{drawer['rows']} run row(s)")
+        assert drawer["open"] and drawer["rows"] >= 1, \
+            f"3. the topbar chip must expand the Activity Terminal and show the run, got {drawer}"
+        findings.append(f"3. one persistent global indicator (the topbar chip); it expands the Activity "
+                        f"Terminal, which shows {drawer['rows']} run row(s)")
 
         # ---- 4/5. the completed run hands off to the result -----------------------------
-        handoff_button = page.locator(f'#automation-activity-drawer [data-run-id="{COMPLETED_RUN["id"]}"] button', has_text="OPEN RESULT")
+        handoff_button = page.locator(
+            f'.cb-terminal-row[data-activity-key="run:{COMPLETED_RUN["id"]}"] button', has_text="OPEN RESULT")
         assert handoff_button.count() == 1, \
             ("5. a completed shot still run must offer OPEN RESULT rather than OPEN WORKSPACE; "
-             f"drawer said: {drawer['text'][:300]}")
+             f"terminal said: {drawer['text'][:300]}")
         # PUT THE WORKSPACE SOMEWHERE ELSE FIRST, AND REDRAW IT, so "it reached the
         # result" is a transition the DOM actually made rather than a stage it happened to
         # already be on. Writing the preference without redrawing is how the first version
@@ -352,7 +354,10 @@ try:
         assert page.locator("#main .guided-frame-workflow").count() == 0, \
             "5. the workspace must start on a stage that is NOT the result's, or the hand-off proves nothing"
         handoff_button.click()
-        page.wait_for_selector("#automation-activity-drawer:not(.open)", timeout=10000)
+        # THE TERMINAL DOES NOT CLOSE. The drawer was modal and got out of the way; the
+        # Terminal is a persistent surface, so the hand-off leaves it exactly where it was.
+        assert page.locator(".cb-terminal-rows").count() == 1, \
+            "5. the Activity Terminal must stay open behind its own hand-off"
         page.wait_for_function(
             """(shot) => {
                  const key = `cinebraid-focused:${ACTIVE_PROJECT_SLUG}:shot-task:${shot}`;
@@ -400,10 +405,10 @@ try:
             };
         }""")
         for handler in panel_state["controls"]:
-            assert "openGlobalAutomationActivity" in handler, \
-                f"6. the compact status may only offer the drawer, found handler: {handler}"
+            assert "expandTerminal" in handler, \
+                f"6. the compact status may only offer the Activity Terminal, found handler: {handler}"
         findings.append(f"6. the task page embeds 0 timelines and shows {panel_state['compact']} compact run "
-                        f"status block(s), whose only control opens the drawer: {panel_state['text'][:1]}")
+                        f"status block(s), whose only control expands the Terminal: {panel_state['text'][:1]}")
 
         # ---- N2. the no-embedded-timeline assertion can fail ---------------------------
         n2 = page.evaluate("""() => {
@@ -715,8 +720,9 @@ try:
         page.evaluate("(shot) => { localStorage.setItem(`cinebraid-focused:${ACTIVE_PROJECT_SLUG}:shot-task:${shot}`, 'inputs'); route(); }", SHOT)
         page.wait_for_selector('[data-selected-task="inputs"]', timeout=10000)
         page.click("#automation-activity-toggle")
-        page.wait_for_selector('#automation-activity-drawer [data-run-id="quiet-shell-motion"]', timeout=10000)
-        page.locator('#automation-activity-drawer [data-run-id="quiet-shell-motion"] button', has_text="OPEN RESULT").click()
+        page.wait_for_selector('.cb-terminal-row[data-activity-key="run:quiet-shell-motion"]', timeout=10000)
+        page.locator('.cb-terminal-row[data-activity-key="run:quiet-shell-motion"] button',
+                     has_text="OPEN RESULT").click()
         page.wait_for_selector('[data-selected-task="motion"]', timeout=10000)
         motion_landed = page.evaluate("""(shot) => ({
             hash: location.hash,
@@ -730,8 +736,9 @@ try:
 
         # ENTITY, clicked from the drawer, with the hash on a DIFFERENT workspace.
         page.click("#automation-activity-toggle")
-        page.wait_for_selector('#automation-activity-drawer [data-run-id="quiet-shell-entity"]', timeout=10000)
-        page.locator('#automation-activity-drawer [data-run-id="quiet-shell-entity"] button', has_text="OPEN RESULT").click()
+        page.wait_for_selector('.cb-terminal-row[data-activity-key="run:quiet-shell-entity"]', timeout=10000)
+        page.locator('.cb-terminal-row[data-activity-key="run:quiet-shell-entity"] button',
+                     has_text="OPEN RESULT").click()
         # AMENDED BY BATCH 2 SLICE 3. Slice 1's rule is unchanged -- a completed run
         # hands off to the surface that OWNS its result -- but Slice 3 moved the
         # candidate grid out of the `Choose & approve` peer stage and into the

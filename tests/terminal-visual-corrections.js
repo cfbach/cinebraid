@@ -147,8 +147,13 @@ async function main() {
     failedRun("run-c", { steps: FAILED_STEP("Provider returned 429.") }),
   ];
   const spread = terminalHtml(await realm(distinct));
-  eq(countOf(spread, "data-cb-group"), 0,
+  /* A groupable failure always gets the same container — that is what lets the reconciler
+     keep its node as members arrive and leave — so "not collapsed" is three groups of one
+     rather than no group at all, and each has its own key. */
+  eq(countOf(spread, 'data-cb-group="1"'), 3,
     "GROUP-3: a different target or a different error is a different failure and must not collapse");
+  eq(new Set([...spread.matchAll(/data-activity-key="(failure-group:[a-f0-9]+)"/g)].map((m) => m[1])).size, 3,
+    "GROUP-3: and each keeps a signature key of its own");
   eq(countOf(spread, 'class="cb-terminal-row tone-'), 3, "GROUP-3: all three stay visible as themselves");
 
   /* Live and finished work never collapses, however alike it looks: each running row is
@@ -170,6 +175,25 @@ async function main() {
   }
   ok(/white-space:\s*nowrap/.test(declarationsFor(".cb-terminal-group-count")),
     "GROUP-6: the multiplier is the point of the collapse and must not wrap");
+
+  /* GROUP-7 — A LONE FAILURE MUST BE VISIBLE. The container is a <details> so a failure
+     signature keeps one DOM node as members arrive and leave. A closed <details> hides its
+     content through the browser's own content slot, which author CSS cannot reliably
+     reopen — so a single-member group rendered without `open` is counted in the header,
+     explained in the footer, and shown nowhere. That is exactly what shipped in the first
+     draft of this container and what a screenshot, not a test, caught. */
+  const lone = terminalHtml(await realm([failedRun("lone-1")]));
+  eq(countOf(lone, 'data-cb-group="1"'), 1, "GROUP-7: one failure is one group of one");
+  ok(/<details class="cb-terminal-group[^>]*data-cb-group="1"[^>]*\sopen>/.test(lone),
+    "GROUP-7: a single-member group must render open, or its only row is invisible");
+  ok(/display:\s*none/.test(declarationsFor('.cb-terminal-group[data-cb-group="1"]>summary')),
+    "GROUP-7: and it must show no disclosure furniture, because there is nothing to disclose");
+  /* A group that DOES have members to collapse must not be forced open, or the collapse
+     the whole feature exists for never happens. */
+  const many = terminalHtml(await realm([1, 2, 3].map((n) => failedRun(`many-${n}`))));
+  ok(/<details class="cb-terminal-group[^>]*data-cb-group="3"[^>]*>/.test(many)
+    && !/<details class="cb-terminal-group[^>]*data-cb-group="3"[^>]*\sopen>/.test(many),
+    "GROUP-7: a real group starts collapsed, which is the accepted appearance");
 
   /* =======================================================================
      C-2 / C-3 — SAY THE QUIET FACT ONCE, AND DO NOT BOUND NOTHING.
@@ -290,6 +314,23 @@ async function main() {
   eq(countOf(withRun, "cb-terminal-row"), 0, "ENTRY-5: no per-run rows may return to the Assistant");
   eq(countOf(withRun, "data-activity-key"), 0, "ENTRY-5: nor per-run activity keys");
   ok(!/Open Activity/i.test(withRun), "ENTRY-5: and no unconditional Open Activity control");
+
+  /* =======================================================================
+     ENROLLMENT — ONE AUTHORITATIVE LIST.
+
+     Registering a suite in package.json makes it reachable by name. It does not make it
+     RUN. Review found these two suites registered and absent from tests/run-full-check.js,
+     which is the difference between a guard and a guard nobody consults: the suite would
+     have gone red at some future edit and nothing would have said so.
+     ======================================================================= */
+  const runner = fs.readFileSync(path.join(ROOT, "tests", "run-full-check.js"), "utf8");
+  const enrolled = new Set((runner.match(/"check:[a-z0-9-]+"/g) || []).map((name) => name.slice(1, -1)));
+  const scripts = JSON.parse(fs.readFileSync(path.join(ROOT, "package.json"), "utf8")).scripts || {};
+  for (const suite of ["check:terminal-visual", "check:terminal-visual-negative",
+    "check:shell-ownership", "check:creator-surface-optin"]) {
+    ok(scripts[suite], `ENROLL: ${suite} must be a registered script`);
+    ok(enrolled.has(suite), `ENROLL: ${suite} is registered but never run by tests/run-full-check.js`);
+  }
 
   console.log(`A1 visual dogfood corrections: ${checks} checks.`);
   console.log("Scroll ownership, failure grouping, idle copy, empty bound, inspector tone,");

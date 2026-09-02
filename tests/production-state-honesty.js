@@ -283,11 +283,18 @@ async function main() {
      --------------------------------------------------------------------------- */
   /* A1: data-run-id was the drawer card's attribute. The Terminal row carries the
      reconciliation key itself, which is the thing the painter actually addresses. */
+  /* Every ADDRESSABLE UNIT carries a key, and a failure group is one of them: the group
+     container is what the reconciler holds on to while its members come and go, so it is
+     keyed too and the count of keys legitimately exceeds the count of rows. What must
+     hold is that no row is left unaddressable. */
   const rowKeys = [...drawerHtml.matchAll(/data-activity-key="([^"]+)"/g)].map((match) => match[1]);
   const rowCount = (drawerHtml.match(/<article class="cb-terminal-row/g) || []).length;
+  const groupCount = (drawerHtml.match(/<details class="cb-terminal-group/g) || []).length;
   assert(rowCount > 0, "the Terminal must render the rows this section is about");
-  assert.strictEqual(rowKeys.length, rowCount,
-    "every Terminal row must carry a reconciliation key");
+  assert.strictEqual(rowKeys.length, rowCount + groupCount,
+    "every Terminal row and every failure group must carry a reconciliation key");
+  assert.strictEqual(new Set(rowKeys).size, rowKeys.length,
+    "reconciliation keys must be unique, or the reconciler cannot tell two units apart");
   /* The three runs this section set up are each addressable by their own key. */
   for (const id of ["run-live", "run-waiting", "run-orphan"]) {
     assert(rowKeys.includes(`run:${id}`), `run row ${id} is missing its key`);
@@ -328,19 +335,44 @@ async function main() {
   function el(tagName, attributes = {}, children = []) {
     const node = {
       id: ++nodeSeq, nodeType: 1, nodeName: tagName.toUpperCase(), tagName: tagName.toUpperCase(),
-      attributes: new Map(Object.entries(attributes)), childNodes: [...children],
+      attributes: new Map(Object.entries(attributes)), childNodes: [...children], parentNode: null,
       getAttributeNames() { return [...this.attributes.keys()]; },
       getAttribute(name) { return this.attributes.has(name) ? this.attributes.get(name) : null; },
       hasAttribute(name) { return this.attributes.has(name); },
       setAttribute(name, value) { this.attributes.set(name, String(value)); },
       removeAttribute(name) { this.attributes.delete(name); },
-      appendChild(child) { this.childNodes.push(child); return child; },
-      removeChild(child) { this.childNodes = this.childNodes.filter((row) => row !== child); return child; },
+      /* The keyed layer asks for ELEMENT children and inserts before a sibling; the
+         positional walk asks for all childNodes. Both surfaces are modelled so this
+         checklist covers both paths rather than only the one it was written for. */
+      get children() { return this.childNodes.filter((row) => row.nodeType === 1); },
+      get firstChild() { return this.childNodes[0] || null; },
+      get previousSibling() {
+        const parent = this.parentNode;
+        if (!parent) return null;
+        const index = parent.childNodes.indexOf(this);
+        return index > 0 ? parent.childNodes[index - 1] : null;
+      },
+      get outerHTML() {
+        const attrs = [...this.attributes].map(([k, v]) => ` ${k}="${v}"`).join("");
+        const inner = this.childNodes.map((row) => row.nodeType === 3 ? String(row.nodeValue) : row.outerHTML).join("");
+        return `<${tagName}${attrs}>${inner}</${tagName}>`;
+      },
+      insertBefore(child, reference) {
+        this.childNodes = this.childNodes.filter((row) => row !== child);
+        const index = reference ? this.childNodes.indexOf(reference) : this.childNodes.length;
+        this.childNodes.splice(index < 0 ? this.childNodes.length : index, 0, child);
+        child.parentNode = this;
+        return child;
+      },
+      remove() { if (this.parentNode) this.parentNode.removeChild(this); },
+      appendChild(child) { this.childNodes.push(child); child.parentNode = this; return child; },
+      removeChild(child) { this.childNodes = this.childNodes.filter((row) => row !== child); child.parentNode = null; return child; },
       replaceChild(next, previous) {
         this.childNodes = this.childNodes.map((row) => (row === previous ? next : row));
         return previous;
       },
     };
+    for (const child of node.childNodes) child.parentNode = node;
     return node;
   }
   const flatten = (node) => node.nodeType === 3 ? String(node.nodeValue)
@@ -350,19 +382,19 @@ async function main() {
   const button = el("button", { class: "ghost-btn", onclick: "dismiss('a')" }, [text("DISMISS")]);
   const label = el("b", {}, [text("Dismissable failure")]);
   const paragraph = el("p", { class: "note" }, [text("Generate correction")]);
-  const live = el("article", { class: "automation-drawer-run state-failed", "data-activity-key": "run:a", "data-stale": "1" },
+  const live = el("article", { class: "cb-terminal-row tone-attention", "data-activity-key": "run:a", "data-stale": "1" },
     [el("header", {}, [label]), paragraph, el("footer", {}, [button])]);
 
   const nextButton = el("button", { class: "ghost-btn", onclick: "dismiss('a')" }, [text("DISMISS")]);
   const nextLabel = el("b", {}, [text("Dismissable failure (retry 2)")]);
   /* Same tag, different attribute AND a removed one; plus a changed text child. */
   const nextParagraph = el("p", { class: "note warn" }, [text("Generate correction - retry scheduled")]);
-  const next = el("article", { class: "automation-drawer-run state-review", "data-activity-key": "run:a" },
+  const next = el("article", { class: "cb-terminal-row tone-waiting", "data-activity-key": "run:a" },
     [el("header", {}, [nextLabel]), nextParagraph, el("footer", {}, [nextButton])]);
 
   patch(live, next);
 
-  assert.strictEqual(live.getAttribute("class"), "automation-drawer-run state-review",
+  assert.strictEqual(live.getAttribute("class"), "cb-terminal-row tone-waiting",
     "a changed class must actually change");
   assert.strictEqual(live.getAttribute("data-stale"), null,
     "an attribute absent from the new markup must be REMOVED, not left behind");
@@ -389,6 +421,56 @@ async function main() {
   assert.notStrictEqual(structural.childNodes[0], staleSpan, "a child whose tag changed must be replaced");
   assert.strictEqual(structural.childNodes[0].nodeName, "EM", "the replacement must be the new element");
   assert.strictEqual(flatten(structural.childNodes[1]), "added", "the appended child must carry its content");
+
+  /* ---------------------------------------------------------------------------
+     5c  THE KEYED LAYER: does a row keep its node when the LIST changes shape?
+
+     5b proves a row survives its own content changing. That is a different claim from
+     this one, and the difference is where the A1 Terminal was wrong: the patcher walked
+     children BY POSITION, so inserting a row above another shifted every node down one
+     and quietly re-pointed row 2's DISMISS button at row 3's run. Nothing threw; the
+     button simply belonged to somebody else.
+
+     The rows carry data-activity-key. These check that the key, not the position, is
+     what decides which live node a new row becomes.
+     --------------------------------------------------------------------------- */
+  const keyedRow = (key, label_) => el("article", { class: "cb-terminal-row", "data-activity-key": key },
+    [el("b", {}, [text(label_)]), el("button", { onclick: `dismiss('${key}')` }, [text("DISMISS")])]);
+
+  const listLive = el("div", { class: "cb-terminal-rows" }, [keyedRow("run:a", "A"), keyedRow("run:b", "B")]);
+  const nodeA = listLive.childNodes[0], nodeB = listLive.childNodes[1];
+  const buttonB = nodeB.childNodes[1];
+  /* A new run arrives ABOVE both, which is exactly the shift that used to retarget. */
+  const listNext = el("div", { class: "cb-terminal-rows" },
+    [keyedRow("run:x", "X"), keyedRow("run:a", "A"), keyedRow("run:b", "B (retry 2)")]);
+  patch(listLive, listNext);
+
+  assert.strictEqual(listLive.childNodes.length, 3, "the inserted row must arrive");
+  assert.strictEqual(listLive.childNodes.map((row) => row.getAttribute("data-activity-key")).join(","),
+    "run:x,run:a,run:b", "the keyed order must follow the new markup");
+  assert.strictEqual(listLive.childNodes[1], nodeA, "run:a must keep its node across an insertion above it");
+  assert.strictEqual(listLive.childNodes[2], nodeB, "run:b must keep its node across an insertion above it");
+  assert.strictEqual(nodeB.childNodes[1], buttonB,
+    "AND ITS CONTROL - a positional patcher hands this button to whichever run took its index");
+  assert.strictEqual(buttonB.getAttribute("onclick"), "dismiss('run:b')",
+    "the surviving control must still act on the run it belongs to");
+  assert.strictEqual(flatten(nodeB.childNodes[0]), "B (retry 2)", "the surviving row still updates its own content");
+
+  /* Reordering moves the surviving nodes rather than rebuilding them. */
+  const reordered = el("div", { class: "cb-terminal-rows" },
+    [keyedRow("run:b", "B"), keyedRow("run:a", "A"), keyedRow("run:x", "X")]);
+  patch(listLive, reordered);
+  assert.strictEqual(listLive.childNodes.map((row) => row.getAttribute("data-activity-key")).join(","),
+    "run:b,run:a,run:x", "a reorder must be applied");
+  assert.strictEqual(listLive.childNodes[0], nodeB, "a reordered row keeps its node");
+  assert.strictEqual(listLive.childNodes[1], nodeA, "so does the row it moved past");
+
+  /* A row that genuinely leaves is removed, and the survivors keep their nodes. */
+  const shrunk = el("div", { class: "cb-terminal-rows" }, [keyedRow("run:a", "A")]);
+  patch(listLive, shrunk);
+  assert.strictEqual(listLive.childNodes.length, 1, "a row absent from the new markup must be removed");
+  assert.strictEqual(listLive.childNodes[0], nodeA, "and the surviving row must still be the same node");
+  note("v670PatchElement reconciles a keyed list by key: insert, reorder and remove all preserve node identity");
 
   /* And a removed child must be removed, not orphaned on screen. */
   const shrinking = el("div", {}, [el("b", {}, [text("keep")]), el("b", {}, [text("drop")])]);

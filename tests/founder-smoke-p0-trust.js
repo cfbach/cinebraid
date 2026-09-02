@@ -101,7 +101,7 @@ async function testCrossProjectActivityIsolation() {
     V641_MANUAL_ACTIVITIES.set("smuggled", { id: "smuggled", system: "VISION AI · SCENE CONTINUITY",
       title: "Smuggled from project A", detail: "", projectSlug: "project-a", status: "completed",
       startedAt: "2026-08-17T00:00:00.000Z", updatedAt: "2026-08-17T00:00:00.000Z" });
-    
+
   `, app.context);
   const drawerC = terminalHtml(app.context);
   assert(drawerC.includes("Review B candidate"), "project B's own activity must still appear");

@@ -365,25 +365,31 @@ try:
           AUTOMATION_RUNS=[{id:'obsolete-reference-failure',type:'entity-chain',targetId:'props:PROP-MURAL',label:'Obsolete mural failure',status:'failed',stage:'Needs attention',summary:'Old prompt was not built',updatedAt:'2026-07-30T20:00:00Z',steps:{prompt:{key:'prompt',kind:'prompt',status:'failed',error:'Old prompt was not built'}}}];
           V641_ACTIVITY_DRAWER_OPEN=true; v641UpdateActivityButton(); v641RenderActivityDrawer();
         }""")
-        page.wait_for_selector('[data-run-id="obsolete-reference-failure"]')
+        page.wait_for_selector('[data-activity-key="run:obsolete-reference-failure"]')
         if SCREENSHOT_DIR:
             page.screenshot(path=str(SCREENSHOT_DIR / "dismiss-obsolete-alert.png"), full_page=False)
-        page.locator('[data-run-id="obsolete-reference-failure"]').get_by_text("DISMISS", exact=True).click()
+        page.locator('[data-activity-key="run:obsolete-reference-failure"]').get_by_text("DISMISS", exact=True).click()
         page.wait_for_function("() => AUTOMATION_RUNS.find(x=>x.id==='obsolete-reference-failure')?.status === 'archived'", timeout=5000)
-        assert page.locator('[data-run-id="obsolete-reference-failure"]').count() == 0, "dismissed obsolete alert remained in Global Activity"
-        page.evaluate("closeGlobalAutomationActivity()")
+        assert page.locator('[data-activity-key="run:obsolete-reference-failure"]').count() == 0, \
+            "dismissed obsolete alert remained in the Activity Terminal"
         checkpoint("obsolete activity alert dismissed")
         audit_mode["enabled"] = False
 
+        # ESCAPE NO LONGER CLOSES ACTIVITY, AND THAT IS THE DECISION. The drawer was a
+        # modal overlay, so Escape dismissed it. The Terminal is a persistent dock: Escape
+        # belongs to whatever modal is actually open, and a persistent surface that
+        # vanished on a keystroke meant for a dialog would be a surprise. What must hold
+        # is that Escape leaves it alone.
         toggle = page.locator("#automation-activity-toggle")
         if toggle.count():
-            page.evaluate("openGlobalAutomationActivity()")
+            page.evaluate("() => window.CineBraidCreatorSurfaces.expandTerminal()")
             page.wait_for_timeout(100)
             page.keyboard.press("Escape")
-            drawer = page.locator("#automation-activity-drawer")
-            assert drawer.get_attribute("aria-hidden") == "true", "Escape did not close Activity"
+            page.wait_for_timeout(150)
+            assert page.locator(".cb-terminal-rows").count() == 1, \
+                "Escape must not collapse the persistent Activity Terminal"
 
-        checkpoint("activity drawer keyboard complete")
+        checkpoint("activity terminal keyboard complete")
         def activity_overlap_count():
             # THE ONE PERSISTENT GLOBAL INDICATOR. The floating strip was retired in Batch
             # 2 Slice 1; the topbar chip is what remains, and the property this measured -

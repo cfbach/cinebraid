@@ -136,11 +136,11 @@ try:
         page.wait_for_selector("#automation-activity-toggle", timeout=15000)
         page.wait_for_timeout(700)
 
-        # ---- open the drawer -------------------------------------------------
-        page.evaluate("() => openGlobalAutomationActivity()")
-        page.wait_for_selector(".automation-activity-drawer.open", timeout=8000)
+        # ---- expand the Activity Terminal ------------------------------------
+        page.evaluate("() => window.CineBraidCreatorSurfaces.expandTerminal()")
+        page.wait_for_selector(".cb-terminal-rows", timeout=8000)
         dismiss = page.locator("button:has-text('DISMISS PREVIOUS ALERTS')")
-        assert dismiss.count() == 1, "the drawer must offer DISMISS PREVIOUS ALERTS for runs needing attention"
+        assert dismiss.count() == 1, "the Terminal must offer DISMISS PREVIOUS ALERTS for runs needing attention"
 
         # ---- the confirmation this flow opens --------------------------------
         dismiss.click()
@@ -152,60 +152,66 @@ try:
             const value = getComputedStyle(node).zIndex;
             return value === 'auto' ? null : Number(value);
           };
-          const drawer = document.getElementById('automation-activity-drawer');
-          const backdrop = document.getElementById('automation-activity-backdrop');
+          const dock = document.getElementById('cb-shell-dock');
+          const rail = document.getElementById('cb-shell-rail');
           const modal = document.getElementById('modal');
           const strip = document.getElementById('automation-global-live-strip');
           const box = modal.querySelector('.modal-box').getBoundingClientRect();
           const point = document.elementFromPoint(box.left + box.width / 2, box.top + box.height / 2);
           return {
             dialog: z(modal),
-            drawer: z(drawer),
-            backdrop: z(backdrop),
+            dock: z(dock),
+            assistant: z(rail),
             strip: z(strip),
             rail: z(document.getElementById('rail')),
             topOfDialogPoint: !!(point && modal.contains(point)),
             dialogFilter: getComputedStyle(modal.querySelector('.modal-box')).filter,
-            drawerOpen: drawer.classList.contains('open'),
+            terminalOpen: !!document.querySelector('.cb-terminal-rows'),
           };
         }""")
 
         assert layers["dialog"] is not None, "the dialog must declare its own stacking level"
-        assert layers["dialog"] > layers["drawer"], (
-            f"confirmation ({layers['dialog']}) must paint above the activity drawer ({layers['drawer']})")
-        assert layers["drawer"] > layers["backdrop"], (
-            f"the drawer ({layers['drawer']}) must paint above its own backdrop ({layers['backdrop']})")
-        assert layers["backdrop"] > layers["rail"], (
-            f"the backdrop ({layers['backdrop']}) must paint above the page ({layers['rail']})")
+        assert layers["dialog"] > layers["dock"], (
+            f"confirmation ({layers['dialog']}) must paint above the Activity Terminal ({layers['dock']})")
+        assert layers["dock"] > layers["rail"], (
+            f"the Activity Terminal ({layers['dock']}) must paint above the page ({layers['rail']})")
+        if layers["assistant"]:
+            assert layers["dock"] > layers["assistant"], (
+                f"the Activity Terminal ({layers['dock']}) must stay above the Assistant overlay "
+                f"({layers['assistant']}), which is a companion panel and not a modal")
         if layers["strip"] is not None:
             assert layers["strip"] < layers["dialog"], (
                 f"the docked activity strip ({layers['strip']}) must not paint over a dialog ({layers['dialog']})")
         assert layers["topOfDialogPoint"], "the topmost element at the confirmation's centre must be the confirmation"
         assert layers["dialogFilter"] in ("none", ""), (
             f"the active confirmation must not be blurred by a lower layer (filter: {layers['dialogFilter']})")
-        assert layers["drawerOpen"], "the drawer must remain open behind its own confirmation"
+        assert layers["terminalOpen"], "the Terminal must remain expanded behind its own confirmation"
 
         # ---- Escape closes the top of the stack, not everything in it ---------
         page.keyboard.press("Escape")
         page.wait_for_timeout(250)
         after_first = page.evaluate("""() => ({
           modalHidden: document.getElementById('modal').classList.contains('hidden'),
-          drawerOpen: document.getElementById('automation-activity-drawer').classList.contains('open'),
+          terminalOpen: !!document.querySelector('.cb-terminal-rows'),
         })""")
         assert after_first["modalHidden"], "Escape must close the confirmation on top"
-        assert after_first["drawerOpen"], "Escape must not also close the drawer that opened the confirmation"
+        assert after_first["terminalOpen"], \
+            "Escape must not also collapse the Terminal that opened the confirmation"
 
+        # AND A SECOND ESCAPE MUST STILL LEAVE IT ALONE. The drawer was modal, so the
+        # second press closed it; the Terminal is a persistent dock and belongs to the
+        # filmmaker's own collapse control, not to a keystroke aimed at a dialog.
         page.keyboard.press("Escape")
         page.wait_for_timeout(250)
-        after_second = page.evaluate(
-            "() => document.getElementById('automation-activity-drawer').classList.contains('open')")
-        assert after_second is False, "a second Escape must close the drawer"
+        after_second = page.evaluate("() => !!document.querySelector('.cb-terminal-rows')")
+        assert after_second is True, "a second Escape must not collapse the persistent Activity Terminal"
 
         overflow = page.evaluate("document.documentElement.scrollWidth-document.documentElement.clientWidth")
         assert overflow <= 2, f"the overlay audit ended with {overflow}px horizontal overflow"
         browser.close()
-    print("Founder smoke overlay stacking check passed: confirmation > drawer > backdrop > page by paint order and by "
-          "hit test, the confirmation is unblurred, and Escape closes one layer at a time. Provider calls made: 0.")
+    print("Founder smoke overlay stacking check passed: confirmation > Activity Terminal > page by paint order "
+          "and by hit test, the confirmation is unblurred, and Escape closes the dialog without collapsing the "
+          "persistent ledger. Provider calls made: 0.")
 finally:
     server.terminate()
     try: server.wait(timeout=5)

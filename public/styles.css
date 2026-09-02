@@ -30,19 +30,24 @@
 
      The rule is that the layer asking for a decision is always on top:
 
-         stamp  >  toast  >  lightbox  >  dialog  >  drawer  >  backdrop  >
-         page chrome  >  page
+         stamp  >  toast  >  lightbox  >  dialog  >  page chrome  >  page
 
      Every OVERLAY takes its number from here. A new overlay adds a token to this
      ladder rather than picking a literal, because picking a literal is exactly how
      the ladder came apart. Page chrome keeps its own literals — #cb-shell-bar 38,
-     #topbar 40, #cb-shell-dock 45, #rail 50 — because those four are ordered
-     against each other inside the layout, not against the overlays; every token
-     below sits above all of them. */
-  --z-side-drawer:60;      /* the legacy .drawer panel */
-  --z-activity-backdrop:185;
-  --z-activity-drawer:190;
-  --z-dialog:200;          /* modals and confirmations — always above the drawer */
+     #topbar 40, #cb-shell-rail overlay 44, #cb-shell-dock 45, #rail 50 — because
+     those are ordered against each other inside the layout, not against the
+     overlays; every token below sits above all of them.
+
+     THE DRAWER'S TWO RUNGS ARE GONE WITH THE DRAWER. A1 retired the Activity drawer
+     and the Activity Terminal took its work; the Terminal is page chrome at 45 and
+     needs no rung here, and nothing else ever consumed --z-activity-drawer or
+     --z-activity-backdrop. The defect the ladder was built for is unchanged and now
+     reads against the Terminal: a confirmation raised from the activity surface must
+     still paint above it. --z-side-drawer stays — despite the name it belongs to the
+     shot-detail .drawer panel, which is still mounted and still opens. */
+  --z-side-drawer:60;      /* the legacy .drawer panel — NOT the retired Activity drawer */
+  --z-dialog:200;          /* modals and confirmations — always above page chrome */
   --z-lightbox:210;        /* full-media inspection, opened from inside a dialog */
   --z-toast:220;           /* feedback about what just happened, above everything it is about */
   --z-stamp:230;           /* pointer-events:none decoration */
@@ -2306,7 +2311,6 @@ body[data-focused-workspace="1"] .coverage-slot-card.focused-slot-selected,body[
 body[data-focused-workspace="1"] .coverage-slot-card.focused-slot-selected>header{grid-area:head}body[data-focused-workspace="1"] .coverage-slot-card.focused-slot-selected>.coverage-slot-preview{grid-area:preview;min-height:300px}body[data-focused-workspace="1"] .coverage-slot-card.focused-slot-selected>label:first-of-type{grid-area:file}body[data-focused-workspace="1"] .coverage-slot-card.focused-slot-selected>label:last-of-type{grid-area:notes}
 body[data-focused-workspace="1"] .coverage-slot-card.focused-slot-selected .coverage-slot-preview img,body[data-focused-workspace="1"] .coverage-slot-card.focused-slot-selected .coverage-slot-preview video{max-height:440px;object-fit:contain}
 .entity-candidate-review-overlay{z-index:5}
-.automation-activity-backdrop{position:fixed;z-index:var(--z-activity-backdrop);inset:0;width:100vw;height:100vh;border:0;border-radius:0;background:rgba(0,0,0,.48);backdrop-filter:blur(2px);cursor:default}.automation-activity-backdrop[hidden]{display:none!important}
 @media(max-width:1180px){.reference-creation-actions{grid-template-columns:repeat(2,minmax(0,1fr))}body[data-focused-workspace="1"] .coverage-slot-card.focused-slot-selected,body[data-focused-workspace="1"] .expression-slot-card.focused-slot-selected{grid-template-columns:1fr;grid-template-areas:"head" "preview" "file" "notes"}.coverage-slot-card.focused-slot-selected>.coverage-slot-preview{min-height:220px}}
 @media(max-width:700px){.reference-creation-actions{grid-template-columns:1fr}.reference-creation-hub{padding:14px}.reference-creation-hub>header{display:grid}.focused-slot-rail button{min-width:126px!important}}
 
@@ -5225,6 +5229,20 @@ body[data-focused-workspace="1"] .guided-frame-body,
 .cb-terminal-group-rows{background:color-mix(in srgb,var(--line-soft) 45%,transparent);padding-left:12px}
 .cb-terminal-group-rows>.cb-terminal-row{border-left-color:transparent}
 .cb-terminal-group-rows>.cb-terminal-row:last-child{border-bottom:none}
+/* A SINGLE-MEMBER GROUP IS A ROW, and must be indistinguishable from one.
+   The container shape is constant so a failure signature keeps its DOM node as members
+   come and go; that is a reconciliation requirement, and the reader must never pay for
+   it. With one member the disclosure furniture is removed, the group's own stripe and
+   rule are dropped in favour of the row's, and the member list is shown unconditionally
+   — <details> hides non-summary children when closed, so it is displayed explicitly. */
+.cb-terminal-group[data-cb-group="1"]{border-left-width:0;border-bottom:none}
+.cb-terminal-group[data-cb-group="1"]>summary{display:none}
+.cb-terminal-group[data-cb-group="1"]>.cb-terminal-group-rows{background:none;padding-left:0}
+.cb-terminal-group[data-cb-group="1"]>.cb-terminal-group-rows>.cb-terminal-row{border-left-width:3px}
+.cb-terminal-group[data-cb-group="1"]>.cb-terminal-group-rows>.cb-terminal-row:last-child{border-bottom:1px solid var(--line-soft)}
+.cb-terminal-group[data-cb-group="1"].tone-working>.cb-terminal-group-rows>.cb-terminal-row{border-left-color:var(--op-working)}
+.cb-terminal-group[data-cb-group="1"].tone-waiting>.cb-terminal-group-rows>.cb-terminal-row{border-left-color:var(--op-waiting)}
+.cb-terminal-group[data-cb-group="1"].tone-attention>.cb-terminal-group-rows>.cb-terminal-row{border-left-color:var(--op-attention)}
 /* A1 zero state: one quiet line, not a large empty box. */
 .cb-terminal-empty{padding:9px 15px}
 /* A1 — the foreign-project warning the retired drawer used to carry. It sits above

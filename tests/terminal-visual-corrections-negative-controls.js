@@ -160,10 +160,11 @@ async function main() {
     ];
     const shipped = terminalHtml(await realm(distinct));
     const broken = terminalHtml(await realm(distinct, only(SURFACES,
-      `fact.technical && fact.technical.error && fact.technical.error.state === "known"\n        ? fact.technical.error.value : "",`,
-      `"",`, "NC-V3")));
+      `      signatureField(tech.error),`, `      "",`, "NC-V3")));
+    /* Every groupable failure gets a container, so "kept apart" is two groups of one and
+       "collapsed" is one group of two. Counting containers alone would say nothing. */
     await control("NC-V3 GROUP-3: a different error is a different failure", {
-      before: countOf(shipped, "data-cb-group") === 0,
+      before: countOf(shipped, 'data-cb-group="1"') === 2,
       after: countOf(broken, 'data-cb-group="2"') === 1,
     });
   }
@@ -341,6 +342,112 @@ async function main() {
     await control("NC-V14 ENTRY-6: the withdrawal point stays in the phone regime", {
       before: floorOf(css) > 0 && floorOf(css) <= 760,
       after: floorOf(broken) > 760,
+    });
+  }
+
+  /* =====================================================================
+     CONTROLS FOR THE CODEX HOLD FINDINGS.
+     ===================================================================== */
+
+  /* NC-GROUP7 — the lone failure stops being forced open, and the row the Terminal counts
+     and explains is rendered into a closed <details> where nobody can see it. */
+  {
+    const lone = [failedRun("lone-1")];
+    const shipped = terminalHtml(await realm(lone));
+    const broken = terminalHtml(await realm(lone, only(SURFACES,
+      `const open = count < 2 || GROUP_OPEN.get(entry.key) === true;`,
+      `const open = GROUP_OPEN.get(entry.key) === true;`, "NC-GROUP7")));
+    const forcedOpen = (html) => /<details class="cb-terminal-group[^>]*data-cb-group="1"[^>]*\sopen>/.test(html);
+    await control("NC-GROUP7 GROUP-7: a lone failure is rendered visible", {
+      before: forcedOpen(shipped),
+      after: !forcedOpen(broken) && /data-cb-group="1"/.test(broken),
+    });
+  }
+
+  /* NC-RH — the completed run's exact-result handoff is disconnected again: the Terminal
+     assigns a coarse workspace route instead of asking the shipped resolver. That is what
+     it did before this correction, and it looked fine — the button still went somewhere. */
+  {
+    const done = [runningRun("done-1")].map((run) => ({ ...run, status: "completed", stage: "Finished",
+      runnerId: "", leaseExpiresAt: "", heartbeatAt: "", updatedAt: "2026-08-26T10:09:00Z" }));
+    const shipped = terminalHtml(await realm(done));
+    const broken = terminalHtml(await realm(done, only(SURFACES,
+      `onclick="openRunResult('\${attr(fact.id)}')">\${fact.resultResolved ? "OPEN RESULT" : "OPEN WORKSPACE"}`,
+      `onclick="location.hash='\${attr(fact.route)}'">OPEN WORKSPACE`,
+      "NC-RH")));
+    await control("NC-RH C1: a completed run reaches its exact result through the shipped resolver", {
+      before: /OPEN RESULT/.test(shipped) && /openRunResult\(/.test(shipped),
+      after: !/OPEN RESULT/.test(broken) && /location\.hash=/.test(broken),
+    });
+  }
+
+  /* NC-GROUP — provider, model and mode leave the signature. Two failures a filmmaker
+     would have to fix in two different places collapse into one line. */
+  {
+    const jobs = [
+      { id: "j1", provider: "fal", model: "flux-pro", mode: "text-to-image", purpose: "Correct SCENE-01",
+        status: "failed", error: "Provider returned 502." },
+      { id: "j2", provider: "openai", model: "gpt-image-2", mode: "image-to-image", purpose: "Correct SCENE-01",
+        status: "failed", error: "Provider returned 502." },
+    ];
+    const runs = jobs.map((job, index) => failedRun(`sig-${index}`, {
+      steps: { s: { key: "s", kind: "generation", status: "failed", label: "Correct SCENE-01",
+        childJobId: job.id, error: "Provider returned 502.",
+        completedAt: "2026-08-26T10:05:00Z", updatedAt: "2026-08-26T10:05:00Z" } },
+    }));
+    const withJobs = async (mutateSource) => {
+      const context = await realm(runs, mutateSource);
+      vm.runInContext(`FAL_GENERATION_JOBS = ${JSON.stringify(jobs)};`, context);
+      const html = terminalHtml(context);
+      return new Set([...html.matchAll(/data-activity-key="(failure-group:[a-f0-9]+)"/g)].map((m) => m[1])).size;
+    };
+    const shipped = await withJobs();
+    const broken = await withJobs(only(SURFACES,
+      `      signatureField(tech.provider),
+      signatureField(tech.model),
+      signatureField(tech.mode),
+      signatureField(tech.purpose),`,
+      `      "",`, "NC-GROUP"));
+    await control("NC-GROUP C3: provider, model and mode keep unlike failures apart", {
+      before: shipped === 2,
+      after: broken === 1,
+    });
+  }
+
+  /* NC-CSS — the retired drawer's runtime CSS owner comes back. */
+  {
+    const broken = anchored(css, ".entity-candidate-review-overlay{z-index:5}",
+      ".entity-candidate-review-overlay{z-index:5}.automation-activity-backdrop{position:fixed;inset:0}",
+      "NC-CSS");
+    const rules = (text) => text.replace(/\/\*[\s\S]*?\*\//g, "");
+    await control("NC-CSS C4: the retired drawer leaves no runtime CSS owner", {
+      before: !rules(css).includes(".automation-activity-backdrop"),
+      after: rules(broken).includes(".automation-activity-backdrop"),
+    });
+  }
+
+  /* NC-HARNESS — the fake drawer id returns to the render harness, so a suite can once
+     again assert against a DOM owner that production does not have. */
+  {
+    const harness = fs.readFileSync(path.join(ROOT, "tests", "render-harness.js"), "utf8");
+    const broken = anchored(harness, `    "automation-activity-toggle",`,
+      `    "automation-activity-toggle",\n    "automation-activity-drawer",`, "NC-HARNESS");
+    const manufactures = (text) => /^\s*"automation-activity-drawer",\s*$/m.test(toLF(text));
+    await control("NC-HARNESS C5: the harness does not invent a retired DOM owner", {
+      before: !manufactures(harness),
+      after: manufactures(broken),
+    });
+  }
+
+  /* NC-ENROLL — a canonical A1 boundary suite is dropped from the standard runner. It is
+     still registered in package.json, so nothing looks missing; it simply stops running. */
+  {
+    const runner = fs.readFileSync(path.join(ROOT, "tests", "run-full-check.js"), "utf8");
+    const broken = anchored(runner, `  "check:terminal-visual",\n`, "", "NC-ENROLL");
+    const runs = (text) => new Set((text.match(/"check:[a-z0-9-]+"/g) || []).map((n) => n.slice(1, -1)));
+    await control("NC-ENROLL C5: the standard runner is the one authoritative list", {
+      before: runs(runner).has("check:terminal-visual"),
+      after: !runs(broken).has("check:terminal-visual"),
     });
   }
 

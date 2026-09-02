@@ -54,7 +54,7 @@ window.v670ScopeActivityToProject = (slug = v670ActiveProjectSlug()) => {
   V641_MANUAL_ACTIVITIES.clear();
   V641_ACTIVITY_FOREIGN_PROJECT = "";
   v641UpdateActivityButton();
- 
+
   return true;
 };
 /* Set when a ledger the server answers with belongs to a different project than
@@ -474,7 +474,7 @@ function v641ScheduleManualRetention(id) {
     V641_MANUAL_RETENTION_TIMERS.delete(id);
     V641_MANUAL_ACTIVITIES.delete(id);
     v641UpdateActivityButton();
-   
+
   }, V641_MANUAL_RETENTION_MS);
   if (timer && typeof timer.unref === "function") timer.unref();
   V641_MANUAL_RETENTION_TIMERS.set(id, timer);
@@ -888,12 +888,68 @@ function v670DomCanReconcile(document_) {
    the fixed, shallow markup this file emits, and nothing else. Form state (value,
    checked) is not synced because the drawer renders none - if that ever changes, this
    function has to grow with it. */
+/* THE KEYED LAYER, WHICH IS WHERE IDENTITY ACTUALLY LIVES.
+ *
+ * v670PatchElement below walks children PAIRWISE, by position. That is correct for the
+ * fixed, shallow markup inside one row — a <time> is always a <time> — and it is wrong
+ * the moment the list of rows itself changes shape. Insert a run above another and every
+ * position shifts by one: row 2's node is patched into row 3's content, so the DISMISS
+ * button the director was reaching for now dismisses a different run. Nothing throws and
+ * nothing looks wrong; the button simply belongs to somebody else.
+ *
+ * The retired drawer had this right and the repair is its algorithm, not a new one: rows
+ * are matched by data-activity-key, a matched row KEEPS ITS NODE whatever changed inside
+ * it, and it is moved into place rather than rebuilt. What was v670PatchSection — a
+ * function that knew about drawer headers and drawer sections — is generalised here into
+ * "a container whose element children are all keyed is reconciled by key", so the
+ * Activity Terminal's rows and a failure group's members are both covered by one rule and
+ * neither surface owns a reconciler of its own.
+ *
+ * Returns false when the container is not fully keyed, so the caller falls back to the
+ * positional walk. A PARTIALLY keyed container is deliberately not half-reconciled: that
+ * was the exact bug in the drawer's first version, where an unkeyed header made the keyed
+ * path unreachable and every row got rebuilt. */
+function v670KeyedChildren(node) {
+  const kids = [...(node?.children || [])];
+  return kids.length && kids.every((kid) => kid.getAttribute?.("data-activity-key")) ? kids : null;
+}
+function v670PatchKeyedChildren(live, next) {
+  const liveKids = v670KeyedChildren(live), nextKids = v670KeyedChildren(next);
+  if (!liveKids || !nextKids) return false;
+  const existing = new Map(liveKids.map((row) => [row.getAttribute("data-activity-key"), row]));
+  const keep = new Set();
+  let anchor = null;
+  for (const nextRow of nextKids) {
+    const key = nextRow.getAttribute("data-activity-key");
+    const found = existing.get(key);
+    let node = found;
+    if (found) {
+      /* The row keeps its node whatever changed inside it. This is the line that stops a
+         DISMISS button vanishing while the run's own label or error is rewritten. */
+      if (found.outerHTML !== nextRow.outerHTML) v670PatchElement(found, nextRow);
+    } else {
+      live.insertBefore(nextRow, anchor ? anchor.nextSibling : live.firstChild);
+      node = nextRow;
+    }
+    /* Reorder by MOVING the surviving node, never by rebuilding it. */
+    if (anchor ? node.previousSibling !== anchor : node !== live.firstChild) {
+      live.insertBefore(node, anchor ? anchor.nextSibling : live.firstChild);
+    }
+    anchor = node;
+    keep.add(key);
+  }
+  for (const [key, row] of existing) if (!keep.has(key)) row.remove();
+  return true;
+}
 function v670PatchElement(live, next) {
   for (const name of live.getAttributeNames()) if (!next.hasAttribute(name)) live.removeAttribute(name);
   for (const name of next.getAttributeNames()) {
     const value = next.getAttribute(name);
     if (live.getAttribute(name) !== value) live.setAttribute(name, value);
   }
+  /* Keyed first: a container of keyed rows is reconciled by identity, and only markup
+     with no keys in it falls through to the positional walk below. */
+  if (v670PatchKeyedChildren(live, next)) return;
   /* Snapshot both sides: appending a node from `next` moves it out of `next`, which
      would shift a live NodeList underneath the walk. */
   const liveKids = [...live.childNodes], nextKids = [...next.childNodes];
@@ -1026,7 +1082,7 @@ window.refreshGlobalAutomationActivity = async (force = false) => {
   finally {
     V641_ACTIVITY_REFRESHING = false;
     v641UpdateActivityButton();
-   
+
     document.querySelectorAll("[data-automation-live-run]").forEach((node) => {
       const run = v641RunById(node.dataset.automationLiveRun);
       if (run) node.outerHTML = v641LiveActivityMarkup(run);
@@ -1056,7 +1112,7 @@ window.v641NotifyAutomationActivity = (run) => {
     v670RepaintCompactRunStatuses(run.id);
   }
   v641UpdateActivityButton();
- 
+
 };
 function v641TickElapsedLabels() {
   document.querySelectorAll("[data-live-start]").forEach((node) => { node.textContent = v641ElapsedLabel(node.dataset.liveStart, node.dataset.liveEnd || ""); });

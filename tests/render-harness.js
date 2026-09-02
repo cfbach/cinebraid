@@ -480,7 +480,11 @@ function createDocument() {
     "global-search",
     "production-nav-count",
     "automation-activity-toggle",
-    "automation-activity-drawer",
+    /* NO "automation-activity-drawer". A1 retired that surface and public/index.html no
+       longer declares it, so manufacturing one here would make the harness a realm where
+       a retired owner still exists — the one thing a fixture must never be. A suite that
+       needs the operational surface asks for the real one with { creatorSurfaces: true }
+       and reads it through tests/terminal-view.js. */
     /* The visually-hidden activity live region. It is shipped chrome in
        public/index.html, so the harness models it — without it the announcer
        silently skips its DOM write here and a suite would report "no announcement"
