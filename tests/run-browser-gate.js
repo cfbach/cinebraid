@@ -53,6 +53,9 @@ const SUITES = [
   "check:shot-readiness-browser",
   "check:founder-p0-browser",
   "check:quiet-shell-browser",
+  /* A2. Beside the A1 shell suite: the two measure the same chrome, one for what
+     it owns and one for what it says it is. */
+  "check:shell-identity-browser",
   "check:project-entry-browser",
   "check:reference-reframe-browser",
   "check:simple-advanced-browser",

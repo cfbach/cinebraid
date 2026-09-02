@@ -253,7 +253,25 @@ const manifest = {
 const manifestName = `${identity.archiveBase}-manifest.json`;
 fs.writeFileSync(path.join(OUT, manifestName), `${JSON.stringify(manifest, null, 2)}\n`);
 
-const sums = [...assets, describe(path.join(OUT, manifestName))]
+/* THE BUILD NOTE, FOR THE INSTALLED COPY TO READ.
+
+   build-identity.js answers "which build am I?" only from what it is supplied,
+   because an installed CineBraid has no .git and its machine need not have Git
+   at all. This is the supplier. It is written NEXT TO the archives rather than
+   inside them on purpose: both archives are `git archive` output over one
+   commit, which is the whole reason their bytes are reproducible and their
+   contents provably the clean tracked tree. Injecting a file would forfeit both.
+
+   To use it, copy it into the unpacked application root — or set
+   CINEBRAID_BUILD_ID, which takes precedence over it. Do neither and the
+   application says "Development build", which is a true statement about a copy
+   nobody told which build it is. */
+fs.writeFileSync(
+  path.join(OUT, "build-info.json"),
+  `${JSON.stringify({ product: "CineBraid", version: identity.version, commit, builtAt: new Date().toISOString() }, null, 2)}\n`,
+);
+
+const sums = [...assets, describe(path.join(OUT, manifestName)), describe(path.join(OUT, "build-info.json"))]
   .map((a) => `${a.sha256}  ${a.name}`)
   .join("\n");
 fs.writeFileSync(path.join(OUT, "SHA256SUMS.txt"), `${sums}\n`);
@@ -261,5 +279,6 @@ fs.writeFileSync(path.join(OUT, "SHA256SUMS.txt"), `${sums}\n`);
 console.log(`Built ${identity.displayName} from ${shortCommit} (${relative.length} files)`);
 for (const a of assets) console.log(`  ${a.name}  ${a.bytes} bytes  ${a.sha256}`);
 console.log(`  ${manifestName}`);
+console.log(`  build-info.json  (copy into the unpacked application root so it can name its own build)`);
 console.log(`  SHA256SUMS.txt`);
 console.log(`Output: ${OUT}`);

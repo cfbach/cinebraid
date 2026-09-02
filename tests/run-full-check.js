@@ -136,6 +136,11 @@ const nodeSuites = [
   "check:braidy-negative",
   "check:quiet-shell",
   "check:shell-ownership",
+  /* A2. Named beside the A1 ownership suite because they guard the same shell
+     from opposite directions: that one holds Activity and the Assistant where A1
+     put them, this one holds project, application and build identity apart. */
+  "check:shell-identity",
+  "check:shell-identity-negative",
   "check:creator-surface-optin",
   /* The A1 boundary suites. They were registered in package.json and reachable by name,
      which is not the same as being run: a suite nobody runs is a suite that goes red
@@ -264,6 +269,7 @@ const browserSuites = [
   "check:ui-state", "check:c2b-browser", "check:brand-logo-browser", "check:lan-passcode-browser",
   "check:focused-browser", "check:alpha-loop-browser", "check:entity-truth-browser",
   "check:shot-readiness-browser", "check:founder-p0-browser", "check:quiet-shell-browser",
+  "check:shell-identity-browser",
   "check:project-entry-browser", "check:reference-reframe-browser", "check:simple-advanced-browser",
   "check:shot-intent-browser", "check:authority-browser", "check:save-truth-browser",
   "check:bible-canon-browser", "check:returned-review-browser", "check:launch-language-browser",

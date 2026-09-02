@@ -25,6 +25,11 @@ const {
 const PromptEngine = require("./prompt-engine");
 const { annotateProfileLibraryExecution } = require("./generation-options");
 const { httpStatusForError } = require("./http-errors");
+/* WHICH APPLICATION, AND WHICH BUILD OF IT. Two questions, two authorities, and
+   deliberately neither of them the project record — see the /api/app-identity
+   route below for why the shell has to be able to tell them apart. */
+const { releaseIdentity } = require("./release-identity");
+const { buildIdentity } = require("./build-identity");
 const { resolveShotEntities, shotEntityTokenMatches, unresolvedShotDependencies, entityVisualDescription, resolveShotDuration, lossyShotCodeTokens } = require("./public/shared-entities");
 const ContinuityBinding = require("./public/shared-continuity-binding");
 const { referenceAspectLabel, aspectRatioMentions } = require("./public/shared-aspect");
@@ -2452,6 +2457,47 @@ app.get("/api/docs/:name", (req, res) => {
   if (!fs.existsSync(f)) return res.status(404).send("Not found");
   res.type("text/plain").send(fs.readFileSync(f, "utf8"));
 });
+
+/* ---- application identity -------------------------------------------------
+
+   THE ONE QUESTION THE SHELL COULD NOT ANSWER. Until now nothing told a running
+   browser which CineBraid it was, so the only version-shaped string in the rail
+   was the SAMPLE PROJECT'S `meta.version` — "6.6.4-studio.2" — sitting directly
+   under the project title in the place a person reads an application version.
+   It is not one. It is a project record field that nothing increments and
+   nothing checks (see projectRevisionFor), and it was three releases stale.
+
+   So this route says what the browser could not work out, and it says the two
+   halves separately because they are two different facts:
+
+     app    WHICH VERSION. releaseIdentity() over package.json, which is the
+            only hand-written version in the product and already enforced as
+            such by tests/version-consistency.js. This route derives; it does
+            not become a second authority.
+     build  WHICH BUILD of that version. Supplied at package time or absent —
+            see build-identity.js. Never discovered, never a Git subprocess.
+
+   PROJECT identity is deliberately not here. It belongs to the project record
+   and arrives with it on /api/project; mixing them into one payload is how the
+   two became confusable in the first place.
+
+   Resolved once at startup rather than per request: neither answer can change
+   while this process is running, and a route that re-read them would only be
+   inventing a way for them to disagree with themselves. */
+const APP_IDENTITY = (() => {
+  const app = releaseIdentity();
+  const build = buildIdentity();
+  return {
+    app: {
+      version: app.version,
+      displayName: app.displayName,
+      channel: app.channel,
+      isPrerelease: app.isPrerelease,
+    },
+    build,
+  };
+})();
+app.get("/api/app-identity", (req, res) => res.json(APP_IDENTITY));
 
 /* ---- config (credentials stay server-side; masked on read) ----
    Which fields are credentials is declared once, in config.js's CONFIG_SECRETS.

@@ -6,6 +6,8 @@ const { terminalHtml } = require("./terminal-view");
 const { readConfig } = require("../config");
 const PromptEngine = require("../prompt-engine");
 const { annotateProfileLibraryExecution } = require("../generation-options");
+const { releaseIdentity } = require("../release-identity");
+const { buildIdentity } = require("../build-identity");
 
 const ROOT = path.join(__dirname, "..");
 const PUBLIC = path.join(ROOT, "public");
@@ -136,6 +138,10 @@ class FakeElement {
     this.value = "";
     this.checked = false;
     this.disabled = false;
+    /* A browser element is visible unless something hides it. Modelled explicitly
+       because A2 toggles `hidden` on the project menu, and an element whose
+       `hidden` starts undefined reports neither open nor closed. */
+    this.hidden = false;
     this.dataset = {};
     this.style = {};
     this.classList = new FakeClassList();
@@ -491,8 +497,19 @@ function createDocument() {
        for a build that announces correctly. */
     "activity-live-region",
     "project-switcher-error",
+    /* A2. The project menu and the application-version line are shipped chrome in
+       public/index.html, so the harness models them: without them a suite reading
+       the shell's identity would be reading elements the harness invented on
+       demand, which is indistinguishable from a build that stopped declaring
+       them. */
+    "project-menu",
+    "app-identity",
   ];
   const map = new Map(ids.map((id) => [id, new FakeElement(id)]));
+  /* Declared hidden in public/index.html. The harness models the SHIPPED initial
+     state, so a suite that asserts the menu is closed on load is reading the
+     product's answer rather than a default this fixture happened to pick. */
+  map.get("project-menu").hidden = true;
   const navViews = ["production", "shots", "library", "reports", "settings"];
   const nav = navViews.map((view) => {
     const element = new FakeElement();
@@ -540,6 +557,16 @@ function createDocument() {
     addEventListener(type, handler) {
       if (!documentListeners.has(type)) documentListeners.set(type, []);
       documentListeners.get(type).push(handler);
+    },
+    /* Removal is modelled for the same reason registration is: a page that takes
+       a document-wide listener OFF is making a claim, and a harness where nothing
+       is ever removed cannot tell a tidy teardown from a leak. Matched on the
+       handler identity, exactly as a browser does. */
+    removeEventListener(type, handler) {
+      const handlers = documentListeners.get(type);
+      if (!handlers) return;
+      const at = handlers.indexOf(handler);
+      if (at >= 0) handlers.splice(at, 1);
     },
   };
   return { document, map, documentListeners };
@@ -658,6 +685,18 @@ async function render(hash, project, options = {}) {
          dispatchability the running server serves rather than a bare catalogue. */
       return response(annotateProfileLibraryExecution(PromptEngine.profileLibrary()));
     if (url === "/api/config") return response(config);
+    /* A2. Served by the harness because public/app.js asks for it at load, and a
+       stub that answered {} would leave every rendered shell reporting that it
+       could not identify its own build. The values are the real ones: the same
+       release identity the server derives from package.json, and a development
+       build, which is what a checkout honestly is. */
+    if (url === "/api/app-identity") {
+      const app = releaseIdentity();
+      return response({
+        app: { version: app.version, displayName: app.displayName, channel: app.channel, isPrerelease: app.isPrerelease },
+        build: buildIdentity({ env: {}, root: path.join(ROOT, "tests", "no-build-info") }),
+      });
+    }
     if (url === "/api/accounts") return response(accounts);
     if (url === "/api/agents/status") return response(agentStatus);
     if (url === "/api/system/health") return response(health);
@@ -829,7 +868,11 @@ async function render(hash, project, options = {}) {
     throw new Error(`${hash}: ${document.body.dataset.renderError}`);
   }
 
-  return { html: map.get("main").innerHTML, context, document, map, gesture };
+  /* `documentListeners` is handed out so a suite can DELIVER an event to what the
+     page really registered, rather than calling the handler it hopes is wired.
+     Page script inside the vm still cannot enumerate or fire them: the map lives
+     in this Node closure and only ever leaves it to the suite. */
+  return { html: map.get("main").innerHTML, context, document, map, gesture, documentListeners };
 }
 
 async function main() {

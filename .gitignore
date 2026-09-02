@@ -166,6 +166,14 @@ dist
 /projects/cinebraid-sample/test-feedback.json
 /projects/cinebraid-sample/embeddings.json
 
+# The build note an installed copy reads to name its own build. It is WRITTEN BY
+# PACKAGING (scripts/build-release.js emits one next to the archives) and dropped
+# into an installed application root; it is never committed, because a commit
+# hash in a tracked file names its own parent and is wrong from the moment it
+# lands. Absent, build-identity.js says "Development build", which is what a
+# checkout honestly is.
+/build-info.json
+
 # Agent and editor local state
 /.claude/settings.local.json
 /.claude/worktrees/

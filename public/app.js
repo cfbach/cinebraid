@@ -111,13 +111,7 @@ function manualFirstWorkflow() {
 window.setProjectTitle = (value) => {
   if (!P?.meta) return;
   P.meta.title = String(value ?? "");
-  const heading = document.getElementById("project-title");
-  if (heading) {
-    heading.textContent = P.meta.title;
-    heading.setAttribute("aria-label", `Open the project switcher — ${P.meta.title} is open`);
-  }
-  const topbar = document.getElementById("topbar-project");
-  if (topbar) topbar.textContent = P.meta.title;
+  applyProjectIdentity();
   dirty();
 };
 window.setProjectWorkflowEmphasis = (value) => {
@@ -1311,9 +1305,14 @@ async function showFirstRunWorkspace(message = "") {
   clearTimeout(saveTimer);
   saveTimer = null;
   const projectTitle = $("#project-title"), projectFormat = $("#project-format"), topbarProject = $("#topbar-project");
-  if (projectTitle) projectTitle.textContent = "CineBraid";
+  if (projectTitle) {
+    projectTitle.textContent = "Projects";
+    projectTitle.setAttribute("aria-label", "Open the project menu");
+  }
   if (projectFormat) projectFormat.textContent = "No project open";
   if (topbarProject) topbarProject.textContent = "CineBraid";
+  /* The menu describes the open project. There is not one. */
+  closeProjectMenu({ returnFocus: false });
   setSaveState("loading", "No project open");
   const existing = (projectData.projects || []).map((project) => `<button class="ghost-btn" onclick="switchProject('${attr(project.slug)}')">Open ${esc(project.title || project.slug)}</button>`).join("");
   $("#main").innerHTML = `<section class="first-run-state" role="status"><div class="first-run-mark">CB</div><div><span>WELCOME TO CINEBRAID</span><h1>Start with a project—or open the sample.</h1><p>CineBraid keeps approved references, continuity, shots, existing media and final deliveries together. AI and in-app generation are optional.</p>${message ? `<small>${esc(message)}</small>` : ""}<div class="first-run-actions"><button class="assemble-btn" onclick="newProject()">Create a project</button>${existing}</div><ol><li>Upload or map existing references.</li><li>Approve the production authorities.</li><li>Attach existing stills, video and audio to shots.</li><li>Mark each approved shot final.</li></ol></div></section>`;
@@ -1337,7 +1336,7 @@ function markProjectLoadFailure(failure) {
     topbarProject = $("#topbar-project");
   if (projectTitle) {
     projectTitle.textContent = "Projects";
-    projectTitle.setAttribute("aria-label", "Open the project switcher");
+    projectTitle.setAttribute("aria-label", "Open the project menu");
   }
   if (projectFormat)
     projectFormat.textContent = title
@@ -2210,16 +2209,7 @@ function decorateProjectCommit(prepared) {
   applyTheme();
   applyProductionFormat();
   watchIntrinsicAspect();
-  const heading = $("#project-title");
-  if (heading) {
-    heading.textContent = P.meta.title;
-    heading.setAttribute("aria-label", `Open the project switcher — ${P.meta.title} is open`);
-  }
-  const format = $("#project-format");
-  if (format)
-    format.textContent = (P.meta.format || "") + (P.meta.version ? " · " + P.meta.version : "");
-  const topbar = $("#topbar-project");
-  if (topbar) topbar.textContent = P.meta.title;
+  applyProjectIdentity();
   if (!location.hash) location.hash = "#/production";
   route();
   const warnings = (P.meta?.dataIntegrityWarnings || []).length;
@@ -2789,7 +2779,304 @@ async function openProjectSwitcher() {
       PROJECT_SWITCH_ERROR.slug,
     );
 }
-$("#project-title").onclick = openProjectSwitcher;
+/* ===========================================================================
+   A2 — SHELL IDENTITY. WHICH PROJECT AM I IN, AND WHICH CINEBRAID IS THIS?
+
+   WHAT WAS WRONG. The rail printed the project title and, directly beneath it,
+   `P.meta.format + " · " + P.meta.version`. On the shipped sample that second
+   value is "6.6.4-studio.2", and `.project-format` is uppercased, so what a
+   filmmaker read under the title of their film was:
+
+       THREE-SHOT SAMPLE · 6.6.4-STUDIO.2
+
+   Every instinct says that is the application version. It is not. It is a
+   PROJECT RECORD field — server.js's revision comment already says so plainly:
+   a product-version string that nothing increments and nothing checks. It was
+   three releases stale, it sat in the one place on screen where an application
+   version belongs, and the application's actual version appeared nowhere in the
+   running shell at all. The only truthful version-shaped string in the product
+   was in the browser tab title.
+
+   WHAT THIS DOES ABOUT IT. It separates the two questions and gives each one a
+   place proportional to how often a filmmaker needs it:
+
+     PROJECT   the title, big, at the top of the rail, with format beneath it.
+               Nothing schema-shaped, nothing release-shaped.
+     APP       "CineBraid <release>" — quiet, in the rail foot, from the
+               canonical release identity and nowhere else.
+     BUILD     "Development build" or "Build <id>" — one step in, in About,
+               because which build you are running is a support question rather
+               than a working one.
+
+   NOTHING HERE DECIDES A VERSION. The release version is package.json's, read
+   through release-identity.js by the server; the build id is supplied at
+   package time or absent; the project fields are the project's. This file
+   displays those three and invents none of them.
+   =========================================================================== */
+
+/* THE SHELL'S PROJECT LINES, WRITTEN IN ONE PLACE.
+
+   They used to be written at four call sites with four slightly different
+   opinions, which is how one of them kept a version string the others never
+   had. One writer means one answer. */
+function applyProjectIdentity() {
+  const title = P?.meta?.title || "";
+  const heading = document.getElementById("project-title");
+  if (heading) {
+    heading.textContent = title || "Projects";
+    heading.setAttribute(
+      "aria-label",
+      title ? `Open the project menu — ${title} is open` : "Open the project menu",
+    );
+  }
+  /* FORMAT ONLY. What the project is being made as is a filmmaker's fact and
+     belongs under the title. `P.meta.version` is deliberately absent: see the
+     block comment above, and tests/shell-identity.js, which fails if it comes
+     back. It remains readable in About under Technical details, where a record
+     field is understood as a record field. */
+  const format = document.getElementById("project-format");
+  if (format) format.textContent = P?.meta?.format || "";
+  const topbar = document.getElementById("topbar-project");
+  if (topbar) topbar.textContent = title || "CineBraid";
+  if (PROJECT_MENU_OPEN) renderProjectMenu();
+}
+
+/* ---------------------------------------------------------------------------
+   APPLICATION IDENTITY.
+
+   Asked for once, because it cannot change while this page is loaded, and never
+   assumed: until the answer arrives the foot says "CineBraid" and About says the
+   identity is unavailable. A window that cannot reach its own server is allowed
+   to say so; it is not allowed to make a version up. */
+let APP_IDENTITY = null;
+let APP_IDENTITY_STATE = "pending"; /* pending | ready | unavailable */
+
+function appReleaseLabel() {
+  const version = APP_IDENTITY?.app?.version || "";
+  return version ? `CineBraid ${version}` : "CineBraid";
+}
+function appBuildLabel() {
+  /* PENDING IS NOT UNAVAILABLE. The request is answered in a millisecond by a
+     server on this machine, so nobody will see this — but "unavailable" is a
+     claim about a request that has FINISHED, and saying it about one still in
+     flight is the same species of small untruth this whole slice is removing. */
+  if (APP_IDENTITY_STATE === "pending") return "";
+  if (APP_IDENTITY_STATE !== "ready") return "Build identity unavailable";
+  return APP_IDENTITY?.build?.label || "Development build";
+}
+function renderAppIdentity() {
+  const line = document.getElementById("app-identity");
+  if (line) line.textContent = appReleaseLabel();
+  if (PROJECT_MENU_OPEN) renderProjectMenu();
+}
+async function loadAppIdentity() {
+  try {
+    const response = await fetch("/api/app-identity", { cache: "no-store" });
+    const data = response.ok ? await response.json() : null;
+    /* A shape check rather than a truthiness check: an empty object from a
+       stubbed or older server has to read as "unavailable", not as a CineBraid
+       with no version. */
+    if (data && data.app && typeof data.app.version === "string" && data.app.version) {
+      APP_IDENTITY = data;
+      APP_IDENTITY_STATE = "ready";
+    } else {
+      APP_IDENTITY = null;
+      APP_IDENTITY_STATE = "unavailable";
+    }
+  } catch {
+    APP_IDENTITY = null;
+    APP_IDENTITY_STATE = "unavailable";
+  }
+  renderAppIdentity();
+}
+
+/* ---------------------------------------------------------------------------
+   THE PROJECT MENU.
+
+   The title was already a button; it opened the full project-management dialog
+   directly. That dialog is the right surface for archiving, deleting and
+   restoring, and it stays exactly as it is — this menu neither replaces it nor
+   reimplements any of it. What was missing was somewhere smaller to stand: a
+   filmmaker who wants to check which project is open, jump to its settings, or
+   find out which CineBraid this is should not have to open a window listing
+   every project they have ever deleted.
+
+   EVERY ENTRY IS AN ACTION THE PRODUCT ALREADY HAS. Nothing here is a new
+   project capability, and nothing here is a second Settings. */
+let PROJECT_MENU_OPEN = false;
+let PROJECT_MENU_DISMISS = null;
+
+function projectMenuActions() {
+  const open = Boolean(P?.meta);
+  return [
+    { label: "Project settings", detail: "Title, format, aspect ratio and world", run: "openProjectSettingsFromMenu()", enabled: open },
+    { label: "Switch project", detail: "Open, archive or restore a project", run: "openProjectSwitcherFromMenu()", enabled: true },
+    { label: "New project", detail: "Start another project alongside this one", run: "newProjectFromMenu()", enabled: true },
+    { label: "About CineBraid", detail: "Version and build details", run: "openAboutCineBraid()", enabled: true },
+  ];
+}
+
+function renderProjectMenu() {
+  const menu = document.getElementById("project-menu");
+  if (!menu) return;
+  const title = P?.meta?.title || "";
+  const format = P?.meta?.format || "";
+  const head = title
+    ? `<div class="project-menu-head cb-section"><span class="cb-section-kicker">CURRENT PROJECT</span><b class="cb-section-title">${esc(title)}</b>${format ? `<span class="cb-help">${esc(format)}</span>` : ""}</div>`
+    : `<div class="project-menu-head cb-empty"><b>No project open</b><span class="cb-help">Open one from Switch project, or start a new one.</span></div>`;
+  const items = projectMenuActions()
+    .map((action) => `<button type="button" class="cb-action" data-emphasis="quiet" data-project-menu-item="1"${action.enabled ? "" : " disabled"} onclick="${attr(action.run)}"><b>${esc(action.label)}</b><small>${esc(action.detail)}</small></button>`)
+    .join("");
+  /* The application's own identity, at the bottom, in the small type it earns.
+     It is a different subject from everything above it, which is why it sits
+     under a rule rather than in the action list. */
+  const build = appBuildLabel();
+  const identity = `<div class="project-menu-foot cb-meta"><span>${esc(appReleaseLabel())}</span>${build ? `<span>${esc(build)}</span>` : ""}</div>`;
+  menu.innerHTML = `${head}<div class="project-menu-actions">${items}</div>${identity}`;
+}
+
+function projectMenuItems() {
+  const menu = document.getElementById("project-menu");
+  return [...(menu?.querySelectorAll?.("[data-project-menu-item]:not([disabled])") || [])];
+}
+
+function openProjectMenu({ focusFirst = true } = {}) {
+  const menu = document.getElementById("project-menu");
+  const button = document.getElementById("project-title");
+  if (!menu || !button) return;
+  renderProjectMenu();
+  menu.hidden = false;
+  button.setAttribute("aria-expanded", "true");
+  PROJECT_MENU_OPEN = true;
+  /* Dismissal is registered on the document rather than on the menu, because
+     the ways a menu should close are mostly things that happen somewhere else:
+     a click on the workspace, Escape from anywhere, a Tab that leaves it. */
+  if (!PROJECT_MENU_DISMISS) {
+    PROJECT_MENU_DISMISS = {
+      click: (event) => {
+        if (!PROJECT_MENU_OPEN) return;
+        const inside = event.target?.closest?.(".project-owner");
+        if (!inside) closeProjectMenu({ returnFocus: false });
+      },
+      keydown: (event) => {
+        if (!PROJECT_MENU_OPEN) return;
+        if (event.key === "Escape") {
+          /* Stopped here so the shared handler in public/review.js does not read
+             the same Escape as "close the dialog"; there is no dialog open, and
+             a menu that dismissed the modal behind it would be a surprise. */
+          event.stopPropagation();
+          closeProjectMenu();
+          return;
+        }
+        /* Tab is allowed to do what Tab does. The popover is not modal, so it
+           closes when focus has actually LEFT it rather than on the first press:
+           read after the default has moved focus, which is the only moment the
+           question "is focus still in here?" has an answer. */
+        if (event.key === "Tab") {
+          setTimeout(() => {
+            if (!PROJECT_MENU_OPEN) return;
+            const owner = document.getElementById("project-menu")?.closest?.(".project-owner");
+            if (!owner?.contains?.(document.activeElement)) closeProjectMenu({ returnFocus: false });
+          }, 0);
+          return;
+        }
+        if (!["ArrowDown", "ArrowUp", "Home", "End"].includes(event.key)) return;
+        const items = projectMenuItems();
+        if (!items.length) return;
+        event.preventDefault();
+        const at = items.indexOf(document.activeElement);
+        const next =
+          event.key === "Home" ? 0
+          : event.key === "End" ? items.length - 1
+          : event.key === "ArrowDown" ? (at + 1 + items.length) % items.length
+          : (at - 1 + items.length) % items.length;
+        items[next]?.focus?.();
+      },
+    };
+    document.addEventListener("click", PROJECT_MENU_DISMISS.click);
+    document.addEventListener("keydown", PROJECT_MENU_DISMISS.keydown, true);
+  }
+  if (focusFirst) setTimeout(() => projectMenuItems()[0]?.focus?.(), 0);
+}
+
+function closeProjectMenu({ returnFocus = true } = {}) {
+  const menu = document.getElementById("project-menu");
+  const button = document.getElementById("project-title");
+  PROJECT_MENU_OPEN = false;
+  if (menu) menu.hidden = true;
+  if (button) button.setAttribute("aria-expanded", "false");
+  if (PROJECT_MENU_DISMISS) {
+    document.removeEventListener?.("click", PROJECT_MENU_DISMISS.click);
+    document.removeEventListener?.("keydown", PROJECT_MENU_DISMISS.keydown, true);
+    PROJECT_MENU_DISMISS = null;
+  }
+  if (returnFocus) button?.focus?.();
+}
+
+window.toggleProjectMenu = (options = {}) =>
+  PROJECT_MENU_OPEN ? closeProjectMenu() : openProjectMenu(options);
+
+/* The menu is a way IN to surfaces that already exist, so it gets out of the way
+   before they open — otherwise a dialog would appear with a menu standing behind
+   it. Focus goes back to the title button on the way out, and NOT because the
+   menu is fussy about focus: openModal() records document.activeElement as the
+   element to restore when the dialog closes, so leaving focus on a menu item
+   that is now hidden is how Escape from About would drop the caller on <body>. */
+window.openProjectSettingsFromMenu = () => {
+  closeProjectMenu();
+  /* Assigned, not routed. The navigation buttons in the rail do exactly this and
+     let the hashchange listener render; a route() here would paint twice on every
+     use, and do nothing extra on the one case where the hash is already #/settings
+     — which is a person asking for the page they are already looking at. */
+  location.hash = "#/settings";
+};
+window.openProjectSwitcherFromMenu = () => {
+  closeProjectMenu();
+  openProjectSwitcher();
+};
+window.newProjectFromMenu = () => {
+  closeProjectMenu();
+  newProject();
+};
+
+/* ABOUT — the one place the machinery is allowed to be visible.
+
+   Two lines a person might quote in a bug report, and everything else folded
+   away. The fold is where project record metadata lives: `meta.version`, the
+   schema markers and the folder name are all diagnostic truth, and none of them
+   is an application version, so this is where they can be read without being
+   mistaken for one. */
+window.openAboutCineBraid = () => {
+  closeProjectMenu();
+  const build = APP_IDENTITY?.build || null;
+  const ready = APP_IDENTITY_STATE === "ready";
+  const rows = [
+    ["Release channel", ready ? APP_IDENTITY.app.channel || "stable" : "unavailable"],
+    ["Build source", ready ? build?.source || "development" : "unavailable"],
+    ["Build identifier", ready ? (build?.supplied ? build.id : "not supplied — development build") : "unavailable"],
+    ["Project record version", P?.meta?.version || "—"],
+    ["Project schema", `${P?.meta?.hubVersion || "—"} · ${P?.meta?.schemaVersion || "—"}`],
+    ["Project folder", ACTIVE_PROJECT_SLUG || "—"],
+  ];
+  openModal(`<div class="about-cinebraid">
+    <header class="cb-section"><span class="cb-section-kicker">ABOUT</span><h3 class="cb-section-title">CineBraid</h3><p class="cb-help">Which application you are running, and which build of it. A project's own version and schema belong to the project record and are listed separately below.</p></header>
+    <div class="cb-meta about-identity"><span><b>Version</b>${esc(ready ? APP_IDENTITY.app.version : "unavailable")}</span><span><b>Build</b>${esc(appBuildLabel() || "checking…")}</span></div>
+    ${ready ? "" : `<p class="cb-help">CineBraid could not read its own identity from this server. Reload the page; if it stays unavailable, this window is not talking to the server it was served from.</p>`}
+    <details class="cb-disclosure"><summary>Technical details</summary><div class="cb-meta cb-meta-stack">${rows.map(([label, value]) => `<span><b>${esc(label)}</b>${esc(value)}</span>`).join("")}</div></details>
+    <div class="modal-actions"><button class="cancel" onclick="closeModal()">Close</button></div>
+  </div>`);
+};
+
+/* The title is the project menu's button. The full project-management dialog is
+   still reachable, from inside the menu, unchanged. */
+$("#project-title").onclick = () => toggleProjectMenu();
+$("#project-title").onkeydown = (event) => {
+  if (event.key !== "ArrowDown" && event.key !== "ArrowUp") return;
+  event.preventDefault();
+  if (!PROJECT_MENU_OPEN) openProjectMenu();
+};
+/* Asked for once, at load, because it cannot change while this page is open. */
+loadAppIdentity();
 window.requestArchiveProject = (slug, title) => {
   confirmModal(`Archive “${title}”? It will disappear from the active project list but can be restored from this same window.`, async () => {
     try {

@@ -854,6 +854,11 @@ function commitIsAwaitFreeSection() {
     /* presentation */
     "applyTheme", "applyProductionFormat", "watchIntrinsicAspect", "$", "toast",
     "setAttribute", "route",
+    /* A2. The shell's project title, format and topbar lines, which the
+       decoration used to write inline through $ and setAttribute. It reads
+       P.meta and writes text; it is on this list rather than exempt from it
+       because that is the point of the list. */
+    "applyProjectIdentity",
     /* hand-offs to independent product lifecycles, entered through their own
        shipped entry points and carrying no authority out of this transaction */
     "refreshAgentStatus", "resumeFalGenerationPolling",

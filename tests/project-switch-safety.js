@@ -247,10 +247,15 @@ async function interfaceChecks() {
   assert.strictEqual(switcher.textContent, "Projects", "the project switcher must stay labelled during a failure");
   assert.notStrictEqual(switcher.textContent, "—", "the project switcher must not collapse to a bare dash");
   assert.strictEqual(typeof switcher.onclick, "function", "the project switcher must stay clickable during a failure");
+  /* A2 renamed what this button OWNS, not what it guarantees. It opens the project
+     menu now, and "Switch project" is one entry inside that menu, so the name it
+     carries during a failure is the menu's. The guarantee is unchanged and is
+     asserted twice over: the button keeps an accessible name, and the failure
+     screen above still offers openProjectSwitcher() directly. */
   assert.match(
     String(switcher["aria-label"] || ""),
-    /project switcher/i,
-    "the project switcher must keep an accessible name during a failure",
+    /project menu/i,
+    "the project owner must keep an accessible name during a failure",
   );
 
   /* A refused switch keeps the dialog open, explains the refusal in place, and leaves the

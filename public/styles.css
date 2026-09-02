@@ -5851,3 +5851,133 @@ select:hover{border-color:var(--line-2)}
 .entity-approval-single-state-readout{padding:9px 11px;border:1px solid var(--line);border-radius:var(--r-sm);background:var(--surface-2)}
 .entity-approval-single-state-readout b{display:block;font-size:12px}
 .entity-approval-single-state-readout small{display:block;margin-top:2px;color:var(--muted);font-size:10px;line-height:1.4}
+
+/* ===========================================================================
+   A2 — SHELL IDENTITY AND THE MINIMAL PRESENTATION PRIMITIVES.
+
+   TWO THINGS LIVE HERE AND THEY ARE DELIBERATELY DIFFERENT IN KIND.
+
+   The first half is a SMALL VOCABULARY: six treatments that the shell, Settings,
+   the Project Builder and References have each been re-inventing locally — a
+   section heading, a line of help, an action's emphasis, a fold, an empty state,
+   a compact run of metadata. They are named `cb-` and they are built out of the
+   tokens this sheet already declares, so they inherit every surface and accent
+   theme for free and add no colours of their own.
+
+   THIS IS NOT A DESIGN SYSTEM AND MUST NOT BECOME ONE HERE. Nothing already
+   shipped is migrated onto these classes by this slice, and no historic screen
+   is repainted. Five of the six are exercised by the one surface this slice
+   actually builds — the project menu and About — rather than declared and left
+   untried; the sixth is noted below with what it is waiting for.
+
+   The second half is the shell identity itself: the project owner in the rail
+   head, its menu, and the quiet application line in the rail foot.
+   =========================================================================== */
+
+/* --- 1. SECTION / TITLE HIERARCHY ---------------------------------------
+   A kicker names the KIND of thing, the title names THIS thing. The kicker is
+   the smaller and quieter of the two on purpose: it is a label, not a heading,
+   and screens that let it compete end up with two headings and no hierarchy. */
+.cb-section{display:grid;gap:3px;min-width:0}
+.cb-section-kicker{font:800 8px/1.3 var(--mono);letter-spacing:.14em;text-transform:uppercase;color:var(--acc)}
+.cb-section-title{margin:0;font:700 15px/1.2 var(--display);letter-spacing:-.01em;color:var(--ink);overflow-wrap:anywhere}
+
+/* --- 2. SUPPORTING / HELP TEXT ------------------------------------------
+   One class, one size, one colour. The existing `.hint` is the same idea inside
+   Settings panels and is left exactly as it is; this is the shell-side one, so
+   that a surface outside Settings does not have to borrow a Settings class to
+   say a sentence quietly. */
+.cb-help{display:block;font-size:11px;line-height:1.5;color:var(--muted);overflow-wrap:anywhere}
+
+/* --- 3. ACTION EMPHASIS -------------------------------------------------
+   Three levels, chosen by `data-emphasis` rather than by three class names, so a
+   surface can change how loudly an action speaks without changing which action
+   it is. Every level keeps the same box, so a row of them lines up.
+
+   WHAT THIS SLICE ACTUALLY USES IS `quiet`, and the note above is honest about
+   that. The other two are declared because the sheet ALREADY expresses this same
+   three-way choice, three times, under names that say nothing about emphasis:
+   `.add-btn` is the primary, `.approve-btn` the secondary, `.ghost-btn` the
+   quiet. Those keep every call site they have — nothing is migrated here — but
+   an area that wants a row of actions should not have to learn which of three
+   unrelated class names means "louder". */
+.cb-action{display:flex;align-items:center;gap:10px;min-height:34px;padding:8px 11px;border:1px solid transparent;border-radius:var(--r-sm);color:var(--ink);font-size:12.5px;text-align:left;transition:color .15s,background .15s,border-color .15s}
+.cb-action[data-emphasis="primary"]{background:var(--acc);border-color:transparent;color:#08130f;font-weight:700}
+.cb-action[data-emphasis="primary"]:hover{filter:brightness(1.07)}
+.cb-action[data-emphasis="secondary"]{background:var(--panel-2);border-color:var(--line-2);color:var(--ink)}
+.cb-action[data-emphasis="secondary"]:hover{border-color:var(--acc)}
+.cb-action[data-emphasis="quiet"]{background:transparent;border-color:transparent;color:var(--muted)}
+.cb-action[data-emphasis="quiet"]:hover{background:var(--panel-2);border-color:var(--line);color:var(--ink)}
+.cb-action:disabled{opacity:.45;cursor:not-allowed}
+.cb-action:disabled:hover{background:transparent;border-color:transparent;color:var(--muted)}
+.cb-action b{font-weight:700}
+.cb-action small{color:var(--faint);font-size:10px;line-height:1.4}
+
+/* --- 4. COMPACT DISCLOSURE ----------------------------------------------
+   Power that opens when it is asked for. The marker is removed and replaced by
+   one that rotates, because the platform triangle sits on a different baseline
+   in every browser and this pattern is used inline beside text. */
+.cb-disclosure{border:1px solid var(--line);border-radius:var(--r-sm);background:var(--panel-2)}
+.cb-disclosure>summary{display:flex;align-items:center;gap:8px;padding:9px 11px;cursor:pointer;font:700 9px var(--mono);letter-spacing:.09em;text-transform:uppercase;color:var(--muted);list-style:none}
+.cb-disclosure>summary::-webkit-details-marker{display:none}
+.cb-disclosure>summary::before{content:"\203A";display:inline-block;font:700 13px/1 var(--mono);color:var(--acc);transition:transform .15s}
+.cb-disclosure[open]>summary::before{transform:rotate(90deg)}
+.cb-disclosure>summary:hover{color:var(--ink)}
+.cb-disclosure>*:not(summary){padding:0 11px 11px}
+
+/* --- 5. EMPTY STATE -----------------------------------------------------
+   Compact by design: this is the inline "there is nothing here yet" for a panel
+   or a menu. The full-page blueprint slates (`.empty-state`, `.first-run-state`)
+   are a different and larger thing and are untouched. */
+.cb-empty{display:grid;gap:3px;padding:11px 12px;border:1px dashed var(--line-2);border-radius:var(--r-sm);background:var(--panel-2)}
+.cb-empty b{font-size:12.5px;color:var(--ink)}
+
+/* --- 6. COMPACT METADATA / STATUS LINE ----------------------------------
+   Facts about the thing rather than actions on it. Monospaced and tabular, so a
+   column of versions, counts or identifiers lines up; wraps rather than
+   truncating, because a metadata line that hides its value is worse than one
+   that takes a second row. */
+.cb-meta{display:flex;flex-wrap:wrap;gap:4px 14px;font:10.5px/1.5 var(--mono);color:var(--muted);font-variant-numeric:tabular-nums}
+.cb-meta>span{display:flex;gap:6px;min-width:0;overflow-wrap:anywhere}
+.cb-meta>span>b{flex:0 0 auto;font-weight:700;color:var(--faint);text-transform:uppercase;letter-spacing:.08em;font-size:9px;align-self:center}
+.cb-meta.cb-meta-stack{flex-direction:column;gap:6px}
+.cb-meta.cb-meta-stack>span{gap:10px}
+.cb-meta.cb-meta-stack>span>b{flex:0 0 132px}
+
+/* ===========================================================================
+   THE PROJECT OWNER — the rail head's answer to "which project am I in?".
+   =========================================================================== */
+
+/* The positioning context for the menu. `#rail` is z-index 50, above the topbar,
+   so the menu only has to win against its own siblings to overhang the
+   workspace — it never has to out-rank the Assistant rail or the Activity
+   Terminal, and it deliberately does not try. */
+.project-owner{position:relative;min-width:0}
+
+/* READABLE AT COMPACT DESKTOP WIDTH. The rail is a fixed 220px track, so a title
+   is only ever as readable as its wrapping: `anywhere` stops a long unbroken word
+   pushing the rail wider than its track, and the three-line cap stops a very long
+   title walking the navigation off the bottom of a 800px-high laptop screen. The
+   complete title is always readable in the menu this button opens, and is always
+   on the button's aria-label. */
+.project-title{display:-webkit-box;width:100%;overflow-wrap:anywhere;hyphens:auto;-webkit-box-orient:vertical;-webkit-line-clamp:3;overflow:hidden}
+.project-title[aria-expanded="true"]{color:var(--acc)}
+.project-format{overflow-wrap:anywhere}
+
+.project-menu{position:absolute;z-index:2;top:calc(100% + 10px);left:0;width:max(100%,268px);max-width:calc(100vw - 24px);display:grid;gap:9px;padding:11px;border:1px solid var(--line-2);border-radius:12px;background:var(--panel);box-shadow:0 22px 48px rgba(0,0,0,.5)}
+.project-menu[hidden]{display:none}
+.project-menu-head.cb-section{padding:1px 2px 3px}
+.project-menu-actions{display:grid;gap:2px;padding-top:8px;border-top:1px solid var(--line)}
+.project-menu-actions .cb-action{width:100%;flex-direction:column;align-items:flex-start;gap:1px}
+.project-menu-foot{padding-top:8px;border-top:1px solid var(--line);color:var(--faint)}
+.project-menu-foot>span{display:block}
+
+/* THE APPLICATION VERSION. Quiet, at the bottom of the rail, in the place a
+   desktop application has always put it — and nowhere near the project title. */
+.app-identity{font-family:var(--mono);letter-spacing:.04em;color:var(--faint)}
+
+/* ABOUT. Two lines a person can quote, and the machinery folded underneath. */
+.about-cinebraid{display:grid;gap:13px}
+.about-cinebraid .about-identity{gap:6px 24px;font-size:12px;color:var(--ink)}
+.about-cinebraid .about-identity>span{flex-direction:column;gap:2px}
+.about-cinebraid .modal-actions{margin-top:2px}

@@ -18,8 +18,25 @@
           <div class="wordmark">Cine<span class="wm-accent">Braid</span></div>
         </div>
       </div>
-      <button id="project-title" class="project-title" type="button" aria-label="Open the project switcher">Projects</button>
-      <div id="project-format" class="project-format">Opening…</div>
+      <!-- A2 — ONE OWNER FOR "WHICH PROJECT AM I IN?". The title is the button, the
+           format is the subtitle a filmmaker can act on, and the menu is the small set
+           of things the product can already truthfully do to a project. All three are
+           static markup for the same reason the rest of the shell is: the page script
+           owns their STATE and never their existence. The menu ships empty and hidden;
+           renderProjectMenu() fills it from the project that is actually open. -->
+      <div class="project-owner">
+        <button id="project-title" class="project-title" type="button" aria-expanded="false" aria-controls="project-menu" aria-label="Open the project menu">Projects</button>
+        <div id="project-format" class="project-format">Opening…</div>
+        <!-- A DISCLOSURE, NOT role="menu". It would be one if it held only commands,
+             but the two most useful things in it are not commands: the head names the
+             open project in full (the button above it clamps a long title to three
+             lines), and the foot names the application and its build. Inside a
+             role="menu" a screen reader is entitled to announce only the menuitems,
+             which would hide exactly the two facts A2 exists to make legible. So it
+             is a labelled group of ordinary buttons, opened and closed by
+             aria-expanded, with arrow-key roving added on top as a convenience. -->
+        <div id="project-menu" class="project-menu" role="group" aria-labelledby="project-title" hidden></div>
+      </div>
     </div>
     <nav id="nav" aria-label="Primary navigation">
       <div class="nav-group">
@@ -38,6 +55,11 @@
       <button id="test-note" class="ghost-btn test-note-button" type="button" onclick="openTestNote()">Leave feedback</button>
       <div class="foot-note">Your production, your control. Sync only when files were added outside CineBraid. Records autosave.</div>
       <div class="foot-note brand-note">Production truth · Frombach Studios</div>
+      <!-- A2 — THE APPLICATION VERSION, WHERE AN APPLICATION VERSION BELONGS: quiet, at
+           the bottom, and nowhere near the project title. It ships saying only the
+           product name, because until /api/app-identity answers, a version is not
+           something this page knows, and a placeholder number would be a guess. -->
+      <div id="app-identity" class="foot-note app-identity">CineBraid</div>
     </div>
   </aside>
 
