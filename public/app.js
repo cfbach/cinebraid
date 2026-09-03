@@ -3205,7 +3205,7 @@ const PROJECT_FORMAT_PRESETS = Object.freeze([
    drift into describing different paths. */
 const PROJECT_START_INTENTS = Object.freeze([
   ["assisted", "Build with an AI assistant — Recommended"],
-  ["cinebraid", "Open an existing CineBraid project"],
+  ["cinebraid", "Open a CineBraid project file"],
   ["scratch", "Start manually"],
 ]);
 window.newProject = () =>

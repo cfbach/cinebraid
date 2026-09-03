@@ -88,18 +88,24 @@ async function sectionEntryIsIntentFirst() {
      different Array.prototype, so deepStrictEqual against a host literal fails while
      printing something identical. */
   const intents = JSON.parse(vm.runInContext("JSON.stringify(CREATION_INTENTS.map((i) => [i.key, i.title, !!i.recommended]))", context));
-  /* The words changed once more after the founder dogfood, for the reason the
-     comment above already gives: a card should name what the FILMMAKER has, and the
-     action underneath it should be the obvious next move. "Build from a script/story
-     with AI" was doing both jobs in one line while the eyebrow said the same thing
-     again; "Start from scratch" and "Import a CineBraid project" described CineBraid's
-     mechanisms rather than the filmmaker's material. The order and the single
-     recommendation are unchanged. */
+  /* The words changed after the founder dogfood, for the reason the comment above
+     already gives: a card names what the FILMMAKER has, and the action underneath is
+     the obvious next move. The CineBraid card is the one the founder could not tell
+     apart from the assisted one at a glance, so its title now names the file type
+     itself. The order and the single recommendation are unchanged. */
   assert.deepStrictEqual(intents, [
     ["assisted", "Build with an AI assistant", true],
-    ["cinebraid", "Open an existing CineBraid project", false],
+    ["cinebraid", "Open a CineBraid project file", false],
     ["scratch", "Start manually", false],
   ], "A. the three starting intents are frozen, in this order, and only the first is recommended");
+
+  /* THE CINEBRAID CARD IS UNAMBIGUOUS BEFORE IT IS SELECTED. The founder read the
+     two import paths as twins; the distinction has to survive at card level, in the
+     one sentence a filmmaker reads before clicking anything. */
+  const cineCard = JSON.parse(vm.runInContext("JSON.stringify(CREATION_INTENTS[1])", context));
+  assert(/\.json/i.test(cineCard.blurb), "A. the CineBraid card must name the file type it takes");
+  assert(/not for scripts or treatments/i.test(cineCard.blurb),
+    "A. and must say, on the card itself, what it does not take");
 
   const rendered = [...html.matchAll(/data-creation-intent="([^"]+)"/g)].map((m) => m[1]);
   assert.deepStrictEqual(rendered, ["assisted", "cinebraid", "scratch"],
@@ -126,12 +132,13 @@ async function sectionEntryIsIntentFirst() {
    screen. None of these words may appear ANYWHERE on the card, which is a stronger
    guard than the single list this suite used to apply to the heading alone.
 
-   The named consumer assistants are a separate matter. The founder dogfood found a
-   filmmaker unable to tell whether the conversion happened inside CineBraid, inside
-   Braidy, or somewhere else — and "the AI assistant you already use" did not answer
-   it. Naming ChatGPT, Claude and Gemini is the shortest true answer, so they are
-   REQUIRED in the card's explanation (section L) and still barred from the intent's
-   own words and from the heading, which name what the filmmaker has. */
+   The named consumer assistants are the opposite of a ban. The founder dogfood found
+   a filmmaker unable to tell whether the conversion happened inside CineBraid, inside
+   Braidy, or somewhere else, and no amount of "the AI assistant you already use"
+   answered it. Naming ChatGPT, Claude and Gemini is the shortest true answer, so they
+   are REQUIRED in the card's lead paragraph and still barred from the intent's own
+   words on the chooser, which name what the filmmaker has rather than what they should
+   go and open. */
 const RUNTIME_JARGON = ["LLM", "GPT", "Ollama", "API key", "endpoint", "temperature", "token", "provider", "model"];
 const NAMED_ASSISTANTS = ["ChatGPT", "Claude", "Gemini"];
 const IMPLEMENTATION_JARGON = [...RUNTIME_JARGON, ...NAMED_ASSISTANTS];
@@ -146,12 +153,8 @@ async function sectionAssistedFraming() {
   assert(/script|treatment|notes/i.test(primary.eyebrow),
     "B. the assisted intent must be labelled by what the filmmaker has");
 
-  const head = html.slice(html.indexOf('id="creation-assisted"'));
-  const heading = head.slice(0, head.indexOf("</div>", head.indexOf("<h3>")));
-  for (const word of IMPLEMENTATION_JARGON)
-    assert(!new RegExp(`\\b${word}\\b`, "i").test(heading),
-      `B. the assisted card's heading must not lead with "${word}"`);
   /* And the whole card, not only its heading, stays free of runtime jargon. */
+  const head = html.slice(html.indexOf('id="creation-assisted"'));
   const card = head.slice(0, head.indexOf("</section>"));
   for (const word of RUNTIME_JARGON)
     assert(!new RegExp(`\\b${word}\\b`, "i").test(card),
@@ -182,7 +185,15 @@ async function sectionCineBraidImportDistinct() {
   assert(!assisted.html.includes('id="creation-cinebraid"'), "C. nor the other way round");
   assert(!cine.html.includes('id="creation-source-material"'),
     "C. importing a CineBraid project must not ask for a script — there is no assistant in this path");
-  assert(/no assistant is involved/i.test(cine.html), "C. the CineBraid path must say that no assistant is involved");
+  /* The path says what it wants in its first sentence. "No assistant is involved" was
+     the earlier wording; it stated the fact by negation, which took a paragraph to
+     land. The positive form is shorter and is the thing the filmmaker has to check
+     against the file in their hand. */
+  assert(/This expects a CineBraid project JSON/i.test(cine.html),
+    "C. the CineBraid path must say what it expects, before anything else");
+  for (const word of NAMED_ASSISTANTS)
+    assert(!new RegExp(`\\b${word}\\b`, "i").test(cine.html.slice(cine.html.indexOf('id="creation-cinebraid"'))),
+      `C. and must not name ${word} — there is no assistant in this path`);
 
   /* THE SAME ACCEPTED MECHANISM, NOT A SECOND ONE. Both cards render one JSON box,
      one result region, and one validate control, because the preview/commit path
@@ -1459,18 +1470,22 @@ async function sectionExternalAssistantIsExplicit() {
   const card = html.slice(html.indexOf('id="creation-assisted"'), html.indexOf("</section>", html.indexOf('id="creation-assisted"')));
 
   /* WHO DOES THE CONVERSION. Named, because "an AI assistant" did not answer it. */
-  assert(/data-external-ai/.test(card), "U1. the assisted card must carry the external-assistant explanation");
   for (const name of NAMED_ASSISTANTS)
-    assert(card.includes(name), `U1. the explanation must name ${name} — a filmmaker has to know which software this is`);
-  assert(/another AI assistant you already use/i.test(card),
-    "U1. and must say the assistant is one the filmmaker already has, not one CineBraid supplies");
+    assert(card.includes(name), `U1. the lead must name ${name} — a filmmaker has to know which software this is`);
+  assert(/another assistant/i.test(card),
+    "U1. and must leave the list open, so it reads as the filmmaker's own choice");
 
-  /* NOT BRAIDY, AND NOT AUTOMATICALLY. Both halves, because either alone misleads. */
-  assert(/Braidy/.test(card), "U2. the card must say where Braidy stands rather than leaving it open");
-  assert(/Braidy[^.]*does not do this conversion/i.test(card),
-    "U2. and must say plainly that Braidy does not perform the conversion today");
-  assert(/does not send your script anywhere from this screen/i.test(card),
-    "U3. the privacy truth must be on the card, in one line");
+  /* NOT BRAIDY, AND NOT AUTOMATICALLY. Both halves, because either alone misleads —
+     and both in ONE line, because the founder's complaint about this card was that
+     the same fact was explained three times in three boxes. */
+  const truth = card.match(/<p class="creation-quiet-truth"[^>]*>([^<]*)<\/p>/);
+  assert(truth, "U2. the card must carry the one quiet truth line");
+  assert(/CineBraid doesn't send anything from this screen/i.test(truth[1]),
+    "U3. which states that nothing leaves this screen");
+  assert(/Braidy isn't used for this step/i.test(truth[1]),
+    "U2. and that Braidy is not what does this");
+  assert.strictEqual((card.match(/Braidy/g) || []).length, 1,
+    "U2. said once — a fact repeated in three places is what made this card unreadable");
 
   /* Braidy is never described as the engine, anywhere in this surface. */
   const studio = codeOnly(CREATION_STUDIO);
@@ -1483,63 +1498,80 @@ async function sectionCopyInstructionsIsPrimary() {
   const { html } = await createRender({ storage: { "cinebraid-creation-start-path": "assisted" } });
   const card = html.slice(html.indexOf('id="creation-assisted"'), html.indexOf("</section>", html.indexOf('id="creation-assisted"')));
 
-  /* THE CORE ACTION IS SIZED AS THE CORE ACTION. `ghost-btn` is this product's
-     secondary weight, and both controls used to carry it, off to the side of the
-     heading — which left the ZIP looking like the way in. */
-  const primary = card.match(/<button[^>]*class="assemble-btn creation-primary-copy"[^>]*>([^<]*)<\/button>/);
-  assert(primary, "U4. copying the instructions must be a primary action, not a ghost button beside a download");
-  assert(/copy project builder instructions/i.test(primary[1]),
-    `U4. and must say what it copies, got "${primary && primary[1]}"`);
-  assert(card.includes("copyProjectBuilderSystemPrompt()"), "U4. through the shipped handler");
+  /* ONE PRIMARY AT A TIME, AND IT FOLLOWS THE MATERIAL.
+   *
+   * With an empty box the useful copy is the instructions; with something in it, the
+   * useful copy is one paste containing both. Offering both as equal green buttons
+   * asked the filmmaker to decide something CineBraid already knows. */
+  const emptyPrimary = card.match(/<button[^>]*class="assemble-btn creation-primary-copy"[^>]*onclick="([^"]*)"[^>]*>([^<]*)<\/button>/);
+  assert(emptyPrimary, "U4. copying must be a primary action, not a ghost button beside a download");
+  assert.strictEqual(emptyPrimary[1], "copyProjectBuilderSystemPrompt()", "U4. with no material, the primary copies the instructions");
+  assert(/copy project builder instructions/i.test(emptyPrimary[2]),
+    `U4. and says so, got "${emptyPrimary && emptyPrimary[2]}"`);
 
-  /* THE FULL KIT IS STILL ONE CLICK AWAY, and now says what it is for. */
-  const kit = card.match(/<a class="ghost-btn" href="\/api\/project-builder\/kit" download>([^<]*)<\/a>/);
-  assert(kit, "U5. the full prompt kit must remain downloadable");
-  assert(/download full prompt kit/i.test(kit[1]), `U5. named for what it is, got "${kit && kit[1]}"`);
-  assert(/repeat use|offline/i.test(card), "U5. with one line saying when a filmmaker would want it");
-
-  /* THE ONE-PASTE PATH, when there is material to include. Same shipped clipboard
-     handler; no provider is reached and no new behaviour is introduced. */
   const withStory = await createRender({ storage: { "cinebraid-creation-start-path": "assisted" } });
   vm.runInContext(`setCreationDraft("assisted:story", ${JSON.stringify(SCRIPT)})`, withStory.context);
   await vm.runInContext("route()", withStory.context);
   const filled = withStory.map.get("main").innerHTML;
-  assert(filled.includes("copyProjectBuilderRequest()"),
-    "U4. with material present, CineBraid must still offer instructions + material as one copy");
-  assert(!card.includes("copyProjectBuilderRequest()"),
-    "U4. and must not offer it before there is any material to include");
+  const filledPrimary = filled.match(/<button[^>]*class="assemble-btn creation-primary-copy"[^>]*onclick="([^"]*)"[^>]*>([^<]*)<\/button>/);
+  assert(filledPrimary, "U4. the primary action survives material being entered");
+  assert.strictEqual(filledPrimary[1], "copyProjectBuilderRequest()",
+    "U4. with material present, the primary copies the instructions AND the material");
+  assert(/copy instructions \+ my material/i.test(filledPrimary[2]),
+    `U4. and says so, got "${filledPrimary && filledPrimary[2]}"`);
+  for (const view of [card, filled])
+    assert.strictEqual((view.match(/class="assemble-btn creation-primary-copy"/g) || []).length, 1,
+      "U4. exactly one primary copy control in either state");
 
-  /* The three steps are stated in the order they happen. */
-  const steps = [...card.matchAll(/<li><b>(\d)<\/b><span>([^<]*)<\/span><\/li>/g)].map((m) => m[2]);
-  assert.strictEqual(steps.length, 3, `U4. the assisted path is three steps, rendered ${steps.length}`);
-  assert(/script|treatment|notes/i.test(steps[0]), "U4. step 1 is the filmmaker's material");
-  assert(/copy/i.test(steps[1]) && /assistant/i.test(steps[1]), "U4. step 2 is the hand-off");
-  assert(/paste|review/i.test(steps[2]), "U4. step 3 is bringing it back");
-  note(`U4-U5. "${primary[1]}" is the primary action, the three steps read ${steps.map((s) => s.split(" ")[0]).join(" / ")}, and "${kit[1]}" stays available as the secondary`);
+  /* THE INSTRUCTIONS ARE READABLE WITHOUT A DOWNLOAD. Deciding whether to paste
+     something into your own assistant should not require unzipping six files. */
+  assert(/data-instructions\b/.test(card), "U5. the instructions must be inspectable in place");
+  const disclosure = card.slice(card.indexOf("data-instructions"));
+  assert(/<summary>View instructions<\/summary>/.test(disclosure), "U5. behind a plainly named disclosure");
+  assert(/data-instructions-text/.test(disclosure), "U5. with somewhere for the text to land");
+  assert(!/<details class="creation-instructions"[^>]*\sopen/.test(card), "U5. closed until asked for");
+  assert(card.includes("loadProjectBuilderInstructions(this)"), "U5. filled by the shipped loader");
+  const studio = codeOnly(CREATION_STUDIO);
+  assert.strictEqual((studio.match(/api\/project-builder\/system-prompt/g) || []).length, 3,
+    "U5. the viewer reads the same served prompt the two copy handlers do — not a second copy of it");
+
+  /* AND THE FULL KIT IS STILL THE ADVANCED OPTION. */
+  const kit = card.match(/<a class="ghost-btn" href="\/api\/project-builder\/kit" download>([^<]*)<\/a>/);
+  assert(kit, "U5. the full prompt kit must remain downloadable");
+  assert(/download full prompt kit/i.test(kit[1]), `U5. named for what it is, got "${kit && kit[1]}"`);
+  assert(/repeat or offline/i.test(card), "U5. with one line saying when a filmmaker would want it");
+
+  /* The steps are labelled in the order they happen, and the labels are labels
+     rather than a second explanation of the paragraph above them. */
+  const steps = [...card.matchAll(/<span>Step (\d) · ([^<]*)<\/span>/g)].map((m) => m[2]);
+  assert.deepStrictEqual(steps, ["Add your material", "Paste the project it returns"],
+    `U4. the material and the return are labelled steps, got ${JSON.stringify(steps)}`);
+  assert(/<b>Take it to your AI assistant<\/b>/.test(card), "U4. and step 2 is the hand-off");
+  note(`U4-U5. the primary copy is "${emptyPrimary[2]}" empty and "${filledPrimary[2]}" with material, the instructions are readable in place, and "${kit[1]}" stays as the advanced option`);
 }
 
 async function sectionExistingProjectPathIsUnambiguous() {
   const { html } = await createRender({ storage: { "cinebraid-creation-start-path": "cinebraid" } });
   const card = html.slice(html.indexOf('id="creation-cinebraid"'), html.indexOf("</section>", html.indexOf('id="creation-cinebraid"')));
 
-  /* WHAT BELONGS HERE. All three of the things a filmmaker might be holding. */
-  for (const kind of [/project\.json/i, /backup or export/i, /another CineBraid user/i])
-    assert(kind.test(card), `U6. the path must say it takes ${kind}`);
-
-  /* AND WHAT DOES NOT. This is the finding: the card looked like the Project Builder's
-     twin and never said the difference. */
-  assert(/data-cinebraid-scope/.test(card), "U6. the path must scope itself explicitly");
-  assert(/not where a screenplay goes/i.test(card), "U6. in words, not by omission");
-  for (const wrong of ["screenplay", "treatment", "story notes"])
-    assert(new RegExp(wrong, "i").test(card), `U6. and must name "${wrong}" as the thing that does not belong here`);
+  /* WHAT BELONGS HERE, IN THE FIRST SENTENCE. The founder read this card as the
+     Project Builder's twin; the answer has to be the first thing on it, not a
+     paragraph the reader has to finish. */
+  const lead = card.slice(card.indexOf("<p>"), card.indexOf("</p>"));
+  assert(/This expects a CineBraid project JSON/i.test(lead),
+    `U6. the path must open by saying what it expects: ${lead.slice(0, 160)}`);
+  for (const kind of [/\.json/i, /backup/i, /someone sent you/i])
+    assert(kind.test(card), `U6. and must say it takes ${kind}`);
 
   /* THE HAND-OFF, so the filmmaker who is in the wrong place is not simply told so. */
+  assert(/data-cinebraid-scope/.test(card), "U7. the path must offer a way out for the wrong material");
   assert(/setCreationStartPath\('assisted'\)/.test(card),
     "U7. a filmmaker holding a script must be handed to the path that wants them");
-  assert(/Have a script or treatment instead/i.test(card), "U7. in a sentence addressed to them");
+  assert(/Have a screenplay, treatment or notes\?/i.test(card), "U7. in a sentence addressed to them");
+  assert(/Build with an AI assistant/i.test(card), "U7. naming the path they should be on");
   assert(!card.includes("/api/project-builder/kit"),
     "U7. and the Prompt Kit must not be duplicated into this path — the issue was clarity, not missing function");
-  note("U6-U7. the existing-project path names project.json / backup / another user's project, says a screenplay does not belong, and offers the assisted path to whoever is holding one");
+  note("U6-U7. the existing-project path opens by naming the CineBraid project JSON it expects, and hands a screenplay-holder to the assisted path");
 }
 
 async function sectionManualStartIsNotAChecklist() {
@@ -1567,7 +1599,67 @@ async function sectionManualStartIsNotAChecklist() {
   assert(styleAt > nextAt, "U9. Project Look must not be the first thing a new project asks for");
   for (const control of ["addEntity('locations')", "addEntity('characters')", "addShot()"])
     assert(html.includes(control), `U9. and nothing is removed — ${control} is still reachable`);
-  note("U8-U9. manual start opens on title / format / aspect through the existing handlers, with Project Look and the reference entry points closed underneath the project's first action");
+
+  /* AND IT SOUNDS LIKE STARTING A PROJECT. The structure was already light after the
+     first correction; the copy still read as product documentation explaining what
+     CineBraid needs from you. */
+  assert(/<h3>Start with the basics<\/h3>/.test(html), "U9. the manual path opens on plain words");
+  assert(/Give the project a name, format and frame\. You can decide everything else later\./.test(html),
+    "U9. saying what to do and what can wait, in one sentence");
+  /* A BRAND-NEW PROJECT IS THE CASE THIS PATH EXISTS FOR, so its empty state is
+     rendered from a project that really is empty rather than from the fixture. */
+  const blank = buildFixture();
+  blank.scenes = [];
+  blank.shots = [];
+  const empty = await createRender({ project: blank, storage: { "cinebraid-creation-start-path": "scratch" } });
+  assert(/Ready for the first scene/.test(empty.html), "U9. its first action is named for the thing, not the state machine");
+  assert(/Start a scene and shot, or build references first if you need them\./.test(empty.html),
+    "U9. with the alternative offered rather than explained");
+  note("U8-U9. manual start opens on title / format / aspect through the existing handlers, in plain words, with Project Look and the reference entry points closed underneath the project's first action");
+}
+
+/* =========================================================================
+   V. THE WORDING THE FOUNDER ASKED TO BE RID OF.
+
+   The first correction fixed the hierarchy and left the register wrong: slogan-like
+   parallel phrasing, a desk metaphor, and the same fact explained in three places
+   because each box had been written to stand alone. This is a copy control, and it
+   is deliberately a blocklist — it names the specific phrasings that were retired,
+   so a future edit cannot quietly restore the voice they belonged to.
+   ========================================================================= */
+const RETIRED_PHRASING = [
+  "already on your desk",
+  "HAND IT OVER",
+  "Hand what you have written",
+  "Three ways in",
+  "hand it over",
+  "Turn what you have written into",
+  "not where a screenplay goes",
+];
+async function sectionWordingIsPlain() {
+  const views = {};
+  for (const stored of ["assisted", "cinebraid", "scratch"])
+    views[stored] = (await createRender({ storage: { "cinebraid-creation-start-path": stored } })).html;
+
+  for (const [stored, html] of Object.entries(views))
+    for (const phrase of RETIRED_PHRASING)
+      assert(!html.includes(phrase), `V1. "${phrase}" was retired from the ${stored} path and must not return`);
+
+  /* NO FACT EXPLAINED TWICE ON ONE SCREEN. Three of these were each stated in two or
+     three places at once, which is what made the surface read as documentation. */
+  for (const [phrase, limit] of [["Braidy", 1], ["ChatGPT", 1], ["Project Builder instructions", 1]])
+    assert((views.assisted.match(new RegExp(phrase, "g")) || []).length <= limit,
+      `V2. "${phrase}" belongs on this screen once, not ${(views.assisted.match(new RegExp(phrase, "g")) || []).length} times`);
+
+  /* SHORT, AND ADDRESSED TO A PERSON. The chooser's own words carry the whole
+     decision, so they are the ones held to a length. */
+  const intents = JSON.parse(vm.runInContext("JSON.stringify(CREATION_INTENTS)", (await createRender()).context));
+  for (const intent of intents) {
+    assert(intent.blurb.length <= 140,
+      `V3. the ${intent.key} card is ${intent.blurb.length} characters; a card is read at a glance`);
+    assert(!/—/.test(intent.title), `V3. and its title is a name, not a sentence with an aside`);
+  }
+  note(`V. ${RETIRED_PHRASING.length} retired phrasings stay retired, no fact on the assisted path is stated twice, and the three cards read in ${intents.map((i) => i.blurb.length).join("/")} characters`);
 }
 
 async function sectionImportPreviewIsSummaryFirst() {
@@ -1612,7 +1704,13 @@ async function sectionImportPreviewIsSummaryFirst() {
     "U12. exactly two rendered import controls — summary and footer — and both are the one shipped commit");
   assert.strictEqual((html.match(/creation-next-step/g) || []).length, 1,
     "U12. with a single footer step, so the existing selector still names exactly one control");
-  assert(/Editing the source JSON requires a new validation/.test(html), "U12. exact-preview semantics stated, unchanged");
+  /* THE TWO EXACT-PREVIEW FACTS, ONE EACH. The summary and the footer both used to
+     recite both of them, which is how a safety guarantee starts reading as filler.
+     Both facts are still on the screen and neither is said twice. */
+  assert(/Imports exactly what is shown here, as a separate project\./.test(html),
+    "U12. the summary states that the import is exactly this preview, into its own project");
+  assert(/Change the source and it needs validating again\./.test(html),
+    "U12. and the footer states that editing the source invalidates it");
   assert(html.includes("Exact preview locked"), "U12. and the preview is still declared locked");
   note("U10-U12. the preview opens on title, what will be created, the standing, the grouped findings and the import button, in that order");
 }
@@ -1721,8 +1819,9 @@ async function main() {
   await sectionImportPreviewIsSummaryFirst();
   await sectionRepeatedFindingsAreGrouped();
   await sectionStructureAndTechnicalAreDisclosed();
+  await sectionWordingIsPlain();
   console.log(notes.join("\n"));
-  console.log("Project entry & import landing suite passed: three intents, retained source material, typed format/aspect, deferred style, Ready/Needs review/Blocked, the planning-marker boundary, a landing whose next action is the single projectNextProductionAction(), and the founder-dogfood surface corrections — external assistant named, Braidy excluded from the conversion, copy-instructions primary, existing-project path scoped, manual start un-gated, and an import preview that answers the decision before it shows the evidence.");
+  console.log("Project entry & import landing suite passed: three intents, retained source material, typed format/aspect, deferred style, Ready/Needs review/Blocked, the planning-marker boundary, a landing whose next action is the single projectNextProductionAction(), and the founder-dogfood surface corrections — external assistant named, Braidy excluded from the conversion, copy-instructions primary, existing-project path scoped, manual start un-gated, an import preview that answers the decision before it shows the evidence, and a final wording pass that keeps the retired phrasings retired.");
 }
 
 /* A HANG IS A FAILURE, NOT A PASS. Sections S gate their own responses; a gate this
