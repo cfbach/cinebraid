@@ -211,7 +211,17 @@ function b_preflightVetoParity() {
       request: () => ({ ...good, value: "SOMEBODY-ELSES-FILE.png" }),
     },
     {
-      label: "a target this project does not have",
+      /* An entity that IS here and DOES own the file, pointed at a state that is
+         not. Ownership and structure both pass, so this is the only case in the
+         table that reaches the target-availability probe — and it is the one that
+         proves the probe still answers correctly now that it is handed a shell
+         holding one list instead of a clone of the whole document. */
+      label: "a state this reference does not have",
+      project: () => {},
+      request: () => ({ ...good, stateId: "state-does-not-exist" }),
+    },
+    {
+      label: "a reference this project does not have",
       project: () => {},
       request: () => ({ ...good, entityId: "CHAR-NOBODY" }),
     },
@@ -329,14 +339,25 @@ async function c_emptyProjectFirstShot() {
   ok(!/has been delivered/i.test(pressed.toast),
     "C3: and CineBraid does not answer with a completion claim: " + pressed.toast);
 
-  /* THE SHOTS BOARD HEAD offered a bare CONTINUE with no empty guard at all. */
+  /* THE SHOTS BOARD HEAD offered a bare CONTINUE with no empty guard at all.
+   *
+   * Read off the RENDERED HEAD, not off projectPrimaryProductionAction(). That
+   * owner is route-independent — it depends only on P — so asking it again here
+   * would assert nothing about this page, and the board-head correction would be
+   * revertible with this suite still green. What is under test is that
+   * productionView() CONSULTS the owner, which only its own markup can show. */
   const board = await render("#/shots/board", emptyFixture());
   const boardSeen = evaluate(board.context, `
-    const primary = projectPrimaryProductionAction();
-    return { kind: primary.kind, label: primary.label };
+    const head = (document.getElementById("main") || { innerHTML: "" }).innerHTML.split("</div>${"$"}{tabs}")[0];
+    const main = (document.getElementById("main") || { innerHTML: "" }).innerHTML;
+    const button = (main.split('onclick="continueProduction()">')[1] || "").split("<")[0];
+    return { button, offersBareContinue: button === "CONTINUE", primary: projectPrimaryProductionAction().label };
   `);
-  equal(boardSeen.kind, "add-first-shot", "C4: the Shots board answers the same question the same way");
-  equal(boardSeen.label, "ADD THE FIRST SHOT", "C4: from the same owner, so the two heads cannot disagree");
+  equal(boardSeen.button, "ADD THE FIRST SHOT",
+    "C4: the Shots board's own rendered head offers the first shot, not a bare CONTINUE");
+  equal(boardSeen.offersBareContinue, false, "C4: the pre-slice bare CONTINUE is gone from a zero-shot board");
+  equal(boardSeen.button, boardSeen.primary,
+    "C4: and it is the owner's word verbatim, so the two heads cannot disagree");
 
   note("C a zero-shot project offers ADD THE FIRST SHOT, and pressing it opens the real New shot flow");
 }
@@ -500,11 +521,16 @@ async function e_canonStateDeletion() {
     });
   equal(orphan, undefined, "E4: no current receipt is left pointing at a state that no longer exists");
 
-  /* 4. THE UNRELATED WORK SURVIVED. */
+  /* 4. THE UNRELATED WORK IS STILL IN THE DOCUMENT.
+   *
+   * IN MEMORY ONLY, and this is deliberately not the whole claim: the unrevoked
+   * build leaves these two values in place too — what it destroys is the ability
+   * to SAVE them, which is why the stranding was expensive. E8 below is where
+   * that half is proved, by putting both successors to the real write seam. */
   equal(seen.unrelatedNote, "An unrelated note the filmmaker typed before deleting anything",
-    "E5: the unrelated edit made before the delete is still there");
+    "E5: the unrelated edit made before the delete is still in the document");
   equal(seen.unrelatedLogline, "An unrelated logline typed in the same session",
-    "E5: and so is the unrelated project-level edit");
+    "E5: and so is the unrelated project-level edit (E8 proves it can still be saved)");
 
   /* 5. AND THE RESULT IS A DECLARABLE HUMAN CANON TRANSITION. This is the same
         oracle the Authority Write Seam consults, asked directly rather than
@@ -605,7 +631,61 @@ async function f_actionLabelsMatchBehaviour() {
   ok(/markGuidedStillFinal[\s\S]{0,120}Mark shot final/.test(studio),
     "F5: the control that actually marks a shot final keeps the action verb");
 
-  note(`F all ${seen.rows.length} readiness actions have distinct performing and navigating wording, and each shipped control uses the one that matches it`);
+  /* F6 — THE DUPLICATE LIST IS NOT STALE, AND THE DUPLICATE IS REAL.
+   *
+   * `SHOT_ACTIONS_NAMED_TWICE` names the codes whose destination PANEL ships a
+   * control bearing the act's exact words — the case that makes the shot card's
+   * primary a duplicate rather than a hand-off. A hand-maintained list is only
+   * honest if something fails when it stops matching the product, so this renders
+   * the real page and checks both halves: the panel's button exists, and the card
+   * above it no longer wears the same name. */
+  const finalProject = rawFixture();
+  finalProject.shots = [(() => {
+    const shot = JSON.parse(JSON.stringify(finalProject.shots[0]));
+    shot.id = "L1-01"; shot.clips = []; shot.deliveryRoute = "t2i";
+    shot.creationBrief = { ...(shot.creationBrief || {}), deliveryIntent: "still" };
+    shot.keyframes = [{ ...shot.keyframes[0], id: "frame-a", label: "A", winner: "FRAME_A.png", required: true }];
+    return shot;
+  })()];
+  withCanon(finalProject, [
+    { kind: "entity-state", list: "characters", entityId: finalProject.characters[0].id, stateId: "state-default", value: finalProject.characters[0].approvedFile },
+    { kind: "shot-frame", shotId: "L1-01", frameId: "frame-a", value: "FRAME_A.png" },
+  ]);
+  const shotPage = await render("#/shot/L1-01", finalProject, {
+    scan: {
+      anchors: (finalProject.characters || []).filter((x) => x.approvedFile).map((x) => ({ name: x.approvedFile, url: `/assets/anchors/${x.approvedFile}` })),
+      plates: [], props: [], vehicles: [], audio: [], media: [],
+      shots: { "L1-01": { takes: [{ name: "FRAME_A.png", url: "/assets/shots/L1-01/takes/FRAME_A.png" }], locked: [] } },
+    },
+  });
+  const dup = evaluate(shotPage.context, `
+    const shot = P.shots[0];
+    const readiness = shotReadinessFor(shot);
+    const card = guidedShotStatusCard(shot, takesFor(shot.id), { prev: null, next: null });
+    const primary = (card.split('class="assemble-btn shot-primary-action"')[1] || "").split(">")[1] || "";
+    return {
+      code: readiness.nextAction.code,
+      listed: SHOT_ACTIONS_NAMED_TWICE.includes(readiness.nextAction.code),
+      performingWords: readinessActionWords(readiness.nextAction),
+      cardPrimary: primary.split("<")[0].trim(),
+    };
+  `);
+  equal(dup.code, "mark-shot-final", "F6 precondition: this shot's next act is the finalisation decision");
+  equal(dup.listed, true, "F6: and that code is listed as one the destination panel names twice");
+  /* The panel renders only when its section is open, so the duplicate is checked
+     where it is authored: a control in the destination panel's own renderer whose
+     label is exactly the act's words. If that control is ever renamed or removed,
+     this fails and the list is revisited rather than quietly outliving its reason. */
+  const finishPanel = readSource("public/creation-studio.js");
+  const performingControlAt = finishPanel.indexOf("markGuidedStillFinal");
+  const performingLabelAt = finishPanel.indexOf(`>${dup.performingWords}<`, performingControlAt);
+  ok(performingControlAt >= 0 && performingLabelAt > performingControlAt && performingLabelAt - performingControlAt < 200,
+    `F6: the destination panel really does ship a control labelled "${dup.performingWords}" — the list is not stale`);
+  ok(dup.cardPrimary !== dup.performingWords,
+    `F6: so the card's primary does NOT wear the performing control's words ("${dup.cardPrimary}" / "${dup.performingWords}")`);
+  ok(/→$/.test(dup.cardPrimary), "F6: it says it travels: " + dup.cardPrimary);
+
+  note(`F all ${seen.rows.length} readiness actions have distinct performing and navigating wording; the shot card says it travels only where it routes away or the destination names the act twice`);
 }
 
 /* ===========================================================================
@@ -639,21 +719,55 @@ async function g_refusalsPersist() {
   ok(/no record of what kind of image/i.test(seen.requirementText),
     "G2: in the kernel's own words, saying what is required next: " + seen.requirementText);
 
-  /* THE PERSISTENT STORE ITSELF: recorded, rendered, survives a re-render, and
-     is cleared by the filmmaker rather than by a timer. */
-  const persisted = evaluate(page.context, `
-    recordActionRefusal("probe-key", "A refusal sentence the filmmaker must still be able to read.", "PROBE_CODE");
-    const first = actionRefusalMarkup("probe-key");
-    const second = actionRefusalMarkup("probe-key");
-    const beforeDismiss = first;
-    dismissActionRefusal("probe-key");
-    return { first, survivesRerender: first === second && second !== "", afterDismiss: actionRefusalMarkup("probe-key"), beforeDismiss };
+  /* THE REAL WIRING, DRIVEN END TO END AND READ OFF THE PAGE.
+   *
+   * The first version of this recorded a synthetic key and compared
+   * actionRefusalMarkup() to itself in one tick. That is true by construction for
+   * every possible implementation — including one that still deletes the refusal
+   * on a 2.2-second timer, which is defect G itself. Nothing was re-rendered and
+   * the shipped path was never entered.
+   *
+   * So this presses the SHIPPED control and reads the DOM. The refusal is a real
+   * one: confirmHistoricSelection() outside a trusted gesture is refused by the
+   * kernel exactly as it would be in a browser, which is the same catch the
+   * artifact and ownership refusals arrive through. */
+  const pressed = await evaluateAsync(page.context, `
+    const feed = projectShotReadiness();
+    const offered = (feed.historic.items || []).find((row) => row.ownership.wouldRefuse === false);
+    /* Pressed outside a gesture, so the kernel refuses it the way it would refuse
+       any act CineBraid cannot complete. route() is async, so the repaint the
+       handler starts is awaited rather than assumed. */
+    confirmHistoricSelection(offered.key);
+    await route();
+    const afterPress = (document.getElementById("main") || { innerHTML: "" }).innerHTML;
+    /* A SECOND, INDEPENDENT PAINT. This is the half the old assertion never did. */
+    await route();
+    const afterRepaint = (document.getElementById("main") || { innerHTML: "" }).innerHTML;
+    const marker = 'data-action-refusal="historic-confirmation:' + offered.key + '"';
+    dismissActionRefusal("historic-confirmation:" + offered.key);
+    await route();
+    const afterDismiss = (document.getElementById("main") || { innerHTML: "" }).innerHTML;
+    return {
+      key: offered.key,
+      onPress: afterPress.indexOf(marker) >= 0,
+      onRepaint: afterRepaint.indexOf(marker) >= 0,
+      afterDismiss: afterDismiss.indexOf(marker) >= 0,
+      sentence: (afterRepaint.split("CineBraid did not make this change</b><span>")[1] || "").split("</span>")[0],
+      toastCleared: ((document.getElementById("toast") || {}).classList || { contains: () => null }).contains("hidden"),
+    };
   `);
-  ok(/A refusal sentence the filmmaker must still be able to read/.test(persisted.first),
-    "G3: a recorded refusal renders its sentence in full");
-  ok(/data-refusal-code="PROBE_CODE"/.test(persisted.first), "G3: and carries the refusal code with it");
-  equal(persisted.survivesRerender, true, "G4: it does not clear itself on a timer");
-  equal(persisted.afterDismiss, "", "G4: it is dismissed by the filmmaker, not by a timeout");
+  equal(pressed.onPress, true, "G3: pressing a control CineBraid cannot complete leaves the reason on the page");
+  equal(pressed.onRepaint, true, "G4: and it is still there after an independent repaint");
+  ok(pressed.sentence.length > 20, "G4: carrying the authority layer's own sentence: " + pressed.sentence);
+  equal(pressed.afterDismiss, false, "G4: and it goes when the filmmaker dismisses it, not before");
+
+  /* AND NOTHING IN THE STORE CAN EXPIRE IT. A build that re-added a timer would
+     satisfy every assertion above, because a suite cannot wait 2.2 seconds — so
+     the absence of the timer is asserted where it would have to live. */
+  const store = (codeOnly(readSource("public/app.js")).split("window.recordActionRefusal = ")[1] || "").split("};")[0];
+  ok(store.length > 0, "G5: recordActionRefusal is where a refusal is stored");
+  ok(!/setTimeout|setInterval/.test(store),
+    "G5 RETIRED: nothing in the refusal store may expire a refusal on a timer — that is the defect G exists to remove");
 
   note("G a refusal is rendered beside the control that offered the act, in the authority layer's own words, until the filmmaker dismisses it");
 }
@@ -741,6 +855,155 @@ function e8_saveSucceedsThroughTheSeam() {
   note("E8 the shipped write seam accepts the AT1-E save with the unrelated edit intact, and refuses the pre-AT1 one with AUTHORITY_EDGE_RECEIPT_MISMATCH");
 }
 
+/* ===========================================================================
+   G6 — A REFUSAL BELONGS TO THE PROJECT IT IS ABOUT.
+
+   Independent review reproduced this against the first version of the store: it
+   is tab-lifetime, and every key a surface can build is target coordinates. Two
+   films that each contain a location called Platform both address
+   `entity-state:locations:LOC-PLATFORM#state-default`, and `state-default` is the
+   literal id every entity's primary reference uses. Un-scoped, film A's refusal
+   rendered on film B under "CineBraid did not make this change" — about a change
+   never attempted there, beside a control that in film B would have succeeded.
+
+   A store built to stop CineBraid saying untrue things must not be able to say
+   one. Three guarantees, matching CONTINUITY_RUNS: the key carries the project, a
+   read revalidates it, and the project open clears the map outright.
+   =========================================================================== */
+
+async function g6_refusalsBelongToTheirProject() {
+  const page = await render("#/production", rawFixture());
+
+  const seen = evaluate(page.context, `
+    const KEY = "historic-confirmation:entity-state:locations:LOC-PLATFORM#state-default";
+    const SENTENCE = "Film A said this, about film A.";
+    const slugOf = () => (typeof ACTIVE_PROJECT_SLUG !== "undefined" ? ACTIVE_PROJECT_SLUG : window.ACTIVE_PROJECT_SLUG) || "";
+    const filmA = slugOf();
+
+    recordActionRefusal(KEY, SENTENCE, "PROBE_CODE");
+    const inFilmA = actionRefusalMarkup(KEY);
+
+    /* 1. THE KEY CARRIES THE PROJECT. Same coordinates, different film. */
+    window.ACTIVE_PROJECT_SLUG = "a-completely-different-film";
+    try { ACTIVE_PROJECT_SLUG = "a-completely-different-film"; } catch {}
+    const inFilmB = actionRefusalMarkup(KEY);
+
+    /* 2. AND FILM B MAY RECORD ITS OWN UNDER THE SAME COORDINATES. */
+    recordActionRefusal(KEY, "Film B said something else entirely.", "OTHER_CODE");
+    const filmBOwn = actionRefusalMarkup(KEY);
+
+    /* 3. BACK IN FILM A — film B's write evicted the other project's row, which is
+          what stops the map growing a resident copy of every film opened. */
+    window.ACTIVE_PROJECT_SLUG = filmA;
+    try { ACTIVE_PROJECT_SLUG = filmA; } catch {}
+    const backInFilmA = actionRefusalMarkup(KEY);
+
+    /* 4. AND A PROJECT OPEN CLEARS THE MAP — the case a scoped key alone cannot
+          cover, because reopening the SAME project keeps the slug and replaces
+          the record. */
+    recordActionRefusal(KEY, SENTENCE, "PROBE_CODE");
+    const beforeOpen = actionRefusalMarkup(KEY);
+    beginProjectOpen();
+    const afterOpen = actionRefusalMarkup(KEY);
+
+    return { inFilmA, inFilmB, filmBOwn, backInFilmA, beforeOpen, afterOpen, filmA };
+  `);
+
+  ok(seen.filmA.length > 0, "G6 precondition: the harness project has a slug to scope by");
+  ok(/Film A said this/.test(seen.inFilmA), "G6: the refusal renders in the film it was recorded in");
+  equal(seen.inFilmB, "", "G6: and renders NOTHING in a different film at the same target coordinates");
+  ok(/Film B said something else/.test(seen.filmBOwn), "G6: which leaves the other film free to record its own");
+  equal(seen.backInFilmA, "", "G6: and one film's write leaves no resident copy of another film's refusal");
+  ok(/Film A said this/.test(seen.beforeOpen), "G6 precondition: a refusal is recorded again");
+  equal(seen.afterOpen, "", "G6: and opening a project clears it, which is what covers reopening the same one");
+
+  note("G6 a refusal is scoped to the project it is about — same coordinates in another film render nothing, and a project open clears the store");
+}
+
+/* ===========================================================================
+   E9 — A RECEIPT THAT CANNOT BE WITHDRAWN BLOCKS THE DELETE, VISIBLY.
+
+   The condition that strands a save is a receipt ROW being `current`. Canon is a
+   STRONGER thing: `currentHumanAuthority` additionally requires the live edge to
+   match the receipt. Those come apart whenever an edge has DRIFTED — a rename
+   that `repairCanonValue` refuses to follow because the receipt carries no asset
+   identity, which is ordinary for any image the media ledger had not indexed.
+
+   Guarding on Canon therefore let a drifted state be spliced out with its
+   `current` receipt still naming it: the exact orphan AT1-E exists to prevent,
+   created silently. The kernel has no command that can withdraw such a row —
+   revokeCanon and systemInvalidateCanon both require currentHumanAuthority — so
+   this fails CLOSED: the state stays, the document stays saveable, and the
+   filmmaker is told what would make it removable.
+   =========================================================================== */
+
+async function e9_undrainableReceiptBlocksRemoval() {
+  const { project, entityId } = canonStateProject();
+
+  /* THE DRIFT, produced the way the product produces it: the edge moves to a
+     renamed file and the receipt — which carries no identity — stays behind. */
+  const state = project.characters.find((row) => row.id === entityId)
+    .continuityStates.find((row) => row.id === "state-rain");
+  state.approvedFile = "KAI-RAIN-RENAMED.png";
+
+  const target = { kind: "entity-state", list: "characters", entityId, stateId: "state-rain" };
+  const rowIsCurrent = Kernel.authorityHistory(project, target).some((row) => row && row.status === "current");
+  equal(rowIsCurrent, true, "E9 precondition: the receipt ROW is still current");
+  equal(Kernel.hasCurrentHumanAuthority(project, target), false,
+    "E9 precondition: but the edge has drifted, so it no longer reads as Canon — this is the gap");
+
+  const page = await render(`#/character/${entityId}`, project);
+  const seen = page.gesture.act(() => evaluate(page.context, `
+    const entity = P.characters.find((row) => row.id === ${JSON.stringify(entityId)});
+    const context = "characters:" + entity.id;
+    boundedWriteState("selected:entity-coverage-view", context, "states");
+    boundedWriteState("selected:continuity-state", context, "state-rain");
+    selectBoundedTask("entity-task", context, "coverage");
+    entity.notes = "an unrelated edit made in the same session";
+    const index = entity.continuityStates.findIndex((row) => row.id === "state-rain");
+    removeContinuityState("characters", entity.id, index);
+    const main = (document.getElementById("main") || { innerHTML: "" }).innerHTML;
+    const receipt = (P.productionAuthority.receipts || []).find((row) => row.stateId === "state-rain");
+    return {
+      stateKept: entity.continuityStates.some((row) => row.id === "state-rain"),
+      receiptStatus: receipt ? receipt.status : "",
+      unrelatedKept: entity.notes,
+      refusalRendered: main.indexOf('data-action-refusal="continuity-state:characters:' + entity.id + ':state-rain"') >= 0,
+      refusalText: (main.split("CineBraid did not make this change</b><span>")[1] || "").split("</span>")[0],
+      after: JSON.parse(JSON.stringify(P)),
+    };
+  `));
+
+  equal(seen.stateKept, true, "E9: the state is NOT removed — removing it would strand the document");
+  equal(seen.receiptStatus, "current", "E9: and its receipt is left exactly as it was");
+  equal(seen.unrelatedKept, "an unrelated edit made in the same session", "E9: the unrelated edit is untouched");
+  equal(seen.refusalRendered, true, "E9: the reason is on screen beside the state whose × was pressed");
+  ok(/renamed or replaced/.test(seen.refusalText),
+    "E9: naming the cause, and what would make it removable: " + seen.refusalText);
+
+  /* AND THE DOCUMENT IS STILL SAVEABLE — which is the whole point of refusing. */
+  const seam = require(path.join(ROOT, "authority-write-seam"));
+  const crypto = require("crypto");
+  let stored = clone(project), writes = 0;
+  const boundary = seam.createAuthorityWriteSeam({
+    resolveFile: () => "project.json", exists: () => true,
+    readProject: () => clone(stored),
+    revisionFor: () => JSON.stringify(crypto.createHash("sha256").update(JSON.stringify(stored)).digest("hex")),
+    validateProject: () => ({ ok: true, errors: [] }),
+    writeProject: (_file, successor) => { stored = clone(successor); writes += 1; },
+  });
+  const outcome = boundary.persistProjectSuccessor({
+    slug: "p", successor: seen.after, writeClass: seam.WRITE_CLASSES.NORMAL_SAVE,
+    expectedRevision: JSON.stringify(crypto.createHash("sha256").update(JSON.stringify(stored)).digest("hex")),
+    transitionMetadata: {},
+  });
+  equal(outcome.ok, true,
+    `E9: and the project can still be saved (${JSON.stringify(outcome.refusal || {})})`);
+  equal(writes, 1, "E9: the unrelated edit reaches disk, which the pre-fix splice made impossible");
+
+  note("E9 a receipt the kernel cannot withdraw blocks the removal instead of orphaning itself — the state stays, the reason is on screen, and the document is still saveable");
+}
+
 async function main() {
   a_shippedSampleFirstAction();
   b_preflightVetoParity();
@@ -749,8 +1012,10 @@ async function main() {
   await e_canonStateDeletion();
   await e2_refusedDeletionKeepsAuthority();
   e8_saveSucceedsThroughTheSeam();
+  await e9_undrainableReceiptBlocksRemoval();
   await f_actionLabelsMatchBehaviour();
   await g_refusalsPersist();
+  await g6_refusalsBelongToTheirProject();
   for (const line of notes) console.log(line);
   console.log(`action-truth-first-press: ${checks} assertions passed`);
 }

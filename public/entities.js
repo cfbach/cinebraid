@@ -1026,12 +1026,59 @@ window.setContinuityState = (list, id, i, k, v) => {
  * IF THE REVOCATION IS REFUSED, NOTHING IS REMOVED. The state keeps its Canon,
  * the project stays consistent, and the refusal is recorded where the filmmaker
  * pressed rather than only in a toast that clears itself. */
+/* WHAT STRANDS A SAVE IS A RECEIPT ROW, SO THAT IS WHAT THIS ASKS ABOUT.
+ *
+ * The first version of this guard asked `hasCurrentHumanAuthority`, and that is a
+ * STRONGER question than the one that matters. `currentHumanAuthority` requires
+ * the live edge to match the receipt exactly (shared-authority-kernel.js, the S5
+ * identity rule); the write seam refuses on the ROW being `current`. Those come
+ * apart whenever an edge has DRIFTED from a still-current receipt — which is a
+ * shipped, documented outcome, not a hypothetical: `repairCanonValue` refuses to
+ * follow a rename when the receipt carries no asset identity, and a receipt with
+ * no identity is ordinary for any image the media ledger had not indexed. The
+ * comment there says so plainly: the edge and the receipt disagree, and the
+ * pointer reads as HISTORIC.
+ *
+ * With the stronger question, such a state skipped revocation and was spliced out
+ * anyway — recreating the exact orphan this whole function exists to prevent, and
+ * silently. Reproduced end to end: the resulting document is refused by BOTH write
+ * classes (CANON_TRANSITION -> AUTHORITY_EDGE_RECEIPT_MISMATCH, NORMAL_SAVE ->
+ * CANON_TRANSITION_REQUIRED), so it cannot be saved at all.
+ *
+ * THREE CASES, AND THE THIRD IS THE ONE THAT WAS WRONG:
+ *
+ *   no current row          nothing to withdraw. Remove the state.
+ *   current row, edge intact  the canonical writer withdraws it. Remove the state.
+ *   current row, edge drifted the kernel has NO command that can withdraw it —
+ *                             revokeCanon and systemInvalidateCanon both require
+ *                             currentHumanAuthority — so REMOVING IT WOULD STRAND
+ *                             THE DOCUMENT. Refuse, visibly, and change nothing.
+ *
+ * The third case fails closed on purpose. This slice does not add a new authority
+ * command, and it does not delete a receipt by hand; a state whose approval cannot
+ * be withdrawn is a state that cannot yet be removed, and the filmmaker is told
+ * what would make it removable. */
+function currentAuthorityRowExists(list, entity, stateId) {
+  if (typeof authorityHistory !== "function") return false;
+  const target = authorityTarget({ kind: "entity-state", list, entityId: entity.id, stateId });
+  if (!target) return false;
+  return authorityHistory(P, target).some((row) => row && String(row.status) === "current");
+}
 function revokeEntityStateCanonForRemoval(list, entity, stateIds) {
   if (typeof hasCurrentHumanAuthority !== "function" || typeof revokeEntityStateCanon !== "function") return;
   const at = new Date().toISOString();
   for (const stateId of stateIds) {
     const target = authorityTarget({ kind: "entity-state", list, entityId: entity.id, stateId });
-    if (!target || !hasCurrentHumanAuthority(P, target)) continue;
+    if (!target || !currentAuthorityRowExists(list, entity, stateId)) continue;
+    if (!hasCurrentHumanAuthority(P, target)) {
+      const state = (entity.continuityStates || []).find((row) => row && row.id === stateId) || {};
+      const error = new Error(
+        `${state.name || "This state"} still holds an approval record CineBraid cannot withdraw, because the approved image was renamed or replaced after it was approved and the record no longer matches it. `
+        + "Re-approve this state's current image, then remove it. Removing it now would leave an approval naming a state that no longer exists, and the project could not be saved.",
+      );
+      error.code = "AUTHORITY_RECEIPT_NOT_WITHDRAWABLE";
+      throw error;
+    }
     revokeEntityStateCanon(P, {
       list, entityId: entity.id, stateId,
       at, via: "confirmed-target-removal", reason: "target-removed", clearEdge: false,

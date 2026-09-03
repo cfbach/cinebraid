@@ -595,7 +595,25 @@ async function ll7_oneNamePerAction() {
      sentence case and modal confirms in caps, and CSS uppercases several of both, so a
      case-sensitive set would report two names for one action purely because of where
      the control sits. The invariant is the WORD. */
-  const names = (pattern) => [...new Set(labels.filter((label) => pattern.test(label)).map((label) => label.toLowerCase()))].sort();
+  /* ONE NAME PER ACTION — AND A CONTROL THAT TRAVELS DOES NOT NAME AN ACTION.
+   *
+   * AT1-F. This set used to be every button label on the surface, and that was
+   * right while every button on it performed something. It no longer is: the shot
+   * card's primary control is a ROUTER — openShotReadinessAction() sets
+   * location.hash or opens a guided panel and performs no act — so it now says
+   * where it goes instead of wearing the verb of the act it goes to. That is the
+   * whole of the correction: a button reading "Mark shot final" that marks
+   * nothing final, a scroll above the one that does, was the duplicate.
+   *
+   * The filter is on the CALL, not on the wording, because the call is ground
+   * truth about what pressing does and a label is what is under test. So the
+   * guarantee is unchanged and is now stated exactly: no two controls that
+   * PERFORM may share a name. A performing control cannot hide behind this —
+   * it would have to be dispatched by a router to be excluded, and then it would
+   * not be a performing control. */
+  const ROUTERS = /^\s*(?:openShotReadinessAction|location\.hash\s*=|openGuidedPanel|scrollGuided|selectBoundedTask)/;
+  const performing = controls(surface).filter((row) => !ROUTERS.test(row.call));
+  const names = (pattern) => [...new Set(performing.map((row) => row.label).filter((label) => pattern.test(label)).map((label) => label.toLowerCase()))].sort();
 
   deepEqual(names(/finish/i), ["send to finishing"],
     `LL7: the optional finishing action has exactly one name across the workspace, got ${JSON.stringify(names(/finish/i))}`);

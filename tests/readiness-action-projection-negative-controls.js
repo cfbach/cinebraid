@@ -537,14 +537,24 @@ async function nc6() {
       decisions: projectFilmmakerDecisions(feed).count,
       inboxHeadline: (inbox.split("<h2>")[1] || "").split("</h2>")[0],
       next: projectNextProductionAction(feed),
-      /* THE ACT THE PRIMARY CONTROL IS ROUTING TO, read from the readiness row
-         that produced it. AT1-F reworded the CONTROL — Production's card travels
-         to the shot, so it says so — and this control's guarantee was expressed
-         as a regex over that wording. A wording rule cannot police an act: the
-         defect being reproduced is that CineBraid offers to PRODUCE MORE MEDIA
-         while a returned result waits, and the produce-frame action code is what
-         says so whatever any surface chooses to call it. */
-      code: (feed.shots || []).map((row) => row.nextAction && row.nextAction.code).filter(Boolean)[0] || "",
+      /* WHAT THE PRIMARY CONTROL ACTUALLY ROUTES TO.
+       *
+       * AT1-F reworded the CONTROL, and this guarantee had been expressed as a
+       * regex over that wording. Re-pointing it at the first shot row's action
+       * code was wrong in the other direction: that code is produce-frame on
+       * the CORRECT build too — the mutation does not touch it — so the predicate
+       * was false on both builds and could no longer tell them apart.
+       *
+       * The fact that separates them is where the PRIMARY ACTION goes. Correct:
+       * it routes to the returned result. Defective: it routes to a shot whose
+       * own next act is producing more media. That is the defect in one value,
+       * and it is wording-independent. */
+      routesToProducingMore: (() => {
+        const next = projectNextProductionAction(feed);
+        if (!next || next.kind !== "shot") return false;
+        const row = (feed.shots || []).find((shot) => shot.shotId === next.shotId);
+        return /^produce-/.test((row && row.nextAction && row.nextAction.code) || "");
+      })(),
       homeCta: (home.split('class="assemble-btn" href="#/shot/L1-01">')[1] || "").split(" ")[0],
     });
   `);
@@ -554,7 +564,7 @@ async function nc6() {
   equal(seen.inboxHeadline, "1 returned result waiting for review",
     "Returned Results correctly says a result is waiting");
   equal(seen.next.kind, "shot", "NC-UX1-6 reproduces the routing defect");
-  equal(seen.code, "produce-frame",
+  equal(seen.routesToProducingMore, true,
     "the primary action routes the filmmaker to generate another candidate for the frame whose first candidate nobody has looked at");
   equal(seen.next.actionLabel, "OPEN THE FRAME WORKSPACE",
     "and the control that travels there is worded for the frame workspace it opens");
@@ -565,9 +575,27 @@ async function nc6() {
       "with returned media awaiting review and no higher-priority blocker, the primary action must route to reviewing it");
   });
   await mustFail("NC-UX1-6 act", "must not route the filmmaker to producing more", () => {
-    assert(seen.code !== "produce-frame" && seen.code !== "produce-motion",
+    assert(!seen.routesToProducingMore,
       "the primary action must not route the filmmaker to producing more media while a returned result waits");
   });
+
+  /* 3. AND THE GUARANTEE IS TRUE ON THE SHIPPED BUILD — the half that makes the
+        control a control. A predicate that is false on both builds throws either
+        way, and mustFail() only requires a throw, so it would report "failed as
+        required" forever while discriminating nothing. Same fixture, no mutation. */
+  const honest = await render("#/production", project, { scan: scanWith(project, { "L1-01": ["FRAME_A.png"] }) });
+  const shipped = await evaluateAsync(honest.context, `
+    const feed = projectShotReadiness();
+    const next = projectNextProductionAction(feed);
+    const row = next && next.kind === "shot" ? (feed.shots || []).find((s) => s.shotId === next.shotId) : null;
+    return {
+      kind: next && next.kind,
+      routesToProducingMore: !!row && /^produce-/.test((row.nextAction && row.nextAction.code) || ""),
+    };
+  `);
+  equal(shipped.kind, "returned-result", "NC-UX1-6: the shipped build routes to the returned result instead");
+  equal(shipped.routesToProducingMore, false,
+    "NC-UX1-6: so the guarantee this control breaks is genuinely TRUE on the shipped build");
 
   note(`NC-UX1-6 restored produce-before-review: "${seen.inboxHeadline}" beside a primary action reading ${seen.next.actionLabel}`);
 }

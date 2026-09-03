@@ -2676,6 +2676,7 @@ function canonicalShotReadinessCardMarkup(s, neighbors, readiness, next, action,
     : "";
   return `<section class="guided-next-action state-readiness-${attr(String(readiness.status || "").toLowerCase())} ${available ? "is-ready" : ""}" data-shot-readiness="${attr(readiness.status)}" style="${attr(shotCanvasStyle(s))}"><div class="guided-lifecycle-preview">${media}</div><div><span>${esc(status)} - NEXT ACTION</span><h2>${esc(next.label)}</h2><p>${esc(next.detail)}</p><div class="guided-next-actions">${action}${note}</div></div><nav>${previous}${following}</nav></section>`;
 }
+const SHOT_ACTIONS_NAMED_TWICE = Object.freeze(["mark-shot-final"]);
 function guidedShotStatusCard(s, takes, neighbors) {
   const life = guidedShotLifecycle(s, takes);
   const preview = life.finalVideo || life.motion || life.finalStill || life.current || life.videos.at(-1) || life.images.at(-1);
@@ -2736,9 +2737,49 @@ function guidedShotStatusCard(s, takes, neighbors) {
     const next = shotProductionNextAction(s, readiness);
     const available = truth.status === "READY";
     const status = READINESS_STATUS_WORDS[truth.status] || truth.status || "NEXT ACTION";
+    /* AT1-F. BOTH OF THESE TRAVEL, SO BOTH SAY SO.
+     *
+     * This was the duplicate the slice was written to remove, and it is the more
+     * prominent half of it: `openShotReadinessAction` is a ROUTER — it sets
+     * location.hash or opens a guided panel, and it performs no act — yet the
+     * button wore `next.label`, the performing verb. So a shot workspace showed
+     * MARK SHOT FINAL on a control that marks nothing final, a scroll away from
+     * Finish & Delivery's real Mark shot final button that does. A filmmaker who
+     * pressed the wrong one had not made the decision they had just been told
+     * they were making. The act is still named — the card's own headline and
+     * message are `next.label` and the readiness sentence — and it is still
+     * performed by its owner at the destination. */
+    /* THE CODES WHOSE DESTINATION PANEL SHIPS A CONTROL WITH THESE EXACT WORDS.
+       Named here rather than inferred, because "is there a rival control with
+       this label" is a question about markup a renderer cannot ask cheaply — and
+       tests/action-truth-first-press.js asserts this list is neither stale nor
+       silently grown. */
+    /* AND ONLY WHERE IT IS ACTUALLY A HAND-OFF. Two cases, and no more:
+     *
+     *   a ROUTE       the press leaves this surface entirely. `confirm-existing-
+     *                 reference` sets location.hash to Production, so a button
+     *                 reading "Confirm existing reference" confirms nothing and
+     *                 is not even on the same page as the thing that does.
+     *
+     *   a DUPLICATE   the destination PANEL ships a control bearing these exact
+     *                 words. `mark-shot-final` opens Finish & Delivery, whose own
+     *                 "Mark shot final" button writes the delivery receipt — so
+     *                 the page carried that name twice, on one control that acts
+     *                 and one that does not.
+     *
+     * Every other code opens a panel on THIS page whose contents are the decision
+     * itself — route selectors, a state picker — with no rival control wearing
+     * the same name. There the act's words are the right words for a control that
+     * scrolls to it, and tests/shot-intent-front.js holds that deliberately. This
+     * is AT1-F's rule applied, not a blanket rewording of every control. */
+    const routes = typeof shotReadinessTargetRoute === "function" && !!shotReadinessTargetRoute(truth);
+    const duplicated = SHOT_ACTIONS_NAMED_TWICE.includes(truth.nextAction?.code || "");
+    const travel = (routes || duplicated) && typeof readinessNavigationWords === "function"
+      ? `${readinessNavigationWords(truth.nextAction)} →`
+      : next.label;
     const action = !readiness
-      ? `<button class="assemble-btn shot-primary-action" onclick="location.hash='#/production'">${esc(next.label)}</button>`
-      : `<button class="assemble-btn shot-primary-action" onclick="openShotReadinessAction('${attr(s.id)}','${attr(truth.nextAction?.code || "")}')">${esc(next.label)}</button>`;
+      ? `<button class="assemble-btn shot-primary-action" onclick="location.hash='#/production'">Open Production →</button>`
+      : `<button class="assemble-btn shot-primary-action" onclick="openShotReadinessAction('${attr(s.id)}','${attr(truth.nextAction?.code || "")}')">${esc(travel)}</button>`;
     return canonicalShotReadinessCardMarkup(s, neighbors, truth, next, action, media, available, status, unavailableNote);
   }
   const ready = ["still-ready", "animate", "motion-approved", "final"].includes(life.key);
@@ -6000,16 +6041,42 @@ window.setManualStartField = (key, value) => {
      and tests/action-truth-first-press-negative-controls.js R-AT1-1 fails if the
      writers that edit the open project come back to this card. */
 };
+/* ONE PRESS, ONE PROJECT. This is `await`ed twice before it commits — a save
+   flush and the create request — and a button with no in-flight guard is pressed
+   twice by any filmmaker who thinks the first press missed. That made two
+   projects from one intent, and the second silently became the open one. */
+let MANUAL_START_IN_FLIGHT = false;
 window.startManualProject = async () => {
+  const refusalKey = "manual-start";
+  clearActionRefusal(refusalKey);
   const draft = manualStartDraft();
   const title = String(draft.title || "").trim();
-  if (!title) return toast("Give the new project a title first");
+  /* AT1-G. These were toast-only, on the slice's own new control — the exact
+     pattern this slice exists to remove. */
+  const refuse = (message, code = "") => {
+    recordActionRefusal(refusalKey, message, code);
+    route();
+    return toast(message);
+  };
+  if (MANUAL_START_IN_FLIGHT) return toast("Already creating that project…");
+  if (!title) return refuse("Give the new project a title before creating it.", "manual-start:title-required");
+  MANUAL_START_IN_FLIGHT = true;
+  try {
+    return await startManualProjectCommit(draft, title, refuse);
+  } finally {
+    MANUAL_START_IN_FLIGHT = false;
+  }
+};
+async function startManualProjectCommit(draft, title, refuse) {
   /* The open project's own unsaved work is flushed before anything switches, the
      same way commitProjectBuilderImport() and newProject() flush it. */
   try {
     await flushPendingProjectSave();
   } catch (error) {
-    return toast(error.message || "Save the current project before creating another one");
+    return refuse(
+      `${error.message || "The project you have open could not be saved"}. Nothing was created, and nothing about it was changed.`,
+      "manual-start:flush-failed",
+    );
   }
   let created = null;
   try {
@@ -6021,7 +6088,10 @@ window.startManualProject = async () => {
     created = await response.json().catch(() => ({}));
     if (!response.ok) throw new Error(created.error || "Could not create project");
   } catch (error) {
-    return toast(error.message || "Could not create project");
+    return refuse(
+      `${error.message || "CineBraid could not create that project"}. What you typed is still here, and the project you have open is unchanged.`,
+      "manual-start:create-failed",
+    );
   }
   /* Consumed, not merely hidden: the draft described a project that now exists. */
   CREATION_MANUAL_IDENTITY.title = "";
@@ -6044,6 +6114,7 @@ function creationManualIdentityCard() {
       ${field("Format", `<input list="cinebraid-format-presets" value="${attr(draft.format || "")}" placeholder="Short film" onchange="setManualStartField('format',this.value)"><datalist id="cinebraid-format-presets">${PROJECT_FORMAT_PRESETS.filter(([value]) => value).map(([value, label]) => `<option value="${attr(value)}">${esc(label)}</option>`).join("")}</datalist><span class="hint">What this project is being made as.</span>`)}
       ${field("Aspect ratio", `<input list="cinebraid-aspect-presets" value="${attr(draft.aspectRatio || "")}" placeholder="16:9" onchange="setManualStartField('aspectRatio',this.value)"><datalist id="cinebraid-aspect-presets">${CINEBRAID_ASPECT_PRESETS.map(([value, label]) => `<option value="${attr(value)}">${esc(label)}</option>`).join("")}</datalist><span class="hint">The frame every shot is judged in unless a shot overrides it.</span>`)}
     </div>
+    ${typeof actionRefusalMarkup === "function" ? actionRefusalMarkup("manual-start") : ""}
     <div class="creation-manual-commit"><button class="assemble-btn" data-manual-start-commit onclick="startManualProject()">CREATE THIS PROJECT</button><small>Creates a separate project and opens it. ${esc(P.meta.title || "The project you have open")} stays exactly as it is.</small></div>
   </section>`;
 }

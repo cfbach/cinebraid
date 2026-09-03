@@ -11,7 +11,7 @@
  *
  * So this file does two things, and they are different:
  *
- *   NEGATIVE CONTROLS (NC-AT1-1..4). Each one REPRODUCES a defect by mutating
+ *   NEGATIVE CONTROLS (NC-AT1-1..5). Each one REPRODUCES a defect by mutating
  *   the shipped source, proves the defect is visible in the mutated build, and
  *   then proves the AT1 guarantee GOES RED against it. A guarantee that stays
  *   green when the defect is restored is not a guarantee, and mustFail() below
@@ -316,6 +316,91 @@ async function nc4_unrevokedStateDeletion() {
   note("NC-AT1-4 restored the direct edge deletion: the state went and its receipt stayed current");
 }
 
+
+/* ===========================================================================
+   NC-AT1-5 — RESTORE THE CANON-SHAPED GUARD.
+
+   The first version of AT1-E guarded on `hasCurrentHumanAuthority`, which is a
+   STRONGER question than the one that strands a save. The seam refuses on a
+   receipt ROW being `current`; Canon additionally requires the live edge to match
+   it. So a state whose edge had drifted skipped revocation and was spliced out
+   anyway, recreating the very orphan the slice was written to prevent — silently.
+
+   This restores that guard and proves the orphan comes back with it.
+   =========================================================================== */
+
+const NC5_ANCHOR = `    if (!target || !currentAuthorityRowExists(list, entity, stateId)) continue;`;
+const NC5_BREAK = `    if (!target || !hasCurrentHumanAuthority(P, target)) continue;`;
+
+async function nc5_canonShapedGuard() {
+  anchorIn("public/entities.js", NC5_ANCHOR, "NC-AT1-5");
+
+  const project = rawFixture();
+  const entity = project.characters[0];
+  entity.continuityStates = [
+    { id: "state-default", name: "Default", isDefault: true, approvedFile: entity.approvedFile || "KAI-ANCHOR.png" },
+    { id: "state-rain", name: "Rain-soaked", isDefault: false, parentStateId: "state-default", approvedFile: "KAI-RAIN.png" },
+  ];
+  withCanon(project, [{
+    kind: "entity-state", list: "characters", entityId: entity.id, stateId: "state-rain", value: "KAI-RAIN.png",
+  }]);
+  /* THE DRIFT: the edge moves, the identity-less receipt cannot follow it. */
+  entity.continuityStates.find((row) => row.id === "state-rain").approvedFile = "KAI-RAIN-RENAMED.png";
+
+  const target = { kind: "entity-state", list: "characters", entityId: entity.id, stateId: "state-rain" };
+  equal(Kernel.authorityHistory(project, target).some((row) => row && row.status === "current"), true,
+    "NC-AT1-5 precondition: the receipt row is current");
+  equal(Kernel.hasCurrentHumanAuthority(project, target), false,
+    "NC-AT1-5 precondition: and the drifted edge means it does not read as Canon");
+
+  const page = await render(`#/character/${entity.id}`, project, {
+    mutateSource: replacing("entities.js", NC5_ANCHOR, NC5_BREAK),
+  });
+  const seen = page.gesture.act(() => evaluate(page.context, `
+    const entity = P.characters[0];
+    const index = entity.continuityStates.findIndex((row) => row.id === "state-rain");
+    removeContinuityState("characters", entity.id, index);
+    const receipt = (P.productionAuthority.receipts || []).find((row) => row.stateId === "state-rain");
+    return {
+      stateGone: !entity.continuityStates.some((row) => row.id === "state-rain"),
+      receiptStatus: receipt ? receipt.status : "",
+      after: JSON.parse(JSON.stringify(P)),
+    };
+  `));
+
+  /* 1. THE DEFECT: spliced out, receipt still current. */
+  equal(seen.stateGone, true, "NC-AT1-5 reproduces the silent removal of a drifted state");
+  equal(seen.receiptStatus, "current", "and its receipt is left naming a state that no longer exists");
+
+  /* 2. AND THE SEAM REFUSES THE DOCUMENT — the stranding, in full. */
+  const seam = require(path.join(ROOT, "authority-write-seam"));
+  const crypto = require("crypto");
+  let stored = clone(project), writes = 0;
+  const boundary = seam.createAuthorityWriteSeam({
+    resolveFile: () => "project.json", exists: () => true,
+    readProject: () => clone(stored),
+    revisionFor: () => JSON.stringify(crypto.createHash("sha256").update(JSON.stringify(stored)).digest("hex")),
+    validateProject: () => ({ ok: true, errors: [] }),
+    writeProject: (_file, successor) => { stored = clone(successor); writes += 1; },
+  });
+  const outcome = boundary.persistProjectSuccessor({
+    slug: "p", successor: seen.after, writeClass: seam.WRITE_CLASSES.CANON_TRANSITION,
+    expectedRevision: JSON.stringify(crypto.createHash("sha256").update(JSON.stringify(stored)).digest("hex")),
+    transitionMetadata: Kernel.authorityWriteTransition(project, seen.after).declaration,
+  });
+  equal(outcome.ok, false, "NC-AT1-5: and the write seam refuses the resulting document");
+  equal(outcome.refusal.code, "AUTHORITY_EDGE_RECEIPT_MISMATCH", "with the exact code the audit reported");
+  equal(writes, 0, "so nothing reaches disk and every unrelated edit is stranded");
+
+  /* 3. AND THE GUARANTEE GOES RED. */
+  await mustFail("NC-AT1-5", "must not remove a state whose receipt cannot be withdrawn", () => {
+    assert(!seen.stateGone,
+      "a state whose current receipt cannot be withdrawn must not be removed — CineBraid must not remove a state whose receipt cannot be withdrawn");
+  });
+
+  note("NC-AT1-5 restored the Canon-shaped guard: a drifted state was spliced out and the seam then refused the whole document");
+}
+
 /* ===========================================================================
    RETIREMENT ASSERTIONS.
 
@@ -447,7 +532,12 @@ async function r_retirementAssertionsFire() {
       "a navigating control must not be labelled with the performing control's words");
   });
 
-  note("R every retirement assertion was run against a source in which its superseded owner had returned, and every one of them fired");
+  /* WHAT THIS PROVED, EXACTLY. Four assertions — one per retired owner — were run
+     against a source in which that owner had returned, and each fired. The other
+     RETIRED assertions in r_retirementAssertions() are the same shape over the
+     same sources and are not separately re-proved here; this establishes that the
+     technique fires rather than that every line of it does. */
+  note("R the four retired owners were each re-introduced into a copy of the shipped source, and the assertion guarding each one fired");
 }
 
 /* THE SHIPPED BUILD IS GREEN ON EVERY CLAIM THE CONTROLS BROKE. */
@@ -473,7 +563,7 @@ async function shippedBuildIsGreen() {
   equal(seen.openedCreation, true, "shipped: and pressing it opens the real creation flow");
   ok(!/has been delivered/i.test(seen.toast), "shipped: with no completion claim");
 
-  note("the shipped build is green on every claim the four controls broke");
+  note("the shipped build is green on every claim the five controls broke");
 }
 
 async function main() {
@@ -481,6 +571,7 @@ async function main() {
   await nc2_zeroShotCompletion();
   await nc3_manualStartMutation();
   await nc4_unrevokedStateDeletion();
+  await nc5_canonShapedGuard();
   r_retirementAssertions();
   await r_retirementAssertionsFire();
   await shippedBuildIsGreen();

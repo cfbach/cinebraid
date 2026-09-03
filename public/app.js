@@ -2015,6 +2015,10 @@ function beginProjectOpen() {
      reopening the SAME project, where the slug never changes but the record
      does. */
   if (typeof resetContinuityWorkspaceState === "function") resetContinuityWorkspaceState();
+  /* AT1-G. A refusal describes a change CineBraid declined to make to the record
+     being replaced, so it goes with the record — including on a reopen of the
+     same project, which the scoped key alone would let through. */
+  if (typeof resetActionRefusals === "function") resetActionRefusals();
   return { intent: "open", epoch: PROJECT_OPEN_EPOCH, sequence: 0, slug: "" };
 }
 /* A refresh's ticket, taken when the request STARTS. The sequence orders it
@@ -2739,14 +2743,45 @@ function toast(msg) {
    as the kernel or the seam said it. This function does not rephrase a refusal,
    because the refusal sentences already name what is wrong and what would
    resolve it, and a second rendering of them is a second place for them to drift. */
+/* SCOPED TO THE PROJECT IT IS ABOUT, the same three ways CONTINUITY_RUNS is.
+ *
+ * A refusal is derived display state about ONE project's record, and every key a
+ * surface can build from is target coordinates: `state-default` is the literal id
+ * every entity's primary reference uses, and entity ids are name-slugs, so two
+ * films that each contain a location called Platform both address
+ * `entity-state:locations:LOC-PLATFORM#state-default`. Un-scoped, one film's
+ * refusal renders in the next — under the heading "CineBraid did not make this
+ * change", about a change never attempted there, beside a control that in THAT
+ * film would have succeeded. A store built to stop CineBraid saying untrue things
+ * must not be able to say one.
+ *
+ * So: the key carries the project, a read revalidates it, a write evicts anything
+ * from another project, and beginProjectOpen() clears the map outright — which is
+ * what covers reopening the SAME project, where the slug never changes but the
+ * record does. */
 const ACTION_REFUSALS = window.__cinebraidActionRefusals || (window.__cinebraidActionRefusals = new Map());
+function actionRefusalProject() {
+  if (typeof ACTIVE_PROJECT_SLUG !== "undefined" && ACTIVE_PROJECT_SLUG) return String(ACTIVE_PROJECT_SLUG);
+  if (typeof window !== "undefined" && window.ACTIVE_PROJECT_SLUG) return String(window.ACTIVE_PROJECT_SLUG);
+  return "";
+}
 function actionRefusalKey(key) {
-  return String(key == null ? "" : key);
+  const id = String(key == null ? "" : key);
+  if (!id) return "";
+  return `${actionRefusalProject()}::${id}`;
 }
 window.recordActionRefusal = (key, message, code = "") => {
   const id = actionRefusalKey(key);
-  if (!id) return;
-  ACTION_REFUSALS.set(id, { message: String(message || "That action could not be completed."), code: String(code || "") });
+  if (id) {
+    const project = actionRefusalProject();
+    /* Nothing from another project stays resident. */
+    for (const [existing, row] of ACTION_REFUSALS) if (row?.projectKey !== project) ACTION_REFUSALS.delete(existing);
+    ACTION_REFUSALS.set(id, {
+      message: String(message || "That action could not be completed."),
+      code: String(code || ""),
+      projectKey: project,
+    });
+  }
 };
 window.clearActionRefusal = (key) => {
   ACTION_REFUSALS.delete(actionRefusalKey(key));
@@ -2756,14 +2791,27 @@ window.dismissActionRefusal = (key) => {
   route();
 };
 function actionRefusal(key) {
-  return ACTION_REFUSALS.get(actionRefusalKey(key)) || null;
+  const row = ACTION_REFUSALS.get(actionRefusalKey(key)) || null;
+  /* Read-side revalidation. The key already scopes it; this makes a mismatch
+     unrepresentable even if some future caller builds a key another way. */
+  return row && row.projectKey === actionRefusalProject() ? row : null;
+}
+/* Called by beginProjectOpen(), which every project open funnels through. */
+function resetActionRefusals() {
+  ACTION_REFUSALS.clear();
 }
 /* Rendered by the surface that offered the act, immediately beside it. The
    dismiss control is the filmmaker's, never a timer's. */
 function actionRefusalMarkup(key) {
   const refusal = actionRefusal(key);
   if (!refusal) return "";
-  return `<div class="action-refusal prompt-check warn" role="status" data-action-refusal="${attr(actionRefusalKey(key))}"${refusal.code ? ` data-refusal-code="${attr(refusal.code)}"` : ""}><b>CineBraid did not make this change</b><span>${esc(refusal.message)}</span><button type="button" class="action-refusal-dismiss" onclick="dismissActionRefusal('${attr(actionRefusalKey(key))}')" aria-label="Dismiss this message">Dismiss</button></div>`;
+  /* THE SURFACE'S OWN KEY, NOT THE STORAGE KEY. The project scoping is an
+     internal addressing concern: rendering the prefixed key here would put the
+     slug in the DOM for no reader, and — the part that actually broke — would
+     hand dismissActionRefusal() a key it prefixes a SECOND time, so Dismiss
+     would delete nothing and the refusal could never be cleared. */
+  const surfaceKey = String(key == null ? "" : key);
+  return `<div class="action-refusal prompt-check warn" role="status" data-action-refusal="${attr(surfaceKey)}"${refusal.code ? ` data-refusal-code="${attr(refusal.code)}"` : ""}><b>CineBraid did not make this change</b><span>${esc(refusal.message)}</span><button type="button" class="action-refusal-dismiss" onclick="dismissActionRefusal('${attr(surfaceKey)}')" aria-label="Dismiss this message">Dismiss</button></div>`;
 }
 function tally() {
   const c = {};
@@ -5878,7 +5926,11 @@ function productionView(tab = "board") {
      and the press answered "Every shot has been delivered". Same owner as
      Production's primary control, so the two heads cannot say different things
      about the same project; CONTINUE keeps its short word when there is work. */
-  const boardPrimary = projectPrimaryProductionAction();
+  /* HANDED THE FEED THIS VIEW ALREADY DERIVED. Calling it bare re-ran
+     evaluateProjectReadiness() for the whole project a second time on every
+     board paint — against this file's own rule, stated above productionHomeView,
+     that the answer is derived ONCE and handed to every reader. */
+  const boardPrimary = projectPrimaryProductionAction(shotReadiness);
   const head = `<div class="view-head board-head"><div><div class="eyebrow">Shots</div><span class="view-title">Shots</span><div class="view-sub">Track scene readiness, approved frames, and one clear next action for every shot.</div></div><div class="board-head-actions"><button class="assemble-btn" onclick="continueProduction()">${esc(boardPrimary.kind === "continue" ? "CONTINUE" : boardPrimary.label)}</button><button class="add-btn" onclick="openContextualAdd('shot')">＋ Add</button></div></div>${tabs}`;
   if (tab === "scenes") {
     const scenePage = boundedPage(P.scenes, "scenes", "overview", BOUNDED_PAGE_SIZES.scenes);

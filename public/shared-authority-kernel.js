@@ -1445,9 +1445,54 @@ function repairCanonValue(project, change = {}) {
    press is what supplies the gesture.
 
    IT NEVER THROWS AND IT NEVER WRITES. A caller may run it on every paint. */
+/* THE ENFORCEMENT LAYER'S SENTENCE, IN THE PREFLIGHT'S TENSE.
+ *
+ * Every refusal `commitCanon` throws ends by reporting what the attempt did to
+ * the document — "No authority was written." / "Nothing was changed." — which is
+ * exactly right for a refusal a filmmaker's press produced. A PREFLIGHT is
+ * answering before any press, so forwarding those clauses verbatim tells somebody
+ * who has pressed nothing that CineBraid tried and failed. The queue was doing
+ * that on every paint.
+ *
+ * The wording still has ONE owner: this trims the outcome clause and keeps the
+ * kernel's own requirement sentence — the half that names what is wrong and what
+ * would resolve it — untouched. */
+/* THE SMALLEST DOCUMENT THE WRITER CAN ANSWER THE EXISTENCE QUESTION ON.
+ *
+ * The probe below asks `writeAuthorityEdge` itself whether a target's host is in
+ * this project, so that resolution is never reimplemented here and cannot drift
+ * from the writer it predicts. The first version handed it `draftOf(project)` — a
+ * deep clone of the WHOLE document — and readiness asks this once per queued row,
+ * so a project with a large media ledger and a dozen unconfirmed references was
+ * cloning the entire record a dozen times on every paint.
+ *
+ * `writeAuthorityEdge` reads exactly one collection: `P.shots` for the three shot
+ * kinds, `P[target.list]` for an entity state. Nothing else on the document is
+ * touched. So the probe is handed a shell holding a clone of that one list — same
+ * answer, same writer, and the cost stops scaling with the rest of the project.
+ * It is still a CLONE: the writer mutates what it is given, and the live document
+ * must not be one of the things it can reach. */
+function availabilityProbeDraft(project, target) {
+  const source = kernelObject(project);
+  const key = kernelObject(target).kind === "entity-state" ? kernelText(kernelObject(target).list) : "shots";
+  const rows = kernelList(source[key]);
+  const shell = {};
+  shell[key] = typeof structuredClone === "function" ? structuredClone(rows) : JSON.parse(JSON.stringify(rows));
+  return shell;
+}
+
+const PREFLIGHT_OUTCOME_CLAUSES = [" No authority was written.", " Nothing was changed."];
+function preflightSentence(message) {
+  let text = kernelText(message);
+  for (const clause of PREFLIGHT_OUTCOME_CLAUSES) {
+    if (text.endsWith(clause)) text = text.slice(0, -clause.length);
+    if (text.endsWith(clause.trim())) text = text.slice(0, -clause.trim().length).trimEnd();
+  }
+  return text.trim();
+}
 function canonApprovalPreflight(project, request = {}) {
   const it = kernelObject(request);
-  const refuse = (code, message, detail) => ({ ok: false, code, message, detail: kernelObject(detail) });
+  const refuse = (code, message, detail) => ({ ok: false, code, message: preflightSentence(message), detail: kernelObject(detail) });
   const target = authorityTarget(it);
   if (!target) return refuse("AUTHORITY_TARGET_INCOMPLETE", "A Canon approval must name a complete target.");
   const what = describeTarget(target);
@@ -1472,7 +1517,7 @@ function canonApprovalPreflight(project, request = {}) {
      returns false for a host this project does not have, and it is handed a deep
      clone, so the real document is untouched and no second host-resolution
      reader exists to disagree with the first. */
-  if (writeAuthorityEdge(draftOf(project), target, { value, assetId: kernelText(it.assetId), at: kernelText(it.at) }) === false)
+  if (writeAuthorityEdge(availabilityProbeDraft(project, target), target, { value, assetId: kernelText(it.assetId), at: kernelText(it.at) }) === false)
     return refuse("AUTHORITY_TARGET_UNAVAILABLE", `${what} is not in this project, so there is nothing to approve.`, { target: target.key });
   return { ok: true, code: "", message: "", detail: {} };
 }

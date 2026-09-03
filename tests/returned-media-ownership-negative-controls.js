@@ -221,7 +221,12 @@ async function ncRM1() {
   equal(seen.next, "REVIEW RETURNED RESULT", "NC-RM1: and Production routes the filmmaker here to review it");
   equal(card.returnedReview, false, "NC-RM1: yet the workspace card is not about the returned result");
   equal(card.headline, "Confirm existing reference", "NC-RM1: it asks for the reference confirmation instead");
-  equal(card.primary, "Confirm existing reference", "NC-RM1: and that is the only primary action offered");
+  /* AT1-F. The HEADLINE above still names the act, which is what this control is
+     about — the reference confirmation displacing the returned review. The button
+     beneath it says where it goes, because that is all it does: this code's
+     declared destination is a ROUTE to Production, so pressing it confirms
+     nothing and does not even stay on this page. */
+  equal(card.primary, "Open confirmation →", "NC-RM1: and the only primary action offered is that same act");
   ok(!html.includes("came back and needs your decision"), "NC-RM1: nothing on the page says a result came back");
 
   /* 2. AND THE GUARANTEE GOES RED FOR IT. */
