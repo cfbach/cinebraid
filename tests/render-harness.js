@@ -883,8 +883,8 @@ async function main() {
        the recommended assisted one; the manual workspace is what the scratch intent
        renders, which is why it needs the stored preference below rather than a
        second disclosure on the same page. */
-    ["#/create", fixture, ["Start a project", "Build from a script/story with AI", "Import a CineBraid project", "Start from scratch"]],
-    ["#/create", fixture, ["Set the visual rules once", "Create the first shot"], { storage: { "cinebraid-creation-start-path": "scratch" } }],
+    ["#/create", fixture, ["Start a project", "Build with an AI assistant", "Open an existing CineBraid project", "Start manually"]],
+    ["#/create", fixture, ["Set the visual rules once", "Create another shot"], { storage: { "cinebraid-creation-start-path": "scratch" } }],
     ["#/shots/board", fixture, ["Shots", "Hull check", "CARD BADGES"]],
     /* The five stage labels used to be expected here because the shot workspace rendered
        the stage taskbar itself. Since O4 the navigator is built by public/stage-surfaces.js

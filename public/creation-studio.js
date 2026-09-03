@@ -5602,23 +5602,23 @@ window.toggleShotCreationProp = (id, propId) => {
 const CREATION_INTENTS = Object.freeze([
   Object.freeze({
     key: "assisted",
-    eyebrow: "YOU HAVE A SCRIPT OR A STORY",
-    title: "Build from a script/story with AI",
-    blurb: "Hand your script, story, treatment or notes to the AI assistant you already use. It returns a structured project; CineBraid checks it and shows you exactly what it would create before anything is imported.",
+    eyebrow: "YOU HAVE A SCRIPT, TREATMENT OR NOTES",
+    title: "Build with an AI assistant",
+    blurb: "Hand what you have written to the AI assistant you already use. It sends back a structured project; CineBraid checks it and shows you everything it would create before anything is imported.",
     recommended: true,
   }),
   Object.freeze({
     key: "cinebraid",
-    eyebrow: "YOU HAVE A CINEBRAID PROJECT",
-    title: "Import a CineBraid project",
-    blurb: "Open a project document that came out of CineBraid — your own backup, or one someone sent you. It is checked and previewed the same way, and it becomes its own project.",
+    eyebrow: "YOU HAVE A CINEBRAID PROJECT FILE",
+    title: "Open an existing CineBraid project",
+    blurb: "A project file that came out of CineBraid — your own backup or export, or one another CineBraid user sent you. Not a screenplay, a treatment or story notes.",
     recommended: false,
   }),
   Object.freeze({
     key: "scratch",
-    eyebrow: "YOU HAVE AN IDEA",
-    title: "Start from scratch",
-    blurb: "Begin with an empty project and build it a scene at a time. Nothing about look, format or generation has to be decided before you start.",
+    eyebrow: "YOU WANT TO BUILD IT YOURSELF",
+    title: "Start manually",
+    blurb: "Name the project and build it a scene at a time. Nothing about look, references or generation has to be decided before you begin.",
     recommended: false,
   }),
 ]);
@@ -5832,7 +5832,7 @@ function projectEntryStandingMarkup(standing, reasons) {
 
 function creationStartChooser() {
   const selected = creationStartPath();
-  return `<section class="creation-start-choice"><div class="creation-start-intro"><span class="creation-kicker">HOW DO YOU WANT TO START?</span><h2>Three ways in. All of them end in one new project.</h2><p>Pick the one that matches what you already have. You can change your mind — anything you have typed or pasted is kept while you look around.</p></div><div class="creation-path-buttons" role="group" aria-label="How do you want to start?">${CREATION_INTENTS.map((intent) => `<button type="button" data-creation-intent="${attr(intent.key)}" class="${selected === intent.key ? "on" : ""}${intent.recommended ? " is-recommended" : ""}" aria-pressed="${selected === intent.key ? "true" : "false"}" onclick="setCreationStartPath('${attr(intent.key)}')"><span>${esc(intent.eyebrow)}</span><b>${esc(intent.title)}</b>${intent.recommended ? `<em class="creation-path-recommended">Recommended</em>` : ""}<small>${esc(intent.blurb)}</small></button>`).join("")}</div></section>`;
+  return `<section class="creation-start-choice"><div class="creation-start-intro"><span class="creation-kicker">WHAT DO YOU HAVE?</span><h2>Start from what is already on your desk.</h2><p>Pick the one that describes your material. Anything you have typed or pasted is kept while you look around.</p></div><div class="creation-path-buttons" role="group" aria-label="What do you have?">${CREATION_INTENTS.map((intent) => `<button type="button" data-creation-intent="${attr(intent.key)}" class="${selected === intent.key ? "on" : ""}${intent.recommended ? " is-recommended" : ""}" aria-pressed="${selected === intent.key ? "true" : "false"}" onclick="setCreationStartPath('${attr(intent.key)}')"><span>${esc(intent.eyebrow)}</span><b>${esc(intent.title)}</b>${intent.recommended ? `<em class="creation-path-recommended">Recommended</em>` : ""}<small>${esc(intent.blurb)}</small></button>`).join("")}</div></section>`;
 }
 
 /* The paste-and-review half, shared by both import intents rather than duplicated
@@ -5850,44 +5850,116 @@ function creationImportPanel(path, options = {}) {
     <div id="project-builder-result">${review}</div>`;
 }
 
-/* THE ASSISTED PATH. It says what the filmmaker gives and what comes back; it does
-   not ask them to choose a provider, a model or a runtime in order to begin. The
-   kit and the instructions are the same two resources CineBraid has always served. */
+/* THE ASSISTED PATH.
+ *
+ * WHO DOES THE CONVERSION, SAID OUT LOUD. The founder dogfood found a filmmaker
+ * reading this card and not knowing which piece of software was about to read their
+ * screenplay. The card said "the AI assistant you already use" and left every other
+ * question open: is that Braidy, is it CineBraid, is my script leaving this machine?
+ *
+ * The answer is one sentence and it is now on the screen: an assistant the FILMMAKER
+ * opens — ChatGPT, Claude, Gemini or another — does the conversion, CineBraid sends
+ * nothing from this screen, and Braidy does not do this today. Naming the assistants
+ * is not a provider picker; it is the shortest true way to say "not us, and not
+ * automatically". Nothing about the mechanism changed: the clipboard is still the
+ * transport and the filmmaker is still the one who sends it.
+ *
+ * WHAT THE PRIMARY ACTION IS. Copying the instructions was a ghost button beside a
+ * download, off to the right of the heading, which made the download look like the
+ * way in — a six-file ZIP, for a filmmaker who needs one paste. The copy is the
+ * step-2 action now, sized as the thing to press; the full kit stays one line below
+ * it for the person who wants the files. */
 function creationAssistedCard() {
   const keys = creationDraftKeys("assisted");
   const story = creationDraft(keys.story);
   return `<section id="creation-assisted" class="creation-card creation-import-card">
-    <div class="creation-card-head"><div><span class="creation-kicker">BUILD FROM A SCRIPT OR STORY</span><h3>Turn what you have written into a reviewable project</h3><p>CineBraid gives you the instructions and the shape it expects back. You give those, and your material, to the AI assistant you already use. CineBraid then checks what comes back and shows you every scene, shot, frame and reference it would create — before it creates anything.</p></div><div class="creation-import-actions"><a class="ghost-btn" href="/api/project-builder/kit" download>Download the kit</a><button type="button" class="ghost-btn" onclick="copyProjectBuilderSystemPrompt()">Copy the instructions</button></div></div>
-    <div class="import-steps"><span><b>1</b> Put your script or story below</span><span><b>2</b> Send it with CineBraid's instructions to your assistant</span><span><b>3</b> Paste what comes back, review it, import</span></div>
-    <label class="creation-source-field" for="creation-source-material"><span>Your script, story, treatment or notes</span><textarea id="creation-source-material" placeholder="Paste the script, the story, the outline, the character notes — whatever you already have. It stays in this browser; CineBraid does not send it anywhere on its own." oninput="setCreationDraft('${attr(keys.story)}',this.value)">${esc(story)}</textarea><div class="creation-source-actions"><small>Kept while you move around this screen. Not saved into the project.</small><span>${story ? `<button type="button" class="ghost-btn" onclick="copyProjectBuilderRequest()">Copy instructions + my material</button><button type="button" class="ghost-btn" onclick="clearCreationDraft('${attr(keys.story)}')">Clear</button>` : ""}</span></div></label>
-    <div class="creation-source-field"><span>What your assistant sent back</span></div>
+    <div class="creation-card-head"><div><span class="creation-kicker">BUILD WITH AN AI ASSISTANT</span><h3>Turn what you have written into a project you can review</h3><p>You give your material and CineBraid's instructions to an assistant you already have open. It sends back a structured project, and CineBraid shows you every scene, shot, frame and reference it would create — before it creates anything.</p></div></div>
+    <div class="creation-external-ai" data-external-ai>
+      <p><b>Use ChatGPT, Claude, Gemini, or another AI assistant you already use.</b> CineBraid gives it the Project Builder instructions; you bring the structured project back here to review before anything is created.</p>
+      <ul><li>CineBraid does not send your script anywhere from this screen.</li><li>Braidy, CineBraid's own assistant, does not do this conversion. Braidy helps once the project exists.</li></ul>
+    </div>
+    <ol class="import-steps import-steps-numbered">
+      <li><b>1</b><span>Add your script, treatment or notes.</span></li>
+      <li><b>2</b><span>Copy CineBraid's Project Builder instructions into your AI assistant.</span></li>
+      <li><b>3</b><span>Paste the project it returns and review it here.</span></li>
+    </ol>
+    <label class="creation-source-field" for="creation-source-material"><span>Step 1 · Your script, treatment or notes</span><textarea id="creation-source-material" placeholder="Paste the script, the story, the outline, the character notes — whatever you already have. It stays in this browser; CineBraid does not send it anywhere on its own." oninput="setCreationDraft('${attr(keys.story)}',this.value)">${esc(story)}</textarea><div class="creation-source-actions"><small>Kept while you move around this screen. Not saved into the project.</small><span>${story ? `<button type="button" class="ghost-btn" onclick="clearCreationDraft('${attr(keys.story)}')">Clear</button>` : ""}</span></div></label>
+    <div class="creation-handoff-step" data-assisted-step="copy">
+      <div class="creation-handoff-copy"><span class="creation-kicker">STEP 2 · HAND IT OVER</span><b>Copy the instructions, paste them into your assistant</b><small>${story ? "Your material is in the box above, so CineBraid can copy the instructions and your material together as one paste." : "Add your material above and CineBraid can copy the instructions and your material together as one paste."}</small></div>
+      <div class="creation-handoff-actions">
+        <button type="button" class="assemble-btn creation-primary-copy" onclick="copyProjectBuilderSystemPrompt()">Copy Project Builder instructions</button>
+        ${story ? `<button type="button" class="assemble-btn" onclick="copyProjectBuilderRequest()">Copy instructions + my material</button>` : ""}
+      </div>
+      <p class="creation-handoff-secondary"><a class="ghost-btn" href="/api/project-builder/kit" download>Download full prompt kit</a><small>All six Project Builder files as a ZIP — for repeat use, offline work, or setting the instructions up once inside your assistant.</small></p>
+    </div>
+    <div class="creation-source-field"><span>Step 3 · What your assistant sent back</span></div>
     ${creationImportPanel("assisted", { label: "Structured project from your assistant" })}
   </section>`;
 }
 
 /* THE CINEBRAID PATH. Same mechanism, a different thing being held: a project
-   document that already came out of CineBraid, which needs no assistant at all. */
+   document that already came out of CineBraid, which needs no assistant at all.
+ *
+ * WHAT IT IS NOT. The dogfood found this card reading as though it were part of the
+ * Project Builder flow — an import screen next to an import screen — with nothing
+ * saying that the file it wants is a CineBraid project rather than a screenplay. A
+ * filmmaker who pastes a script here gets a validation error and no idea which of
+ * the three doors was theirs. The card now says what belongs here, says what does
+ * not, and hands the script-holder to the path that wants them. */
 function creationCineBraidImportCard() {
   return `<section id="creation-cinebraid" class="creation-card creation-import-card">
-    <div class="creation-card-head"><div><span class="creation-kicker">IMPORT A CINEBRAID PROJECT</span><h3>Open a project document you already have</h3><p>A CineBraid project file — your own JSON backup, or one another CineBraid user sent you. No assistant is involved. CineBraid checks it, shows you exactly what it contains, and imports it as a separate project, so nothing you are working on now is touched.</p></div></div>
-    <div class="import-steps"><span><b>1</b> Choose or paste the project file</span><span><b>2</b> Check what it contains</span><span><b>3</b> Import it as its own project</span></div>
+    <div class="creation-card-head"><div><span class="creation-kicker">OPEN AN EXISTING CINEBRAID PROJECT</span><h3>Open a CineBraid project file you already have</h3><p>This is for a project file that came out of CineBraid: a project.json, a backup or export, or a project another CineBraid user sent you. No assistant is involved. CineBraid checks it, shows you exactly what it contains, and opens it as a separate project, so nothing you are working on now is touched.</p></div></div>
+    <div class="creation-path-not-this" data-cinebraid-scope>
+      <p><b>This is not where a screenplay goes.</b> A script, a treatment or story notes are not CineBraid project files and will not validate here.</p>
+      <p class="creation-path-handoff">Have a script or treatment instead? <button type="button" class="ghost-btn" onclick="setCreationStartPath('assisted')">Build it with an AI assistant</button></p>
+    </div>
+    <ol class="import-steps import-steps-numbered">
+      <li><b>1</b><span>Choose or paste the CineBraid project file.</span></li>
+      <li><b>2</b><span>Check what it contains.</span></li>
+      <li><b>3</b><span>Open it as its own project.</span></li>
+    </ol>
     ${creationImportPanel("cinebraid", { label: "CineBraid project document", placeholder: "Paste the contents of a CineBraid project.json, or choose the file below." })}
   </section>`;
 }
 
+/* THE MANUAL PATH, AS CREATING A PROJECT RATHER THAN COMPLETING A CHECKLIST.
+ *
+ * This opened on PROJECT LOOK, then four numbered cards — location plate, character
+ * anchor, prop reference, first shot — before the project felt like it existed. The
+ * dogfood read that as setup machinery: a production checklist standing between a
+ * filmmaker and an empty project they had already asked for.
+ *
+ * Nothing is removed. The identity a project actually needs — title, format, aspect —
+ * comes first, through the same three handlers Settings → Project already uses, then
+ * one obvious first action. The look and the reference entry points are a disclosure
+ * underneath, which is where NEXT actions belong. */
+function creationManualIdentityCard() {
+  return `<section class="creation-card creation-manual-identity" data-manual-identity>
+    <div class="creation-card-head"><div><span class="creation-kicker">YOUR PROJECT</span><h3>${esc(P.meta.title || "Untitled project")}</h3><p>The three things CineBraid needs to know about a project. Everything else is decided as you go, and all of this stays editable in Settings → Project.</p></div></div>
+    <div class="creation-grid creation-identity-grid">
+      ${field("Project title", `<input value="${attr(P.meta.title || "")}" onchange="setProjectTitle(this.value)">`)}
+      ${field("Format", `<input list="cinebraid-format-presets" value="${attr(P.meta.format || "")}" placeholder="Short film" onchange="P.meta.format=this.value;dirty()"><datalist id="cinebraid-format-presets">${PROJECT_FORMAT_PRESETS.filter(([value]) => value).map(([value, label]) => `<option value="${attr(value)}">${esc(label)}</option>`).join("")}</datalist><span class="hint">What this project is being made as.</span>`)}
+      ${field("Aspect ratio", `<input list="cinebraid-aspect-presets" value="${attr(P.meta.aspectRatio || "")}" placeholder="16:9" onchange="setGlobalCreationField('aspectRatio',this.value)"><datalist id="cinebraid-aspect-presets">${CINEBRAID_ASPECT_PRESETS.map(([value, label]) => `<option value="${attr(value)}">${esc(label)}</option>`).join("")}</datalist><span class="hint">The frame every shot is judged in unless a shot overrides it.</span>`)}
+    </div>
+  </section>`;
+}
 function creationManualWorkspace() {
   const approvedCount = (list) => (P[list] || []).filter((x) => entityWorkflowState(x).key === "APPROVED" && entityApprovedFileForState(x, "")).length;
   const sceneCount = P.scenes.length;
   const shotCount = P.shots.length;
   return `<div id="creation-scratch">
-  ${creationOptionalStyleCard()}
-  <div class="creation-quick-grid">
-    <button onclick="addEntity('locations')"><span>STEP 1</span><b>Create a location plate</b><small>Describe an empty environment and compile a reusable base-plate prompt.</small></button>
-    <button onclick="addEntity('characters')"><span>STEP 2</span><b>Create a character anchor</b><small>Lock identity, wardrobe, proportions, and materials before placing the character in shots.</small></button>
-    <button onclick="addEntity('props')"><span>OPTIONAL</span><b>Create a prop reference</b><small>Lock an object's shape, materials, scale, and wear when continuity matters.</small></button>
-    <button onclick="addShot()"><span>STEP 3</span><b>Create the first shot</b><small>Add a scene automatically if needed, then describe the visible action and staging.</small></button>
-  </div>
-  <section class="creation-progress"><header><div><span class="creation-kicker">PROJECT AT A GLANCE</span><h3>${esc(P.meta.title)}</h3></div><a class="ghost-btn" href="#/production/scenes">Open scenes & shots →</a></header><div class="creation-metrics"><div><b>${sceneCount}</b><span>scenes</span></div><div><b>${shotCount}</b><span>shots</span></div><div><b>${approvedCount("locations")}/${P.locations.length}</b><span>approved locations</span></div><div><b>${approvedCount("characters")}/${P.characters.length}</b><span>approved characters</span></div><div><b>${approvedCount("props")}/${P.props.length}</b><span>approved props</span></div><div><b>${approvedCount("vehicles")}/${(P.vehicles || []).length}</b><span>approved vehicles</span></div></div>${!sceneCount ? `<div class="creation-empty-project"><h3>Your project is ready for its first scene</h3><p>Create a scene and shot now, or create the location and character references first.</p><button class="add-btn" onclick="addShot()">Create scene + first shot</button><button class="ghost-btn" onclick="addEntity('locations')">Create first location</button></div>` : `<div class="creation-project-actions">${creationRecommendedActionMarkup()}<article><span>PROJECT STRUCTURE</span><b>${sceneCount} scenes · ${shotCount} shots</b><small>Scene beats and the complete shot list now live in Production, where they can be filtered and paginated.</small><a class="ghost-btn" href="#/shots/board">OPEN SHOTS</a></article></div>`}</section>
+  ${creationManualIdentityCard()}
+  <section class="creation-progress"><header><div><span class="creation-kicker">PROJECT AT A GLANCE</span><h3>${esc(P.meta.title)}</h3></div><a class="ghost-btn" href="#/production/scenes">Open scenes &amp; shots →</a></header><div class="creation-metrics"><div><b>${sceneCount}</b><span>scenes</span></div><div><b>${shotCount}</b><span>shots</span></div><div><b>${approvedCount("locations")}/${P.locations.length}</b><span>approved locations</span></div><div><b>${approvedCount("characters")}/${P.characters.length}</b><span>approved characters</span></div><div><b>${approvedCount("props")}/${P.props.length}</b><span>approved props</span></div><div><b>${approvedCount("vehicles")}/${(P.vehicles || []).length}</b><span>approved vehicles</span></div></div>${!sceneCount ? `<div class="creation-empty-project"><h3>Your project is ready for its first scene</h3><p>Create a scene and shot now, or create the location and character references first.</p><button class="add-btn" onclick="addShot()">Create scene + first shot</button><button class="ghost-btn" onclick="addEntity('locations')">Create first location</button></div>` : `<div class="creation-project-actions">${creationRecommendedActionMarkup()}<article><span>PROJECT STRUCTURE</span><b>${sceneCount} scenes · ${shotCount} shots</b><small>Scene beats and the complete shot list now live in Production, where they can be filtered and paginated.</small><a class="ghost-btn" href="#/shots/board">OPEN SHOTS</a></article></div>`}</section>
+  <details class="creation-card creation-manual-next" data-manual-next>
+    <summary><div><span class="creation-kicker">WHEN YOU ARE READY</span><b>Set the look, or build the references first</b><small>None of this is needed to start. Open it when the project has a look worth repeating, or when you would rather lock a location or a character before shooting into it.</small></div><span class="creation-state">Optional</span></summary>
+    <div class="creation-quick-grid">
+      <button onclick="addEntity('locations')"><span>REFERENCE</span><b>Create a location plate</b><small>Describe an empty environment and compile a reusable base-plate prompt.</small></button>
+      <button onclick="addEntity('characters')"><span>REFERENCE</span><b>Create a character anchor</b><small>Lock identity, wardrobe, proportions, and materials before placing the character in shots.</small></button>
+      <button onclick="addEntity('props')"><span>REFERENCE</span><b>Create a prop reference</b><small>Lock an object's shape, materials, scale, and wear when continuity matters.</small></button>
+      <button onclick="addShot()"><span>SHOTS</span><b>Create another shot</b><small>Add a scene automatically if needed, then describe the visible action and staging.</small></button>
+    </div>
+    ${creationOptionalStyleCard()}
+  </details>
   </div>`;
 }
 /* THE GLOBAL LOOK, OFFERED RATHER THAN DEMANDED.
@@ -6143,28 +6215,158 @@ function projectBuilderContinuityReview(states = []) {
     )
     .join("")}</div>`;
 }
+/* THE PROJECT, AT THE DEPTH THE READER ASKED FOR.
+ *
+ * This rendered every scene's prose, every shot's description and positioning, every
+ * frame and every motion unit, all expanded, with the first scene open — a wall of
+ * 7-to-9px text that the founder dogfood called an evidence dump. Reading it was the
+ * only way to find out how many scenes there were.
+ *
+ * Three depths now, and NOTHING is removed at any of them: scene rows; compact shot
+ * rows inside an opened scene; the shot's full planning detail inside an opened shot.
+ * Every scene is closed on arrival, including the first, because "which scene do I
+ * want" is the question this screen is for. */
+function projectBuilderShotDetail(shot) {
+  const risks = shot.risks?.length ? `<div class="import-shot-detail-block"><strong>Risks</strong><div class="import-shot-tags">${shot.risks.map((risk) => `<span>${esc(risk)}</span>`).join("")}</div></div>` : "";
+  const frames = (shot.keyframes || []).map((frame) => `<span><b>FRAME ${esc(frame.label || frame.id)}</b>${esc(frame.description || frame.title || "Needs description")}</span>`).join("");
+  const units = (shot.motionUnits || []).map((unit) => `<span><b>${esc((unit.kind || "motion").toUpperCase())} · ${esc(unit.duration || 0)}s</b>${esc(unit.motionPrompt || unit.title || "Needs motion direction")}</span>`).join("");
+  return `<div class="import-shot-detail">
+    <div class="import-shot-detail-block"><strong>Framing and staging</strong><p>${esc(shot.positioning || "No framing or contact guidance supplied.")}</p></div>
+    ${risks}
+    ${frames || units ? `<div class="import-shot-detail-block"><strong>Frames and motion</strong><div class="import-shot-units">${frames}${units}</div></div>` : ""}
+  </div>`;
+}
 function projectBuilderOutline(outline = []) {
   if (!outline.length)
     return `<p class="import-outline-empty">No scene outline was produced.</p>`;
   return `<div class="import-project-outline">${outline
     .map(
-      (scene, sceneIndex) => `<details ${sceneIndex === 0 ? "open" : ""}><summary><span>${esc(scene.id)} · ${esc(scene.title)}</span><b>${esc(scene.tier || "B")} · ${(scene.shots || []).length} shots</b></summary><div class="import-scene-summary"><p><strong>Story beat</strong>${esc(scene.whatHappens || "Missing")}</p><p><strong>Tone</strong>${esc(scene.howItFeels || "Missing")}</p></div><div class="import-shot-outline">${(scene.shots || [])
+      (scene) => `<details class="import-scene" data-import-scene="${attr(scene.id)}"><summary><span>${esc(scene.id)} · ${esc(scene.title)}</span><b>${(scene.shots || []).length} shot${(scene.shots || []).length === 1 ? "" : "s"} · tier ${esc(scene.tier || "B")}</b></summary><div class="import-scene-summary"><p><strong>Story beat</strong>${esc(scene.whatHappens || "Missing")}</p><p><strong>Tone</strong>${esc(scene.howItFeels || "Missing")}</p></div><div class="import-shot-outline">${(scene.shots || [])
         .map(
-          (shot) => `<article><header><div><span>${esc(shot.id)}</span><b>${esc(shot.title)}</b></div><i>${esc(shot.route || "GENERATE")} · ${esc(shot.duration || 0)}s</i></header><p>${esc(shot.description || "No visible action supplied.")}</p><small>${esc(shot.positioning || "No framing or contact guidance supplied.")}</small>${shot.risks?.length ? `<div class="import-shot-tags">${shot.risks.map((risk) => `<span>${esc(risk)}</span>`).join("")}</div>` : ""}<div class="import-shot-units">${(shot.keyframes || []).map((frame) => `<span><b>FRAME ${esc(frame.label || frame.id)}</b>${esc(frame.description || frame.title || "Needs description")}</span>`).join("")}${(shot.motionUnits || []).map((unit) => `<span><b>${esc((unit.kind || "motion").toUpperCase())} · ${esc(unit.duration || 0)}s</b>${esc(unit.motionPrompt || unit.title || "Needs motion direction")}</span>`).join("")}</div></article>`,
+          (shot) => `<details class="import-shot" data-import-shot="${attr(shot.id)}"><summary><div><span>${esc(shot.id)}</span><b>${esc(shot.title)}</b></div><i>${esc(shot.route || "GENERATE")} · ${esc(shot.duration || 0)}s</i></summary><p>${esc(shot.description || "No visible action supplied.")}</p>${projectBuilderShotDetail(shot)}</details>`,
         )
         .join("")}</div></details>`,
     )
     .join("")}</div>`;
 }
+
+/* ==========================================================================
+   REPEATED FINDINGS, SAID ONCE AND STILL COUNTABLE.
+ *
+ * A sixteen-shot import that declares risks without fallbacks produces sixteen
+ * review lines that differ only in a shot id, and they arrived at the top of the
+ * screen ahead of the decision the filmmaker was there to make. The dogfood read
+ * that as the import being in trouble.
+ *
+ * This is PRESENTATION ONLY. Nothing here re-words a finding, drops one, changes a
+ * severity or touches the standing: the grouping key is the review's own sentence
+ * split at its first colon, the subject is the text before it, and every original
+ * line is rendered verbatim inside the group's disclosure. A finding with no colon
+ * is its own group of one, which is the same as not grouping it. */
+function groupReviewFindings(items) {
+  const groups = new Map();
+  for (const item of Array.isArray(items) ? items : []) {
+    const text = typeof item === "string" ? item : `${item?.path || "Value"} — ${item?.value || ""}`;
+    const line = text.trim();
+    if (!line) continue;
+    const at = line.indexOf(": ");
+    const issue = at > 0 ? line.slice(at + 2) : line;
+    const subject = at > 0 ? line.slice(0, at) : "";
+    if (!groups.has(issue)) groups.set(issue, { issue, subjects: [], lines: [] });
+    const group = groups.get(issue);
+    if (subject) group.subjects.push(subject);
+    group.lines.push(line);
+  }
+  return [...groups.values()].sort((a, b) => b.lines.length - a.lines.length);
+}
+/* "16 shots" when all sixteen subjects are shots, "16 items" when they are not.
+   Read off the subjects themselves rather than from a table of known prefixes, so a
+   finding this build has never seen still counts correctly. */
+function reviewGroupSubjectWord(group) {
+  const words = new Set(group.subjects.map((subject) => subject.trim().split(/\s+/)[0].toLowerCase()).filter(Boolean));
+  if (words.size !== 1 || group.subjects.length !== group.lines.length) return group.lines.length === 1 ? "item" : "items";
+  const word = [...words][0];
+  return group.lines.length === 1 ? word : `${word}s`;
+}
+function projectBuilderIssueSummary(review) {
+  const sections = [
+    ["blocking", "Missing before production", review?.missing, "Production detail the source does not contain."],
+    ["conflict", "Source conflicts", review?.conflicts, "Contradictions CineBraid could not resolve for you."],
+    ["review", "Worth checking", review?.review, "Planning decisions to look at. None of them stop production."],
+  ].map(([kind, title, items, detail]) => [kind, title, groupReviewFindings(items), detail])
+    .filter(([, , groups]) => groups.length);
+  if (!sections.length)
+    return `<p class="import-issue-none">Nothing in this import needs your attention before production.</p>`;
+  return `<div class="import-issue-summary" data-issue-summary>${sections
+    .map(([kind, title, groups, detail]) => {
+      const total = groups.reduce((sum, group) => sum + group.lines.length, 0);
+      return `<section class="import-issue-block is-${attr(kind)}" data-issue-kind="${attr(kind)}"><header><b>${esc(title)}</b><span>${total}</span></header><p>${esc(detail)}</p><ul>${groups
+        .map(
+          (group) => `<li data-review-group="${attr(group.issue)}"><details><summary><b>${group.lines.length} ${esc(reviewGroupSubjectWord(group))}</b><span>${esc(group.issue)}</span><em>${group.lines.length === 1 ? "Show it" : `Show all ${group.lines.length}`}</em></summary><ol class="import-issue-lines">${group.lines.map((line) => `<li>${esc(line)}</li>`).join("")}</ol></details></li>`,
+        )
+        .join("")}</ul></section>`;
+    })
+    .join("")}</div>`;
+}
+/* THE COUNTS, AS ONE SENTENCE. The comparison grid answers "did anything change on
+   the way in", which is an audit question and lives in the technical section. What
+   belongs at the top is the shorter answer: what will exist when this is imported.
+   Zero-count kinds are left out rather than shown as 0 — a project with no vehicles
+   has nothing to say about vehicles. */
+function projectBuilderCountLine(counts = {}) {
+  return [
+    ["scene", "scenes", counts.scenes], ["shot", "shots", counts.shots],
+    ["character", "characters", counts.characters], ["location", "locations", counts.locations],
+    ["prop", "props", counts.props], ["vehicle", "vehicles", counts.vehicles],
+    ["frame", "frames", counts.keyframes], ["motion unit", "motion units", counts.motionUnits],
+  ]
+    .filter(([, , value]) => Number(value) > 0)
+    .map(([one, many, value]) => `${Number(value)} ${Number(value) === 1 ? one : many}`)
+    .join(" · ");
+}
+/* ==========================================================================
+   THE IMPORT DECISION, ABOVE THE EVIDENCE FOR IT.
+ *
+ * Everything this screen showed is still here and still exact. What changed is the
+ * order. The founder dogfood met six columns of findings, a SHA-256, a
+ * before/after counter grid and every scene expanded — with the one question they
+ * had, "is this safe to import", rendered smaller than the field-level evidence for
+ * it. Seventeen near-identical review lines sat above the button.
+ *
+ * The first screen now answers, in this order: what project is this, what will
+ * CineBraid create, is anything blocking, what is merely worth checking, and can I
+ * import it. The structure is a disclosure; the normalization evidence — hash,
+ * counters, per-field origin rows, continuity states — is a second one. Both are
+ * complete, and both are one click away.
+ *
+ * NOTHING ABOUT THE IMPORT ITSELF MOVED. Same standing projection, same review
+ * payload, same preview token, same commitProjectBuilderImport() on both buttons. */
 function renderProjectBuilderReview(data) {
   const review = data.review;
   const counts = review.counts;
-  /* The five columns below are complete and stay complete; what they never did was
+  /* The columns below are complete and stay complete; what they never did was
      answer the question the filmmaker actually has in front of them, which is
      whether they can press the button. The standing says that in three words, off
      the same payload the columns are rendered from. */
   const standing = projectEntryStanding(review);
-  return `<div class="project-builder-review"><header><div><span class="creation-kicker">NORMALIZED IMPORT PREVIEW</span><h3>${esc(data.title)}</h3><p>${counts.scenes} scenes · ${counts.shots} shots · ${counts.characters} characters · ${counts.locations} locations · ${counts.props} props · ${counts.vehicles || 0} vehicles</p></div><span class="creation-state ready">Exact preview locked</span></header>${projectEntryStandingMarkup(standing, projectEntryStandingReasons(review))}${projectBuilderCountComparison(review)}<div class="import-preview-proof"><span>PREVIEW SHA-256</span><code>${esc(data.previewHash)}</code><button class="ghost-btn" onclick="downloadNormalizedProjectBuilderJSON()">Download normalized JSON</button></div><div class="import-review-legend"><span class="inferred">CINEBRAID</span><span class="source">IN SOURCE</span><span class="missing">MISSING</span><span class="removed">REMOVED</span><span>REVIEW</span></div><div class="import-review-grid">${projectBuilderReviewColumn("CineBraid planning decisions", "inferred", cinebraidInferences(review), "CineBraid inferred nothing during this import.")}${projectBuilderReviewColumn("Planning-marker text found in source", "source", sourceInferences(review), "No planning-marker text was found in your source.")}${projectBuilderReviewColumn("Source conflicts", "review", review.conflicts || [], "No [SOURCE CONFLICT] values were found.")}${projectBuilderReviewColumn("Missing before production", "missing", review.missing, "No important descriptive gaps detected.")}${projectBuilderReviewColumn("Removed during import", "removed", review.removed, "No unsupported generated or approval claims detected.")}${projectBuilderReviewColumn("Needs human review", "review", review.review, "No additional warnings.")}</div><details class="import-normalized-section" open><summary>Normalized scene and shot plan</summary>${projectBuilderOutline(review.outline)}</details><details class="import-normalized-section"><summary>Continuity states CineBraid will import</summary>${projectBuilderContinuityReview(review.continuity)}</details><div class="creation-next-step"><div><span>SAFE EXACT IMPORT</span><b>The button imports this exact normalized preview into a separate project. Editing the source JSON requires a new validation.</b></div><button class="assemble-btn" onclick="commitProjectBuilderImport()">Import this exact preview →</button></div></div>`;
+  const importButton = (className) => `<button class="${attr(className)}" onclick="commitProjectBuilderImport()">Import this project →</button>`;
+  return `<div class="project-builder-review">
+    <header class="import-summary-head"><div><span class="creation-kicker">READY TO IMPORT</span><h3>${esc(data.title)}</h3><p class="import-count-line">${esc(projectBuilderCountLine(counts)) || "Nothing to create"}</p></div><span class="creation-state ready">Exact preview locked</span></header>
+    ${projectEntryStandingMarkup(standing, [])}
+    ${projectBuilderIssueSummary(review)}
+    <div class="import-summary-action" data-import-action="summary">${importButton("assemble-btn import-primary-btn")}<small>Imports this exact preview as a separate project. Editing the source means validating again.</small></div>
+    <details class="import-normalized-section" data-import-section="structure"><summary>What this project contains — ${esc(String(counts.scenes || 0))} scene${Number(counts.scenes) === 1 ? "" : "s"}, ${esc(String(counts.shots || 0))} shot${Number(counts.shots) === 1 ? "" : "s"}</summary>${projectBuilderOutline(review.outline)}</details>
+    <details class="import-normalized-section" data-import-section="technical"><summary>Technical import details</summary>
+      <div class="import-technical-body">
+        <div class="import-preview-proof"><span>PREVIEW SHA-256</span><code>${esc(data.previewHash)}</code><button class="ghost-btn" onclick="downloadNormalizedProjectBuilderJSON()">Download normalized JSON</button></div>
+        ${projectBuilderCountComparison(review)}
+        <div class="import-review-legend"><span class="inferred">CINEBRAID</span><span class="source">IN SOURCE</span><span class="missing">MISSING</span><span class="removed">REMOVED</span><span>REVIEW</span></div>
+        <div class="import-review-grid">${projectBuilderReviewColumn("CineBraid planning decisions", "inferred", cinebraidInferences(review), "CineBraid inferred nothing during this import.")}${projectBuilderReviewColumn("Planning-marker text found in source", "source", sourceInferences(review), "No planning-marker text was found in your source.")}${projectBuilderReviewColumn("Source conflicts", "review", review.conflicts || [], "No [SOURCE CONFLICT] values were found.")}${projectBuilderReviewColumn("Missing before production", "missing", review.missing, "No important descriptive gaps detected.")}${projectBuilderReviewColumn("Removed during import", "removed", review.removed, "No unsupported generated or approval claims detected.")}${projectBuilderReviewColumn("Needs human review", "review", review.review, "No additional warnings.")}</div>
+        <div class="import-technical-continuity"><span class="creation-kicker">CONTINUITY STATES CINEBRAID WILL IMPORT</span>${projectBuilderContinuityReview(review.continuity)}</div>
+      </div>
+    </details>
+    <div class="creation-next-step"><div><span>SAFE EXACT IMPORT</span><b>The button imports this exact normalized preview into a separate project. Editing the source JSON requires a new validation.</b></div>${importButton("assemble-btn")}</div>
+  </div>`;
 }
 window.importProjectBuilderJSON = async () => {
   /* EVERYTHING THIS OPERATION NEEDS TO KNOW, DECIDED NOW. After the await below the

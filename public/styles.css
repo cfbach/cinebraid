@@ -5981,3 +5981,143 @@ select:hover{border-color:var(--line-2)}
 .about-cinebraid .about-identity{gap:6px 24px;font-size:12px;color:var(--ink)}
 .about-cinebraid .about-identity>span{flex-direction:column;gap:2px}
 .about-cinebraid .modal-actions{margin-top:2px}
+
+/* ==========================================================================
+   PROJECT ENTRY & IMPORT PREVIEW - density and hierarchy.
+
+   The founder dogfood read the import preview as a debug dump: 7px to 9px type
+   throughout, six finding columns and every scene expanded at once, with the import
+   decision rendered smaller than the field-level evidence for it. These rules raise
+   the floor on readable text in this surface and give the new summary / structure /
+   technical layers their own weights. Existing tokens only - no new colours, no new
+   fonts, and nothing here widens the page. */
+
+/* THE FLOOR. Every one of these selectors was 7-10px. A detail line is 12px and a
+   monospace stamp is 9-10px; nothing in this surface goes below that. */
+.project-builder-review p,.project-builder-review small{font-size:12px;line-height:1.55}
+.import-review-column li,.import-review-column p,.import-review-column>small{font-size:12px;line-height:1.55}
+.import-review-value code{font-size:10px}.import-review-value span{font-size:12px;line-height:1.55}
+.import-count-comparison span{font-size:9px}.import-count-comparison b{font-size:13px}
+.import-preview-proof>span{font-size:9px}.import-preview-proof>code{font-size:10px}
+.import-scene-summary p{font-size:12px;line-height:1.55}.import-scene-summary strong{font-size:9px}
+.import-shot-outline p{font-size:12.5px;line-height:1.55}.import-shot-outline small{font-size:12px}
+.import-shot-tags span{font-size:10px;padding:4px 7px}
+.import-shot-units>span{font-size:12px;line-height:1.5;padding:9px}.import-shot-units b{font-size:9px;margin-bottom:5px}
+.import-continuity-list header b{font-size:11px}.import-continuity-list header span{font-size:9px}
+.import-continuity-list strong{font-size:12px}.import-continuity-list p,.import-outline-empty{font-size:12px;line-height:1.55}
+.continuity-origin{font-size:9px}
+.project-entry-standing>div>small{font-size:13px}.project-entry-standing li{font-size:12px}
+.import-normalized-section>summary{font-size:11px;padding:14px 15px}
+
+/* THE SUMMARY. Title, what will be created, standing, then the button. */
+.project-builder-review{padding:18px;display:grid;gap:16px}
+.import-summary-head{display:flex;justify-content:space-between;align-items:flex-start;gap:16px}
+.import-summary-head h3{margin:4px 0 6px;font:700 26px/1.1 var(--display)}
+.import-count-line{margin:0;color:var(--muted);font-size:13px;line-height:1.5}
+.project-builder-review .project-entry-standing{margin:0}
+.import-summary-action{display:flex;align-items:center;gap:14px;flex-wrap:wrap;padding:14px 16px;border:1px solid color-mix(in srgb,var(--accent) 34%,var(--line));border-radius:12px;background:color-mix(in srgb,var(--accent) 6%,var(--panel))}
+.import-summary-action small{flex:1 1 240px;min-width:0;color:var(--muted);font-size:12px;line-height:1.5}
+
+/* THE FOOTER STEP. It had no rules of its own at all: an unstyled div and a button,
+   which read as a caption with an orphaned control under it. Same two elements, now
+   laid out as the step they are. */
+.creation-next-step{display:flex;align-items:center;gap:16px;flex-wrap:wrap;padding:16px;border:1px solid color-mix(in srgb,var(--accent) 30%,var(--line));border-radius:12px;background:var(--panel)}
+.creation-next-step>div{flex:1 1 320px;min-width:0}
+.creation-next-step>div>span{display:block;font:800 9px var(--mono);letter-spacing:.12em;color:var(--muted)}
+.creation-next-step>div>b{display:block;margin-top:5px;font-weight:600;font-size:12.5px;line-height:1.55;color:var(--muted)}
+.creation-next-step .assemble-btn{width:auto;font-size:14px;padding:12px 20px}
+.import-primary-btn{width:auto;font-size:14px;padding:12px 20px}
+
+/* GROUPED FINDINGS. One line per kind of finding, every original line inside it. */
+.import-issue-summary{display:grid;gap:12px}
+.import-issue-none{margin:0;padding:14px 16px;border:1px solid var(--line);border-radius:12px;background:var(--panel);color:var(--muted);font-size:13px}
+.import-issue-block{border:1px solid var(--line);border-left-width:4px;border-radius:12px;background:var(--panel);padding:14px 16px}
+.import-issue-block>header{display:flex;align-items:baseline;gap:10px}
+.import-issue-block>header b{font-size:15px}
+.import-issue-block>header span{padding:2px 8px;border-radius:var(--r-pill);background:var(--panel-2);color:var(--muted);font:800 11px var(--mono)}
+.import-issue-block>p{margin:6px 0 12px;color:var(--muted);font-size:12px;line-height:1.55}
+.import-issue-block>ul{margin:0;padding:0;list-style:none;display:grid;gap:8px}
+.import-issue-block details{border:1px solid var(--line);border-radius:9px;background:var(--surface)}
+.import-issue-block summary{display:flex;align-items:baseline;gap:10px;flex-wrap:wrap;padding:11px 13px;cursor:pointer}
+.import-issue-block summary b{white-space:nowrap;font-size:13px}
+.import-issue-block summary span{flex:1 1 240px;min-width:0;color:var(--muted);font-size:13px;line-height:1.5}
+.import-issue-block summary em{font:800 10px var(--mono);font-style:normal;letter-spacing:.06em;text-transform:uppercase;color:var(--accent);white-space:nowrap}
+.import-issue-lines{margin:0;padding:0 15px 13px 32px;display:grid;gap:5px}
+.import-issue-lines li{color:var(--muted);font-size:12px;line-height:1.5}
+.import-issue-block.is-blocking{border-left-color:var(--red)}.import-issue-block.is-blocking>header b{color:var(--red)}
+.import-issue-block.is-conflict{border-left-color:var(--amber)}.import-issue-block.is-conflict>header b{color:var(--amber)}
+.import-issue-block.is-review{border-left-color:var(--blue)}.import-issue-block.is-review>header b{color:var(--blue)}
+
+/* STRUCTURE. Scenes closed, shots closed inside them, detail inside the shot. */
+.import-project-outline{gap:9px;padding:0 13px 13px}
+.import-scene>summary{padding:13px;font-size:14px}
+.import-scene>summary b{font:800 10px var(--mono);letter-spacing:.05em;color:var(--muted)}
+.import-shot-outline{gap:8px;padding:0 13px 13px}
+.import-shot{border:1px solid var(--line);border-radius:9px;background:var(--panel);overflow:hidden}
+.import-shot>summary{display:flex;justify-content:space-between;gap:14px;padding:11px 13px;cursor:pointer}
+.import-shot>summary>div{min-width:0}
+.import-shot>summary span{display:block;font:800 9px var(--mono);color:var(--accent)}
+.import-shot>summary b{display:block;margin-top:3px;font-size:13px}
+.import-shot>summary i{font:800 9px var(--mono);font-style:normal;color:var(--muted);white-space:nowrap}
+.import-shot>p{margin:0;padding:0 13px 11px;font-size:12.5px;line-height:1.55}
+.import-shot-detail{display:grid;gap:11px;padding:0 13px 13px}
+.import-shot-detail-block>strong{display:block;margin-bottom:5px;font:800 9px var(--mono);letter-spacing:.08em;text-transform:uppercase;color:var(--muted)}
+.import-shot-detail-block>p{margin:0;color:var(--muted);font-size:12px;line-height:1.55}
+
+/* TECHNICAL. Complete, and one click away from the decision. */
+.import-technical-body{display:grid;gap:14px;padding:0 15px 15px}
+.import-technical-body .import-count-comparison,.import-technical-body .import-review-legend{margin:0}
+.import-technical-continuity>.creation-kicker{display:block;margin-bottom:8px}
+.import-technical-continuity .import-continuity-list{padding:0}
+.import-review-column ul{max-height:230px;padding:11px 11px 11px 27px}
+
+/* ENTRY PATHS. What you have, then one obvious next move. */
+.creation-path-buttons button{min-height:150px;padding:16px}
+.creation-path-buttons span{font-size:9px;line-height:1.4}
+.creation-path-buttons b{margin:12px 0 6px;font-size:17px;line-height:1.2}
+.creation-path-buttons small{font-size:12.5px;line-height:1.5}
+.creation-start-choice p{font-size:13px}
+
+/* THE EXTERNAL ASSISTANT, SAID PLAINLY. */
+.creation-external-ai{margin:14px 0 0;padding:14px 16px;border:1px solid color-mix(in srgb,var(--accent) 30%,var(--line));border-radius:12px;background:color-mix(in srgb,var(--accent) 5%,var(--panel))}
+.creation-external-ai p{margin:0;font-size:13.5px;line-height:1.6}
+.creation-external-ai ul{margin:9px 0 0;padding-left:20px;display:grid;gap:4px}
+.creation-external-ai li{color:var(--muted);font-size:12.5px;line-height:1.55}
+.import-steps-numbered{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:9px;margin:14px 0 4px;padding:0;list-style:none}
+.import-steps-numbered li{display:flex;gap:10px;align-items:center;padding:12px;border:1px solid var(--line);border-radius:10px;background:var(--surface);color:var(--text);font-size:12.5px;line-height:1.45}
+.import-steps-numbered b{flex:0 0 auto;display:grid;place-items:center;width:24px;height:24px;border-radius:50%;background:var(--accent);color:#07100d;font:800 11px var(--mono)}
+.creation-handoff-step{margin-top:16px;padding:16px;border:1px solid color-mix(in srgb,var(--accent) 34%,var(--line));border-radius:12px;background:color-mix(in srgb,var(--accent) 6%,var(--panel))}
+.creation-handoff-copy>.creation-kicker{display:block}
+.creation-handoff-copy b{display:block;margin:5px 0;font:700 19px/1.15 var(--display)}
+.creation-handoff-copy small{display:block;color:var(--muted);font-size:12.5px;line-height:1.55}
+.creation-handoff-actions{display:flex;gap:10px;flex-wrap:wrap;margin-top:13px}
+.creation-handoff-actions .assemble-btn{width:auto;font-size:14px;padding:12px 18px}
+.creation-handoff-secondary{display:flex;align-items:center;gap:12px;flex-wrap:wrap;margin:13px 0 0;padding-top:13px;border-top:1px solid var(--line)}
+.creation-handoff-secondary small{flex:1 1 260px;min-width:0;color:var(--muted);font-size:12px;line-height:1.5}
+.creation-path-not-this{margin:14px 0 0;padding:14px 16px;border:1px solid var(--line);border-left:4px solid var(--amber);border-radius:12px;background:var(--panel)}
+.creation-path-not-this p{margin:0;font-size:13px;line-height:1.6}
+.creation-path-handoff{display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin-top:10px!important;color:var(--muted)}
+.creation-path-handoff .ghost-btn{width:auto;padding:8px 14px;font-size:12.5px;color:var(--accent);border-color:color-mix(in srgb,var(--accent) 45%,var(--line))}
+
+/* PROJECT AT A GLANCE. The kicker and the link shared a flex row with nothing
+   reserving space for either, so at 1280 the label wrapped to two lines and the
+   link climbed into it. */
+.creation-progress>header{gap:16px;flex-wrap:wrap}
+.creation-progress>header>div{min-width:0;flex:1 1 260px}
+.creation-progress>header .creation-kicker{display:block;white-space:nowrap}
+.creation-progress>header .ghost-btn{width:auto;flex:0 0 auto}
+
+/* MANUAL START. Identity first; look and references are the next thing, not a gate. */
+.creation-manual-identity .creation-identity-grid{grid-template-columns:repeat(3,minmax(0,1fr));margin-top:6px}
+.creation-manual-next>summary{display:flex;justify-content:space-between;align-items:flex-start;gap:16px;cursor:pointer;padding:15px}
+.creation-manual-next>summary b{display:block;margin:4px 0 5px;font:700 19px/1.15 var(--display)}
+.creation-manual-next>summary small{display:block;max-width:760px;color:var(--muted);font-size:12.5px;line-height:1.55}
+.creation-manual-next[open]>summary{border-bottom:1px solid var(--line)}
+.creation-manual-next .creation-quick-grid{padding:0 15px;margin:15px 0}
+.creation-manual-next .creation-optional-style{margin:0 15px 15px}
+
+/* COMPACT DESKTOP. 1280x800 and 1366x768 keep every column readable rather than
+   narrower: the grids fold instead of shrinking their type. */
+@media(max-width:1400px){.creation-manual-identity .creation-identity-grid{grid-template-columns:1fr 1fr}}
+@media(max-width:1180px){.import-steps-numbered{grid-template-columns:1fr}.creation-manual-identity .creation-identity-grid{grid-template-columns:1fr}}
+@media(max-width:900px){.import-summary-head{display:block}.import-summary-head .creation-state{display:inline-block;margin-top:10px}}

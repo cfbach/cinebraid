@@ -205,7 +205,7 @@ try:
         assert [row["intent"] for row in chooser] == ["assisted", "cinebraid", "scratch"], \
             f"1. the entry must offer the three frozen intents in order, got {chooser}"
         assert [row["title"] for row in chooser] == [
-            "Build from a script/story with AI", "Import a CineBraid project", "Start from scratch"], \
+            "Build with an AI assistant", "Open an existing CineBraid project", "Start manually"], \
             f"1. with the frozen words, got {[row['title'] for row in chooser]}"
         assert [row["recommended"] for row in chooser] == [True, False, False], \
             "1. exactly the assisted path is marked Recommended"

@@ -3204,9 +3204,9 @@ const PROJECT_FORMAT_PRESETS = Object.freeze([
    is the intent key the creation studio reads, so the modal and the chooser cannot
    drift into describing different paths. */
 const PROJECT_START_INTENTS = Object.freeze([
-  ["assisted", "Build from a script/story with AI — Recommended"],
-  ["cinebraid", "Import a CineBraid project"],
-  ["scratch", "Start from scratch"],
+  ["assisted", "Build with an AI assistant — Recommended"],
+  ["cinebraid", "Open an existing CineBraid project"],
+  ["scratch", "Start manually"],
 ]);
 window.newProject = () =>
   formModal(

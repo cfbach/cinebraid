@@ -88,10 +88,17 @@ async function sectionEntryIsIntentFirst() {
      different Array.prototype, so deepStrictEqual against a host literal fails while
      printing something identical. */
   const intents = JSON.parse(vm.runInContext("JSON.stringify(CREATION_INTENTS.map((i) => [i.key, i.title, !!i.recommended]))", context));
+  /* The words changed once more after the founder dogfood, for the reason the
+     comment above already gives: a card should name what the FILMMAKER has, and the
+     action underneath it should be the obvious next move. "Build from a script/story
+     with AI" was doing both jobs in one line while the eyebrow said the same thing
+     again; "Start from scratch" and "Import a CineBraid project" described CineBraid's
+     mechanisms rather than the filmmaker's material. The order and the single
+     recommendation are unchanged. */
   assert.deepStrictEqual(intents, [
-    ["assisted", "Build from a script/story with AI", true],
-    ["cinebraid", "Import a CineBraid project", false],
-    ["scratch", "Start from scratch", false],
+    ["assisted", "Build with an AI assistant", true],
+    ["cinebraid", "Open an existing CineBraid project", false],
+    ["scratch", "Start manually", false],
   ], "A. the three starting intents are frozen, in this order, and only the first is recommended");
 
   const rendered = [...html.matchAll(/data-creation-intent="([^"]+)"/g)].map((m) => m[1]);
@@ -112,7 +119,22 @@ async function sectionEntryIsIntentFirst() {
 /* =========================================================================
    B. THE ASSISTED PATH IS NOT A PROVIDER SCREEN.
    ========================================================================= */
-const IMPLEMENTATION_JARGON = ["LLM", "ChatGPT", "Claude", "GPT", "Ollama", "API key", "endpoint", "temperature", "token", "provider", "model"];
+/* TWO DIFFERENT BANS, because they were protecting two different things and one list
+   was doing both jobs.
+
+   RUNTIME_JARGON is the real rule: the assisted path must never become a provider
+   screen. None of these words may appear ANYWHERE on the card, which is a stronger
+   guard than the single list this suite used to apply to the heading alone.
+
+   The named consumer assistants are a separate matter. The founder dogfood found a
+   filmmaker unable to tell whether the conversion happened inside CineBraid, inside
+   Braidy, or somewhere else — and "the AI assistant you already use" did not answer
+   it. Naming ChatGPT, Claude and Gemini is the shortest true answer, so they are
+   REQUIRED in the card's explanation (section L) and still barred from the intent's
+   own words and from the heading, which name what the filmmaker has. */
+const RUNTIME_JARGON = ["LLM", "GPT", "Ollama", "API key", "endpoint", "temperature", "token", "provider", "model"];
+const NAMED_ASSISTANTS = ["ChatGPT", "Claude", "Gemini"];
+const IMPLEMENTATION_JARGON = [...RUNTIME_JARGON, ...NAMED_ASSISTANTS];
 async function sectionAssistedFraming() {
   const { html, context } = await createRender();
   const intent = vm.runInContext("JSON.stringify(CREATION_INTENTS[0])", context);
@@ -121,13 +143,19 @@ async function sectionAssistedFraming() {
   for (const word of IMPLEMENTATION_JARGON)
     assert(!new RegExp(`\\b${word}\\b`, "i").test(framing),
       `B. the assisted intent's own words must not lead with "${word}": ${framing}`);
-  assert(/script|story/i.test(primary.title), "B. the assisted intent must be named for what the filmmaker has");
+  assert(/script|treatment|notes/i.test(primary.eyebrow),
+    "B. the assisted intent must be labelled by what the filmmaker has");
 
   const head = html.slice(html.indexOf('id="creation-assisted"'));
   const heading = head.slice(0, head.indexOf("</div>", head.indexOf("<h3>")));
   for (const word of IMPLEMENTATION_JARGON)
     assert(!new RegExp(`\\b${word}\\b`, "i").test(heading),
       `B. the assisted card's heading must not lead with "${word}"`);
+  /* And the whole card, not only its heading, stays free of runtime jargon. */
+  const card = head.slice(0, head.indexOf("</section>"));
+  for (const word of RUNTIME_JARGON)
+    assert(!new RegExp(`\\b${word}\\b`, "i").test(card),
+      `B. the assisted card must not turn into a provider screen: "${word}"`);
 
   /* "LLM" is the specific word the old surface put in front of the filmmaker. It is
      gone from every path of this view, not merely demoted. */
@@ -1406,6 +1434,266 @@ async function sectionSourceWordingAndCollisions(base) {
   note(`T. source-origin wording says only that planning-marker text was found — asserted against ${INTENT_CLAIMING_WORDS.length} intent-claiming phrasings and five authored shapes — and a byte-identical cross-origin collision at one path now keeps both facts (${originsAt(one, NOTES_PATH).join("+")}), rendering as cinebraid+source, while same-origin duplicates still collapse`);
 }
 
+/* =========================================================================
+   U. THE FOUNDER DOGFOOD CORRECTION.
+
+   Native-browser dogfood accepted the backend and refused the surface. Seven findings,
+   and each one below is the reproduction of a sentence a filmmaker could not answer
+   from what was on screen:
+
+     * which piece of software is about to read my screenplay?
+     * is Braidy doing this?
+     * is my script leaving this machine?
+     * which of these two import boxes is mine?
+     * do I have to set a Project Look before I have a project?
+     * seventeen near-identical lines — is this import in trouble?
+     * where is the decision I came here to make?
+
+   These are presentation assertions on purpose. Nothing below touches the review
+   payload, the standing projection, the preview token or the commit path — the
+   sections above already own those, and section U would be the wrong place to
+   discover that any of them had changed.
+   ========================================================================= */
+async function sectionExternalAssistantIsExplicit() {
+  const { html } = await createRender({ storage: { "cinebraid-creation-start-path": "assisted" } });
+  const card = html.slice(html.indexOf('id="creation-assisted"'), html.indexOf("</section>", html.indexOf('id="creation-assisted"')));
+
+  /* WHO DOES THE CONVERSION. Named, because "an AI assistant" did not answer it. */
+  assert(/data-external-ai/.test(card), "U1. the assisted card must carry the external-assistant explanation");
+  for (const name of NAMED_ASSISTANTS)
+    assert(card.includes(name), `U1. the explanation must name ${name} — a filmmaker has to know which software this is`);
+  assert(/another AI assistant you already use/i.test(card),
+    "U1. and must say the assistant is one the filmmaker already has, not one CineBraid supplies");
+
+  /* NOT BRAIDY, AND NOT AUTOMATICALLY. Both halves, because either alone misleads. */
+  assert(/Braidy/.test(card), "U2. the card must say where Braidy stands rather than leaving it open");
+  assert(/Braidy[^.]*does not do this conversion/i.test(card),
+    "U2. and must say plainly that Braidy does not perform the conversion today");
+  assert(/does not send your script anywhere from this screen/i.test(card),
+    "U3. the privacy truth must be on the card, in one line");
+
+  /* Braidy is never described as the engine, anywhere in this surface. */
+  const studio = codeOnly(CREATION_STUDIO);
+  for (const claim of [/Braidy (?:will |can )?convert/i, /Braidy builds your project/i, /ask Braidy to build/i])
+    assert(!claim.test(studio), `U2. no path may describe Braidy as the conversion engine (${claim})`);
+  note("U1-U3. the assisted card names ChatGPT / Claude / Gemini as the filmmaker's own assistant, states that Braidy does not do this conversion, and states that nothing is sent from this screen");
+}
+
+async function sectionCopyInstructionsIsPrimary() {
+  const { html } = await createRender({ storage: { "cinebraid-creation-start-path": "assisted" } });
+  const card = html.slice(html.indexOf('id="creation-assisted"'), html.indexOf("</section>", html.indexOf('id="creation-assisted"')));
+
+  /* THE CORE ACTION IS SIZED AS THE CORE ACTION. `ghost-btn` is this product's
+     secondary weight, and both controls used to carry it, off to the side of the
+     heading — which left the ZIP looking like the way in. */
+  const primary = card.match(/<button[^>]*class="assemble-btn creation-primary-copy"[^>]*>([^<]*)<\/button>/);
+  assert(primary, "U4. copying the instructions must be a primary action, not a ghost button beside a download");
+  assert(/copy project builder instructions/i.test(primary[1]),
+    `U4. and must say what it copies, got "${primary && primary[1]}"`);
+  assert(card.includes("copyProjectBuilderSystemPrompt()"), "U4. through the shipped handler");
+
+  /* THE FULL KIT IS STILL ONE CLICK AWAY, and now says what it is for. */
+  const kit = card.match(/<a class="ghost-btn" href="\/api\/project-builder\/kit" download>([^<]*)<\/a>/);
+  assert(kit, "U5. the full prompt kit must remain downloadable");
+  assert(/download full prompt kit/i.test(kit[1]), `U5. named for what it is, got "${kit && kit[1]}"`);
+  assert(/repeat use|offline/i.test(card), "U5. with one line saying when a filmmaker would want it");
+
+  /* THE ONE-PASTE PATH, when there is material to include. Same shipped clipboard
+     handler; no provider is reached and no new behaviour is introduced. */
+  const withStory = await createRender({ storage: { "cinebraid-creation-start-path": "assisted" } });
+  vm.runInContext(`setCreationDraft("assisted:story", ${JSON.stringify(SCRIPT)})`, withStory.context);
+  await vm.runInContext("route()", withStory.context);
+  const filled = withStory.map.get("main").innerHTML;
+  assert(filled.includes("copyProjectBuilderRequest()"),
+    "U4. with material present, CineBraid must still offer instructions + material as one copy");
+  assert(!card.includes("copyProjectBuilderRequest()"),
+    "U4. and must not offer it before there is any material to include");
+
+  /* The three steps are stated in the order they happen. */
+  const steps = [...card.matchAll(/<li><b>(\d)<\/b><span>([^<]*)<\/span><\/li>/g)].map((m) => m[2]);
+  assert.strictEqual(steps.length, 3, `U4. the assisted path is three steps, rendered ${steps.length}`);
+  assert(/script|treatment|notes/i.test(steps[0]), "U4. step 1 is the filmmaker's material");
+  assert(/copy/i.test(steps[1]) && /assistant/i.test(steps[1]), "U4. step 2 is the hand-off");
+  assert(/paste|review/i.test(steps[2]), "U4. step 3 is bringing it back");
+  note(`U4-U5. "${primary[1]}" is the primary action, the three steps read ${steps.map((s) => s.split(" ")[0]).join(" / ")}, and "${kit[1]}" stays available as the secondary`);
+}
+
+async function sectionExistingProjectPathIsUnambiguous() {
+  const { html } = await createRender({ storage: { "cinebraid-creation-start-path": "cinebraid" } });
+  const card = html.slice(html.indexOf('id="creation-cinebraid"'), html.indexOf("</section>", html.indexOf('id="creation-cinebraid"')));
+
+  /* WHAT BELONGS HERE. All three of the things a filmmaker might be holding. */
+  for (const kind of [/project\.json/i, /backup or export/i, /another CineBraid user/i])
+    assert(kind.test(card), `U6. the path must say it takes ${kind}`);
+
+  /* AND WHAT DOES NOT. This is the finding: the card looked like the Project Builder's
+     twin and never said the difference. */
+  assert(/data-cinebraid-scope/.test(card), "U6. the path must scope itself explicitly");
+  assert(/not where a screenplay goes/i.test(card), "U6. in words, not by omission");
+  for (const wrong of ["screenplay", "treatment", "story notes"])
+    assert(new RegExp(wrong, "i").test(card), `U6. and must name "${wrong}" as the thing that does not belong here`);
+
+  /* THE HAND-OFF, so the filmmaker who is in the wrong place is not simply told so. */
+  assert(/setCreationStartPath\('assisted'\)/.test(card),
+    "U7. a filmmaker holding a script must be handed to the path that wants them");
+  assert(/Have a script or treatment instead/i.test(card), "U7. in a sentence addressed to them");
+  assert(!card.includes("/api/project-builder/kit"),
+    "U7. and the Prompt Kit must not be duplicated into this path — the issue was clarity, not missing function");
+  note("U6-U7. the existing-project path names project.json / backup / another user's project, says a screenplay does not belong, and offers the assisted path to whoever is holding one");
+}
+
+async function sectionManualStartIsNotAChecklist() {
+  const { html } = await createRender({ storage: { "cinebraid-creation-start-path": "scratch" } });
+
+  /* IDENTITY FIRST, through the handlers that already own these three fields. */
+  assert(/data-manual-identity/.test(html), "U8. manual start must open on the project's own identity");
+  for (const handler of ["setProjectTitle(this.value)", "P.meta.format=this.value;dirty()", "setGlobalCreationField('aspectRatio',this.value)"])
+    assert(html.includes(handler), `U8. through the existing handler ${handler} — no new persistence`);
+
+  /* AND THE CHECKLIST IS THE NEXT THING, NOT THE GATE. Everything is still here;
+     `details` without `open` is the difference between offered and demanded. */
+  const identityAt = html.indexOf("data-manual-identity");
+  const nextAt = html.indexOf("data-manual-next");
+  assert(identityAt > -1 && nextAt > identityAt, "U9. the reference checklist must come after the project's identity");
+  const next = html.slice(nextAt - 200, nextAt + 60);
+  assert(/<details[^>]*data-manual-next/.test(html), "U9. the checklist must be a disclosure");
+  assert(!/<details[^>]*data-manual-next[^>]*\sopen/.test(html), "U9. and must be closed on arrival");
+  assert(html.indexOf("creation-progress") < nextAt,
+    "U9. the project's own first action must come before the optional work");
+  assert(next.length > 0);
+
+  /* Project Look is inside that disclosure rather than at the top of the page. */
+  const styleAt = html.indexOf('id="creation-global-style"');
+  assert(styleAt > nextAt, "U9. Project Look must not be the first thing a new project asks for");
+  for (const control of ["addEntity('locations')", "addEntity('characters')", "addShot()"])
+    assert(html.includes(control), `U9. and nothing is removed — ${control} is still reachable`);
+  note("U8-U9. manual start opens on title / format / aspect through the existing handlers, with Project Look and the reference entry points closed underneath the project's first action");
+}
+
+async function sectionImportPreviewIsSummaryFirst() {
+  const { context } = await createRender();
+  const review = {
+    counts: { scenes: 3, shots: 16, characters: 2, locations: 7, props: 0, vehicles: 0, keyframes: 20, motionUnits: 12 },
+    sourceCounts: { scenes: 3, shots: 16 },
+    inferred: [{ path: "shots[0].notes", value: "[INFERRED FOR PLANNING] duration", origin: "cinebraid" }],
+    conflicts: [],
+    missing: [],
+    removed: [],
+    review: Array.from({ length: 16 }, (_, i) => `Shot S01-${String(i + 1).padStart(2, "0")}: add a simpler fallback for the risks this shot declares`)
+      .concat(["Scene S02: add emotional or tonal intent"]),
+    continuity: [{ kind: "Character", entityId: "CHAR-A", entityName: "Ada", stateId: "state-default", stateName: "Default", isDefault: true, notes: "", inferred: true, sourceMarked: false }],
+    outline: [
+      { id: "S01", title: "The Problem", tier: "A", whatHappens: "It begins.", howItFeels: "Uneasy.", shots: [
+        { id: "S01-01", title: "Ada arrives", route: "GENERATE", duration: 6, description: "Ada walks in.", positioning: "Medium, frame left.", risks: ["Identity drift"], keyframes: [{ label: "A", description: "Ada at the door." }], motionUnits: [{ kind: "i2v", duration: 6, motionPrompt: "She walks." }] },
+        { id: "S01-02", title: "The desk", route: "GENERATE", duration: 4, description: "The desk.", positioning: "Static.", risks: [], keyframes: [], motionUnits: [] },
+      ] },
+      { id: "S02", title: "Organize the World", tier: "B", whatHappens: "It continues.", howItFeels: "Steady.", shots: [] },
+    ],
+  };
+  const html = vm.runInContext(`renderProjectBuilderReview(${JSON.stringify({ title: "Dogfood Import", previewHash: "a".repeat(64), review })})`, context);
+
+  /* 1-2. WHAT PROJECT IS THIS, AND WHAT WILL CINEBRAID CREATE. */
+  assert(html.includes("Dogfood Import"), "U10. the preview must name the project");
+  const summary = html.slice(0, html.indexOf("import-issue-summary"));
+  assert(/3 scenes · 16 shots · 2 characters · 7 locations/.test(summary),
+    "U10. and say what it will create, in one line, above everything else");
+  assert(!/0 props/.test(summary), "U10. without inventing a row for something the import does not contain");
+
+  /* 3-4. IS ANYTHING BLOCKING, AND WHAT IS MERELY WORTH CHECKING. */
+  assert(html.includes('data-entry-standing="needs-review"'), "U11. the standing is the same projection it always was");
+  assert(html.indexOf('data-entry-standing') < html.indexOf("import-issue-summary"),
+    "U11. and it comes before the findings rather than after them");
+
+  /* 5. AND THE DECISION IS ON THE FIRST SCREEN. */
+  const structureAt = html.indexOf('data-import-section="structure"');
+  assert(html.indexOf('data-import-action="summary"') < structureAt,
+    "U12. the import action must be reachable from the summary, above the detail");
+  assert.strictEqual((html.match(/commitProjectBuilderImport\(\)/g) || []).length, 2,
+    "U12. exactly two rendered import controls — summary and footer — and both are the one shipped commit");
+  assert.strictEqual((html.match(/creation-next-step/g) || []).length, 1,
+    "U12. with a single footer step, so the existing selector still names exactly one control");
+  assert(/Editing the source JSON requires a new validation/.test(html), "U12. exact-preview semantics stated, unchanged");
+  assert(html.includes("Exact preview locked"), "U12. and the preview is still declared locked");
+  note("U10-U12. the preview opens on title, what will be created, the standing, the grouped findings and the import button, in that order");
+}
+
+async function sectionRepeatedFindingsAreGrouped() {
+  const { context } = await createRender();
+  const lines = Array.from({ length: 16 }, (_, i) => `Shot S01-${String(i + 1).padStart(2, "0")}: add a simpler fallback for the risks this shot declares`);
+  const summary = vm.runInContext(`projectBuilderIssueSummary(${JSON.stringify({ missing: [], conflicts: [], review: lines.concat(["Scene S02: add emotional or tonal intent"]) })})`, context);
+
+  /* SAID ONCE, COUNTED HONESTLY. */
+  assert(/<b>16 shots<\/b>/.test(summary), `U13. sixteen identical findings must read as one line: ${summary.slice(0, 400)}`);
+  assert(/add a simpler fallback for the risks this shot declares/.test(summary),
+    "U13. in the review's own words, not a re-worded summary");
+  assert(/Show all 16/.test(summary), "U13. with a way to open all sixteen");
+  assert(/<b>1 scene<\/b>/.test(summary), "U13. and a single finding still says one, in its own subject's word");
+
+  /* AND EVERY ORIGINAL LINE IS STILL THERE. This is the whole safety property: the
+     grouping is presentation, so nothing may be lost inside it. */
+  for (const line of lines)
+    assert(summary.includes(line), `U14. every individual finding must remain inspectable: ${line}`);
+  assert.strictEqual((summary.match(/<li>Shot S01-/g) || []).length, 16, "U14. all sixteen, once each");
+
+  /* SEVERITY IS UNTOUCHED — a review finding is never rendered as a blocker. */
+  const blocked = vm.runInContext(`projectBuilderIssueSummary(${JSON.stringify({ missing: ["Shot S01-01: action description"], conflicts: [], review: ["Scene S02: add emotional or tonal intent"] })})`, context);
+  const blockingBlock = blocked.slice(blocked.indexOf('data-issue-kind="blocking"'), blocked.indexOf('data-issue-kind="review"'));
+  assert(blockingBlock.includes("action description"), "U15. what the server called missing renders as blocking");
+  assert(!blockingBlock.includes("emotional or tonal intent"), "U15. and what it called review does not");
+  assert(!summary.includes('data-issue-kind="blocking"'),
+    "U15. an import with nothing missing must render no blocking block at all");
+
+  /* Grouping never re-words. A finding with no colon is its own group of one. */
+  const odd = vm.runInContext(`projectBuilderIssueSummary(${JSON.stringify({ missing: [], conflicts: [], review: ["qcChecklist contained 2 usable items; CineBraid completed it to exactly five review checks."] })})`, context);
+  assert(odd.includes("qcChecklist contained 2 usable items"), "U14. an ungroupable finding survives verbatim");
+  assert(/<b>1 item<\/b>/.test(odd), "U14. counted as one, with no subject invented for it");
+  note("U13-U15. sixteen identical findings render as one countable line with all sixteen inspectable inside it, and the missing / review split is the server's own");
+}
+
+async function sectionStructureAndTechnicalAreDisclosed() {
+  const { context } = await createRender();
+  const review = {
+    counts: { scenes: 2, shots: 2, characters: 1, locations: 1, props: 0, vehicles: 0 },
+    sourceCounts: { scenes: 2, shots: 2 },
+    inferred: [{ path: "shots[0].notes", value: "[INFERRED FOR PLANNING] x", origin: "cinebraid" }],
+    conflicts: [], missing: [], removed: ["mediaAssets was cleared"], review: [],
+    continuity: [{ kind: "Character", entityId: "CHAR-A", entityName: "Ada", stateId: "state-default", stateName: "Default", isDefault: true, notes: "", inferred: true, sourceMarked: false }],
+    outline: [
+      { id: "S01", title: "The Problem", tier: "A", whatHappens: "It begins.", howItFeels: "Uneasy.", shots: [{ id: "S01-01", title: "Ada arrives", route: "GENERATE", duration: 6, description: "Ada walks in.", positioning: "Medium, frame left.", risks: ["Identity drift"], keyframes: [{ label: "A", description: "Ada at the door." }], motionUnits: [{ kind: "i2v", duration: 6, motionPrompt: "She walks." }] }] },
+      { id: "S02", title: "Organize the World", tier: "B", whatHappens: "It continues.", howItFeels: "Steady.", shots: [] },
+    ],
+  };
+  const html = vm.runInContext(`renderProjectBuilderReview(${JSON.stringify({ title: "Disclosure", previewHash: "b".repeat(64), review })})`, context);
+
+  /* NOTHING IS OPEN ON ARRIVAL EXCEPT THE DECISION. Not the structure, not the
+     technical evidence, and — the founder's specific complaint — not the first scene. */
+  for (const section of ["structure", "technical"]) {
+    const open = new RegExp(`<details[^>]*data-import-section="${section}"[^>]*\\sopen`);
+    assert(!open.test(html), `U16. the ${section} section must be closed on arrival`);
+    assert(html.includes(`data-import-section="${section}"`), `U16. and must exist`);
+  }
+  assert(!/<details class="import-scene"[^>]*\sopen/.test(html), "U17. every scene must be closed, including the first");
+  assert(!/<details class="import-shot"[^>]*\sopen/.test(html), "U17. and every shot inside it");
+
+  /* THREE DEPTHS, EACH COMPLETE. Scene row, shot row, shot detail. */
+  assert.strictEqual((html.match(/data-import-scene="/g) || []).length, 2, "U17. one row per scene");
+  assert(/S01 · The Problem/.test(html) && /1 shot · tier A/.test(html), "U17. named and counted in the row itself");
+  assert(/data-import-shot="S01-01"/.test(html), "U17. with a compact row per shot inside it");
+  assert(/Medium, frame left\./.test(html) && /Identity drift/.test(html) && /She walks\./.test(html),
+    "U17. and the full planning detail still present, one level deeper");
+
+  /* THE EVIDENCE IS COMPLETE AND OUT OF THE WAY. */
+  const technical = html.slice(html.indexOf('data-import-section="technical"'));
+  assert(/PREVIEW SHA-256/.test(technical) && /b{64}/.test(technical), "U18. the hash lives in the technical section");
+  assert(/import-count-comparison/.test(technical), "U18. so does the before/after counter grid");
+  assert(/import-review-grid/.test(technical), "U18. and the six origin columns");
+  assert(/import-continuity-list/.test(technical), "U18. and the continuity states");
+  assert(!/PREVIEW SHA-256/.test(html.slice(0, html.indexOf('data-import-section="technical"'))),
+    "U18. and none of it competes with the import decision above");
+  assert(/downloadNormalizedProjectBuilderJSON\(\)/.test(technical), "U18. the normalized download is still offered");
+  note("U16-U18. structure and technical evidence are both closed on arrival, scenes and shots open one depth at a time, and the hash, counters, origin columns and continuity states are all still rendered");
+}
+
 async function main() {
   await sectionEntryIsIntentFirst();
   await sectionAssistedFraming();
@@ -1426,8 +1714,15 @@ async function main() {
   await sectionAsyncOwnershipAttacks();
   await sectionSliceOnePreserved();
   await sectionNoLaterSliceLeakage();
+  await sectionExternalAssistantIsExplicit();
+  await sectionCopyInstructionsIsPrimary();
+  await sectionExistingProjectPathIsUnambiguous();
+  await sectionManualStartIsNotAChecklist();
+  await sectionImportPreviewIsSummaryFirst();
+  await sectionRepeatedFindingsAreGrouped();
+  await sectionStructureAndTechnicalAreDisclosed();
   console.log(notes.join("\n"));
-  console.log("Project entry & import landing suite passed: three intents, retained source material, typed format/aspect, deferred style, Ready/Needs review/Blocked, the planning-marker boundary, and a landing whose next action is the single projectNextProductionAction().");
+  console.log("Project entry & import landing suite passed: three intents, retained source material, typed format/aspect, deferred style, Ready/Needs review/Blocked, the planning-marker boundary, a landing whose next action is the single projectNextProductionAction(), and the founder-dogfood surface corrections — external assistant named, Braidy excluded from the conversion, copy-instructions primary, existing-project path scoped, manual start un-gated, and an import preview that answers the decision before it shows the evidence.");
 }
 
 /* A HANG IS A FAILURE, NOT A PASS. Sections S gate their own responses; a gate this
