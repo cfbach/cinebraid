@@ -2446,6 +2446,20 @@ body[data-focused-workspace="1"] .coverage-slot-card.focused-slot-selected .cove
 .prompt-check{display:block;grid-template-columns:none;overflow-wrap:anywhere;white-space:normal}
 .prompt-check>b{display:block;margin:0 0 3px;color:var(--text)}
 .prompt-check>b+span{display:block;text-align:left;font:inherit;color:var(--muted)}
+
+/* AT1-G — THE REFUSAL THAT STAYS. It inherits .prompt-check.warn above, so the
+   colour and the b+span shape are the ones every other requirement on the page
+   already uses; only the dismiss control and the wrapping are added here. A
+   refusal sentence names a filename and a remediation, so it wraps rather than
+   truncating — `overflow-wrap:anywhere` is inherited, and the narrow viewports
+   drop the control onto its own row instead of squeezing the sentence. */
+.action-refusal{margin:8px 0 0;display:grid;gap:6px}
+.action-refusal-dismiss{justify-self:start;padding:3px 9px;border:1px solid var(--line);border-radius:var(--r-input);background:transparent;color:var(--muted);font:600 10px var(--mono);letter-spacing:.04em;text-transform:uppercase;cursor:pointer}
+.action-refusal-dismiss:hover{color:var(--text);border-color:color-mix(in srgb,var(--amber) 40%,var(--line))}
+/* AT1-D — the explicit act that creates the separate project, and the sentence
+   that says what happens to the one already open. */
+.creation-manual-commit{display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin-top:12px}
+.creation-manual-commit small{color:var(--muted);font-size:11px;line-height:1.45;flex:1 1 260px;min-width:0;overflow-wrap:anywhere}
 .state-generation-guidance{display:grid;gap:7px;padding:10px 12px;border:1px solid color-mix(in srgb,var(--amber) 34%,var(--line));border-radius:var(--r-tile);background:rgba(231,173,74,.05)}
 .state-generation-guidance>div{display:grid;grid-template-columns:minmax(105px,auto) minmax(0,1fr);gap:10px;align-items:start}
 .state-generation-guidance b{font-size:11px;color:var(--text)}
@@ -2490,6 +2504,14 @@ body[data-focused-workspace="1"] .coverage-slot-card.focused-slot-selected .cove
 .historic-confirm-list>li b{font-size:13px}
 .historic-confirm-list>li small{font:600 10px var(--mono);color:var(--muted);overflow-wrap:anywhere}
 .historic-confirm-list>li em{font-style:normal;font-size:11px;color:var(--acc)}
+/* AT1-B/G. The refused row now carries the kernel's own requirement sentence
+   instead of a truncated fragment beside a `title` tooltip, so it needs a width
+   of its own and a row that wraps rather than crushing the reference beside it.
+   The row is flex; the refusal is capped and allowed to take its own line at the
+   narrow end, which is what keeps 1280 free of horizontal overflow. */
+.historic-confirm-list>li{flex-wrap:wrap}
+.historic-confirm-list>li>.prompt-check{flex:0 1 340px;min-width:0;margin:0}
+@media (max-width:1400px){.historic-confirm-list>li>.prompt-check{flex:1 1 100%}}
 .historic-confirm-bulk{display:grid;gap:4px;justify-items:start}
 .historic-confirm-bulk small{font-size:11px;color:var(--muted)}
 

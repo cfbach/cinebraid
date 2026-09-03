@@ -5958,14 +5958,93 @@ function creationCineBraidImportCard() {
  * comes first, through the same three handlers Settings → Project already uses, then
  * one obvious first action. The look and the reference entry points are a disclosure
  * underneath, which is where NEXT actions belong. */
+/* ==========================================================================
+   AT1-D — START MANUALLY CREATES A PROJECT. IT DOES NOT EDIT THE OPEN ONE.
+
+   THE DEFECT, AND IT WAS A TRUST BOUNDARY RATHER THAN A BUG IN A FIELD. This
+   card's three inputs read `P.meta.title`, `P.meta.format` and
+   `P.meta.aspectRatio` and wrote straight back through setProjectTitle(),
+   `P.meta.format=…;dirty()` and setGlobalCreationField() — P being the project
+   ALREADY OPEN. So a filmmaker who opened Start a project, chose Start manually
+   and typed a new title had renamed the film they were working on, and `dirty()`
+   had queued that rename to be SAVED. The screen directly above these fields
+   says, in its own words: "Whatever you start here becomes its own project. The
+   one you have open now is not changed." The assisted and CineBraid paths keep
+   that promise — both commit through a server route that mints a separate
+   project. This path contradicted it silently.
+
+   WHAT REPLACES IT. A draft, and one explicit act.
+
+   OWNERSHIP AND LIFETIME are deliberately identical to CREATION_SOURCE_DRAFTS
+   above, for the same reasons stated there: this browser tab, until the filmmaker
+   creates the project or reloads. It is NOT written to the project, the server or
+   localStorage — writing it to the project is the entire defect.
+
+   IT IS SEEDED EMPTY, never from P.meta. Pre-filling with the open project's
+   title would show the filmmaker their existing film in the box that claims to
+   describe a new one, which is how a rename reads as a creation.
+
+   THE COMMIT IS THE SHIPPED ONE. POST /api/projects/new, the exact route
+   window.newProject() has always used, with the same three fields. No second
+   project-creation architecture exists here. */
+const CREATION_MANUAL_IDENTITY =
+  window.__cinebraidManualStart || (window.__cinebraidManualStart = { title: "", format: "", aspectRatio: "" });
+function manualStartDraft() {
+  return CREATION_MANUAL_IDENTITY;
+}
+window.setManualStartField = (key, value) => {
+  if (!Object.prototype.hasOwnProperty.call(CREATION_MANUAL_IDENTITY, key)) return;
+  CREATION_MANUAL_IDENTITY[key] = String(value == null ? "" : value);
+  /* NO dirty(). NOTHING TOUCHES P. That is the whole point of this function.
+     tests/action-truth-first-press.js D5 asserts this setter cannot reach either,
+     and tests/action-truth-first-press-negative-controls.js R-AT1-1 fails if the
+     writers that edit the open project come back to this card. */
+};
+window.startManualProject = async () => {
+  const draft = manualStartDraft();
+  const title = String(draft.title || "").trim();
+  if (!title) return toast("Give the new project a title first");
+  /* The open project's own unsaved work is flushed before anything switches, the
+     same way commitProjectBuilderImport() and newProject() flush it. */
+  try {
+    await flushPendingProjectSave();
+  } catch (error) {
+    return toast(error.message || "Save the current project before creating another one");
+  }
+  let created = null;
+  try {
+    const response = await fetch("/api/projects/new", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ title, format: draft.format || "", aspectRatio: draft.aspectRatio || "" }),
+    });
+    created = await response.json().catch(() => ({}));
+    if (!response.ok) throw new Error(created.error || "Could not create project");
+  } catch (error) {
+    return toast(error.message || "Could not create project");
+  }
+  /* Consumed, not merely hidden: the draft described a project that now exists. */
+  CREATION_MANUAL_IDENTITY.title = "";
+  CREATION_MANUAL_IDENTITY.format = "";
+  CREATION_MANUAL_IDENTITY.aspectRatio = "";
+  window.__cinebraidProjectEntryLanding = null;
+  await load();
+  /* Into the normal production flow, which is where a project with no shots
+     offers ADD THE FIRST SHOT and that button now actually adds one. */
+  location.hash = "#/production";
+  route();
+  toast("Project created");
+};
 function creationManualIdentityCard() {
+  const draft = manualStartDraft();
   return `<section class="creation-card creation-manual-identity" data-manual-identity>
-    <div class="creation-card-head"><div><h3>Start with the basics</h3><p>Give the project a name, format and frame. You can decide everything else later.</p></div></div>
+    <div class="creation-card-head"><div><h3>Start with the basics</h3><p>Give the new project a name, format and frame. You can decide everything else later. Nothing here changes ${esc(P.meta.title || "the project you have open")}.</p></div></div>
     <div class="creation-grid creation-identity-grid">
-      ${field("Project title", `<input value="${attr(P.meta.title || "")}" onchange="setProjectTitle(this.value)">`)}
-      ${field("Format", `<input list="cinebraid-format-presets" value="${attr(P.meta.format || "")}" placeholder="Short film" onchange="P.meta.format=this.value;dirty()"><datalist id="cinebraid-format-presets">${PROJECT_FORMAT_PRESETS.filter(([value]) => value).map(([value, label]) => `<option value="${attr(value)}">${esc(label)}</option>`).join("")}</datalist><span class="hint">What this project is being made as.</span>`)}
-      ${field("Aspect ratio", `<input list="cinebraid-aspect-presets" value="${attr(P.meta.aspectRatio || "")}" placeholder="16:9" onchange="setGlobalCreationField('aspectRatio',this.value)"><datalist id="cinebraid-aspect-presets">${CINEBRAID_ASPECT_PRESETS.map(([value, label]) => `<option value="${attr(value)}">${esc(label)}</option>`).join("")}</datalist><span class="hint">The frame every shot is judged in unless a shot overrides it.</span>`)}
+      ${field("Project title", `<input value="${attr(draft.title || "")}" placeholder="The Black Lantern" onchange="setManualStartField('title',this.value)">`)}
+      ${field("Format", `<input list="cinebraid-format-presets" value="${attr(draft.format || "")}" placeholder="Short film" onchange="setManualStartField('format',this.value)"><datalist id="cinebraid-format-presets">${PROJECT_FORMAT_PRESETS.filter(([value]) => value).map(([value, label]) => `<option value="${attr(value)}">${esc(label)}</option>`).join("")}</datalist><span class="hint">What this project is being made as.</span>`)}
+      ${field("Aspect ratio", `<input list="cinebraid-aspect-presets" value="${attr(draft.aspectRatio || "")}" placeholder="16:9" onchange="setManualStartField('aspectRatio',this.value)"><datalist id="cinebraid-aspect-presets">${CINEBRAID_ASPECT_PRESETS.map(([value, label]) => `<option value="${attr(value)}">${esc(label)}</option>`).join("")}</datalist><span class="hint">The frame every shot is judged in unless a shot overrides it.</span>`)}
     </div>
+    <div class="creation-manual-commit"><button class="assemble-btn" data-manual-start-commit onclick="startManualProject()">CREATE THIS PROJECT</button><small>Creates a separate project and opens it. ${esc(P.meta.title || "The project you have open")} stays exactly as it is.</small></div>
   </section>`;
 }
 function creationManualWorkspace() {

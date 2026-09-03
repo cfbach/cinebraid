@@ -338,6 +338,8 @@ async function main() {
     "account-lan-safety.js",
     "account-provider-adapter.js",
     "account-secret-handling.js",
+    "action-truth-first-press-negative-controls.js",
+    "action-truth-first-press.js",
     "alpha-production-loop-negative-controls.js",
     "alpha-production-loop-real-browser.py",
     "alpha-production-loop.js",

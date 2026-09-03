@@ -537,6 +537,14 @@ async function nc6() {
       decisions: projectFilmmakerDecisions(feed).count,
       inboxHeadline: (inbox.split("<h2>")[1] || "").split("</h2>")[0],
       next: projectNextProductionAction(feed),
+      /* THE ACT THE PRIMARY CONTROL IS ROUTING TO, read from the readiness row
+         that produced it. AT1-F reworded the CONTROL — Production's card travels
+         to the shot, so it says so — and this control's guarantee was expressed
+         as a regex over that wording. A wording rule cannot police an act: the
+         defect being reproduced is that CineBraid offers to PRODUCE MORE MEDIA
+         while a returned result waits, and the produce-frame action code is what
+         says so whatever any surface chooses to call it. */
+      code: (feed.shots || []).map((row) => row.nextAction && row.nextAction.code).filter(Boolean)[0] || "",
       homeCta: (home.split('class="assemble-btn" href="#/shot/L1-01">')[1] || "").split(" ")[0],
     });
   `);
@@ -546,17 +554,19 @@ async function nc6() {
   equal(seen.inboxHeadline, "1 returned result waiting for review",
     "Returned Results correctly says a result is waiting");
   equal(seen.next.kind, "shot", "NC-UX1-6 reproduces the routing defect");
-  equal(seen.next.actionLabel, "PRODUCE THE FRAME",
-    "the primary action tells the filmmaker to generate another candidate for the frame whose first candidate nobody has looked at");
+  equal(seen.code, "produce-frame",
+    "the primary action routes the filmmaker to generate another candidate for the frame whose first candidate nobody has looked at");
+  equal(seen.next.actionLabel, "OPEN THE FRAME WORKSPACE",
+    "and the control that travels there is worded for the frame workspace it opens");
 
   /* 2. AND THE GUARANTEE GOES RED. */
   await mustFail("NC-UX1-6", "must route to reviewing it", () => {
     assert.strictEqual(seen.next.kind, "returned-result",
       "with returned media awaiting review and no higher-priority blocker, the primary action must route to reviewing it");
   });
-  await mustFail("NC-UX1-6 wording", "must not tell the filmmaker to produce more", () => {
-    assert(!/produce/i.test(seen.next.actionLabel),
-      "the primary action must not tell the filmmaker to produce more media while a returned result waits");
+  await mustFail("NC-UX1-6 act", "must not route the filmmaker to producing more", () => {
+    assert(seen.code !== "produce-frame" && seen.code !== "produce-motion",
+      "the primary action must not route the filmmaker to producing more media while a returned result waits");
   });
 
   note(`NC-UX1-6 restored produce-before-review: "${seen.inboxHeadline}" beside a primary action reading ${seen.next.actionLabel}`);

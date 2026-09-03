@@ -1577,10 +1577,32 @@ async function sectionExistingProjectPathIsUnambiguous() {
 async function sectionManualStartIsNotAChecklist() {
   const { html } = await createRender({ storage: { "cinebraid-creation-start-path": "scratch" } });
 
-  /* IDENTITY FIRST, through the handlers that already own these three fields. */
+  /* IDENTITY FIRST — of the project being STARTED, not of the one already open.
+   *
+   * AT1-D. This assertion used to require the three fields to be wired to
+   * `setProjectTitle(this.value)`, `P.meta.format=this.value;dirty()` and
+   * `setGlobalCreationField('aspectRatio',this.value)`, under the heading "no new
+   * persistence". The persistence half of that reasoning was right and is kept:
+   * completing a manual start still writes through the shipped creation route and
+   * this path still invents no storage of its own.
+   *
+   * The half that was wrong is WHICH PROJECT those handlers write to. All three
+   * write `P.meta` — the project already open — and all three call `dirty()`. So
+   * a filmmaker who opened Start a project, chose Start manually and typed a
+   * title had renamed the film they were working on and queued the rename to be
+   * saved, on a screen whose own words are "Whatever you start here becomes its
+   * own project. The one you have open now is not changed." This assertion is
+   * what kept that wiring in place, so it is corrected here rather than deleted:
+   * the fields must reach the DRAFT writer, and must not be able to reach any of
+   * the three writers that edit the open project. */
   assert(/data-manual-identity/.test(html), "U8. manual start must open on the project's own identity");
-  for (const handler of ["setProjectTitle(this.value)", "P.meta.format=this.value;dirty()", "setGlobalCreationField('aspectRatio',this.value)"])
-    assert(html.includes(handler), `U8. through the existing handler ${handler} — no new persistence`);
+  for (const handler of ["setManualStartField('title',this.value)", "setManualStartField('format',this.value)", "setManualStartField('aspectRatio',this.value)"])
+    assert(html.includes(handler), `U8. through the draft handler ${handler} — no new persistence, and no edit to the open project`);
+  for (const retired of ["setProjectTitle(this.value)", "P.meta.format=this.value;dirty()", "setGlobalCreationField('aspectRatio',this.value)"])
+    assert(!html.includes(retired),
+      `U8. and never through ${retired}, which writes the project already open`);
+  assert(/data-manual-start-commit/.test(html),
+    "U8. with one explicit act that creates the separate project this screen promised");
 
   /* AND THE CHECKLIST IS THE NEXT THING, NOT THE GATE. Everything is still here;
      `details` without `open` is the difference between offered and demanded. */
@@ -1604,8 +1626,15 @@ async function sectionManualStartIsNotAChecklist() {
      first correction; the copy still read as product documentation explaining what
      CineBraid needs from you. */
   assert(/<h3>Start with the basics<\/h3>/.test(html), "U9. the manual path opens on plain words");
-  assert(/Give the project a name, format and frame\. You can decide everything else later\./.test(html),
+  /* AT1-D: "the NEW project", because that is which one these fields describe,
+     followed by the reassurance the screen's promise implies — the sentence a
+     filmmaker needs when the boxes in front of them are empty and the film they
+     were working on a moment ago is not. Same register, same length, one more
+     true thing said. */
+  assert(/Give the new project a name, format and frame\. You can decide everything else later\./.test(html),
     "U9. saying what to do and what can wait, in one sentence");
+  assert(/Nothing here changes /.test(html),
+    "U9. and naming the project that is NOT being edited, which is the promise this screen makes");
   /* A BRAND-NEW PROJECT IS THE CASE THIS PATH EXISTS FOR, so its empty state is
      rendered from a project that really is empty rather than from the fixture. */
   const blank = buildFixture();
@@ -1615,7 +1644,7 @@ async function sectionManualStartIsNotAChecklist() {
   assert(/Ready for the first scene/.test(empty.html), "U9. its first action is named for the thing, not the state machine");
   assert(/Start a scene and shot, or build references first if you need them\./.test(empty.html),
     "U9. with the alternative offered rather than explained");
-  note("U8-U9. manual start opens on title / format / aspect through the existing handlers, in plain words, with Project Look and the reference entry points closed underneath the project's first action");
+  note("U8-U9. manual start opens on the NEW project's title / format / aspect through the draft handler — never the writers that edit the project already open — in plain words, with Project Look and the reference entry points closed underneath the project's first action");
 }
 
 /* =========================================================================

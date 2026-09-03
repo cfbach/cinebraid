@@ -2707,6 +2707,64 @@ function toast(msg) {
   clearTimeout(t._h);
   t._h = setTimeout(() => t.classList.add("hidden"), 2200);
 }
+
+/* ==========================================================================
+   AT1-G — A REFUSAL THE FILMMAKER PRESSED FOR STAYS ON THE SCREEN.
+
+   THE DEFECT. Every refusal on an action surface was reported by toast() above
+   and by nothing else. It clears itself after 2.2 seconds, it is a single line
+   with no room for a requirement, and it renders in a corner rather than beside
+   the control that was pressed. A filmmaker who pressed Confirm and looked back
+   at the button found the button unchanged, still offered, with no trace of why
+   it had not worked — so the only available reading was that the press had been
+   missed, and the honest thing CineBraid had actually said was gone.
+
+   A toast is a fine NOTICE. It is not evidence, and it must not be the only
+   record of a decision the application refused to make.
+
+   WHAT THIS IS, AND WHAT IT DELIBERATELY IS NOT. It is not a global error
+   subsystem and it does not intercept anything. It is a keyed store of the last
+   refusal per action surface — the same shape and lifetime as CREATION_RESULTS
+   in public/creation-studio.js, which already keeps a per-surface result across
+   renders — and a renderer that surfaces choose to place beside their own
+   control. Nothing is captured that a surface did not record, and a surface that
+   records nothing renders nothing.
+
+   OWNERSHIP: this browser tab. LIFETIME: until the act succeeds, the filmmaker
+   dismisses it, or the tab reloads. Nothing is written to the project or the
+   server — a refusal means the project did NOT change, and persisting evidence
+   of a non-change into the document would be its own untruth.
+
+   THE WORDING IS THE AUTHORITY LAYER'S OWN. `message` is passed through exactly
+   as the kernel or the seam said it. This function does not rephrase a refusal,
+   because the refusal sentences already name what is wrong and what would
+   resolve it, and a second rendering of them is a second place for them to drift. */
+const ACTION_REFUSALS = window.__cinebraidActionRefusals || (window.__cinebraidActionRefusals = new Map());
+function actionRefusalKey(key) {
+  return String(key == null ? "" : key);
+}
+window.recordActionRefusal = (key, message, code = "") => {
+  const id = actionRefusalKey(key);
+  if (!id) return;
+  ACTION_REFUSALS.set(id, { message: String(message || "That action could not be completed."), code: String(code || "") });
+};
+window.clearActionRefusal = (key) => {
+  ACTION_REFUSALS.delete(actionRefusalKey(key));
+};
+window.dismissActionRefusal = (key) => {
+  ACTION_REFUSALS.delete(actionRefusalKey(key));
+  route();
+};
+function actionRefusal(key) {
+  return ACTION_REFUSALS.get(actionRefusalKey(key)) || null;
+}
+/* Rendered by the surface that offered the act, immediately beside it. The
+   dismiss control is the filmmaker's, never a timer's. */
+function actionRefusalMarkup(key) {
+  const refusal = actionRefusal(key);
+  if (!refusal) return "";
+  return `<div class="action-refusal prompt-check warn" role="status" data-action-refusal="${attr(actionRefusalKey(key))}"${refusal.code ? ` data-refusal-code="${attr(refusal.code)}"` : ""}><b>CineBraid did not make this change</b><span>${esc(refusal.message)}</span><button type="button" class="action-refusal-dismiss" onclick="dismissActionRefusal('${attr(actionRefusalKey(key))}')" aria-label="Dismiss this message">Dismiss</button></div>`;
+}
 function tally() {
   const c = {};
   P.shots.forEach((s) => {
@@ -4631,7 +4689,9 @@ function projectNextProductionAction(feed = projectShotReadiness()) {
       kind: "shot", shotId: ready.shotId, href: `#/shot/${ready.shotId}`,
       title: `${ready.shotId}${shot?.title ? ` · ${shot.title}` : ""}`,
       message: ready.nextAction?.message || "",
-      actionLabel: readinessActionWords(ready.nextAction).toUpperCase(),
+      /* AT1-F. `href` is what this control does, so its words say so. The ACT is
+         still named in `message` and performed by its own owner on the shot. */
+      actionLabel: readinessNavigationWords(ready.nextAction).toUpperCase(),
     };
   }
   const outstanding = (feed.shots || []).filter((shot) => shot.status !== "COMPLETE");
@@ -4658,13 +4718,39 @@ function projectNextProductionAction(feed = projectShotReadiness()) {
     kind: "shot", shotId: first.shotId, href: `#/shot/${first.shotId}`,
     title: `${first.shotId}${shot?.title ? ` · ${shot.title}` : ""}`,
     message: first.nextAction?.message || "",
-    actionLabel: readinessActionWords(first.nextAction).toUpperCase(),
+    /* AT1-F, same reason as the READY branch above: this travels to the shot. */
+    actionLabel: readinessNavigationWords(first.nextAction).toUpperCase(),
   };
 }
+/* AT1-C — ONE OWNER FOR THE PRIMARY PRODUCTION CONTROL: ITS WORDS AND ITS ACT.
+ *
+ * THE DEFECT. The label was derived on the Production head — `next ? "CONTINUE
+ * PRODUCTION" : hasShots ? "NOTHING OUTSTANDING" : "ADD THE FIRST SHOT"` — and
+ * the handler beside it read only `projectNextProductionAction()`, which returns
+ * null for BOTH "nothing is outstanding" and "there is nothing at all". So a
+ * project with no shots printed ADD THE FIRST SHOT on a primary button and
+ * answered the press with "Every shot has been delivered": a completion claim
+ * about a production that has not started, in place of the act the button named.
+ *
+ * Two readers of one question is how that happens, so there is one reader now.
+ * The words and the act are decided together and cannot disagree, because the
+ * same value produces both. `nothing-outstanding` keeps its exact wording — it
+ * was the truthful case all along, and suites assert it. */
+function projectPrimaryProductionAction(feed = projectShotReadiness()) {
+  const next = projectNextProductionAction(feed);
+  if (next) return { kind: "continue", label: "CONTINUE PRODUCTION", next };
+  /* NO SHOTS IS NOT COMPLETION. A project that has never had a shot cannot have
+     delivered one, and the act this offers is the one that starts the film. */
+  if (!P.shots.length) return { kind: "add-first-shot", label: "ADD THE FIRST SHOT", next: null };
+  return { kind: "nothing-outstanding", label: "NOTHING OUTSTANDING", next: null };
+}
 window.continueProduction = () => {
-  const next = projectNextProductionAction();
-  if (!next) return toast("Every shot has been delivered");
-  location.hash = next.href;
+  const primary = projectPrimaryProductionAction();
+  /* The real creation flow — the same one ＋ Add shot reaches — not a message
+     about it. addShot() creates the first scene too when there is none. */
+  if (primary.kind === "add-first-shot") return openContextualAdd("shot");
+  if (primary.kind === "nothing-outstanding") return toast("Every shot has been delivered");
+  location.hash = primary.next.href;
 };
 function slate(s, sceneId, readiness = null) {
   const takes = takesFor(s.id);
@@ -5384,6 +5470,54 @@ function readinessActionWords(action) {
   if (count > 1 && action?.code === "supply-approved-media") return `Supply ${count} approved files`;
   return label;
 }
+/* ==========================================================================
+   AT1-F — THE SAME ANSWER, WORDED FOR A CONTROL THAT TRAVELS TO IT.
+
+   READINESS_ACTION_WORDS above names the ACT. A control that PERFORMS the act
+   should wear those words, and the two that do — Confirm in the historic queue,
+   Mark shot final in Finish & Delivery — already do.
+
+   THE DEFECT WAS THE OTHER HALF. Production's NEXT ACTION card is an `<a href>`
+   and #/create's recommended card is a button that sets `location.hash`. Both
+   were labelled with the ACT: "CONFIRM EXISTING REFERENCE →" on a link that
+   confirms nothing, and "MARK SHOT FINAL →" on a link that marks nothing —
+   sitting in the same product as a real Mark shot final button that does. Two
+   visible controls, the same words, and only one of them performs the act. A
+   filmmaker who pressed the wrong one had not made the decision they had just
+   been told they were making.
+
+   So a navigating control says where it goes. The action codes are the SAME
+   codes — this is a second rendering of one answer, never a second answer — and
+   the arrow the cards already append reads as travel rather than decoration.
+
+   The fallback is deliberately "Open the next action" rather than a guess: a
+   code with no phrasing here still describes travel truthfully. */
+const READINESS_NAVIGATION_WORDS = {
+  "repair-authority-ledger": "Open the approval records",
+  "awaiting-project-repair": "Open project repair",
+  "establish-media-availability": "Review approved media",
+  "confirm-existing-reference": "Open confirmation",
+  "reapprove-revoked-reference": "Review withdrawn reference",
+  "resolve-relationship": "Open the shot input",
+  "remove-stale-state-declaration": "Open the stale declaration",
+  "resolve-state-declaration": "Open the declared state",
+  "resolve-frame-state-declaration": "Open the frame state",
+  "repair-presence-declaration": "Open the frame presence",
+  "resolve-media-ownership": "Open the media claim",
+  "declare-producible-unit": "Open what this shot produces",
+  "declare-shot-route": "Open how this shot is made",
+  "supply-approved-media": "Open approved media",
+  "prepare-references": "Review required references",
+  "approve-parent-frame": "Review the previous frame",
+  "approve-required-frames": "Review required frames",
+  "produce-frame": "Open the frame workspace",
+  "produce-motion": "Open the motion workspace",
+  "mark-shot-final": "Open the finish decision",
+  "nothing-outstanding": "Open the shot",
+};
+function readinessNavigationWords(action) {
+  return READINESS_NAVIGATION_WORDS[action?.code] || "Open the next action";
+}
 function historicConfirmationMarkup(feed) {
   const queue = feed?.historic;
   if (!queue?.items?.length) return "";
@@ -5391,9 +5525,17 @@ function historicConfirmationMarkup(feed) {
     const shots = item.shotIds.length;
     const refused = item.ownership.wouldRefuse;
     const action = refused
-      ? `<span class="prompt-check warn" title="${attr(`CineBraid will not approve this file for this reference: ${item.ownership.reason}`)}">Cannot confirm — ${esc(item.ownership.reason || "not owned")}</span>`
+      /* AT1-B/G. THE REQUIREMENT IS RENDERED, NOT HIDDEN IN A TOOLTIP. `reason`
+         is now the kernel's own refusal sentence, which already names the file,
+         what is wrong and what would resolve it — so it belongs on the screen at
+         full length rather than truncated beside a `title` a pointer has to find.
+         And `wouldRefuse` is now the kernel's own preflight rather than this
+         surface's guess at it, so a row that reads Cannot confirm is a row the
+         writer would genuinely refuse, and a row that offers Confirm is one it
+         would genuinely accept. */
+      ? `<span class="prompt-check warn"${item.ownership.code ? ` data-refusal-code="${attr(item.ownership.code)}"` : ""}><b>Cannot confirm yet</b><span>${esc(item.ownership.reason || "This file is not owned by this reference.")}</span></span>`
       : `<button class="approve-btn" onclick="confirmHistoricSelection('${attr(item.key)}')">Confirm</button>`;
-    return `<li><div><b>${esc(item.label)}</b><small>${esc(item.value || "no file recorded")} · ${esc(item.key)}</small><em>Satisfies ${plural(item.requirementCount, "shot requirement")} across ${plural(shots, "shot")}</em></div>${action}</li>`;
+    return `<li><div><b>${esc(item.label)}</b><small>${esc(item.value || "no file recorded")} · ${esc(item.key)}</small><em>Satisfies ${plural(item.requirementCount, "shot requirement")} across ${plural(shots, "shot")}</em>${actionRefusalMarkup(`historic-confirmation:${item.key}`)}</div>${action}</li>`;
   }).join("");
   const confirmable = queue.items.filter((item) => !item.ownership.wouldRefuse).length;
   /* THE BULK ACTION IS NOT A BLIND SHORTCUT. Every row it would write is listed
@@ -5486,12 +5628,20 @@ function commitHistoricConfirmation(item, at) {
   throw new Error(`CineBraid cannot confirm a ${target.kind || "unknown"} selection from this surface.`);
 }
 window.confirmHistoricSelection = (key) => {
+  const refusalKey = `historic-confirmation:${key}`;
+  clearActionRefusal(refusalKey);
   const feed = projectShotReadiness();
   const item = (feed?.historic?.items || []).find((row) => row.key === key);
   if (!item) return toast("That selection is no longer waiting for confirmation");
   try {
     commitHistoricConfirmation(item, new Date().toISOString());
   } catch (error) {
+    /* AT1-G. This was a toast and nothing else: the Confirm button was still
+       sitting there, unchanged, two seconds later, with no record of what the
+       kernel had refused or what would resolve it. The kernel's own sentence is
+       kept — it names the file, the reason and the next step. */
+    recordActionRefusal(refusalKey, error.message || "That selection could not be confirmed", error.code || "");
+    route();
     return toast(error.message || "That selection could not be confirmed");
   }
   dirty();
@@ -5508,13 +5658,20 @@ window.confirmAllListedHistoricSelections = () => {
   const at = new Date().toISOString();
   const confirmed = [], refused = [];
   for (const item of items) {
+    const refusalKey = `historic-confirmation:${item.key}`;
+    clearActionRefusal(refusalKey);
     try {
       commitHistoricConfirmation(item, at);
       confirmed.push(item.label);
     } catch (error) {
+      /* AT1-G. The summary toast can only name the first refusal and then clears
+         itself, so a bulk confirm that refused three rows left two of them with no
+         explanation anywhere. Each refusal is recorded against its OWN row. */
+      recordActionRefusal(refusalKey, error.message || "That selection could not be confirmed", error.code || "");
       refused.push(`${item.label}: ${error.message || "refused"}`);
     }
   }
+  if (refused.length) route();
   if (confirmed.length) { dirty(); route(); }
   toast(refused.length
     ? `Confirmed ${confirmed.length}; ${refused.length} refused — ${refused[0]}`
@@ -5540,7 +5697,11 @@ async function productionHomeView() {
      twice per paint would be the cost of pretending otherwise. */
   const shotReadiness = projectShotReadiness();
   /* THE SAME ANSWER #/create SHOWS. One derivation, two screens. */
-  const next = projectNextProductionAction(shotReadiness);
+  /* AT1-C. Both the words on the primary control and what pressing it does come
+     from this one value; `next` stays for the NEXT ACTION card below, which is a
+     rendering of the same answer. */
+  const primaryAction = projectPrimaryProductionAction(shotReadiness);
+  const next = primaryAction.next;
   /* ONE COUNT, ONE MEANING, AND THE SAME OBJECT EVERY SUMMARY ON THIS PAGE READS.
      Derived once from the readiness answer already in hand, and handed down to the
      summary tile, the readiness pill and every scene card below. */
@@ -5562,7 +5723,7 @@ async function productionHomeView() {
   const isDelivered = (shot) => (decisions.available ? deliveredIds.has(shot.id) : shotIsDelivered(shot));
   const activeRows = P.shots.map((shot) => ({ shot, next: shotProductionNextAction(shot, readinessByShot.get(shot.id)) }))
     .filter((row) => !isDelivered(row.shot)).slice(0, 8);
-  return `<div class="view-head production-home-head"><div><div class="eyebrow">Production</div><span class="view-title">${esc(P.meta.title)}</span><div class="view-sub">Continue the film from the next unfinished decision. Detailed tools stay inside each shot.</div></div><div class="production-home-actions"><button class="${next ? "ghost-btn" : "assemble-btn"}" onclick="continueProduction()">${next ? "CONTINUE PRODUCTION" : hasShots ? "NOTHING OUTSTANDING" : "ADD THE FIRST SHOT"}</button><button class="add-btn" onclick="openContextualAdd('shot')">＋ Add shot</button></div></div>
+  return `<div class="view-head production-home-head"><div><div class="eyebrow">Production</div><span class="view-title">${esc(P.meta.title)}</span><div class="view-sub">Continue the film from the next unfinished decision. Detailed tools stay inside each shot.</div></div><div class="production-home-actions"><button class="${next ? "ghost-btn" : "assemble-btn"}" onclick="continueProduction()">${esc(primaryAction.label)}</button><button class="add-btn" onclick="openContextualAdd('shot')">＋ Add shot</button></div></div>
   <div class="production-summary"><article title="A shot is delivered once you have marked it final in Finish &amp; Delivery. That decision is recorded as a production approval you can withdraw later, and a leftover file pointer with no approval behind it does not count."><b>${deliveredCount}/${P.shots.length}</b><span>${pluralWord(P.shots.length, "shot")} delivered</span></article><article title="A shot is signed off once its workflow status reaches Signed off. Signing a shot off is not the same as delivering it, and neither one approves an image."><b>${approvedCount}/${P.shots.length}</b><span>${pluralWord(P.shots.length, "shot")} signed off</span></article><article class="${decisions.available && decisions.count ? "review" : ""}" title="Shots that cannot move without a decision only you can make. This is the one decision count in CineBraid: the readiness list, the scene cards and the shot filters all report this same number.">${decisions.available ? `<b>${decisions.count}</b><span>${pluralWord(decisions.count, FILMMAKER_DECISION_LABEL)} ${decisions.count === 1 ? "needs" : "need"} you</span>` : `<b>—</b><span>decisions unavailable</span>`}</article><article><b>${mmss(P.shots.reduce((sum, shot) => sum + shotDur(shot), 0))}</b><span>planned runtime across ${plural(P.scenes.length, "scene")}</span></article></div>
   <!-- THE ORDER OF THIS PAGE IS THE POINT.
        What to do now, then the outstanding decisions behind it, then the detail.
@@ -5713,7 +5874,12 @@ function productionView(tab = "board") {
   const tabDefs = [["board", "Shot board"], ["scenes", "Scene directory"]];
   if (tab === "table") tab = "board";
   const tabs = workspaceTabs("production", tab, tabDefs);
-  const head = `<div class="view-head board-head"><div><div class="eyebrow">Shots</div><span class="view-title">Shots</span><div class="view-sub">Track scene readiness, approved frames, and one clear next action for every shot.</div></div><div class="board-head-actions"><button class="assemble-btn" onclick="continueProduction()">CONTINUE</button><button class="add-btn" onclick="openContextualAdd('shot')">＋ Add</button></div></div>${tabs}`;
+  /* AT1-C. This head offered a bare CONTINUE on a project with no shots at all,
+     and the press answered "Every shot has been delivered". Same owner as
+     Production's primary control, so the two heads cannot say different things
+     about the same project; CONTINUE keeps its short word when there is work. */
+  const boardPrimary = projectPrimaryProductionAction();
+  const head = `<div class="view-head board-head"><div><div class="eyebrow">Shots</div><span class="view-title">Shots</span><div class="view-sub">Track scene readiness, approved frames, and one clear next action for every shot.</div></div><div class="board-head-actions"><button class="assemble-btn" onclick="continueProduction()">${esc(boardPrimary.kind === "continue" ? "CONTINUE" : boardPrimary.label)}</button><button class="add-btn" onclick="openContextualAdd('shot')">＋ Add</button></div></div>${tabs}`;
   if (tab === "scenes") {
     const scenePage = boundedPage(P.scenes, "scenes", "overview", BOUNDED_PAGE_SIZES.scenes);
     return head + runtimeBar(P.shots, P.meta.targetRuntime) + `<div class="bounded-scene-list">${scenePage.rows.map((sc) => {

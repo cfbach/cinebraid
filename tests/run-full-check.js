@@ -160,6 +160,16 @@ const nodeSuites = [
   "check:shot-intent-negative",
   "check:action-projection",
   "check:action-projection-negative",
+  /* AT1. Listed beside the readiness/action projection suites because they
+     govern the same surface from the other side: those two hold that one
+     projection answers "what needs me now", and these two hold that a control
+     offering to act on that answer can actually perform it — or says truthfully
+     that it is travelling to where it can be performed. The negative-controls
+     file also carries this repository's first RETIREMENT assertions, which fail
+     if a superseded owner comes back rather than merely proving the new one
+     works. */
+  "check:action-truth",
+  "check:action-truth-negative",
   "check:stage-surfaces",
   "check:stage-surfaces-negative",
   "check:production-media",

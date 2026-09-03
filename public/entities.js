@@ -887,7 +887,7 @@ function continuityStatesPanel(list, it, media = [], demand = null) {
     const status = standing === "canon" ? (state.isDefault ? "Main canon image" : "Canon") : standing === "historic" ? "Historic · not approved" : effectiveRequirementLabel(state, demand, { isDefault: state.isDefault, family: "state" });
     return `<button type="button" class="tone-${tone} ${state.id===selectedId?"selected":""}" onclick="selectBoundedItem('continuity-state','${attr(list+":"+it.id)}','${attr(state.id)}')"><i></i><span><b>${esc(state.name || `State ${index+1}`)}</b><small>${status}</small></span></button>`;
   }).join("")}</nav>`;
-  const editor = st ? `<article class="continuity-state-card continuity-state-card-focused ${st.isDefault ? "is-default" : ""}" data-continuity-state-id="${attr(st.id)}"><div class="continuity-state-head"><span>${selectedIndex + 1}</span><input value="${attr(st.name || "")}" placeholder="Clean suit / Damaged sleeve / Night lighting" onchange="setContinuityState('${list}','${it.id}',${selectedIndex},'name',this.value)" ${st.isDefault ? 'data-default="1"' : ''}><div class="continuity-state-head-actions">${st.isDefault ? `<button class="chip" onclick="approveEntityFile('${list}','${it.id}','${attr(st.approvedFile || '')}','${attr(st.id)}')">CHOOSE AUTHORITY</button>` : `<button class="chip" onclick="openContinuityStateVariant('${attr(list)}','${attr(it.id)}','${attr(st.id)}')">${selectedIsCanon ? "EDIT / REGENERATE" : selectedParentIsCanon ? `GENERATE FROM ${esc(parentInfo.label.toUpperCase())}` : "OPEN STATE WORKFLOW"}</button><button class="ghost-btn" onclick="openStateReferenceUpload('${attr(list)}','${attr(it.id)}','${attr(st.id)}')">UPLOAD STATE REFERENCE</button><button class="chip" onclick="approveEntityFile('${attr(list)}','${attr(it.id)}','','${attr(st.id)}')">CHOOSE CANDIDATE</button><button class="icon-danger" onclick="removeContinuityState('${list}','${it.id}',${selectedIndex})">×</button>`}</div></div>${selectedApprovedHero}${continuityStateValidationMarkup(list,it,st,media)}<div class="continuity-state-scope"><label>Applies to scenes / shots<input value="${attr(st.appliesTo || "")}" placeholder="Scenes 1–2 or L2-01, L2-02" onchange="setContinuityState('${list}','${it.id}',${selectedIndex},'appliesTo',this.value)"></label>${st.isDefault ? `<label>Reference requirement<input value="Required — the main approved image" disabled></label>` : `<label>Reference requirement${referenceRequirementSelect(referenceRequirement(st), `setContinuityState('${list}','${it.id}',${selectedIndex},'referenceRequirement',this.value);dirty();route()`)}</label>`}<div class="state-approved-readout"><span>${selectedIsCanon ? "Canon image" : selectedApprovedFile ? "Historic image · not approved" : "Canon image"}</span><b>${esc(selectedApprovedFile || "None selected")}</b><small>${selectedIsCanon ? "Approved by you as this state’s production truth." : selectedApprovedFile ? "Previously selected. Approve it to make it canon." : "Use Upload State Reference or Choose Candidate above."}</small></div></div><label class="continuity-state-delta"><span>${st.isDefault ? "Base-state notes" : "State change / delta"}</span><textarea placeholder="${st.isDefault ? "Primary appearance and any details that must always remain true." : "What changes from the parent state? Also name anything that must remain unchanged."}" onchange="setContinuityState('${list}','${it.id}',${selectedIndex},'notes',this.value)">${esc(st.notes || "")}</textarea></label>${typeof assetStatePromptStudio === "function" ? assetStatePromptStudio(list, it, st) : ""}${continuityStateCandidateTray(list,it,st,media)}</article>` : '<div class="canon-notes">No continuity states yet.</div>';
+  const editor = st ? `<article class="continuity-state-card continuity-state-card-focused ${st.isDefault ? "is-default" : ""}" data-continuity-state-id="${attr(st.id)}"><div class="continuity-state-head"><span>${selectedIndex + 1}</span><input value="${attr(st.name || "")}" placeholder="Clean suit / Damaged sleeve / Night lighting" onchange="setContinuityState('${list}','${it.id}',${selectedIndex},'name',this.value)" ${st.isDefault ? 'data-default="1"' : ''}><div class="continuity-state-head-actions">${st.isDefault ? `<button class="chip" onclick="approveEntityFile('${list}','${it.id}','${attr(st.approvedFile || '')}','${attr(st.id)}')">CHOOSE AUTHORITY</button>` : `<button class="chip" onclick="openContinuityStateVariant('${attr(list)}','${attr(it.id)}','${attr(st.id)}')">${selectedIsCanon ? "EDIT / REGENERATE" : selectedParentIsCanon ? `GENERATE FROM ${esc(parentInfo.label.toUpperCase())}` : "OPEN STATE WORKFLOW"}</button><button class="ghost-btn" onclick="openStateReferenceUpload('${attr(list)}','${attr(it.id)}','${attr(st.id)}')">UPLOAD STATE REFERENCE</button><button class="chip" onclick="approveEntityFile('${attr(list)}','${attr(it.id)}','','${attr(st.id)}')">CHOOSE CANDIDATE</button><button class="icon-danger" onclick="removeContinuityState('${list}','${it.id}',${selectedIndex})">×</button>`}</div></div>${typeof actionRefusalMarkup === "function" ? actionRefusalMarkup(`continuity-state:${list}:${it.id}:${st.id}`) : ""}${selectedApprovedHero}${continuityStateValidationMarkup(list,it,st,media)}<div class="continuity-state-scope"><label>Applies to scenes / shots<input value="${attr(st.appliesTo || "")}" placeholder="Scenes 1–2 or L2-01, L2-02" onchange="setContinuityState('${list}','${it.id}',${selectedIndex},'appliesTo',this.value)"></label>${st.isDefault ? `<label>Reference requirement<input value="Required — the main approved image" disabled></label>` : `<label>Reference requirement${referenceRequirementSelect(referenceRequirement(st), `setContinuityState('${list}','${it.id}',${selectedIndex},'referenceRequirement',this.value);dirty();route()`)}</label>`}<div class="state-approved-readout"><span>${selectedIsCanon ? "Canon image" : selectedApprovedFile ? "Historic image · not approved" : "Canon image"}</span><b>${esc(selectedApprovedFile || "None selected")}</b><small>${selectedIsCanon ? "Approved by you as this state’s production truth." : selectedApprovedFile ? "Previously selected. Approve it to make it canon." : "Use Upload State Reference or Choose Candidate above."}</small></div></div><label class="continuity-state-delta"><span>${st.isDefault ? "Base-state notes" : "State change / delta"}</span><textarea placeholder="${st.isDefault ? "Primary appearance and any details that must always remain true." : "What changes from the parent state? Also name anything that must remain unchanged."}" onchange="setContinuityState('${list}','${it.id}',${selectedIndex},'notes',this.value)">${esc(st.notes || "")}</textarea></label>${typeof assetStatePromptStudio === "function" ? assetStatePromptStudio(list, it, st) : ""}${continuityStateCandidateTray(list,it,st,media)}</article>` : '<div class="canon-notes">No continuity states yet.</div>';
   /* R21 — A CONTINUITY STATE IS A STORY VARIANT, NOT A CONFIGURATION RECORD.
    *
    * Glasses on, wet, bloodied, helmet off, thirty years older. That is what this
@@ -985,24 +985,102 @@ window.setContinuityState = (list, id, i, k, v) => {
  * derive from this one, and that those go first. Each of those is its own
  * decision, visible and refusable, and none of them silently re-roots anything
  * the filmmaker built on. */
+/* AT1-E — REMOVING A STATE THAT HOLDS CANON REVOKES THE RECEIPT FIRST.
+ *
+ * THE DEFECT, AND IT STRANDED THE DOCUMENT. applyStateDeletion() splices the
+ * state out of `continuityStates`. That is a structural operation and it knows
+ * nothing about the authority ledger, so deleting a non-default state that held
+ * CURRENT Canon took its EDGE away with the record and left the RECEIPT saying
+ * `status: "current"` about a target that no longer existed. The write seam
+ * compares the two on every save, found a declared Canon edge with no matching
+ * receipt, and refused the transition with AUTHORITY_EDGE_RECEIPT_MISMATCH
+ * (authority-write-seam.js). The refusal is correct — that is the seam doing
+ * exactly its job — but the document could not be saved afterwards at all, so
+ * every UNRELATED edit made in the same session was stuck behind a receipt the
+ * filmmaker had no way to see or withdraw. Reload was the only exit.
+ *
+ * THE SEQUENCE, AND IT IS THE ONE THE SHOT SIDE ALREADY USES.
+ * revokeShotCanonForRemoval() in public/mutations.js is the accepted template
+ * for exactly this situation, and this is that function for entity states:
+ *
+ *   1. PLAN the deletion. Nothing is revoked for a removal that will not happen.
+ *      A state with children, or the default state, is REFUSED by the planner —
+ *      revoking first and discovering that second would withdraw a filmmaker's
+ *      approval and then leave the state sitting there without it.
+ *   2. For each state that will actually be removed and that holds current human
+ *      authority, revoke through the canonical writer. No receipt is edited, no
+ *      ledger row is deleted, and no check is bypassed: revokeEntityStateCanon()
+ *      is the kernel's own command and it validates the ledger before and marks
+ *      the row `revoked` with provenance.
+ *   3. Only then remove the state.
+ *
+ * `reason: "target-removed"` and `clearEdge: false`, both matching the shot-side
+ * call and both load-bearing. The target is being REMOVED, not cleared — the
+ * kernel's revocation vocabulary distinguishes those — and clearing an edge on a
+ * record that is about to be spliced out would be a write with no reader.
+ *
+ * NO `await` ANYWHERE IN THIS PATH. revokeCanon() requires the trusted gesture to
+ * be the event currently dispatching, and a suspension would end it partway
+ * through, leaving some states revoked and others not.
+ *
+ * IF THE REVOCATION IS REFUSED, NOTHING IS REMOVED. The state keeps its Canon,
+ * the project stays consistent, and the refusal is recorded where the filmmaker
+ * pressed rather than only in a toast that clears itself. */
+function revokeEntityStateCanonForRemoval(list, entity, stateIds) {
+  if (typeof hasCurrentHumanAuthority !== "function" || typeof revokeEntityStateCanon !== "function") return;
+  const at = new Date().toISOString();
+  for (const stateId of stateIds) {
+    const target = authorityTarget({ kind: "entity-state", list, entityId: entity.id, stateId });
+    if (!target || !hasCurrentHumanAuthority(P, target)) continue;
+    revokeEntityStateCanon(P, {
+      list, entityId: entity.id, stateId,
+      at, via: "confirmed-target-removal", reason: "target-removed", clearEdge: false,
+    });
+  }
+}
 window.removeContinuityState = (list, id, i) => {
   const x = P[list].find((e) => e.id === id);
   const state = x?.continuityStates?.[i];
   if (!state) return;
+  const refusalKey = `continuity-state:${list}:${id}:${state.id}`;
+  clearActionRefusal(refusalKey);
+  /* PLANNED FIRST, so authority is only withdrawn for a removal that is going to
+     happen. The planner is pure and applyStateDeletion() runs it again. */
+  const planned = planStateDeletion(x.continuityStates, state.id, { dirty });
+  if (planned.remove === true) {
+    try {
+      revokeEntityStateCanonForRemoval(list, x, planned.removedIds || [state.id]);
+    } catch (error) {
+      /* The state still holds its Canon and is still here. Say so where the
+         filmmaker pressed, and change nothing. */
+      recordActionRefusal(refusalKey, error.message || "That state's approval could not be withdrawn, so it was not removed.", error.code || "");
+      route();
+      return toast(error.message || "That state could not be removed");
+    }
+  }
   const outcome = applyStateDeletion(x.continuityStates, state.id, { dirty });
   if (!outcome.applied) {
-    if (outcome.reason === "default-state-is-the-root") return toast("The base state remains available for every continuity record");
+    /* AT1-G. Every one of these was a toast and only a toast: the filmmaker
+       pressed ×, the row stayed, and 2.2 seconds later the reason was gone. The
+       sentences are unchanged — they were already the truthful ones — and they
+       now stay beside the state they are about. */
+    const refuse = (message) => {
+      recordActionRefusal(refusalKey, message, `state-deletion:${outcome.reason || "refused"}`);
+      route();
+      return toast(message);
+    };
+    if (outcome.reason === "default-state-is-the-root") return refuse("The base state remains available for every continuity record");
     if (outcome.reason === "has-children") {
       const names = outcome.children
         .map((childId) => (x.continuityStates.find((row) => row && row.id === childId) || {}).name || childId)
         .join(", ");
       const many = outcome.children.length !== 1;
-      return toast(
+      return refuse(
         `${state.name || "This state"} cannot be removed while ${many ? "these states derive" : "another state derives"} from it: ${names}. `
         + `Remove ${many ? "them" : "it"} first. A state's derivation is chosen when it is created and CineBraid will not re-point it.`,
       );
     }
-    return toast("That state could not be removed.");
+    return refuse("That state could not be removed.");
   }
   route();
 };

@@ -670,6 +670,12 @@ async function ncRM11() {
       awaiting: projection.counts.awaiting,
       settled: projection.items.map((row) => row.candidate.name + ":" + (row.settled || "waiting")),
       next: projectNextProductionAction(),
+      /* WHICH ACT the project is offering, read from the readiness row that
+         produced it. AT1-F reworded the CONTROL — Production's card is a link to
+         the shot, so it says it travels there — and this control's claim is about
+         the ACT being offered, which the action code names whatever any surface
+         chooses to call it. */
+      code: (projectShotReadiness().shots || []).map((row) => row.nextAction && row.nextAction.code).filter(Boolean)[0] || "",
       inbox: (productionResultInbox().split("<h2>")[1] || "").split("</h2>")[0],
     };
   `);
@@ -682,7 +688,8 @@ async function ncRM11() {
   ok(seen.settled.includes("C2.png:unit-already-picked"),
     "NC-RM11: the undecided repair reports the parent's pick as its own settlement: " + seen.settled.join(", "));
   equal(seen.inbox, "No returned result is waiting for review", "NC-RM11: Returned Results says nothing is waiting");
-  equal(seen.next.actionLabel, "MARK SHOT FINAL", "NC-RM11: and the project offers to finish the shot");
+  equal(seen.code, "mark-shot-final", "NC-RM11: and the project offers to finish the shot");
+  equal(seen.next.actionLabel, "OPEN THE FINISH DECISION", "NC-RM11: worded as the travel its control performs");
   ok(!card.returnedReview, "NC-RM11: with no review anywhere on the shot workspace");
   ok(!/C2\.png/.test(card.markup), "NC-RM11: the repair is not even named");
 
@@ -690,7 +697,7 @@ async function ncRM11() {
     assert.strictEqual(seen.awaiting, 1, "the undecided repair is still a returned review");
   });
 
-  note(`NC-RM11 restored frame-wide settlement: an unreviewed repair reported ${seen.settled.find((row) => row.startsWith("C2")) } and the project said ${seen.next.actionLabel}`);
+  note(`NC-RM11 restored frame-wide settlement: an unreviewed repair reported ${seen.settled.find((row) => row.startsWith("C2")) } and the project offered ${seen.code}`);
 }
 
 /* ===========================================================================
@@ -788,6 +795,10 @@ async function ncRM13() {
       unavailable: projection.counts.unavailable,
       recorded: P.shots[0].candidateFiles.map((row) => row.stored + ":" + row.decision),
       next: projectNextProductionAction(),
+      /* The ACT being offered, named by its action code. AT1-F reworded the
+         travelling control; the shot's own card below still carries the verb, and
+         this control still asserts that too. */
+      code: (projectShotReadiness().shots || []).map((row) => row.nextAction && row.nextAction.code).filter(Boolean)[0] || "",
     };
   `);
   const shotPage = await render("#/shot/L1-01", project, { scan, mutateSource: replacing(PROJECTION_FILE, NC13_ANCHOR, NC13_BREAK) });
@@ -796,7 +807,8 @@ async function ncRM13() {
   deepEqualLoose(seen.recorded, ["GONE.png:unreviewed"], "NC-RM13: the project still records an undecided returned result");
   equal(seen.items, 0, "NC-RM13: and the projection has lost it entirely");
   equal(seen.unavailable, 0, "NC-RM13: reporting no integrity condition for it");
-  equal(seen.next.actionLabel, "PRODUCE THE FRAME", "NC-RM13: so the project offers to generate another one");
+  equal(seen.code, "produce-frame", "NC-RM13: so the project offers to generate another one");
+  equal(seen.next.actionLabel, "OPEN THE FRAME WORKSPACE", "NC-RM13: worded as the travel its control performs");
   ok(/Produce the frame/.test(card.headline), "NC-RM13: and so does the shot: " + card.headline);
   ok(!/GONE\.png/.test(card.markup), "NC-RM13: with the lost result named nowhere");
 

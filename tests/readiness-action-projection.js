@@ -242,7 +242,22 @@ async function ux1_1_approveToFinalHandoff() {
   equal(after.deliverStatus, "Not started", "the Deliver stage still reads Not started — and now nothing contradicts it");
   equal(after.homeMentionsNothingOutstanding, false, "P0-01: Production never claims nothing is outstanding either");
   equal(after.nextKind, "shot", "the project's next action is this shot");
-  equal(after.nextLabel, "MARK SHOT FINAL", "with the same words");
+  /* AT1-F. THE SAME ACTION, AND THE HONEST WORDS FOR EACH CONTROL.
+   *
+   * This assertion used to read `equal(after.nextLabel, "MARK SHOT FINAL")` —
+   * "with the same words" — and the words were the problem. Production's control
+   * is an `<a href>` to the shot: pressing it marks nothing final, it travels to
+   * the surface where Finish & Delivery's real Mark shot final button lives. Two
+   * visible controls wore one act's name and only one of them performed it.
+   *
+   * What must stay identical is the ACTION, and it does: `after.code` is
+   * `mark-shot-final` above, both labels are derived from that one code, and
+   * `nextHref` still points at the shot. What must differ is the wording, because
+   * the two controls do different things. */
+  equal(after.nextLabel, "OPEN THE FINISH DECISION",
+    "and Production's control names the travel, in words derived from that same action code");
+  ok(after.nextLabel !== after.label.toUpperCase(),
+    `AT1-F: the navigating control and the performing control must not share a primary label (${after.nextLabel} / ${after.label})`);
   equal(after.nextHref, "#/shot/L1-01", "pointing at the shot itself");
   equal(after.decisions, 1, "and the one filmmaker decision is counted once");
   equal(after.returned, 0, "the returned-results queue is empty, which is a different fact and stays separate");
@@ -977,11 +992,19 @@ async function ux1_10_returnedResultRouting() {
   const c = projectOf([{ id: "L1-01", winner: "FRAME_A.png" }]);
   const cPage = await render("#/production", c, { scan: scanWith(c, { "L1-01": ["FRAME_A.png"] }) });
   const cSeen = await evaluateAsync(cPage.context, `
-    return ({ returned: returnedResultsAwaitingReview().length, next: projectNextProductionAction() });
+    return ({
+      returned: returnedResultsAwaitingReview().length,
+      next: projectNextProductionAction(),
+      code: shotReadinessFor(P.shots[0]).nextAction.code,
+    });
   `);
   equal(cSeen.returned, 0, "C: nothing is awaiting review");
   ok(cSeen.next.kind !== "returned-result", "C: so no returned-review action is invented");
-  equal(cSeen.next.actionLabel, "MARK SHOT FINAL", "C: the real outstanding decision is offered instead");
+  /* WHICH decision is offered is the invariant, and it is asserted on the action
+     code. AT1-F: the label beside it is the wording for a control that TRAVELS to
+     the shot, because that is what Production's control does. */
+  equal(cSeen.code, "mark-shot-final", "C: the real outstanding decision is offered instead");
+  equal(cSeen.next.actionLabel, "OPEN THE FINISH DECISION", "C: worded as the travel it is");
 
   /* D — THE RETURNED RESULT HAS BEEN REVIEWED. Routing must stop, and it must stop
      because the queue emptied rather than because a flag was set. */
@@ -995,11 +1018,16 @@ async function ux1_10_returnedResultRouting() {
   dPage.context.document.getElementById("approve-name").value = "FRAME_A.png";
   await dPage.gesture.act(() => dPage.context.confirmApproveTake());
   const after = evaluate(dPage.context, `
-    return { returned: returnedResultsAwaitingReview().length, next: projectNextProductionAction() };
+    return {
+      returned: returnedResultsAwaitingReview().length,
+      next: projectNextProductionAction(),
+      code: shotReadinessFor(P.shots[0]).nextAction.code,
+    };
   `);
   equal(after.returned, 0, "D: reviewing the candidate empties the queue");
   ok(after.next.kind !== "returned-result", "D: so the primary action stops routing to it");
-  equal(after.next.actionLabel, "MARK SHOT FINAL", "D: and moves on to what is genuinely outstanding");
+  equal(after.code, "mark-shot-final", "D: and moves on to what is genuinely outstanding");
+  equal(after.next.actionLabel, "OPEN THE FINISH DECISION", "D: worded as the travel it is");
 
   /* E — AN INTEGRITY BLOCKER PLUS A RETURNED RESULT. Blocker priority is preserved:
      a project whose approval records cannot be read is repaired first, because no

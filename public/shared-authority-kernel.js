@@ -863,14 +863,33 @@ function entityArtifactVerdict(project, target, fileName) {
   };
 }
 
-function enforceTargetPolicy(project, target, value) {
-  if (target.kind !== "entity-state") return;
-  /* Ownership first: WHOSE this is, then WHAT it is. A file the entity does not
-     own should say so before its structure is discussed. */
-  for (const verdict of [
+/* THE POLICY VERDICTS, IN ONE LIST WITH ONE OWNER.
+ *
+ * Ownership first: WHOSE this is, then WHAT it is. A file the entity does not
+ * own should say so before its structure is discussed.
+ *
+ * AT1-B. This list used to be an array literal inside enforceTargetPolicy, and
+ * it was reachable ONLY by attempting the write. The offer surface therefore had
+ * to guess what enforcement would say, and public/shared-shot-readiness.js
+ * guessed with ownership alone — so every reference whose STRUCTURE was
+ * undeclared was offered an enabled Confirm that the kernel then refused. The
+ * shipped sample was four such buttons on a filmmaker's first screen.
+ *
+ * The verdicts are named here so that the offer and the refusal read the SAME
+ * list. Not a copy of it, and not a summary of it: this function is the only
+ * place the policy exists, canonApprovalPreflight() reads it without writing,
+ * and enforceTargetPolicy() throws on it. Neither can drift, because there is
+ * nothing left to drift from. */
+function entityStatePolicyVerdicts(project, target, value) {
+  return [
     kernelObject(entityOwnershipVerdict(project, target, value)),
     kernelObject(entityArtifactVerdict(project, target, value)),
-  ]) {
+  ];
+}
+
+function enforceTargetPolicy(project, target, value) {
+  if (target.kind !== "entity-state") return;
+  for (const verdict of entityStatePolicyVerdicts(project, target, value)) {
     if (verdict.ok === true) continue;
     throw authorityError(
       kernelText(verdict.code) || "AUTHORITY_OWNERSHIP_INELIGIBLE",
@@ -1391,6 +1410,73 @@ function repairCanonValue(project, change = {}) {
   return repaired;
 }
 
+/* ==========================================================================
+   AT1-B — WOULD THIS APPROVAL BE REFUSED, ASKED WITHOUT ATTEMPTING IT.
+
+   INVARIANT 6 OF THIS FILE IS "PREFLIGHT DOES NOT MUTATE", and this is the
+   function that lets a surface obey it while still telling the truth.
+
+   THE DEFECT THIS EXISTS FOR. `commitCanon` above applies a list of
+   deterministic vetoes. Until this function, the ONLY way to learn any of them
+   was to attempt the write and catch the throw — so every surface that wanted
+   to decide whether to OFFER a Confirm had to re-derive the answer. Exactly one
+   of them did (public/shared-shot-readiness.js), it re-derived ownership only,
+   and the artifact-structure veto beside it was invisible to the offer. The
+   result was an enabled primary control whose own enforcement layer already knew
+   it would fail — which is the whole of the Action Truth rule.
+
+   WHAT IT REPORTS, and every one is read off the very code that enforces it:
+
+     AUTHORITY_TARGET_INCOMPLETE        authorityTarget() — the same resolver
+     AUTHORITY_VALUE_REQUIRED           the same emptiness test
+     AUTHORITY_ASSET_IDENTITY_REQUIRED  the same `hasOwnProperty` statement rule
+     AUTHORITY_LEDGER_UNREADABLE        validateAuthorityLedger() — the same call
+     AUTHORITY_TARGET_UNAVAILABLE       writeAuthorityEdge() ON A THROWAWAY DRAFT,
+                                        so target resolution is not reimplemented
+                                        here and cannot fall out of step with the
+                                        writer it is predicting
+     the entity-state policy verdicts   entityStatePolicyVerdicts() — the list
+                                        enforceTargetPolicy() throws on
+
+   WHAT IT DELIBERATELY DOES NOT REPORT. The trusted gesture. A gesture is a
+   property of the ACT, not of the project, and asking for one here would either
+   mint a credential outside a click or report a refusal that pressing the button
+   would not produce. A surface preflights to decide what to OFFER; the human's
+   press is what supplies the gesture.
+
+   IT NEVER THROWS AND IT NEVER WRITES. A caller may run it on every paint. */
+function canonApprovalPreflight(project, request = {}) {
+  const it = kernelObject(request);
+  const refuse = (code, message, detail) => ({ ok: false, code, message, detail: kernelObject(detail) });
+  const target = authorityTarget(it);
+  if (!target) return refuse("AUTHORITY_TARGET_INCOMPLETE", "A Canon approval must name a complete target.");
+  const what = describeTarget(target);
+  const value = kernelText(it.value);
+  if (!value) return refuse("AUTHORITY_VALUE_REQUIRED", `${what} cannot be approved without naming the media being approved.`, { target: target.key });
+  /* The same statement rule commitCanon applies: a missing key is silence, and
+     silence is not an answer. An explicit "" is a real answer and passes. */
+  if (!Object.prototype.hasOwnProperty.call(it, "assetId"))
+    return refuse("AUTHORITY_ASSET_IDENTITY_REQUIRED", `${what} cannot be approved without stating the identity of the media being approved.`, { target: target.key, value });
+  for (const verdict of target.kind === "entity-state" ? entityStatePolicyVerdicts(project, target, value) : []) {
+    if (verdict.ok === true) continue;
+    return refuse(
+      kernelText(verdict.code) || "AUTHORITY_OWNERSHIP_INELIGIBLE",
+      kernelText(verdict.message) || `${what} cannot be approved for this image.`,
+      verdict.detail,
+    );
+  }
+  const ledger = validateAuthorityLedger(project);
+  if (!ledger.trusted)
+    return refuse("AUTHORITY_LEDGER_UNREADABLE", `This project's approval records cannot be read, so CineBraid will not add to them. (${ledger.diagnostics.map((row) => row.code).join(", ")})`, { diagnostics: ledger.diagnostics });
+  /* THE TARGET-EXISTS QUESTION, ASKED OF THE WRITER ITSELF. `writeAuthorityEdge`
+     returns false for a host this project does not have, and it is handed a deep
+     clone, so the real document is untouched and no second host-resolution
+     reader exists to disagree with the first. */
+  if (writeAuthorityEdge(draftOf(project), target, { value, assetId: kernelText(it.assetId), at: kernelText(it.at) }) === false)
+    return refuse("AUTHORITY_TARGET_UNAVAILABLE", `${what} is not in this project, so there is nothing to approve.`, { target: target.key });
+  return { ok: true, code: "", message: "", detail: {} };
+}
+
 /* ========================================================================== */
 /* 8. THE FOUR NAMED CANON COMMANDS — the whole public write surface          */
 /* ========================================================================== */
@@ -1602,6 +1688,9 @@ const AUTHORITY_KERNEL_EXPORTS = {
   authorityHistory,
   historicSelection,
   authorityWriteTransition,
+  /* READ-ONLY, and the reason it is here rather than beside the commands: a
+     surface asks this to decide what to OFFER. It writes nothing. */
+  canonApprovalPreflight,
   /* the one projection — read-only derived state */
   entityProductionTruth,
   /* Only authority-creating commands are namespaced. Destructive and repair

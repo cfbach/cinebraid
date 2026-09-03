@@ -273,7 +273,20 @@
           "notes": "Not needed for the three sample shots."
         }
       ],
-      "candidateFiles": []
+      "candidateFiles": [
+        {
+          "stored": "CHAR-COURIER-FRONT.png",
+          "original": "courier-front.png",
+          "coverageJobType": "single-reference",
+          "targetStateId": "state-default",
+          "targetStateName": "Travel coat"
+        },
+        {
+          "stored": "CHAR-COURIER-PROFILE.png",
+          "original": "courier-profile.png",
+          "coverageJobType": "single-reference"
+        }
+      ]
     }
   ],
   "locations": [
@@ -319,7 +332,20 @@
           "notes": "Not needed for the sample."
         }
       ],
-      "candidateFiles": [],
+      "candidateFiles": [
+        {
+          "stored": "LOC-PLATFORM-MASTER.png",
+          "original": "platform-master.png",
+          "coverageJobType": "single-reference",
+          "targetStateId": "state-default",
+          "targetStateName": "Rainy afternoon"
+        },
+        {
+          "stored": "LOC-PLATFORM-REVERSE.png",
+          "original": "platform-reverse.png",
+          "coverageJobType": "single-reference"
+        }
+      ],
       "description": "Covered rain platform with a central yellow safety line, a wooden bench, and a dark waiting-room wall. The master and reverse views describe the same fixed geometry."
     }
   ],
@@ -350,7 +376,22 @@
         }
       ],
       "coverageSlots": [],
-      "candidateFiles": []
+      "candidateFiles": [
+        {
+          "stored": "PROP-PARCEL-CLOSED.png",
+          "original": "parcel-closed.png",
+          "coverageJobType": "single-reference",
+          "targetStateId": "state-closed",
+          "targetStateName": "Closed"
+        },
+        {
+          "stored": "PROP-PARCEL-OPEN.png",
+          "original": "parcel-open.png",
+          "coverageJobType": "single-reference",
+          "targetStateId": "state-open",
+          "targetStateName": "Opened"
+        }
+      ]
     }
   ],
   "vehicles": [],

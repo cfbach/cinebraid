@@ -203,7 +203,23 @@ scenario("C-12", () => {
   sameDocument(P, before);
 });
 scenario("C-13", () => {
-  const allowed = new Set(["creation-studio.js", "library-tools.js", "mutations.js"]);
+  /* AT1-E adds entities.js, and this is the classification that addition
+     requires rather than a widening that slipped past.
+   *
+   * removeContinuityState() deletes a continuity state. When that state holds
+   * CURRENT Canon, deleting it used to remove the authority EDGE and leave the
+   * RECEIPT saying `current` about a target that no longer existed — so the
+   * write seam refused every later save with AUTHORITY_EDGE_RECEIPT_MISMATCH
+   * and the filmmaker's unrelated edits were stranded until reload.
+   *
+   * The fix is the one mutations.js already uses for the same situation on the
+   * shot side (revokeShotCanonForRemoval): plan the removal, revoke the receipt
+   * through the canonical writer with reason "target-removed" and
+   * clearEdge:false, and only then remove the record. So entities.js is a
+   * destructive-writer caller for exactly the reason mutations.js is — it owns a
+   * DELETION of a target that can hold authority — and it is listed here for
+   * that reason and no other. */
+  const allowed = new Set(["creation-studio.js", "entities.js", "library-tools.js", "mutations.js"]);
   const callers = [];
   for (const name of fs.readdirSync(path.join(ROOT, "public")).filter((name) => name.endsWith(".js"))) {
     const body = fs.readFileSync(path.join(ROOT, "public", name), "utf8")

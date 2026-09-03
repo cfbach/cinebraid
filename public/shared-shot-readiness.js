@@ -423,6 +423,12 @@
      here would disagree about .m4v, .avi and .mkv. It is never asked whether the
      shot is final; that is currentHumanAuthority()'s answer and nothing else's. */
   const liveAuthorityEdgeOwner = requireOwner(KERNEL && KERNEL.liveAuthorityEdge, "liveAuthorityEdge", "shared-authority-kernel.js");
+  /* AT1-B. A HARD dependency exactly like every other owner in this list, and
+     that is the point: this module must not be able to load and then answer
+     "would the veto allow it" out of its own head. If the kernel ever stops
+     exporting the preflight, readiness fails loudly here rather than quietly
+     going back to guessing. */
+  const canonApprovalPreflightOwner = requireOwner(KERNEL && KERNEL.canonApprovalPreflight, "canonApprovalPreflight", "shared-authority-kernel.js");
   const resolveApprovalMediaOwner = requireOwner(DISPOSITION && DISPOSITION.resolveApprovalMedia, "resolveApprovalMedia", "shared-media-disposition.js");
   const shotDependencyRecordsOwner = requireOwner(ENTITIES && ENTITIES.shotDependencyRecords, "shotDependencyRecords", "shared-entities.js");
   const shotStateBearingEntityRecordsOwner = requireOwner(ENTITIES && ENTITIES.shotStateBearingEntityRecords, "shotStateBearingEntityRecords", "shared-entities.js");
@@ -1808,24 +1814,61 @@
     });
   }
 
+  /* WOULD THE SHIPPED VETO ALLOW IT — ASKED OF THE VETO.
+   *
+   * AT1-B. This function used to ANSWER that question itself, from ownership
+   * alone: `basis === "durable-claim" && ownerId === entityId`. Ownership is one
+   * of the kernel's vetoes and it was the only one represented here, so a
+   * reference the entity durably owned but whose ARTIFACT STRUCTURE was
+   * undeclared came back `wouldRefuse: false` — an enabled Confirm — and
+   * `approveEntityStateCanon` then threw AUTHORITY_ARTIFACT_UNDECLARED on the
+   * press. The shipped sample was four of those, on the filmmaker's first screen.
+   *
+   * The veto is now asked directly. `wouldRefuse` is the kernel's own preflight,
+   * over the same target and value `commitHistoricConfirmation` will submit, and
+   * `code` carries the refusal identifier so a surface can render the REQUIREMENT
+   * rather than a bare "cannot confirm".
+   *
+   * The ownership fields stay, because they are what the queue DISPLAYS —
+   * contested claimants by name, the resolution status — and they remain a
+   * description of ownership only. `applicable` still means "ownership is a
+   * meaningful question for this target kind"; it never meant "this is
+   * confirmable", and `wouldRefuse` no longer depends on it: a shot frame has no
+   * owner and can still be refused for a target this project does not have. */
   function confirmationOwnership(project, row) {
     const target = record(row.target);
+    const verdict = record(canonApprovalPreflightOwner(project, {
+      ...target,
+      value: text(row.value),
+      /* Stated explicitly, exactly as commitHistoricConfirmation states it, so
+         preflight is answering about the request that will actually be made. */
+      assetId: text(row.assetId),
+      /* No clock. This derivation reaches none, and `at` cannot change a verdict. */
+      at: "",
+    }));
+    const refused = verdict.ok !== true;
     if (text(target.kind) !== "entity-state") {
       /* A shot frame has no ownership concept — the bytes live in the shot's own
-         takes directory and no entity claims them. */
-      return deepFreeze({ applicable: false, status: "not-applicable", contested: false, claimants: deepFreeze([]), wouldRefuse: false, reason: "" });
+         takes directory and no entity claims them. The VETO still applies. */
+      return deepFreeze({
+        applicable: false, status: "not-applicable", contested: false, claimants: deepFreeze([]),
+        wouldRefuse: refused, code: text(verdict.code), reason: refused ? text(verdict.message) : "",
+      });
     }
     const listName = text(target.list);
     const index = buildEntityOwnerIndexOwner(project, listName);
     const resolution = record(resolveMediaOwnershipOwner(index, text(row.value)));
-    const owned = text(resolution.basis) === "durable-claim" && text(resolution.ownerId) === text(target.entityId);
     return deepFreeze({
       applicable: true,
       status: text(resolution.status),
       contested: resolution.contested === true,
       claimants: deepFreeze(list(resolution.claimants).map(text)),
-      wouldRefuse: !owned,
-      reason: owned ? "" : text(resolution.basis) || "unowned",
+      wouldRefuse: refused,
+      code: text(verdict.code),
+      /* The kernel's own sentence. It already names what is wrong and what would
+         resolve it; restating it in this module's words would be a second, worse
+         copy of an answer that already exists. */
+      reason: refused ? text(verdict.message) : "",
     });
   }
 
