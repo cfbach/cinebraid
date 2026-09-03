@@ -2,22 +2,36 @@
   "meta": {
     "title": "Signal Room",
     "format": "Short scene",
-    "targetRuntime": 8,
+    "targetRuntime": 24,
     "aspectRatio": "16:9",
-    "globalStylePrompt": "Naturalistic near-future drama, restrained contrast, practical fluorescent light, subtle handheld lens character.",
-    "globalNegativePrompt": "No glossy futuristic redesign, no holographic interfaces, no added text.",
+    "globalStylePrompt": "Naturalistic near-future drama. Restrained contrast, practical light only, subtle handheld lens character, no gloss.",
+    "globalNegativePrompt": "No futuristic redesign, no holographic interfaces, no added or invented text.",
     "world": {
       "setting": "A worn municipal communications facility during a night shift.",
       "include": "Functional analogue controls, scuffed painted metal, practical cable runs.",
       "reject": "Luxury technology, pristine surfaces, decorative science-fiction lighting."
-    }
+    },
+    "styleBlocks": [
+      {
+        "id": "night-shift",
+        "name": "Night shift",
+        "stage": "night-shift",
+        "text": "The room as it normally is. Overhead fluorescent only, cool and even, no motivated highlights. Grain visible in the shadows. Camera near eye level and nearly still."
+      },
+      {
+        "id": "relay-window",
+        "name": "Relay window",
+        "stage": "relay-window",
+        "text": "The room while the relay is open. The same architecture, unchanged, lit only by the amber console row: warm, low, strongly directional, deep falloff into the corners. Nothing is redesigned; only the light and the contrast change."
+      }
+    ]
   },
   "qcChecklist": [
-    "Mara's rectangular shoulder patch and short dark hair remain consistent.",
-    "Her left hand maintains clear contact with the red handset.",
-    "The wall console layout and amber indicator row do not drift between frames.",
-    "The handset label remains unreadable rather than becoming invented text.",
-    "Mara's spoken line begins only after she raises the handset to her mouth."
+    "Mara's blank rectangular shoulder patch and short dark hair stay consistent across every shot.",
+    "Her left hand keeps clear contact with the red handset and the coiled cable stays connected to the console.",
+    "The wall console layout and amber indicator row do not drift between the night-shift and relay-window looks.",
+    "The handset label plate stays unreadable rather than acquiring invented text.",
+    "The room's architecture is identical in S02 and S03; only light and contrast differ."
   ],
   "characters": [
     {
@@ -25,14 +39,14 @@
       "name": "Mara",
       "role": "Night communications operator",
       "block": "Adult operator with short dark hair and a compact, practical silhouette.",
-      "visualDescription": "Adult woman in a faded navy utility jacket with a rectangular blank shoulder patch; short dark hair; tired, alert expression; no jewellery.",
-      "driftNotes": "Keep the blank rectangular patch, jacket wear, hair length, and practical proportions consistent.",
+      "visualDescription": "Adult woman in a faded navy utility jacket with a blank rectangular shoulder patch; short dark hair; tired, alert expression; no jewellery.",
+      "driftNotes": "Keep the blank patch, jacket wear, hair length, and practical proportions consistent.",
       "expressions": "Controlled concern, focused listening.",
       "notes": "",
       "audio": {
         "voiceDesignPrompt": "Low, steady adult voice; clipped professional cadence; quiet urgency; clean close-mic recording.",
         "voiceTool": "",
-        "voiceNotes": "Record one clean master before adding room coloration in post.",
+        "voiceNotes": "Record one clean master before adding handset coloration in post.",
         "sunoAltPrompt": "",
         "status": "NOT STARTED"
       },
@@ -51,15 +65,22 @@
     {
       "id": "LOC-SIGNAL-ROOM",
       "name": "Signal Room",
-      "notes": "",
-      "visualDescription": "Narrow municipal control room with a fixed wall console on frame right, painted concrete walls, exposed cable trays, one overhead fluorescent fixture, and a metal desk facing the console.",
+      "notes": "The architecture is the same in every scene. Only the lighting regime changes.",
+      "visualDescription": "Narrow municipal control room. Fixed wall console on frame right, painted concrete walls, exposed cable trays overhead, one recessed fluorescent fixture, metal desk facing the console, ventilation stack above the console.",
       "continuityStates": [
         {
           "id": "state-default",
           "name": "Default",
           "appliesTo": "",
-          "notes": "Night-shift practical lighting with the amber console indicators active.",
+          "notes": "Night-shift fluorescent light with the amber console indicators dark.",
           "isDefault": true
+        },
+        {
+          "id": "state-relay-open",
+          "name": "Relay open",
+          "appliesTo": "While the relay is open",
+          "notes": "Fluorescent fixture off; the amber indicator row is the only light source. Set dressing and layout unchanged.",
+          "isDefault": false
         }
       ]
     }
@@ -68,7 +89,7 @@
     {
       "id": "PROP-RED-HANDSET",
       "name": "Red Handset",
-      "notes": "The label area is blank and must not acquire readable text.",
+      "notes": "The label plate is blank and must not acquire readable text.",
       "visualDescription": "Heavy red corded handset with a coiled black cable, worn matte plastic, and a small blank recessed label plate.",
       "continuityStates": [
         {
@@ -82,29 +103,13 @@
           "id": "state-lifted",
           "name": "Lifted",
           "appliesTo": "During the call",
-          "notes": "Handset is in Mara's left hand with the cable hanging toward the console.",
+          "notes": "Handset is in Mara's left hand with the cable hanging back toward the console.",
           "isDefault": false
         }
       ]
     }
   ],
-  "vehicles": [
-    {
-      "id": "VEH-MAINTENANCE-CART",
-      "name": "Maintenance Cart",
-      "notes": "Parked in the rear service aisle; it must not move during the shot.",
-      "visualDescription": "Compact municipal electric maintenance cart with a blunt cab, narrow wheelbase, faded cream paint, black rubber bumpers, open rear tool bed, and no readable branding.",
-      "continuityStates": [
-        {
-          "id": "state-default",
-          "name": "Parked",
-          "appliesTo": "",
-          "notes": "Parked in the rear service aisle with the tool bed closed.",
-          "isDefault": true
-        }
-      ]
-    }
-  ],
+  "vehicles": [],
   "audio": [
     {
       "id": "VOICE-MARA-CLEAN",
@@ -121,16 +126,51 @@
       "id": "S01",
       "title": "Unexpected Signal",
       "tier": "A",
+      "stage": "night-shift",
       "characters": [
         "CHAR-MARA"
       ],
-      "whatHappens": "Mara notices an unexpected indicator, lifts the handset, and answers cautiously.",
+      "whatHappens": "An unexpected indicator lights. Mara turns, lifts the red handset, and answers.",
       "howItFeels": "Routine work shifts into controlled unease.",
       "notes": "",
       "audio": {
         "music": "",
         "ambience": "Low ventilation hum and distant relay clicks.",
         "notes": "Keep ambience restrained under the dialogue."
+      }
+    },
+    {
+      "id": "S02",
+      "title": "Relay Window",
+      "tier": "A",
+      "stage": "relay-window",
+      "characters": [
+        "CHAR-MARA"
+      ],
+      "whatHappens": "The overhead light drops out and the console carries the room while the relay stays open.",
+      "howItFeels": "The familiar room becomes unfamiliar without moving.",
+      "notes": "The script calls this a change of light, not a change of place.",
+      "audio": {
+        "music": "",
+        "ambience": "The ventilation hum stops; only relay clicks remain.",
+        "notes": ""
+      }
+    },
+    {
+      "id": "S03",
+      "title": "After",
+      "tier": "B",
+      "stage": "night-shift",
+      "characters": [
+        "CHAR-MARA"
+      ],
+      "whatHappens": "The relay closes and the overhead light returns.",
+      "howItFeels": "Ordinary again, and not reassuring.",
+      "notes": "Returns to the night-shift look. Same stage value as S01, so the same style block governs it.",
+      "audio": {
+        "music": "",
+        "ambience": "Ventilation hum returns.",
+        "notes": ""
       }
     }
   ],
@@ -139,57 +179,58 @@
       "id": "S01-01",
       "scene": "S01",
       "title": "Mara answers",
-      "desc": "An amber indicator illuminates; Mara turns, lifts the red handset with her left hand, and answers.",
+      "desc": "An amber indicator illuminates. Mara turns, lifts the red handset with her left hand, brings it to her mouth, and answers.",
       "route": "GENERATE",
       "codes": [
         "LOC-SIGNAL-ROOM",
-        "PROP-RED-HANDSET",
-        "VEH-MAINTENANCE-CART"
+        "PROP-RED-HANDSET"
       ],
       "characters": [
         "CHAR-MARA"
       ],
-      "positioning": "Medium three-quarter view from slightly below eye level. Mara occupies frame left at the desk; the wall console is frame right. Her left hand reaches across to the handset, and the coiled cable remains visibly connected to the console. A compact cream maintenance cart remains parked deep in the rear service aisle.",
+      "positioning": "Medium three-quarter view from slightly below eye level. Mara at frame left at the desk; the wall console frame right. Her left hand reaches across to the handset and the coiled cable stays visibly connected to the console.",
       "risks": [
-        "Left-hand handset contact",
-        "Console geometry drift",
-        "Invented text on handset label",
-        "Dialogue timing before handset reaches mouth",
-        "Maintenance cart silhouette and parked position drift"
+        "Left-hand contact with the handset",
+        "Console geometry drift between the two frames",
+        "Invented text on the blank handset label plate",
+        "Dialogue starting before the handset reaches her mouth"
       ],
-      "safe": "Hold a steadier medium shot as Mara lifts the handset without a camera move.",
+      "safe": "Hold a steadier medium shot through the handset lift and let the line play off a locked frame, rather than moving the camera during the reach.",
+      "endpoints": {
+        "start": "approximate",
+        "end": "exact"
+      },
       "dur": 8,
-      "notes": "",
+      "notes": "The script fixes the ending image (handset at her mouth, before the first word) but says nothing about how the shot is made, so no delivery route is declared.",
       "audio": {
         "line": "Signal room. Go ahead.",
         "speakerId": "CHAR-MARA",
-        "note": "Begin the line only when the handset reaches her mouth; retain the clean master and add handset filtering in post.",
+        "note": "Begin the line only when the handset reaches her mouth. Keep the clean master and add handset filtering in post.",
         "voiceEntityId": "VOICE-MARA-CLEAN",
         "vo": "",
-        "sfx": "One soft relay click when the indicator turns on; handset cradle release.",
+        "sfx": "One soft relay click as the indicator lights; handset cradle release.",
         "ambience": "Low ventilation hum.",
         "music": "",
-        "sync": "Handset reaches mouth before first word."
+        "sync": "Handset reaches her mouth before the first word."
       },
       "continuityStateSelections": {
-        "PROP-RED-HANDSET": "state-lifted",
-        "VEH-MAINTENANCE-CART": "state-default"
+        "PROP-RED-HANDSET": "state-lifted"
       },
       "keyframes": [
         {
           "id": "S01-01-A",
           "label": "A",
           "title": "Indicator activates",
-          "description": "Mara sits frame left, looking toward the newly lit amber indicator on the frame-right wall console. The red handset is still in its cradle.",
-          "notes": "Preserve the narrow room layout and blank handset label.",
+          "description": "Mara sits frame left, turning toward the newly lit amber indicator on the frame-right wall console. The red handset is still in its cradle.",
+          "notes": "Preserve the narrow room layout and the blank handset label plate.",
           "required": true
         },
         {
           "id": "S01-01-B",
           "label": "B",
           "title": "Handset raised",
-          "description": "Mara holds the red handset to her mouth with her left hand; the coiled cable hangs back to the frame-right console; her gaze remains on the indicator row.",
-          "notes": "Maintain left-hand contact and the same console geometry.",
+          "description": "Mara holds the red handset to her mouth in her left hand; the coiled cable hangs back to the frame-right console; her gaze stays on the indicator row.",
+          "notes": "This is the required ending image. Maintain left-hand contact and identical console geometry.",
           "required": true
         }
       ],
@@ -199,60 +240,30 @@
           "label": "A",
           "title": "Turn and answer",
           "dur": 8,
-          "kind": "flf",
-          "motionPrompt": "The amber indicator illuminates. Mara turns her head first, reaches with her left hand, lifts the handset in one controlled motion, settles it at her mouth, then speaks. Keep the console fixed and the camera nearly still with only subtle handheld movement.",
-          "note": "No extra gestures or console changes.",
+          "kind": "plan",
+          "motionPrompt": "The amber indicator illuminates. Mara turns her head first, reaches with her left hand, lifts the handset in one controlled motion, settles it at her mouth, then speaks. The console stays fixed and the camera stays nearly still.",
+          "note": "Planned but not routed: the source does not say whether this is made from one frame, from both, or from the text alone.",
           "line": "Signal room. Go ahead.",
           "speakerId": "CHAR-MARA",
           "audioNote": "Speech starts after the handset reaches her mouth.",
           "voiceEntityId": "VOICE-MARA-CLEAN",
-          "vo": "",
-          "sfx": "Relay click and handset release.",
-          "ambience": "Low ventilation hum.",
-          "fromFrame": "S01-01-A",
-          "toFrame": "S01-01-B",
-          "emotion": "alert but professional",
-          "delivery": "clear and measured",
-          "language": "English",
-          "pace": "measured",
-          "volume": "normal",
-          "music": "",
-          "sync": "Handset reaches her mouth before speech begins.",
+          "fromFrame": "",
+          "toFrame": "",
           "motionBrief": {
             "schemaVersion": 1,
             "performance": {
-              "action": "Mara turns her head first, reaches with her left hand, lifts the handset, settles it at her mouth, then speaks.",
-              "emotion": "alert but professional",
-              "delivery": "controlled",
-              "facial": "eyes sharpen toward the indicator",
-              "gaze": "indicator, then handset",
-              "bodyLanguage": "upright and economical",
-              "objectInteraction": "left hand lifts the handset and holds it at her mouth",
-              "secondaryMotion": "amber indicator illuminates",
-              "endingState": "handset held at her mouth",
-              "staticConstraints": "console geometry and room layout",
-              "prohibitedMotion": "no extra gestures or object morphing"
-            },
-            "camera": {
-              "movement": "nearly locked with subtle handheld movement",
-              "timing": "hold throughout",
-              "framing": "preserve the established composition",
-              "lensBehavior": "no focus pull"
+              "action": "Mara turns her head, reaches with her left hand, lifts the handset, settles it at her mouth, then speaks.",
+              "objectInteraction": "Left hand lifts the handset and holds it at her mouth; the cable stays connected.",
+              "endingState": "Handset held at her mouth.",
+              "staticConstraints": "Console geometry and room layout.",
+              "prohibitedMotion": "No extra gestures, no object morphing."
             },
             "dialogue": {
               "line": "Signal room. Go ahead.",
               "speakerId": "CHAR-MARA",
-              "speakerName": "Mara",
               "language": "English",
-              "emotion": "alert but professional",
-              "delivery": "clear and measured",
-              "pace": "measured",
-              "volume": "normal",
               "startTime": "after the handset reaches her mouth",
-              "endTime": "",
-              "locked": true,
-              "lipSyncRequired": true,
-              "voiceDesign": ""
+              "locked": true
             },
             "sound": {
               "sfxEvents": [
@@ -260,32 +271,172 @@
                   "timing": "opening beat",
                   "event": "relay click",
                   "source": "console",
-                  "intensity": "restrained",
-                  "distance": "near",
                   "diegetic": true
                 },
                 {
-                  "timing": "as handset lifts",
-                  "event": "handset release",
+                  "timing": "as the handset lifts",
+                  "event": "handset cradle release",
                   "source": "console cradle",
-                  "intensity": "natural",
-                  "distance": "close",
                   "diegetic": true
                 }
               ],
               "ambience": "Low ventilation hum.",
-              "music": "",
-              "silence": "",
-              "priorities": "dialogue first; keep relay sounds restrained"
-            },
-            "output": {
-              "resolution": "model-default",
-              "nativeAudio": true
-            },
-            "additionalDirection": ""
+              "priorities": "Dialogue first; keep the relay sounds restrained."
+            }
           }
         }
       ]
+    },
+    {
+      "id": "S01-02",
+      "scene": "S01",
+      "title": "Ventilation stack",
+      "desc": "Dust drifts through the fluorescent light above the console while the call continues off-screen.",
+      "route": "GENERATE",
+      "codes": [
+        "LOC-SIGNAL-ROOM"
+      ],
+      "characters": [],
+      "positioning": "Static low-angle detail of the ventilation stack and cable trays above the console. No performer in frame and no readable surface.",
+      "risks": [],
+      "deliveryRoute": "t2v",
+      "dur": 4,
+      "notes": "The shot list names this a texture plate with no anchored subject, so it is authored as text-to-video rather than routed from a frame.",
+      "audio": {
+        "line": "",
+        "speakerId": "",
+        "note": "",
+        "voiceEntityId": "",
+        "vo": "",
+        "sfx": "",
+        "ambience": "Ventilation hum, closer than in the wide.",
+        "music": "",
+        "sync": ""
+      },
+      "continuityStateSelections": {},
+      "keyframes": [
+        {
+          "id": "S01-02-A",
+          "label": "A",
+          "title": "Dust in the fixture",
+          "description": "Ventilation stack and cable trays in the upper frame, lit from below by the recessed fluorescent fixture. Slow dust drift, no readable text or markings.",
+          "notes": "",
+          "required": true
+        }
+      ],
+      "clips": [
+        {
+          "id": "S01-02-M01",
+          "label": "A",
+          "title": "Dust drift",
+          "dur": 4,
+          "kind": "t2v",
+          "motionPrompt": "Dust drifts slowly across the light from the recessed fixture. The stack and trays stay completely still. No camera movement.",
+          "note": ""
+        }
+      ]
+    },
+    {
+      "id": "S02-01",
+      "scene": "S02",
+      "title": "The overhead drops out",
+      "desc": "The fluorescent fixture cuts. The amber indicator row becomes the only light in the room while Mara holds the handset.",
+      "route": "GENERATE",
+      "codes": [
+        "LOC-SIGNAL-ROOM",
+        "PROP-RED-HANDSET"
+      ],
+      "characters": [
+        "CHAR-MARA"
+      ],
+      "positioning": "Same medium three-quarter framing as S01-01, held. Mara frame left with the handset at her mouth; the amber row frame right becomes the key light and the corners fall away.",
+      "risks": [
+        "Room architecture being redesigned along with the lighting change",
+        "Console layout and indicator order drifting under the new key light",
+        "Identity drift on Mara's face under strong directional light"
+      ],
+      "safe": "Let the light change happen off a locked frame with no performer movement, so only exposure and colour shift while the geometry is provably identical.",
+      "dur": 6,
+      "notes": "",
+      "audio": {
+        "line": "",
+        "speakerId": "",
+        "note": "",
+        "voiceEntityId": "",
+        "vo": "",
+        "sfx": "Fluorescent ballast cutting out.",
+        "ambience": "Ventilation hum stops; relay clicks continue.",
+        "music": "",
+        "sync": ""
+      },
+      "continuityStateSelections": {
+        "LOC-SIGNAL-ROOM": "state-relay-open",
+        "PROP-RED-HANDSET": "state-lifted"
+      },
+      "keyframes": [
+        {
+          "id": "S02-01-A",
+          "label": "A",
+          "title": "Overhead still on",
+          "description": "Mara frame left with the handset at her mouth under even fluorescent light; the amber indicator row is lit but not dominant; console geometry identical to S01-01.",
+          "notes": "The last frame of the night-shift look.",
+          "required": true
+        }
+      ],
+      "clips": [
+        {
+          "id": "S02-01-M01",
+          "label": "A",
+          "title": "Light regime change",
+          "dur": 6,
+          "kind": "i2v",
+          "motionPrompt": "The overhead fixture cuts out over roughly half a second. The amber row becomes the only source; shadows deepen and the corners fall away. Nothing in the room moves and Mara holds her position.",
+          "note": "Animated forward from the established opening composition; the source describes no required ending frame.",
+          "fromFrame": "S02-01-A",
+          "toFrame": ""
+        }
+      ]
+    },
+    {
+      "id": "S03-01",
+      "scene": "S03",
+      "title": "The overhead returns",
+      "desc": "The fluorescent fixture comes back on. Mara lowers the handset to the cradle.",
+      "route": "GENERATE",
+      "codes": [
+        "LOC-SIGNAL-ROOM",
+        "PROP-RED-HANDSET"
+      ],
+      "characters": [
+        "CHAR-MARA"
+      ],
+      "positioning": "Same medium three-quarter framing, held. Even fluorescent light restored; the amber row recedes.",
+      "risks": [],
+      "dur": 5,
+      "notes": "The source describes the return but plans no motion units for it.",
+      "audio": {
+        "line": "",
+        "speakerId": "",
+        "note": "",
+        "voiceEntityId": "",
+        "vo": "",
+        "sfx": "Handset settling into the cradle.",
+        "ambience": "Ventilation hum returns.",
+        "music": "",
+        "sync": ""
+      },
+      "continuityStateSelections": {},
+      "keyframes": [
+        {
+          "id": "S03-01-A",
+          "label": "A",
+          "title": "Light restored",
+          "description": "Even fluorescent light back across the room, identical layout and console geometry to S01-01. Mara's hand is on the cradle with the handset seated.",
+          "notes": "",
+          "required": true
+        }
+      ],
+      "clips": []
     }
   ]
 }

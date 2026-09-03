@@ -2973,6 +2973,7 @@ app.get("/api/system/health", async (req, res) => {
 
 /* ---- external LLM Project Builder → validated separate project ---- */
 const PROJECT_BUILDER_DIR = path.join(__dirname, "resources", "project-builder");
+const { projectBuilderContract } = require("./project-builder-contract");
 const IMPORT_PREVIEWS = new Map();
 const IMPORT_PREVIEW_TTL_MS = 30 * 60 * 1000;
 
@@ -2988,18 +2989,17 @@ app.get("/api/project-builder/system-prompt", (req, res) => {
 
 app.get("/api/project-builder/kit", async (req, res) => {
   try {
-    const files = [
-      "CINEBRAID_PROJECT_BUILDER_SYSTEM_PROMPT.txt",
-      "CINEBRAID_PROJECT_BUILDER_USER_TEMPLATE.txt",
-      "CINEBRAID_PROJECT_SCHEMA_v6.5.3.json",
-      "CINEBRAID_PROJECT_BUILDER_MINIMAL_EXAMPLE.json",
-      "QUICK_START.md",
-      "README.md",
-    ].filter(Boolean);
+    /* THE KIT IS THE CONTRACT'S OWN LIST, not a list retyped here. This route
+       used to name a version-numbered schema file that five stale copies sat
+       beside, all six looking equally authoritative to anyone reading the
+       directory; the download and the directory could disagree and nothing
+       said so. Both now read project-builder-contract.js. */
+    const contract = projectBuilderContract(),
+      files = contract.resources;
     res.setHeader("Content-Type", "application/zip");
     res.setHeader(
       "Content-Disposition",
-      'attachment; filename="CineBraid_Project_Builder_Prompt_Kit_v6.5.3.zip"',
+      `attachment; filename="${contract.archive}"`,
     );
     const archive = new SimpleZipWriter(res);
     for (const name of files) {
@@ -3596,16 +3596,33 @@ function normalizeBuilderClips(shot, frames, warnings) {
     const source = builderObject(clip),
       label = String(source.label || builderLabel(index)),
       id = String(source.id || `${shotId}-M${String(index + 1).padStart(2, "0")}`).trim();
-    let kind = String(source.kind || "i2v").toLowerCase(),
+    let kind = String(source.kind ?? "").trim().toLowerCase(),
       fromFrame = String(source.fromFrame || ""),
       toFrame = String(source.toFrame || "");
     if (!source.id)
       warnings.push(
         `Shot ${shotId} motion unit ${label} had no id; CineBraid assigned ${id}.`,
       );
-    if (!allowedKinds.has(kind)) {
+    /* AN ABSENT KIND IS NOT A DECISION. This read `source.kind || "i2v"`, so a
+       document that never named a generation method was imported as one that
+       had: image-to-video, which then demanded an approved still and a paid
+       generation the production had never asked for. Nobody was told, because
+       from the importer's side nothing had gone wrong.
+
+       Absence and a value this build cannot read are different facts and are
+       said differently, but they end in the same place - `plan`, which is
+       frameless and generates nothing - because the alternative in both cases
+       is choosing an execution method on the filmmaker's behalf. That is the
+       policy the unknown-kind branch already had; it now covers the case that
+       never reached it. */
+    if (!kind) {
       warnings.push(
-        `Shot ${shotId} motion unit ${id} used unknown kind ${kind || "(blank)"}; CineBraid changed it to planning-only.`,
+        `Shot ${shotId} motion unit ${id} named no generation method; CineBraid imported it as planning-only rather than choosing one.`,
+      );
+      kind = "plan";
+    } else if (!allowedKinds.has(kind)) {
+      warnings.push(
+        `Shot ${shotId} motion unit ${id} used unknown kind ${kind}; CineBraid changed it to planning-only.`,
       );
       kind = "plan";
     }
@@ -4241,8 +4258,15 @@ function projectBuilderReview(project, warnings = [], sourceCounts = {}, inferre
       missing.push(`Shot ${shot.id}: action description`);
     if (!String(shot.positioning || "").trim())
       missing.push(`Shot ${shot.id}: framing, placement, and contact guidance`);
-    if (!String(shot.safe || "").trim())
-      review.push(`Shot ${shot.id}: add a simpler fallback that preserves the beat`);
+    /* A FALLBACK IS A FALLBACK TO SOMETHING. This asked every shot for a `safe`
+       alternative whether or not the shot declared a single risk, so a plain
+       shot that carries none was told, permanently, that it was incomplete -
+       and the only way to clear the item was to invent a second creative plan
+       for a problem the production had not identified. The review item now
+       follows the risk it exists to answer. Severity is unchanged: this was
+       never blocking and still is not. */
+    if (shot.risks?.length && !String(shot.safe || "").trim())
+      review.push(`Shot ${shot.id}: add a simpler fallback for the risks this shot declares`);
     for (const frame of shot.keyframes || [])
       if (!String(frame.description || "").trim())
         review.push(`Shot ${shot.id} frame ${frame.label || frame.id}: description needs review`);

@@ -479,6 +479,80 @@ async function main() {
   assert(unknown.some((row) => /unknown kind/i.test(row)), "and still says so");
 }
 
+/* AND THE CONTRACT THE MODEL IS GIVEN HAS TO ADMIT IT TOO.
+ *
+ * The importer accepted `t2v` while the canonical schema's enum did not, so the one
+ * document a filmmaker hands an external model declared a valid text-to-video plan
+ * invalid. Half a repair reads as a whole one from either side alone. */
+{
+  const schema = JSON.parse(fs.readFileSync(
+    path.join(ROOT, "resources", "project-builder", "CINEBRAID_PROJECT_SCHEMA.json"), "utf8"));
+  const kinds = schema.$defs.clip.properties.kind.enum;
+  assert(kinds.includes("t2v"), "the Project Builder schema must admit the kind its own importer accepts");
+  const framed = schema.$defs.clip.allOf
+    .filter((branch) => branch.then?.required?.includes("fromFrame"))
+    .flatMap((branch) => branch.if.properties.kind.enum || [branch.if.properties.kind.const]);
+  assert(!framed.includes("t2v"), "and must not then require the frame t2v begins without");
+}
+
+/* AN OMITTED KIND IS NOT A DECISION EITHER.
+ *
+ * `String(source.kind || "i2v")` was the other half of the same mistake, and the
+ * quieter one: a document that named no generation method at all was imported as one
+ * that had named image-to-video, which then demanded an approved still and a paid
+ * generation nobody had asked for. No warning was possible, because by the time the
+ * unknown-kind branch ran the value was already `i2v` — a known kind.
+ *
+ * Absence and an unreadable value are different facts, said differently, and both end
+ * at `plan`: frameless, generating nothing, and the filmmaker's decision to make. */
+{
+  const normaliseClips = builderNormalisers().clips;
+  for (const [label, unit] of [
+    ["an omitted kind", { id: "SH-M-M01", dur: 5, motionPrompt: "She turns." }],
+    ["a blank kind", { id: "SH-M-M01", kind: "", dur: 5, motionPrompt: "She turns." }],
+    ["a whitespace kind", { id: "SH-M-M01", kind: "   ", dur: 5, motionPrompt: "She turns." }],
+  ]) {
+    const warnings = [];
+    const clips = normaliseClips({ id: "SH-M", clips: [unit] }, [{ id: "SH-M-A" }], warnings);
+    assert.notStrictEqual(clips[0].kind, "i2v", `${label} must never come back as image-to-video`);
+    assert.strictEqual(clips[0].kind, "plan", `${label} becomes planning-only, which generates nothing`);
+    assert.strictEqual(clips[0].fromFrame, "",
+      `${label} must not be handed a start frame; plan is frameless and the dependency is not real`);
+    assert(warnings.some((row) => /named no generation method/i.test(row)),
+      `${label} must be reported, not silently resolved: ${JSON.stringify(warnings)}`);
+    assert(!warnings.some((row) => /unknown kind/i.test(row)),
+      `${label} is absence, not an unreadable value, and must not be described as one`);
+  }
+
+  /* THE EXPLICIT KINDS ARE UNTOUCHED. Removing a default is only a repair if it did
+     not also remove the answers people actually wrote down. */
+  for (const [kind, frames, expectedFrame] of [
+    ["i2v", [{ id: "SH-K-A" }], "SH-K-A"],
+    ["t2v", [{ id: "SH-K-A" }], ""],
+    ["hold", [{ id: "SH-K-A" }], "SH-K-A"],
+    ["flf", [{ id: "SH-K-A" }, { id: "SH-K-B" }], "SH-K-A"],
+    ["plan", [{ id: "SH-K-A" }], ""],
+    ["post", [{ id: "SH-K-A" }], ""],
+    ["reuse", [{ id: "SH-K-A" }], ""],
+  ]) {
+    const warnings = [];
+    const clips = normaliseClips(
+      { id: "SH-K", clips: [{ id: "SH-K-M01", kind, dur: 5, motionPrompt: "Movement." }] },
+      frames, warnings,
+    );
+    assert.strictEqual(clips[0].kind, kind, `an explicit ${kind} unit must survive import unchanged`);
+    assert.strictEqual(clips[0].fromFrame, expectedFrame, `${kind} start-frame handling must not have moved`);
+    assert(!warnings.some((row) => /named no generation method|unknown kind/i.test(row)),
+      `${kind} is a decision the document made and must not be questioned`);
+  }
+
+  /* Case is a dialect, not a different answer. */
+  const shouted = [];
+  assert.strictEqual(
+    normaliseClips({ id: "SH-U", clips: [{ id: "SH-U-M01", kind: "T2V", dur: 5 }] }, [{ id: "SH-U-A" }], shouted)[0].kind,
+    "t2v", "an uppercase kind is the same kind");
+}
+
 /* THE LIVE CONSUMERS, which normalisation and the mode helper do not reach.
  *
  * `normalizeShotV5` kept a t2v clip as t2v and `guidedVideoModeNeedsApprovedStill("t2v")`

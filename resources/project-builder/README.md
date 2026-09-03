@@ -1,48 +1,68 @@
-# CineBraid Project Builder Prompt Kit — Schema v6.5.3
+# CineBraid Project Builder Prompt Kit
 
-Use ChatGPT, Claude, or a capable local LLM to convert scripts, treatments, project bibles, character notes, storyboards, shot lists, and audio documents into **planning-only JSON** for CineBraid v6.6.x using the stable v6.5.3 planning schema.
+**PROJECT BUILDER CONTRACT 1.0**
 
-The kit creates source-grounded project structure: characters, locations, props, vehicles, audio entities, scenes, shots, continuity states, keyframes, motion units, exact dialogue, speakers, voice identities, production notes, and five project-specific QC checks.
+Use ChatGPT, Claude or a capable local model to turn scripts, treatments, bibles, character notes, storyboards, shot lists and audio documents into a CineBraid project.
 
-It intentionally does **not** claim that media has been generated, approved, reviewed, corrected, or delivered. CineBraid creates runtime state after import and reports anything it had to infer, normalize, remove, or flag for review.
+The kit produces **planning-only JSON**: characters, locations, props, vehicles, audio entities, scenes, shots, continuity states, keyframes, motion units, exact dialogue, speakers, voice identities, production notes, and five project-specific QC checks — all grounded in the material you supplied.
+
+It does not claim that media has been generated, approved, reviewed, corrected or delivered. CineBraid creates that runtime state after import, and reports everything it had to infer, normalize, remove or flag.
+
+## The contract, and why it is not a version number
+
+The kit's identity is a **contract number**, not a CineBraid release. It says what an external model must produce and what it must leave unknown, and it changes only when that agreement changes — never because CineBraid shipped a release. All six files below state the same contract, and the build fails if they ever disagree.
 
 ## Files
 
-- `CINEBRAID_PROJECT_BUILDER_SYSTEM_PROMPT.txt` — complete system/project instruction for the LLM
-- `CINEBRAID_PROJECT_BUILDER_USER_TEMPLATE.txt` — reusable request template
-- `CINEBRAID_PROJECT_SCHEMA_v6.5.3.json` — canonical planning-import JSON Schema
-- `CINEBRAID_PROJECT_BUILDER_MINIMAL_EXAMPLE.json` — small valid example
-- `QUICK_START.md` — recommended workflow and review checklist
+| File | What it is |
+| --- | --- |
+| `CINEBRAID_PROJECT_SCHEMA.json` | The canonical planning-import JSON Schema. There is exactly one. |
+| `CINEBRAID_PROJECT_BUILDER_SYSTEM_PROMPT.txt` | The complete instruction for the assistant |
+| `CINEBRAID_PROJECT_BUILDER_USER_TEMPLATE.txt` | A reusable request template |
+| `CINEBRAID_PROJECT_BUILDER_MINIMAL_EXAMPLE.json` | A small, deliberately conservative example |
+| `QUICK_START.md` | The workflow, and what to check in the result |
+| `README.md` | This file |
 
-The application also retains the older schema filenames as compatibility aliases, but new work should use `CINEBRAID_PROJECT_SCHEMA_v6.5.3.json`.
+Earlier releases shipped five additional version-named schema files alongside the live one. Three were byte-identical copies and two were stale; all six looked equally authoritative. They are gone. If you have an older kit on disk, delete it — a version-named schema file beside this one is not a fallback, it is a different contract.
 
-## What happens after import
+## What the builder is for
 
-The JSON establishes planning canon, not finished production assets. In CineBraid, the normal next steps are:
+    your source material
+      -> preserve the creative truth already in it
+      -> structure what is known
+      -> make what is unknown explicit
+      -> a CineBraid project
+      -> continue through References, Shots, Generate and Review
 
-1. Review normalized import warnings and inferred values.
+The builder plans the production. Anything it cannot ground in your material it leaves empty and says so, rather than filling the field with something plausible.
+
+## After import
+
+1. Read the normalized import warnings and the inferred values.
 2. Refine the Project Bible.
-3. Upload and approve visual/audio references.
+3. Upload and approve visual and audio references.
 4. Build or revise blocking for geometry.
 5. Assign final appearance references.
 6. Generate and review frame candidates.
-7. Correct failed candidates when needed.
-8. Plan motion, dialogue, audio, and finishing.
+7. Correct failed candidates where needed.
+8. Plan motion, dialogue, audio and finishing.
 
-## Critical audio rule
+The importer always creates a **separate** project. It never overwrites the project directory you have open.
 
-Literal spoken words belong only in `shot.audio.line` or `clip.line`. Speaker, voice source, recording direction, editorial routing, clean-master instructions, and post-processing notes belong in their own fields. CineBraid never treats `audio.note`, `clip.audioNote`, or legacy `vo` text as words a character should say.
+## Rules worth knowing before you read the output
 
-## Critical reference/blocking rule
+**Dialogue is only ever the words spoken.** Literal speech belongs in `shot.audio.line` or `clip.line`. Speaker, voice source, recording direction, editorial routing, clean-master instructions and post-processing notes each have their own field. CineBraid never treats `audio.note`, `clip.audioNote` or legacy `vo` text as words a character says.
 
-Project Builder JSON cannot contain approved media, blocking images, candidate files, reference assignments, generation packages, FAL jobs, reviews, or corrections. Use structured descriptions to prepare those later workflows:
+**Fallbacks answer risks.** `shot.safe` is a simpler supported way to shoot a beat whose risk the shot has already named. A shot with `"risks": []` needs no fallback, should not have one, and is not asked for one.
 
-- entity `visualDescription` defines what approved appearance references must establish;
-- shot `positioning` and keyframe descriptions define blocking geometry;
-- shot `risks` identifies what must be checked during generation and review.
+**Absence is a real answer.** A missing `deliveryRoute` means nobody decided how the shot is delivered. A motion unit with no stated method imports as planning-only rather than being routed for you. An omitted `endpoints` means the shot's first and last frames are unconstrained. CineBraid reads all three as undecided and will not guess.
 
-The importer always creates a separate project. It never overwrites the currently active project directory.
+**Endpoints are not a generation method.** `endpoints.start` and `endpoints.end` record how fixed the shot's own opening and ending frames are — `free`, `approximate`, `exact`. That a shot must end on an exact frame does not make it a first/last-frame shot.
 
-## Motion & Sound Brief
+**Looks are planning, not references.** `meta.styleBlocks` and `scene.stage` express visual regimes the source authored, including one the film leaves and returns to. They describe intent. They are not approved references and not generated state.
 
-The v6.3.0 schema accepts optional structured `clip.motionBrief` data for performance, camera, exact dialogue, timed SFX, ambience, music, and output intent. Older clip audio fields remain valid and are normalized into the same editable workspace.
+**Nothing has been made yet.** Project Builder JSON cannot contain approved media, blocking images, candidate files, reference assignments, generation packages, provider jobs, reviews or corrections. Prepare that work instead:
+
+- entity `visualDescription` defines what approved references must establish;
+- shot `positioning` and keyframe descriptions define the blocking geometry;
+- shot `risks` defines what must be checked during generation and review.

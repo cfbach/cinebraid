@@ -352,6 +352,62 @@ control("NC-4b", "removing t2v from the import vocabulary", () => {
   assert.notStrictEqual(out[0].kind, "t2v");
 });
 
+/* NC-4h — restore the `|| "i2v"` default for a unit that named no method at all.
+
+   The quieter half of the same defect. The unknown-kind branch could never see this
+   case: by the time it ran, the missing value had already become a KNOWN kind, so the
+   document was routed to image-to-video — demanding an approved still and a paid
+   generation — with nothing said to anyone. */
+control("NC-4h", "restoring the i2v default for a clip that names no kind", () => {
+  const source = mutated("server.js", (text) =>
+    text.replace(
+      'let kind = String(source.kind ?? "").trim().toLowerCase(),',
+      'let kind = String(source.kind || "i2v").toLowerCase(),',
+    ));
+  const clips = builderClipsFrom(source);
+  const warnings = [];
+  const out = clips(
+    { id: "SH-M", clips: [{ id: "SH-M-M01", dur: 5, motionPrompt: "She turns." }] },
+    [{ id: "SH-M-A" }],
+    warnings,
+  );
+  /* THE LIVE DEFECT: absence became image-to-video, and the unit was handed a start
+     frame to match a dependency the document never stated. */
+  assert.strictEqual(out[0].kind, "i2v", "the control must reintroduce the coercion");
+  assert.strictEqual(out[0].fromFrame, "SH-M-A", "and the invented frame dependency with it");
+  assert(!warnings.some((row) => /named no generation method/i.test(row)),
+    "and the silence: the old rule could not warn, because the value was already valid");
+  assert.notStrictEqual(out[0].kind, "plan");
+});
+
+/* NC-4i — remove `t2v` from the CONTRACT, leaving the importer's copy intact.
+
+   The two vocabularies disagreed for as long as they did because each looked correct
+   from its own side. This control proves the schema half is now guarded too: a valid
+   text-to-video plan becomes an invalid document, and the kit suite's enum assertion
+   is the thing that has to catch it. Pure data, mutated in memory. */
+control("NC-4i", "removing t2v from the Project Builder contract schema", () => {
+  const relative = path.join("resources", "project-builder", "CINEBRAID_PROJECT_SCHEMA.json");
+  const schema = JSON.parse(read(relative));
+  const kinds = schema.$defs.clip.properties.kind.enum;
+  assert(kinds.includes("t2v"), "the shipped schema must admit t2v before this control can remove it");
+  schema.$defs.clip.properties.kind.enum = kinds.filter((kind) => kind !== "t2v");
+
+  /* THE LIVE DEFECT: the kit suite's assertion — that the schema admits the kind its
+     own importer accepts — is now false. */
+  assert(!schema.$defs.clip.properties.kind.enum.includes("t2v"),
+    "the control must actually remove the enum member");
+  /* And the disagreement is real rather than cosmetic: the importer still takes it. */
+  const clips = builderClipsFrom(read("server.js"));
+  const accepted = clips(
+    { id: "SH-T2V", clips: [{ id: "SH-T2V-M01", kind: "t2v", dur: 6, motionPrompt: "A storm front." }] },
+    [{ id: "SH-T2V-A" }],
+    [],
+  );
+  assert.strictEqual(accepted[0].kind, "t2v",
+    "the importer still accepts what the mutated contract now forbids — which is the defect");
+});
+
 /* ===========================================================================
    NC-4d / NC-4e — the two LIVE consumers.
 

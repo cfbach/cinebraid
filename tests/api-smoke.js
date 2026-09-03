@@ -12,6 +12,7 @@ const { Kernel: AuthorityKernel, Private: AuthorityPrivate } = require("./author
 const { installTestManualActionSource } = require("./authority-test-gesture");
 const AUTHORITY_MANUAL = installTestManualActionSource(AuthorityKernel);
 const RELEASE_VERSION = require("../package.json").version;
+const PROJECT_BUILDER_CONTRACT = require("../project-builder-contract").projectBuilderContract();
 
 const ROOT = path.join(__dirname, "..");
 const TEMP = fs.mkdtempSync(path.join(os.tmpdir(), "cinebraid-smoke-"));
@@ -1839,15 +1840,21 @@ async function main() {
 
     result = await request("/api/project-builder/system-prompt");
     assert.strictEqual(result.response.status, 200);
-    assert.match(String(result.body), /CineBraid v6\.5\.3 planning JSON object/);
+    /* The kit states ONE identity, and it is a contract number rather than a release:
+       both surfaces are checked against the declaration in project-builder-contract.js
+       so a version typed into a resource by hand fails here rather than shipping. */
+    assert(String(result.body).includes(PROJECT_BUILDER_CONTRACT.name),
+      "the served system prompt must state the Project Builder contract");
     assert.match(String(result.body), /4 and 15 seconds/);
     assert.doesNotMatch(String(result.body), /v5\.8/);
+    assert(!String(result.body).includes(RELEASE_VERSION),
+      "the Project Builder contract must never be numbered after the application");
 
     result = await request("/api/project-builder/kit");
     assert.strictEqual(result.response.status, 200);
-    assert.match(
+    assert.strictEqual(
       result.response.headers.get("content-disposition") || "",
-      /Prompt_Kit_v6\.5\.3\.zip/,
+      `attachment; filename="${PROJECT_BUILDER_CONTRACT.archive}"`,
     );
 
     const leanImport = {
