@@ -6072,9 +6072,16 @@ window.startManualProject = async () => {
      seam every app-owned mutation goes through. It is also what the install
      checks it still holds. */
   const transition = beginProjectTransition("opening another project");
+  /* THE MODAL COMMIT. From here until this returns, no trusted interaction in
+     this window reaches an ordinary handler — enforced centrally, at the one
+     boundary every user action crosses, rather than on the controls. */
+  beginInteractionFence("opening that project");
   try {
     return await startManualProjectCommit(draft, title, refuse, transition);
   } finally {
+    /* RELEASED ON EVERY PATH — success, refusal, or a throw nobody predicted.
+       A window left inert would be worse than the race this closes. */
+    endInteractionFence();
     MANUAL_START_IN_FLIGHT = false;
     endProjectTransition(transition.token);
     endManualReplacement();

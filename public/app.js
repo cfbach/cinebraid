@@ -2431,35 +2431,118 @@ function withProjectTransitionWork(token, body) {
   PROJECT_TRANSITION_WORK += 1;
   try { return body(); } finally { PROJECT_TRANSITION_WORK -= 1; }
 }
-/* "" when this mutation may proceed, otherwise why it may not. */
-function projectMutationRefusal() {
-  if (!PROJECT_TRANSITION || PROJECT_TRANSITION_WORK > 0) return "";
-  return `CineBraid is ${PROJECT_TRANSITION.label}, so this change was not made to `
-    + `${(P && P.meta && P.meta.title) || "the project you have open"}. `
-    + "It will accept changes again as soon as that finishes.";
+/* ==========================================================================
+   THE INTERACTION FENCE — A MODAL COMMIT, ENFORCED WHERE INPUT ARRIVES.
+
+   A replacement transaction is modal: from the press until it succeeds or fails,
+   no trusted interaction in this window may reach an ordinary editing or
+   project-changing handler. Enforced HERE, at the one boundary every user action
+   crosses, rather than on the handlers — `+ Add`, a modal's Save, `+ Project`,
+   Settings, navigation and their keyboard equivalents are all the same event
+   arriving at the same place, and none of them is named below.
+
+   ONLY TRUSTED EVENTS ARE FENCED, and that line is the whole design. A trusted
+   event is a person; page script cannot forge the flag. Everything the
+   transaction itself does — route(), the render, its own requests — and every
+   legitimate internal or background mutation is untouched, which is exactly what
+   must remain true: those changes are supposed to happen, be recorded by
+   dirty(), and invalidate the replacement certificate.
+
+   `inert` is set on the shell as well. In a real browser that is what actually
+   removes focus, hover and the tab order; the capture-phase fence is what makes
+   the guarantee testable and what covers anything `inert` does not reach. */
+const FENCED_INTERACTIONS = [
+  "pointerdown", "pointerup", "mousedown", "mouseup", "click", "dblclick", "contextmenu",
+  "keydown", "keypress", "keyup", "input", "change", "submit", "paste", "drop", "wheel",
+];
+let INTERACTION_FENCE = null;
+let INTERACTION_FENCE_TOLD = 0;
+
+function interactionFenceActive() { return !!INTERACTION_FENCE; }
+function interactionFenceMessage() {
+  return INTERACTION_FENCE
+    ? `CineBraid is ${INTERACTION_FENCE.label}. This window accepts changes again as soon as that finishes.`
+    : "";
+}
+/* The single handler. It refuses the interaction outright — the event never
+   reaches a handler, so nothing is accepted and then discarded. */
+function interactionFenceHandler(event) {
+  if (!INTERACTION_FENCE) return;
+  /* Page script, the transaction's own work and every programmatic dispatch are
+     not people, and must pass. */
+  if (!event || event.isTrusted !== true) return;
+  if (typeof event.preventDefault === "function") event.preventDefault();
+  if (typeof event.stopImmediatePropagation === "function") event.stopImmediatePropagation();
+  else if (typeof event.stopPropagation === "function") event.stopPropagation();
+  /* Said once every couple of seconds rather than on every keystroke of a
+     sentence somebody is trying to type. */
+  const now = Date.now();
+  if (now - INTERACTION_FENCE_TOLD > 1800) {
+    INTERACTION_FENCE_TOLD = now;
+    if (typeof toast === "function") toast(interactionFenceMessage());
+  }
+}
+function beginInteractionFence(label) {
+  INTERACTION_FENCE = { label: String(label || "opening another project") };
+  INTERACTION_FENCE_TOLD = 0;
+  const target = typeof document !== "undefined" ? document : null;
+  if (target && typeof target.addEventListener === "function") {
+    for (const name of FENCED_INTERACTIONS) {
+      target.addEventListener(name, interactionFenceHandler, true);
+    }
+  }
+  const shell = typeof document !== "undefined" && document.getElementById ? document.getElementById("app") : null;
+  if (shell) {
+    shell.inert = true;
+    if (typeof shell.setAttribute === "function") shell.setAttribute("aria-busy", "true");
+  }
+  if (typeof document !== "undefined" && document.body && document.body.dataset) {
+    document.body.dataset.projectTransition = "1";
+  }
+  return INTERACTION_FENCE;
+}
+function endInteractionFence() {
+  const target = typeof document !== "undefined" ? document : null;
+  if (target && typeof target.removeEventListener === "function") {
+    for (const name of FENCED_INTERACTIONS) {
+      target.removeEventListener(name, interactionFenceHandler, true);
+    }
+  }
+  const shell = typeof document !== "undefined" && document.getElementById ? document.getElementById("app") : null;
+  if (shell) {
+    shell.inert = false;
+    if (typeof shell.removeAttribute === "function") shell.removeAttribute("aria-busy");
+  }
+  if (typeof document !== "undefined" && document.body && document.body.dataset) {
+    delete document.body.dataset.projectTransition;
+  }
+  INTERACTION_FENCE = null;
 }
 if (typeof window !== "undefined") {
   window.projectTransitionOwner = projectTransitionOwner;
   window.withProjectTransitionWork = withProjectTransitionWork;
-  window.projectMutationRefusal = projectMutationRefusal;
+  window.beginInteractionFence = beginInteractionFence;
+  window.endInteractionFence = endInteractionFence;
+  window.interactionFenceActive = interactionFenceActive;
+  window.interactionFenceMessage = interactionFenceMessage;
 }
 
+/* dirty() DOES NOT KNOW ABOUT REPLACEMENT TRANSACTIONS, AND MUST NOT.
+ *
+ * It briefly did. A guard here refused an ordinary write while a replacement
+ * owned the project — but every caller MUTATES `P` and THEN calls dirty(), so the
+ * refusal arrived after the document had already changed. It suppressed the
+ * record of a mutation that had happened, which is the one thing this function
+ * must never do: it produced `P` changed, counters unchanged, and
+ * projectSaveSettled() answering true about a document that was no longer what it
+ * described.
+ *
+ * Human input is fenced where human input arrives — see the interaction fence
+ * below — and concurrent internal or asynchronous change is caught by the
+ * replacement certificate, which goes stale precisely because dirty() records
+ * honestly here. Both of those depend on this function telling the truth. */
 function dirty() {
   clearTimeout(saveTimer);
-  /* A REPLACEMENT TRANSACTION OWNS THIS PROJECT, so an ordinary edit to it is
-     refused here — before the counter moves, before the indicator claims a save
-     is coming, and before anything is armed. Everything below this line would be
-     untrue of a document that is being replaced. The refusal is recorded where
-     the transaction is on screen rather than only spoken, so nothing is left
-     looking as though it were accepted. */
-  const transitionRefusal = projectMutationRefusal();
-  if (transitionRefusal) {
-    if (typeof recordActionRefusal === "function") {
-      recordActionRefusal("manual-start", transitionRefusal, "project-transition:mutation-refused");
-    }
-    if (typeof toast === "function") toast(transitionRefusal);
-    return setSaveState("error", "Not saved — CineBraid is opening another project");
-  }
   /* RECOVERY MODE REFUSES BEFORE IT COUNTS. Everything below this line describes
      a window that holds a project: it advances the local edit counter, says
      "Unsaved changes", and arms a write. A quarantined window holds no project at

@@ -1334,33 +1334,58 @@ async function final_b1_atomicReplacement() {
   note("FINAL-B1 the transaction locks the window, creates the new project inactive, prepares it completely, revalidates, activates conditionally and installs synchronously: a preload delay leaves both sides naming the old project, a legitimate switch to a third project makes the activation refuse without any put-back, the activation is the last request before the install, and recovery reuses the created project");
 }
 /* ===========================================================================
-   CENTRAL — OWNERSHIP AT THE SEAMS, NOT ON THE CONTROLS.
+   MODAL — THE COMMIT IS MODAL, AND dirty() TELLS THE TRUTH AGAIN.
 
-   The presentation lock covered route() and switchProject(), and independent
-   review went round it twice: `+ Add → Scene → Save` mutated the open project
-   through a modal that navigates nowhere, and `+ Project` opened a third project
-   through a path the lock did not watch, after which the prepared snapshot
-   installed on top of it.
+   The previous shape guarded dirty(). That was too late: every caller mutates
+   `P` and THEN calls dirty(), so the guard suppressed the record of a change
+   that had already happened — `P` changed, counters unchanged,
+   projectSaveSettled() answering true about a document it no longer described.
 
-   Patching those two controls would have left the next one. The rule is enforced
-   in two places instead:
+   Two mechanisms replace it, and they cover different things:
 
-     A. dirty() — the seam every app-owned write already passes through, 269
-        callers across twelve files. While a replacement transaction owns the
-        project, an ordinary mutation is refused there, before the counter moves
-        and before anything is armed.
+     THE INTERACTION FENCE protects human input. From the press until it settles,
+     no TRUSTED event reaches an ordinary handler, so `+ Add`, a modal's Save,
+     `+ Project`, Settings and their keyboard equivalents never run at all. `P` is
+     not mutated, because the mutator is never called.
 
-     B. commitPreparedProjectLoad() — the synchronous install. It compares the
-        operation's token, the project it owned and the open epoch against what
-        is current, so a prepared snapshot cannot install just because an earlier
-        fence passed.
+     THE REPLACEMENT CERTIFICATE protects concurrent internal and asynchronous
+     change. Those are supposed to happen: dirty() records them, the counters
+     move, and the certificate goes stale — so the prepared project refuses to
+     install over a newer document rather than discarding it.
 
-   Neither knows the name of a single button, which is the point.
+   Only trusted events are fenced, which is the line between the two. A trusted
+   event is a person, and page script cannot forge the flag.
    =========================================================================== */
 
-/* Drives the real press with a held activation, so the transaction is genuinely
-   in flight while the test attacks it. */
-function centralHarness({ createSlug = "film-b", sourceSlug = "film-a" } = {}) {
+/* A TRUSTED INTERACTION, MODELLED THE WAY A BROWSER DELIVERS ONE.
+ *
+ * Capture listeners run first; if one calls stopImmediatePropagation the target's
+ * own handler never runs. `documentListeners` lives in the harness's Node closure
+ * — page script can register into it but cannot enumerate or fire it — so this is
+ * the one place a genuinely un-forgeable "a person did this" can come from.
+ *
+ * Returns whether the interaction was DELIVERED to its handler. */
+function trustedInteraction(page, type, run) {
+  let stopped = false;
+  let prevented = false;
+  const event = {
+    type,
+    isTrusted: true,
+    target: page.context.document.getElementById("main"),
+    preventDefault() { prevented = true; },
+    stopPropagation() { stopped = true; },
+    stopImmediatePropagation() { stopped = true; },
+  };
+  for (const handler of (page.documentListeners.get(type) || []).slice()) {
+    handler(event);
+    if (stopped) break;
+  }
+  if (stopped) return { delivered: false, prevented };
+  run();
+  return { delivered: true, prevented };
+}
+
+function modalHarness({ createSlug = "film-b", sourceSlug = "film-a" } = {}) {
   const calls = [];
   let activeProject = sourceSlug;
   let saveStatus = 200;
@@ -1368,14 +1393,22 @@ function centralHarness({ createSlug = "film-b", sourceSlug = "film-a" } = {}) {
   let releaseSwitch = null;
   const switchGate = new Promise((r) => { releaseSwitch = r; });
   let holdSwitch = false;
+  let createStatus = 200;
+  let prepareStatus = 200;
+  let releaseCreate = null;
+  const createGate = new Promise((r) => { releaseCreate = r; });
+  let holdCreate = false;
   return {
     calls,
     holdSwitch() { holdSwitch = true; },
+    holdCreate() { holdCreate = true; },
+    releaseCreate: () => releaseCreate(),
     releaseSwitch: () => releaseSwitch(),
     setSaveStatus(status, body) { saveStatus = status; saveBody = body || null; },
-    activeProject: () => activeProject,
+    setCreateStatus(status) { createStatus = status; },
+    setPrepareStatus(status) { prepareStatus = status; },
     setActiveProject(slug) { activeProject = slug; },
-    saves: () => calls.filter((row) => row.method !== "GET" && /\/api\/projects\/[^/]+\/project$/.test(row.url)),
+    activeProject: () => activeProject,
     switchCalls: () => calls.filter((row) => row.url === "/api/projects/switch"),
     marker() { return calls.length; },
     since(m) { return calls.slice(m); },
@@ -1384,21 +1417,25 @@ function centralHarness({ createSlug = "film-b", sourceSlug = "film-a" } = {}) {
       const body = String((options && options.body) || "");
       calls.push({ url, method, body });
       if (url === "/api/projects/new") {
+        if (holdCreate) await createGate;
+        if (createStatus !== 200) return respond({ error: "Could not create project" }, createStatus);
         const request = (() => { try { return JSON.parse(body); } catch { return {}; } })();
         if (request.activate !== false) activeProject = createSlug;
         return respond({ ok: true, slug: createSlug }, 200);
       }
       if (url === "/api/projects/switch") {
-        if (holdSwitch) await switchGate;
         const request = (() => { try { return JSON.parse(body); } catch { return {}; } })();
         if (Object.prototype.hasOwnProperty.call(request, "expectedActiveProject")
           && String(request.expectedActiveProject || "") !== activeProject) {
+          if (holdSwitch) await switchGate;
           return respond({ ok: false, code: "PROJECT_ACTIVE_CONFLICT", error: "The active project changed.", activeProject }, 409);
         }
         activeProject = String(request.slug || activeProject);
+        if (holdSwitch) await switchGate;
         return respond({ ok: true, slug: activeProject }, 200);
       }
       if (method === "GET" && /\/api\/projects\/[^/]+\/project$/.test(url)) {
+        if (prepareStatus !== 200) return respond({ error: "unreadable" }, prepareStatus);
         const slug = url.split("/")[3];
         const project = rawFixture();
         project.meta.title = slug === createSlug ? "Film B" : "Film C";
@@ -1420,198 +1457,206 @@ function centralHarness({ createSlug = "film-b", sourceSlug = "film-a" } = {}) {
     },
   };
 }
-
-async function untilHeldSwitch(gate) {
+async function untilFenceUp(page) {
   for (let i = 0; i < 400; i++) {
-    if (gate.switchCalls().length > 0) return;
+    if (evaluate(page.context, `return interactionFenceActive();`)) return;
     await tick();
   }
-  throw new Error("the activation never reached the wire");
+  throw new Error("the interaction fence never came up");
 }
 
-async function central_ownershipSeams() {
-  /* ---- CENTRAL-1: the seam refuses `+ Add → Scene`, and everything like it. */
+async function modal_commitIsModal() {
+  /* ---- MODAL-1 / 2 / 3: trusted input cannot reach a mutator. ----------- */
   for (const [label, status, body] of [
     ["an ordinary pending save", 200, null],
     ["a 409", 409, { error: "This project changed in storage.", code: "PROJECT_REVISION_CONFLICT" }],
     ["a 422", 422, { error: "Project failed validation.", code: "PROJECT_VALIDATION_FAILED" }],
   ]) {
-    const gate = centralHarness();
+    const gate = modalHarness();
     gate.holdSwitch();
     const page = await render("#/create", rawFixture(), { fetch: gate.hook });
     await evaluateAsync(page.context, `await flushPendingProjectSave(); return 1;`);
     evaluate(page.context, `ACTIVE_PROJECT_SLUG = "film-a"; return 1;`);
     startPressInFlight(page.context);
-    await untilHeldSwitch(gate);
+    await untilFenceUp(page);
     gate.setSaveStatus(status, body);
 
+    /* THE DOCUMENT ITSELF, not a counter. */
     const before = evaluate(page.context, `return {
-      scenes: P.scenes.length, saveRevision: SAVE_REVISION, savedRevision: SAVED_REVISION,
-      blocked: SAVE_BLOCKED, conflict: PROJECT_CONFLICT };`);
+      document: JSON.stringify(P), scenes: P.scenes.length, shots: P.shots.length,
+      saveRevision: SAVE_REVISION, savedRevision: SAVED_REVISION };`);
     const marker = gate.marker();
 
-    /* THE REPRODUCTION, THROUGH THE REAL HANDLER. addScene() is not named by the
-       guard; it reaches dirty() like every other app-owned writer. */
-    const attempted = await evaluateAsync(page.context, `
+    /* MODAL-1 — the exact reproduction: + Add → Scene → Save, as a person. */
+    const addScene = trustedInteraction(page, "click", () => evaluate(page.context, `
       addScene();
-      const modal = document.getElementById("modal");
-      const before = P.scenes.length;
-      /* The filmmaker fills the form and presses Save, through the shipped
-         handler rather than a simulation of it. */
-      document.getElementById("ff-title").value = "A scene typed mid-transaction";
-      _formSubmit();
-      /* The refusal is recorded by the seam and rendered by the caller's own
-         route(), which is async — so the render is awaited rather than raced. */
-      await route();
-      const main = (document.getElementById("main")||{innerHTML:""}).innerHTML;
-      return {
-        scenesBeforeSubmit: before,
-        scenes: P.scenes.length,
-        saveRevision: SAVE_REVISION, savedRevision: SAVED_REVISION,
-        blocked: SAVE_BLOCKED, conflict: PROJECT_CONFLICT,
-        refusal: main.indexOf('data-action-refusal="manual-start"') >= 0,
-        refusalText: (main.split("CineBraid did not make this change</b><span>")[1]||"").split("</span>")[0],
-        saveState: (document.getElementById("save-state") || {}).textContent || "",
-      };`);
+      const field = document.getElementById("ff-title");
+      if (field) field.value = "A scene typed mid-transaction";
+      if (typeof _formSubmit === "function") _formSubmit();
+      return 1;`));
+    equal(addScene.delivered, false,
+      `MODAL-1 (${label}): the editing action never reached addScene() — the fence refused delivery`);
 
-    equal(attempted.saveRevision, before.saveRevision,
-      `CENTRAL-1 (${label}): the attempted edit advanced NO dirty revision`);
-    equal(attempted.savedRevision, before.savedRevision,
-      `CENTRAL-1 (${label}): and the saved counter is untouched`);
+    /* MODAL-2 — + Project, the same way. */
+    const newProjectPress = trustedInteraction(page, "click", () => evaluate(page.context, `newProject(); return 1;`));
+    equal(newProjectPress.delivered, false, `MODAL-2 (${label}): + Project cannot be reached either`);
+
+    /* MODAL-3 — a Settings write, and its keyboard equivalent. */
+    const settings = trustedInteraction(page, "change", () => evaluate(page.context,
+      `setGlobalCreationField("globalStylePrompt", "typed mid-transaction"); return 1;`));
+    equal(settings.delivered, false, `MODAL-3 (${label}): a Settings edit cannot be reached`);
+    const keyboard = trustedInteraction(page, "keydown", () => evaluate(page.context, `addShot(); return 1;`));
+    equal(keyboard.delivered, false, `MODAL-3 (${label}): nor its keyboard equivalent`);
+
+    const after = evaluate(page.context, `return {
+      document: JSON.stringify(P), scenes: P.scenes.length, shots: P.shots.length,
+      saveRevision: SAVE_REVISION, savedRevision: SAVED_REVISION };`);
+    equal(after.document, before.document,
+      `MODAL-1 (${label}): the project document is deep-equal before and after every attempted interaction`);
+    equal(after.scenes, before.scenes, `MODAL-1 (${label}): the scene count is unchanged`);
+    equal(after.shots, before.shots, `MODAL-1 (${label}): and the shot count`);
+    equal(after.saveRevision, before.saveRevision,
+      `MODAL-1 (${label}): the revision is unchanged BECAUSE no mutation occurred`);
+    equal(after.savedRevision, before.savedRevision, `MODAL-1 (${label}): and the saved counter with it`);
     equal(gate.since(marker).filter((row) => row.method !== "GET"
       && /\/api\/projects\/[^/]+\/project$/.test(row.url)).length, 0,
-      `CENTRAL-1 (${label}): no save was armed or sent, so none can be discarded later`);
-    equal(attempted.blocked, before.blocked, `CENTRAL-1 (${label}): the existing save state is intact`);
-    equal(attempted.conflict, before.conflict, `CENTRAL-1 (${label}): and so is the existing refusal state`);
-    equal(attempted.refusal, true, `CENTRAL-1 (${label}): the refusal is persistent, not a toast alone`);
-    ok(/did not make/i.test(attempted.refusalText) || /was not made/i.test(attempted.refusalText),
-      `CENTRAL-1 (${label}): and truthful: ${attempted.refusalText}`);
+      `MODAL-1 (${label}): no save was sent, so none can be discarded later`);
 
-    /* Releasing B cannot lose Film A work, because none was ever accepted. */
     gate.releaseSwitch();
     await settlePress(page.context);
-    const after = evaluate(page.context, `return { title: P.meta.title, saveRevision: SAVE_REVISION };`);
-    equal(after.title, "Film B", `CENTRAL-1 (${label}): the replacement completes normally`);
+    equal(evaluate(page.context, `return interactionFenceActive();`), false,
+      `MODAL-1 (${label}): the fence released`);
   }
 
-  /* ---- CENTRAL-3: several materially different writers, same seam. ------ */
-  const anyWriter = centralHarness();
-  anyWriter.holdSwitch();
-  const writerPage = await render("#/create", rawFixture(), { fetch: anyWriter.hook });
-  await evaluateAsync(writerPage.context, `await flushPendingProjectSave(); return 1;`);
-  evaluate(writerPage.context, `ACTIVE_PROJECT_SLUG = "film-a"; return 1;`);
-  startPressInFlight(writerPage.context);
-  await untilHeldSwitch(anyWriter);
+  /* ---- MODAL-4: a background mutation is RECORDED and invalidates B. ---- */
+  const background = modalHarness();
+  /* HELD AT THE CREATE, not the switch: the mutation must land AFTER the open
+     project has been certified, which is what makes the certificate go stale.
+     Landing before certification is a different case — the pre-press guard —
+     and it simply refuses to create anything. */
+  background.holdCreate();
+  const bgPage = await render("#/create", rawFixture(), { fetch: background.hook });
+  await evaluateAsync(bgPage.context, `await flushPendingProjectSave(); return 1;`);
+  evaluate(bgPage.context, `ACTIVE_PROJECT_SLUG = "film-a"; return 1;`);
+  startPressInFlight(bgPage.context);
+  await untilFenceUp(bgPage);
+  for (let i = 0; i < 400 && !background.calls.some((row) => row.url === "/api/projects/new"); i++) await tick();
 
-  const writers = evaluate(writerPage.context, `
-    const results = [];
-    const attempt = (name, run) => {
-      const before = SAVE_REVISION;
-      try { run(); } catch (error) { /* a refused writer may throw; the counter is the claim */ }
-      results.push({ name, moved: SAVE_REVISION !== before });
-    };
-    /* Materially different app-owned writers, each through its own real path. */
-    attempt("entity creation", () => addEntity("locations"));
-    attempt("shot creation", () => addShot());
-    attempt("settings / global style", () => setGlobalCreationField("globalStylePrompt", "typed mid-transaction"));
-    attempt("a direct dirty() from any future writer", () => dirty());
-    return results;`);
-  for (const row of writers) {
-    equal(row.moved, false,
-      `CENTRAL-3: ${row.name} advanced no dirty revision — the guarantee is the seam, not a list of buttons`);
-  }
-  anyWriter.releaseSwitch();
-  await settlePress(writerPage.context);
+  const bg = evaluate(bgPage.context, `
+    const beforeRevision = SAVE_REVISION;
+    const beforeSettled = projectSaveSettled().settled;
+    /* NOT a user action: legitimate internal work, exactly as a background
+       ingest or an automation completion would do it. The fence does not touch
+       it, and must not. */
+    P.meta.logline = "BACKGROUND-MUTATION";
+    dirty();
+    return {
+      beforeRevision, beforeSettled,
+      afterRevision: SAVE_REVISION,
+      recorded: P.meta.logline,
+      settledAfter: projectSaveSettled().settled,
+    };`);
+  equal(bg.beforeSettled, true, "MODAL-4 precondition: the project was settled when the transaction began");
+  equal(bg.recorded, "BACKGROUND-MUTATION", "MODAL-4: the internal mutation changed P");
+  ok(bg.afterRevision > bg.beforeRevision,
+    "MODAL-4: dirty() RECORDED it — the counters advance normally, which is what the old guard concealed");
+  equal(bg.settledAfter, false,
+    "MODAL-4: so the window truthfully reports itself unsaved — never `P` changed with counters unchanged");
 
-  /* ---- CENTRAL-4: a stale prepared snapshot cannot install. ------------- */
-  const stalePage = await render("#/create", rawFixture());
-  const staleInstall = evaluate(stalePage.context, `
-    const prepared = { available: true, slug: "film-b", revision: "rev-b",
-      project: JSON.parse(JSON.stringify(P)),
-      scan: { anchors: [], plates: [], props: [], vehicles: [], audio: [], media: [], shots: {} }, config: {}, promptLibrary: { profiles: [] },
-      agentStatus: {}, automationRuns: [], falJobs: [], falLedgerLoaded: false, backgroundRecovery: null };
-    const owned = beginProjectTransition("opening another project");
-    const ownedCopy = { token: owned.token, sourceSlug: owned.sourceSlug, epoch: owned.epoch };
-
-    /* Every earlier B1 fence is satisfied: the certificate is valid right now. */
-    const certificate = createReplacementCertificate();
-    const fenceSaysYes = createReplacementRefusal(certificate) === "";
-
-    /* Then the transaction is superseded — a third project became current
-       through SOME path, which is exactly what the presentation lock missed. */
-    beginProjectOpen();
-    ACTIVE_PROJECT_SLUG = "film-c";
-
-    const installed = commitPreparedProjectLoad(prepared, ownedCopy);
-    /* And with no ownership at all it would have installed, which is what makes
-       the guard rather than the snapshot the thing under test. */
-    const installedUnguarded = commitPreparedProjectLoad(prepared);
-    endProjectTransition(owned.token);
-    return { fenceSaysYes, installed, installedUnguarded };`);
-  equal(staleInstall.fenceSaysYes, true, "CENTRAL-4: every earlier fence was satisfied when the snapshot was prepared");
-  equal(staleInstall.installed, false,
-    "CENTRAL-4: the install ownership check refuses a superseded transaction anyway");
-  equal(staleInstall.installedUnguarded, true,
-    "CENTRAL-4: and the snapshot itself was installable — the refusal comes from ownership, not from the data");
-
-  /* ---- CENTRAL-2: `+ Project` opens Film C during the transaction. ------ */
-  const superseded = centralHarness();
-  superseded.holdSwitch();
-  const page2 = await render("#/create", rawFixture(), { fetch: superseded.hook });
-  await evaluateAsync(page2.context, `await flushPendingProjectSave(); return 1;`);
-  evaluate(page2.context, `ACTIVE_PROJECT_SLUG = "film-a"; return 1;`);
-  startPressInFlight(page2.context);
-  await untilHeldSwitch(superseded);
-
-  /* Film C legitimately becomes current, through the ordinary replacement path
-     that `+ Project` uses — beginProjectOpen() plus an installed record. */
-  superseded.setActiveProject("film-c");
-  await evaluateAsync(page2.context, `
-    const preparedC = await prepareProjectLoad("film-c");
-    commitPreparedProjectLoad(preparedC);
-    return 1;`);
-  const onC = evaluate(page2.context, `return { slug: ACTIVE_PROJECT_SLUG, title: P.meta.title };`);
-  equal(onC.title, "Film C", "CENTRAL-2: Film C is now the project in the browser");
-  equal(superseded.activeProject(), "film-c", "CENTRAL-2: and on the server");
-
-  superseded.releaseSwitch();
-  await settlePress(page2.context);
-
-  const after2 = evaluate(page2.context, `
+  background.releaseCreate();
+  await settlePress(bgPage.context);
+  const after4 = evaluate(bgPage.context, `
     const main = (document.getElementById("main")||{innerHTML:""}).innerHTML;
-    return { slug: ACTIVE_PROJECT_SLUG, title: P.meta.title,
+    return { title: P.meta.title, logline: P.meta.logline,
              pending: (window.__cinebraidManualStartPending||{}).slug || "",
              refusal: main.indexOf('data-action-refusal="manual-start"') >= 0 };`);
-  equal(after2.title, "Film C", "CENTRAL-2: the stale prepared Film B did NOT install over it");
-  equal(superseded.activeProject(), "film-c", "CENTRAL-2: the server is still on Film C");
-  ok(!superseded.switchCalls().some((row) => /"slug":"film-a"/.test(row.body)),
-    "CENTRAL-2: and no rollback to Film A was attempted");
-  equal(after2.pending, "film-b", "CENTRAL-2: Film B stays pending and inactive");
+  /* Scanned across the whole transaction: the certificate goes stale the moment
+     the counters move, so the fence flushes A BEFORE the activation — which is
+     earlier than the held switch, not after it. */
+  const savedBody = background.calls.find((row) => row.method !== "GET"
+    && /\/api\/projects\/[^/]+\/project$/.test(row.url)
+    && String(row.body).includes("BACKGROUND-MUTATION"));
+  ok(savedBody && String(savedBody.body).includes("BACKGROUND-MUTATION"),
+    "MODAL-4: A's change was carried through the ordinary save loop, not lost. calls="
+    + JSON.stringify(background.calls.map((row) => row.method + " " + row.url)));
+  ok(after4.title === "Film B" || after4.refusal === true,
+    "MODAL-4: and B either installs only after that save settled, or refuses — never over an unsaved newer A");
+  equal(after4.logline === "BACKGROUND-MUTATION" || after4.title === "Film B", true,
+    "MODAL-4: the change is never silently discarded");
 
-  /* ---- CENTRAL-5: the ordinary path is untouched. ----------------------- */
-  const fast = centralHarness();
+  /* ---- MODAL-5: an external switch to C still cannot be overwritten. ---- */
+  const external = modalHarness();
+  external.holdSwitch();
+  const extPage = await render("#/create", rawFixture(), { fetch: external.hook });
+  await evaluateAsync(extPage.context, `await flushPendingProjectSave(); return 1;`);
+  evaluate(extPage.context, `ACTIVE_PROJECT_SLUG = "film-a"; return 1;`);
+  startPressInFlight(extPage.context);
+  await untilFenceUp(extPage);
+  external.setActiveProject("film-c");
+  external.releaseSwitch();
+  await settlePress(extPage.context);
+  equal(external.activeProject(), "film-c",
+    "MODAL-5: another window's switch to Film C survives — the conditional activation refused");
+  equal(evaluate(extPage.context, `return P.meta.title;`), "Render Harness Project",
+    "MODAL-5: and the stale prepared Film B did not install");
+
+  /* ---- MODAL-6: success, and the window is editable again afterwards. --- */
+  const fast = modalHarness();
   const fastPage = await render("#/create", rawFixture(), { fetch: fast.hook });
   await evaluateAsync(fastPage.context, `await flushPendingProjectSave(); return 1;`);
   evaluate(fastPage.context, `ACTIVE_PROJECT_SLUG = "film-a"; return 1;`);
   startPressInFlight(fastPage.context);
   await settlePress(fastPage.context);
   const fastSeen = evaluate(fastPage.context, `return { title: P.meta.title, hash: location.hash,
-    owner: projectTransitionOwner(), pending: (window.__cinebraidManualStartPending||{}).slug || "" };`);
-  equal(fast.calls.filter((row) => row.url === "/api/projects/new").length, 1, "CENTRAL-5: one create");
-  equal(fast.switchCalls().length, 1, "CENTRAL-5: one conditional activation");
-  equal(fastSeen.title, "Film B", "CENTRAL-5: one synchronous install");
-  equal(fastSeen.hash, "#/production", "CENTRAL-5: and the window moves into it");
-  equal(fast.activeProject(), "film-b", "CENTRAL-5: current on the server too");
-  equal(fastSeen.owner, null, "CENTRAL-5: and the transaction released its ownership");
-  equal(fastSeen.pending, "", "CENTRAL-5: with nothing left pending");
-  /* Ordinary editing works again the moment the transaction ends. */
-  const editsAgain = evaluate(fastPage.context, `
+    fence: interactionFenceActive(), owner: projectTransitionOwner(),
+    pending: (window.__cinebraidManualStartPending||{}).slug || "" };`);
+  equal(fast.calls.filter((row) => row.url === "/api/projects/new").length, 1, "MODAL-6: one create");
+  equal(fast.switchCalls().length, 1, "MODAL-6: one conditional activation");
+  equal(fastSeen.title, "Film B", "MODAL-6: the prepared project installed");
+  equal(fastSeen.hash, "#/production", "MODAL-6: and the window moved into it");
+  equal(fast.activeProject(), "film-b", "MODAL-6: current on the server too");
+  equal(fastSeen.fence, false, "MODAL-6: the interaction fence released");
+  equal(fastSeen.owner, null, "MODAL-6: and the transaction released its ownership");
+  equal(fastSeen.pending, "", "MODAL-6: with nothing left pending");
+  const editable = trustedInteraction(fastPage, "click", () => evaluate(fastPage.context, `
     const before = SAVE_REVISION; P.meta.logline = "after the transaction"; dirty();
-    return SAVE_REVISION !== before;`);
-  equal(editsAgain, true, "CENTRAL-5: and ordinary editing is accepted again afterwards");
+    return SAVE_REVISION !== before;`));
+  equal(editable.delivered, true, "MODAL-6: trusted interaction is delivered again afterwards");
 
-  note("CENTRAL ownership is enforced at two seams rather than on controls: dirty() refuses every app-owned write while a replacement transaction owns the project — scene, entity, shot and settings writers all advance no revision and arm no save — and the synchronous install refuses a superseded transaction even when every earlier fence passed, so a third project opened through any path keeps the window on both sides");
+  /* ---- MODAL-7: every failure path releases the fence. ------------------ */
+  const failures = [
+    /* A refused save needs something to save, or the flush sends nothing and the
+       transaction has no reason to stop. */
+    ["a refused save",
+      (gate) => gate.setSaveStatus(422, { error: "refused", code: "PROJECT_VALIDATION_FAILED" }),
+      `P.meta.logline = "an edit that will be refused"; dirty(); return 1;`],
+    ["a failed creation", (gate) => gate.setCreateStatus(500), ""],
+    ["a failed preparation", (gate) => gate.setPrepareStatus(500), ""],
+    ["an activation conflict", (gate) => gate.setActiveProject("film-c"), ""],
+  ];
+  for (const [label, arrange, pageArrange] of failures) {
+    const gate = modalHarness();
+    const page = await render("#/create", rawFixture(), { fetch: gate.hook });
+    await evaluateAsync(page.context, `await flushPendingProjectSave(); return 1;`);
+    evaluate(page.context, `ACTIVE_PROJECT_SLUG = "film-a"; return 1;`);
+    if (pageArrange) evaluate(page.context, pageArrange);
+    arrange(gate);
+    startPressInFlight(page.context);
+    await settlePress(page.context);
+    const seen = evaluate(page.context, `return {
+      fence: interactionFenceActive(), owner: projectTransitionOwner(),
+      title: P.meta.title, busy: (document.body.dataset || {}).projectTransition || "" };`);
+    equal(seen.fence, false, `MODAL-7 (${label}): the interaction fence released`);
+    equal(seen.owner, null, `MODAL-7 (${label}): and the transaction ownership with it`);
+    equal(seen.busy, "", `MODAL-7 (${label}): no busy state is left on the window`);
+    equal(seen.title, "Render Harness Project", `MODAL-7 (${label}): the truthful current project remains`);
+    const usable = trustedInteraction(page, "click", () => 1);
+    equal(usable.delivered, true, `MODAL-7 (${label}): and the window accepts interaction again`);
+  }
+
+  note("MODAL the commit is modal at the interaction boundary: trusted +Add/Scene-Save/+Project/Settings and their keyboard equivalents are never delivered, so the document is deep-equal before and after and no counter moves because no mutation happened; a background mutation is recorded normally by dirty(), makes the certificate stale and is saved rather than lost; and the fence releases on success and on every failure path");
 }
+
 async function main() {
   await b1_createRequiresConfirmedSave();
   await b2_manualStartIsolation();
@@ -1620,7 +1665,7 @@ async function main() {
   await active_serverSeparatesCreationFromActivation();
   await active_clientActivatesOnlyOnCommit();
   await final_b1_atomicReplacement();
-  await central_ownershipSeams();
+  await modal_commitIsModal();
   console.log(`AT1 boundary corrections: ${checks} checks passed`);
   for (const line of notes) console.log("  - " + line);
 }

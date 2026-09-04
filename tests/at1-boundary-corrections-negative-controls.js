@@ -846,46 +846,36 @@ async function ncf_structuralShapes() {
   note("NC-FINAL-2/4/5 restoring the put-back, restoring an asynchronous open after the activation, and inserting a single await before the install each make R-B1R go red — the three shapes that independently failed review cannot come back silently");
 }
 /* ===========================================================================
-   NC-CENTRAL — THE TWO OWNERSHIP GUARDS, REMOVED.
+   NC-MODAL — THE FIVE WAYS THE MODAL COMMIT CAN BE UNDONE.
 
-   Both defects were reproduced by going ROUND the presentation lock, so the
-   controls that matter are the ones that prove the lock alone is not the
-   guarantee. Each removes one central guard and shows the exact reproduction
-   coming back.
+   The previous shape guarded dirty(), and that control had to be retired with it:
+   the guard it protected was itself the defect. These replace it, and one of them
+   is specifically the reproduction of that mistake — `P` changed with the
+   counters standing still.
    =========================================================================== */
 
-function centralGate({ createSlug = "film-b", sourceSlug = "film-a" } = {}) {
+function modalGate({ createSlug = "film-b", sourceSlug = "film-a" } = {}) {
   const calls = [];
   let activeProject = sourceSlug;
-  let releaseSwitch = null;
-  const switchGate = new Promise((r) => { releaseSwitch = r; });
+  let releaseCreate = null;
+  const createGate = new Promise((r) => { releaseCreate = r; });
   return {
     calls,
-    releaseSwitch: () => releaseSwitch(),
+    releaseCreate: () => releaseCreate(),
     activeProject: () => activeProject,
     setActiveProject(slug) { activeProject = slug; },
-    switchCalls: () => calls.filter((row) => row.url === "/api/projects/switch"),
-    saves: () => calls.filter((row) => row.method !== "GET" && /\/api\/projects\/[^/]+\/project$/.test(row.url)),
     hook: async (url, options, respond) => {
       const method = (options && options.method) || "GET";
       const body = String((options && options.body) || "");
       calls.push({ url, method, body });
-      if (url === "/api/projects/new") return respond({ ok: true, slug: createSlug }, 200);
+      if (url === "/api/projects/new") { await createGate; return respond({ ok: true, slug: createSlug }, 200); }
       if (url === "/api/projects/switch") {
-        /* THE CODEX ORDERING. The server APPLIES the switch, and only then is the
-           RESPONSE held — which is what the reproduction depends on: the
-           expectation was satisfied when it was checked, and the active project
-           moved again afterwards. Holding before applying would test a different
-           thing (a stale expectation), which the conditional switch already
-           refuses. */
         const request = (() => { try { return JSON.parse(body); } catch { return {}; } })();
         if (Object.prototype.hasOwnProperty.call(request, "expectedActiveProject")
           && String(request.expectedActiveProject || "") !== activeProject) {
-          await switchGate;
           return respond({ ok: false, code: "PROJECT_ACTIVE_CONFLICT", error: "changed", activeProject }, 409);
         }
         activeProject = String(request.slug || activeProject);
-        await switchGate;
         return respond({ ok: true, slug: activeProject }, 200);
       }
       if (method === "GET" && /\/api\/projects\/[^/]+\/project$/.test(url)) {
@@ -904,154 +894,148 @@ function centralGate({ createSlug = "film-b", sourceSlug = "film-a" } = {}) {
     },
   };
 }
-const pressHeld = (context) => evaluate(context, `
+/* The same trusted-delivery model the focused suite uses: capture listeners run
+   first, and a stopped event never reaches its handler. */
+function ncTrustedInteraction(page, type, run) {
+  let stopped = false;
+  const event = {
+    type, isTrusted: true, target: page.context.document.getElementById("main"),
+    preventDefault() {}, stopPropagation() { stopped = true; }, stopImmediatePropagation() { stopped = true; },
+  };
+  for (const handler of (page.documentListeners.get(type) || []).slice()) {
+    handler(event);
+    if (stopped) break;
+  }
+  if (stopped) return { delivered: false };
+  run();
+  return { delivered: true };
+}
+const ncPressHeld = (context) => evaluate(context, `
   setCreationStartPath("scratch");
   setManualStartField("title", "Film B");
   ACTIVE_PROJECT_SLUG = "film-a";
   globalThis.__press = startManualProject();
   return 1;`);
-async function untilSwitchHeld(gate) {
-  for (let i = 0; i < 400; i++) { if (gate.switchCalls().length > 0) return; await tick(); }
-  throw new Error("the activation never reached the wire");
+async function ncUntilCreate(gate) {
+  for (let i = 0; i < 400; i++) { if (gate.calls.some((row) => row.url === "/api/projects/new")) return; await tick(); }
+  throw new Error("the create request never reached the wire");
 }
 
-/* ---- 1. THE MUTATION OWNERSHIP GUARD, REMOVED. ------------------------- */
-const NCC1_ANCHOR = `  const transitionRefusal = projectMutationRefusal();`;
-const NCC1_BREAK = `  const transitionRefusal = "";`;
+/* ---- 1 & 2. THE INTERACTION FENCE, REMOVED. --------------------------- */
+const NCM_ANCHOR = `  beginInteractionFence("opening that project");`;
+const NCM_BREAK = `  /* the modal interaction fence, removed */`;
 
-async function ncc1_mutationGuardRemoved() {
-  anchorIn("public/app.js", NCC1_ANCHOR, "NC-CENTRAL-1");
-  const gate = centralGate();
+async function ncm_fenceRemoved() {
+  anchorIn("public/creation-studio.js", NCM_ANCHOR, "NC-MODAL-1");
+  const gate = modalGate();
   const page = await render("#/create", rawFixture(), {
     fetch: gate.hook,
-    mutateSource: replacing("app.js", NCC1_ANCHOR, NCC1_BREAK),
+    mutateSource: replacing("creation-studio.js", NCM_ANCHOR, NCM_BREAK),
   });
   await evaluateAsync(page.context, `await flushPendingProjectSave(); return 1;`);
-  pressHeld(page.context);
-  await untilSwitchHeld(gate);
+  ncPressHeld(page.context);
+  await ncUntilCreate(gate);
 
-  const attempted = await evaluateAsync(page.context, `
-    const before = SAVE_REVISION;
-    addScene();
-    document.getElementById("ff-title").value = "A scene typed mid-transaction";
-    _formSubmit();
+  /* The route() and switchProject() guards are untouched in this build, and are
+     doing their job — this is the control that says they are not the mechanism. */
+  const lockIntact = await evaluateAsync(page.context, `
+    const busy = manualReplacementBusy();
+    location.hash = "#/shots";
     await route();
-    return { moved: SAVE_REVISION !== before, scenes: P.scenes.length };`);
+    return { busy, heldTheHash: location.hash === "#/create" };`);
+  equal(lockIntact.busy, true, "NC-MODAL-1: the presentation lock is active in this build");
+  equal(lockIntact.heldTheHash, true, "NC-MODAL-1: and still refuses navigation, exactly as before");
 
-  /* THE DEFECT IS GENUINELY VISIBLE: the edit is accepted into a project that is
-     about to be replaced. */
-  equal(attempted.moved, true,
-    "NC-CENTRAL-1 REPRODUCED: without the seam guard, `+ Add → Scene` advances a dirty revision mid-transaction");
-  gate.releaseSwitch();
-  await evaluateAsync(page.context, `try { await globalThis.__press; } catch {} return 1;`);
-  const after = evaluate(page.context, `return { title: P.meta.title, scenes: P.scenes.length };`);
-  equal(after.title, "Film B", "NC-CENTRAL-1 REPRODUCED: and Film B then installs over it");
-  ok(after.scenes !== attempted.scenes,
-    "NC-CENTRAL-1 REPRODUCED: discarding the scene the filmmaker just added");
+  const before = evaluate(page.context, `return { document: JSON.stringify(P), scenes: P.scenes.length };`);
+  const delivered = ncTrustedInteraction(page, "click", () => evaluate(page.context, `
+    addScene();
+    const field = document.getElementById("ff-title");
+    if (field) field.value = "A scene the lock never saw";
+    if (typeof _formSubmit === "function") _formSubmit();
+    return 1;`));
+  const after = evaluate(page.context, `return { document: JSON.stringify(P), scenes: P.scenes.length };`);
 
-  await mustFail("NC-CENTRAL-1", "advanced NO dirty revision", async () => {
-    equal(attempted.moved, false, "the attempted edit advanced NO dirty revision");
+  equal(delivered.delivered, true,
+    "NC-MODAL-2 REPRODUCED: without the fence a trusted `+ Add → Scene` reaches its handler");
+  ok(after.document !== before.document,
+    "NC-MODAL-1 REPRODUCED: and the project document changes — the exact reproduction, with the route/switch guards fully intact");
+  ok(after.scenes > before.scenes, "NC-MODAL-1 REPRODUCED: a scene is added to the film being replaced");
+
+  await mustFail("NC-MODAL-1", "never reached addScene()", async () => {
+    equal(delivered.delivered, false, "the editing action never reached addScene() — the fence refused delivery");
   });
-  note("NC-CENTRAL-1 removing the dirty() ownership guard restores the `+ Add → Scene` reproduction exactly: the edit is accepted, then discarded by the install");
+  await mustFail("NC-MODAL-2", "deep-equal before and after", async () => {
+    equal(after.document, before.document, "the project document is deep-equal before and after every attempted interaction");
+  });
+  gate.releaseCreate();
+  await evaluateAsync(page.context, `try { await globalThis.__press; } catch {} return 1;`);
+  note("NC-MODAL-1/2 removing the central interaction fence lets trusted `+ Add → Scene` reach its handler and change the document, with route() and switchProject() guards fully intact — they explain, the fence enforces");
 }
 
-/* ---- 2. THE INSTALL OWNERSHIP GUARD, REMOVED. ------------------------- */
-const NCC2_ANCHOR = `  if (ownership) {
+/* ---- 3. THE dirty() SUPPRESSION, RESTORED. ---------------------------- */
+const NCM3_ANCHOR = `function dirty() {
+  clearTimeout(saveTimer);`;
+const NCM3_BREAK = `function dirty() {
+  clearTimeout(saveTimer);
+  if (PROJECT_TRANSITION && PROJECT_TRANSITION_WORK === 0) return;`;
+
+async function ncm3_dirtySuppressionRestored() {
+  anchorIn("public/app.js", NCM3_ANCHOR, "NC-MODAL-3");
+  const gate = modalGate();
+  const page = await render("#/create", rawFixture(), {
+    fetch: gate.hook,
+    mutateSource: replacing("app.js", NCM3_ANCHOR, NCM3_BREAK),
+  });
+  await evaluateAsync(page.context, `await flushPendingProjectSave(); return 1;`);
+  ncPressHeld(page.context);
+  await ncUntilCreate(gate);
+
+  /* A legitimate internal mutation — not a user action, so the fence does not
+     touch it and must not. */
+  const seen = evaluate(page.context, `
+    const beforeDocument = JSON.stringify(P);
+    const beforeRevision = SAVE_REVISION;
+    P.meta.logline = "BACKGROUND-MUTATION";
+    dirty();
+    return {
+      changed: JSON.stringify(P) !== beforeDocument,
+      revisionMoved: SAVE_REVISION !== beforeRevision,
+      settled: projectSaveSettled().settled,
+    };`);
+
+  equal(seen.changed, true, "NC-MODAL-3 REPRODUCED: the document changed");
+  equal(seen.revisionMoved, false,
+    "NC-MODAL-3 REPRODUCED: and the counters did NOT — the suppression is back");
+  equal(seen.settled, true,
+    "NC-MODAL-3 REPRODUCED: so projectSaveSettled() reports a settled project that no longer matches what it describes");
+
+  await mustFail("NC-MODAL-3", "dirty() RECORDED it", async () => {
+    ok(seen.revisionMoved, "dirty() RECORDED it — the counters advance normally, which is what the old guard concealed");
+  });
+  gate.releaseCreate();
+  await evaluateAsync(page.context, `try { await globalThis.__press; } catch {} return 1;`);
+  note("NC-MODAL-3 restoring the dirty() suppression reproduces `P changed / counters unchanged / settled true` — the state the certificate cannot detect and the reason the guard was removed");
+}
+
+/* ---- 4. THE INSTALL OWNERSHIP CHECK, REMOVED. ------------------------- */
+const NCM4_ANCHOR = `  if (ownership) {
     if (!PROJECT_TRANSITION || PROJECT_TRANSITION.token !== ownership.token) return false;
     if (ACTIVE_PROJECT_SLUG !== ownership.sourceSlug) return false;
     if (PROJECT_OPEN_EPOCH !== ownership.epoch) return false;
   }`;
-const NCC2_BREAK = `  /* ownership, unchecked */`;
+const NCM4_BREAK = `  /* ownership, unchecked */`;
 
-async function ncc2_installGuardRemoved() {
-  anchorIn("public/app.js", NCC2_ANCHOR, "NC-CENTRAL-2");
-  const gate = centralGate();
+async function ncm4_installOwnershipRemoved() {
+  anchorIn("public/app.js", NCM4_ANCHOR, "NC-MODAL-4");
   const page = await render("#/create", rawFixture(), {
-    fetch: gate.hook,
-    mutateSource: replacing("app.js", NCC2_ANCHOR, NCC2_BREAK),
-  });
-  await evaluateAsync(page.context, `await flushPendingProjectSave(); return 1;`);
-  pressHeld(page.context);
-  await untilSwitchHeld(gate);
-
-  /* Film C becomes current through the ordinary replacement path — the one
-     `+ Project` uses, and the one the presentation lock did not watch. */
-  gate.setActiveProject("film-c");
-  await evaluateAsync(page.context, `
-    const preparedC = await prepareProjectLoad("film-c");
-    commitPreparedProjectLoad(preparedC);
-    return 1;`);
-  equal(evaluate(page.context, `return P.meta.title;`), "Film C", "NC-CENTRAL-2: Film C is current in the browser");
-
-  gate.releaseSwitch();
-  await evaluateAsync(page.context, `try { await globalThis.__press; } catch {} return 1;`);
-  const after = evaluate(page.context, `return { title: P.meta.title };`);
-
-  equal(after.title, "Film B",
-    "NC-CENTRAL-2 REPRODUCED: without the install guard the stale snapshot installs over Film C");
-  equal(gate.activeProject(), "film-c",
-    "NC-CENTRAL-2 REPRODUCED: while the server is still on Film C — browser B, server C");
-  await mustFail("NC-CENTRAL-2", "did NOT install over it", async () => {
-    equal(after.title, "Film C", "the stale prepared Film B did NOT install over it");
-  });
-  note("NC-CENTRAL-2 removing the install ownership check restores browser-B/server-C exactly as reproduced: the prepared snapshot installs because an earlier fence passed");
-}
-
-/* ---- 3. THE PRESENTATION LOCK ALONE IS NOT ENOUGH. -------------------- */
-async function ncc3_presentationLockAlone() {
-  /* Both central guards removed, the route() and switchProject() guards left
-     entirely intact. If the lock were the guarantee, this build would be safe. */
-  const gate = centralGate();
-  const page = await render("#/create", rawFixture(), {
-    fetch: gate.hook,
-    mutateSource: (name, contents) => {
-      if (name !== "app.js") return contents;
-      return String(contents).replace(/\r\n/g, "\n")
-        .split(NCC1_ANCHOR).join(NCC1_BREAK)
-        .split(NCC2_ANCHOR).join(NCC2_BREAK);
-    },
-  });
-  await evaluateAsync(page.context, `await flushPendingProjectSave(); return 1;`);
-  pressHeld(page.context);
-  await untilSwitchHeld(gate);
-
-  const seen = await evaluateAsync(page.context, `
-    /* The lock is present and doing its job on the paths it covers. */
-    const lockPresent = typeof manualReplacementBusy === "function" && manualReplacementBusy();
-    location.hash = "#/shots";
-    await route();
-    const lockHeldTheHash = location.hash === "#/create";
-    /* And the mutation goes through anyway, because it never navigates. */
-    const before = SAVE_REVISION;
-    addScene();
-    document.getElementById("ff-title").value = "A scene the lock never saw";
-    _formSubmit();
-    await route();
-    return { lockPresent, lockHeldTheHash, mutated: SAVE_REVISION !== before };`);
-
-  equal(seen.lockPresent, true, "NC-CENTRAL-3: the presentation lock is active");
-  equal(seen.lockHeldTheHash, true, "NC-CENTRAL-3: and still refuses navigation, exactly as before");
-  equal(seen.mutated, true,
-    "NC-CENTRAL-3 REPRODUCED: yet the mutation lands, because `+ Add → Scene` never navigates — "
-    + "route() and switchProject() guards are not the guarantee");
-  await mustFail("NC-CENTRAL-3", "advanced NO dirty revision", async () => {
-    equal(seen.mutated, false, "the attempted edit advanced NO dirty revision");
-  });
-  gate.releaseSwitch();
-  await evaluateAsync(page.context, `try { await globalThis.__press; } catch {} return 1;`);
-  note("NC-CENTRAL-3 with both central guards removed and the presentation lock fully intact, the reproduction returns — proving the lock explains but does not enforce");
-}
-
-/* ---- 4. A VALID EARLIER FENCE IS NOT A PERMIT TO INSTALL. ------------- */
-async function ncc4_staleCertificateIsNotAPermit() {
-  const page = await render("#/create", rawFixture(), {
-    mutateSource: replacing("app.js", NCC2_ANCHOR, NCC2_BREAK),
+    mutateSource: replacing("app.js", NCM4_ANCHOR, NCM4_BREAK),
   });
   const seen = evaluate(page.context, `
     const prepared = { available: true, slug: "film-b", revision: "rev-b",
       project: JSON.parse(JSON.stringify(P)),
-      scan: { anchors: [], plates: [], props: [], vehicles: [], audio: [], media: [], shots: {} }, config: {}, promptLibrary: { profiles: [] },
-      agentStatus: {}, automationRuns: [], falJobs: [], falLedgerLoaded: false, backgroundRecovery: null };
+      scan: { anchors: [], plates: [], props: [], vehicles: [], audio: [], media: [], shots: {} },
+      config: {}, promptLibrary: { profiles: [] }, agentStatus: {}, automationRuns: [],
+      falJobs: [], falLedgerLoaded: false, backgroundRecovery: null };
     const owned = beginProjectTransition("opening another project");
     const ownedCopy = { token: owned.token, sourceSlug: owned.sourceSlug, epoch: owned.epoch };
     const fenceSaysYes = createReplacementRefusal(createReplacementCertificate()) === "";
@@ -1060,36 +1044,65 @@ async function ncc4_staleCertificateIsNotAPermit() {
     const installed = commitPreparedProjectLoad(prepared, ownedCopy);
     endProjectTransition(owned.token);
     return { fenceSaysYes, installed };`);
-  equal(seen.fenceSaysYes, true, "NC-CENTRAL-4: the earlier fence was satisfied");
+  equal(seen.fenceSaysYes, true, "NC-MODAL-4: the earlier fence was satisfied when the snapshot was prepared");
   equal(seen.installed, true,
-    "NC-CENTRAL-4 REPRODUCED: without the ownership check a superseded snapshot installs on the strength of that fence alone");
-  await mustFail("NC-CENTRAL-4", "refuses a superseded transaction", async () => {
+    "NC-MODAL-4 REPRODUCED: without the ownership check a superseded snapshot installs on the strength of that fence alone");
+  await mustFail("NC-MODAL-4", "refuses a superseded transaction", async () => {
     equal(seen.installed, false, "the install ownership check refuses a superseded transaction anyway");
   });
-  note("NC-CENTRAL-4 a stale prepared snapshot installs whenever the ownership check is absent, however valid the certificate that authorised its preparation was");
+  note("NC-MODAL-4 a stale prepared snapshot still installs whenever the synchronous ownership check is absent, however valid the certificate that authorised its preparation was");
 }
 
-/* ---- AND THE GUARANTEE MUST NOT DEGRADE INTO A LIST OF BUTTONS. ------- */
-function ncc_seamNotAList() {
-  const app = codeOnly(readLF("public/app.js"));
-  const guardAt = app.indexOf("function dirty()");
-  ok(guardAt >= 0, "NC-CENTRAL: dirty() is still the seam");
-  const guard = app.slice(guardAt, app.indexOf("\n}", guardAt));
-  ok(/projectMutationRefusal\s*\(/.test(guard),
-    "NC-CENTRAL: and the transaction rule is enforced inside it");
-  /* The rule must not name controls. If a future edit starts enumerating
-     writers, the guarantee has moved back to a blessed list. */
-  for (const control of ["addScene", "addShot", "addEntity", "setGlobalCreationField", "openGlobalAdd", "newProject"]) {
-    ok(!new RegExp(`\\b${control}\\b`).test(guard),
-      `NC-CENTRAL RETIRED: the seam must not name ${control} — the guarantee is the seam, not a list of buttons`);
-  }
-  const owner = app.slice(app.indexOf("function projectMutationRefusal()"), app.indexOf("\n}", app.indexOf("function projectMutationRefusal()")));
-  for (const control of ["addScene", "addShot", "addEntity", "setGlobalCreationField"]) {
-    ok(!new RegExp(`\\b${control}\\b`).test(owner),
-      `NC-CENTRAL RETIRED: nor may the ownership predicate name ${control}`);
-  }
-  note("NC-CENTRAL the rule lives in dirty() and its ownership predicate, and neither names a single control — a regression to enumerating buttons fails here");
+/* ---- 5. THE FENCE FAILS TO RELEASE. ----------------------------------- */
+const NCM5_ANCHOR = `    endInteractionFence();`;
+const NCM5_BREAK = `    /* released only on success */ if (false) endInteractionFence();`;
+
+async function ncm5_fenceNeverReleases() {
+  anchorIn("public/creation-studio.js", NCM5_ANCHOR, "NC-MODAL-5");
+  const gate = modalGate();
+  gate.setActiveProject("film-c");   /* the activation will conflict */
+  const page = await render("#/create", rawFixture(), {
+    fetch: gate.hook,
+    mutateSource: replacing("creation-studio.js", NCM5_ANCHOR, NCM5_BREAK),
+  });
+  await evaluateAsync(page.context, `await flushPendingProjectSave(); return 1;`);
+  ncPressHeld(page.context);
+  await ncUntilCreate(gate);
+  gate.releaseCreate();
+  await evaluateAsync(page.context, `try { await globalThis.__press; } catch {} return 1;`);
+
+  const stranded = evaluate(page.context, `return { fence: interactionFenceActive() };`);
+  const usable = ncTrustedInteraction(page, "click", () => 1);
+  equal(stranded.fence, true,
+    "NC-MODAL-5 REPRODUCED: an error path that does not release leaves the fence up");
+  equal(usable.delivered, false,
+    "NC-MODAL-5 REPRODUCED: and the window is stranded — no interaction is delivered ever again");
+  await mustFail("NC-MODAL-5", "the interaction fence released", async () => {
+    equal(stranded.fence, false, "the interaction fence released");
+  });
+  note("NC-MODAL-5 releasing the fence anywhere but a finally strands the window inert after a failed activation, which is worse than the race it closes");
 }
+
+/* ---- AND THE FENCE MUST NOT DEGRADE INTO A LIST OF CONTROLS. ---------- */
+function ncm_fenceNotAList() {
+  const app = codeOnly(readLF("public/app.js"));
+  const at = app.indexOf("function interactionFenceHandler(");
+  ok(at >= 0, "NC-MODAL: the interaction fence handler is still the boundary");
+  const handler = app.slice(at, app.indexOf("\n}", at));
+  ok(/isTrusted\s*!==\s*true/.test(handler),
+    "NC-MODAL: it fences trusted events only, so internal and background work is untouched");
+  for (const control of ["addScene", "addShot", "addEntity", "setGlobalCreationField", "newProject", "global-add"]) {
+    ok(!new RegExp(control).test(handler),
+      `NC-MODAL RETIRED: the fence must not name ${control} — the guarantee is the boundary, not a list of controls`);
+  }
+  /* And dirty() must not have grown a transaction opinion again. */
+  const dirtyAt = app.indexOf("function dirty()");
+  const dirtyBody = app.slice(dirtyAt, app.indexOf("\n}", dirtyAt));
+  ok(!/PROJECT_TRANSITION/.test(dirtyBody),
+    "NC-MODAL RETIRED: dirty() must not consult the replacement transaction — that guard ran after the mutation");
+  note("NC-MODAL the fence names no control and fences only trusted events, and dirty() holds no opinion about replacement transactions");
+}
+
 async function main() {
   await nc_b1_resolvedFlushIsNotSaved();
   await nc_b2_openProjectWriterReturns();
@@ -1103,11 +1116,11 @@ async function main() {
   await ncf3_serverConditionRemoved();
   await ncf6_lockRemoved();
   await ncf_structuralShapes();
-  await ncc1_mutationGuardRemoved();
-  await ncc2_installGuardRemoved();
-  await ncc3_presentationLockAlone();
-  await ncc4_staleCertificateIsNotAPermit();
-  ncc_seamNotAList();
+  await ncm_fenceRemoved();
+  await ncm3_dirtySuppressionRestored();
+  await ncm4_installOwnershipRemoved();
+  await ncm5_fenceNeverReleases();
+  ncm_fenceNotAList();
   console.log(`AT1 boundary corrections negative controls: ${checks} checks passed`);
   for (const line of notes) console.log("  - " + line);
 }
