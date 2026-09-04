@@ -6061,10 +6061,17 @@ window.startManualProject = async () => {
   if (MANUAL_START_IN_FLIGHT) return toast("Already creating that project…");
   if (!title) return refuse("Give the new project a title before creating it.", "manual-start:title-required");
   MANUAL_START_IN_FLIGHT = true;
+  /* THE TRANSACTION IS LOCKED FOR ITS WHOLE LENGTH, INCLUDING THE SAVE.
+     The open project is certified at an exact revision inside this window, so an
+     edit made to it anywhere between here and the install would be certified by
+     nothing. The lock refuses that navigation out loud; the finally releases it
+     on every path, so no refusal can strand the window between two projects. */
+  beginManualReplacement("saving the project you have open");
   try {
     return await startManualProjectCommit(draft, title, refuse);
   } finally {
     MANUAL_START_IN_FLIGHT = false;
+    endManualReplacement();
   }
 };
 /* A CREATION THAT SUCCEEDED BUT COULD NOT BE OPENED YET.
@@ -6085,6 +6092,55 @@ window.startManualProject = async () => {
  * forgotten one leaves an ordinary empty project the switcher can open. */
 const MANUAL_START_PENDING =
   window.__cinebraidManualStartPending || (window.__cinebraidManualStartPending = { slug: "", title: "" });
+
+/* ==========================================================================
+   THE REPLACEMENT LOCK.
+
+   CREATE THIS PROJECT is a short transaction across several awaits: certify the
+   open project, create the new one inactive, prepare it completely, activate it
+   conditionally, install it synchronously. For the length of that transaction
+   the window is BETWEEN two projects, and the open one has been certified at an
+   exact revision the commit is about to replace. An edit made to it in that
+   window would be certified by nothing and discarded by the install.
+
+   So the transaction is locked, and the lock REFUSES rather than ignores: route()
+   puts the hash back and says why, and switchProject() declines. Nothing is left
+   looking editable while its edits are being dropped.
+
+   It covers only this transaction. It is set when the press begins and cleared in
+   a finally, including on every refusal path, so ordinary editing is never behind
+   it and a failed press cannot strand the window. */
+const MANUAL_REPLACEMENT =
+  window.__cinebraidManualReplacement || (window.__cinebraidManualReplacement = { active: false, from: "", stage: "" });
+
+window.manualReplacementBusy = () => !!MANUAL_REPLACEMENT.active;
+window.manualReplacementBusyMessage = () =>
+  `CineBraid is ${MANUAL_REPLACEMENT.stage || "creating that project"}. This will finish in a moment.`;
+/* True when this navigation must not happen, having already put the hash back.
+   The creation surface itself stays reachable — that is where the transaction is
+   being reported — and everything that would open the outgoing project does not. */
+window.manualReplacementNavigationRefused = (hash) => {
+  if (!MANUAL_REPLACEMENT.active) return false;
+  if (String(hash || "").startsWith("#/create")) return false;
+  if (location.hash !== "#/create") location.hash = "#/create";
+  toast(manualReplacementBusyMessage());
+  return true;
+};
+function beginManualReplacement(stage) {
+  MANUAL_REPLACEMENT.active = true;
+  MANUAL_REPLACEMENT.from = ACTIVE_PROJECT_SLUG;
+  MANUAL_REPLACEMENT.stage = stage;
+  route();
+}
+function manualReplacementStage(stage) {
+  if (!MANUAL_REPLACEMENT.active) return;
+  MANUAL_REPLACEMENT.stage = stage;
+}
+function endManualReplacement() {
+  MANUAL_REPLACEMENT.active = false;
+  MANUAL_REPLACEMENT.from = "";
+  MANUAL_REPLACEMENT.stage = "";
+}
 
 /* Whether the window is still looking at the project the certificate was taken
    for. Distinguishes "Film A moved" — which a save can resolve — from "we are
@@ -6140,31 +6196,25 @@ async function startManualProjectCommit(draft, title, refuse) {
     );
   }
   /* THE CERTIFICATE. Taken while the settled verdict above is still the truth,
-     and carried across the request so the replacement can be checked against
+     and carried across every await below so the replacement is checked against
      what was actually certified rather than against a boolean. */
-  const certificate = typeof createReplacementCertificate === "function"
+  let certificate = typeof createReplacementCertificate === "function"
     ? createReplacementCertificate()
     : { ok: true };
 
   /* THE POST IS NOT REPEATED FOR A CREATION THAT ALREADY SUCCEEDED.
-     If a previous press created the project and the replacement fence then
-     refused, the project EXISTS. Pressing again must finish that creation, not
-     make a second identical project. */
-  /* Resuming or not, the activation below is the same one explicit act, so there
-     is nothing here that needs to know which of the two this press is. */
+     If a previous press created the project and the transaction then stopped,
+     the project EXISTS. Pressing again must finish that creation, not make a
+     second identical project. */
   let created = MANUAL_START_PENDING.slug ? { slug: MANUAL_START_PENDING.slug } : null;
   if (!created) {
     try {
       const response = await fetch("/api/projects/new", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        /* CREATED, NOT ACTIVATED. The fence below decides whether the switch is
-           safe, and it can refuse — so the server must not have already made
-           this project current. Without this the browser stayed in the open
-           project on a refusal while `activeProject` named the new one, and a
-           reload opened the project the fence had just declined to switch to,
-           discarding the edit the refusal existed to protect. Activation is one
-           explicit act, through /api/projects/switch, at the commit below. */
+        /* CREATED, NOT ACTIVATED. Activation happens once, at the conditional
+           switch below, when the new project is fully prepared and this window
+           is ready to install it in the same synchronous breath. */
         body: JSON.stringify({
           title, format: draft.format || "", aspectRatio: draft.aspectRatio || "", activate: false,
         }),
@@ -6177,49 +6227,59 @@ async function startManualProjectCommit(draft, title, refuse) {
         "manual-start:create-failed",
       );
     }
-    /* IT EXISTS NOW. Recorded before anything can refuse the replacement, so a
+    /* IT EXISTS NOW. Recorded before anything can stop the transaction, so a
        refusal can never strand a created project behind a draft that would
        create a second one. */
     MANUAL_START_PENDING.slug = String(created.slug || "");
     MANUAL_START_PENDING.title = title;
   }
 
-  /* ---- THE REPLACEMENT FENCE -------------------------------------------
-     The POST was an await. Everything the certificate described may have moved
-     while it was on the wire, so it is checked HERE rather than trusted. */
-  /* The certificate the replacement is ultimately authorised by. It starts as
-     the one taken before the request and is REPLACED if the open project moved
-     and was brought back to a saved state below — the later activation must be
-     validated against what was actually certified last, not against a snapshot
-     that has since been superseded. */
-  let effective = certificate;
-  let refusal = typeof createReplacementRefusal === "function"
-    ? createReplacementRefusal(effective)
-    : "";
+  /* ---- PREPARE THE NEW PROJECT, WITHOUT REPLACING ANYTHING ---------------
+     Every asynchronous read the open needs, against the new project's own slug,
+     while the open project is still the active one on both sides. Nothing here
+     touches P, the slug, the hash, the save counters or the indicator. */
+  manualReplacementStage("opening that project");
+  let prepared = null;
+  try {
+    prepared = typeof prepareProjectLoad === "function"
+      ? await prepareProjectLoad(MANUAL_START_PENDING.slug)
+      : null;
+  } catch (error) {
+    prepared = null;
+  }
+  if (!prepared || !prepared.available) {
+    return refuse(
+      `${MANUAL_START_PENDING.title || title} was created, but CineBraid could not read it back, so it did not switch to it. `
+      + `You are still in ${P?.meta?.title || "the project you have open"}. `
+      + `Press CREATE THIS PROJECT again to open it — it will not be created twice.`,
+      "manual-start:prepare-failed",
+    );
+  }
 
+  /* ---- REVALIDATE, NOW THAT EVERY AWAIT IS BEHIND US ---------------------
+     The certificate described the open project before the creation and the
+     preparation. Both were round trips. */
+  let refusal = typeof createReplacementRefusal === "function"
+    ? createReplacementRefusal(certificate)
+    : "";
   if (refusal && stillTheSameOpenProject(certificate)) {
     /* THE OPEN PROJECT MOVED, BUT IT IS STILL THE SAME PROJECT. Bring whatever
-       it now holds through the ordinary save loop and ask again — for the
-       revision it holds NOW, not the one that was certified. */
+       it now holds through the ordinary save loop and certify THAT revision. */
     try {
       await flushPendingProjectSave();
     } catch { /* the save chain reports its own failure; the fence below decides */ }
-    effective = typeof createReplacementCertificate === "function"
+    certificate = typeof createReplacementCertificate === "function"
       ? createReplacementCertificate()
       : { ok: true };
     refusal = typeof createReplacementRefusal === "function"
-      ? createReplacementRefusal(effective)
+      ? createReplacementRefusal(certificate)
       : "";
   }
-
   if (refusal) {
-    /* NOTHING IS REPLACED. No load(), no hash change, no reset of the save
-       machinery: the project stays open, its edit stays in the tab, and its own
-       refusal stays on screen beside it. The created project is remembered, so
-       the next press finishes it instead of making another one. */
-    /* Some reasons are whole sentences from the save loop and already end in a
-       full stop; this one sentence is composed from them, so it must not read
-       "refused.. You are still in". */
+    /* NOTHING WAS ACTIVATED AND NOTHING IS REPLACED. The new project is on disk
+       and inactive; the open project keeps its edit, its refusal and its save
+       counters, and both sides still name it. There is nothing to put back
+       because nothing was moved. */
     const because = String(refusal).replace(/\s*\.\s*$/, "");
     return refuse(
       `${MANUAL_START_PENDING.title || title} was created, but CineBraid did not switch to it: ${because}. `
@@ -6229,70 +6289,57 @@ async function startManualProjectCommit(draft, title, refuse) {
     );
   }
 
-  /* ---- ACTIVATE, THEN COMMIT ---------------------------------------------
-     The project was created WITHOUT activation, so this is the act that makes it
-     current — the shipped switch route, named explicitly rather than inferred
-     from whatever the server last had active.
+  /* ---- CONDITIONAL ACTIVATION -------------------------------------------
+     The last await, and the point of no return. The request states which project
+     this window believes is active; the server checks and writes in one
+     synchronous section. If a third project became active in the meantime the
+     switch does not happen AT ALL — that project keeps the window, nothing is
+     overwritten, and there is nothing to restore.
 
-     THIS IS AN AWAIT, SO THE VERDICT IS TAKEN AGAIN AFTER IT. The fence's whole
-     point is that a verdict stops being true the moment the event loop is given
-     back, and activating is a round trip like any other. A filmmaker can type
-     into Film A while the switch is on the wire, and load() would discard it. */
-  const openingSlug = MANUAL_START_PENDING.slug;
-  const sourceSlug = effective.ok ? effective.slug : ACTIVE_PROJECT_SLUG;
+     THERE IS NO PUT-BACK. The previous shape activated unconditionally and
+     switched back on discovering a stale source, which could overwrite a
+     legitimate switch and could itself fail. If this window is not ready to
+     commit, the new project is simply never activated. */
+  let activation = null;
   try {
-    const switched = await fetch("/api/projects/switch", {
+    const response = await fetch("/api/projects/switch", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ slug: openingSlug }),
+      body: JSON.stringify({ slug: MANUAL_START_PENDING.slug, expectedActiveProject: certificate.slug }),
     });
-    if (!switched.ok) throw new Error((await switched.json().catch(() => ({}))).error || "Could not open the new project");
+    activation = await response.json().catch(() => ({}));
+    if (!response.ok) throw new Error(activation.error || "The project could not be opened");
   } catch (error) {
     return refuse(
-      `${MANUAL_START_PENDING.title || title} was created, but CineBraid could not open it: `
-      + `${String(error.message || "the project could not be opened").replace(/\s*\.\s*$/, "")}. `
+      `${MANUAL_START_PENDING.title || title} was created, but CineBraid did not switch to it: `
+      + `${String(error.message || "the active project changed").replace(/\s*\.\s*$/, "")}. `
       + `You are still in ${P?.meta?.title || "the project you have open"}. `
       + `Press CREATE THIS PROJECT again to open it — it will not be created twice.`,
-      "manual-start:activate-failed",
+      "manual-start:activation-refused",
     );
   }
 
-  /* THE LAST VERDICT, AND NOTHING IS AWAITED BETWEEN IT AND THE REPLACEMENT. */
-  const finalRefusal = typeof createReplacementRefusal === "function"
-    ? createReplacementRefusal(effective)
-    : "";
-  if (finalRefusal) {
-    /* AN EDIT LANDED WHILE THE SWITCH WAS IN FLIGHT. The server now says the new
-       project is current and this window says otherwise, which is the exact
-       disagreement this correction exists to remove — so the activation is put
-       back before refusing. The creation stays pending and nothing is deleted. */
-    try {
-      if (sourceSlug) {
-        await fetch("/api/projects/switch", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ slug: sourceSlug }),
-        });
-      }
-    } catch { /* reported by the refusal below; nothing was replaced either way */ }
-    const because = String(finalRefusal).replace(/\s*\.\s*$/, "");
+  /* ---- INSTALL, SYNCHRONOUSLY -------------------------------------------
+     NOTHING IS AWAITED FROM HERE TO THE END OF THIS FUNCTION. The snapshot was
+     read before the activation, so the project the server just made current is
+     installed in this same breath. That is the whole point of preparing first:
+     there is no interval in which the server says one thing and this window
+     says another. */
+  if (!commitPreparedProjectLoad(prepared)) {
     return refuse(
-      `${MANUAL_START_PENDING.title || title} was created, but CineBraid did not switch to it: ${because}. `
-      + `You are still in ${P?.meta?.title || "the project you have open"}, and the work you have not saved is still here. `
-      + `Resolve that save and press CREATE THIS PROJECT again to open ${MANUAL_START_PENDING.title || title} — it will not be created twice.`,
-      "manual-start:replacement-unsafe",
+      `${MANUAL_START_PENDING.title || title} was created and opened, but CineBraid could not install it in this window. Reload to continue in it.`,
+      "manual-start:install-refused",
     );
   }
-
   /* Consumed, not merely hidden: the draft described a project that now exists,
-     and it is now the current one on both sides. */
+     and it is the current one on both sides. */
   CREATION_MANUAL_IDENTITY.title = "";
   CREATION_MANUAL_IDENTITY.format = "";
   CREATION_MANUAL_IDENTITY.aspectRatio = "";
   window.__cinebraidProjectEntryLanding = null;
   MANUAL_START_PENDING.slug = "";
   MANUAL_START_PENDING.title = "";
-  await load();
+  endManualReplacement();
   /* Into the normal production flow, which is where a project with no shots
      offers ADD THE FIRST SHOT and that button now actually adds one. */
   location.hash = "#/production";
@@ -6309,7 +6356,12 @@ function creationManualIdentityCard() {
       ${field("Aspect ratio", `<input list="cinebraid-aspect-presets" value="${attr(draft.aspectRatio || "")}" placeholder="16:9" onchange="setManualStartField('aspectRatio',this.value)"><datalist id="cinebraid-aspect-presets">${CINEBRAID_ASPECT_PRESETS.map(([value, label]) => `<option value="${attr(value)}">${esc(label)}</option>`).join("")}</datalist><span class="hint">The frame every shot is judged in unless a shot overrides it.</span>`)}
     </div>
     ${typeof actionRefusalMarkup === "function" ? actionRefusalMarkup("manual-start") : ""}
-    <div class="creation-manual-commit"><button class="assemble-btn" data-manual-start-commit onclick="startManualProject()">CREATE THIS PROJECT</button><small>Creates a separate project and opens it. ${esc(P.meta.title || "The project you have open")} stays exactly as it is.</small></div>
+    <div class="creation-manual-commit"><button class="assemble-btn" data-manual-start-commit ${MANUAL_REPLACEMENT.active ? `disabled data-manual-start-busy="${attr(MANUAL_REPLACEMENT.stage || "working")}"` : ""} onclick="startManualProject()">${MANUAL_REPLACEMENT.active ? "CREATING…" : "CREATE THIS PROJECT"}</button><small>${MANUAL_REPLACEMENT.active
+      /* SAYING WHICH PART IS HAPPENING, because the transaction holds the window
+         between two projects and a filmmaker is entitled to know why the rest of
+         the screen is refusing them. */
+      ? `CineBraid is ${esc(MANUAL_REPLACEMENT.stage || "creating that project")}. ${esc(P.meta.title || "The project you have open")} stays open until it is ready.`
+      : `Creates a separate project and opens it. ${esc(P.meta.title || "The project you have open")} stays exactly as it is.`}</small></div>
   </section>`;
 }
 function creationManualWorkspace() {

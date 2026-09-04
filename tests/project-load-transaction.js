@@ -2864,12 +2864,12 @@ const TRIGGER_WITHOUT_BINDING = `  const timer = setTimeout(() => {
   }, ms);`;
 /* The identity swap as it shipped: the slug and revision installed from the
    response BEFORE the record, with an await still to come. */
-const REPAIRED_PREPARE_IDENTITY = `    slug: projectResponse.headers?.get?.("x-cinebraid-project-slug") || "",
+const REPAIRED_PREPARE_IDENTITY = `    slug: projectResponse.headers?.get?.("x-cinebraid-project-slug") || slug || "",
     revision:
       projectResponse.headers?.get?.("x-cinebraid-project-revision") ||
       projectResponse.headers?.get?.("etag") ||
       "",`;
-const PREPARE_INSTALLS_IDENTITY = `    slug: (ACTIVE_PROJECT_SLUG = projectResponse.headers?.get?.("x-cinebraid-project-slug") || ACTIVE_PROJECT_SLUG || "fixture"),
+const PREPARE_INSTALLS_IDENTITY = `    slug: (ACTIVE_PROJECT_SLUG = projectResponse.headers?.get?.("x-cinebraid-project-slug") || slug || ACTIVE_PROJECT_SLUG || "fixture"),
     revision: (PROJECT_REVISION =
       projectResponse.headers?.get?.("x-cinebraid-project-revision") ||
       projectResponse.headers?.get?.("etag") ||

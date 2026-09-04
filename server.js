@@ -2114,11 +2114,19 @@ function syncConfiguredMediaRoot() {
    at one (tests/media-asset-activation-boundary.js); a second reader in server.js
    would be a second answer to "who reads the ledger, and when", which is the
    property activation was granted in exchange for. */
-function mediaIdentityIndex() {
-  return MediaAssetService.identityIndex({ projectsRoot: projectsRoot(), slug: activeSlug() });
+/* SCOPED TO THE ACTIVE PROJECT BY DEFAULT, AND ONLY BY DEFAULT.
+ *
+ * B1 needs one project read while a DIFFERENT project is active: the manual
+ * create path prepares the new project completely before it activates it, so
+ * there is never a moment when the server says one thing and the window is still
+ * operating on another. The scope is an optional argument with the previous
+ * value as its default, so all eighteen existing callers are unchanged and no
+ * global is mutated to fake an active project. */
+function mediaIdentityIndex(slug = activeSlug()) {
+  return MediaAssetService.identityIndex({ projectsRoot: projectsRoot(), slug });
 }
-function listMedia(rel, identity = null) {
-  const dir = path.join(PROJECT_DIR(), rel);
+function listMedia(rel, identity = null, base = PROJECT_DIR()) {
+  const dir = path.join(base, rel);
   if (!fs.existsSync(dir)) return [];
   const relPosix = rel.split(path.sep).join("/");
   return fs
@@ -2169,31 +2177,47 @@ function noteProjectActivity(reason, slug = activeSlug(), project = null) {
   });
 }
 
-function scanProject() {
-  const sync = syncConfiguredMediaRoot();
-  const shotsDir = path.join(PROJECT_DIR(), "shots");
+function scanProject(slug = "") {
+  /* The configured media root syncs INTO the active project, so a scoped scan of
+     a project that is not active must not run it — it would copy another
+     project's incoming media into the one being prepared. */
+  const scoped = !!slug && slug !== activeSlug();
+  const sync = scoped ? { ran: false, scoped: true } : syncConfiguredMediaRoot();
+  const base = scoped ? path.join(projectsRoot(), slug) : PROJECT_DIR();
+  const shotsDir = path.join(base, "shots");
   const shots = {};
-  const identity = mediaIdentityIndex();
+  const identity = mediaIdentityIndex(scoped ? slug : undefined);
   if (fs.existsSync(shotsDir))
     for (const id of fs.readdirSync(shotsDir))
       shots[id] = {
-        takes: listMedia(path.join("shots", id, "takes"), identity),
-        locked: listMedia(path.join("shots", id, "locked"), identity),
-        blocking: listMedia(path.join("shots", id, "blocking"), identity),
+        takes: listMedia(path.join("shots", id, "takes"), identity, base),
+        locked: listMedia(path.join("shots", id, "locked"), identity, base),
+        blocking: listMedia(path.join("shots", id, "blocking"), identity, base),
       };
   return {
-    anchors: listMedia("anchors", identity),
-    plates: listMedia("plates", identity),
-    props: listMedia("props", identity),
-    vehicles: listMedia("vehicles", identity),
-    audio: listMedia("audio", identity),
-    media: listMedia("media", identity),
+    anchors: listMedia("anchors", identity, base),
+    plates: listMedia("plates", identity, base),
+    props: listMedia("props", identity, base),
+    vehicles: listMedia("vehicles", identity, base),
+    audio: listMedia("audio", identity, base),
+    media: listMedia("media", identity, base),
     shots,
     workspaceSync: sync,
   };
 }
 app.get("/api/scan", (req, res) => {
-  const scan = scanProject();
+  /* Contained through the same helper config.activeProject passes through, so a
+     scope cannot address anything outside the projects root. An unknown or
+     uncontained slug is refused rather than silently falling back to the active
+     project, which would answer a question nobody asked. */
+  const requested = String(req.query.project || "").trim();
+  let scope = "";
+  if (requested) {
+    scope = containedProjectSlug(requested) || "";
+    if (!scope || !fs.existsSync(path.join(projectsRoot(), scope, "project.json")))
+      return res.status(404).json({ error: "No such project to scan.", code: "PROJECT_NOT_FOUND" });
+  }
+  const scan = scanProject(scope);
   /* After the sync copy, so media just brought in from a configured mediaRoot is
      visible to the pass. Scheduled, never awaited — the scan answers now. */
   noteProjectActivity("scan");
@@ -9106,6 +9130,38 @@ app.post("/api/projects/switch", (req, res) => {
   if (!inspected.ok)
     return res.status(inspected.status).json(projectFailurePayload(inspected));
   const c = readConfig();
+  /* A CONDITIONAL SWITCH, AND IT IS WHAT REPLACES THE PUT-BACK.
+   *
+   * B1's manual create path prepares the new project completely and then
+   * activates it. Between reading `activeProject` and writing it, the filmmaker
+   * may legitimately have switched to a third project — and the previous
+   * correction handled that by activating anyway and switching BACK afterwards,
+   * which could overwrite that legitimate switch and could itself fail, leaving
+   * the browser and the server naming different projects with nothing left to
+   * repair it.
+   *
+   * So the caller states which project it believes is active, and the check and
+   * the write happen HERE, in one synchronous section with no await between
+   * them. If the belief is wrong the switch does not happen at all: the caller
+   * is told, and whatever is actually active stays active. Nothing is restored,
+   * because nothing was overwritten.
+   *
+   * `expectedActiveProject` is optional. An ordinary switch — the switcher, the
+   * recovery screens — states no expectation and is unconditional exactly as
+   * before. */
+  if (Object.prototype.hasOwnProperty.call(req.body || {}, "expectedActiveProject")) {
+    const expected = containedProjectSlug(String(req.body.expectedActiveProject || "")) || "";
+    const current = activeSlug() || "";
+    if (expected !== current) {
+      return res.status(409).json({
+        ok: false,
+        code: "PROJECT_ACTIVE_CONFLICT",
+        error: "The active project changed before this switch, so it was not made.",
+        expected,
+        activeProject: current,
+      });
+    }
+  }
   c.activeProject = inspected.slug;
   writeConfig(c);
   /* After the switch is committed, so the pass indexes the project that is now

@@ -95,6 +95,19 @@ function persist(project, successor, writeClass = seam.WRITE_CLASSES.NORMAL_SAVE
    B1 — CREATING A PROJECT REQUIRES A POSITIVELY CONFIRMED SAVE.
    =========================================================================== */
 
+/* The manual create path now PREPARES the new project before it activates it, so
+   every stub that drives a creation must be able to serve that project's own
+   document and its scoped scan. Answering them here keeps each stub's own
+   scenario about the thing it is testing. */
+function preparedProjectRoutes(createSlug, project) {
+  return (url, options, respond) => {
+    if (url === `/api/projects/${createSlug}/project`) {
+      return respond(project, 200, { "x-cinebraid-project-slug": createSlug, "x-cinebraid-project-revision": `rev-${createSlug}`, etag: `rev-${createSlug}` });
+    }
+    if (url.startsWith("/api/scan?project=")) return respond({ anchors: [], plates: [], props: [], vehicles: [], audio: [], media: [], shots: {} }, 200);
+    return null;
+  };
+}
 /* A save response that REFUSES without throwing — which is the whole premise of
    the defect. 409 and 422 both land here. */
 function refusingFetch(status, body) {
@@ -103,6 +116,9 @@ function refusingFetch(status, body) {
     calls,
     hook: async (url, options, respond) => {
       calls.push({ url, method: (options && options.method) || "GET" });
+      const preparedRoute = preparedProjectRoutes("new-project", rawFixture())(url, options, respond);
+      if (preparedRoute) return preparedRoute;
+      if (url === "/api/projects/switch") return respond({ ok: true, slug: "new-project" }, 200);
       if (/\/api\/projects\/[^/]+\/(project|canon-transition)$/.test(url)) return respond(body, status);
       if (url === "/api/projects/new") return respond({ slug: "new-project", title: "Created" }, 200);
       return null;
@@ -232,8 +248,14 @@ async function b1_createRequiresConfirmedSave() {
   const okCalls = [];
   const good = await render("#/create", rawFixture(), {
     fetch: async (url, options, respond) => {
-      okCalls.push({ url, method: (options && options.method) || "GET" });
-      if (/\/api\/projects\/[^/]+\/project$/.test(url)) {
+      const method = (options && options.method) || "GET";
+      okCalls.push({ url, method });
+      /* The same path serves a SAVE (PUT) and the prepare READ (GET), and they
+         are different answers — a save receipt is not a project document. */
+      const preparedRoute = preparedProjectRoutes("the-new-film", rawFixture())(url, options, respond);
+      if (method === "GET" && preparedRoute) return preparedRoute;
+      if (url === "/api/projects/switch") return respond({ ok: true, slug: "the-new-film" }, 200);
+      if (method !== "GET" && /\/api\/projects\/[^/]+\/project$/.test(url)) {
         return respond({ project: null, revision: "rev-2" }, 200, { "x-cinebraid-project-revision": "rev-2" });
       }
       if (url === "/api/projects/new") return respond({ slug: "the-new-film", title: "The New Film" }, 200);
@@ -321,9 +343,16 @@ async function b2_manualStartIsolation() {
 
   /* B2.4 — CREATE PRODUCES FILM B WITH THE DRAFT VALUES, AND FILM A IS UNCHANGED. */
   const posts = [];
+  const okBodies = [];
   const commitPage = await render("#/create", (() => { const p = rawFixture(); p.meta.title = "Film A"; return p; })(), {
     fetch: async (url, options, respond) => {
-      if (/\/api\/projects\/[^/]+\/project$/.test(url)) return respond({ revision: "rev-2" }, 200, { "x-cinebraid-project-revision": "rev-2" });
+      const method = (options && options.method) || "GET";
+      okBodies.push({ url, method, body: String((options && options.body) || "") });
+      const filmB = rawFixture(); filmB.meta.title = "Film B";
+      const preparedRoute = preparedProjectRoutes("film-b", filmB)(url, options, respond);
+      if (method === "GET" && preparedRoute) return preparedRoute;
+      if (url === "/api/projects/switch") return respond({ ok: true, slug: "film-b" }, 200);
+      if (method !== "GET" && /\/api\/projects\/[^/]+\/project$/.test(url)) return respond({ revision: "rev-2" }, 200, { "x-cinebraid-project-revision": "rev-2" });
       if (url === "/api/projects/new") {
         posts.push(JSON.parse(String((options && options.body) || "{}")));
         return respond({ slug: "film-b", title: "Film B" }, 200);
@@ -344,14 +373,18 @@ async function b2_manualStartIsolation() {
   equal(posts[0].title, "Film B", "B2.4: with the draft's title");
   equal(posts[0].format, "Feature film", "B2.4: its format");
   equal(posts[0].aspectRatio, "2.39:1", "B2.4: and its aspect ratio");
-  /* Film A's identity is untouched by creating Film B. A successful create
-     reloads, and the harness serves Film A back, so this is read after the
-     reload: the draft's title, format and aspect went to the NEW project and
-     none of them landed on the one that was open. */
-  equal(committed.after.title, "Film A", "B2.4: Film A was not renamed by creating Film B");
-  equal(committed.after.title, committed.before.title, "B2.4: its title is what it was");
-  equal(committed.after.style, committed.before.style, "B2.4: its global style is what it was");
-  equal(committed.after.aspect, committed.before.aspect, "B2.4: and its aspect ratio is what it was");
+  /* The draft's title, format and aspect went to the NEW project and none of
+     them landed on the one that was open. Film A was named "Film A" while the
+     press was made — asserted before the commit — and the window is in Film B
+     afterwards because a successful create now installs the prepared project
+     rather than re-reading whatever the server had active. */
+  equal(committed.before.title, "Film A", "B2.4: Film A was still itself when the press was made");
+  equal(committed.after.title, "Film B", "B2.4: and the window opens the created project");
+  const savesToFilmA = okBodies.filter((row) => row.method !== "GET"
+    && /\/api\/projects\/[^/]+\/project$/.test(row.url));
+  ok(!savesToFilmA.some((row) => /"title":"Film B"/.test(row.body)),
+    "B2.4: no SAVE carrying the draft's title was written to Film A — it was not renamed: "
+    + JSON.stringify(savesToFilmA.map((row) => row.url)));
 
   note("B2 the manual creation surface's only editable controls are the draft's: every reachable field leaves the open project byte-identical with an unmoved dirty revision, Project Look and the addEntity/addShot disclosure are gone, the read-only glance stays, and create posts the draft's values");
 }
@@ -513,6 +546,13 @@ function delayedCreation({ createSlug = "film-b" } = {}) {
         await gate;
         return respond({ ok: true, slug: createSlug }, 200);
       }
+      /* THE PREPARE READ COMES FIRST, AND IT IS A GET. The same path serves the
+         save (PUT/POST) and the new project's document (GET), and answering a
+         read with a save receipt would hand the commit a document with no meta. */
+      if (((options && options.method) || "GET") === "GET") {
+        const preparedRoute = preparedProjectRoutes(createSlug, rawFixture())(url, options, respond);
+        if (preparedRoute) return preparedRoute;
+      }
       if (/\/api\/projects\/[^/]+\/(project|canon-transition)$/.test(url)) {
         if (saveStatus === 200) {
           return respond({ ok: true, revision: `rev-${calls.length}` }, 200,
@@ -619,7 +659,7 @@ async function b1race_replacementFence() {
       refusal: main.indexOf('data-action-refusal="manual-start"') >= 0,
       refusalText: (main.split("CineBraid did not make this change</b><span>")[1]||"").split("</span>")[0],
     };`);
-  const reloadsAfter2 = refused.since(marker2).filter((row) => row.url === "/api/project").length;
+  const reloadsAfter2 = refused.since(marker2).filter((row) => row.url === "/api/projects/switch").length;
 
   equal(reloadsAfter2, 0, "B1-RACE-2: Film B is not loaded — no project read followed the refused save");
   equal(after2.hash, "#/create", "B1-RACE-2: the hash is untouched, so the window did not move");
@@ -672,7 +712,7 @@ async function b1race_replacementFence() {
     return { logline: P.meta.logline, hash: location.hash, conflict: PROJECT_CONFLICT,
              settled: projectSaveSettled().settled,
              pending: (window.__cinebraidManualStartPending||{}).slug || "" };`);
-  equal(conflicted.since(marker3).filter((row) => row.url === "/api/project").length, 0,
+  equal(conflicted.since(marker3).filter((row) => row.url === "/api/projects/switch").length, 0,
     "B1-RACE-3: a conflicted save also prevents the replacement");
   equal(after3.hash, "#/create", "B1-RACE-3: the window did not move");
   equal(after3.logline, "EDIT-THEN-CONFLICT", "B1-RACE-3: and the edit is still in the tab");
@@ -698,7 +738,7 @@ async function b1race_replacementFence() {
   const after4 = evaluate(page4.context, `
     return { slug: ACTIVE_PROJECT_SLUG, hash: location.hash,
              pending: (window.__cinebraidManualStartPending||{}).slug || "" };`);
-  equal(moved.since(marker4).filter((row) => row.url === "/api/project").length, 0,
+  equal(moved.since(marker4).filter((row) => row.url === "/api/projects/switch").length, 0,
     "B1-RACE-4: a stale create response does not blindly replace whichever project is now open");
   equal(after4.slug, movedTo.slug, "B1-RACE-4: the project the filmmaker moved to is left alone");
   equal(after4.hash, "#/create", "B1-RACE-4: and nothing about its identity or hash was altered");
@@ -850,6 +890,13 @@ function activationHarness({ createSlug = "film-b", sourceSlug = "film-a" } = {}
         activeProject = String(request.slug || activeProject);
         return respond({ ok: true, slug: activeProject }, 200);
       }
+      /* THE PREPARE READ COMES FIRST, AND IT IS A GET. The same path serves the
+         save (PUT/POST) and the new project's document (GET), and answering a
+         read with a save receipt would hand the commit a document with no meta. */
+      if (((options && options.method) || "GET") === "GET") {
+        const preparedRoute = preparedProjectRoutes(createSlug, rawFixture())(url, options, respond);
+        if (preparedRoute) return preparedRoute;
+      }
       if (/\/api\/projects\/[^/]+\/(project|canon-transition)$/.test(url)) {
         if (saveStatus === 200) {
           return respond({ ok: true, revision: `rev-${calls.length}` }, 200,
@@ -905,7 +952,7 @@ async function active_clientActivatesOnlyOnCommit() {
   equal(after1.hash, "#/create", "ACTIVE-1: the window did not move");
   equal(refused.activeProject(), "film-a",
     "ACTIVE-1: and the SERVER's active project is still Film A — browser and server agree");
-  equal(refused.since(marker1).filter((row) => row.url === "/api/project").length, 0,
+  equal(refused.since(marker1).filter((row) => row.url === "/api/projects/switch").length, 0,
     "ACTIVE-1: Film B was never loaded");
   equal(after1.logline, "ACTIVE-EDIT-THEN-REFUSED", "ACTIVE-1: Film A's edit remains");
   equal(after1.blocked, true, "ACTIVE-1: its refusal remains");
@@ -979,13 +1026,293 @@ async function active_clientActivatesOnlyOnCommit() {
   equal(after3.slug, "some-other-film", "ACTIVE-3: the browser stays in the project the filmmaker moved to");
   equal(moved.activeProject(), "some-other-film",
     "ACTIVE-3: and the stale create response does not overwrite the server's active project either");
-  equal(moved.since(marker3).filter((row) => row.url === "/api/project").length, 0,
+  equal(moved.since(marker3).filter((row) => row.url === "/api/projects/switch").length, 0,
     "ACTIVE-3: nothing was loaded over it");
   equal(after3.pending, "film-b", "ACTIVE-3: Film B is kept as a pending creation rather than lost");
 
   note("ACTIVE the manual path creates Film B without activating it: a refused fence leaves browser AND server both naming Film A, an intervening edit is persisted before the activating switch, a stale response overwrites neither side, and recovery activates the already-created project with one switch and no second creation");
 }
 
+/* ===========================================================================
+   FINAL-B1 — THE ATOMIC REPLACEMENT PROTOCOL.
+
+   Three defects were reproduced against the previous shape, and they were not
+   three bugs: they were one wrong shape, `activate B -> discover stale source ->
+   restore A`. A failed put-back left the browser and the server naming different
+   projects; a successful put-back could overwrite a legitimate switch to a third
+   project; and the asynchronous open after the activation reopened the very
+   interval the fence existed to close.
+
+   The shape is now: LOCK, certify A, create B inactive, PREPARE B completely,
+   revalidate, activate CONDITIONALLY, install SYNCHRONOUSLY. If this window is
+   not ready to commit, B is never activated — so there is nothing to put back.
+   =========================================================================== */
+
+/* A harness that models the server's active project AND the conditional switch,
+   with independent gates on the creation and the preparation so the test can
+   act inside either. */
+function atomicHarness({ createSlug = "film-b", sourceSlug = "film-a" } = {}) {
+  const calls = [];
+  let activeProject = sourceSlug;
+  let saveStatus = 200;
+  let saveBody = null;
+  const created = new Set();
+  let releaseCreate = null;
+  let releasePrepare = null;
+  const createGate = new Promise((r) => { releaseCreate = r; });
+  const prepareGate = new Promise((r) => { releasePrepare = r; });
+  let holdPrepare = false;
+  return {
+    calls,
+    releaseCreate: () => releaseCreate(),
+    releasePrepare: () => releasePrepare(),
+    holdPrepare() { holdPrepare = true; },
+    setSaveStatus(status, body) { saveStatus = status; saveBody = body || null; },
+    setActiveProject(slug) { activeProject = slug; },
+    activeProject: () => activeProject,
+    createdProjects: () => [...created],
+    createCount: () => calls.filter((row) => row.url === "/api/projects/new").length,
+    switchCalls: () => calls.filter((row) => row.url === "/api/projects/switch")
+      .map((row) => { try { return JSON.parse(row.body); } catch { return {}; } }),
+    marker() { return calls.length; },
+    since(m) { return calls.slice(m); },
+    hook: async (url, options, respond) => {
+      const method = (options && options.method) || "GET";
+      const body = String((options && options.body) || "");
+      calls.push({ url, method, body });
+
+      if (url === "/api/projects/new") {
+        await createGate;
+        created.add(createSlug);
+        /* activate:false is honoured — the project exists, inactive. */
+        const request = (() => { try { return JSON.parse(body); } catch { return {}; } })();
+        if (request.activate !== false) activeProject = createSlug;
+        return respond({ ok: true, slug: createSlug }, 200);
+      }
+
+      if (url === "/api/projects/switch") {
+        const request = (() => { try { return JSON.parse(body); } catch { return {}; } })();
+        /* THE CONDITIONAL SWITCH, modelled exactly as the route implements it:
+           the check and the write are one synchronous section. */
+        if (Object.prototype.hasOwnProperty.call(request, "expectedActiveProject")
+          && String(request.expectedActiveProject || "") !== activeProject) {
+          return respond({
+            ok: false, code: "PROJECT_ACTIVE_CONFLICT",
+            error: "The active project changed before this switch, so it was not made.",
+            expected: request.expectedActiveProject, activeProject,
+          }, 409);
+        }
+        activeProject = String(request.slug || activeProject);
+        return respond({ ok: true, slug: activeProject }, 200);
+      }
+
+      if (method === "GET" && url === `/api/projects/${createSlug}/project`) {
+        if (holdPrepare) await prepareGate;
+        const project = rawFixture();
+        project.meta.title = "Film B";
+        return respond(project, 200, {
+          "x-cinebraid-project-slug": createSlug,
+          "x-cinebraid-project-revision": `rev-${createSlug}`, etag: `rev-${createSlug}`,
+        });
+      }
+      if (method === "GET" && url.startsWith("/api/scan?project=")) {
+        return respond({ anchors: [], plates: [], props: [], vehicles: [], audio: [], media: [], shots: {} }, 200);
+      }
+      if (/\/api\/projects\/[^/]+\/(project|canon-transition)$/.test(url)) {
+        if (saveStatus === 200) {
+          return respond({ ok: true, revision: `rev-${calls.length}` }, 200,
+            { "x-cinebraid-project-revision": `rev-${calls.length}` });
+        }
+        return respond(saveBody || { error: "refused", code: "PROJECT_VALIDATION_FAILED" }, saveStatus);
+      }
+      return null;
+    },
+  };
+}
+
+async function untilRequest(gate, predicate, label) {
+  for (let i = 0; i < 300; i++) {
+    if (gate.calls.some(predicate)) return;
+    await tick();
+  }
+  throw new Error(`${label} never happened`);
+}
+
+async function final_b1_atomicReplacement() {
+  /* ---- FINAL-B1-6: the ordinary path, and the shape it now has. --------- */
+  const fast = atomicHarness();
+  const fastPage = await render("#/create", rawFixture(), { fetch: fast.hook });
+  await evaluateAsync(fastPage.context, `await flushPendingProjectSave(); return 1;`);
+  evaluate(fastPage.context, `ACTIVE_PROJECT_SLUG = "film-a"; return 1;`);
+  startPressInFlight(fastPage.context);
+  fast.releaseCreate();
+  await settlePress(fastPage.context);
+
+  const fastSeen = evaluate(fastPage.context, `return { title: P.meta.title, hash: location.hash,
+    pending: (window.__cinebraidManualStartPending||{}).slug || "" };`);
+  equal(fast.createCount(), 1, "FINAL-B1-6: one creation");
+  equal(fast.switchCalls().length, 1, "FINAL-B1-6: one activation");
+  equal(fast.switchCalls()[0].expectedActiveProject, "film-a",
+    "FINAL-B1-6: which states the project it believes is active");
+  equal(fast.activeProject(), "film-b", "FINAL-B1-6: and the server now names the new project");
+  equal(fastSeen.title, "Film B", "FINAL-B1-6: the window installed the prepared project");
+  equal(fastSeen.hash, "#/production", "FINAL-B1-6: and moved into it");
+  equal(fastSeen.pending, "", "FINAL-B1-6: with nothing left pending");
+  /* The create POST asked NOT to activate, so a reload before the switch would
+     have opened Film A. */
+  const createBody = JSON.parse(fast.calls.find((row) => row.url === "/api/projects/new").body);
+  equal(createBody.activate, false, "FINAL-B1-6: the creation was explicitly inactive");
+
+  /* ---- FINAL-B1-1: the lock refuses same-window navigation and switching. */
+  const locked = atomicHarness();
+  const page1 = await render("#/create", rawFixture(), { fetch: locked.hook });
+  await evaluateAsync(page1.context, `await flushPendingProjectSave(); return 1;`);
+  evaluate(page1.context, `ACTIVE_PROJECT_SLUG = "film-a"; return 1;`);
+  startPressInFlight(page1.context);
+  await untilRequest(locked, (row) => row.url === "/api/projects/new", "the creation");
+
+  const duringLock = await evaluateAsync(page1.context, `
+    const busy = manualReplacementBusy();
+    /* The filmmaker tries to go back into Film A and edit it. */
+    location.hash = "#/shots";
+    await route();
+    const hashAfterNavigation = location.hash;
+    /* And tries to switch projects from the same window. */
+    await switchProject("some-other-film");
+    return {
+      busy, hashAfterNavigation,
+      toast: (document.getElementById("toast") || {}).textContent || "",
+      slug: ACTIVE_PROJECT_SLUG,
+    };`);
+  equal(duringLock.busy, true, "FINAL-B1-1: the transaction reports itself busy");
+  equal(duringLock.hashAfterNavigation, "#/create",
+    "FINAL-B1-1: navigating into the open project during the transaction is refused, and the hash is put back");
+  ok(/CineBraid is /.test(duringLock.toast),
+    "FINAL-B1-1: and it says why rather than ignoring the press: " + duringLock.toast);
+  equal(duringLock.slug, "film-a", "FINAL-B1-1: the same-window switch did not happen either");
+  equal(locked.calls.filter((row) => row.url === "/api/projects/switch").length, 0,
+    "FINAL-B1-1: no switch request was issued by that attempt");
+  locked.releaseCreate();
+  await settlePress(page1.context);
+
+  /* ---- FINAL-B1-3: preload delay leaves A active on both sides. --------- */
+  const slow = atomicHarness();
+  slow.holdPrepare();
+  const page3 = await render("#/create", rawFixture(), { fetch: slow.hook });
+  await evaluateAsync(page3.context, `await flushPendingProjectSave(); return 1;`);
+  evaluate(page3.context, `ACTIVE_PROJECT_SLUG = "film-a"; return 1;`);
+  startPressInFlight(page3.context);
+  slow.releaseCreate();
+  await untilRequest(slow, (row) => row.url === "/api/projects/film-b/project", "the prepare read");
+
+  /* The preparation is in flight. Nothing may have moved. */
+  const midPrepare = evaluate(page3.context, `return { slug: ACTIVE_PROJECT_SLUG, title: P.meta.title, hash: location.hash };`);
+  equal(slow.activeProject(), "film-a",
+    "FINAL-B1-3: the SERVER still names Film A while the new project is being prepared");
+  equal(midPrepare.slug, "film-a", "FINAL-B1-3: and so does the window");
+  equal(midPrepare.hash, "#/create", "FINAL-B1-3: which has not moved");
+  equal(slow.calls.filter((row) => row.url === "/api/projects/switch").length, 0,
+    "FINAL-B1-3: NO activation has been issued — there is no interval in which B is active and unprepared");
+  ok(slow.createdProjects().includes("film-b"), "FINAL-B1-3: even though B exists on disk already");
+  slow.releasePrepare();
+  await settlePress(page3.context);
+  equal(slow.activeProject(), "film-b", "FINAL-B1-3: only once prepared is it activated");
+
+  /* ---- FINAL-B1-2 / FINAL-B1-5: a legitimate C before the activation. --- */
+  const raced = atomicHarness();
+  raced.holdPrepare();
+  const page2 = await render("#/create", rawFixture(), { fetch: raced.hook });
+  await evaluateAsync(page2.context, `await flushPendingProjectSave(); return 1;`);
+  evaluate(page2.context, `ACTIVE_PROJECT_SLUG = "film-a"; return 1;`);
+  startPressInFlight(page2.context);
+  raced.releaseCreate();
+  await untilRequest(raced, (row) => row.url === "/api/projects/film-b/project", "the prepare read");
+  /* A third project legitimately becomes active — another window, or the
+     switcher — while this transaction is preparing. */
+  raced.setActiveProject("film-c");
+  raced.releasePrepare();
+  await settlePress(page2.context);
+
+  const after2 = evaluate(page2.context, `
+    const main = (document.getElementById("main")||{innerHTML:""}).innerHTML;
+    return { title: P.meta.title, hash: location.hash,
+             pending: (window.__cinebraidManualStartPending||{}).slug || "",
+             busy: manualReplacementBusy(),
+             refusal: main.indexOf('data-action-refusal="manual-start"') >= 0,
+             refusalText: (main.split("CineBraid did not make this change</b><span>")[1]||"").split("</span>")[0] };`);
+  const switches = raced.switchCalls();
+  equal(switches.length, 1, "FINAL-B1-2: exactly one switch was attempted");
+  equal(switches[0].expectedActiveProject, "film-a", "FINAL-B1-2: stating the project this window believed active");
+  equal(raced.activeProject(), "film-c",
+    "FINAL-B1-2: the conditional switch refused, so Film C remains server-active");
+  ok(!switches.some((row) => row.slug === "film-a"),
+    "FINAL-B1-2: and NO put-back was issued — Film A was never restored over Film C");
+  equal(after2.title, "Render Harness Project", "FINAL-B1-5: no browser replacement happened");
+  equal(after2.hash, "#/create", "FINAL-B1-5: and the window did not move");
+  equal(raced.createdProjects().length, 1, "FINAL-B1-2: Film B exists exactly once");
+  equal(after2.pending, "film-b", "FINAL-B1-2: inactive, and remembered as pending");
+  equal(after2.busy, false, "FINAL-B1-2: the lock was released safely");
+  equal(after2.refusal, true, "FINAL-B1-5: the reason is on screen");
+  ok(/did not switch to it/i.test(after2.refusalText), "FINAL-B1-5: " + after2.refusalText);
+
+  /* ---- FINAL-B1-7: recovery reuses the pending B, activating it once. --- */
+  const beforeRecovery = raced.marker();
+  raced.setActiveProject("film-a");   /* the filmmaker comes back to Film A */
+  evaluate(page2.context, `ACTIVE_PROJECT_SLUG = "film-a"; return 1;`);
+  startPressInFlight(page2.context);
+  await settlePress(page2.context);
+  const recovery = raced.since(beforeRecovery);
+  equal(recovery.filter((row) => row.url === "/api/projects/new").length, 0,
+    "FINAL-B1-7: recovery issues NO second creation");
+  equal(recovery.filter((row) => row.url === "/api/projects/switch").length, 1,
+    "FINAL-B1-7: exactly one activation opens the project that already existed");
+  equal(raced.createdProjects().length, 1, "FINAL-B1-7: still exactly one Film B");
+  equal(raced.activeProject(), "film-b", "FINAL-B1-7: which is now active");
+  equal(evaluate(page2.context, `return P.meta.title;`), "Film B", "FINAL-B1-7: and open");
+
+  /* ---- FINAL-B1-4: no awaited work between activation and installation. -
+     The behavioural half: the activation is the LAST request the transaction
+     makes, so nothing was fetched between its response and the install. The
+     structural half is R-B1R in the negative controls, which reads the source. */
+  const instrumented = atomicHarness();
+  const page4 = await render("#/create", rawFixture(), { fetch: instrumented.hook });
+  await evaluateAsync(page4.context, `await flushPendingProjectSave(); return 1;`);
+  evaluate(page4.context, `ACTIVE_PROJECT_SLUG = "film-a"; return 1;`);
+  const markerFour = instrumented.marker();
+  /* EVERY REQUEST, STAMPED WITH WHICH PROJECT WAS INSTALLED WHEN IT WENT OUT.
+     "Nothing awaited between the activation and the replacement" is precisely:
+     no request left this window, after the activation was confirmed, while P was
+     still the outgoing project. Requests made AFTER the install are ordinary
+     rendering and are not the defect. */
+  evaluate(page4.context, `
+    globalThis.__seen = [];
+    const original = globalThis.fetch;
+    globalThis.fetch = (url, opts) => {
+      globalThis.__seen.push({ url: String(url), title: (P && P.meta && P.meta.title) || "" });
+      return original(url, opts);
+    };
+    return 1;`);
+  startPressInFlight(page4.context);
+  instrumented.releaseCreate();
+  await settlePress(page4.context);
+
+  const seen = evaluate(page4.context, `return globalThis.__seen;`);
+  const switchAt = seen.map((row) => row.url).lastIndexOf("/api/projects/switch");
+  ok(switchAt >= 0, "FINAL-B1-4: the activation happened");
+  const afterActivation = seen.slice(switchAt + 1);
+  const beforeInstall = afterActivation.filter((row) => row.title !== "Film B");
+  equal(beforeInstall.length, 0,
+    "FINAL-B1-4: NO request left this window between the confirmed activation and the installation: "
+    + JSON.stringify(beforeInstall));
+  ok(afterActivation.length > 0 && afterActivation.every((row) => row.title === "Film B"),
+    "FINAL-B1-4: everything after it ran against the already-installed project");
+  equal(evaluate(page4.context, `return P.meta.title;`), "Film B",
+    "FINAL-B1-4: and the prepared project is installed");
+  ok(seen.map((row) => row.url).indexOf("/api/projects/film-b/project") < switchAt,
+    "FINAL-B1-4: every read the open needed happened BEFORE the activation");
+
+  note("FINAL-B1 the transaction locks the window, creates the new project inactive, prepares it completely, revalidates, activates conditionally and installs synchronously: a preload delay leaves both sides naming the old project, a legitimate switch to a third project makes the activation refuse without any put-back, the activation is the last request before the install, and recovery reuses the created project");
+}
 async function main() {
   await b1_createRequiresConfirmedSave();
   await b2_manualStartIsolation();
@@ -993,6 +1320,7 @@ async function main() {
   await b1race_replacementFence();
   await active_serverSeparatesCreationFromActivation();
   await active_clientActivatesOnlyOnCommit();
+  await final_b1_atomicReplacement();
   console.log(`AT1 boundary corrections: ${checks} checks passed`);
   for (const line of notes) console.log("  - " + line);
 }

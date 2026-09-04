@@ -1664,8 +1664,15 @@ async function load(options = {}) {
    counters, the saved baseline, the save latches, the save indicator, the
    continuity workspace, the project-open epoch or the refresh watermark. The
    return value is a candidate snapshot and nothing else. */
-async function prepareProjectSnapshot({ claimRecovery = false } = {}) {
-  const projectResponse = await fetch("/api/project", { cache: "no-store" });
+async function prepareProjectSnapshot({ claimRecovery = false, slug = "" } = {}) {
+  /* SCOPED, WHEN A CALLER NEEDS TO PREPARE A PROJECT THAT IS NOT ACTIVE YET.
+     B1's manual create path reads the NEW project completely before activating
+     it, so there is never a moment when the server has been switched and the
+     window is still operating on the old record. Unscoped — every existing
+     caller — this is byte-for-byte the request it always made. */
+  const projectUrl = slug ? `/api/projects/${encodeURIComponent(slug)}/project` : "/api/project";
+  const scanUrl = slug ? `/api/scan?project=${encodeURIComponent(slug)}` : "/api/scan";
+  const projectResponse = await fetch(projectUrl, { cache: "no-store" });
   if (projectResponse.status === 404) {
     const data = await projectResponse.json().catch(() => ({}));
     return { available: false, message: data.error || "No project is available yet." };
@@ -1680,7 +1687,7 @@ async function prepareProjectSnapshot({ claimRecovery = false } = {}) {
        revision of the exact document the view would be built from. Both are read
        here and INSTALLED NOWHERE until the commit, so there is no window in
        which the identity has moved and the record has not. */
-    slug: projectResponse.headers?.get?.("x-cinebraid-project-slug") || "",
+    slug: projectResponse.headers?.get?.("x-cinebraid-project-slug") || slug || "",
     revision:
       projectResponse.headers?.get?.("x-cinebraid-project-revision") ||
       projectResponse.headers?.get?.("etag") ||
@@ -1691,7 +1698,7 @@ async function prepareProjectSnapshot({ claimRecovery = false } = {}) {
   };
   const loaded = await Promise.all([
     projectResponse.json(),
-    fetch("/api/scan").then((r) => r.json()),
+    fetch(scanUrl).then((r) => r.json()),
     fetch("/api/prompt/profiles")
       .then((r) => r.json())
       .catch(() => ({ profiles: [] })),
@@ -2866,6 +2873,48 @@ if (typeof window !== "undefined") {
   window.createReplacementCertificate = createReplacementCertificate;
   window.createReplacementRefusal = createReplacementRefusal;
 }
+
+/* ==========================================================================
+   THE OPEN, SPLIT INTO ITS TWO HALVES AND NAMED.
+
+   load() has always been prepare-then-commit internally: prepareProjectSnapshot()
+   gathers every asynchronous input and installs nothing, and commitPreparedProject()
+   installs a whole project with no await anywhere inside it. What it did NOT have
+   was a way for a caller to hold the two apart and do something in between.
+
+   B1 needs exactly that, and it is the reason the previous shape kept failing.
+   Activating the new project and then awaiting load() left a window in which the
+   server had switched and this window had not — and the repair for that window
+   was a put-back, which could overwrite a legitimate switch to a third project
+   and could itself fail. There is no repair here because there is no window: the
+   new project is fully prepared FIRST, the activation is conditional, and the
+   installation that follows it is synchronous.
+
+   These two add no behaviour. They are the existing halves, named, so a caller
+   can put a conditional activation between them. */
+async function prepareProjectLoad(slug) {
+  return prepareProjectSnapshot({ claimRecovery: true, slug: String(slug || "") });
+}
+/* SYNCHRONOUS. No await here and none in anything it calls, which is what makes
+   "nothing can change between the activation and the replacement" a fact about
+   the code rather than a hope about timing. Returns whether it installed. */
+function commitPreparedProjectLoad(prepared) {
+  /* A SNAPSHOT WITHOUT A DOCUMENT IS NOT A SNAPSHOT. `available` says the server
+     had something to serve; this says the read actually produced the record the
+     install is about to build a window from. Installing a half-prepared snapshot
+     would replace a working project with an empty one, which is the one outcome
+     worse than refusing to open. */
+  if (!prepared || !prepared.available || !prepared.project || typeof prepared.project !== "object") return false;
+  if (!prepared.project.meta || typeof prepared.project.meta !== "object") return false;
+  const ticket = beginProjectOpen();
+  if (!commitPreparedProject(prepared, ticket)) return false;
+  decorateProjectCommit(prepared);
+  return true;
+}
+if (typeof window !== "undefined") {
+  window.prepareProjectLoad = prepareProjectLoad;
+  window.commitPreparedProjectLoad = commitPreparedProjectLoad;
+}
 function toast(msg) {
   const t = $("#toast");
   t.textContent = msg;
@@ -3400,6 +3449,15 @@ window.requestDeleteProject = (slug, title) => {
    anything is shown, so the interface and the server never disagree about which project is open
    and a later edit cannot be written into the project that failed. */
 window.switchProject = async (slug) => {
+  /* A switch from THIS window cannot race the manual replacement commit: the
+     commit's conditional activation states which project it believes is active,
+     and a switch dispatched from the same window between that belief and the
+     write is the one racer the server's check cannot distinguish from a
+     legitimate one. It is refused for the length of the transaction and said
+     out loud. */
+  if (typeof manualReplacementBusy === "function" && manualReplacementBusy()) {
+    return toast(manualReplacementBusyMessage());
+  }
   const previousSlug = ACTIVE_PROJECT_SLUG;
   clearProjectSwitcherError();
   try {
@@ -3937,6 +3995,21 @@ function markRouteRenderSettled(requestToken) {
 }
 async function route(recoveryAttempt = false) {
   if (!P) return;
+  /* THE MANUAL REPLACEMENT LOCK, HONOURED AT THE ONE PLACE EVERY VIEW CHANGE
+     PASSES THROUGH.
+
+     While CREATE THIS PROJECT is mid-transaction the window is between two
+     projects: the open one has been certified as saved and the new one is being
+     prepared. Navigating into the open project's surfaces during that window is
+     how an edit gets made to a document the commit is about to replace, which is
+     the race this lock exists to remove. It is refused rather than ignored — the
+     hash is put back and the reason is said out loud, so nothing is typed into a
+     screen that is pretending to accept it.
+
+     IT IS THE SHORT TRANSACTION ONLY. It is set when the press begins and
+     cleared in a finally, so ordinary editing is never behind it. */
+  if (typeof manualReplacementNavigationRefused === "function"
+    && manualReplacementNavigationRefused(location.hash)) return;
   const requestToken = ++ROUTE_REQUEST_TOKEN;
   if (document.body?.dataset) delete document.body.dataset.renderReady;
   try {
