@@ -39,6 +39,7 @@ const ROUTES = {
     const shots = P.shots.filter((s) => s.scene === sc.id);
     const shotPage = boundedPage(shots, "shots", `scene:${sc.id}`, BOUNDED_PAGE_SIZES.shots);
     return `<div class="crumb"><a href="#/shots/scenes">Shots</a> / ${esc(sc.id)}</div>
+    ${typeof actionRefusalMarkup === "function" ? actionRefusalMarkup(`scene-delete:${sc.id}`) : ""}
     <input class="page-title-input" value="${attr(sc.title)}" onchange="setVal('scenes','${sc.id}','title',this.value)">
     <div class="chip-row" style="margin:10px 0 4px">
       ${["A", "B"].map((t) => `<button class="tier-badge ${t}" style="${sc.tier === t ? "" : "opacity:.35"}" onclick="setVal('scenes','${sc.id}','tier','${t}');route()">TIER ${t}</button>`).join("")}

@@ -62,6 +62,11 @@ const SUITES = [
   "check:shot-intent-browser",
   "check:shot-intent-front-browser",
   "check:authority-browser",
+  /* The post-AT1 shot-side removal slice. It sits beside check:authority-browser
+     because it asks the same boundary the same question from the other side: what a
+     real Chromium and the real save path do when a shot holding a receipt nothing can
+     withdraw is deleted. */
+  "check:shot-canon-removal-browser",
   "check:save-truth-browser",
   "check:bible-canon-browser",
   "check:returned-review-browser",

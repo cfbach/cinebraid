@@ -172,6 +172,13 @@ const nodeSuites = [
   "check:action-truth-negative",
   "check:at1-boundary",
   "check:at1-boundary-negative",
+  /* The post-AT1 authority slice: AT1-E/B3 on the shot side. Listed immediately after
+     the AT1 suites because it holds the same invariant on the other removal path — a
+     target that can hold authority is not removed until every current receipt it would
+     invalidate has actually been withdrawn — and its negative controls restore the
+     drift hole that shipped. */
+  "check:shot-canon-removal",
+  "check:shot-canon-removal-negative",
   "check:stage-surfaces",
   "check:stage-surfaces-negative",
   "check:production-media",
@@ -283,7 +290,8 @@ const browserSuites = [
   "check:shot-readiness-browser", "check:founder-p0-browser", "check:quiet-shell-browser",
   "check:shell-identity-browser",
   "check:project-entry-browser", "check:reference-reframe-browser", "check:simple-advanced-browser",
-  "check:shot-intent-browser", "check:authority-browser", "check:save-truth-browser",
+  "check:shot-intent-browser", "check:authority-browser", "check:shot-canon-removal-browser",
+  "check:save-truth-browser",
   "check:bible-canon-browser", "check:returned-review-browser", "check:launch-language-browser",
   "check:reference-demand-browser", "check:shot-intent-front-browser",
   "check:references-alpha-browser"];

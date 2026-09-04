@@ -269,23 +269,185 @@ window.addScene = () =>
       route();
     },
   );
-function revokeShotCanonForRemoval(shot) {
-  if (!shot || typeof hasCurrentHumanAuthority !== "function") return;
-  const revokeIfCurrent = (target, command, details) => {
-    if (target && hasCurrentHumanAuthority(P, target)) command(P, {
-      ...details, at: new Date().toISOString(), via: "confirmed-target-removal",
-      reason: "target-removed", clearEdge: false,
-    });
-  };
-  for (const frame of shot.keyframes || []) revokeIfCurrent(
-    authorityTarget({ kind: "shot-frame", shotId: shot.id, frameId: frame.id }),
-    revokeFrameCanon, { shotId: shot.id, frameId: frame.id },
-  );
-  for (const clip of shot.clips || []) {
-    const key = clip.id || unitKey(clip);
-    revokeIfCurrent(authorityTarget({ kind: "shot-motion", shotId: shot.id, unitKey: key }), revokeMotionCanon, { shotId: shot.id, unitKey: key });
+/* AT1-F — REMOVING A SHOT OR A SCENE WITHDRAWS EVERY RECEIPT FIRST, OR REMOVES NOTHING.
+ *
+ * THE DEFECT, AND IT IS THE AT1-E DEFECT ON THE SHOT SIDE. This function used to decide
+ * what to withdraw by asking hasCurrentHumanAuthority(), then let its callers remove the
+ * shot whatever the answer had been. hasCurrentHumanAuthority() is a STRONGER question
+ * than the one that matters: currentHumanAuthority() requires the live edge to match the
+ * receipt exactly (shared-authority-kernel.js, the S5 identity rule), while the Authority
+ * Write Seam refuses on the receipt ROW being `current` (authority-write-seam.js —
+ * targetRemovalDisposition() reads raw rows, transitionPolicy() compares the surviving
+ * current row against the edge). Those two come apart whenever an edge has DRIFTED from a
+ * still-current receipt, which is a shipped, documented outcome rather than a
+ * hypothetical: repairCanonValue() refuses to follow a rename when the receipt carries no
+ * asset identity, and a receipt with no identity is ordinary for any image the media
+ * ledger had not indexed when the filmmaker approved it.
+ *
+ * With the stronger question a drifted target was SKIPPED and the shot was removed
+ * anyway, leaving a receipt saying `current` about a shot that no longer existed — exactly
+ * the orphan this function exists to prevent, and silently. The document is then refused
+ * by BOTH write classes (NORMAL_SAVE -> CANON_TRANSITION_REQUIRED, CANON_TRANSITION ->
+ * AUTHORITY_EDGE_RECEIPT_MISMATCH), so it cannot be saved at all and every unrelated edit
+ * made in the same session is stranded behind a receipt the filmmaker has no way to see or
+ * withdraw. Reload is the only exit.
+ *
+ * THREE CASES, AND THE THIRD IS THE ONE THAT WAS WRONG:
+ *
+ *   no current row            nothing to withdraw. Remove the shot.
+ *   current row, edge intact  the canonical writer withdraws it. Remove the shot.
+ *   current row, edge drifted the kernel has NO command that can withdraw it —
+ *                             revokeCanon and systemInvalidateCanon both require
+ *                             currentHumanAuthority — so REMOVING IT WOULD STRAND
+ *                             THE DOCUMENT. Refuse, visibly, and change nothing.
+ *
+ * THE SEQUENCE, and it is the one delEntity() below already uses:
+ *
+ *   1. PLAN, while every target still exists. Nothing is withdrawn for a removal that
+ *      will not happen, and for a SCENE every shot is planned before the first one is
+ *      touched — otherwise a later shot's unwithdrawable receipt would be discovered
+ *      after its siblings had already been withdrawn and recorded as deleted.
+ *   2. WITHDRAW every current receipt through the kernel's own revoke command. No receipt
+ *      is edited, no ledger row is deleted and no check is bypassed.
+ *   3. REMOVE, and only then.
+ *
+ * `reason: "target-removed"` and `clearEdge: false` are both load-bearing and both
+ * unchanged. The target is being REMOVED, not cleared — the kernel's revocation
+ * vocabulary distinguishes those, and targetRemovalDisposition() admits an ordinary save
+ * only for "target-removed" — and clearing an edge on a record that is about to be spliced
+ * out is a write with no reader.
+ *
+ * NO `await` ANYWHERE IN THIS PATH. revokeCanon() requires the trusted gesture to be the
+ * event currently dispatching, and a suspension would end it partway through, leaving some
+ * receipts withdrawn and others not. */
+
+/* WHAT STRANDS A SAVE IS A RECEIPT ROW, SO THAT IS WHAT THIS ASKS ABOUT.
+ *
+ * Raw ledger rows — not authorityHistory(), and not a walk of the shot's keyframes, clips
+ * and delivery edge. Three reasons, and each one is a case the old shape missed:
+ *
+ *   the SEAM reads raw rows. targetRemovalDisposition() does not validate the ledger
+ *   first, so an untrusted ledger — which authorityHistory() answers [] for — still
+ *   refuses the save. Asking the same raw question the seam asks is the only way this plan
+ *   can be complete, and an untrusted ledger then lands in `blocked`, which is the
+ *   fail-closed direction.
+ *
+ *   a receipt can name a frame or a motion unit THE SHOT NO LONGER LISTS, deleted after it
+ *   was approved. A structural walk cannot see it; removing the shot removes its target
+ *   all the same.
+ *
+ *   and a structural walk could never find anything this does not: currentHumanAuthority()
+ *   requires exactly one current row for the target, so a target with no current row was
+ *   never withdrawable and never needed to be. */
+function currentShotAuthorityTargets(shotId) {
+  const id = String(shotId == null ? "" : shotId);
+  const found = [];
+  if (!id || typeof authorityTarget !== "function") return found;
+  const seen = new Set();
+  for (const row of (P.productionAuthority && P.productionAuthority.receipts) || []) {
+    if (!row || String(row.status) !== "current") continue;
+    const target = authorityTarget(row);
+    /* entity-state targets carry no shotId, so they are excluded here by construction
+       rather than by a kind test that would have to be kept aligned by hand. */
+    if (!target || target.shotId !== id || seen.has(target.key)) continue;
+    seen.add(target.key);
+    found.push(target);
   }
-  revokeIfCurrent(authorityTarget({ kind: "shot-delivery", shotId: shot.id }), revokeDeliveryCanon, { shotId: shot.id });
+  return found;
+}
+/* The kernel's own withdrawal command for a target kind, or null when this build has
+   none. A target nothing can withdraw is BLOCKED, never quietly skipped. */
+function shotCanonRevoker(kind) {
+  if (kind === "shot-frame") return typeof revokeFrameCanon === "function" ? revokeFrameCanon : null;
+  if (kind === "shot-motion") return typeof revokeMotionCanon === "function" ? revokeMotionCanon : null;
+  if (kind === "shot-delivery") return typeof revokeDeliveryCanon === "function" ? revokeDeliveryCanon : null;
+  return null;
+}
+/* Read-only. Returns what must be withdrawn and what cannot be, touching neither the shots
+   nor the ledger.
+
+   A ROW ONLY COUNTS IF THIS REMOVAL IS WHAT INVALIDATES IT. authorityTargetExists() is the
+   kernel's own answer to "is this target in the document", and it is the same question the
+   seam asks: targetRemovalDisposition() accounts only for targets that exist BEFORE and not
+   AFTER. A current row whose target has ALREADY gone — a receipt naming a frame the shot no
+   longer lists — is invalid before this deletion and invalid after it, the seam does not
+   look at it, and blocking on it would refuse a removal the seam would have accepted while
+   asking the filmmaker to re-approve a frame that is not there. That is a dead end, so it
+   is skipped rather than blocked; and it could never have been withdrawn anyway, because a
+   target with no live edge has no current human authority.
+
+   Everything else is BLOCKED unless the kernel can actually withdraw it. */
+function planShotCanonWithdrawal(shots) {
+  const withdraw = [];
+  const blocked = [];
+  const available = typeof authorityTarget === "function" && typeof hasCurrentHumanAuthority === "function"
+    && typeof authorityTargetExists === "function";
+  if (!available) return { withdraw, blocked, available };
+  for (const shot of shots || []) {
+    if (!shot || !shot.id) continue;
+    for (const target of currentShotAuthorityTargets(shot.id)) {
+      if (!authorityTargetExists(P, target)) continue;
+      const entry = { shot, shotId: String(shot.id), target };
+      if (shotCanonRevoker(target.kind) && hasCurrentHumanAuthority(P, target)) withdraw.push(entry);
+      else blocked.push(entry);
+    }
+  }
+  return { withdraw, blocked, available };
+}
+/* What the filmmaker is looking at, named the way the shot workspace names it. Only a
+   target the shot still lists can reach here — the plan skips the rest — so the lookup
+   finds the record; the id is the fallback for a frame or unit carrying neither title nor
+   label, which is ordinary for one created before those fields were filled in. */
+function shotCanonTargetName(entry) {
+  const shot = entry.shot || {};
+  const target = entry.target;
+  if (target.kind === "shot-frame") {
+    const frame = (shot.keyframes || []).find((row) => row && row.id === target.frameId);
+    return `${entry.shotId} · frame ${(frame && (frame.title || frame.label)) || target.frameId}`;
+  }
+  if (target.kind === "shot-motion") {
+    const clip = (shot.clips || []).find((row) => row && (row.id === target.unitKey || row.suffix === target.unitKey));
+    return `${entry.shotId} · motion ${(clip && (clip.title || clip.label)) || target.unitKey}`;
+  }
+  return `${entry.shotId} · final deliverable`;
+}
+/* The half of the refusal that is the same wherever it is refused from: why CineBraid
+   could not withdraw the approval, which approvals, and what would make the removal
+   possible. */
+function shotCanonBlockedDetail(blocked) {
+  const many = blocked.length !== 1;
+  return "because the approved file was renamed or replaced after it was approved and the record no longer "
+    + `matches it: ${blocked.map(shotCanonTargetName).join(", ")}. `
+    + `Re-approve ${many ? "those current files" : "that current file"}, then delete again. `
+    + "Deleting now would leave an approval naming a shot that no longer exists, and the project could not be saved.";
+}
+/* Withdraws every planned receipt through the kernel. The plan already proved each row
+   withdrawable, so a throw here means the ledger disagreed mid-way; the ledger is put back
+   exactly as it was and the caller removes nothing, because a half-withdrawn ledger is the
+   one outcome worse than either whole one.
+
+   THE NAME IS KEPT ON PURPOSE. public/entities.js and tests/authority-write-seam.js both
+   cite revokeShotCanonForRemoval() by name as the accepted template for removing a target
+   that can hold authority; it is now the WITHDRAWAL STEP of that template rather than the
+   whole of it, and a rename would leave two true comments pointing at nothing. */
+function revokeShotCanonForRemoval(plan) {
+  if (!plan.withdraw.length) return;
+  const ledgerBefore = JSON.parse(JSON.stringify(P.productionAuthority || null));
+  const at = new Date().toISOString();
+  const base = { at, via: "confirmed-target-removal", reason: "target-removed", clearEdge: false };
+  try {
+    for (const entry of plan.withdraw) {
+      const target = entry.target;
+      const command = shotCanonRevoker(target.kind);
+      if (target.kind === "shot-frame") command(P, { ...base, shotId: target.shotId, frameId: target.frameId });
+      else if (target.kind === "shot-motion") command(P, { ...base, shotId: target.shotId, unitKey: target.unitKey });
+      else command(P, { ...base, shotId: target.shotId });
+    }
+  } catch (error) {
+    if (ledgerBefore === null) delete P.productionAuthority;
+    else P.productionAuthority = ledgerBefore;
+    throw error;
+  }
 }
 function deletedTargetRecord(type, id, extra = {}) {
   P.meta = P.meta || {};
@@ -300,8 +462,34 @@ window.delScene = (id) => {
     const button = document.getElementById("delete-scene-confirm");
     if (!button) return;
     button.onclick = () => {
-      shots.forEach((shot) => { revokeShotCanonForRemoval(shot); deletedTargetRecord("shot", shot.id, { scene: id, mediaRetained: true }); });
-      deletedTargetRecord("scene", id, { shotIds: shots.map((shot) => shot.id), mediaRetained: true });
+      /* Re-read at the press, not at the modal, and PLAN EVERY SHOT IN THE SCENE before
+         the first one is touched. The old order withdrew and recorded one shot at a time,
+         so a later shot whose receipt could not be withdrawn left earlier siblings already
+         revoked and already written into deletedTargets, with the scene still standing. */
+      const sceneShots = P.shots.filter((s) => s.scene === id);
+      const refusalKey = `scene-delete:${id}`;
+      if (typeof clearActionRefusal === "function") clearActionRefusal(refusalKey);
+      const refuse = (message, code) => {
+        if (typeof recordActionRefusal === "function") recordActionRefusal(refusalKey, message, code);
+        closeModal(); route(); return toast(message);
+      };
+      const plan = planShotCanonWithdrawal(sceneShots);
+      if (plan.blocked.length) {
+        const blockedShots = [...new Set(plan.blocked.map((entry) => entry.shotId))];
+        return refuse(
+          `Scene ${id} was not deleted: ${blockedShots.length === 1 ? `shot ${blockedShots[0]} still holds an approval record` : `shots ${blockedShots.join(", ")} still hold approval records`} `
+          + `CineBraid cannot withdraw, ${shotCanonBlockedDetail(plan.blocked)}`,
+          "AUTHORITY_RECEIPT_NOT_WITHDRAWABLE",
+        );
+      }
+      try { revokeShotCanonForRemoval(plan); } catch (error) {
+        return refuse(
+          `Scene ${id} was not deleted: ${error.message || "an approval record could not be withdrawn"} Nothing was changed.`,
+          error.code || "AUTHORITY_RECEIPT_NOT_WITHDRAWABLE",
+        );
+      }
+      sceneShots.forEach((shot) => deletedTargetRecord("shot", shot.id, { scene: id, mediaRetained: true }));
+      deletedTargetRecord("scene", id, { shotIds: sceneShots.map((shot) => shot.id), mediaRetained: true });
       P.scenes = P.scenes.filter((s) => s.id !== id);
       P.shots = P.shots.filter((s) => s.scene !== id);
       dirty(); closeModal(); location.hash = "#/production/scenes";
@@ -442,10 +630,33 @@ window.delShot = (id) => {
     const button = document.getElementById("delete-shot-confirm");
     if (!button) return;
     button.onclick = () => {
-      revokeShotCanonForRemoval(shot);
-      deletedTargetRecord("shot", id, { scene: shot.scene, mediaRetained: true, takeCount: takes.length });
+      /* Re-read at the press: the modal is wired on a macrotask and the shot it was opened
+         about is the shot that must be planned. */
+      const target = shotById(id);
+      if (!target) { closeModal(); return route(); }
+      const refusalKey = `shot-delete:${id}`;
+      if (typeof clearActionRefusal === "function") clearActionRefusal(refusalKey);
+      const refuse = (message, code) => {
+        if (typeof recordActionRefusal === "function") recordActionRefusal(refusalKey, message, code);
+        closeModal(); route(); return toast(message);
+      };
+      const plan = planShotCanonWithdrawal([target]);
+      if (plan.blocked.length) {
+        return refuse(
+          `Shot ${id} was not deleted: it still holds ${plan.blocked.length === 1 ? "an approval record" : "approval records"} `
+          + `CineBraid cannot withdraw, ${shotCanonBlockedDetail(plan.blocked)}`,
+          "AUTHORITY_RECEIPT_NOT_WITHDRAWABLE",
+        );
+      }
+      try { revokeShotCanonForRemoval(plan); } catch (error) {
+        return refuse(
+          `Shot ${id} was not deleted: ${error.message || "an approval record could not be withdrawn"} Nothing was changed.`,
+          error.code || "AUTHORITY_RECEIPT_NOT_WITHDRAWABLE",
+        );
+      }
+      deletedTargetRecord("shot", id, { scene: target.scene, mediaRetained: true, takeCount: takes.length });
       P.shots = P.shots.filter((s) => s.id !== id);
-      dirty(); closeModal(); location.hash = "#/scene/" + shot.scene;
+      dirty(); closeModal(); location.hash = "#/scene/" + target.scene;
     };
   }, 0);
 };
