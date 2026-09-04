@@ -21,6 +21,8 @@
  * NC-SCR-5  the other direction: the target-existence gate is dropped, so a receipt the
  *           seam does not care about refuses a legitimate deletion and sends the filmmaker
  *           to re-approve something that is not there.
+ * NC-SCR-6  P1: membership inspects only the DERIVED receipt identity, so a row whose
+ *           stored targetKey names the shot being removed is never planned.
  */
 
 const assert = require("assert");
@@ -87,8 +89,8 @@ const EDITS = {
   "NC-SCR-2": [{
     label: "rows filtered by Canon state instead of by status",
     file: "mutations.js",
-    from: '    if (!row || String(row.status) !== "current") continue;\n    const target = authorityTarget(row);',
-    to: '    if (!row || String(row.status) !== "current") continue;\n    const target = authorityTarget(row);\n    if (target && !hasCurrentHumanAuthority(P, target)) continue;',
+    from: "      const target = authorityTargetFromKey(key);",
+    to: "      const target = authorityTargetFromKey(key);\n      if (target && !hasCurrentHumanAuthority(P, target)) continue;",
   }],
 
   /* NC-SCR-3 — REMOVAL BEFORE REVOCATION. The shot leaves the document first, so the
@@ -135,6 +137,18 @@ const EDITS = {
       "      }",
       "      if (plan.blocked.length) {",
     ].join("\n"),
+  }],
+
+  /* NC-SCR-6 — P1, RESTORED. Membership reads only the identity DERIVED from the row's own
+     kind/shotId/frameId and ignores the stored targetKey — the shape that shipped in
+     82d3b10. The Authority Write Seam reads both (rawCurrentTargetDomain freezes each,
+     targetRemovalDisposition matches either), so the two come apart on a row whose stored
+     key names the shot being deleted. */
+  "NC-SCR-6": [{
+    label: "membership reads the derived identity only",
+    file: "mutations.js",
+    from: "    for (const key of authorityReceiptTargetKeys(row)) {",
+    to: "    for (const key of (authorityTarget(row) ? [authorityTarget(row).key] : [])) {",
   }],
 
   /* NC-SCR-5 — THE OTHER DIRECTION. Without the target-existence gate the plan blocks on a
@@ -434,6 +448,46 @@ async function ncscr5() {
   pass("NC-SCR-5", "dropping the target-existence gate refuses a deletion the real seam would have stored, on a receipt that was already invalid");
 }
 
+/* ===========================================================================
+   NC-SCR-6 — P1: THE STORED TARGET CLAIM IS IGNORED.
+   Turns red: shot-canon-removal-drift.js P1 "the shot is NOT removed".
+   =========================================================================== */
+
+async function ncscr6() {
+  const control = mutator(EDITS["NC-SCR-6"]);
+  const project = rawFixture();
+  /* The exact row from the review: stored key names L1-01, derived identity names another
+     shot. Written by hand because it is the shape no writer produces — a document that
+     arrived carrying it. */
+  withCanon(project, [{ kind: "shot-frame", shotId: SHOT, frameId: "frame-a", value: "FRAME_A.png" }]);
+  const row = project.productionAuthority.receipts[0];
+  row.shotId = "OTHER-SHOT";
+  assert.strictEqual(row.targetKey, `shot-frame:${SHOT}#frame-a`);
+  assert.strictEqual(Kernel.authorityTarget(row).key, "shot-frame:OTHER-SHOT#frame-a");
+
+  const page = await render(`#/shot/${SHOT}`, project, { mutateSource: control.fn });
+  control.verify();
+
+  /* THE PLANNER SKIPS IT — asked directly, not inferred from what follows. */
+  const planned = evaluate(page.context, `
+    const plan = planShotCanonWithdrawal(P.shots.filter((row) => row.id === ${JSON.stringify(SHOT)}));
+    return { blocked: plan.blocked.length, withdraw: plan.withdraw.length };
+  `);
+  assert.deepStrictEqual({ ...planned }, { blocked: 0, withdraw: 0 },
+    "the control must reproduce the real defect: the inconsistent stored target is not planned");
+
+  const seen = await pressThrough(page, `delShot(${JSON.stringify(SHOT)}); return 1;`, "delete-shot-confirm");
+  assert.strictEqual(seen.shotIds.includes(SHOT), false, "so the removal proceeds");
+  assert.deepStrictEqual(seen.deletedTargets, [`shot:${SHOT}`], "and deletion history is written");
+  assert.deepStrictEqual(currentKeys(seen.after), [`shot-frame:${SHOT}#frame-a`],
+    "while the row stays `current`, still claiming the shot that has gone");
+
+  const { normal } = strandedBy(project, seen.after);
+  assert.strictEqual(normal.outcome.ok, false, "and the Authority Write Seam rejects the resulting document");
+  assert.strictEqual(normal.code, "CANON_TRANSITION_REQUIRED", `expected CANON_TRANSITION_REQUIRED, got ${normal.code}`);
+  pass("NC-SCR-6", "reading only the derived receipt identity skips a row whose stored targetKey names the shot, removes it, writes deletion history, and the seam then rejects the document with CANON_TRANSITION_REQUIRED");
+}
+
 /* ========================================================================== */
 
 async function main() {
@@ -443,7 +497,8 @@ async function main() {
   await ncscr3();
   await ncscr4();
   await ncscr5();
-  const expected = ["NC-SCR-0", "NC-SCR-1", "NC-SCR-2", "NC-SCR-3", "NC-SCR-4", "NC-SCR-5"];
+  await ncscr6();
+  const expected = ["NC-SCR-0", "NC-SCR-1", "NC-SCR-2", "NC-SCR-3", "NC-SCR-4", "NC-SCR-5", "NC-SCR-6"];
   assert.deepStrictEqual(passed.sort(), expected, `every control must run: ${passed.join(", ")}`);
   console.log(`Shot Canon removal drift negative controls: ${passed.length}/${expected.length} reverted defects reproduced against the shipped seam.`);
 }

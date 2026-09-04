@@ -36,6 +36,9 @@
  *     refuses the whole scene without partially removing a sibling.
  * S5  an unrelated edit made in the same session survives the successful deletion, the
  *     save, and the reload.
+ * P1  a receipt that claims its target TWICE — a stored `targetKey` naming one shot and a
+ *     derived identity naming another — is relevant to the removal on EITHER claim, because
+ *     the write seam protects both. Refused, atomically, on the shot and on the scene.
  */
 
 const assert = require("assert");
@@ -448,6 +451,111 @@ async function s4_sceneDeletionIsAtomic() {
 }
 
 /* ===========================================================================
+   P1 — A RECEIPT CLAIMS ITS TARGET TWICE, AND THE SEAM PROTECTS BOTH CLAIMS.
+
+   A receipt carries its target identity as a stored `targetKey` string AND as fields the
+   identity is re-derived from. validateAuthorityLedger() refuses a row whose two disagree,
+   but a document can already contain one, and the Authority Write Seam has always measured
+   a removal against BOTH — rawCurrentTargetDomain() freezes each, and
+   targetRemovalDisposition() matches a removed target against either.
+
+   The planner asked only the derived identity. So a row whose STORED key named the shot
+   being deleted was invisible to it: the shot was removed, deletion history was written,
+   the row stayed `current`, and the next ordinary save was refused with
+   CANON_TRANSITION_REQUIRED for a target the deletion had never considered.
+   =========================================================================== */
+
+/* The exact row from the review. Written by hand rather than through withCanon() because it
+   is precisely the shape no writer produces: this is a document that ARRIVED carrying it. */
+function crossClaimedReceipt(project, storedShotId, derivedShotId, frameId = "frame-a") {
+  withCanon(project, [{ kind: "shot-frame", shotId: storedShotId, frameId, value: "FRAME_A.png" }]);
+  const row = project.productionAuthority.receipts[project.productionAuthority.receipts.length - 1];
+  row.shotId = derivedShotId;
+  return row;
+}
+
+async function p1_storedTargetKeyIsMembership() {
+  /* P1-SHOT. */
+  const project = rawFixture();
+  const row = crossClaimedReceipt(project, SHOT, "OTHER-SHOT");
+  equal(row.targetKey, `shot-frame:${SHOT}#frame-a`, "P1 precondition: the STORED key names the shot being deleted");
+  equal(Kernel.authorityTarget(row).key, "shot-frame:OTHER-SHOT#frame-a",
+    "P1 precondition: while the DERIVED identity names a different shot");
+  equal(row.status, "current", "P1 precondition: and the row is current");
+
+  const page = await render(`#/shot/${SHOT}`, project);
+  const before = evaluate(page.context, `P.meta.globalStylePrompt = "an unrelated edit"; return JSON.stringify(P);`);
+  const seen = await deleteShotThrough(page, SHOT);
+
+  /* RELEVANT BECAUSE OF THE STORED CLAIM. The plan is asked directly, so this is not
+     inferred from the refusal that follows it. */
+  const planned = evaluate(page.context, `
+    const plan = planShotCanonWithdrawal(P.shots.filter((row) => row.id === ${JSON.stringify(SHOT)}));
+    return {
+      blocked: plan.blocked.map((entry) => entry.target.key),
+      withdraw: plan.withdraw.map((entry) => entry.target.key),
+      keys: authorityReceiptTargetKeys(P.productionAuthority.receipts[0]),
+    };
+  `);
+  equal(planned.keys.join(" | "), `shot-frame:${SHOT}#frame-a | shot-frame:OTHER-SHOT#frame-a`,
+    "P1: the shared predicate reports BOTH claims, stored first");
+  equal(planned.blocked.join(","), `shot-frame:${SHOT}#frame-a`,
+    `P1: the row is relevant because its stored target identifies ${SHOT}: ${JSON.stringify(planned)}`);
+  equal(planned.withdraw.length, 0, "P1: and withdrawal cannot legitimately proceed");
+
+  equal(seen.shotIds.includes(SHOT), true, "P1: the shot is NOT removed");
+  equal(seen.refusalCode, "AUTHORITY_RECEIPT_NOT_WITHDRAWABLE", "P1: deletion refuses under the code that names the cause");
+  equal(seen.order.length, 0, "P1: not one receipt was withdrawn");
+  equal(seen.deletedTargets.length, 0, "P1: and no deletion history was written");
+  equal(currentKeys(seen.after).length, 1, "P1: the receipt is left current");
+  equal(JSON.stringify(seen.after), before, "P1: with ZERO mutation of any kind");
+
+  /* THE REFUSAL HAS TO BE TRUE ABOUT WHY. This row was not renamed, so it must not be
+     described as renamed, and it must not send the filmmaker to re-approve an image. */
+  ok(/do not read as trustworthy|disagrees with/i.test(seen.refusalText),
+    `P1: the reason names the real cause: ${seen.refusalText}`);
+  equal(/renamed or replaced/i.test(seen.refusalText), false,
+    `P1: and does not claim a rename that never happened: ${seen.refusalText}`);
+
+  const saved = persist(project, seen.after);
+  equal(saved.outcome.ok, true, `P1: and the project is still accepted by the real seam: ${saved.code}`);
+
+  /* THE COUNTERFACTUAL, THROUGH THE REAL SEAM: removing it anyway is the reported failure. */
+  const stranded = clone(JSON.parse(before));
+  stranded.shots = stranded.shots.filter((r) => r.id !== SHOT);
+  const strandedSave = persist(project, stranded);
+  equal(strandedSave.outcome.ok, false, "P1: had the shot been removed anyway, an ordinary save is refused");
+  equal(strandedSave.code, "CANON_TRANSITION_REQUIRED",
+    `P1: with CANON_TRANSITION_REQUIRED, exactly as reported: ${strandedSave.code}`);
+
+  /* P1-SCENE — the cross-claimed row sits on the SECOND shot of a multi-shot scene, so a
+     removal that acted before planning the whole scene would already have withdrawn the
+     first shot's three receipts and recorded it deleted. */
+  const scene = rawFixture();
+  canonShot(scene);
+  addSiblingShot(scene);
+  crossClaimedReceipt(scene, SIBLING, "OTHER-SHOT", "frame-c");
+  equal(scene.shots.map((r) => r.id).join(","), `${SHOT},${SIBLING}`,
+    "P1-SCENE precondition: the removable shot comes first and the cross-claimed one second");
+  equal(Kernel.hasCurrentHumanAuthority(scene, { kind: "shot-frame", shotId: SHOT, frameId: "frame-a" }), false,
+    "P1-SCENE precondition: an inconsistent row makes the WHOLE ledger untrusted, so nothing here is withdrawable");
+
+  const scenePage = await render(`#/scene/${SCENE}`, scene);
+  const sceneBefore = evaluate(scenePage.context, `P.meta.globalStylePrompt = "an unrelated edit"; return JSON.stringify(P);`);
+  const sceneSeen = await deleteSceneThrough(scenePage, SCENE);
+
+  equal(sceneSeen.sceneIds.includes(SCENE), true, "P1-SCENE: the scene is NOT removed");
+  equal(sceneSeen.shotIds.length, 2, "P1-SCENE: and neither of its shots is");
+  equal(sceneSeen.order.length, 0, "P1-SCENE: no earlier sibling receipt was withdrawn");
+  equal(sceneSeen.deletedTargets.length, 0, "P1-SCENE: and no deleted-target history was recorded");
+  equal(JSON.stringify(sceneSeen.after), sceneBefore, "P1-SCENE: the refusal is atomic — ZERO mutation");
+  equal(sceneSeen.refusalCode, "AUTHORITY_RECEIPT_NOT_WITHDRAWABLE", "P1-SCENE: under the code that names the cause");
+  equal(persist(scene, sceneSeen.after).outcome.ok, true, "P1-SCENE: and the project remains saveable");
+
+  note("P1 a receipt whose stored targetKey and derived identity name different shots is relevant on either claim: shot and scene deletion both refuse atomically with zero mutation, the reason names the real cause rather than a rename, the project stays saveable, and the seam confirms removing it anyway is the reported CANON_TRANSITION_REQUIRED");
+}
+
+/* ===========================================================================
    ARCHITECTURE — THE PLAN IS THE SEAM'S OWN QUESTION, IN BOTH DIRECTIONS.
 
    The membership test has to match targetRemovalDisposition() exactly: a current receipt
@@ -527,6 +635,7 @@ async function main() {
   await s2_canonShotWithdrawsThenRemoves();
   await s3_driftedReceiptRefuses();
   await s4_sceneDeletionIsAtomic();
+  await p1_storedTargetKeyIsMembership();
   await architecture_receiptRowIsTheQuestion();
   console.log(`Shot Canon removal drift suite passed ${checks} assertions.`);
   for (const line of notes) console.log(`  · ${line}`);

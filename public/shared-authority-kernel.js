@@ -1565,6 +1565,36 @@ function authorityTargetFromKey(key) {
   match = raw.match(/^entity-state:([^:]+):([^#]+)#(.+)$/);
   return match ? authorityTarget({ kind: "entity-state", list: match[1], entityId: match[2], stateId: match[3] }) : null;
 }
+/* WHICH TARGETS A CURRENT RECEIPT CLAIMS — THE ONE ANSWER.
+ *
+ * A receipt carries its target identity TWICE: the stored `targetKey` string, and the
+ * identity re-derived from its own `kind`/`shotId`/`frameId`/`unitKey`/entity fields.
+ * validateAuthorityLedger() refuses a row whose two disagree, but a document can already
+ * contain one — an import, a restore, a hand edit, a build that predates the check — and
+ * enforcement here has always protected BOTH, because a damaged row that named one target
+ * to the writer and another to the reader is exactly how an approval survives the thing it
+ * was about.
+ *
+ * THIS FUNCTION EXISTS BECAUSE A SECOND CALLER ANSWERED IT DIFFERENTLY. The shot/scene
+ * deletion planner in public/mutations.js asked only the DERIVED identity, so a row whose
+ * stored key named the shot being deleted was skipped: the shot was removed, the row stayed
+ * `current`, and the write seam — which had read the stored key all along — then refused
+ * every save with CANON_TRANSITION_REQUIRED. One predicate, called by everything that asks
+ * "does this receipt speak about that target", is the only shape in which the planner and
+ * the seam cannot drift apart again.
+ *
+ * Returns KEY STRINGS, deduplicated, in stored-then-derived order. An empty stored key and
+ * an underivable identity each contribute nothing; a row that claims neither is a row no
+ * removal can be measured against. */
+function authorityReceiptTargetKeys(row) {
+  const receipt = kernelObject(row);
+  const keys = [];
+  const stored = kernelText(receipt.targetKey);
+  if (stored) keys.push(stored);
+  const derived = authorityTarget(receipt);
+  if (derived && derived.key !== stored) keys.push(derived.key);
+  return keys;
+}
 function authorityStable(value) {
   if (Array.isArray(value)) return value.map(authorityStable);
   if (!value || typeof value !== "object") return value;
@@ -1577,10 +1607,9 @@ function rawAuthorityDomain(current, successor) {
   for (const project of [current, successor]) for (const rowValue of rawAuthorityRows(project)) {
     const row = kernelObject(rowValue);
     if (row.status !== "current") continue;
-    const stored = kernelText(row.targetKey);
-    if (stored) targets.set(stored, authorityTargetFromKey(stored));
-    const derived = authorityTarget(row);
-    if (derived) targets.set(derived.key, derived);
+    /* Both identities, through the one predicate. A stored key that parses to nothing still
+       freezes its own string, so damage cannot shrink the protected domain. */
+    for (const key of authorityReceiptTargetKeys(row)) targets.set(key, authorityTargetFromKey(key));
   }
   return targets;
 }
@@ -1717,6 +1746,9 @@ const AUTHORITY_KERNEL_EXPORTS = {
   AUTHORITY_DIAGNOSTIC_CODES,
   authorityError,
   authorityTarget,
+  /* The one receipt-target membership predicate. Exported because the Authority Write
+     Seam and the shot/scene deletion planner must ask it the same way. */
+  authorityReceiptTargetKeys,
   describeTarget,
   /* the human */
   installBrowserManualActionSource,

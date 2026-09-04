@@ -171,7 +171,10 @@ function targetRemovalDisposition(current, successor, comparison) {
     const rows = beforeRows.filter((rowValue) => {
       const row = object(rowValue);
       if (row.status !== "current") return false;
-      return text(row.targetKey) === delta.targetKey || Authority.authorityTarget(row)?.key === delta.targetKey;
+      /* Stored key OR re-derived identity, through the kernel's one predicate — the same
+         call public/mutations.js plans a removal with, so what this refuses and what that
+         refuses to remove cannot come apart. */
+      return Authority.authorityReceiptTargetKeys(row).includes(delta.targetKey);
     });
     if (!rows.length) return { ok: false, allowedIds: new Set(), keys: new Set() };
     for (const priorValue of rows) {

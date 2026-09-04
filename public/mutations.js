@@ -338,20 +338,43 @@ window.addScene = () =>
  *
  *   and a structural walk could never find anything this does not: currentHumanAuthority()
  *   requires exactly one current row for the target, so a target with no current row was
- *   never withdrawable and never needed to be. */
+ *   never withdrawable and never needed to be.
+ *
+ * P1 — AND A ROW CLAIMS ITS TARGET TWICE, SO BOTH CLAIMS ARE READ.
+ *
+ * This asked authorityTarget(row) — the identity DERIVED from the row's own kind/shotId/
+ * frameId — and nothing else. A receipt can also carry a stored `targetKey`, and the two
+ * can disagree:
+ *
+ *     { status: "current", targetKey: "shot-frame:L1-01#frame-a",
+ *       kind: "shot-frame", shotId: "OTHER-SHOT", frameId: "frame-a" }
+ *
+ * The write seam protects BOTH — targetRemovalDisposition() matches a removed target
+ * against the stored key OR the derived one — so deleting L1-01 skipped this row, removed
+ * the shot, wrote deletion history, and the next ordinary save was refused with
+ * CANON_TRANSITION_REQUIRED for a target the planner had never looked at.
+ *
+ * authorityReceiptTargetKeys() is now the ONE predicate both sides call, and every key it
+ * returns is resolved through the kernel's own authorityTargetFromKey(). A row whose stored
+ * key names the shot being removed enters the plan on that basis alone; whether it can then
+ * be WITHDRAWN is the next question, and for an inconsistent row the answer is no, because
+ * validateAuthorityLedger() refuses the ledger and currentHumanAuthority() fails closed.
+ * That is the correct outcome and it is reached before anything is mutated. */
 function currentShotAuthorityTargets(shotId) {
   const id = String(shotId == null ? "" : shotId);
   const found = [];
-  if (!id || typeof authorityTarget !== "function") return found;
+  if (!id || typeof authorityReceiptTargetKeys !== "function" || typeof authorityTargetFromKey !== "function") return found;
   const seen = new Set();
   for (const row of (P.productionAuthority && P.productionAuthority.receipts) || []) {
     if (!row || String(row.status) !== "current") continue;
-    const target = authorityTarget(row);
-    /* entity-state targets carry no shotId, so they are excluded here by construction
-       rather than by a kind test that would have to be kept aligned by hand. */
-    if (!target || target.shotId !== id || seen.has(target.key)) continue;
-    seen.add(target.key);
-    found.push(target);
+    for (const key of authorityReceiptTargetKeys(row)) {
+      const target = authorityTargetFromKey(key);
+      /* entity-state targets carry no shotId, so they are excluded here by construction
+         rather than by a kind test that would have to be kept aligned by hand. */
+      if (!target || target.shotId !== id || seen.has(target.key)) continue;
+      seen.add(target.key);
+      found.push(target);
+    }
   }
   return found;
 }
@@ -380,8 +403,8 @@ function shotCanonRevoker(kind) {
 function planShotCanonWithdrawal(shots) {
   const withdraw = [];
   const blocked = [];
-  const available = typeof authorityTarget === "function" && typeof hasCurrentHumanAuthority === "function"
-    && typeof authorityTargetExists === "function";
+  const available = typeof authorityReceiptTargetKeys === "function" && typeof authorityTargetFromKey === "function"
+    && typeof hasCurrentHumanAuthority === "function" && typeof authorityTargetExists === "function";
   if (!available) return { withdraw, blocked, available };
   for (const shot of shots || []) {
     if (!shot || !shot.id) continue;
@@ -411,13 +434,26 @@ function shotCanonTargetName(entry) {
   }
   return `${entry.shotId} · final deliverable`;
 }
-/* The half of the refusal that is the same wherever it is refused from: why CineBraid
-   could not withdraw the approval, which approvals, and what would make the removal
-   possible. */
+/* The half of the refusal that is the same wherever it is refused from: why CineBraid could
+   not withdraw the approval, which approvals, and what would make the removal possible.
+
+   TWO CAUSES, AND THEY NEED DIFFERENT SENTENCES. An approval can be unwithdrawable because
+   the file it names was renamed after it was approved — the drift case, where re-approving
+   the current image is the repair — or because the ledger itself does not read as
+   trustworthy, which is what a receipt claiming two different targets produces. Telling a
+   filmmaker to re-approve an image would be false in the second case and would send them
+   somewhere that cannot fix it, so the ledger is asked which case this is rather than one
+   sentence being written for both. */
 function shotCanonBlockedDetail(blocked) {
   const many = blocked.length !== 1;
+  const named = blocked.map(shotCanonTargetName).join(", ");
+  const damaged = typeof validateAuthorityLedger === "function" && !validateAuthorityLedger(P).trusted;
+  if (damaged) return "because this project's approval records do not read as trustworthy — a record disagrees with "
+    + `itself about what it approved, and CineBraid will not withdraw an approval it cannot verify: ${named}. `
+    + "This project's approval records need repair before this can be removed. "
+    + "Deleting now would leave an approval naming a shot that no longer exists, and the project could not be saved.";
   return "because the approved file was renamed or replaced after it was approved and the record no longer "
-    + `matches it: ${blocked.map(shotCanonTargetName).join(", ")}. `
+    + `matches it: ${named}. `
     + `Re-approve ${many ? "those current files" : "that current file"}, then delete again. `
     + "Deleting now would leave an approval naming a shot that no longer exists, and the project could not be saved.";
 }
