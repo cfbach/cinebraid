@@ -10,7 +10,10 @@
  * control stops mutating the live path — so a rewrite that moves the code cannot
  * quietly turn these into no-ops.
  *
- * NO PROJECT DATA IS TOUCHED. NO SERVER IS STARTED. NO PROVIDER OR PAID CALL IS MADE.
+ * A REAL SERVER IS STARTED, on a throwaway root and config, by the ACTIVE
+ * checks only: "what does a reload open" is a question about stored state, and
+ * nothing in a browser harness can answer it. NO PROJECT DATA IS TOUCHED. NO
+ * PROVIDER OR PAID CALL IS MADE.
  */
 
 const assert = require("assert");
@@ -276,16 +279,22 @@ async function nc_b3_deletionWithoutRevocation() {
    there is exactly one place a future rewrite has to keep honest.
    =========================================================================== */
 
-const NCR_ANCHOR = `  let refusal = typeof createReplacementRefusal === "function"
-    ? createReplacementRefusal(certificate)
-    : "";`;
-/* 1. NO POST-RESPONSE VALIDATION AT ALL. This is the shipped defect: the
-      pre-POST verdict is treated as a permit to replace, later. */
-const NCR_UNCONDITIONAL = `  let refusal = "";`;
+/* THE DECISION EXPRESSION, EVERYWHERE IT IS ASKED.
+ *
+ * The commit now validates the certificate TWICE — once when the create response
+ * lands, and once after the activation round trip — so a control that broke only
+ * the first would be caught by the second and would never fire. The anchor is
+ * therefore the shared call itself, and every site is mutated: that is what makes
+ * these controls reproduce the defect rather than a half of it. */
+const NCR_ANCHOR = `createReplacementRefusal(effective)`;
+const NCR_SITES = 3;
+/* 1. NO VALIDATION AT ALL. This is the shipped defect: the pre-POST verdict is
+      treated as a permit to replace, later. */
+const NCR_UNCONDITIONAL = `""`;
 /* 2. A BOOLEAN, RE-ASKED, BUT NOT TIED TO WHICH PROJECT IT IS ABOUT. */
-const NCR_BOOLEAN_ONLY = `  let refusal = projectSaveSettled().settled ? "" : "the project you have open is not saved";`;
+const NCR_BOOLEAN_ONLY = `(projectSaveSettled().settled ? "" : "the project you have open is not saved")`;
 /* 3. IDENTITY ONLY, NOT TIED TO THE PROJECT'S LATEST SAVED REVISION. */
-const NCR_IDENTITY_ONLY = `  let refusal = (certificate && certificate.slug === ACTIVE_PROJECT_SLUG && certificate.epoch === PROJECT_OPEN_EPOCH) ? "" : "different project";`;
+const NCR_IDENTITY_ONLY = `((effective && effective.slug === ACTIVE_PROJECT_SLUG && effective.epoch === PROJECT_OPEN_EPOCH) ? "" : "different project")`;
 
 function racingFetch({ createSlug = "film-b" } = {}) {
   const calls = [];
@@ -326,7 +335,7 @@ async function untilInFlight(gate) {
 }
 
 async function ncr1_unconditionalLoad() {
-  anchorIn("public/creation-studio.js", NCR_ANCHOR, "NC-B1R-1");
+  anchorIn("public/creation-studio.js", NCR_ANCHOR, "NC-B1R-1", NCR_SITES);
 
   const gate = racingFetch();
   const page = await render("#/create", rawFixture(), {
@@ -358,7 +367,7 @@ async function ncr1_unconditionalLoad() {
 }
 
 async function ncr2_booleanWithoutIdentity() {
-  anchorIn("public/creation-studio.js", NCR_ANCHOR, "NC-B1R-2");
+  anchorIn("public/creation-studio.js", NCR_ANCHOR, "NC-B1R-2", NCR_SITES);
 
   const gate = racingFetch();
   const page = await render("#/create", rawFixture(), {
@@ -389,7 +398,7 @@ async function ncr2_booleanWithoutIdentity() {
 }
 
 async function ncr3_identityWithoutRevision() {
-  anchorIn("public/creation-studio.js", NCR_ANCHOR, "NC-B1R-3");
+  anchorIn("public/creation-studio.js", NCR_ANCHOR, "NC-B1R-3", NCR_SITES);
 
   const gate = racingFetch();
   const page = await render("#/create", rawFixture(), {
@@ -462,6 +471,107 @@ function rb1r_replacementFenceRetirement() {
   note("R-B1R the create response is never acted on without validating the certificate taken before it, and nothing is awaited between that verdict and the replacement");
 }
 
+/* ===========================================================================
+   NC-ACTIVE — RESTORE THE ACTIVATION-AT-CREATION MUTATION.
+
+   The residual half of B1. The replacement fence kept the WINDOW in Film A when
+   it refused, but POST /api/projects/new had already written `activeProject`, so
+   the browser said A and the config said B. A reload then opened the project the
+   fence had just declined to switch to, discarding the edit the refusal existed
+   to protect.
+
+   This puts the unconditional mutation back — the exact pre-correction three
+   lines — and proves the reload case fails with it. It runs against a REAL
+   server and reads the REAL config file, because "what does a reload open" is a
+   question about stored state.
+   =========================================================================== */
+
+const { spawn } = require("child_process");
+const os = require("os");
+
+const NCA_ANCHOR = `  if (req.body.activate !== false) {
+    const c = readConfig();
+    c.activeProject = slug;
+    writeConfig(c);
+  }
+  res.json({ ok: true, slug });`;
+/* The shipped defect: activation is not a separate act. */
+const NCA_BREAK = `  const c = readConfig();
+  c.activeProject = slug;
+  writeConfig(c);
+  res.json({ ok: true, slug });`;
+
+/* Runs a real server against a COPY of server.js with the mutation applied, so
+   the negative control exercises the route rather than a description of it. */
+async function withMutatedServer(anchor, replacement, body) {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "cinebraid-nca-"));
+  fs.mkdirSync(path.join(dir, "projects"), { recursive: true });
+  const source = fs.readFileSync(path.join(ROOT, "server.js"), "utf8");
+  const normalized = source.replace(/\r\n/g, "\n");
+  assert.strictEqual(normalized.split(anchor).length - 1, 1,
+    "probe receipt: NC-ACTIVE expected exactly one occurrence of its anchor in server.js. "
+    + "The control is no longer mutating the live path and must be rewritten.");
+  const mutatedPath = path.join(ROOT, "server.__nca-mutated.js");
+  fs.writeFileSync(mutatedPath, normalized.split(anchor).join(replacement));
+
+  const configPath = path.join(dir, "config.json");
+  const port = 4960 + Math.floor(Math.random() * 200);
+  const child = spawn(process.execPath, [mutatedPath], {
+    cwd: ROOT,
+    env: { ...process.env, PORT: String(port), CINEBRAID_HOST: "127.0.0.1",
+           CINEBRAID_CONFIG_PATH: configPath, CINEBRAID_PROJECTS_ROOT: path.join(dir, "projects") },
+    stdio: ["ignore", "ignore", "ignore"],
+  });
+  const base = `http://127.0.0.1:${port}`;
+  try {
+    for (let i = 0; i < 200; i++) {
+      try { await fetch(`${base}/api/app-identity`); break; }
+      catch { await new Promise((r) => setTimeout(r, 100)); }
+    }
+    return await body({
+      base,
+      activeProject: () => {
+        try { return JSON.parse(fs.readFileSync(configPath, "utf8")).activeProject || ""; } catch { return ""; }
+      },
+      create: async (title, extra = {}) => {
+        const response = await fetch(`${base}/api/projects/new`, {
+          method: "POST", headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ title, ...extra }),
+        });
+        return { status: response.status, body: await response.json().catch(() => ({})) };
+      },
+    });
+  } finally {
+    try { child.kill(); } catch {}
+    await new Promise((r) => setTimeout(r, 200));
+    try { fs.rmSync(mutatedPath, { force: true }); } catch {}
+    try { fs.rmSync(dir, { recursive: true, force: true }); } catch {}
+  }
+}
+
+async function nc_active_activationAtCreation() {
+  await withMutatedServer(NCA_ANCHOR, NCA_BREAK, async (server) => {
+    const filmA = await server.create("Film A");
+    equal(server.activeProject(), filmA.body.slug, "NC-ACTIVE precondition: Film A is the active project");
+
+    /* The manual path's request — it asks NOT to activate. The reverted route
+       has no such concept and activates anyway. */
+    const filmB = await server.create("Film B", { activate: false });
+    equal(filmB.status, 200, "NC-ACTIVE: the creation still succeeds");
+    equal(server.activeProject(), filmB.body.slug,
+      "NC-ACTIVE REPRODUCED: the reverted route activates Film B despite being asked not to");
+    ok(server.activeProject() !== filmA.body.slug,
+      "NC-ACTIVE REPRODUCED: so a reload would open Film B while the window is still in Film A");
+
+    /* AND THE GUARANTEE GOES RED AGAINST IT. This is the assertion the shipped
+       build passes in tests/at1-boundary-corrections.js ACTIVE-S2. */
+    await mustFail("NC-ACTIVE", "the ACTIVE project is still Film A", async () => {
+      equal(server.activeProject(), filmA.body.slug, "the ACTIVE project is still Film A");
+    });
+  });
+  note("NC-ACTIVE restoring the activation-at-creation mutation makes a create-without-activate request move activeProject anyway, so a reload opens the project the fence refused to switch to; the ACTIVE guarantee fails against that build");
+}
+
 async function main() {
   await nc_b1_resolvedFlushIsNotSaved();
   await nc_b2_openProjectWriterReturns();
@@ -470,6 +580,7 @@ async function main() {
   await ncr2_booleanWithoutIdentity();
   await ncr3_identityWithoutRevision();
   rb1r_replacementFenceRetirement();
+  await nc_active_activationAtCreation();
   console.log(`AT1 boundary corrections negative controls: ${checks} checks passed`);
   for (const line of notes) console.log("  - " + line);
 }

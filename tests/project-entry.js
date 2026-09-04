@@ -344,11 +344,27 @@ async function sectionFormatAndAspect() {
   const fromFormat = vm.runInContext(`projectAspectLabel({ meta: { format: "2.39:1" } })`, context);
   assert.strictEqual(fromFormat, "2.39:1", "F. and the legacy meta.format fallback is untouched");
 
-  /* No new persistent field was invented to make either control readable. */
-  const newProjectRoute = read("server.js").slice(read("server.js").indexOf('app.post("/api/projects/new"'));
-  const accepted = [...newProjectRoute.slice(0, 1400).matchAll(/req\.body\.(\w+)/g)].map((m) => m[1]).sort();
-  assert.deepStrictEqual([...new Set(accepted)], ["aspectRatio", "firstScene", "format", "globalNegativePrompt", "globalStylePrompt", "title", "worldSetting"],
-    "F. project creation accepts exactly the fields it accepted before this slice");
+  /* No new persistent field was invented to make either control readable.
+
+     Read the WHOLE route rather than its first 1400 characters: the slice was a
+     proxy for "the part that builds the document", and a comment added above the
+     response was enough to push a real field out of it. The persisted set is
+     named explicitly, and `activate` is named explicitly as the one accepted
+     field that is NOT persisted — it chooses whether the route also makes the
+     new project current, which is a separate act (see B1's active-project
+     fence). If it ever starts writing into the document, it belongs in the list
+     above and this assertion fails until it is. */
+  const routeStart = read("server.js").indexOf('app.post("/api/projects/new"');
+  const newProjectRoute = read("server.js").slice(routeStart, read("server.js").indexOf("\n});", routeStart));
+  const accepted = [...new Set([...newProjectRoute.matchAll(/req\.body\.(\w+)/g)].map((m) => m[1]))].sort();
+  const PERSISTED = ["aspectRatio", "firstScene", "format", "globalNegativePrompt", "globalStylePrompt", "title", "worldSetting"];
+  assert.deepStrictEqual(accepted, [...PERSISTED, "activate"].sort(),
+    "F. project creation accepts exactly the fields it accepted before this slice, plus the non-persisted `activate` control");
+  for (const field of PERSISTED)
+    assert(newProjectRoute.includes(`blank.meta.${field}`) || field === "firstScene" || field === "worldSetting",
+      `F. ${field} is still written into the created document`);
+  assert(!/blank\.\w+[^\n]*activate/.test(newProjectRoute),
+    "F. and `activate` is never written into the document — it only chooses whether the route activates the project");
   note(`F. format and aspect are typed selects that post ${JSON.stringify(body)} into the existing meta fields, from the shared preset list`);
 }
 

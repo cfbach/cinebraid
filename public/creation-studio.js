@@ -6150,14 +6150,24 @@ async function startManualProjectCommit(draft, title, refuse) {
      If a previous press created the project and the replacement fence then
      refused, the project EXISTS. Pressing again must finish that creation, not
      make a second identical project. */
+  /* Resuming or not, the activation below is the same one explicit act, so there
+     is nothing here that needs to know which of the two this press is. */
   let created = MANUAL_START_PENDING.slug ? { slug: MANUAL_START_PENDING.slug } : null;
-  const resuming = !!created;
   if (!created) {
     try {
       const response = await fetch("/api/projects/new", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ title, format: draft.format || "", aspectRatio: draft.aspectRatio || "" }),
+        /* CREATED, NOT ACTIVATED. The fence below decides whether the switch is
+           safe, and it can refuse — so the server must not have already made
+           this project current. Without this the browser stayed in the open
+           project on a refusal while `activeProject` named the new one, and a
+           reload opened the project the fence had just declined to switch to,
+           discarding the edit the refusal existed to protect. Activation is one
+           explicit act, through /api/projects/switch, at the commit below. */
+        body: JSON.stringify({
+          title, format: draft.format || "", aspectRatio: draft.aspectRatio || "", activate: false,
+        }),
       });
       created = await response.json().catch(() => ({}));
       if (!response.ok) throw new Error(created.error || "Could not create project");
@@ -6177,8 +6187,14 @@ async function startManualProjectCommit(draft, title, refuse) {
   /* ---- THE REPLACEMENT FENCE -------------------------------------------
      The POST was an await. Everything the certificate described may have moved
      while it was on the wire, so it is checked HERE rather than trusted. */
+  /* The certificate the replacement is ultimately authorised by. It starts as
+     the one taken before the request and is REPLACED if the open project moved
+     and was brought back to a saved state below — the later activation must be
+     validated against what was actually certified last, not against a snapshot
+     that has since been superseded. */
+  let effective = certificate;
   let refusal = typeof createReplacementRefusal === "function"
-    ? createReplacementRefusal(certificate)
+    ? createReplacementRefusal(effective)
     : "";
 
   if (refusal && stillTheSameOpenProject(certificate)) {
@@ -6188,11 +6204,11 @@ async function startManualProjectCommit(draft, title, refuse) {
     try {
       await flushPendingProjectSave();
     } catch { /* the save chain reports its own failure; the fence below decides */ }
-    const recertified = typeof createReplacementCertificate === "function"
+    effective = typeof createReplacementCertificate === "function"
       ? createReplacementCertificate()
       : { ok: true };
     refusal = typeof createReplacementRefusal === "function"
-      ? createReplacementRefusal(recertified)
+      ? createReplacementRefusal(effective)
       : "";
   }
 
@@ -6213,28 +6229,69 @@ async function startManualProjectCommit(draft, title, refuse) {
     );
   }
 
-  /* ---- COMMIT. No await between the fence above and the replacement below. */
-  /* Consumed, not merely hidden: the draft described a project that now exists. */
+  /* ---- ACTIVATE, THEN COMMIT ---------------------------------------------
+     The project was created WITHOUT activation, so this is the act that makes it
+     current — the shipped switch route, named explicitly rather than inferred
+     from whatever the server last had active.
+
+     THIS IS AN AWAIT, SO THE VERDICT IS TAKEN AGAIN AFTER IT. The fence's whole
+     point is that a verdict stops being true the moment the event loop is given
+     back, and activating is a round trip like any other. A filmmaker can type
+     into Film A while the switch is on the wire, and load() would discard it. */
+  const openingSlug = MANUAL_START_PENDING.slug;
+  const sourceSlug = effective.ok ? effective.slug : ACTIVE_PROJECT_SLUG;
+  try {
+    const switched = await fetch("/api/projects/switch", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ slug: openingSlug }),
+    });
+    if (!switched.ok) throw new Error((await switched.json().catch(() => ({}))).error || "Could not open the new project");
+  } catch (error) {
+    return refuse(
+      `${MANUAL_START_PENDING.title || title} was created, but CineBraid could not open it: `
+      + `${String(error.message || "the project could not be opened").replace(/\s*\.\s*$/, "")}. `
+      + `You are still in ${P?.meta?.title || "the project you have open"}. `
+      + `Press CREATE THIS PROJECT again to open it — it will not be created twice.`,
+      "manual-start:activate-failed",
+    );
+  }
+
+  /* THE LAST VERDICT, AND NOTHING IS AWAITED BETWEEN IT AND THE REPLACEMENT. */
+  const finalRefusal = typeof createReplacementRefusal === "function"
+    ? createReplacementRefusal(effective)
+    : "";
+  if (finalRefusal) {
+    /* AN EDIT LANDED WHILE THE SWITCH WAS IN FLIGHT. The server now says the new
+       project is current and this window says otherwise, which is the exact
+       disagreement this correction exists to remove — so the activation is put
+       back before refusing. The creation stays pending and nothing is deleted. */
+    try {
+      if (sourceSlug) {
+        await fetch("/api/projects/switch", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ slug: sourceSlug }),
+        });
+      }
+    } catch { /* reported by the refusal below; nothing was replaced either way */ }
+    const because = String(finalRefusal).replace(/\s*\.\s*$/, "");
+    return refuse(
+      `${MANUAL_START_PENDING.title || title} was created, but CineBraid did not switch to it: ${because}. `
+      + `You are still in ${P?.meta?.title || "the project you have open"}, and the work you have not saved is still here. `
+      + `Resolve that save and press CREATE THIS PROJECT again to open ${MANUAL_START_PENDING.title || title} — it will not be created twice.`,
+      "manual-start:replacement-unsafe",
+    );
+  }
+
+  /* Consumed, not merely hidden: the draft described a project that now exists,
+     and it is now the current one on both sides. */
   CREATION_MANUAL_IDENTITY.title = "";
   CREATION_MANUAL_IDENTITY.format = "";
   CREATION_MANUAL_IDENTITY.aspectRatio = "";
   window.__cinebraidProjectEntryLanding = null;
-  const openingSlug = MANUAL_START_PENDING.slug;
   MANUAL_START_PENDING.slug = "";
   MANUAL_START_PENDING.title = "";
-  /* A RESUMED creation says which project to open. The creation route pointed
-     the server at it when it was created, but a refused replacement leaves the
-     filmmaker working — and switching projects in between would leave load()
-     opening whatever is active now. The shipped switch route names it. */
-  if (resuming && openingSlug) {
-    try {
-      await fetch("/api/projects/switch", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ slug: openingSlug }),
-      });
-    } catch { /* load() below falls back to whatever the server reports as active */ }
-  }
   await load();
   /* Into the normal production flow, which is where a project with no shots
      offers ADD THE FIRST SHOT and that button now actually adds one. */

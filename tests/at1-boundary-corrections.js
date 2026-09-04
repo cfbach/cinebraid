@@ -32,11 +32,15 @@
  * inside a delivered trusted gesture, and B3's saveability is answered by the
  * real Authority Write Seam rather than by this file.
  *
- * NO PROJECT DATA IS TOUCHED. NO SERVER IS STARTED. NO PROVIDER OR PAID CALL IS MADE.
+ * A REAL SERVER IS STARTED, on a throwaway root and config, by the ACTIVE
+ * checks only: "what does a reload open" is a question about stored state, and
+ * nothing in a browser harness can answer it. NO PROJECT DATA IS TOUCHED. NO
+ * PROVIDER OR PAID CALL IS MADE.
  */
 
 const assert = require("assert");
 const crypto = require("crypto");
+const fs = require("fs");
 const path = require("path");
 const vm = require("vm");
 
@@ -703,11 +707,292 @@ async function b1race_replacementFence() {
   note("B1-RACE the pre-POST verdict is carried as a certificate (open epoch, project, durable generation, stored revision, edit counters) and re-checked with no await before the replacement: an intervening edit is saved first and only then replaced; a 422, a 409 or a project change leaves Film A current with its edit, refusal and counters intact; the created project is remembered and finished by the next press rather than created twice");
 }
 
+/* ===========================================================================
+   ACTIVE — CREATING FILM B AND ACTIVATING IT ARE TWO ACTS.
+
+   The replacement fence kept the WINDOW in Film A when it refused, but
+   POST /api/projects/new had already written `activeProject` server-side. So the
+   two disagreed: the browser said A, the config said B, and a reload opened the
+   project the fence had just declined to switch to — discarding the edit the
+   refusal existed to protect.
+
+   The route now takes `activate` (default true, so every other caller is
+   unchanged) and the manual path creates WITHOUT activating. Activation is one
+   explicit act through the shipped switch route, at the commit.
+
+   The first half of this section proves the SERVER's half against a real server
+   and a real config file, because "what does a reload open" is a question about
+   stored state and nothing in a browser harness can answer it. The second half
+   proves the CLIENT's half, with the harness modelling the active project so a
+   refused fence can be checked against both sides at once.
+   =========================================================================== */
+
+const { spawn } = require("child_process");
+const os = require("os");
+
+function freePortDir() {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "cinebraid-active-"));
+  fs.mkdirSync(path.join(dir, "projects"), { recursive: true });
+  return dir;
+}
+
+/* A real CineBraid server on a throwaway root, so `activeProject` is read back
+   from the config file the product actually writes. */
+async function withRealServer(body) {
+  const dir = freePortDir();
+  const configPath = path.join(dir, "config.json");
+  const projectsRoot = path.join(dir, "projects");
+  const port = 4700 + Math.floor(Math.random() * 250);
+  const child = spawn(process.execPath, ["server.js"], {
+    cwd: ROOT,
+    env: { ...process.env, PORT: String(port), CINEBRAID_HOST: "127.0.0.1",
+           CINEBRAID_CONFIG_PATH: configPath, CINEBRAID_PROJECTS_ROOT: projectsRoot },
+    stdio: ["ignore", "ignore", "ignore"],
+  });
+  const base = `http://127.0.0.1:${port}`;
+  try {
+    for (let i = 0; i < 200; i++) {
+      try { await fetch(`${base}/api/app-identity`); break; } catch { await tick(); await new Promise((r) => setTimeout(r, 100)); }
+    }
+    const activeProject = () => {
+      try { return JSON.parse(fs.readFileSync(configPath, "utf8")).activeProject || ""; } catch { return ""; }
+    };
+    const create = async (title, extra = {}) => {
+      const response = await fetch(`${base}/api/projects/new`, {
+        method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ title, ...extra }),
+      });
+      return { status: response.status, body: await response.json().catch(() => ({})) };
+    };
+    const switchTo = async (slug) => {
+      const response = await fetch(`${base}/api/projects/switch`, {
+        method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ slug }),
+      });
+      return { status: response.status, body: await response.json().catch(() => ({})) };
+    };
+    const projects = () => fs.readdirSync(projectsRoot)
+      .filter((d) => fs.existsSync(path.join(projectsRoot, d, "project.json")));
+    return await body({ base, activeProject, create, switchTo, projects, projectsRoot });
+  } finally {
+    try { child.kill(); } catch {}
+    await new Promise((r) => setTimeout(r, 200));
+    try { fs.rmSync(dir, { recursive: true, force: true }); } catch {}
+  }
+}
+
+async function active_serverSeparatesCreationFromActivation() {
+  await withRealServer(async (server) => {
+    /* The baseline caller — no flag — still creates AND activates. */
+    const filmA = await server.create("Film A");
+    equal(filmA.status, 200, "ACTIVE-S1: an ordinary creation succeeds");
+    equal(server.activeProject(), filmA.body.slug,
+      "ACTIVE-S1: every existing caller is unchanged — creation still activates by default");
+
+    /* The manual path's creation — created on disk, NOT activated. */
+    const filmB = await server.create("Film B", { activate: false });
+    equal(filmB.status, 200, "ACTIVE-S2: a create-without-activate succeeds");
+    ok(server.projects().includes(filmB.body.slug),
+      "ACTIVE-S2: Film B exists on disk — it was created, only not made current");
+    equal(server.activeProject(), filmA.body.slug,
+      "ACTIVE-S2: and the ACTIVE project is still Film A, so a reload opens Film A");
+    ok(fs.existsSync(path.join(server.projectsRoot, filmB.body.slug, "project.json")),
+      "ACTIVE-S2: Film B is a complete, openable project, not a placeholder");
+
+    /* Activation is the switch route, and it is what makes a reload open B. */
+    const switched = await server.switchTo(filmB.body.slug);
+    equal(switched.status, 200, "ACTIVE-S3: the shipped switch route activates it");
+    equal(server.activeProject(), filmB.body.slug,
+      "ACTIVE-S3: and only now does a reload open Film B");
+
+  });
+  note("ACTIVE-S the creation route separates creating from activating: `activate: false` leaves a complete project on disk without moving activeProject, the default still activates so no other caller changes, and the switch route is what a reload follows");
+}
+
+/* ---- the client half ---------------------------------------------------- */
+
+/* A create/switch stub that MODELS the server's active project, so a refused
+   fence can be checked on both sides at once. */
+function activationHarness({ createSlug = "film-b", sourceSlug = "film-a" } = {}) {
+  const calls = [];
+  let release = null;
+  let saveStatus = 200;
+  let saveBody = null;
+  let activeProject = sourceSlug;
+  const created = new Set();
+  const gate = new Promise((resolve) => { release = resolve; });
+  return {
+    calls,
+    release: () => release(),
+    setSaveStatus(status, body) { saveStatus = status; saveBody = body || null; },
+    activeProject: () => activeProject,
+    createdProjects: () => [...created],
+    createCount: () => calls.filter((row) => row.url === "/api/projects/new").length,
+    switchCount: () => calls.filter((row) => row.url === "/api/projects/switch").length,
+    switchTargets: () => calls.filter((row) => row.url === "/api/projects/switch")
+      .map((row) => { try { return JSON.parse(row.body).slug; } catch { return ""; } }),
+    marker() { return calls.length; },
+    since(m) { return calls.slice(m); },
+    hook: async (url, options, respond) => {
+      const body = String((options && options.body) || "");
+      calls.push({ url, method: (options && options.method) || "GET", body });
+      if (url === "/api/projects/new") {
+        const request = (() => { try { return JSON.parse(body); } catch { return {}; } })();
+        await gate;
+        /* The project is created either way — that is the point. */
+        created.add(createSlug);
+        const activate = request.activate !== false;
+        if (activate) activeProject = createSlug;
+        return respond({ ok: true, slug: createSlug, activated: activate }, 200);
+      }
+      if (url === "/api/projects/switch") {
+        const request = (() => { try { return JSON.parse(body); } catch { return {}; } })();
+        activeProject = String(request.slug || activeProject);
+        return respond({ ok: true, slug: activeProject }, 200);
+      }
+      if (/\/api\/projects\/[^/]+\/(project|canon-transition)$/.test(url)) {
+        if (saveStatus === 200) {
+          return respond({ ok: true, revision: `rev-${calls.length}` }, 200,
+            { "x-cinebraid-project-revision": `rev-${calls.length}` });
+        }
+        return respond(saveBody || { error: "refused", code: "PROJECT_VALIDATION_FAILED" }, saveStatus);
+      }
+      return null;
+    },
+  };
+}
+
+async function active_clientActivatesOnlyOnCommit() {
+  /* ---- ACTIVE-5: the ordinary path still works, and activates exactly once. */
+  const fast = activationHarness();
+  const fastPage = await render("#/create", rawFixture(), { fetch: fast.hook });
+  await evaluateAsync(fastPage.context, `await flushPendingProjectSave(); return 1;`);
+  startPressInFlight(fastPage.context);
+  await untilCreateInFlight(fast);
+  equal(fast.activeProject(), "film-a",
+    "ACTIVE-5: the project is created without becoming active");
+  fast.release();
+  await settlePress(fastPage.context);
+  equal(evaluate(fastPage.context, `return location.hash;`), "#/production",
+    "ACTIVE-5: ordinary creation still opens the new project");
+  equal(fast.activeProject(), "film-b", "ACTIVE-5: which is now the active project");
+  equal(fast.switchCount(), 1, "ACTIVE-5: activated by exactly one explicit switch");
+  equal(fast.createCount(), 1, "ACTIVE-5: and created exactly once");
+
+  /* ---- ACTIVE-1: delayed create + intervening 422. --------------------- */
+  const refused = activationHarness();
+  const page1 = await render("#/create", rawFixture(), { fetch: refused.hook });
+  await evaluateAsync(page1.context, `await flushPendingProjectSave(); return 1;`);
+  const titleBefore = evaluate(page1.context, `return P.meta.title;`);
+  startPressInFlight(page1.context);
+  await untilCreateInFlight(refused);
+  refused.setSaveStatus(422, { error: "Project failed validation.", code: "PROJECT_VALIDATION_FAILED" });
+  evaluate(page1.context, `P.meta.logline = "ACTIVE-EDIT-THEN-REFUSED"; dirty(); return 1;`);
+  const marker1 = refused.marker();
+  refused.release();
+  await settlePress(page1.context);
+
+  const after1 = evaluate(page1.context, `
+    const main = (document.getElementById("main")||{innerHTML:""}).innerHTML;
+    return { title: P.meta.title, logline: P.meta.logline, hash: location.hash,
+             blocked: SAVE_BLOCKED, settled: projectSaveSettled().settled,
+             pending: (window.__cinebraidManualStartPending||{}).slug || "",
+             refusal: main.indexOf('data-action-refusal="manual-start"') >= 0 };`);
+
+  ok(refused.createdProjects().includes("film-b"), "ACTIVE-1: Film B was successfully created");
+  equal(refused.createCount(), 1, "ACTIVE-1: exactly once");
+  equal(after1.title, titleBefore, "ACTIVE-1: the UI remains Film A");
+  equal(after1.hash, "#/create", "ACTIVE-1: the window did not move");
+  equal(refused.activeProject(), "film-a",
+    "ACTIVE-1: and the SERVER's active project is still Film A — browser and server agree");
+  equal(refused.since(marker1).filter((row) => row.url === "/api/project").length, 0,
+    "ACTIVE-1: Film B was never loaded");
+  equal(after1.logline, "ACTIVE-EDIT-THEN-REFUSED", "ACTIVE-1: Film A's edit remains");
+  equal(after1.blocked, true, "ACTIVE-1: its refusal remains");
+  equal(after1.refusal, true, "ACTIVE-1: and is on screen");
+  equal(after1.pending, "film-b", "ACTIVE-1: Film B is remembered as the pending creation");
+
+  /* ---- ACTIVE-4: recovery uses the pending B and activates it once. ----- */
+  const beforeRecovery = refused.marker();
+  refused.setSaveStatus(200, null);
+  await evaluateAsync(page1.context, `
+    resumeProjectSaving();
+    await flushPendingProjectSave();
+    return 1;`);
+  equal(evaluate(page1.context, `return projectSaveSettled().settled;`), true,
+    "ACTIVE-4 precondition: Film A reaches a positively saved state");
+  startPressInFlight(page1.context);
+  await settlePress(page1.context);
+  const recoveryCalls = refused.since(beforeRecovery);
+  equal(recoveryCalls.filter((row) => row.url === "/api/projects/new").length, 0,
+    "ACTIVE-4: recovery issues NO second creation");
+  equal(recoveryCalls.filter((row) => row.url === "/api/projects/switch").length, 1,
+    "ACTIVE-4: exactly one legitimate switch activates the already-created project");
+  equal(refused.activeProject(), "film-b", "ACTIVE-4: which is now active");
+  equal(refused.createdProjects().length, 1, "ACTIVE-4: and only one project was ever created");
+  equal(evaluate(page1.context, `return location.hash;`), "#/production", "ACTIVE-4: it opens");
+
+  /* ---- ACTIVE-2: intervening edit that later saves. -------------------- */
+  const saving = activationHarness();
+  const page2 = await render("#/create", rawFixture(), { fetch: saving.hook });
+  await evaluateAsync(page2.context, `await flushPendingProjectSave(); return 1;`);
+  startPressInFlight(page2.context);
+  await untilCreateInFlight(saving);
+  evaluate(page2.context, `P.meta.logline = "ACTIVE-EDIT-THEN-SAVED"; dirty(); return 1;`);
+  equal(saving.activeProject(), "film-a",
+    "ACTIVE-2: Film B exists but is not active while Film A's save is pending");
+  const marker2 = saving.marker();
+  saving.release();
+  await settlePress(page2.context);
+
+  const savesBeforeSwitch = saving.since(marker2);
+  const switchAt = savesBeforeSwitch.findIndex((row) => row.url === "/api/projects/switch");
+  const savedAt = savesBeforeSwitch.findIndex((row) => /\/api\/projects\/[^/]+\/project$/.test(row.url)
+    && String(row.body).includes("ACTIVE-EDIT-THEN-SAVED"));
+  ok(savedAt >= 0, "ACTIVE-2: Film A's later revision was persisted");
+  ok(switchAt >= 0 && savedAt < switchAt,
+    "ACTIVE-2: and it was persisted BEFORE the switch that activates Film B");
+  equal(saving.activeProject(), "film-b", "ACTIVE-2: only then is Film B active, so a reload opens it");
+  equal(evaluate(page2.context, `return location.hash;`), "#/production", "ACTIVE-2: and it opens normally");
+
+  /* ---- ACTIVE-3: the source project changed while the request flew. ---- */
+  const moved = activationHarness();
+  const page3 = await render("#/create", rawFixture(), { fetch: moved.hook });
+  await evaluateAsync(page3.context, `await flushPendingProjectSave(); return 1;`);
+  startPressInFlight(page3.context);
+  await untilCreateInFlight(moved);
+  /* The filmmaker opens a different project. The harness's active project moves
+     with them, exactly as the switcher would move it. */
+  evaluate(page3.context, `
+    beginProjectOpen();
+    ACTIVE_PROJECT_SLUG = "some-other-film";
+    return 1;`);
+  await moved.hook("/api/projects/switch", { method: "POST", body: JSON.stringify({ slug: "some-other-film" }) },
+    (b, s) => ({ ok: true, status: s || 200, json: async () => b, headers: { get: () => null } }));
+  equal(moved.activeProject(), "some-other-film", "ACTIVE-3 precondition: the filmmaker is in another project");
+  const marker3 = moved.marker();
+  moved.release();
+  await settlePress(page3.context);
+
+  const after3 = evaluate(page3.context, `return { slug: ACTIVE_PROJECT_SLUG, hash: location.hash,
+    pending: (window.__cinebraidManualStartPending||{}).slug || "" };`);
+  equal(after3.slug, "some-other-film", "ACTIVE-3: the browser stays in the project the filmmaker moved to");
+  equal(moved.activeProject(), "some-other-film",
+    "ACTIVE-3: and the stale create response does not overwrite the server's active project either");
+  equal(moved.since(marker3).filter((row) => row.url === "/api/project").length, 0,
+    "ACTIVE-3: nothing was loaded over it");
+  equal(after3.pending, "film-b", "ACTIVE-3: Film B is kept as a pending creation rather than lost");
+
+  note("ACTIVE the manual path creates Film B without activating it: a refused fence leaves browser AND server both naming Film A, an intervening edit is persisted before the activating switch, a stale response overwrites neither side, and recovery activates the already-created project with one switch and no second creation");
+}
+
 async function main() {
   await b1_createRequiresConfirmedSave();
   await b2_manualStartIsolation();
   await b3_wholeReferenceDeletion();
   await b1race_replacementFence();
+  await active_serverSeparatesCreationFromActivation();
+  await active_clientActivatesOnlyOnCommit();
   console.log(`AT1 boundary corrections: ${checks} checks passed`);
   for (const line of notes) console.log("  - " + line);
 }

@@ -9231,9 +9231,34 @@ app.post("/api/projects/new", (req, res) => {
     });
   const { slug, outcome: createOutcome } = createProjectUnderFreeSlug(title, blank);
   if (!createOutcome.ok) return seamFailure(res, createOutcome, slug);
-  const c = readConfig();
-  c.activeProject = slug;
-  writeConfig(c);
+  /* CREATING A PROJECT AND ACTIVATING IT ARE TWO ACTS, AND ONE CALLER NEEDS THEM
+     APART.
+
+     This route always did both, which is right for the caller that creates a
+     project and immediately opens it. It is wrong for a caller that must decide
+     AFTER the response whether the switch is safe: Start manually creates the
+     new project while the filmmaker may still be editing the one they have
+     open, and its replacement fence can refuse. When it refuses the browser
+     correctly stays in the open project — but `activeProject` had already moved,
+     so the two disagreed, and a reload opened a project the fence had just
+     declined to switch to, discarding the edit the refusal existed to protect.
+
+     `activate` DEFAULTS TO TRUE, so every existing caller is unchanged and this
+     is opt-out for the one flow that owns the distinction. A project created
+     without activation is an ordinary project: it is on disk, it is in the
+     switcher, and the shipped /api/projects/switch is what makes it current —
+     which is the seam that already exists for exactly this act.
+
+     THE RESPONSE SHAPE IS UNCHANGED. It would have been convenient to report
+     `activated` back, but this response is a shared contract — the untrusted
+     import path asserts its exact shape — and a caller already knows what it
+     asked for. Whether the project became current is observable where it
+     matters, in `activeProject`. */
+  if (req.body.activate !== false) {
+    const c = readConfig();
+    c.activeProject = slug;
+    writeConfig(c);
+  }
   res.json({ ok: true, slug });
 });
 
