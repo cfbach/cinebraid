@@ -6067,10 +6067,16 @@ window.startManualProject = async () => {
      nothing. The lock refuses that navigation out loud; the finally releases it
      on every path, so no refusal can strand the window between two projects. */
   beginManualReplacement("saving the project you have open");
+  /* THE DATA-LAYER OWNER. The presentation lock above explains and discourages;
+     THIS is what actually refuses an ordinary write to the open project, at the
+     seam every app-owned mutation goes through. It is also what the install
+     checks it still holds. */
+  const transition = beginProjectTransition("opening another project");
   try {
-    return await startManualProjectCommit(draft, title, refuse);
+    return await startManualProjectCommit(draft, title, refuse, transition);
   } finally {
     MANUAL_START_IN_FLIGHT = false;
+    endProjectTransition(transition.token);
     endManualReplacement();
   }
 };
@@ -6153,7 +6159,7 @@ function stillTheSameOpenProject(certificate) {
     && certificate.epoch === PROJECT_OPEN_EPOCH;
 }
 
-async function startManualProjectCommit(draft, title, refuse) {
+async function startManualProjectCommit(draft, title, refuse, transition) {
   /* The open project's own unsaved work is flushed before anything switches, the
      same way commitProjectBuilderImport() and newProject() flush it. */
   try {
@@ -6325,10 +6331,19 @@ async function startManualProjectCommit(draft, title, refuse) {
      installed in this same breath. That is the whole point of preparing first:
      there is no interval in which the server says one thing and this window
      says another. */
-  if (!commitPreparedProjectLoad(prepared)) {
+  if (!commitPreparedProjectLoad(prepared, transition)) {
+    /* THE INSTALL OWNERSHIP CHECK REFUSED. Something replaced the project this
+       transaction owned while it was in flight — a project opened through any
+       path, covered by the presentation lock or not. The window stays on
+       whatever is actually current, nothing is rolled back, and the created
+       project is left pending so the next press finishes it rather than making
+       another one. */
     return refuse(
-      `${MANUAL_START_PENDING.title || title} was created and opened, but CineBraid could not install it in this window. Reload to continue in it.`,
-      "manual-start:install-refused",
+      `${MANUAL_START_PENDING.title || title} was created, but CineBraid did not switch to it: `
+      + `${P?.meta?.title || "another project"} became the project you have open while it was being prepared. `
+      + `Nothing was changed here. Press CREATE THIS PROJECT again to open `
+      + `${MANUAL_START_PENDING.title || title} — it will not be created twice.`,
+      "manual-start:install-superseded",
     );
   }
   /* Consumed, not merely hidden: the draft described a project that now exists,

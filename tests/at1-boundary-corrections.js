@@ -611,10 +611,15 @@ async function b1race_replacementFence() {
 
   startPressInFlight(page1.context);
   await untilCreateInFlight(ok1);
-  /* THE RACE: the filmmaker edits Film A while the create request is on the wire. */
+  /* THE RACE. An ordinary edit is now REFUSED at the seam while the transaction
+     owns this project — that is CENTRAL-1, and dirty() declines it. What the
+     CERTIFICATE exists for is the state that can still move without dirty(): a
+     save queued before the press landing or being refused mid-flight, and a
+     durable advance this window did not author. So the unsaved work is expressed
+     directly here, which is exactly the condition the certificate compares. */
   const editedInFlight = evaluate(page1.context, `
     P.meta.logline = "EDIT-DURING-CREATE";
-    dirty();
+    SAVE_REVISION += 1; setSaveState("dirty", "Unsaved changes");
     return { unsaved: projectSaveSettled().settled === false, saveRevision: SAVE_REVISION };`);
   equal(editedInFlight.unsaved, true, "B1-RACE-1: the intervening edit leaves Film A unsaved mid-flight");
 
@@ -644,7 +649,16 @@ async function b1race_replacementFence() {
   refused.setSaveStatus(422, { error: "Project failed validation.", code: "PROJECT_VALIDATION_FAILED" });
   startPressInFlight(page2.context);
   await untilCreateInFlight(refused);
-  evaluate(page2.context, `P.meta.logline = "EDIT-THEN-REFUSED"; dirty(); return 1;`);
+  /* ORDINARY EDITS ARE NOW REFUSED AT THE SEAM while a replacement
+     transaction owns this project — that is CENTRAL-1, and dirty() would
+     decline this. What the CERTIFICATE exists for is the state that can
+     still move without dirty(): a save queued before the press landing or
+     being refused mid-flight, and a durable advance this window did not
+     author. So the unsaved work is expressed directly here, which is
+     exactly the condition the certificate compares. */
+  evaluate(page2.context, `P.meta.logline = "EDIT-THEN-REFUSED";
+    SAVE_REVISION += 1; setSaveState("dirty", "Unsaved changes");
+    return 1;`);
   const marker2 = refused.marker();
   refused.release();
   await settlePress(page2.context);
@@ -704,7 +718,9 @@ async function b1race_replacementFence() {
   conflicted.setSaveStatus(409, { error: "This project changed in storage.", code: "PROJECT_REVISION_CONFLICT" });
   startPressInFlight(page3.context);
   await untilCreateInFlight(conflicted);
-  evaluate(page3.context, `P.meta.logline = "EDIT-THEN-CONFLICT"; dirty(); return 1;`);
+  evaluate(page3.context, `P.meta.logline = "EDIT-THEN-CONFLICT";
+    SAVE_REVISION += 1; setSaveState("dirty", "Unsaved changes");
+    return 1;`);
   const marker3 = conflicted.marker();
   conflicted.release();
   await settlePress(page3.context);
@@ -934,7 +950,9 @@ async function active_clientActivatesOnlyOnCommit() {
   startPressInFlight(page1.context);
   await untilCreateInFlight(refused);
   refused.setSaveStatus(422, { error: "Project failed validation.", code: "PROJECT_VALIDATION_FAILED" });
-  evaluate(page1.context, `P.meta.logline = "ACTIVE-EDIT-THEN-REFUSED"; dirty(); return 1;`);
+  evaluate(page1.context, `P.meta.logline = "ACTIVE-EDIT-THEN-REFUSED";
+    SAVE_REVISION += 1; setSaveState("dirty", "Unsaved changes");
+    return 1;`);
   const marker1 = refused.marker();
   refused.release();
   await settlePress(page1.context);
@@ -985,7 +1003,9 @@ async function active_clientActivatesOnlyOnCommit() {
   await evaluateAsync(page2.context, `await flushPendingProjectSave(); return 1;`);
   startPressInFlight(page2.context);
   await untilCreateInFlight(saving);
-  evaluate(page2.context, `P.meta.logline = "ACTIVE-EDIT-THEN-SAVED"; dirty(); return 1;`);
+  evaluate(page2.context, `P.meta.logline = "ACTIVE-EDIT-THEN-SAVED";
+    SAVE_REVISION += 1; setSaveState("dirty", "Unsaved changes");
+    return 1;`);
   equal(saving.activeProject(), "film-a",
     "ACTIVE-2: Film B exists but is not active while Film A's save is pending");
   const marker2 = saving.marker();
@@ -1313,6 +1333,285 @@ async function final_b1_atomicReplacement() {
 
   note("FINAL-B1 the transaction locks the window, creates the new project inactive, prepares it completely, revalidates, activates conditionally and installs synchronously: a preload delay leaves both sides naming the old project, a legitimate switch to a third project makes the activation refuse without any put-back, the activation is the last request before the install, and recovery reuses the created project");
 }
+/* ===========================================================================
+   CENTRAL — OWNERSHIP AT THE SEAMS, NOT ON THE CONTROLS.
+
+   The presentation lock covered route() and switchProject(), and independent
+   review went round it twice: `+ Add → Scene → Save` mutated the open project
+   through a modal that navigates nowhere, and `+ Project` opened a third project
+   through a path the lock did not watch, after which the prepared snapshot
+   installed on top of it.
+
+   Patching those two controls would have left the next one. The rule is enforced
+   in two places instead:
+
+     A. dirty() — the seam every app-owned write already passes through, 269
+        callers across twelve files. While a replacement transaction owns the
+        project, an ordinary mutation is refused there, before the counter moves
+        and before anything is armed.
+
+     B. commitPreparedProjectLoad() — the synchronous install. It compares the
+        operation's token, the project it owned and the open epoch against what
+        is current, so a prepared snapshot cannot install just because an earlier
+        fence passed.
+
+   Neither knows the name of a single button, which is the point.
+   =========================================================================== */
+
+/* Drives the real press with a held activation, so the transaction is genuinely
+   in flight while the test attacks it. */
+function centralHarness({ createSlug = "film-b", sourceSlug = "film-a" } = {}) {
+  const calls = [];
+  let activeProject = sourceSlug;
+  let saveStatus = 200;
+  let saveBody = null;
+  let releaseSwitch = null;
+  const switchGate = new Promise((r) => { releaseSwitch = r; });
+  let holdSwitch = false;
+  return {
+    calls,
+    holdSwitch() { holdSwitch = true; },
+    releaseSwitch: () => releaseSwitch(),
+    setSaveStatus(status, body) { saveStatus = status; saveBody = body || null; },
+    activeProject: () => activeProject,
+    setActiveProject(slug) { activeProject = slug; },
+    saves: () => calls.filter((row) => row.method !== "GET" && /\/api\/projects\/[^/]+\/project$/.test(row.url)),
+    switchCalls: () => calls.filter((row) => row.url === "/api/projects/switch"),
+    marker() { return calls.length; },
+    since(m) { return calls.slice(m); },
+    hook: async (url, options, respond) => {
+      const method = (options && options.method) || "GET";
+      const body = String((options && options.body) || "");
+      calls.push({ url, method, body });
+      if (url === "/api/projects/new") {
+        const request = (() => { try { return JSON.parse(body); } catch { return {}; } })();
+        if (request.activate !== false) activeProject = createSlug;
+        return respond({ ok: true, slug: createSlug }, 200);
+      }
+      if (url === "/api/projects/switch") {
+        if (holdSwitch) await switchGate;
+        const request = (() => { try { return JSON.parse(body); } catch { return {}; } })();
+        if (Object.prototype.hasOwnProperty.call(request, "expectedActiveProject")
+          && String(request.expectedActiveProject || "") !== activeProject) {
+          return respond({ ok: false, code: "PROJECT_ACTIVE_CONFLICT", error: "The active project changed.", activeProject }, 409);
+        }
+        activeProject = String(request.slug || activeProject);
+        return respond({ ok: true, slug: activeProject }, 200);
+      }
+      if (method === "GET" && /\/api\/projects\/[^/]+\/project$/.test(url)) {
+        const slug = url.split("/")[3];
+        const project = rawFixture();
+        project.meta.title = slug === createSlug ? "Film B" : "Film C";
+        return respond(project, 200, {
+          "x-cinebraid-project-slug": slug,
+          "x-cinebraid-project-revision": `rev-${slug}`, etag: `rev-${slug}`,
+        });
+      }
+      if (method === "GET" && url.startsWith("/api/scan")) {
+        return respond({ anchors: [], plates: [], props: [], vehicles: [], audio: [], media: [], shots: {} }, 200);
+      }
+      if (/\/api\/projects\/[^/]+\/(project|canon-transition)$/.test(url)) {
+        if (saveStatus === 200) {
+          return respond({ ok: true, revision: `rev-${calls.length}` }, 200, { "x-cinebraid-project-revision": `rev-${calls.length}` });
+        }
+        return respond(saveBody || { error: "refused", code: "PROJECT_VALIDATION_FAILED" }, saveStatus);
+      }
+      return null;
+    },
+  };
+}
+
+async function untilHeldSwitch(gate) {
+  for (let i = 0; i < 400; i++) {
+    if (gate.switchCalls().length > 0) return;
+    await tick();
+  }
+  throw new Error("the activation never reached the wire");
+}
+
+async function central_ownershipSeams() {
+  /* ---- CENTRAL-1: the seam refuses `+ Add → Scene`, and everything like it. */
+  for (const [label, status, body] of [
+    ["an ordinary pending save", 200, null],
+    ["a 409", 409, { error: "This project changed in storage.", code: "PROJECT_REVISION_CONFLICT" }],
+    ["a 422", 422, { error: "Project failed validation.", code: "PROJECT_VALIDATION_FAILED" }],
+  ]) {
+    const gate = centralHarness();
+    gate.holdSwitch();
+    const page = await render("#/create", rawFixture(), { fetch: gate.hook });
+    await evaluateAsync(page.context, `await flushPendingProjectSave(); return 1;`);
+    evaluate(page.context, `ACTIVE_PROJECT_SLUG = "film-a"; return 1;`);
+    startPressInFlight(page.context);
+    await untilHeldSwitch(gate);
+    gate.setSaveStatus(status, body);
+
+    const before = evaluate(page.context, `return {
+      scenes: P.scenes.length, saveRevision: SAVE_REVISION, savedRevision: SAVED_REVISION,
+      blocked: SAVE_BLOCKED, conflict: PROJECT_CONFLICT };`);
+    const marker = gate.marker();
+
+    /* THE REPRODUCTION, THROUGH THE REAL HANDLER. addScene() is not named by the
+       guard; it reaches dirty() like every other app-owned writer. */
+    const attempted = await evaluateAsync(page.context, `
+      addScene();
+      const modal = document.getElementById("modal");
+      const before = P.scenes.length;
+      /* The filmmaker fills the form and presses Save, through the shipped
+         handler rather than a simulation of it. */
+      document.getElementById("ff-title").value = "A scene typed mid-transaction";
+      _formSubmit();
+      /* The refusal is recorded by the seam and rendered by the caller's own
+         route(), which is async — so the render is awaited rather than raced. */
+      await route();
+      const main = (document.getElementById("main")||{innerHTML:""}).innerHTML;
+      return {
+        scenesBeforeSubmit: before,
+        scenes: P.scenes.length,
+        saveRevision: SAVE_REVISION, savedRevision: SAVED_REVISION,
+        blocked: SAVE_BLOCKED, conflict: PROJECT_CONFLICT,
+        refusal: main.indexOf('data-action-refusal="manual-start"') >= 0,
+        refusalText: (main.split("CineBraid did not make this change</b><span>")[1]||"").split("</span>")[0],
+        saveState: (document.getElementById("save-state") || {}).textContent || "",
+      };`);
+
+    equal(attempted.saveRevision, before.saveRevision,
+      `CENTRAL-1 (${label}): the attempted edit advanced NO dirty revision`);
+    equal(attempted.savedRevision, before.savedRevision,
+      `CENTRAL-1 (${label}): and the saved counter is untouched`);
+    equal(gate.since(marker).filter((row) => row.method !== "GET"
+      && /\/api\/projects\/[^/]+\/project$/.test(row.url)).length, 0,
+      `CENTRAL-1 (${label}): no save was armed or sent, so none can be discarded later`);
+    equal(attempted.blocked, before.blocked, `CENTRAL-1 (${label}): the existing save state is intact`);
+    equal(attempted.conflict, before.conflict, `CENTRAL-1 (${label}): and so is the existing refusal state`);
+    equal(attempted.refusal, true, `CENTRAL-1 (${label}): the refusal is persistent, not a toast alone`);
+    ok(/did not make/i.test(attempted.refusalText) || /was not made/i.test(attempted.refusalText),
+      `CENTRAL-1 (${label}): and truthful: ${attempted.refusalText}`);
+
+    /* Releasing B cannot lose Film A work, because none was ever accepted. */
+    gate.releaseSwitch();
+    await settlePress(page.context);
+    const after = evaluate(page.context, `return { title: P.meta.title, saveRevision: SAVE_REVISION };`);
+    equal(after.title, "Film B", `CENTRAL-1 (${label}): the replacement completes normally`);
+  }
+
+  /* ---- CENTRAL-3: several materially different writers, same seam. ------ */
+  const anyWriter = centralHarness();
+  anyWriter.holdSwitch();
+  const writerPage = await render("#/create", rawFixture(), { fetch: anyWriter.hook });
+  await evaluateAsync(writerPage.context, `await flushPendingProjectSave(); return 1;`);
+  evaluate(writerPage.context, `ACTIVE_PROJECT_SLUG = "film-a"; return 1;`);
+  startPressInFlight(writerPage.context);
+  await untilHeldSwitch(anyWriter);
+
+  const writers = evaluate(writerPage.context, `
+    const results = [];
+    const attempt = (name, run) => {
+      const before = SAVE_REVISION;
+      try { run(); } catch (error) { /* a refused writer may throw; the counter is the claim */ }
+      results.push({ name, moved: SAVE_REVISION !== before });
+    };
+    /* Materially different app-owned writers, each through its own real path. */
+    attempt("entity creation", () => addEntity("locations"));
+    attempt("shot creation", () => addShot());
+    attempt("settings / global style", () => setGlobalCreationField("globalStylePrompt", "typed mid-transaction"));
+    attempt("a direct dirty() from any future writer", () => dirty());
+    return results;`);
+  for (const row of writers) {
+    equal(row.moved, false,
+      `CENTRAL-3: ${row.name} advanced no dirty revision — the guarantee is the seam, not a list of buttons`);
+  }
+  anyWriter.releaseSwitch();
+  await settlePress(writerPage.context);
+
+  /* ---- CENTRAL-4: a stale prepared snapshot cannot install. ------------- */
+  const stalePage = await render("#/create", rawFixture());
+  const staleInstall = evaluate(stalePage.context, `
+    const prepared = { available: true, slug: "film-b", revision: "rev-b",
+      project: JSON.parse(JSON.stringify(P)),
+      scan: { anchors: [], plates: [], props: [], vehicles: [], audio: [], media: [], shots: {} }, config: {}, promptLibrary: { profiles: [] },
+      agentStatus: {}, automationRuns: [], falJobs: [], falLedgerLoaded: false, backgroundRecovery: null };
+    const owned = beginProjectTransition("opening another project");
+    const ownedCopy = { token: owned.token, sourceSlug: owned.sourceSlug, epoch: owned.epoch };
+
+    /* Every earlier B1 fence is satisfied: the certificate is valid right now. */
+    const certificate = createReplacementCertificate();
+    const fenceSaysYes = createReplacementRefusal(certificate) === "";
+
+    /* Then the transaction is superseded — a third project became current
+       through SOME path, which is exactly what the presentation lock missed. */
+    beginProjectOpen();
+    ACTIVE_PROJECT_SLUG = "film-c";
+
+    const installed = commitPreparedProjectLoad(prepared, ownedCopy);
+    /* And with no ownership at all it would have installed, which is what makes
+       the guard rather than the snapshot the thing under test. */
+    const installedUnguarded = commitPreparedProjectLoad(prepared);
+    endProjectTransition(owned.token);
+    return { fenceSaysYes, installed, installedUnguarded };`);
+  equal(staleInstall.fenceSaysYes, true, "CENTRAL-4: every earlier fence was satisfied when the snapshot was prepared");
+  equal(staleInstall.installed, false,
+    "CENTRAL-4: the install ownership check refuses a superseded transaction anyway");
+  equal(staleInstall.installedUnguarded, true,
+    "CENTRAL-4: and the snapshot itself was installable — the refusal comes from ownership, not from the data");
+
+  /* ---- CENTRAL-2: `+ Project` opens Film C during the transaction. ------ */
+  const superseded = centralHarness();
+  superseded.holdSwitch();
+  const page2 = await render("#/create", rawFixture(), { fetch: superseded.hook });
+  await evaluateAsync(page2.context, `await flushPendingProjectSave(); return 1;`);
+  evaluate(page2.context, `ACTIVE_PROJECT_SLUG = "film-a"; return 1;`);
+  startPressInFlight(page2.context);
+  await untilHeldSwitch(superseded);
+
+  /* Film C legitimately becomes current, through the ordinary replacement path
+     that `+ Project` uses — beginProjectOpen() plus an installed record. */
+  superseded.setActiveProject("film-c");
+  await evaluateAsync(page2.context, `
+    const preparedC = await prepareProjectLoad("film-c");
+    commitPreparedProjectLoad(preparedC);
+    return 1;`);
+  const onC = evaluate(page2.context, `return { slug: ACTIVE_PROJECT_SLUG, title: P.meta.title };`);
+  equal(onC.title, "Film C", "CENTRAL-2: Film C is now the project in the browser");
+  equal(superseded.activeProject(), "film-c", "CENTRAL-2: and on the server");
+
+  superseded.releaseSwitch();
+  await settlePress(page2.context);
+
+  const after2 = evaluate(page2.context, `
+    const main = (document.getElementById("main")||{innerHTML:""}).innerHTML;
+    return { slug: ACTIVE_PROJECT_SLUG, title: P.meta.title,
+             pending: (window.__cinebraidManualStartPending||{}).slug || "",
+             refusal: main.indexOf('data-action-refusal="manual-start"') >= 0 };`);
+  equal(after2.title, "Film C", "CENTRAL-2: the stale prepared Film B did NOT install over it");
+  equal(superseded.activeProject(), "film-c", "CENTRAL-2: the server is still on Film C");
+  ok(!superseded.switchCalls().some((row) => /"slug":"film-a"/.test(row.body)),
+    "CENTRAL-2: and no rollback to Film A was attempted");
+  equal(after2.pending, "film-b", "CENTRAL-2: Film B stays pending and inactive");
+
+  /* ---- CENTRAL-5: the ordinary path is untouched. ----------------------- */
+  const fast = centralHarness();
+  const fastPage = await render("#/create", rawFixture(), { fetch: fast.hook });
+  await evaluateAsync(fastPage.context, `await flushPendingProjectSave(); return 1;`);
+  evaluate(fastPage.context, `ACTIVE_PROJECT_SLUG = "film-a"; return 1;`);
+  startPressInFlight(fastPage.context);
+  await settlePress(fastPage.context);
+  const fastSeen = evaluate(fastPage.context, `return { title: P.meta.title, hash: location.hash,
+    owner: projectTransitionOwner(), pending: (window.__cinebraidManualStartPending||{}).slug || "" };`);
+  equal(fast.calls.filter((row) => row.url === "/api/projects/new").length, 1, "CENTRAL-5: one create");
+  equal(fast.switchCalls().length, 1, "CENTRAL-5: one conditional activation");
+  equal(fastSeen.title, "Film B", "CENTRAL-5: one synchronous install");
+  equal(fastSeen.hash, "#/production", "CENTRAL-5: and the window moves into it");
+  equal(fast.activeProject(), "film-b", "CENTRAL-5: current on the server too");
+  equal(fastSeen.owner, null, "CENTRAL-5: and the transaction released its ownership");
+  equal(fastSeen.pending, "", "CENTRAL-5: with nothing left pending");
+  /* Ordinary editing works again the moment the transaction ends. */
+  const editsAgain = evaluate(fastPage.context, `
+    const before = SAVE_REVISION; P.meta.logline = "after the transaction"; dirty();
+    return SAVE_REVISION !== before;`);
+  equal(editsAgain, true, "CENTRAL-5: and ordinary editing is accepted again afterwards");
+
+  note("CENTRAL ownership is enforced at two seams rather than on controls: dirty() refuses every app-owned write while a replacement transaction owns the project — scene, entity, shot and settings writers all advance no revision and arm no save — and the synchronous install refuses a superseded transaction even when every earlier fence passed, so a third project opened through any path keeps the window on both sides");
+}
 async function main() {
   await b1_createRequiresConfirmedSave();
   await b2_manualStartIsolation();
@@ -1321,6 +1620,7 @@ async function main() {
   await active_serverSeparatesCreationFromActivation();
   await active_clientActivatesOnlyOnCommit();
   await final_b1_atomicReplacement();
+  await central_ownershipSeams();
   console.log(`AT1 boundary corrections: ${checks} checks passed`);
   for (const line of notes) console.log("  - " + line);
 }

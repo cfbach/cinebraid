@@ -2382,8 +2382,84 @@ function blockSaving() {
   for (const timer of PENDING_SAVE_TRIGGERS) clearTimeout(timer);
   PENDING_SAVE_TRIGGERS.clear();
 }
+/* ==========================================================================
+   PROJECT TRANSITION OWNERSHIP.
+
+   A replacement transaction — CREATE THIS PROJECT is the only one today — spends
+   several awaits holding the open project at an exact certified revision while it
+   prepares its replacement. Any ordinary edit made in that window is an edit to a
+   document that is about to be replaced, certified by nothing and saved by
+   nothing.
+
+   THE GUARD IS AT THE SEAM, NOT ON THE CONTROLS. Independent review reproduced
+   the loss through `+ Add → Scene`, and the answer to that is not to disable
+   `+ Add`: it is to enforce the rule where every app-owned write already goes.
+   dirty() is that place. It has 269 callers across twelve files — scene
+   creation, entity creation, shot creation, Settings, everything — and it is
+   already where a window-level condition that makes a mutation untrue is
+   refused, which is exactly what the quarantine check below it does.
+
+   AN OWNER, NOT A FLAG. The transaction is identified by a token so its own work
+   is distinguishable from an unrelated mutation, and so a stale transaction
+   cannot claim ownership it no longer has. */
+let PROJECT_TRANSITION = null;
+let PROJECT_TRANSITION_SEQUENCE = 0;
+let PROJECT_TRANSITION_WORK = 0;
+
+function beginProjectTransition(label) {
+  PROJECT_TRANSITION = {
+    token: ++PROJECT_TRANSITION_SEQUENCE,
+    label: String(label || "opening another project"),
+    /* What this transaction owns. Both are compared at the install: a
+       transaction that began in one project may not replace a different one. */
+    sourceSlug: ACTIVE_PROJECT_SLUG,
+    epoch: PROJECT_OPEN_EPOCH,
+  };
+  return PROJECT_TRANSITION;
+}
+/* Ends only ITS OWN transaction. A late finally from a superseded operation
+   cannot release the one that replaced it. */
+function endProjectTransition(token) {
+  if (PROJECT_TRANSITION && PROJECT_TRANSITION.token === token) PROJECT_TRANSITION = null;
+}
+function projectTransitionOwner() { return PROJECT_TRANSITION; }
+/* The transaction's own writes. Synchronous by design: a suspension inside this
+   would leave the escape open across an await, which is the hole it exists to
+   avoid. */
+function withProjectTransitionWork(token, body) {
+  if (!PROJECT_TRANSITION || PROJECT_TRANSITION.token !== token) return undefined;
+  PROJECT_TRANSITION_WORK += 1;
+  try { return body(); } finally { PROJECT_TRANSITION_WORK -= 1; }
+}
+/* "" when this mutation may proceed, otherwise why it may not. */
+function projectMutationRefusal() {
+  if (!PROJECT_TRANSITION || PROJECT_TRANSITION_WORK > 0) return "";
+  return `CineBraid is ${PROJECT_TRANSITION.label}, so this change was not made to `
+    + `${(P && P.meta && P.meta.title) || "the project you have open"}. `
+    + "It will accept changes again as soon as that finishes.";
+}
+if (typeof window !== "undefined") {
+  window.projectTransitionOwner = projectTransitionOwner;
+  window.withProjectTransitionWork = withProjectTransitionWork;
+  window.projectMutationRefusal = projectMutationRefusal;
+}
+
 function dirty() {
   clearTimeout(saveTimer);
+  /* A REPLACEMENT TRANSACTION OWNS THIS PROJECT, so an ordinary edit to it is
+     refused here — before the counter moves, before the indicator claims a save
+     is coming, and before anything is armed. Everything below this line would be
+     untrue of a document that is being replaced. The refusal is recorded where
+     the transaction is on screen rather than only spoken, so nothing is left
+     looking as though it were accepted. */
+  const transitionRefusal = projectMutationRefusal();
+  if (transitionRefusal) {
+    if (typeof recordActionRefusal === "function") {
+      recordActionRefusal("manual-start", transitionRefusal, "project-transition:mutation-refused");
+    }
+    if (typeof toast === "function") toast(transitionRefusal);
+    return setSaveState("error", "Not saved — CineBraid is opening another project");
+  }
   /* RECOVERY MODE REFUSES BEFORE IT COUNTS. Everything below this line describes
      a window that holds a project: it advances the local edit counter, says
      "Unsaved changes", and arms a write. A quarantined window holds no project at
@@ -2898,7 +2974,7 @@ async function prepareProjectLoad(slug) {
 /* SYNCHRONOUS. No await here and none in anything it calls, which is what makes
    "nothing can change between the activation and the replacement" a fact about
    the code rather than a hope about timing. Returns whether it installed. */
-function commitPreparedProjectLoad(prepared) {
+function commitPreparedProjectLoad(prepared, ownership) {
   /* A SNAPSHOT WITHOUT A DOCUMENT IS NOT A SNAPSHOT. `available` says the server
      had something to serve; this says the read actually produced the record the
      install is about to build a window from. Installing a half-prepared snapshot
@@ -2906,6 +2982,25 @@ function commitPreparedProjectLoad(prepared) {
      worse than refusing to open. */
   if (!prepared || !prepared.available || !prepared.project || typeof prepared.project !== "object") return false;
   if (!prepared.project.meta || typeof prepared.project.meta !== "object") return false;
+  /* INSTALL OWNERSHIP, CHECKED HERE BECAUSE HERE IS THE LAST PLACE IT IS TRUE.
+   *
+   * An earlier fence passing is not a permit to install later. Independent review
+   * reproduced a window that opened a third project through a path the
+   * presentation lock did not cover, and the prepared snapshot then installed on
+   * top of it — leaving the browser on B and the server on C.
+   *
+   * So the operation states what it owned, and this compares it to what is
+   * current, synchronously, immediately before the install: the same transaction,
+   * the same project, and no newer open in between. PROJECT_OPEN_EPOCH advances
+   * in beginProjectOpen(), which is every explicit replacement there is, so a
+   * project opened by ANY path — covered by the lock or not — supersedes this
+   * one and this refuses. Nothing is rolled back; the prepared snapshot is simply
+   * not installed. */
+  if (ownership) {
+    if (!PROJECT_TRANSITION || PROJECT_TRANSITION.token !== ownership.token) return false;
+    if (ACTIVE_PROJECT_SLUG !== ownership.sourceSlug) return false;
+    if (PROJECT_OPEN_EPOCH !== ownership.epoch) return false;
+  }
   const ticket = beginProjectOpen();
   if (!commitPreparedProject(prepared, ticket)) return false;
   decorateProjectCommit(prepared);
