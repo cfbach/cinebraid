@@ -5518,6 +5518,9 @@ body[data-focused-workspace="1"] .guided-frame-body,
    status chip's slot. Different corner, different weight, advisory wording. Scrim ink
    rather than --blue: see the token note, the themed hue measured 2.77:1 here. */
 .results-card-ai{position:absolute;right:7px;bottom:7px;padding:3px 6px;border-radius:var(--r-sm);font:700 8px var(--mono);letter-spacing:.08em;background:var(--preview-overlay);color:var(--preview-ink-attention);border:1px solid color-mix(in srgb,var(--preview-ink-attention) 36%,transparent)}
+/* PT2 - a flagged review keeps its own ink. The affirmative chip reads as one at a
+   glance, so a chip that means the opposite must not borrow its colour. */
+.results-card-ai.is-flagged{color:var(--preview-ink-warn);border-color:color-mix(in srgb,var(--preview-ink-warn) 44%,transparent)}
 .results-card-body{display:grid;gap:2px;padding:9px 10px 11px;min-width:0}
 .results-card-kind{font:700 9px var(--mono);letter-spacing:.11em;color:var(--acc)}
 .results-card-body b{font-size:13px;overflow-wrap:anywhere}

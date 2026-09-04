@@ -45,6 +45,13 @@ const nodeSuites = [
   "check:reference-contract",
   "check:candidate-review",
   "check:candidate-review-negative",
+  /* Production Truth Cleanup V1. Listed beside the candidate-review suites because
+     they hold the same class of invariant on three surfaces those two do not reach:
+     an approval control may not claim an approval the authority layer denies, an AI
+     FLAG may not wear affirmative wording, and an unplanned duration may not be
+     stored, printed or totalled as a real zero. */
+  "check:production-truth",
+  "check:production-truth-negative",
   /* Dogfood Pass #2 P0 trust batch. Listed individually rather than through the
      check:dogfood2-p0 aggregate so a failure names the invariant that broke
      rather than the group that contains it. */

@@ -672,6 +672,24 @@ function v670CorrectionVerdictFor(step, file) {
    than the original, because this was `file === step.winner` and nothing else. */
 function v670CandidateIsSuggested(step, candidate) {
   if (candidate.file !== step.winner) return false;
+  /* PT2 — AND A FLAGGED WINNER IS STILL FLAGGED.
+
+     `winner` means "highest score among this pass's own candidates", which a
+     candidate can be while the reviewer FLAGGED it: v627PauseForHumanReview is
+     reached both by a strong pass AND by exhausting the authorized rounds, and on
+     the second arm `step.winner` is whatever scored best out of a set nothing
+     passed. On a non-correction gate this function returned true for it, so the
+     card wore `suggested`, the control read APPROVE SUGGESTED in the affirmative
+     style, and the header claimed `N/100 suggested`.
+
+     The card's own line has always said `flagged` two rows above that button. Two
+     opposite words about one candidate, and the affirmative one is the one shaped
+     like a recommendation, so it is the one that wins a glance.
+
+     A FLAG is never promoted. Approval stays available — it is the human's act and
+     the gate exists to offer it — but it is offered as APPROVE THIS, in the neutral
+     control, with nothing claiming the reviewer endorsed it. */
+  if (candidate.pass !== true) return false;
   const verdict = v670CorrectionVerdictFor(step, candidate.file);
   if (!verdict) return true;
   return step.result?.recommend === true && recommendableCorrection(verdict);
@@ -718,8 +736,14 @@ function v627HumanReviewMarkup(run) {
      worse frame. It says what is actually true instead, and the approved original
      stays protected either way — approving a challenger is still the person's
      explicit act. */
-  const headerNote = correctionGate && !anySuggested
-    ? `<span class="automation-review-none">NO CANDIDATE IMPROVED ON THE APPROVED FRAME</span>`
+  /* PT2 — the same rule for the header. `N/100 suggested` was printed on every
+     non-correction gate, so a gate reached by exhausting its rounds with nothing
+     passing announced a suggestion it did not have. The score is real and stays;
+     the word "suggested" is the claim, and it is only made where one exists. */
+  const headerNote = !anySuggested
+    ? correctionGate
+      ? `<span class="automation-review-none">NO CANDIDATE IMPROVED ON THE APPROVED FRAME</span>`
+      : `<span class="automation-review-none">${Math.round(Number(step.score || 0))}/100 · FLAGGED BY AI REVIEW · NO CANDIDATE SUGGESTED</span>`
     : `<span>${Math.round(Number(step.score || 0))}/100 suggested</span>`;
   const correctionIntro = correctionGate
     ? `<p class="automation-correction-intro">${step.result?.baseline?.available === false

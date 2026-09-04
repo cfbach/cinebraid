@@ -754,7 +754,12 @@
         else if (frame.representationNote) out.push("", `_${frame.representationNote}_`);
       }
       for (const motion of shot.motions) {
-        out.push("", `**Motion ${motion.label} — ${motion.title}** · ${motion.from || "?"}${motion.to ? ` → ${motion.to}` : ""} · ${motion.dur}s`);
+        /* PT3 — a motion unit nobody has timed is not a zero-second one. The
+           projection carries an undeclared duration as 0, which is the shipped
+           reading rule (shotDurationAlias(): only a positive finite number counts
+           as supplied) — so the export says what that 0 means instead of
+           printing it as a length. */
+        out.push("", `**Motion ${motion.label} — ${motion.title}** · ${motion.from || "?"}${motion.to ? ` → ${motion.to}` : ""} · ${motion.dur ? `${motion.dur}s` : "duration not planned"}`);
         if (motion.line) out.push(`Dialogue — ${oneLine(motion.line)}`);
         if (motion.audioNote) out.push(`Voice note — ${oneLine(motion.audioNote)}`);
         out.push(motion.winner ? `Approved output: \`${motion.winner.name}\`` : "No approved output.");

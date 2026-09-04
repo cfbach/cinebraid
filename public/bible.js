@@ -104,7 +104,7 @@ function shotCard(s) {
      motion prompt inside a section headed as canon. Dialogue and voice notes stay:
      they are script the filmmaker wrote, not a generation claiming to be approved. */
   const motionList = motions.length
-    ? `<div class="bible-motion-list"><b class="bible-subhead">MOTION PLAN</b>${motions.map((m) => `<article><div class="bible-motion-head"><span>${esc(m.label)}</span><strong>${esc(m.title)}</strong><code>${esc(String(m.kind || "plan").toUpperCase())} · ${esc(m.from || "?")}${m.to ? " → " + esc(m.to) : ""} · ${esc(m.dur)}s</code></div>${m.line ? `<small>DIALOGUE · ${esc(m.line)}</small>` : ""}${m.audioNote ? `<small>VOICE NOTE · ${esc(m.audioNote)}</small>` : ""}${m.winner ? `<a class="bible-motion-winner" href="${m.winner.url}" target="_blank">Approved output · ${esc(m.winner.name)}</a>` : ""}${approvedPromptBlock(m)}</article>`).join("")}</div>`
+    ? `<div class="bible-motion-list"><b class="bible-subhead">MOTION PLAN</b>${motions.map((m) => `<article><div class="bible-motion-head"><span>${esc(m.label)}</span><strong>${esc(m.title)}</strong><code>${esc(String(m.kind || "plan").toUpperCase())} · ${esc(m.from || "?")}${m.to ? " → " + esc(m.to) : ""} · ${m.dur ? esc(m.dur) + "s" : "duration not planned"}</code></div>${m.line ? `<small>DIALOGUE · ${esc(m.line)}</small>` : ""}${m.audioNote ? `<small>VOICE NOTE · ${esc(m.audioNote)}</small>` : ""}${m.winner ? `<a class="bible-motion-winner" href="${m.winner.url}" target="_blank">Approved output · ${esc(m.winner.name)}</a>` : ""}${approvedPromptBlock(m)}</article>`).join("")}</div>`
     : "";
   /* THE DELIVERABLE IS ITS OWN AUTHORITY FACT, so it gets its own row. The hero
      image above is a presentation choice; when it happened to be an approved frame,

@@ -162,9 +162,26 @@
        own status on the card rather than borrowing APPROVED or hiding as a
        plain candidate. */
     const statusWord = { approved: "APPROVED", historic: "HISTORIC", candidate: "CANDIDATE", rejected: "REJECTED" }[row.disposition.role] || "";
-    const recommended = row.aiRecommendation.state === "known" && row.disposition.role !== "approved"
-      ? `<span class="results-card-ai" title="An AI reviewer suggested this. It is not an approval.">AI SUGGESTED</span>`
-      : "";
+    /* PT2 — A FLAG IS NOT A SUGGESTION, AND THIS CHIP USED TO SAY IT WAS.
+
+       The condition was `row.aiRecommendation.state === "known"`, which tests
+       whether a review EXISTS, not what it CONCLUDED. `state` is "known" for every
+       value in the vocabulary, and a failing shot triage maps to `correct` — so
+       three candidates, two of them flagged, all wore AI SUGGESTED, and a flagged
+       asset collected decision weight it had not earned.
+
+       The projection already carries the value; this reads it. `approve` is the one
+       member of PRODUCTION_MEDIA_RECOMMENDATIONS that is affirmative, so it is the
+       one that may wear an affirmative word. The other three are shown — a review
+       that concluded something is not hidden — under a word that says what they
+       are. Neither chip is a decision: the Inspector states the same distinction at
+       length, and the status chip beside this one is still the disposition alone. */
+    const recommendationValue = row.aiRecommendation.state === "known" ? String(row.aiRecommendation.value || "") : "";
+    const recommended = row.disposition.role === "approved" || !recommendationValue
+      ? ""
+      : recommendationValue === "approve"
+        ? `<span class="results-card-ai" title="An AI reviewer suggested this. It is not an approval.">AI SUGGESTED</span>`
+        : `<span class="results-card-ai is-flagged" title="An AI reviewer flagged this. It is not an approval and it is not a suggestion.">AI FLAGGED</span>`;
     const authority = row.disposition.targets.length
       ? `<small class="results-card-authority">${esc(row.disposition.targets.map((target) => target.label || target.kind).slice(0, 2).join(" · "))}</small>`
       : "";

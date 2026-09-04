@@ -517,6 +517,8 @@ async function main() {
     "production-state-honesty-negative-controls.js",
     "production-state-honesty-real-browser.py",
     "production-state-honesty.js",
+    "production-truth-cleanup-negative-controls.js",
+    "production-truth-cleanup.js",
     "project-builder-kit.js",
     "project-entry-negative-controls.js",
     "project-entry-real-browser.py",

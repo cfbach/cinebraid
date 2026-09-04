@@ -78,7 +78,10 @@ function extractFunction(source, name) {
 function builderNormalisers() {
   const context = vm.createContext({ deriveLipSync, lipSyncRequiredFrom });
   const declarations = [
-    "builderObject", "builderArray", "builderNumber", "builderLabel",
+    /* PT3: normalizeBuilderClips reads builderDuration for `dur`, so the lift has
+       to supply it. This list is the boundary that made the omission a failure
+       rather than a silent undefined. */
+    "builderObject", "builderArray", "builderNumber", "builderDuration", "builderLabel",
     "normalizeBuilderMotionBrief", "normalizeBuilderClips",
   ].map((name) => extractFunction(SERVER_SOURCE, name)).join("\n");
   vm.runInContext(

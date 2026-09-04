@@ -861,7 +861,29 @@ window.syncEntityApprovalModal = () => {
     /* Ancestors are absent from this list by construction, so the ring that
        offered an already-approved parent after the final descendant cannot form. */
     const nextStates = entityApprovalContinuationStates(x, stateId);
-    nextSelect.innerHTML = `<option value="">Approve only — stay on this asset</option>${nextStates.map((item) => `<option value="${attr(item.id)}">Edit ${esc(item.name || "next state")}${item.approvedFile ? " · currently approved" : " · needs reference"}</option>`).join("")}`;
+    /* PT1 / DF-04 — FILE ASSIGNMENT IS NOT APPROVAL, AND THIS LINE USED TO SAY IT WAS.
+
+       The wording was `item.approvedFile ? " · currently approved" : " · needs
+       reference"`. `approvedFile` is a POINTER — an edge a state can hold with no
+       receipt behind it — so the one surface where approval is granted told the
+       filmmaker `Edit Opened · currently approved` about a state the authority
+       projection was simultaneously classifying `Historic · not approved`.
+
+       There is one reader of that question in this application and it is the
+       projection, so this asks it. Three standings, three sentences: only a
+       receipt-backed state may be called approved, a pointer with no receipt is
+       named as the historic selection it is, and a state with neither still needs
+       a reference. If the projection is not loaded, nothing affirmative is said —
+       an unavailable truth reader is not permission to guess. */
+    const continuationTruth = typeof entityStateTruth === "function" ? entityStateTruth(current.list, x) : null;
+    const continuationStanding = (item) => {
+      if (!continuationTruth) return " · approval state unavailable";
+      const standing = continuationTruth.of(item).standing;
+      if (standing === "canon") return " · currently approved";
+      if (standing === "historic") return " · historic, not approved";
+      return " · needs reference";
+    };
+    nextSelect.innerHTML = `<option value="">Approve only — stay on this asset</option>${nextStates.map((item) => `<option value="${attr(item.id)}">Edit ${esc(item.name || "next state")}${continuationStanding(item)}</option>`).join("")}`;
     const validPrevious = nextStates.some((item) => item.id === previous);
     nextSelect.value = validPrevious ? previous : entitySuggestedContinuationState(x, stateId);
   }

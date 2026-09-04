@@ -337,6 +337,24 @@ const shotDur = (s) =>
   s.clips?.length
     ? s.clips.reduce((x, c) => x + (+c.dur || 0), 0)
     : +s.dur || 0;
+/* PT3 — A RUNTIME TOTAL SAYS WHAT IT COVERS.
+
+   shotDur() adds 0 for a shot nobody has planned, which is arithmetically the same
+   as skipping it and reads as something else entirely: one number, presented as
+   the runtime of the whole production. public/shared-entities.js counts the shots
+   it could not count; this turns that into the sentence beside the figure.
+
+   The number itself is unchanged. Nothing is estimated and nothing is filled in —
+   the total is still the sum of the durations that exist, and the only new claim
+   is the honest one about how many are missing. */
+const plannedRuntimeOf = (shots) =>
+  (typeof plannedRuntime === "function"
+    ? plannedRuntime(shots || [])
+    : { seconds: (shots || []).reduce((a, s) => a + shotDur(s), 0), unknown: 0, complete: true });
+const unplannedRuntimeNote = (runtime) =>
+  runtime.unknown
+    ? ` · ${runtime.unknown} ${pluralWord(runtime.unknown, "shot")} not yet timed`
+    : "";
 const mmss = (sec) =>
   Math.floor(sec / 60) + ":" + String(Math.round(sec % 60)).padStart(2, "0");
 
@@ -3294,7 +3312,8 @@ function tally() {
     const k = workflowState(s).key;
     c[k] = (c[k] || 0) + 1;
   });
-  const total = P.shots.reduce((a, s) => a + shotDur(s), 0);
+  const runtime = plannedRuntimeOf(P.shots);
+  const total = runtime.seconds;
   /* The breakdown below the totals is the workflow status of every shot, so it is
      labelled as such — otherwise "approved 2" reads as a contradiction of the
      "0/3 shots delivered" tile on Production, which counts a different thing. */
@@ -3305,7 +3324,7 @@ function tally() {
      listed, and the heading goes with it when there is nothing to head. */
   const breakdown = WORKFLOW_STATES.filter((k) => c[k]);
   $("#tally").innerHTML =
-    `<div><b>${P.shots.length}</b> ${pluralWord(P.shots.length, "shot")} · <b>${P.scenes.length}</b> ${pluralWord(P.scenes.length, "scene")} · <b>${mmss(total)}</b></div>` +
+    `<div><b>${P.shots.length}</b> ${pluralWord(P.shots.length, "shot")} · <b>${P.scenes.length}</b> ${pluralWord(P.scenes.length, "scene")} · <b>${mmss(total)}</b>${esc(unplannedRuntimeNote(runtime))}</div>` +
     (breakdown.length
       ? `<div class="tally-heading">Shot workflow status</div>` +
         breakdown.map(
@@ -5455,12 +5474,18 @@ window.toggleSceneCollapse = (id) => {
 };
 
 function runtimeBar(shots, target) {
-  const total = shots.reduce((a, s) => a + shotDur(s), 0);
-  if (!target) return `<div class="runtime-label">${mmss(total)} planned</div>`;
+  /* PT3 — "12:30 planned" over a list where nine shots have no length is a
+     complete-looking answer to an incomplete question. The figure is unchanged;
+     what it leaves out is now said next to it, and an over-target verdict is still
+     read from the same sum. */
+  const runtime = plannedRuntimeOf(shots);
+  const total = runtime.seconds;
+  const unplanned = unplannedRuntimeNote(runtime);
+  if (!target) return `<div class="runtime-label">${mmss(total)} planned${esc(unplanned)}</div>`;
   const pct = Math.min(100, (total / target.max) * 100);
   const cls = total > target.max ? "over" : total >= target.min ? "ok" : "";
   return `<div class="runtime-bar"><div class="runtime-track"><div class="runtime-fill ${cls}" style="width:${pct}%"></div></div>
-    <div class="runtime-label">${mmss(total)} planned · target ${mmss(target.min)}–${mmss(target.max)}${total > target.max ? " · OVER" : ""}</div></div>`;
+    <div class="runtime-label">${mmss(total)} planned${esc(unplanned)} · target ${mmss(target.min)}–${mmss(target.max)}${total > target.max ? " · OVER" : ""}</div></div>`;
 }
 function workspaceSectionStorageKey(key) {
   return `cinebraid-section:${ACTIVE_PROJECT_SLUG || "project"}:${String(key || "section")}`;
@@ -6271,7 +6296,7 @@ async function productionHomeView() {
   const activeRows = P.shots.map((shot) => ({ shot, next: shotProductionNextAction(shot, readinessByShot.get(shot.id)) }))
     .filter((row) => !isDelivered(row.shot)).slice(0, 8);
   return `<div class="view-head production-home-head"><div><div class="eyebrow">Production</div><span class="view-title">${esc(P.meta.title)}</span><div class="view-sub">Continue the film from the next unfinished decision. Detailed tools stay inside each shot.</div></div><div class="production-home-actions"><button class="${next ? "ghost-btn" : "assemble-btn"}" onclick="continueProduction()">${esc(primaryAction.label)}</button><button class="add-btn" onclick="openContextualAdd('shot')">＋ Add shot</button></div></div>
-  <div class="production-summary"><article title="A shot is delivered once you have marked it final in Finish &amp; Delivery. That decision is recorded as a production approval you can withdraw later, and a leftover file pointer with no approval behind it does not count."><b>${deliveredCount}/${P.shots.length}</b><span>${pluralWord(P.shots.length, "shot")} delivered</span></article><article title="A shot is signed off once its workflow status reaches Signed off. Signing a shot off is not the same as delivering it, and neither one approves an image."><b>${approvedCount}/${P.shots.length}</b><span>${pluralWord(P.shots.length, "shot")} signed off</span></article><article class="${decisions.available && decisions.count ? "review" : ""}" title="Shots that cannot move without a decision only you can make. This is the one decision count in CineBraid: the readiness list, the scene cards and the shot filters all report this same number.">${decisions.available ? `<b>${decisions.count}</b><span>${pluralWord(decisions.count, FILMMAKER_DECISION_LABEL)} ${decisions.count === 1 ? "needs" : "need"} you</span>` : `<b>—</b><span>decisions unavailable</span>`}</article><article><b>${mmss(P.shots.reduce((sum, shot) => sum + shotDur(shot), 0))}</b><span>planned runtime across ${plural(P.scenes.length, "scene")}</span></article></div>
+  <div class="production-summary"><article title="A shot is delivered once you have marked it final in Finish &amp; Delivery. That decision is recorded as a production approval you can withdraw later, and a leftover file pointer with no approval behind it does not count."><b>${deliveredCount}/${P.shots.length}</b><span>${pluralWord(P.shots.length, "shot")} delivered</span></article><article title="A shot is signed off once its workflow status reaches Signed off. Signing a shot off is not the same as delivering it, and neither one approves an image."><b>${approvedCount}/${P.shots.length}</b><span>${pluralWord(P.shots.length, "shot")} signed off</span></article><article class="${decisions.available && decisions.count ? "review" : ""}" title="Shots that cannot move without a decision only you can make. This is the one decision count in CineBraid: the readiness list, the scene cards and the shot filters all report this same number.">${decisions.available ? `<b>${decisions.count}</b><span>${pluralWord(decisions.count, FILMMAKER_DECISION_LABEL)} ${decisions.count === 1 ? "needs" : "need"} you</span>` : `<b>—</b><span>decisions unavailable</span>`}</article><article><b>${mmss(plannedRuntimeOf(P.shots).seconds)}</b><span>planned runtime across ${plural(P.scenes.length, "scene")}${esc(unplannedRuntimeNote(plannedRuntimeOf(P.shots)))}</span></article></div>
   <!-- THE ORDER OF THIS PAGE IS THE POINT.
        What to do now, then the outstanding decisions behind it, then the detail.
        The next action used to render THIRD, below a four-row confirmation backlog
@@ -6435,7 +6460,7 @@ function productionView(tab = "board") {
     const scenePage = boundedPage(P.scenes, "scenes", "overview", BOUNDED_PAGE_SIZES.scenes);
     return head + runtimeBar(P.shots, P.meta.targetRuntime) + `<div class="bounded-scene-list">${scenePage.rows.map((sc) => {
       const shots = P.shots.filter((s) => s.scene === sc.id), refs = sceneReferenceRecords(sc), done = shots.filter(shotIsApproved).length;
-      return `<a class="scene-card" href="#/scene/${sc.id}"><div class="scene-card-head"><span class="scene-card-title">${esc(sc.title)}</span><span class="tier-badge ${sc.tier || "B"}">TIER ${sc.tier || "B"}</span><span class="scene-card-meta">${mmss(shots.reduce((a, s) => a + shotDur(s), 0))} · ${done}/${shots.length} ${pluralWord(shots.length, "shot")} signed off · ${plural(refs.length, "reference")}</span></div><div class="scene-card-beat">${esc(sc.whatHappens || "No scene beat written yet.")}</div></a>`;
+      return `<a class="scene-card" href="#/scene/${sc.id}"><div class="scene-card-head"><span class="scene-card-title">${esc(sc.title)}</span><span class="tier-badge ${sc.tier || "B"}">TIER ${sc.tier || "B"}</span><span class="scene-card-meta">${mmss(plannedRuntimeOf(shots).seconds)}${esc(unplannedRuntimeNote(plannedRuntimeOf(shots)))} · ${done}/${shots.length} ${pluralWord(shots.length, "shot")} signed off · ${plural(refs.length, "reference")}</span></div><div class="scene-card-beat">${esc(sc.whatHappens || "No scene beat written yet.")}</div></a>`;
     }).join("")}</div>${boundedPagerMarkup("scenes","overview",scenePage,"scenes")}`;
   }
   const routes = [

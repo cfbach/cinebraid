@@ -588,7 +588,7 @@ function builderClipsFrom(serverSource) {
   };
   const { deriveLipSync, lipSyncRequiredFrom } = require("../public/shared-lip-sync");
   const context = vm.createContext({ deriveLipSync, lipSyncRequiredFrom });
-  const declarations = ["builderObject", "builderArray", "builderNumber", "builderLabel",
+  const declarations = ["builderObject", "builderArray", "builderNumber", "builderDuration", "builderLabel",
     "normalizeBuilderMotionBrief", "normalizeBuilderClips"].map(extract).join("\n");
   vm.runInContext(`${declarations}\nglobalThis.__clips = normalizeBuilderClips;`, context);
   return context.__clips;

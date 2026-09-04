@@ -69,6 +69,71 @@ function shotDurationAlias(source) {
 function shotDurationSeconds(source) {
   return shotDurationAlias(source)?.seconds || 0;
 }
+/* ==========================================================================
+   PT3 / PK2-DURATION-UNKNOWN-REPRESENTATION — UNKNOWN IS A THIRD ANSWER.
+
+   Project Builder can already tell a planned duration from an unplanned one: on
+   The Last Seat it declared TLS-011 at four seconds from an authored 3-5s tag and
+   refused, unprompted, to map a beat sheet's launch-cut timecodes onto story-shot
+   durations. What it could not do was SAY the second thing. The representation
+   required a number, so "undecided" was written as `0` on 34 of 34 Tideglass shots
+   and 10 of 11 on The Last Seat.
+
+   `0` is not that fact. It is a duration — a real one, arithmetically — and the
+   surfaces below printed it as `0s` and added it into a planned runtime that then
+   read as complete.
+
+   THE SHIPPED READING RULE IS ALREADY RIGHT, and it is shotDurationAlias() above:
+   only a positive finite number counts as supplied. What was missing was a WRITER
+   that could express the other state and READERS that ask this file instead of
+   coercing the field themselves. Storage now carries `null` — the same explicit
+   unknown ofp/ofp-schema.js already declares for `duration.seconds`, and the same
+   one ofp-migrate-rules.js M010 carries through as null rather than as a number.
+
+   These three are the whole vocabulary. Nothing below invents a duration, and
+   nothing below is a fallback: resolveShotDuration() keeps that job, and keeps
+   saying `wasDefaulted` when it does it. */
+
+/* Did anybody plan this? Absent, null, "", 0 and NaN all answer no, which is
+   shotDurationAlias()'s rule and not a second one. */
+function shotDurationIsDeclared(source) {
+  return shotDurationAlias(source) !== null;
+}
+/* One shot's PLANNED length, and whether it has one. Same precedence as
+   resolveShotDuration — a shot split into units is as long as its units — because
+   it IS resolveShotDuration, with the invented number removed instead of a third
+   ordering written here. */
+function shotPlannedDuration(shot) {
+  const resolved = resolveShotDuration(shot);
+  return {
+    seconds: resolved.wasDefaulted ? 0 : resolved.seconds,
+    known: !resolved.wasDefaulted,
+    source: resolved.wasDefaulted ? "" : resolved.source,
+  };
+}
+/* A duration as WORDS. An undeclared duration is not "0s"; it says it is not set,
+   because a reader who sees `0s` beside a shot has been told a length. */
+function shotDurationWords(source, absent = "duration not set") {
+  const declared = shotDurationAlias(source);
+  return declared ? `${declared.seconds}s` : String(absent);
+}
+/* The planned runtime of a list of shots WITH the shots it could not count.
+
+   A total that adds 0 for every unplanned shot is arithmetically identical to one
+   that skips them, and that is exactly the problem: both produce a single number
+   that reads as the runtime of the whole production. The caller is handed the
+   count it would otherwise have silently dropped, so it can say what the number
+   covers. Nothing here rounds, estimates or fills in. */
+function plannedRuntime(shots) {
+  const rows = Array.isArray(shots) ? shots : [];
+  let seconds = 0, planned = 0, unknown = 0;
+  for (const shot of rows) {
+    const row = shotPlannedDuration(shot);
+    if (row.known) { seconds += row.seconds; planned += 1; continue; }
+    unknown += 1;
+  }
+  return { seconds, planned, unknown, total: rows.length, complete: unknown === 0 };
+}
 /* The effective duration of a shot or one of its segments, plus whether the
    number had to be invented. A shot's own aliases lose to its motion units,
    because a shot split into clips is as long as its clips — that ordering is
@@ -565,6 +630,10 @@ if (typeof window !== "undefined") {
   window.entityVisualDescription = entityVisualDescription;
   window.resolveShotDuration = resolveShotDuration;
   window.shotDurationSeconds = shotDurationSeconds;
+  window.shotDurationIsDeclared = shotDurationIsDeclared;
+  window.shotPlannedDuration = shotPlannedDuration;
+  window.shotDurationWords = shotDurationWords;
+  window.plannedRuntime = plannedRuntime;
   window.resolveShotEntities = resolveShotEntities;
   window.classifyShotCodeTokens = classifyShotCodeTokens;
   window.lossyShotCodeTokens = lossyShotCodeTokens;
@@ -585,6 +654,10 @@ if (typeof module !== "undefined" && module.exports) {
     entityVisualDescription,
     SHOT_DURATION_ALIASES,
     shotDurationSeconds,
+    shotDurationIsDeclared,
+    shotPlannedDuration,
+    shotDurationWords,
+    plannedRuntime,
     resolveShotDuration,
     resolveShotEntities,
     classifyShotCodeTokens,

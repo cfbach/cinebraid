@@ -30,7 +30,7 @@ const { httpStatusForError } = require("./http-errors");
    route below for why the shell has to be able to tell them apart. */
 const { releaseIdentity } = require("./release-identity");
 const { buildIdentity } = require("./build-identity");
-const { resolveShotEntities, shotEntityTokenMatches, unresolvedShotDependencies, entityVisualDescription, resolveShotDuration, lossyShotCodeTokens } = require("./public/shared-entities");
+const { resolveShotEntities, shotEntityTokenMatches, unresolvedShotDependencies, entityVisualDescription, resolveShotDuration, shotDurationIsDeclared, shotDurationWords, shotPlannedDuration, lossyShotCodeTokens } = require("./public/shared-entities");
 const ContinuityBinding = require("./public/shared-continuity-binding");
 const { referenceAspectLabel, aspectRatioMentions } = require("./public/shared-aspect");
 const { deriveLipSync, lipSyncRequiredFrom } = require("./public/shared-lip-sync");
@@ -3052,6 +3052,26 @@ function builderNumber(value, fallback = 0) {
   return Number.isFinite(number) && number >= 0 ? number : fallback;
 }
 
+/* PT3 / PK2-DURATION-UNKNOWN-REPRESENTATION — THE IMPORTER MAY SAY "NOT PLANNED".
+
+   builderNumber() answers a number or a fallback, and for `dur` that fallback was
+   0. So a source that never stated a length — 34 of 34 Tideglass shots, 10 of 11
+   on The Last Seat — was imported as a shot planned to last zero seconds, and the
+   qualification could not tell that apart from a shot whose length was authored.
+
+   The builder was not the defect. It distinguishes known from unknown correctly
+   and refused, unprompted, to invent durations from a beat sheet's timecodes. It
+   had nowhere to PUT the second answer.
+
+   `null` is that place: the explicit unknown ofp/ofp-schema.js already declares
+   for `duration.seconds`, read as "not declared" by shotDurationAlias() and
+   carried through migration as null rather than as a number. A stated length still
+   arrives as the number it was stated as; only absence changes shape. */
+function builderDuration(value) {
+  const number = Number(value);
+  return Number.isFinite(number) && number > 0 ? number : null;
+}
+
 function builderLabel(index) {
   let value = index + 1,
     label = "";
@@ -3668,7 +3688,7 @@ function normalizeBuilderClips(shot, frames, warnings) {
       suffix: String(source.suffix || label.toLowerCase()),
       label,
       title: String(source.title || `Motion ${label}`),
-      dur: builderNumber(source.dur),
+      dur: builderDuration(source.dur),
       kind,
       motionPrompt: String(source.motionPrompt || source.note || ""),
       note: String(source.note || source.motionPrompt || ""),
@@ -3712,7 +3732,7 @@ function normalizeBuilderShot(shot, index, warnings, inferences, stateDeclaratio
       notes: String(source.notes || ""),
       winner: source.winner ?? null,
       motionPrompt: String(source.motionPrompt || ""),
-      dur: builderNumber(source.dur),
+      dur: builderDuration(source.dur),
       audio: (() => {
         const audio = builderObject(source.audio);
         return {
@@ -4032,9 +4052,17 @@ function validateImportedProject(raw) {
         errors.push(
           `Shot ${shot.id} FLF motion unit ${clipId} needs both fromFrame and toFrame.`,
         );
-      if (clip.kind === "r2v" && (clip.dur < 4 || clip.dur > 15))
+      /* PT3 — an unplanned unit is reported as unplanned. `clip.dur < 4` is true
+         for an undeclared duration too, and the message then asserted "is 0s",
+         which is a length nobody wrote. Both still warn; they say different
+         things because they are different facts. */
+      if (clip.kind === "r2v" && !shotDurationIsDeclared(clip))
         warnings.push(
-          `Shot ${shot.id} reference-led motion unit ${clipId} is ${clip.dur || 0}s; Seedance Omni packages support 4–15s, so split or retime this unit before motion generation.`,
+          `Shot ${shot.id} reference-led motion unit ${clipId} has no planned duration; Seedance Omni packages support 4–15s, so give this unit a length before motion generation.`,
+        );
+      else if (clip.kind === "r2v" && (clip.dur < 4 || clip.dur > 15))
+        warnings.push(
+          `Shot ${shot.id} reference-led motion unit ${clipId} is ${clip.dur}s; Seedance Omni packages support 4–15s, so split or retime this unit before motion generation.`,
         );
     }
     if (
@@ -4297,7 +4325,11 @@ function projectBuilderReview(project, warnings = [], sourceCounts = {}, inferre
     for (const clip of shot.clips || []) {
       if (!["plan", "post", "reuse"].includes(clip.kind) && !String(clip.motionPrompt || "").trim())
         review.push(`Shot ${shot.id} motion unit ${clip.label || clip.id}: motion direction is empty`);
-      if (clip.kind === "r2v" && (clip.dur < 4 || clip.dur > 15))
+      if (clip.kind === "r2v" && !shotDurationIsDeclared(clip))
+        review.push(
+          `Shot ${shot.id} motion unit ${clip.label || clip.id}: reference-led motion has no planned duration; Seedance Omni packages need 4–15 seconds`,
+        );
+      else if (clip.kind === "r2v" && (clip.dur < 4 || clip.dur > 15))
         review.push(
           `Shot ${shot.id} motion unit ${clip.label || clip.id}: reference-led duration must be retimed or split to 4–15 seconds`,
         );
@@ -4586,7 +4618,7 @@ app.post("/api/export/packages", async (req, res) => {
         lines.push(
           "",
           `## Motion ${c.label || c.suffix || ""} — ${c.title || ""}`,
-          `Method: ${c.kind || "i2v"} · Duration: ${c.dur || 0}s`,
+          `Method: ${c.kind || "i2v"} · Duration: ${shotDurationWords(c, "not planned")}`,
           c.motionPrompt || c.note || "",
         );
         const motionPackages = resolvePromptBuildList(P, c.generationPackages || []),
@@ -4749,9 +4781,10 @@ function buildMarkdown(P) {
     L.push("| Shot | Title | Dur | Frames | Motion | Status | Safe version |");
     L.push("|---|---|---:|---|---|---|---|");
     for (const s of (P.shots || []).filter((x) => x.scene === sc.id)) {
-      const d = s.clips?.length
-        ? s.clips.reduce((a, c) => a + (+c.dur || 0), 0)
-        : s.dur || 0;
+      /* PT3 — the Dur column prints a length or says there is none. It read
+         `d + "s"`, so every unplanned shot in this export claimed to be 0s long. */
+      const planned = shotPlannedDuration(s);
+      const d = planned.known ? `${planned.seconds}s` : "—";
       const frames =
         (s.keyframes || [])
           .map((f) => `${f.label || "?"}${AuthorityKernel.hasCurrentHumanAuthority(P, { kind: "shot-frame", shotId: s.id, frameId: f.id }) ? " ✓" : ""}`)
@@ -4770,7 +4803,7 @@ function buildMarkdown(P) {
           s.title +
           " | " +
           d +
-          "s | " +
+          " | " +
           frames +
           " | " +
           motion +
@@ -4814,7 +4847,7 @@ function buildMarkdown(P) {
         const to =
           (s.keyframes || []).find((f) => f.id === c.toFrame)?.label || "";
         L.push(
-          `- **Motion ${c.label || c.suffix || "?"} — ${c.title || "Motion unit"}** · ${String(c.kind || "plan").toUpperCase()} · ${from}${to ? " → " + to : ""} · ${c.dur || 0}s${AuthorityKernel.hasCurrentHumanAuthority(P, { kind: "shot-motion", shotId: s.id, unitKey: c.id || c.suffix }) ? ` · approved: ${c.videoWinner}` : c.videoWinner ? ` · historic selection: ${c.videoWinner}` : ""}`,
+          `- **Motion ${c.label || c.suffix || "?"} — ${c.title || "Motion unit"}** · ${String(c.kind || "plan").toUpperCase()} · ${from}${to ? " → " + to : ""} · ${shotDurationWords(c, "duration not planned")}${AuthorityKernel.hasCurrentHumanAuthority(P, { kind: "shot-motion", shotId: s.id, unitKey: c.id || c.suffix }) ? ` · approved: ${c.videoWinner}` : c.videoWinner ? ` · historic selection: ${c.videoWinner}` : ""}`,
         );
         if (c.motionPrompt || c.note)
           L.push("  - " + oneLine(c.motionPrompt || c.note));

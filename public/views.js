@@ -44,7 +44,7 @@ const ROUTES = {
     <div class="chip-row" style="margin:10px 0 4px">
       ${["A", "B"].map((t) => `<button class="tier-badge ${t}" style="${sc.tier === t ? "" : "opacity:.35"}" onclick="setVal('scenes','${sc.id}','tier','${t}');route()">TIER ${t}</button>`).join("")}
       <input class="status-select" style="width:130px" placeholder="stage (optional)" value="${attr(sc.stage ?? "")}" onchange="setVal('scenes','${sc.id}','stage',this.value)">
-      <span class="hint">${mmss(shots.reduce((a, s) => a + shotDur(s), 0))} planned in this scene</span>
+      <span class="hint">${mmss(plannedRuntimeOf(shots).seconds)} planned in this scene${esc(unplannedRuntimeNote(plannedRuntimeOf(shots)))}</span>
     </div>
     <div class="section-label">Scene reference package <span class="section-count">${sceneReferenceRecords(sc).length}</span></div>
     <div class="reference-package">${

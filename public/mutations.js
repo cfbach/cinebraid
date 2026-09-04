@@ -620,7 +620,12 @@ window.addShot = (sceneId) => {
       promptOptions: [],
       promptBuilds: [],
       winner: null,
-      dur: 0,
+      /* PT3 — A NEW SHOT HAS NO PLANNED LENGTH, and `0` is a length. Every shot
+         added here started life claiming to run zero seconds, which the runtime
+         total then added up as certainty. `null` is the same explicit unknown the
+         importer now writes and shotDurationAlias() already reads as "not
+         declared"; the filmmaker's first real number replaces it. */
+      dur: null,
       continuityStateSelections: {},
       keyframes: [newKeyframe(0)],
       clips: [],

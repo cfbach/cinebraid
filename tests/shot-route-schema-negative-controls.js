@@ -476,7 +476,7 @@ function extractFunction(source, name) {
   throw new Error(`could not find the end of ${name} in server.js`);
 }
 
-const IMPORT_HELPERS = ["builderObject", "builderArray", "builderNumber", "builderLabel",
+const IMPORT_HELPERS = ["builderObject", "builderArray", "builderNumber", "builderDuration", "builderLabel",
   "recordPlanningInference", "normalizeBuilderMotionBrief", "normalizeBuilderKeyframes",
   "normalizeBuilderClips", "normalizeBuilderShot"];
 
