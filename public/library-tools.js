@@ -873,14 +873,26 @@ window.syncEntityApprovalModal = () => {
        projection, so this asks it. Three standings, three sentences: only a
        receipt-backed state may be called approved, a pointer with no receipt is
        named as the historic selection it is, and a state with neither still needs
-       a reference. If the projection is not loaded, nothing affirmative is said —
-       an unavailable truth reader is not permission to guess. */
+       a reference.
+
+       PT1-C1 — AND "NEEDS REFERENCE" IS ITSELF A CLAIM. The first repair guarded
+       only the case where entityStateTruth() is absent; it could not see the case
+       where the truth reader is present and the PROJECTION UNDER IT is not, which
+       used to hand back fabricated empty collections. A state holding a current
+       approval was then offered as `Edit Opened · needs reference` — a different
+       wrong answer, arrived at the same way.
+
+       Three of these four branches are statements about authority, and none of
+       them may be reached from an answer nobody could compute. `available` is
+       asked first, and any standing this list does not recognise is treated as
+       unavailable rather than falling through to the last line. */
     const continuationTruth = typeof entityStateTruth === "function" ? entityStateTruth(current.list, x) : null;
     const continuationStanding = (item) => {
-      if (!continuationTruth) return " · approval state unavailable";
+      if (!continuationTruth || continuationTruth.available === false) return " · approval state unavailable";
       const standing = continuationTruth.of(item).standing;
       if (standing === "canon") return " · currently approved";
       if (standing === "historic") return " · historic, not approved";
+      if (standing !== "missing") return " · approval state unavailable";
       return " · needs reference";
     };
     nextSelect.innerHTML = `<option value="">Approve only — stay on this asset</option>${nextStates.map((item) => `<option value="${attr(item.id)}">Edit ${esc(item.name || "next state")}${continuationStanding(item)}</option>`).join("")}`;

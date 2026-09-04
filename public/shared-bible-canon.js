@@ -87,6 +87,17 @@
   const HISTORY = (typeof module === "object" && module.exports)
     ? require("./shared-build-history.js")
     : root;
+  /* PT3-C1. The duration vocabulary is public/shared-entities.js's, and it is asked
+     rather than restated: only a positive finite number counts as a declared
+     length, so absent, null, "" and 0 are all one answer — NOT PLANNED. */
+  const DURATION = (typeof module === "object" && module.exports)
+    ? require("./shared-entities.js")
+    : root;
+  function durationDeclared(source) {
+    return typeof DURATION.shotDurationIsDeclared === "function"
+      ? DURATION.shotDurationIsDeclared(source) === true
+      : Number.isFinite(Number(record(source).dur)) && Number(record(source).dur) > 0;
+  }
 
   const BIBLE_CANON_CONTRACT = { version: 1, name: "bible-canon" };
   /* The five answers to "what is this material?". Nothing in the canon body may
@@ -419,6 +430,50 @@
     };
   }
 
+  /* PT3-C1 — WHAT A SHOT'S TIMING ACTUALLY IS, IN THREE FIELDS AND ONE SENTENCE.
+
+     `dur`              the seconds that are actually declared. Unchanged.
+     `durComplete`      whether every contributing length is one of them.
+     `durUntimedUnits`  how many motion units still owe a length.
+     `durWords`         the sentence, built once so the page and the export cannot
+                        say different things about the same shot.
+
+     A shot with motion units is timed by its units, which is the precedence the
+     aggregate already had. A shot with none is timed by its own declared length,
+     read through the same rule. Nothing here estimates, rounds or fills in: an
+     incomplete answer is published as incomplete rather than as a smaller number
+     that looks finished. */
+  function shotTiming(s, motions) {
+    if (motions.length) {
+      const untimed = motions.filter((m) => m.durDeclared !== true);
+      const seconds = motions.reduce((total, m) => total + (m.durDeclared === true ? m.dur : 0), 0);
+      return {
+        dur: seconds,
+        durComplete: untimed.length === 0,
+        durUntimedUnits: untimed.length,
+        durWords: timingWords(seconds, untimed.length === 0, untimed.length),
+      };
+    }
+    /* NARROWED ON PURPOSE. The aggregate has always read `s.dur` and nothing else,
+       so the declared-ness question is asked about that same field: a shot whose
+       only length is a legacy `sec`/`duration` alias keeps exactly the Bible
+       behaviour it has today rather than acquiring a number here. The RULE is
+       still shared-entities.js's; only what it is applied to is pinned. */
+    const declared = durationDeclared({ dur: s.dur });
+    const seconds = declared ? +s.dur || 0 : 0;
+    return {
+      dur: seconds,
+      durComplete: declared,
+      durUntimedUnits: 0,
+      durWords: timingWords(seconds, declared, 0),
+    };
+  }
+  function timingWords(seconds, complete, untimedUnits) {
+    if (complete) return seconds > 0 ? `${seconds}s` : "";
+    const missing = untimedUnits === 1 ? "1 unit untimed" : untimedUnits ? `${untimedUnits} units untimed` : "duration not planned";
+    return seconds > 0 ? `${seconds}s known · ${missing}` : missing;
+  }
+
   function shotProjection(project, shot, pool) {
     const s = record(shot);
     const find = mediaFinder(pool);
@@ -515,6 +570,17 @@
         kind: text(c.kind) || "plan",
         from: text(record(fromFrame).label) || text(record(keyframes[0]).label),
         to: text(record(toFrame).label),
+        /* PT3-C1 — WHETHER THE NUMBER BELOW IS ONE ANYBODY WROTE.
+
+           `+c.dur || 0` is the shipped reading rule and stays exactly as it is,
+           byte for byte: a 0 there has always meant "not declared", and
+           tests/bible-canon-export-negative-controls.js anchors NC-BIBLE10 on that
+           line and the one after it. What was missing is that the SHOT AGGREGATE
+           below could not tell that 0 apart from a real second, so it summed
+           `[6, 0]` to 6 and published `6s` for a shot with one untimed unit. The
+           distinction travels with the row instead of being re-derived from a
+           number that cannot carry it. */
+        durDeclared: durationDeclared(c),
         dur: +c.dur || 0,
         /* DIALOGUE AND VOICE NOTES STAY. They are script the filmmaker wrote about
            the shot, the same class as a title or an identity block, and no
@@ -618,7 +684,19 @@
       id: text(s.id),
       title: text(s.title),
       sceneId: text(s.scene),
-      dur: motions.length ? motions.reduce((total, m) => total + m.dur, 0) : +s.dur || 0,
+      /* PT3-C1 — A SUBTOTAL IS NOT A TOTAL.
+
+         This was `motions.reduce((total, m) => total + m.dur, 0)`, which adds the
+         not-declared 0 of an untimed unit as though it were a second, so a shot
+         with units [6s, untimed] published `Cold open · 6s` — a complete-looking
+         answer to a question nobody had finished answering. That is the Project
+         Bible, which is the document a production is run from.
+
+         The number is unchanged: it is still the sum of the lengths that exist.
+         What it LEAVES OUT now travels beside it, and `durWords` is the one place
+         the sentence is built, so the HTML page and the Markdown export cannot
+         disagree about it. */
+      ...shotTiming(s, motions),
       route: text(s.route),
       winner,
       keyframes,
@@ -740,7 +818,8 @@
     }
     for (const shot of rows) {
       out.push(`### ${shot.id} — ${shot.title}`);
-      out.push(`${shot.scene}${shot.dur ? ` · ${shot.dur}s` : ""}${shot.route ? ` · ${shot.route}` : ""}`);
+      /* PT3-C1 — the heading prints the timing SENTENCE, not the subtotal. */
+      out.push(`${shot.scene}${shot.durWords ? ` · ${shot.durWords}` : ""}${shot.route ? ` · ${shot.route}` : ""}`);
       /* THREE INDEPENDENT AUTHORITY FACTS, SERIALISED AS THREE. There is no
          headline line here at all: the shot's hero image is a presentation choice
          and every canonical fact below names its own file. The version that printed

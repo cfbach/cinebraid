@@ -73,9 +73,20 @@ const readLF = (file) => fs.readFileSync(path.join(ROOT, file), "utf8").replace(
    Everything below stays in one realm.
 
    The `require` shim is also a proof, used by EXP8: the module may reach exactly
-   two files, and anything else — a network client above all — throws by name.
+   the files listed below, and anything else — a network client above all — throws
+   by name.
+
+   PT3-C1 AMENDED THIS LIST, DELIBERATELY AND BY ONE ENTRY. The property EXP8 states
+   is LOCAL-ONLY, not self-containment: "the module may not even REQUIRE a network
+   client". public/shared-entities.js is the same class as the two already here — a
+   pure vocabulary module with no network, no filesystem and no clock — and the
+   Bible aggregate reaches it for exactly one thing: whether a stored duration is a
+   length anybody declared. Restating that rule inside the Bible module instead is
+   how `0` came to mean two things in the first place, which is the defect PT3-C1
+   is correcting. EXP8's own negative control is untouched and still proves a
+   `require("https")` is refused by name.
    =========================================================================== */
-const ALLOWED_REQUIRES = ["./shared-production-authority.js", "./shared-build-history.js"];
+const ALLOWED_REQUIRES = ["./shared-production-authority.js", "./shared-build-history.js", "./shared-entities.js"];
 function loadBibleCanon(mutate) {
   let source = readLF("public/shared-bible-canon.js");
   if (mutate) source = mutate(source);

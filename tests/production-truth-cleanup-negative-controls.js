@@ -18,6 +18,10 @@
  *   2  DETECT. The failure counts only if it is an AssertionError whose message
  *      matches the reason this control exists to produce.
  *
+ * N12/N13 and N14 are the correction controls: they restore the fabricated empty
+ * authority projection and the sum-of-not-declared-sentinels aggregate, which is
+ * how the two blocked reproductions are held rather than described.
+ *
  * NOTHING IS WRITTEN TO DISK AND NOTHING IS REVERTED WITH GIT. Page scripts go
  * through render()'s `mutateSource` hook; the server's import writer is lifted by
  * exact source into a vm; every file touched is re-read at the end and required
@@ -35,7 +39,7 @@ const PUBLIC = path.join(ROOT, "public");
 const SERVER = path.join(ROOT, "server.js");
 const { render, rawFixture, buildFixture, withCanon } = require("./render-harness");
 
-const PAGE_FILES = ["library-tools.js", "media-results.js", "automation.js", "app.js", "shared-bible-canon.js", "mutations.js"];
+const PAGE_FILES = ["library-tools.js", "entities.js", "media-results.js", "automation.js", "app.js", "shared-bible-canon.js", "mutations.js"];
 const TOUCHED = [SERVER, ...PAGE_FILES.map((name) => path.join(PUBLIC, name))];
 const ORIGINAL = new Map(TOUCHED.map((file) => [file, fs.readFileSync(file, "utf8")]));
 
@@ -136,6 +140,29 @@ function pt1Project() {
   return withCanon(project, [
     { kind: "entity-state", list: "characters", entityId: "KAI", stateId: "state-default", value: "KAI-ANCHOR.png" },
   ]);
+}
+/* PT1-C1's subject: the same entity with BOTH states receipt-backed, so an
+   unreadable projection cannot be mistaken for a true absence. */
+function pt1CanonProject() {
+  const project = pt1Project();
+  return withCanon(project, [
+    { kind: "entity-state", list: "characters", entityId: "KAI", stateId: "state-opened", value: "KAI-OPENED.png" },
+  ]);
+}
+/* Opens the approval modal with the authority PROJECTION withdrawn and the truth
+   READER left in place — the state the blocked candidate answered from fabricated
+   empty collections. */
+async function pt1UnavailableOption(run) {
+  const app = await run({ hash: "#/character/KAI", project: pt1CanonProject(), scan: PT1_SCAN });
+  vm.runInContext("globalThis.entityProductionTruth = undefined; entityProductionTruth = undefined;", app.context);
+  app.context.approveEntityFile("characters", "KAI", "KAI-ANCHOR.png", "state-default");
+  const select = vm.runInContext(
+    "(() => { const el = document.getElementById('entity-approve-next'); return el ? el.innerHTML : ''; })()",
+    app.context,
+  );
+  const option = select.match(/<option value="state-opened">([^<]*)<\/option>/);
+  assert(option, "the continuation option must render");
+  return option[1];
 }
 
 /* ==========================================================================
@@ -256,6 +283,44 @@ const CONTROLS = [
       assert(option, "the historic state must be offered");
       assert(!/currently approved/.test(option[1]),
         `an assigned file with no receipt was called currently approved: ${option[1]}`);
+    },
+  },
+
+  /* ---- PT1-C1 · an unavailable projection is not an empty one ----------- */
+  {
+    id: "N12",
+    title: "entityStateTruth fabricates empty collections again",
+    target: { file: "entities.js" },
+    from: `  const available = typeof entityProductionTruth === "function";
+  const truth = available ? entityProductionTruth(P, list, entity && entity.id) : null;`,
+    to: `  const available = true;
+  const truth = typeof entityProductionTruth === "function"
+    ? entityProductionTruth(P, list, entity && entity.id)
+    : { canon: [], references: [], historic: [] };`,
+    expect: /an unreadable authority projection was answered as an absence of approval truth/,
+    async guard(run) {
+      const wording = await pt1UnavailableOption(run);
+      assert(/approval state unavailable/.test(wording),
+        `an unreadable authority projection was answered as an absence of approval truth: ${wording}`);
+    },
+  },
+  {
+    id: "N13",
+    title: "the approval modal falls through an unrecognised standing to needs-reference",
+    target: { file: "library-tools.js" },
+    /* The other half of the same claim: even with the seam honest, the modal must
+       not reach its last line from a standing it does not recognise. */
+    mutations: [
+      { from: `      if (!continuationTruth || continuationTruth.available === false) return " · approval state unavailable";`,
+        to: `      if (!continuationTruth) return " · approval state unavailable";` },
+      { from: `      if (standing !== "missing") return " · approval state unavailable";
+`, to: `` },
+    ],
+    expect: /an unreadable authority projection was answered as an absence of approval truth/,
+    async guard(run) {
+      const wording = await pt1UnavailableOption(run);
+      assert(/approval state unavailable/.test(wording),
+        `an unreadable authority projection was answered as an absence of approval truth: ${wording}`);
     },
   },
 
@@ -380,6 +445,42 @@ const CONTROLS = [
       const runtime = JSON.parse(vm.runInContext("JSON.stringify(plannedRuntimeOf(P.shots))", app.context));
       assert.strictEqual(runtime.unknown, 2,
         `an untimed shot was counted as a timed one: ${JSON.stringify(runtime)}`);
+    },
+  },
+  {
+    id: "N14",
+    title: "the Bible shot aggregate sums the not-declared sentinel as a second",
+    target: { file: "shared-bible-canon.js" },
+    /* ASTRA'S REPRODUCTION, RESTORED. `[6, null]` projects as `[6, 0]`; summing
+       that at face value publishes `6s` for a shot with one untimed unit. */
+    from: `      const untimed = motions.filter((m) => m.durDeclared !== true);
+      const seconds = motions.reduce((total, m) => total + (m.durDeclared === true ? m.dur : 0), 0);`,
+    to: `      const untimed = [];
+      const seconds = motions.reduce((total, m) => total + m.dur, 0);`,
+    expect: /a partly timed shot was published as a complete duration/,
+    guard(run) {
+      const BibleCanon = run();
+      const doc = BibleCanon.bibleCanonProjection({
+        meta: { title: "Duration", models: [] },
+        characters: [], locations: [], props: [], vehicles: [], audio: [], mediaAssets: [],
+        scenes: [{ id: "Cold open", title: "Cold open" }],
+        shots: [{
+          id: "S-01", scene: "Cold open", title: "Hull check", status: "LOCKED", workflowStatus: "APPROVED",
+          dur: null, keyframes: [],
+          clips: [
+            { id: "seg-a", suffix: "a", label: "A", title: "Timed", kind: "i2v", dur: 6 },
+            { id: "seg-b", suffix: "b", label: "B", title: "Untimed", kind: "i2v", dur: null },
+          ],
+          candidateFiles: [], promptBuilds: [], generationPackages: [], creationBrief: {},
+        }],
+        productionAuthority: { version: 1, receipts: [] },
+      }, { media: {}, shotMedia: () => [], modelName: () => "" });
+      const heading = BibleCanon.bibleCanonMarkdown(doc, { preset: "canon" })
+        .split(/\r?\n/).find((line) => line.startsWith("Cold open")) || "";
+      assert(heading, "the shot heading must be exported");
+      const facts = heading.split(" · ").map((part) => part.trim());
+      assert(!facts.includes("6s"),
+        `a partly timed shot was published as a complete duration: ${heading}`);
     },
   },
   {

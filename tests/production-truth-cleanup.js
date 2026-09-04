@@ -25,6 +25,21 @@
  *        Tideglass shots. `0` is a length, and it was printed as one and totalled
  *        as one.
  *
+ * TWO OF THE THREE CARRY A CORRECTION, and the corrections are the sharper half
+ * of what this suite holds:
+ *
+ *   PT1-C1  the first repair asked the projection instead of `approvedFile`, but
+ *           entityStateTruth() still SUBSTITUTED `{ canon: [], historic: [] }` when
+ *           the projection could not be evaluated. That is a complete answer, not
+ *           a missing one: a state holding a current approval came back `missing`
+ *           and was offered as `needs reference`. Not knowing and knowing there is
+ *           nothing are different facts.
+ *
+ *   PT3-C1  the Bible is the shipped consumer of the retained `dur: 0`. A shot
+ *           with units [6s, untimed] projects as `[6, 0]`, the aggregate summed
+ *           that to 6, and the heading published `Cold open · 6s` — a
+ *           complete-looking answer in the document a production is run from.
+ *
  * WHAT EACH PART IS RUN AGAINST. Nothing here asserts against a hand-built row
  * where real code could produce one: PT1 opens the SHIPPED modal through the
  * shipped command, PT2 builds its cards from the REAL projection and its gate
@@ -91,9 +106,15 @@ function pt1Project({ openedIsCanon }) {
   return withCanon(project, receipts);
 }
 
-async function pt1ContinuationOptions(openedIsCanon) {
+async function pt1ContinuationOptions(openedIsCanon, { withdrawProjection = false } = {}) {
   const app = await render("#/character/KAI", pt1Project({ openedIsCanon }), { scan: PT1_SCAN });
   const truth = JSON.parse(vm.runInContext("JSON.stringify(entityProductionTruth(P,'characters','KAI'))", app.context));
+  /* PT1-C1's condition, produced rather than described: the truth READER is
+     present and the PROJECTION UNDER IT is not. Withdrawn after the fixture's
+     receipts are read, so the assertions below know exactly what the modal is
+     failing to see. */
+  if (withdrawProjection)
+    vm.runInContext("globalThis.entityProductionTruth = undefined; entityProductionTruth = undefined;", app.context);
   app.context.approveEntityFile("characters", "KAI", "KAI-ANCHOR.png", "state-default");
   const select = vm.runInContext(
     "(() => { const el = document.getElementById('entity-approve-next'); return el ? el.innerHTML : ''; })()",
@@ -137,7 +158,59 @@ async function checkApprovalWordingReadsAuthority() {
   ok(!/historic, not approved/.test(approvedOption[1]),
     "PT1: and must not also be called historic");
 
+  /* CASE 3 — PT1-C1. THE PROJECTION CANNOT BE EVALUATED.
+
+     entityStateTruth() used to substitute `{ canon: [], references: [], historic: [] }`
+     here, which is not a missing answer but a COMPLETE one: every state came back
+     `missing`, so a state holding a current human approval was offered as
+     `Edit Opened · needs reference`. Not knowing and knowing there is nothing are
+     different facts, and the fixture is built so that they cannot be confused —
+     the state under test genuinely HOLDS Canon, so any of the three authority
+     phrases would be the projection being invented rather than read. */
+  const unavailable = await pt1ContinuationOptions(true, { withdrawProjection: true });
+  eq(unavailable.truth.canon.length, 2,
+    "PT1-C1: the fixture must genuinely hold Canon on the state under test, or an unavailable reading proves nothing");
+  ok(unavailable.select, "PT1-C1: the modal must still render — an unreadable projection is not a reason to show nothing");
+
+  const unavailableOption = unavailable.select.match(/<option value="state-opened">([^<]*)<\/option>/);
+  ok(unavailableOption, "PT1-C1: the state must still be offered as a continuation");
+  ok(/approval state unavailable/.test(unavailableOption[1]),
+    `PT1-C1: an unevaluable projection must say so: ${unavailableOption[1]}`);
+  ok(!/needs reference/.test(unavailableOption[1]),
+    `PT1-C1: an unavailable projection was read as an absence of approval truth: ${unavailableOption[1]}`);
+  ok(!/currently approved/.test(unavailableOption[1]),
+    `PT1-C1: nor may it be read as an approval: ${unavailableOption[1]}`);
+  ok(!/historic, not approved/.test(unavailableOption[1]),
+    `PT1-C1: nor as a historic selection: ${unavailableOption[1]}`);
+  ok(!/needs reference/.test(unavailable.select),
+    "PT1-C1: no option in this dropdown may claim a state needs a reference while the projection is unreadable");
+
+  /* AND THE SEAM ITSELF, not only the one caller. `entityStateTruth()` is the
+     shared reader; a repair that only patched the modal would leave the next
+     reader to make the same mistake. */
+  const seam = await render("#/character/KAI", pt1Project({ openedIsCanon: true }), { scan: PT1_SCAN });
+  const readings = JSON.parse(vm.runInContext(`(() => {
+    const entity = P.characters.find((row) => row.id === "KAI");
+    const before = entityStateTruth("characters", entity);
+    const openedBefore = before.of({ id: "state-opened" }).standing;
+    globalThis.entityProductionTruth = undefined; entityProductionTruth = undefined;
+    const after = entityStateTruth("characters", entity);
+    return JSON.stringify({
+      availableBefore: before.available, openedBefore,
+      availableAfter: after.available, openedAfter: after.of({ id: "state-opened" }).standing,
+      canonCountAfter: after.canonCount,
+    });
+  })()`, seam.context));
+  eq(readings.availableBefore, true, "PT1-C1: a loaded projection reports itself available");
+  eq(readings.openedBefore, "canon", "PT1-C1: and answers canon for a receipt-backed state");
+  eq(readings.availableAfter, false, "PT1-C1: an unloaded projection reports itself unavailable");
+  eq(readings.openedAfter, "unavailable",
+    "PT1-C1: and answers `unavailable` rather than a standing it cannot support");
+  eq(readings.canonCountAfter, 0,
+    "PT1-C1: its counts are empty, which is exactly why `available` and not a count has to be the question");
+
   note("PT1: the approval modal's continuation wording comes from the authority projection — an assigned file with no receipt reads Historic, a receipt-backed state reads currently approved, and a state with neither needs a reference");
+  note("PT1-C1: an authority projection that cannot be evaluated reads `approval state unavailable` at the modal and `unavailable` at the shared seam — never needs-reference, historic or approved");
 }
 
 /* ==========================================================================
@@ -411,6 +484,16 @@ const PT3_SOURCE = {
       clips: [{ id: "seg-a", suffix: "a", kind: "i2v", dur: 4, motionPrompt: "It drifts." }] },
     { id: "S-02", scene: "SC-01", title: "Unplanned length", desc: "A second wide.", positioning: "Wide.",
       clips: [{ id: "seg-a", suffix: "a", kind: "i2v", motionPrompt: "It drifts again." }] },
+    /* PT3-C1 case 5. Locked, so it reaches the Project Bible, and mixed-timing, so
+       the export has to decide what to publish about a shot it cannot fully time.
+       This is Astra's shape carried through the real routes rather than the
+       module: import, disk, reload, and the Bible file a filmmaker downloads. */
+    { id: "S-03", scene: "SC-01", title: "Partly timed", desc: "A locked wide.", positioning: "Wide.",
+      status: "LOCKED", workflowStatus: "APPROVED",
+      clips: [
+        { id: "seg-a", suffix: "a", kind: "i2v", dur: 6, motionPrompt: "It turns." },
+        { id: "seg-b", suffix: "b", kind: "i2v", motionPrompt: "It settles." },
+      ] },
   ],
   characters: [], locations: [], props: [], vehicles: [], audio: [],
 };
@@ -500,7 +583,32 @@ async function checkUnknownSurvivesImportAndReload() {
     ok(!/\| 0s \|/.test(rowOf("S-02")), `PT3b: the unplanned shot was exported as a zero-second one: ${rowOf("S-02")}`);
     ok(/\| — \|/.test(rowOf("S-02")), `PT3b: it exports no length at all: ${rowOf("S-02")}`);
 
+    /* PT3-C1 CASE 5 — SAVE / RELOAD / EXPORT. The mixed-timing shot went through
+       the same import and the same file; this is the Bible a filmmaker downloads,
+       served by the real route from what is on disk. */
+    const partlyTimed = shotOf(disk, "S-03");
+    assert.deepStrictEqual(partlyTimed.clips.map((clip) => clip.dur), [6, null],
+      "PT3-C1: the mixed-timing shot is stored with one length and one explicit unknown");
+    checks += 1;
+
+    const bible = await (await fetch(`${base}/api/bible/export?preset=canon`)).text();
+    /* The heading is the line after the shot's own `### id — title`, taken by
+       position rather than by guessing the scene label the projection resolves to. */
+    const bibleLines = bible.split(/\r?\n/);
+    const headingIndex = bibleLines.findIndex((line) => line.startsWith("### S-03 "));
+    const heading = headingIndex >= 0 ? bibleLines[headingIndex + 1] : "";
+    ok(heading, `PT3-C1: the locked shot must reach the Bible export: ${bible.slice(0, 300)}`);
+    /* The heading is a `·`-joined list of facts, so the claim under test is that
+       the TIMING FACT is not the bare number — `6s known · 1 unit untimed` passes,
+       `6s` does not. Substring matching would not tell those apart. */
+    const headingFacts = heading.split(" · ").map((part) => part.trim());
+    ok(!headingFacts.includes("6s"),
+      `PT3-C1: the export published a partly timed shot as a complete 6s: ${heading}`);
+    ok(/6s/.test(heading), `PT3-C1: the known subtotal survives the export: ${heading}`);
+    ok(/1 unit untimed/.test(heading), `PT3-C1: and so does what it could not time: ${heading}`);
+
     note(`PT3b: through the real import routes, ${commit.slug}/project.json holds 4 for the authored shot and null for the unplanned one, and both survive the reload unchanged`);
+    note(`PT3-C1: the Bible file the real export route serves reads "${heading}" — no false complete duration survives import, disk and reload`);
   } finally {
     child.kill();
   }
@@ -590,6 +698,107 @@ async function checkSurfacesDoNotCountUnknownAsZero() {
 }
 
 /* ==========================================================================
+   PT3-C1 — THE BIBLE AGGREGATE MAY NOT PUBLISH A SUBTOTAL AS A TOTAL.
+
+   Astra's reproduction, exactly: one motion unit at 6s and one untimed projects as
+   `[6, 0]`, the shot aggregate sums that to 6, and the heading prints
+   `Cold open · 6s` — a complete-looking answer about a shot nobody has finished
+   timing, in the document a production is run from.
+
+   The Project Bible is the shipped consumer of the retained `dur: 0` projection.
+   That projection field is unchanged and asserted as unchanged below; what
+   changed is that the row now also says whether its number is one anybody wrote,
+   and the aggregate keeps both facts.
+   ========================================================================== */
+
+const PT3C1_CLIP = (label, dur) => ({
+  id: `seg-${label.toLowerCase()}`, suffix: label.toLowerCase(), label,
+  title: `Unit ${label}`, kind: "i2v", dur,
+});
+function pt3c1Doc(clips, shotDur = null) {
+  return BibleCanon.bibleCanonProjection({
+    meta: { title: "Duration", models: [] },
+    characters: [], locations: [], props: [], vehicles: [], audio: [], mediaAssets: [],
+    scenes: [{ id: "Cold open", title: "Cold open" }],
+    shots: [{
+      id: "S-01", scene: "Cold open", title: "Hull check", status: "LOCKED", workflowStatus: "APPROVED",
+      dur: shotDur, keyframes: [], clips,
+      candidateFiles: [], promptBuilds: [], generationPackages: [], creationBrief: {},
+    }],
+    productionAuthority: { version: 1, receipts: [] },
+  }, { media: {}, shotMedia: () => [], modelName: () => "" });
+}
+const pt3c1Heading = (doc) =>
+  BibleCanon.bibleCanonMarkdown(doc, { preset: "canon" })
+    .split(/\r?\n/).find((line) => line.startsWith("Cold open")) || "";
+
+function checkBibleAggregateNeverCompletesIncompleteTiming() {
+  /* CASE 1 — [6, null]. THE REPRODUCTION. */
+  const partial = pt3c1Doc([PT3C1_CLIP("A", 6), PT3C1_CLIP("B", null)]);
+  const partialShot = partial.shots[0];
+
+  /* The projection's own motion field is deliberately unchanged — a 0 there has
+     always meant "not declared", and NC-BIBLE10 anchors on that line. This asserts
+     the retained shape so the correction is visibly ABOUT the aggregate. */
+  assert.deepStrictEqual(partialShot.motions.map((m) => m.dur), [6, 0],
+    "PT3-C1: the motion projection still carries a not-declared duration as 0");
+  assert.deepStrictEqual(partialShot.motions.map((m) => m.durDeclared), [true, false],
+    "PT3-C1: and now says which of those numbers anybody wrote");
+  checks += 2;
+
+  eq(partialShot.dur, 6, "PT3-C1: the known subtotal is preserved — nothing is discarded");
+  eq(partialShot.durComplete, false, "PT3-C1: and the aggregate reports itself incomplete");
+  eq(partialShot.durUntimedUnits, 1, "PT3-C1: naming how many units still owe a length");
+
+  const partialHeading = pt3c1Heading(partial);
+  ok(partialHeading, "PT3-C1: the shot heading must be exported");
+  ok(!/^Cold open · 6s$/.test(partialHeading),
+    `PT3-C1: a shot with one untimed unit was published as a complete 6s: ${partialHeading}`);
+  ok(/6s/.test(partialHeading), `PT3-C1: the known subtotal stays visible: ${partialHeading}`);
+  ok(/untimed/.test(partialHeading), `PT3-C1: and the incompleteness is surfaced: ${partialHeading}`);
+  ok(/1 unit untimed/.test(partialHeading), `PT3-C1: with the count: ${partialHeading}`);
+
+  /* CASE 2 — [6, 4]. A GENUINELY COMPLETE TOTAL IS STILL A PLAIN NUMBER, or the
+     repair is indistinguishable from making every shot look unfinished. */
+  const complete = pt3c1Doc([PT3C1_CLIP("A", 6), PT3C1_CLIP("B", 4)]);
+  eq(complete.shots[0].dur, 10, "PT3-C1: two declared units sum to their total");
+  eq(complete.shots[0].durComplete, true, "PT3-C1: and that total is complete");
+  eq(complete.shots[0].durUntimedUnits, 0, "PT3-C1: with nothing outstanding");
+  eq(pt3c1Heading(complete), "Cold open · 10s", "PT3-C1: so the heading is the plain truthful number");
+
+  /* CASE 3 — [null, null]. NOT ZERO SECONDS. */
+  const untimed = pt3c1Doc([PT3C1_CLIP("A", null), PT3C1_CLIP("B", null)]);
+  eq(untimed.shots[0].durComplete, false, "PT3-C1: a shot whose every unit is untimed is not complete");
+  eq(untimed.shots[0].durUntimedUnits, 2, "PT3-C1: and both units are counted");
+  const untimedHeading = pt3c1Heading(untimed);
+  ok(!/0s/.test(untimedHeading), `PT3-C1: an entirely untimed shot must not read as zero seconds: ${untimedHeading}`);
+  ok(/2 units untimed/.test(untimedHeading), `PT3-C1: it says what it is: ${untimedHeading}`);
+
+  /* CASE 4 — AN EXPLICIT LEGITIMATE DURATION, under the existing precedence. */
+  const authored = pt3c1Doc([], 5);
+  eq(authored.shots[0].dur, 5, "PT3-C1: a shot with no units keeps its own declared length");
+  eq(authored.shots[0].durComplete, true, "PT3-C1: which is a complete answer");
+  eq(pt3c1Heading(authored), "Cold open · 5s", "PT3-C1: and prints as the number it is");
+  const unitsWin = pt3c1Doc([PT3C1_CLIP("A", 6), PT3C1_CLIP("B", 4)], 99);
+  eq(unitsWin.shots[0].dur, 10,
+    "PT3-C1: units still beat the shot's own alias — the precedence the aggregate already had is unchanged");
+  const zeroSentinel = pt3c1Doc([], 0);
+  eq(zeroSentinel.shots[0].durComplete, false,
+    "PT3-C1: a stored 0 on a shot with no units is the not-declared sentinel, not a zero-second shot");
+  ok(!/0s/.test(pt3c1Heading(zeroSentinel)), "PT3-C1: and is never printed as one");
+
+  /* THE PAGE AND THE EXPORT SAY THE SAME THING. `durWords` is built once, which is
+     why they cannot drift — the HTML heading reads the same field. */
+  const bibleSource = fs.readFileSync(path.join(PUBLIC, "bible.js"), "utf8");
+  ok(/durWords/.test(bibleSource),
+    "PT3-C1: the Bible page must print the same timing sentence the export does");
+  ok(!/s\.dur \? esc\(s\.dur\)/.test(bibleSource),
+    "PT3-C1: and must not re-derive a heading from the subtotal");
+
+  note("PT3-C1: the Bible aggregate keeps the known subtotal AND how many units are untimed; [6, null] publishes `6s known · 1 unit untimed` instead of `6s`, [6, 4] still publishes `10s`, and [null, null] is untimed rather than 0s");
+}
+
+/* ==========================================================================
    PT3d — A NEW SHOT HAS NO PLANNED LENGTH.
 
    The representation half, at the other writer. `dur: 0` and `dur: null` read
@@ -632,6 +841,7 @@ async function main() {
   checkDurationContract();
   await checkUnknownSurvivesImportAndReload();
   await checkSurfacesDoNotCountUnknownAsZero();
+  checkBibleAggregateNeverCompletesIncompleteTiming();
   await checkNewShotHasNoInventedLength();
 
   for (const line of notes) console.log(`  - ${line}`);

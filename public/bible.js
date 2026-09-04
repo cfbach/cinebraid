@@ -114,7 +114,7 @@ function shotCard(s) {
     : "";
   return `<article class="bible-shot" data-search="${attr([s.id, s.title, s.scene, s.route, frames.map((f) => [f.title, f.description, f.package && f.package.prompt].join(" ")).join(" "), motions.map((m) => [m.title, m.kind, m.line, m.package && m.package.prompt].join(" ")).join(" "), s.delivery && [s.delivery.authority.value, s.delivery.package && s.delivery.package.prompt].join(" ")].join(" "))}">
     <div class="bible-shot-media">${s.winner ? `<a href="${s.winner.url}" target="_blank">${isVideo(s.winner.name) ? `<video muted preload="metadata" src="${s.winner.url}#t=0.1"></video>` : `<img src="${s.winner.url}" alt="">`}<span>APPROVED</span></a>` : '<div class="bible-media-empty">Locked record has no preview</div>'}</div>
-    <div class="bible-shot-body"><div class="bible-shot-top"><code>${esc(s.id)}</code><span>${esc(s.scene)}</span><span>${s.dur ? esc(s.dur) + "s" : ""}</span></div>
+    <div class="bible-shot-body"><div class="bible-shot-top"><code>${esc(s.id)}</code><span>${esc(s.scene)}</span><span${s.durComplete === false ? ' class="bible-shot-untimed"' : ""}>${esc(s.durWords || "")}</span></div>
       <h3>${esc(s.title)}</h3><div class="bible-shot-meta">${esc(s.route || "")}${s.stillModel ? " · STILL " + esc(s.stillModel) : ""}${s.videoModel ? " · VIDEO " + esc(s.videoModel) : ""}</div>
       ${frameStrip}${motionList}${delivery}
     </div></article>`;

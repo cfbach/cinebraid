@@ -379,16 +379,33 @@ function entityCandidateReviewBadge(entity, fileName) {
  * There is one reader now and it is the projection. A pointer with no receipt
  * is HISTORIC: still shown, still named, still one click from being approved,
  * and never counted or badged as canon. */
+/* PT1-C1 — AN UNAVAILABLE PROJECTION IS NOT AN EMPTY ONE.
+ *
+ * The fallback here was `{ canon: [], references: [], historic: [] }`. That is a
+ * COMPLETE ANSWER: every state comes back `missing`, which reads on the surfaces
+ * below as "nothing has been approved and nothing has been selected" — about a
+ * project whose receipts this build simply could not consult. A state holding a
+ * current human approval was reported as one needing a reference.
+ *
+ * Not knowing and knowing there is nothing are different facts, and the second is
+ * the more expensive one to get wrong: it is the answer a filmmaker acts on.
+ *
+ * `available` says which case this is, and `of()` answers `unavailable` rather
+ * than a standing it cannot support. The three real standings are unchanged, so
+ * every existing reader keeps the behaviour it has — an unreadable projection
+ * already fell into their else-branch as `missing`; it now arrives under its own
+ * name, and a reader that must not guess can see it. */
 function entityStateTruth(list, entity) {
-  const truth = typeof entityProductionTruth === "function"
-    ? entityProductionTruth(P, list, entity && entity.id)
-    : { canon: [], references: [], historic: [] };
-  const canon = new Map(truth.canon.map((row) => [row.stateId, row]));
-  const historic = new Map(truth.historic.map((row) => [row.stateId, row]));
+  const available = typeof entityProductionTruth === "function";
+  const truth = available ? entityProductionTruth(P, list, entity && entity.id) : null;
+  const canon = new Map((truth ? truth.canon : []).map((row) => [row.stateId, row]));
+  const historic = new Map((truth ? truth.historic : []).map((row) => [row.stateId, row]));
   return {
+    available,
     canonCount: canon.size,
     historicCount: historic.size,
     of(state) {
+      if (!available) return { standing: "unavailable", file: "" };
       const id = (state && state.id) || "";
       if (canon.has(id)) return { standing: "canon", file: canon.get(id).value };
       if (historic.has(id)) return { standing: "historic", file: historic.get(id).value };

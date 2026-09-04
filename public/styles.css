@@ -753,6 +753,9 @@ kbd{margin-left:auto;padding:1px 6px;border:1px solid var(--line-2);border-botto
 .bible-shot-body{padding:17px 19px}
 .bible-shot-top{display:flex;gap:10px;align-items:center;font:500 9px var(--mono);color:var(--faint)}
 .bible-shot-top span+span::before{content:"·";margin-right:10px}
+/* PT3-C1 - an incomplete shot timing is not read at the same weight as a settled
+   one. Same treatment the rest of the Bible gives an unfinished fact. */
+.bible-shot-top .bible-shot-untimed{color:var(--amber)}
 .bible-shot-body h3{margin:7px 0 4px;font:700 23px var(--display)}
 .bible-shot-meta{font:500 8.5px var(--mono);letter-spacing:.06em;color:var(--faint)}
 .bible-audio{display:flex;align-items:center;gap:10px;margin-top:10px}
