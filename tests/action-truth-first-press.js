@@ -427,7 +427,17 @@ async function d_manualStartSeparation() {
   /* THE COMMIT USES THE SHIPPED CREATION ROUTE — the same one newProject() uses.
      A second creation architecture is exactly what this slice was told not to
      invent, so the route is asserted rather than assumed. */
-  ok(/startManualProject[\s\S]{0,1600}\/api\/projects\/new/.test(studio),
+  /* Read off the COMMIT FUNCTION'S OWN BODY rather than a character window after
+     the name. The window version failed the day a comment was added between the
+     two, which made the assertion a measure of comment length rather than of
+     which route the commit uses. */
+  const commitBody = (() => {
+    const code = codeOnly(studio);
+    const at = code.indexOf("async function startManualProjectCommit(");
+    return at < 0 ? "" : code.slice(at, code.indexOf("\n}", at));
+  })();
+  ok(commitBody.length > 0, "D6: startManualProjectCommit is still the commit");
+  ok(/fetch\("\/api\/projects\/new"/.test(commitBody),
     "D6: completing a manual start commits through /api/projects/new, the shipped creation route");
 
   note("D typing every Start manually field leaves the open project byte-identical, and the commit uses the shipped creation route");

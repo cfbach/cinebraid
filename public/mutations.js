@@ -618,6 +618,89 @@ function replaceEntityReferences(list, id, replacement = "") {
     }
   });
 }
+/* ==========================================================================
+   B3 — DELETING A WHOLE REFERENCE REVOKES ITS CANON BEFORE IT REMOVES ANYTHING.
+
+   THE DEFECT, AND IT STRANDED THE DOCUMENT EXACTLY AS AT1-E DID. delEntity()
+   spliced the entity out of `P[list]`. That is a structural operation and it
+   knows nothing about the authority ledger, so deleting a reference whose states
+   held CURRENT Canon took their EDGES away with the record and left the RECEIPTS
+   saying `status: "current"` about targets that no longer existed. The write seam
+   compares the two on every save: the ordinary save was refused
+   CANON_TRANSITION_REQUIRED, the Canon transition was refused
+   AUTHORITY_EDGE_RECEIPT_MISMATCH, and zero writes occurred — so the project
+   could not be saved at all afterwards, and every unrelated edit in the session
+   was stuck behind receipts the filmmaker had no way to see or withdraw.
+
+   This is the same defect the dedicated continuity-state path already fixed, on
+   the path that removes ALL of an entity's states at once, and it is corrected
+   the same way rather than a new way: PLAN, then WITHDRAW, then REMOVE.
+
+     1. PLAN. Nothing is revoked for a removal that will not happen, and nothing
+        is removed before every withdrawal is known to be possible. The plan is
+        computed while the entity is still whole.
+     2. WITHDRAW every current receipt through revokeEntityStateCanon(), the
+        kernel's own command. No receipt is edited, no ledger row is deleted and
+        no check is bypassed.
+     3. REMOVE, and only then.
+
+   IF ANY RECEIPT CANNOT BE WITHDRAWN, NOTHING HAPPENS AT ALL. A drifted receipt —
+   one whose approved image was renamed or replaced after approval, so the live
+   edge no longer matches it — cannot be withdrawn by any kernel command, because
+   revokeCanon and systemInvalidateCanon both require currentHumanAuthority.
+   Removing the entity anyway would strand the document, so the deletion is
+   refused before a single mutation, the entity/state/receipt relationship is left
+   exactly as it was, and the project stays saveable. The refusal names the states
+   and what would make the reference removable.
+
+   THE LEDGER IS RESTORED IF A REVOCATION FAILS MID-WAY. The plan already proved
+   every row withdrawable, so this should not happen; if it ever does, a
+   half-withdrawn ledger is the one outcome worse than either whole one.
+
+   NO `await` ANYWHERE IN THIS PATH. revokeCanon() requires the trusted gesture to
+   be the event currently dispatching, and a suspension would end it partway. */
+function entityAuthorityStateIds(list, entity) {
+  const ids = new Set();
+  for (const state of entity.continuityStates || []) {
+    const stateId = String((state && state.id) || "");
+    if (stateId) ids.add(stateId);
+  }
+  /* A receipt can name a state this entity no longer lists. Removing the entity
+     removes that receipt's target too, so it is part of the plan. */
+  const receipts = (P.productionAuthority && P.productionAuthority.receipts) || [];
+  for (const row of receipts) {
+    if (!row || String(row.status) !== "current") continue;
+    if (String(row.kind || "") !== "entity-state") continue;
+    if (String(row.list || "") !== String(list)) continue;
+    if (String(row.entityId || "") !== String(entity.id)) continue;
+    const stateId = String(row.stateId || "");
+    if (stateId) ids.add(stateId);
+  }
+  return [...ids];
+}
+/* Read-only. Returns the states that must be withdrawn and the states that
+   cannot be, without touching either the entity or the ledger. */
+function planEntityCanonWithdrawal(list, entity) {
+  const withdraw = [];
+  const blocked = [];
+  if (typeof authorityTarget !== "function" || typeof authorityHistory !== "function"
+    || typeof hasCurrentHumanAuthority !== "function" || typeof revokeEntityStateCanon !== "function") {
+    return { withdraw, blocked, available: false };
+  }
+  for (const stateId of entityAuthorityStateIds(list, entity)) {
+    const target = authorityTarget({ kind: "entity-state", list, entityId: entity.id, stateId });
+    if (!target) continue;
+    if (!authorityHistory(P, target).some((row) => row && String(row.status) === "current")) continue;
+    if (hasCurrentHumanAuthority(P, target)) withdraw.push(stateId);
+    else blocked.push(stateId);
+  }
+  return { withdraw, blocked, available: true };
+}
+function entityStateNames(entity, stateIds) {
+  return stateIds
+    .map((stateId) => ((entity.continuityStates || []).find((row) => row && row.id === stateId) || {}).name || stateId)
+    .join(", ");
+}
 window.delEntity = (list, id) => {
   const impact = entityDependencyImpact(list, id);
   const alternatives = (P[list] || []).filter((row) => row.id !== id);
@@ -627,6 +710,57 @@ window.delEntity = (list, id) => {
     if (!button) return;
     button.onclick = () => {
       const replacement = document.getElementById("delete-entity-replacement")?.value || "";
+      const entity = (P[list] || []).find((x) => x.id === id);
+      if (!entity) return closeModal();
+      const refusalKey = `entity-delete:${list}:${id}`;
+      if (typeof clearActionRefusal === "function") clearActionRefusal(refusalKey);
+
+      /* PLAN, BEFORE ANY MUTATION. */
+      const plan = planEntityCanonWithdrawal(list, entity);
+      if (plan.blocked.length) {
+        const many = plan.blocked.length !== 1;
+        const message =
+          `${entity.name || id} still holds ${many ? "approval records" : "an approval record"} CineBraid cannot withdraw, `
+          + `because the approved image for ${many ? "these states was" : "this state was"} renamed or replaced after it was `
+          + `approved and the record no longer matches it: ${entityStateNames(entity, plan.blocked)}. `
+          + `Re-approve ${many ? "those states' current images" : "that state's current image"}, then delete this reference. `
+          + "Deleting it now would leave an approval naming a reference that no longer exists, and the project could not be saved.";
+        if (typeof recordActionRefusal === "function") {
+          recordActionRefusal(refusalKey, message, "AUTHORITY_RECEIPT_NOT_WITHDRAWABLE");
+        }
+        closeModal();
+        route();
+        return toast(message);
+      }
+
+      /* WITHDRAW, all of it, before anything is removed. */
+      if (plan.withdraw.length) {
+        const ledgerBefore = JSON.parse(JSON.stringify(P.productionAuthority || null));
+        const at = new Date().toISOString();
+        try {
+          for (const stateId of plan.withdraw) {
+            revokeEntityStateCanon(P, {
+              list, entityId: id, stateId,
+              at, via: "confirmed-target-removal", reason: "target-removed", clearEdge: false,
+            });
+          }
+        } catch (error) {
+          /* The plan said every row was withdrawable, so reaching here means the
+             ledger disagreed mid-way. Put it back exactly as it was and remove
+             nothing: a half-withdrawn ledger is worse than either whole outcome. */
+          if (ledgerBefore === null) delete P.productionAuthority;
+          else P.productionAuthority = ledgerBefore;
+          const message = `${entity.name || id} was not deleted: ${error.message || "an approval record could not be withdrawn"}. Nothing was changed.`;
+          if (typeof recordActionRefusal === "function") {
+            recordActionRefusal(refusalKey, message, error.code || "AUTHORITY_RECEIPT_NOT_WITHDRAWABLE");
+          }
+          closeModal();
+          route();
+          return toast(message);
+        }
+      }
+
+      /* REMOVE, and only now. */
       replaceEntityReferences(list, id, replacement);
       deletedTargetRecord(list.slice(0,-1), id, { replacement: replacement || null, affectedShots: impact.shots, affectedScenes: impact.scenes });
       P[list] = P[list].filter((x) => x.id !== id);

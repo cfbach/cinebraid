@@ -346,6 +346,8 @@ async function main() {
     "api-smoke.js",
     "approval-reference-consistency.js",
     "asset-lifecycle.js",
+    "at1-boundary-corrections-negative-controls.js",
+    "at1-boundary-corrections.js",
     "authority-kernel-private.js",
     "authority-test-gesture.js",
     "authority-write-seam-real-browser.py",

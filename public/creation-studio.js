@@ -6078,6 +6078,37 @@ async function startManualProjectCommit(draft, title, refuse) {
       "manual-start:flush-failed",
     );
   }
+  /* B1 — A RESOLVED FLUSH IS NOT A SAVED PROJECT.
+   *
+   * THE DEFECT. This function treated `await flushPendingProjectSave()` returning
+   * as proof the open project was safe, and then created and OPENED a different
+   * project. But queueProjectSave() reports 409, 422 and 428 by calling their
+   * refusal surface and RETURNING — those responses resolve, they do not throw —
+   * and flushPendingProjectSave() itself returns early when a refusal is already
+   * latched. So a filmmaker whose save had just been refused pressed CREATE THIS
+   * PROJECT and CineBraid switched away from the film holding their unsaved edit,
+   * discarding the edit and clearing the refusal they were being asked to act on.
+   * Independent boundary review reproduced this on both 409 and 422.
+   *
+   * THE GUARD IS A POSITIVE CONFIRMATION, NOT A WIDER CATCH. Wrapping this in a
+   * try/catch would be the same mistake in a different shape: those statuses are
+   * DELIBERATELY represented as resolved results, so there is no exception to
+   * catch. projectSaveSettled() is the save loop's own answer about its own state,
+   * and nothing proceeds unless it says the document reached storage.
+   *
+   * FAIL CLOSED MEANS NOTHING HAPPENS. No POST to /api/projects/new, no load(), no
+   * hash change: the open project keeps its edits, keeps its refusal on screen,
+   * and this refusal names which project is blocking and why. The draft is
+   * untouched, so the press can be repeated once the save is resolved. */
+  const settled = typeof projectSaveSettled === "function" ? projectSaveSettled() : { settled: true };
+  if (!settled.settled) {
+    return refuse(
+      `${settled.reason || "The project you have open is not saved"} Nothing was created, you are still in `
+      + `${P?.meta?.title || "the project you have open"}, and the work you have not saved is still here. `
+      + "Resolve that save first, then create this project.",
+      `manual-start:${settled.code || "not-saved"}`,
+    );
+  }
   let created = null;
   try {
     const response = await fetch("/api/projects/new", {
@@ -6119,38 +6150,52 @@ function creationManualIdentityCard() {
   </section>`;
 }
 function creationManualWorkspace() {
+  /* B2 — START MANUALLY CONTAINS NO WRITER INTO THE OPEN PROJECT.
+   *
+   * THE DEFECT, AND IT SURVIVED AT1-D BY SITTING ONE CARD LOWER. AT1-D made the
+   * IDENTITY card draft-backed and retired its three writers, and R-AT1-1 pinned
+   * that card. Everything BELOW it was left alone, and three controls there
+   * edited the project already open:
+   *
+   *   - "Look and references" -> Project Look wrote P.meta.globalStylePrompt,
+   *     P.meta.world.setting and P.meta.globalNegativePrompt through
+   *     setGlobalCreationField(), which calls dirty(). Independent boundary
+   *     review reproduced exactly this: editing the style on the create screen
+   *     changed the open film and advanced its dirty revision.
+   *   - The same disclosure offered addEntity('locations'|'characters'|'props')
+   *     and addShot(), each of which creates a record IN THE OPEN PROJECT.
+   *   - The empty-project branch of the glance offered addShot() again.
+   *
+   * The screen this panel renders inside says, in its own words: "Whatever you
+   * start here becomes its own project. The one you have open now is not
+   * changed." A create screen that edits the open film contradicts its own
+   * promise, silently and durably.
+   *
+   * WHAT IS REMOVED, AND WHAT IS DELIBERATELY NOT. Every WRITER is gone. The
+   * READ-ONLY orientation stays: the glance still reports what the open project
+   * contains, and the recommendation card still names its canonical next action,
+   * because reading a project is not editing it and this screen is reached from
+   * inside that project. Removing those as well would have been a product change
+   * B2 did not ask for, and would have taken a founder trust check
+   * (tests/founder-smoke-p0-trust.js testCreateViewRecommendationAgrees) with it.
+   *
+   * WHY REMOVAL RATHER THAN A DRAFT LAYER for the writers: each already has a
+   * home that owns it — Project Look is Settings > Project (public/views.js),
+   * references are the References library, shots are Production — and none of
+   * them describes the project being CREATED, so a draft-backed copy would mean
+   * inventing a second, pre-creation version of four subsystems.
+   *
+   * tests/action-truth-first-press-negative-controls.js R-AT1-1b now asserts the
+   * absence across this WHOLE function rather than the identity card alone,
+   * which is the gap that let this reach a filmmaker. */
   const approvedCount = (list) => (P[list] || []).filter((x) => entityWorkflowState(x).key === "APPROVED" && entityApprovedFileForState(x, "")).length;
   const sceneCount = P.scenes.length;
   const shotCount = P.shots.length;
   return `<div id="creation-scratch">
   ${creationManualIdentityCard()}
-  <section class="creation-progress"><header><div><span class="creation-kicker">PROJECT AT A GLANCE</span><h3>${esc(P.meta.title)}</h3></div><a class="ghost-btn" href="#/production/scenes">Open scenes &amp; shots →</a></header><div class="creation-metrics"><div><b>${sceneCount}</b><span>scenes</span></div><div><b>${shotCount}</b><span>shots</span></div><div><b>${approvedCount("locations")}/${P.locations.length}</b><span>approved locations</span></div><div><b>${approvedCount("characters")}/${P.characters.length}</b><span>approved characters</span></div><div><b>${approvedCount("props")}/${P.props.length}</b><span>approved props</span></div><div><b>${approvedCount("vehicles")}/${(P.vehicles || []).length}</b><span>approved vehicles</span></div></div>${!sceneCount ? `<div class="creation-empty-project"><h3>Ready for the first scene</h3><p>Start a scene and shot, or build references first if you need them.</p><button class="add-btn" onclick="addShot()">Start a scene + shot</button><button class="ghost-btn" onclick="addEntity('locations')">Build a location first</button></div>` : `<div class="creation-project-actions">${creationRecommendedActionMarkup()}<article><span>PROJECT STRUCTURE</span><b>${sceneCount} scenes · ${shotCount} shots</b><small>Scene beats and the full shot list are in Production.</small><a class="ghost-btn" href="#/shots/board">OPEN SHOTS</a></article></div>`}</section>
-  <details class="creation-card creation-manual-next" data-manual-next>
-    <summary><div><span class="creation-kicker">OPTIONAL</span><b>Look and references</b><small>Set the project look, or lock a location, character or prop before you shoot into it.</small></div><span class="creation-state">Optional</span></summary>
-    <div class="creation-quick-grid">
-      <button onclick="addEntity('locations')"><span>REFERENCE</span><b>Create a location plate</b><small>Describe an empty environment and compile a reusable base-plate prompt.</small></button>
-      <button onclick="addEntity('characters')"><span>REFERENCE</span><b>Create a character anchor</b><small>Lock identity, wardrobe, proportions, and materials before placing the character in shots.</small></button>
-      <button onclick="addEntity('props')"><span>REFERENCE</span><b>Create a prop reference</b><small>Lock an object's shape, materials, scale, and wear when continuity matters.</small></button>
-      <button onclick="addShot()"><span>SHOTS</span><b>Create another shot</b><small>Add a scene automatically if needed, then describe the visible action and staging.</small></button>
-    </div>
-    ${creationOptionalStyleCard()}
-  </details>
+  <section class="creation-progress"><header><div><span class="creation-kicker">PROJECT AT A GLANCE</span><h3>${esc(P.meta.title)}</h3></div><a class="ghost-btn" href="#/production/scenes">Open scenes &amp; shots &rarr;</a></header><div class="creation-metrics"><div><b>${sceneCount}</b><span>scenes</span></div><div><b>${shotCount}</b><span>shots</span></div><div><b>${approvedCount("locations")}/${P.locations.length}</b><span>approved locations</span></div><div><b>${approvedCount("characters")}/${P.characters.length}</b><span>approved characters</span></div><div><b>${approvedCount("props")}/${P.props.length}</b><span>approved props</span></div><div><b>${approvedCount("vehicles")}/${(P.vehicles || []).length}</b><span>approved vehicles</span></div></div>${!sceneCount ? `<div class="creation-empty-project"><h3>Ready for the first scene</h3><p>The first scene and shot are added in Production, in the project they belong to.</p><a class="ghost-btn" href="#/production">Open Production &rarr;</a></div>` : `<div class="creation-project-actions">${creationRecommendedActionMarkup()}<article><span>PROJECT STRUCTURE</span><b>${sceneCount} scenes &middot; ${shotCount} shots</b><small>Scene beats and the full shot list are in Production.</small><a class="ghost-btn" href="#/shots/board">OPEN SHOTS</a></article></div>`}</section>
+  <p class="creation-path-handoff" data-manual-after-create>The look, references and shots belong to a project that exists. Create this one and it opens on Production, with Settings &rsaquo; Project for the look and the References library for locations, characters and props.</p>
   </div>`;
-}
-/* THE GLOBAL LOOK, OFFERED RATHER THAN DEMANDED.
- *
- * This was "STEP 1 · PROJECT LOOK", first on the page, carrying a `warn` chip that
- * read "Start here" until it was filled in. A filmmaker whose first act is creating
- * a location plate was told they had already fallen behind on a decision the plate
- * does not need — the style feeds NEW prompts, and there are none yet.
- *
- * Every field, handler and downstream effect is unchanged; it is a disclosure now
- * rather than a gate, and it is still editable in Settings → Project. Deferring a
- * decision is not removing the capability to make it.
- */
-function creationOptionalStyleCard() {
-  const set = !!globalStylePrompt();
-  return `<details id="creation-global-style" class="creation-card global-style-card creation-optional-style" ${set ? "open" : ""}><summary><div><span class="creation-kicker">OPTIONAL · PROJECT LOOK</span><b>Set the visual rules once</b><small>${set ? "Applied to new location, character, prop and shot-image prompts." : "Not needed to begin. Set it whenever the project has a look worth repeating."}</small></div><span class="creation-state ${set ? "ready" : ""}">${set ? "Style set" : "Optional"}</span></summary><div class="creation-grid">${field("Global style prompt", `<textarea placeholder="Cinematic naturalism, damp medieval textures, smoke-softened torchlight, muted earth palette, practical grime…" onchange="setGlobalCreationField('globalStylePrompt',this.value)">${esc(P.meta?.globalStylePrompt || "")}</textarea>`)}${field("World / setting", `<textarea placeholder="Late-medieval border town in winter; poor river district; practical candle and hearth light…" onchange="setGlobalCreationField('worldSetting',this.value)">${esc(P.meta?.world?.setting || "")}</textarea>`)}${field("World / period exclusions", `<textarea placeholder="No modern objects, no clean fantasy theme-park surfaces, no legible text unless requested…" onchange="setGlobalCreationField('globalNegativePrompt',this.value)">${esc(P.meta?.globalNegativePrompt || P.meta?.world?.reject || "")}</textarea>`)}</div></details>`;
 }
 /* THE RECOMMENDED CARD, FROM THE ONE ANSWER.
  *

@@ -2704,6 +2704,75 @@ async function flushPendingProjectSave() {
   if (!P || !ACTIVE_PROJECT_SLUG || SAVE_REVISION <= SAVED_REVISION) return;
   await queueProjectSave(captureProjectSave());
 }
+
+/* ==========================================================================
+   B1 — WHETHER THE OPEN PROJECT IS ACTUALLY SAVED, ANSWERED ONCE.
+
+   AWAITING flushPendingProjectSave() PROVES NOTHING, and that is by design
+   rather than by accident. queueProjectSave() reports every refusal it can
+   RECOVER from by returning, not by throwing — a resolved promise is how this
+   module says "the request is finished", never "the document was written".
+   Six distinct outcomes above resolve without an exception:
+
+     PROJECT_CONFLICT / SAVE_BLOCKED   the view is already known stale or paused
+     PROJECT_QUARANTINE                this stored document must not be written
+     no document revision              a local precondition failed; nothing sent
+     409 PROJECT_REVISION_CONFLICT     projectConflict(), then return
+     428 PROJECT_REVISION_REQUIRED     saveRevisionUnavailable(), then return
+     422 (validation or authority)     projectSaveRefusal()/authoritySaveRefusal()
+
+   And flushPendingProjectSave() itself returns early — resolved — when a refusal
+   is ALREADY latched, so a caller that only awaits it cannot even tell that the
+   project was refused before it asked.
+
+   Any caller about to do something IRREVERSIBLE on the strength of "the open
+   project is safe" must ask this instead. It is a read: it sends nothing, latches
+   nothing, and clears nothing, so asking cannot change the answer. It reports the
+   reason as well as the verdict, because a caller that must refuse has to say why.
+
+   Callers await the flush FIRST and ask this SECOND. */
+function projectSaveSettled() {
+  if (!P || !ACTIVE_PROJECT_SLUG) {
+    return { settled: false, code: "NO_OPEN_PROJECT", reason: "No project is open." };
+  }
+  if (PROJECT_QUARANTINE) {
+    return {
+      settled: false,
+      code: "PROJECT_QUARANTINED",
+      reason: "The stored project is quarantined, so CineBraid is not writing to it.",
+    };
+  }
+  if (PROJECT_CONFLICT) {
+    return {
+      settled: false,
+      code: "PROJECT_REVISION_CONFLICT",
+      reason: "The project you have open changed in storage while this window was open, so its save was refused.",
+    };
+  }
+  if (AUTHORITY_SAVE_REFUSED) {
+    return {
+      settled: false,
+      code: "AUTHORITY_SAVE_REFUSED",
+      reason: "The project you have open has an approval change its save was refused, so it is not saved.",
+    };
+  }
+  if (SAVE_BLOCKED) {
+    return {
+      settled: false,
+      code: "SAVE_BLOCKED",
+      reason: "Saving is paused on the project you have open because its last save was refused.",
+    };
+  }
+  if (SAVE_REVISION > SAVED_REVISION) {
+    return {
+      settled: false,
+      code: "UNSAVED_EDITS",
+      reason: "The project you have open still has edits that have not reached storage.",
+    };
+  }
+  return { settled: true, code: "", reason: "" };
+}
+if (typeof window !== "undefined") window.projectSaveSettled = projectSaveSettled;
 function toast(msg) {
   const t = $("#toast");
   t.textContent = msg;

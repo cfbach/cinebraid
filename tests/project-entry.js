@@ -212,15 +212,27 @@ async function sectionCineBraidImportDistinct() {
 }
 
 /* =========================================================================
-   D. SCRATCH IS STILL THERE, AND IS STILL THE MANUAL WORKSPACE.
+   D. SCRATCH IS STILL THERE, AND IS NOW ONLY THE NEW PROJECT'S DRAFT.
+
+   B2. This section used to require addEntity(), addShot() and "PROJECT AT A
+   GLANCE" on the create screen, and every one of those is about the film the
+   filmmaker ALREADY HAS OPEN: the two creation controls write records into it,
+   and the glance rendered its scene, shot and approval counts on a screen that
+   promises "The one you have open now is not changed." Independent boundary
+   review reproduced the writer beside them. So the requirement is inverted, not
+   dropped: scratch renders the draft and says where the rest lives.
    ========================================================================= */
 async function sectionScratchRemains() {
   const { html } = await createRender({ storage: { "cinebraid-creation-start-path": "scratch" } });
   assert(html.includes('id="creation-scratch"'), "D. the scratch intent must render the manual workspace");
+  assert(html.includes("data-manual-identity"), "D. which is the new project's own identity card");
+  assert(html.includes("data-manual-start-commit"), "D. and the one act that creates it");
   for (const control of ["addEntity('locations')", "addEntity('characters')", "addShot()"])
-    assert(html.includes(control), `D. the manual workspace must keep ${control}`);
-  assert(html.includes("PROJECT AT A GLANCE"), "D. and its own project summary");
-  note("D. the scratch intent renders the manual workspace with its reference and shot entry points intact");
+    assert(!html.includes(control), `D. and it must NOT offer ${control}, which writes the open project`);
+  assert(html.includes("PROJECT AT A GLANCE"),
+    "D. the read-only glance stays — reading the open project is not editing it");
+  assert(html.includes("data-manual-after-create"), "D. it says where those tools live once this project exists");
+  note("D. the scratch intent renders the new project's draft plus a read-only glance — every writer into the open project is retired from it");
 }
 
 /* =========================================================================
@@ -350,27 +362,31 @@ async function sectionGlobalStyleDeferred() {
   assert(!/ff-globalStyle/.test(modal), "G. creating a project must not ask for a global visual style");
   assert(!/visual style/i.test(modal), "G. nor mention one");
 
-  /* On the create screen it is a disclosure with no outstanding-work chip. */
+  /* B2. AND IT IS NOT ON THE CREATE SCREEN AT ALL ANY MORE.
+   *
+   * This used to assert the style card WAS on the create screen, "moved, not
+   * removed". The move was the defect: its textareas write P.meta on the
+   * currently open film and call dirty(), so a filmmaker setting a look for the
+   * project they were about to create was editing the one they already had. It
+   * is removed from that screen and still owned by Settings → Project, which is
+   * what "not deleted" now means. */
   const blank = buildFixture();
   blank.meta.globalStylePrompt = "";
   blank.meta.styleBlocks = [];
   const scratch = await createRender({ project: blank, storage: { "cinebraid-creation-start-path": "scratch" } });
-  const card = scratch.html.slice(scratch.html.indexOf('id="creation-global-style"'));
-  assert(scratch.html.includes('<details id="creation-global-style"'), "G. the style card must be a disclosure");
-  assert(/OPTIONAL/.test(card.slice(0, 400)), "G. and must say it is optional");
-  assert(!/STEP 1/.test(card.slice(0, 400)), "G. it must no longer be step one");
-  assert(!/creation-state warn/.test(card.slice(0, 400)), "G. and must not chip the filmmaker for not having done it");
+  assert(!scratch.html.includes('id="creation-global-style"'),
+    "G. the style card must not be on the create screen — it writes the project already open");
+  assert(!scratch.html.includes("setGlobalCreationField("),
+    "G. and no create-screen control may reach that setter at all");
   assert(!/Start here/.test(scratch.html), "G. nothing on the create screen may demand the look first");
 
-  /* THE CAPABILITY IS MOVED, NOT REMOVED. Both editors still exist and still write
-     through the same setter. */
-  assert(card.includes("setGlobalCreationField('globalStylePrompt'"), "G. the create-screen editor still writes the style");
+  /* THE CAPABILITY IS OWNED ELSEWHERE, NOT REMOVED. */
   const settings = await render("#/settings", buildFixture(), {
     storage: { "cinebraid-focused:fixture:settings-task:settings": "project" },
   });
   assert(settings.html.includes('id="cfg-global-visual-style"'), "G. Settings → Project still edits the global visual style");
   assert(settings.html.includes('list="cinebraid-format-presets"'), "G/F. and offers the same typed format suggestions the create screen does");
-  note("G. the global look is a disclosure marked OPTIONAL on the create screen, absent from the create modal, and still fully editable in Settings → Project");
+  note("G. the global look is absent from the create modal and from the create screen — where it edited the open project — and remains fully editable in Settings → Project");
 }
 
 /* =========================================================================
@@ -1604,23 +1620,36 @@ async function sectionManualStartIsNotAChecklist() {
   assert(/data-manual-start-commit/.test(html),
     "U8. with one explicit act that creates the separate project this screen promised");
 
-  /* AND THE CHECKLIST IS THE NEXT THING, NOT THE GATE. Everything is still here;
-     `details` without `open` is the difference between offered and demanded. */
+  /* U9 — B2. THIS ASSERTION USED TO REQUIRE THE DEFECT.
+   *
+   * It demanded that "Look and references" be present, that Project Look live
+   * inside it, and that addEntity()/addShot() stay reachable — on the CREATE
+   * screen. Every one of those edits the project already open: Project Look's
+   * textareas call setGlobalCreationField(), which calls dirty(), and addEntity
+   * and addShot create records in the open film. Independent boundary review
+   * reproduced exactly that, and this assertion is what kept the wiring in
+   * place. Like U8 before it, it is corrected rather than deleted: what the
+   * create screen may contain is the DRAFT, and nothing that writes the project
+   * a filmmaker already has open.
+   *
+   * NOTHING IS LOST, and that is asserted where it is now true — Settings →
+   * Project still owns the look, and the references and shots surfaces still own
+   * their creation controls. */
   const identityAt = html.indexOf("data-manual-identity");
-  const nextAt = html.indexOf("data-manual-next");
-  assert(identityAt > -1 && nextAt > identityAt, "U9. the reference checklist must come after the project's identity");
-  const next = html.slice(nextAt - 200, nextAt + 60);
-  assert(/<details[^>]*data-manual-next/.test(html), "U9. the checklist must be a disclosure");
-  assert(!/<details[^>]*data-manual-next[^>]*\sopen/.test(html), "U9. and must be closed on arrival");
-  assert(html.indexOf("creation-progress") < nextAt,
-    "U9. the project's own first action must come before the optional work");
-  assert(next.length > 0);
-
-  /* Project Look is inside that disclosure rather than at the top of the page. */
-  const styleAt = html.indexOf('id="creation-global-style"');
-  assert(styleAt > nextAt, "U9. Project Look must not be the first thing a new project asks for");
-  for (const control of ["addEntity('locations')", "addEntity('characters')", "addShot()"])
-    assert(html.includes(control), `U9. and nothing is removed — ${control} is still reachable`);
+  assert(identityAt > -1, "U9. the create screen renders the new project's identity");
+  assert(!/data-manual-next/.test(html),
+    "U9. the 'Look and references' disclosure must not be on the create screen — it wrote the open project");
+  assert(!/id="creation-global-style"/.test(html),
+    "U9. nor Project Look, whose fields call setGlobalCreationField() and mark the open project dirty");
+  for (const control of ["addEntity('locations')", "addEntity('characters')", "addEntity('props')", "addShot()"])
+    assert(!html.includes(control),
+      `U9. nor ${control}, which creates a record in the film that is already open`);
+  assert(/data-manual-after-create/.test(html),
+    "U9. and the screen says where those tools live once the project exists");
+  /* The capability is still in the product, in the surface that owns it. */
+  const settingsSource = fs.readFileSync(path.join(ROOT, "public", "views.js"), "utf8");
+  assert(settingsSource.includes("setGlobalCreationField('globalStylePrompt'"),
+    "U9. Settings → Project still owns the global style, so retiring it from the create screen removed no capability");
 
   /* AND IT SOUNDS LIKE STARTING A PROJECT. The structure was already light after the
      first correction; the copy still read as product documentation explaining what
@@ -1635,16 +1664,25 @@ async function sectionManualStartIsNotAChecklist() {
     "U9. saying what to do and what can wait, in one sentence");
   assert(/Nothing here changes /.test(html),
     "U9. and naming the project that is NOT being edited, which is the promise this screen makes");
-  /* A BRAND-NEW PROJECT IS THE CASE THIS PATH EXISTS FOR, so its empty state is
-     rendered from a project that really is empty rather than from the fixture. */
+  /* B2. THE EMPTY-STATE FIRST ACTION BELONGED TO THE OPEN PROJECT.
+     "Ready for the first scene" offered addShot() and addEntity('locations'),
+     and both create records in the film already open. The empty state still
+     orients — it is rendered off the open project and reading it is not editing
+     it — but the two writers it carried are replaced by a link to the surface
+     that owns them. */
   const blank = buildFixture();
   blank.scenes = [];
   blank.shots = [];
   const empty = await createRender({ project: blank, storage: { "cinebraid-creation-start-path": "scratch" } });
-  assert(/Ready for the first scene/.test(empty.html), "U9. its first action is named for the thing, not the state machine");
-  assert(/Start a scene and shot, or build references first if you need them\./.test(empty.html),
-    "U9. with the alternative offered rather than explained");
-  note("U8-U9. manual start opens on the NEW project's title / format / aspect through the draft handler — never the writers that edit the project already open — in plain words, with Project Look and the reference entry points closed underneath the project's first action");
+  assert(/Ready for the first scene/.test(empty.html),
+    "U9. the empty state still orients a filmmaker whose open project has no scenes");
+  assert(!/onclick="addShot\(\)"/.test(empty.html) && !/onclick="addEntity\(/.test(empty.html),
+    "U9. but it must not OFFER the writers that create records in the open project");
+  assert(/data-manual-after-create/.test(empty.html),
+    "U9. it names where the look, references and shots live once this project exists");
+  assert(/data-manual-start-commit/.test(empty.html),
+    "U9. and its own first action is creating the project");
+  note("U8-U9. manual start opens on the NEW project's title / format / aspect through the draft handler — never the writers that edit the project already open — in plain words, and B2 retired every remaining open-project writer from the surface below it");
 }
 
 /* =========================================================================

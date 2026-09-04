@@ -439,6 +439,44 @@ function r_retirementAssertions() {
   ok(!/\bdirty\s*\(/.test(setter) && !/\bP\.meta\b/.test(setter),
     "R-AT1-1 RETIRED: and the draft writer cannot reach the open project or the save loop");
 
+  /* R-AT1-1b — THE WHOLE MANUAL CREATION SURFACE, NOT ONLY THE IDENTITY CARD.
+   *
+   * WHY THIS EXISTS. The assertions above scope to creationManualIdentityCard(),
+   * and independent boundary review found that scoping was the gap: AT1-D moved
+   * the identity fields onto a draft and retired their three writers, and the
+   * card BELOW them went on writing the open project. "Look and references"
+   * offered Project Look, whose textareas called setGlobalCreationField() and
+   * therefore dirty(), plus addEntity() and addShot(), each of which creates a
+   * record in the film the filmmaker already had open — on a screen whose own
+   * words are "The one you have open now is not changed."
+   *
+   * A retirement that names one card cannot retire a defect that can move to the
+   * next one. The unit is now the panel Start manually actually renders. */
+  const workspaceStart = studio.indexOf("function creationManualWorkspace() {");
+  ok(workspaceStart >= 0, "R-AT1-1b: creationManualWorkspace is still the panel Start manually renders");
+  const workspace = studio.slice(workspaceStart, studio.indexOf("\n}\n", workspaceStart));
+  for (const [pattern, what] of [
+    [/setGlobalCreationField\s*\(/, "setGlobalCreationField — it writes P.meta and marks the open project dirty"],
+    [/setProjectTitle\s*\(/, "setProjectTitle — it renames the OPEN project"],
+    [/\baddEntity\s*\(/, "addEntity — it creates a reference IN the open project"],
+    [/\baddShot\s*\(/, "addShot — it creates a scene and shot IN the open project"],
+    [/\bdirty\s*\(/, "dirty — nothing on this screen may queue the open project to be saved"],
+    [/\bP\.meta\.\w+\s*=/, "a direct write to the open project's metadata"],
+  ]) {
+    ok(!pattern.test(workspace),
+      `R-AT1-1b RETIRED: the manual creation panel must not reach ${what}`);
+  }
+  ok(/creationManualIdentityCard\s*\(/.test(workspace),
+    "R-AT1-1b: the draft identity card is what it renders instead");
+  /* And Project Look's card is gone rather than merely unreferenced, so it
+     cannot be re-mounted by restoring one call. Settings → Project still owns
+     those three fields, which is why removing this one loses no capability. */
+  ok(!/function creationOptionalStyleCard\s*\(/.test(studio),
+    "R-AT1-1b RETIRED: the create screen's Project Look card is removed, not just unreferenced");
+  const views = codeOnly(readLF("public/views.js"));
+  ok(/setGlobalCreationField\('globalStylePrompt'/.test(views),
+    "R-AT1-1b: and Settings → Project still owns the global style, so nothing was lost");
+
   /* R-AT1-2 — the ownership-only preflight owner.
    *
    * `confirmationOwnership` must not be able to decide `wouldRefuse` from an

@@ -884,7 +884,12 @@ async function main() {
        renders, which is why it needs the stored preference below rather than a
        second disclosure on the same page. */
     ["#/create", fixture, ["Start a project", "Build with an AI assistant", "Open a CineBraid project file", "Start manually"]],
-    ["#/create", fixture, ["Set the visual rules once", "Create another shot"], { storage: { "cinebraid-creation-start-path": "scratch" } }],
+    /* B2. Was ["Set the visual rules once", "Create another shot"] — Project Look
+       and the reference/shot entry points. Both WROTE the project already open,
+       on the screen that promises it is not changed, so both are retired. The
+       read-only glance stays; what is asserted here is the draft the screen
+       exists for, plus the line saying where the retired tools live. */
+    ["#/create", fixture, ["Start with the basics", "CREATE THIS PROJECT", "data-manual-after-create"], { storage: { "cinebraid-creation-start-path": "scratch" } }],
     ["#/shots/board", fixture, ["Shots", "Hull check", "CARD BADGES"]],
     /* The five stage labels used to be expected here because the shot workspace rendered
        the stage taskbar itself. Since O4 the navigator is built by public/stage-surfaces.js

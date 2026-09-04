@@ -170,6 +170,8 @@ const nodeSuites = [
      works. */
   "check:action-truth",
   "check:action-truth-negative",
+  "check:at1-boundary",
+  "check:at1-boundary-negative",
   "check:stage-surfaces",
   "check:stage-surfaces-negative",
   "check:production-media",
