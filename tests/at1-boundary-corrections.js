@@ -474,10 +474,240 @@ async function b3_wholeReferenceDeletion() {
   note("B3 whole-reference deletion plans every withdrawal first: one and two current receipts are revoked through the kernel then removed and the result saves, a drifted receipt refuses with zero mutation and a saveable project, and an unrelated pending edit survives");
 }
 
+/* ===========================================================================
+   B1-RACE — THE SAVE PROOF MUST STILL BE TRUE AT THE MOMENT OF REPLACEMENT.
+
+   The first B1 fix asked projectSaveSettled() before POSTing /api/projects/new.
+   The POST is an await, so a filmmaker can edit Film A inside it, and the
+   verdict was then used — several awaits later — to justify replacing the very
+   project that edit was made to. Loading Film B cancels Film A's pending save
+   and resets its counters, so the edit went. These hold the fence that closes
+   that window, and every one of them drives the SHIPPED control.
+   =========================================================================== */
+
+/* A create response held open until the test releases it. Everything about the
+   race happens inside this gate. */
+function delayedCreation({ createSlug = "film-b" } = {}) {
+  const calls = [];
+  let release = null;
+  /* Saves succeed until the test says otherwise. Film A must reach a genuinely
+     saved state BEFORE the press, or the pre-POST guard refuses and the race
+     under test never happens. */
+  let saveStatus = 200;
+  let saveBody = null;
+  const gate = new Promise((resolve) => { release = resolve; });
+  return {
+    calls,
+    release: () => release(),
+    setSaveStatus(status, body) { saveStatus = status; saveBody = body || null; },
+    createCount: () => calls.filter((row) => row.url === "/api/projects/new").length,
+    since(marker) { return calls.slice(marker); },
+    marker() { return calls.length; },
+    hook: async (url, options, respond) => {
+      calls.push({ url, method: (options && options.method) || "GET", body: (options && options.body) || "" });
+      if (url === "/api/projects/new") {
+        await gate;
+        return respond({ ok: true, slug: createSlug }, 200);
+      }
+      if (/\/api\/projects\/[^/]+\/(project|canon-transition)$/.test(url)) {
+        if (saveStatus === 200) {
+          return respond({ ok: true, revision: `rev-${calls.length}` }, 200,
+            { "x-cinebraid-project-revision": `rev-${calls.length}` });
+        }
+        return respond(saveBody || { error: "refused", code: "PROJECT_VALIDATION_FAILED" }, saveStatus);
+      }
+      if (url === "/api/projects/switch") return respond({ ok: true, slug: createSlug }, 200);
+      return null;
+    },
+  };
+}
+
+/* Start the press without awaiting it, so the test can act inside the flight. */
+function startPressInFlight(context) {
+  return evaluate(context, `
+    setCreationStartPath("scratch");
+    setManualStartField("title", "Film B");
+    globalThis.__press = startManualProject();
+    return 1;`);
+}
+const settlePress = (context) => evaluateAsync(context, `return await globalThis.__press;`);
+
+/* The press must have got PAST its pre-POST guard and be waiting on the create
+   response before the test edits Film A. Editing earlier lands inside the
+   pre-POST flush instead, which is a different (already-covered) case and not
+   the race under test. */
+async function untilCreateInFlight(gate) {
+  for (let i = 0; i < 200 && gate.createCount() === 0; i++) await tick();
+  if (gate.createCount() === 0) throw new Error("the create request never reached the wire");
+}
+
+async function b1race_replacementFence() {
+  /* ---- B1-RACE-6 first: the ordinary fast path is unchanged. ------------- */
+  const fast = delayedCreation();
+  const fastPage = await render("#/create", rawFixture(), { fetch: fast.hook });
+  await evaluateAsync(fastPage.context, `await flushPendingProjectSave(); return 1;`);
+  startPressInFlight(fastPage.context);
+  await untilCreateInFlight(fast);
+  fast.release();
+  await settlePress(fastPage.context);
+  const fastSeen = evaluate(fastPage.context, `
+    return { hash: location.hash, draft: manualStartDraft().title,
+             pending: (window.__cinebraidManualStartPending||{}).slug || "" };`);
+  equal(fast.createCount(), 1, "B1-RACE-6: with no intervening edit the project is created once");
+  equal(fastSeen.hash, "#/production", "B1-RACE-6: and the window moves into production as before");
+  equal(fastSeen.draft, "", "B1-RACE-6: the draft is consumed");
+  equal(fastSeen.pending, "", "B1-RACE-6: and nothing is left pending");
+
+  /* ---- B1-RACE-1: edit during the flight, whose save then SUCCEEDS. ------ */
+  const ok1 = delayedCreation();
+  const page1 = await render("#/create", rawFixture(), { fetch: ok1.hook });
+  await evaluateAsync(page1.context, `await flushPendingProjectSave(); return 1;`);
+  const before1 = evaluate(page1.context, `return { settled: projectSaveSettled().settled, gen: PROJECT_SAVE_GENERATION };`);
+  equal(before1.settled, true, "B1-RACE-1 precondition: Film A is saved before the press");
+
+  startPressInFlight(page1.context);
+  await untilCreateInFlight(ok1);
+  /* THE RACE: the filmmaker edits Film A while the create request is on the wire. */
+  const editedInFlight = evaluate(page1.context, `
+    P.meta.logline = "EDIT-DURING-CREATE";
+    dirty();
+    return { unsaved: projectSaveSettled().settled === false, saveRevision: SAVE_REVISION };`);
+  equal(editedInFlight.unsaved, true, "B1-RACE-1: the intervening edit leaves Film A unsaved mid-flight");
+
+  const marker1 = ok1.marker();
+  ok1.release();
+  await settlePress(page1.context);
+
+  /* The edit must have been carried through the ordinary save loop BEFORE the
+     replacement, and the body that went out must contain it. */
+  const savesAfter = ok1.since(marker1).filter((row) => /\/api\/projects\/[^/]+\/project$/.test(row.url));
+  ok(savesAfter.length >= 1, "B1-RACE-1: the intervening edit was saved before the replacement");
+  ok(savesAfter.some((row) => String(row.body).includes("EDIT-DURING-CREATE")),
+    "B1-RACE-1: and the saved body carries it, so the edit reached storage");
+  const after1 = evaluate(page1.context, `return { hash: location.hash, pending: (window.__cinebraidManualStartPending||{}).slug || "" };`);
+  equal(after1.hash, "#/production", "B1-RACE-1: only then does Film B open");
+  equal(after1.pending, "", "B1-RACE-1: and the creation is complete, with nothing left pending");
+  equal(ok1.createCount(), 1, "B1-RACE-1: the project was created exactly once");
+
+  /* ---- B1-RACE-2: the intervening edit's save is REFUSED 422. ------------ */
+  const refused = delayedCreation();
+  const page2 = await render("#/create", rawFixture(), { fetch: refused.hook });
+  await evaluateAsync(page2.context, `await flushPendingProjectSave(); return 1;`);
+  equal(evaluate(page2.context, `return projectSaveSettled().settled;`), true,
+    "B1-RACE-2 precondition: Film A is saved before the press");
+  const titleBefore2 = evaluate(page2.context, `return P.meta.title;`);
+  /* From here the intervening save will be genuinely refused. */
+  refused.setSaveStatus(422, { error: "Project failed validation.", code: "PROJECT_VALIDATION_FAILED" });
+  startPressInFlight(page2.context);
+  await untilCreateInFlight(refused);
+  evaluate(page2.context, `P.meta.logline = "EDIT-THEN-REFUSED"; dirty(); return 1;`);
+  const marker2 = refused.marker();
+  refused.release();
+  await settlePress(page2.context);
+
+  const after2 = evaluate(page2.context, `
+    const main = (document.getElementById("main")||{innerHTML:""}).innerHTML;
+    return {
+      title: P.meta.title, logline: P.meta.logline, hash: location.hash,
+      blocked: SAVE_BLOCKED, settled: projectSaveSettled().settled,
+      saveRevision: SAVE_REVISION, savedRevision: SAVED_REVISION,
+      pending: (window.__cinebraidManualStartPending||{}).slug || "",
+      refusal: main.indexOf('data-action-refusal="manual-start"') >= 0,
+      refusalText: (main.split("CineBraid did not make this change</b><span>")[1]||"").split("</span>")[0],
+    };`);
+  const reloadsAfter2 = refused.since(marker2).filter((row) => row.url === "/api/project").length;
+
+  equal(reloadsAfter2, 0, "B1-RACE-2: Film B is not loaded — no project read followed the refused save");
+  equal(after2.hash, "#/create", "B1-RACE-2: the hash is untouched, so the window did not move");
+  equal(after2.title, titleBefore2, "B1-RACE-2: Film A is still the current project");
+  equal(after2.logline, "EDIT-THEN-REFUSED", "B1-RACE-2: its edit remains");
+  equal(after2.blocked, true, "B1-RACE-2: the save-blocked state remains truthful");
+  equal(after2.settled, false, "B1-RACE-2: and the window still reports itself unsaved");
+  ok(after2.saveRevision > after2.savedRevision,
+    "B1-RACE-2: the save counters were NOT reset by a replacement that did not happen");
+  equal(after2.refusal, true, "B1-RACE-2: the refusal is on screen where the button was pressed");
+  ok(/did not switch to it/i.test(after2.refusalText),
+    "B1-RACE-2: saying the project was created but not opened: " + after2.refusalText);
+  equal(after2.pending, "film-b", "B1-RACE-2: and the created project is remembered rather than lost");
+  equal(refused.createCount(), 1, "B1-RACE-2: it was created exactly once");
+
+  /* ---- B1-RACE-5: pressing again finishes THAT project, and only it. ----- */
+  refused.calls.length = 0;
+  refused.setSaveStatus(200, null);
+  const recovered = await evaluateAsync(page2.context, `
+    /* The filmmaker resolves the refusal: saving resumes and the edit lands
+       through the ordinary loop, not by moving a counter. */
+    resumeProjectSaving();
+    await flushPendingProjectSave();
+    return { settled: projectSaveSettled().settled, logline: P.meta.logline };`);
+  equal(recovered.logline, "EDIT-THEN-REFUSED", "B1-RACE-5: the edit that was refused is still the one being saved");
+  equal(recovered.settled, true, "B1-RACE-5 precondition: Film A reaches a positively saved state");
+  startPressInFlight(page2.context);
+  await settlePress(page2.context);
+  const after5 = evaluate(page2.context, `
+    return { hash: location.hash, pending: (window.__cinebraidManualStartPending||{}).slug || "" };`);
+  equal(refused.createCount(), 0,
+    "B1-RACE-5: NO second POST to /api/projects/new — the pending creation is finished, not repeated");
+  ok(refused.calls.some((row) => row.url === "/api/projects/switch" && String(row.body).includes("film-b")),
+    "B1-RACE-5: the already-created project is opened by name");
+  equal(after5.hash, "#/production", "B1-RACE-5: and it opens");
+  equal(after5.pending, "", "B1-RACE-5: the pending creation is cleared once it is open");
+
+  /* ---- B1-RACE-3: the intervening save is refused 409. ------------------- */
+  const conflicted = delayedCreation();
+  const page3 = await render("#/create", rawFixture(), { fetch: conflicted.hook });
+  await evaluateAsync(page3.context, `await flushPendingProjectSave(); return 1;`);
+  conflicted.setSaveStatus(409, { error: "This project changed in storage.", code: "PROJECT_REVISION_CONFLICT" });
+  startPressInFlight(page3.context);
+  await untilCreateInFlight(conflicted);
+  evaluate(page3.context, `P.meta.logline = "EDIT-THEN-CONFLICT"; dirty(); return 1;`);
+  const marker3 = conflicted.marker();
+  conflicted.release();
+  await settlePress(page3.context);
+  const after3 = evaluate(page3.context, `
+    return { logline: P.meta.logline, hash: location.hash, conflict: PROJECT_CONFLICT,
+             settled: projectSaveSettled().settled,
+             pending: (window.__cinebraidManualStartPending||{}).slug || "" };`);
+  equal(conflicted.since(marker3).filter((row) => row.url === "/api/project").length, 0,
+    "B1-RACE-3: a conflicted save also prevents the replacement");
+  equal(after3.hash, "#/create", "B1-RACE-3: the window did not move");
+  equal(after3.logline, "EDIT-THEN-CONFLICT", "B1-RACE-3: and the edit is still in the tab");
+  equal(after3.conflict, true, "B1-RACE-3: the conflict is still declared");
+  equal(after3.settled, false, "B1-RACE-3: and the window is truthfully unsaved");
+  equal(after3.pending, "film-b", "B1-RACE-3: with the created project remembered");
+
+  /* ---- B1-RACE-4: the SOURCE project changed while the request flew. ----- */
+  const moved = delayedCreation();
+  const page4 = await render("#/create", rawFixture(), { fetch: moved.hook });
+  await evaluateAsync(page4.context, `await flushPendingProjectSave(); return 1;`);
+  startPressInFlight(page4.context);
+  await untilCreateInFlight(moved);
+  /* The filmmaker legitimately opens a different project mid-flight. This is the
+     shipped replacement act — the same one the switcher performs. */
+  const movedTo = evaluate(page4.context, `
+    beginProjectOpen();
+    ACTIVE_PROJECT_SLUG = "some-other-film";
+    return { slug: ACTIVE_PROJECT_SLUG, epoch: PROJECT_OPEN_EPOCH };`);
+  const marker4 = moved.marker();
+  moved.release();
+  await settlePress(page4.context);
+  const after4 = evaluate(page4.context, `
+    return { slug: ACTIVE_PROJECT_SLUG, hash: location.hash,
+             pending: (window.__cinebraidManualStartPending||{}).slug || "" };`);
+  equal(moved.since(marker4).filter((row) => row.url === "/api/project").length, 0,
+    "B1-RACE-4: a stale create response does not blindly replace whichever project is now open");
+  equal(after4.slug, movedTo.slug, "B1-RACE-4: the project the filmmaker moved to is left alone");
+  equal(after4.hash, "#/create", "B1-RACE-4: and nothing about its identity or hash was altered");
+  equal(after4.pending, "film-b", "B1-RACE-4: the created project is remembered rather than lost or deleted");
+
+  note("B1-RACE the pre-POST verdict is carried as a certificate (open epoch, project, durable generation, stored revision, edit counters) and re-checked with no await before the replacement: an intervening edit is saved first and only then replaced; a 422, a 409 or a project change leaves Film A current with its edit, refusal and counters intact; the created project is remembered and finished by the next press rather than created twice");
+}
+
 async function main() {
   await b1_createRequiresConfirmedSave();
   await b2_manualStartIsolation();
   await b3_wholeReferenceDeletion();
+  await b1race_replacementFence();
   console.log(`AT1 boundary corrections: ${checks} checks passed`);
   for (const line of notes) console.log("  - " + line);
 }

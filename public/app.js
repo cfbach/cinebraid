@@ -2773,6 +2773,99 @@ function projectSaveSettled() {
   return { settled: true, code: "", reason: "" };
 }
 if (typeof window !== "undefined") window.projectSaveSettled = projectSaveSettled;
+
+/* ==========================================================================
+   B1 (RACE) — A SAVE VERDICT IS A SNAPSHOT, NOT A PERMIT TO REPLACE LATER.
+
+   THE DEFECT THE FIRST B1 FIX LEFT BEHIND. projectSaveSettled() correctly
+   answers "is the open project saved RIGHT NOW", and startManualProjectCommit()
+   correctly asked it before POSTing /api/projects/new. But the POST is an
+   `await`: the event loop is free for the whole round trip, and a filmmaker can
+   open Settings and edit Film A inside it. The verdict was taken before that
+   edit and was then used, several awaits later, to justify replacing the project
+   the edit was made to. Loading Film B cancels Film A's pending save and resets
+   its counters, so the edit went. Independent review reproduced the stronger
+   case too: the intervening edit's save is REFUSED 422, SAVE_BLOCKED is true at
+   the moment of replacement, projectSaveSettled() would say false — and the
+   replacement proceeded anyway, discarding both the edit and the refusal.
+
+   THE FENCE, AND IT IS THE ONE THIS FILE ALREADY USES. A refresh has exactly
+   this problem — several awaits between reading a snapshot and installing it —
+   and solves it with a ticket taken at the start (beginProjectRefresh) validated
+   at the commit point. This is that pattern for replacement rather than refresh,
+   and it compares the same facts: which open, which project, which durable
+   generation, which stored revision, and which local edit counters.
+
+   WHAT MAKES IT A CERTIFICATE RATHER THAN A BOOLEAN. It names the exact revision
+   and generation that were certified. "Still settled" is not enough on its own:
+   a window that saved a NEW revision mid-flight is settled again, and replacing
+   there would discard an edit that was never certified. Equality on the
+   generation and the revision is what distinguishes "nothing happened" from
+   "something happened and then settled" — and those need different answers.
+
+   IT WRITES NOTHING. Both halves are reads, so asking cannot change the answer,
+   and taking a certificate cannot make a replacement more likely to be allowed. */
+function createReplacementCertificate() {
+  const settled = projectSaveSettled();
+  if (!settled.settled) return { ok: false, code: settled.code, reason: settled.reason };
+  return {
+    ok: true,
+    slug: ACTIVE_PROJECT_SLUG,
+    epoch: PROJECT_OPEN_EPOCH,
+    /* The durable truth this window owned when it was certified. Advanced by an
+       accepted write, a rebase, and a server-side ingest — every way the stored
+       document can move without a replacement. */
+    saveGeneration: PROJECT_SAVE_GENERATION,
+    /* The stored document that certificate describes. Compared for EQUALITY
+       only: revisions are opaque server tokens and cannot be ordered. */
+    revision: PROJECT_REVISION,
+    saveRevision: SAVE_REVISION,
+    savedRevision: SAVED_REVISION,
+  };
+}
+
+/* "" when the certificate still describes the window, otherwise the reason it
+   does not. Synchronous and await-free on purpose: the caller checks this and
+   commits the replacement with no yield in between, which is what makes the
+   answer still true at the moment it is acted on. */
+function createReplacementRefusal(certificate) {
+  /* An unusable certificate reports the SAVE STATE that made it unusable, not a
+     sentence about when it was taken — this function is called twice, once with
+     the certificate from before the request and once with a fresh one taken
+     after the intervening save was carried through, and "when this creation
+     began" would be false the second time. */
+  if (!certificate || !certificate.ok) {
+    return (certificate && certificate.reason) || "the project you have open is not saved";
+  }
+  if (!P || !ACTIVE_PROJECT_SLUG) return "no project is open to replace";
+  /* SOURCE IDENTITY FIRST. A response that outlived the project it was started
+     for must not replace whichever project happens to be open now. */
+  if (certificate.slug !== ACTIVE_PROJECT_SLUG)
+    return `the project this creation began from (${certificate.slug}) is no longer the one open`;
+  if (certificate.epoch !== PROJECT_OPEN_EPOCH)
+    return "the project was explicitly reopened or replaced while this creation was in flight";
+  /* THEN WHETHER IT IS STILL SAVED AT ALL. This catches a refusal that ARRIVED
+     during the flight — 422, 409, a block, a quarantine — which is the case
+     where replacing would erase both the edit and the reason it was refused. */
+  const settled = projectSaveSettled();
+  if (!settled.settled)
+    return settled.reason || "the project you have open is no longer saved";
+  /* AND FINALLY WHETHER IT IS STILL THE SAME SAVED THING. A window that edited
+     and successfully saved during the flight is settled again, at a revision
+     this certificate never covered. That is not a refusal — it is a certificate
+     that has to be taken again for the newer revision. */
+  if (certificate.saveGeneration !== PROJECT_SAVE_GENERATION)
+    return "this window's stored project advanced while the creation was in flight, so the earlier save proof is behind the record";
+  if (certificate.revision !== PROJECT_REVISION)
+    return "the stored revision this creation was certified against is no longer the one this window holds";
+  if (certificate.saveRevision !== SAVE_REVISION || certificate.savedRevision !== SAVED_REVISION)
+    return "the project you have open was edited while the creation was in flight";
+  return "";
+}
+if (typeof window !== "undefined") {
+  window.createReplacementCertificate = createReplacementCertificate;
+  window.createReplacementRefusal = createReplacementRefusal;
+}
 function toast(msg) {
   const t = $("#toast");
   t.textContent = msg;

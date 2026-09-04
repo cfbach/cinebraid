@@ -6067,6 +6067,36 @@ window.startManualProject = async () => {
     MANUAL_START_IN_FLIGHT = false;
   }
 };
+/* A CREATION THAT SUCCEEDED BUT COULD NOT BE OPENED YET.
+ *
+ * POST /api/projects/new is not idempotent — it mints a project under a free
+ * slug every time it is called — so a press that creates the project and is then
+ * refused the REPLACEMENT must never be retried by POSTing again. That would
+ * leave a filmmaker with two identical empty films and no way to tell which one
+ * the button meant.
+ *
+ * Ownership and lifetime are the same as CREATION_MANUAL_IDENTITY beside it:
+ * this browser tab, until the creation is completed or the tab is reloaded. It
+ * is not written to the project, the server or localStorage. A reload loses the
+ * pointer, not the project — the project exists and is in the switcher.
+ *
+ * CLEANUP IS NOT DELETION. Nothing here removes a project the filmmaker's press
+ * genuinely created; a stranded pointer is recovered by pressing again, and a
+ * forgotten one leaves an ordinary empty project the switcher can open. */
+const MANUAL_START_PENDING =
+  window.__cinebraidManualStartPending || (window.__cinebraidManualStartPending = { slug: "", title: "" });
+
+/* Whether the window is still looking at the project the certificate was taken
+   for. Distinguishes "Film A moved" — which a save can resolve — from "we are
+   no longer in Film A at all", which it cannot: flushing there would save a
+   different project and prove nothing about the one that was certified. */
+function stillTheSameOpenProject(certificate) {
+  return !!certificate && certificate.ok === true
+    && !!ACTIVE_PROJECT_SLUG
+    && certificate.slug === ACTIVE_PROJECT_SLUG
+    && certificate.epoch === PROJECT_OPEN_EPOCH;
+}
+
 async function startManualProjectCommit(draft, title, refuse) {
   /* The open project's own unsaved work is flushed before anything switches, the
      same way commitProjectBuilderImport() and newProject() flush it. */
@@ -6109,26 +6139,102 @@ async function startManualProjectCommit(draft, title, refuse) {
       `manual-start:${settled.code || "not-saved"}`,
     );
   }
-  let created = null;
-  try {
-    const response = await fetch("/api/projects/new", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ title, format: draft.format || "", aspectRatio: draft.aspectRatio || "" }),
-    });
-    created = await response.json().catch(() => ({}));
-    if (!response.ok) throw new Error(created.error || "Could not create project");
-  } catch (error) {
+  /* THE CERTIFICATE. Taken while the settled verdict above is still the truth,
+     and carried across the request so the replacement can be checked against
+     what was actually certified rather than against a boolean. */
+  const certificate = typeof createReplacementCertificate === "function"
+    ? createReplacementCertificate()
+    : { ok: true };
+
+  /* THE POST IS NOT REPEATED FOR A CREATION THAT ALREADY SUCCEEDED.
+     If a previous press created the project and the replacement fence then
+     refused, the project EXISTS. Pressing again must finish that creation, not
+     make a second identical project. */
+  let created = MANUAL_START_PENDING.slug ? { slug: MANUAL_START_PENDING.slug } : null;
+  const resuming = !!created;
+  if (!created) {
+    try {
+      const response = await fetch("/api/projects/new", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ title, format: draft.format || "", aspectRatio: draft.aspectRatio || "" }),
+      });
+      created = await response.json().catch(() => ({}));
+      if (!response.ok) throw new Error(created.error || "Could not create project");
+    } catch (error) {
+      return refuse(
+        `${error.message || "CineBraid could not create that project"}. What you typed is still here, and the project you have open is unchanged.`,
+        "manual-start:create-failed",
+      );
+    }
+    /* IT EXISTS NOW. Recorded before anything can refuse the replacement, so a
+       refusal can never strand a created project behind a draft that would
+       create a second one. */
+    MANUAL_START_PENDING.slug = String(created.slug || "");
+    MANUAL_START_PENDING.title = title;
+  }
+
+  /* ---- THE REPLACEMENT FENCE -------------------------------------------
+     The POST was an await. Everything the certificate described may have moved
+     while it was on the wire, so it is checked HERE rather than trusted. */
+  let refusal = typeof createReplacementRefusal === "function"
+    ? createReplacementRefusal(certificate)
+    : "";
+
+  if (refusal && stillTheSameOpenProject(certificate)) {
+    /* THE OPEN PROJECT MOVED, BUT IT IS STILL THE SAME PROJECT. Bring whatever
+       it now holds through the ordinary save loop and ask again — for the
+       revision it holds NOW, not the one that was certified. */
+    try {
+      await flushPendingProjectSave();
+    } catch { /* the save chain reports its own failure; the fence below decides */ }
+    const recertified = typeof createReplacementCertificate === "function"
+      ? createReplacementCertificate()
+      : { ok: true };
+    refusal = typeof createReplacementRefusal === "function"
+      ? createReplacementRefusal(recertified)
+      : "";
+  }
+
+  if (refusal) {
+    /* NOTHING IS REPLACED. No load(), no hash change, no reset of the save
+       machinery: the project stays open, its edit stays in the tab, and its own
+       refusal stays on screen beside it. The created project is remembered, so
+       the next press finishes it instead of making another one. */
+    /* Some reasons are whole sentences from the save loop and already end in a
+       full stop; this one sentence is composed from them, so it must not read
+       "refused.. You are still in". */
+    const because = String(refusal).replace(/\s*\.\s*$/, "");
     return refuse(
-      `${error.message || "CineBraid could not create that project"}. What you typed is still here, and the project you have open is unchanged.`,
-      "manual-start:create-failed",
+      `${MANUAL_START_PENDING.title || title} was created, but CineBraid did not switch to it: ${because}. `
+      + `You are still in ${P?.meta?.title || "the project you have open"}, and the work you have not saved is still here. `
+      + `Resolve that save and press CREATE THIS PROJECT again to open ${MANUAL_START_PENDING.title || title} — it will not be created twice.`,
+      "manual-start:replacement-unsafe",
     );
   }
+
+  /* ---- COMMIT. No await between the fence above and the replacement below. */
   /* Consumed, not merely hidden: the draft described a project that now exists. */
   CREATION_MANUAL_IDENTITY.title = "";
   CREATION_MANUAL_IDENTITY.format = "";
   CREATION_MANUAL_IDENTITY.aspectRatio = "";
   window.__cinebraidProjectEntryLanding = null;
+  const openingSlug = MANUAL_START_PENDING.slug;
+  MANUAL_START_PENDING.slug = "";
+  MANUAL_START_PENDING.title = "";
+  /* A RESUMED creation says which project to open. The creation route pointed
+     the server at it when it was created, but a refused replacement leaves the
+     filmmaker working — and switching projects in between would leave load()
+     opening whatever is active now. The shipped switch route names it. */
+  if (resuming && openingSlug) {
+    try {
+      await fetch("/api/projects/switch", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ slug: openingSlug }),
+      });
+    } catch { /* load() below falls back to whatever the server reports as active */ }
+  }
   await load();
   /* Into the normal production flow, which is where a project with no shots
      offers ADD THE FIRST SHOT and that button now actually adds one. */
