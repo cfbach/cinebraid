@@ -2432,6 +2432,92 @@ function withProjectTransitionWork(token, body) {
   try { return body(); } finally { PROJECT_TRANSITION_WORK -= 1; }
 }
 /* ==========================================================================
+   PROJECT-MUTATING ASYNCHRONOUS WORK, DECLARED WHILE IT IS PENDING.
+
+   The interaction fence stops a person from STARTING work during a replacement.
+   It cannot stop work that was already running: independent review pressed
+   Blocking → Improve, held /api/prompt/compile, began a manual creation, and the
+   prompt's continuation landed during the activation round trip —
+   `c.blockingBuilds.push(build); … dirty()` — mutating the project the
+   replacement was about to install over. The completed build went with it.
+
+   So a replacement may only BEGIN when the open project is saved AND quiescent:
+   nothing is pending that could mutate it when it resumes. This is the registry
+   that answers the second half.
+
+   WHAT TAKES A LEASE. Work that begins against the open project, awaits
+   something, and CAN MUTATE `P` when its continuation resumes. Not a poll, not a
+   preview, not a read that returns data — those cannot strand anything, and
+   QUIET-6 pins that they do not block a creation.
+
+   SCOPED BY PROJECT AND OPEN EPOCH, not counted globally. A lease taken under a
+   project this window has since left describes work whose continuation can no
+   longer reach the project now open — it must not hold a creation hostage, and
+   an epoch is what distinguishes that from work on the current record.
+
+   IT IS NOT A JOB FRAMEWORK. It records that something is pending, and what to
+   call it when a filmmaker is told to wait. It does not schedule, cancel, retry
+   or own anything. */
+const PROJECT_ASYNC_MUTATIONS = new Map();
+let PROJECT_ASYNC_MUTATION_SEQUENCE = 0;
+
+/* Returns a lease. Release it in a `finally` — a lease that outlives its work
+   would make CineBraid believe the project is permanently busy. */
+function beginProjectAsyncMutation(label, key = "") {
+  const id = ++PROJECT_ASYNC_MUTATION_SEQUENCE;
+  PROJECT_ASYNC_MUTATIONS.set(id, {
+    id,
+    key: String(key || ""),
+    label: String(label || "a project operation"),
+    slug: ACTIVE_PROJECT_SLUG,
+    epoch: PROJECT_OPEN_EPOCH,
+  });
+  return { id, release() { PROJECT_ASYNC_MUTATIONS.delete(id); } };
+}
+/* Every lease still pending against the project this window has open now. */
+function projectAsyncMutationsInFlight() {
+  const rows = [];
+  for (const lease of PROJECT_ASYNC_MUTATIONS.values()) {
+    if (lease.slug !== ACTIVE_PROJECT_SLUG) continue;
+    if (lease.epoch !== PROJECT_OPEN_EPOCH) continue;
+    rows.push(lease);
+  }
+  return rows;
+}
+/* A keyed lease is replaced rather than duplicated: an operation that restarts
+   under the same key is the same operation, and two leases for it would need two
+   releases. Releasing by key is how the shared prompt-op helper below both
+   takes and drops leases without every caller learning about this registry. */
+function releaseProjectAsyncMutationsByKey(key) {
+  const wanted = String(key || "");
+  if (!wanted) return 0;
+  let released = 0;
+  for (const [id, lease] of [...PROJECT_ASYNC_MUTATIONS.entries()]) {
+    if (lease.key === wanted) { PROJECT_ASYNC_MUTATIONS.delete(id); released += 1; }
+  }
+  return released;
+}
+/* "" when a replacement may begin, otherwise what is still running. Named when
+   CineBraid knows the name, because "wait" is easier to accept with a reason. */
+function projectQuiescenceRefusal() {
+  const pending = projectAsyncMutationsInFlight();
+  /* Automation runs keep their own in-flight registry and mutate the project
+     from their own continuations. It is read here rather than re-modelled. */
+  const automationRunning = typeof V626_ACTIVE_AUTOMATION_RUNS !== "undefined"
+    && V626_ACTIVE_AUTOMATION_RUNS.size > 0;
+  if (!pending.length && !automationRunning) return "";
+  const named = pending[0] ? pending[0].label : "An automation run";
+  return `${named} is still running on ${(P && P.meta && P.meta.title) || "the project you have open"}. `
+    + "Let it finish, then create the project — CineBraid will not discard work that is still in progress.";
+}
+if (typeof window !== "undefined") {
+  window.beginProjectAsyncMutation = beginProjectAsyncMutation;
+  window.projectAsyncMutationsInFlight = projectAsyncMutationsInFlight;
+  window.releaseProjectAsyncMutationsByKey = releaseProjectAsyncMutationsByKey;
+  window.projectQuiescenceRefusal = projectQuiescenceRefusal;
+}
+
+/* ==========================================================================
    THE INTERACTION FENCE — A MODAL COMMIT, ENFORCED WHERE INPUT ARRIVES.
 
    A replacement transaction is modal: from the press until it succeeds or fails,

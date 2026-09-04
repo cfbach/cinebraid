@@ -1103,6 +1103,356 @@ function ncm_fenceNotAList() {
   note("NC-MODAL the fence names no control and fences only trusted events, and dirty() holds no opinion about replacement transactions");
 }
 
+/* ===========================================================================
+   NC-QUIET — THE SIX WAYS THE QUIESCENCE GATE CAN BE UNDONE.
+
+   The headline is NC-QUIET-0: it restores the shipped reproduction end to end —
+   a pending Blocking → Improve, a creation begun anyway, the prompt continuation
+   landing during the activation round trip, and Film B installing over the
+   completed build. Everything else here removes one part of the gate.
+   =========================================================================== */
+
+function quietGate({ createSlug = "film-b", sourceSlug = "film-a" } = {}) {
+  const calls = [];
+  let activeProject = sourceSlug;
+  let releaseCompile = null;
+  let releaseSwitch = null;
+  const compileGate = new Promise((r) => { releaseCompile = r; });
+  const switchGate = new Promise((r) => { releaseSwitch = r; });
+  let holdSwitch = false;
+  return {
+    calls,
+    releaseCompile: () => releaseCompile(),
+    releaseSwitch: () => releaseSwitch(),
+    holdSwitch() { holdSwitch = true; },
+    activeProject: () => activeProject,
+    creates: () => calls.filter((row) => row.url === "/api/projects/new"),
+    hook: async (url, options, respond) => {
+      const method = (options && options.method) || "GET";
+      const body = String((options && options.body) || "");
+      calls.push({ url, method, body });
+      if (url === "/api/prompt/compile") {
+        await compileGate;
+        return respond({ compiledPrompt: "An improved blocking prompt", profileId: "gpt-image-2/t2i", profileName: "GPT Image 2" }, 200);
+      }
+      if (url === "/api/projects/new") {
+        const request = (() => { try { return JSON.parse(body); } catch { return {}; } })();
+        if (request.activate !== false) activeProject = createSlug;
+        return respond({ ok: true, slug: createSlug }, 200);
+      }
+      if (url === "/api/projects/switch") {
+        const request = (() => { try { return JSON.parse(body); } catch { return {}; } })();
+        if (Object.prototype.hasOwnProperty.call(request, "expectedActiveProject")
+          && String(request.expectedActiveProject || "") !== activeProject) {
+          if (holdSwitch) await switchGate;
+          return respond({ ok: false, code: "PROJECT_ACTIVE_CONFLICT", error: "changed", activeProject }, 409);
+        }
+        activeProject = String(request.slug || activeProject);
+        if (holdSwitch) await switchGate;
+        return respond({ ok: true, slug: activeProject }, 200);
+      }
+      if (method === "GET" && /\/api\/projects\/[^/]+\/project$/.test(url)) {
+        const slug = url.split("/")[3];
+        const project = rawFixture();
+        project.meta.title = slug === createSlug ? "Film B" : "Film C";
+        return respond(project, 200, { "x-cinebraid-project-slug": slug, "x-cinebraid-project-revision": `rev-${slug}`, etag: `rev-${slug}` });
+      }
+      if (method === "GET" && url.startsWith("/api/scan")) {
+        return respond({ anchors: [], plates: [], props: [], vehicles: [], audio: [], media: [], shots: {} }, 200);
+      }
+      if (/\/api\/projects\/[^/]+\/(project|canon-transition)$/.test(url)) {
+        return respond({ ok: true, revision: `rev-${calls.length}` }, 200, { "x-cinebraid-project-revision": `rev-${calls.length}` });
+      }
+      return null;
+    },
+  };
+}
+async function ncUntilCompile(gate) {
+  for (let i = 0; i < 400; i++) {
+    if (gate.calls.some((row) => row.url === "/api/prompt/compile")) return;
+    await tick();
+  }
+  throw new Error("the prompt compile never reached the wire");
+}
+
+/* ---- 0. THE HEADLINE: THE EXACT SHIPPED REPRODUCTION. ----------------- */
+const NCQ_ANCHOR = `    const busy = typeof projectQuiescenceRefusal === "function" ? projectQuiescenceRefusal() : "";
+    if (busy) return refuse(busy, "manual-start:not-quiescent");`;
+const NCQ_BREAK = `    /* the quiescence gate, removed */`;
+
+async function ncq0_shippedReproduction() {
+  anchorIn("public/creation-studio.js", NCQ_ANCHOR, "NC-QUIET-0");
+  const gate = quietGate();
+  gate.holdSwitch();
+  const page = await render("#/create", rawFixture(), {
+    fetch: gate.hook,
+    mutateSource: replacing("creation-studio.js", NCQ_ANCHOR, NCQ_BREAK),
+  });
+  await evaluateAsync(page.context, `await flushPendingProjectSave(); return 1;`);
+  evaluate(page.context, `ACTIVE_PROJECT_SLUG = "film-a"; return 1;`);
+
+  /* 1-3. Blocking → Improve is running and its response is held. */
+  evaluate(page.context, `globalThis.__improve = buildBlockingPrompt("L1-01", true); return 1;`);
+  await ncUntilCompile(gate);
+  const buildsBefore = evaluate(page.context, `return ensureShotCreation(shotById("L1-01")).blockingBuilds.length;`);
+
+  /* 4-5. The creation begins anyway, and the response lands during the
+     activation round trip. */
+  evaluate(page.context, `
+    setCreationStartPath("scratch");
+    setManualStartField("title", "Film B");
+    globalThis.__press = startManualProject();
+    return 1;`);
+  for (let i = 0; i < 400 && gate.calls.filter((row) => row.url === "/api/projects/switch").length === 0; i++) await tick();
+  gate.releaseCompile();
+  await evaluateAsync(page.context, `try { await globalThis.__improve; } catch {} return 1;`);
+
+  /* 6. The continuation mutated Film A while the replacement was in flight. */
+  const mutated = evaluate(page.context, `
+    return { builds: ensureShotCreation(shotById("L1-01")).blockingBuilds.length,
+             prompt: (ensureShotCreation(shotById("L1-01")).blockingBuilds.at(-1) || {}).prompt || "" };`);
+  ok(mutated.builds > buildsBefore,
+    "NC-QUIET-0 REPRODUCED: the held prompt continuation mutated Film A during the replacement");
+  equal(mutated.prompt, "An improved blocking prompt", "NC-QUIET-0 REPRODUCED: with the completed build on it");
+
+  /* 7. And Film B installs over it. */
+  gate.releaseSwitch();
+  await evaluateAsync(page.context, `try { await globalThis.__press; } catch {} return 1;`);
+  const after = evaluate(page.context, `
+    return { title: P.meta.title,
+             builds: ensureShotCreation(shotById("L1-01") || { id: "L1-01" }).blockingBuilds.length };`);
+  equal(after.title, "Film B", "NC-QUIET-0 REPRODUCED: Film B installed over the newer Film A");
+  ok(after.builds < mutated.builds || !evaluate(page.context, `return !!shotById("L1-01");`),
+    "NC-QUIET-0 REPRODUCED: and the completed build is gone with it");
+
+  await mustFail("NC-QUIET-0", "no project was created while the operation was pending", async () => {
+    equal(gate.creates().length, 0, "no project was created while the operation was pending");
+  });
+  note("NC-QUIET-0 removing the quiescence gate restores the shipped reproduction end to end: a pending Blocking → Improve, a creation begun anyway, the continuation mutating Film A during activation, and Film B installing over the completed build");
+}
+
+/* ---- 1. THE BLOCKING REQUEST IS NO LONGER REGISTERED. ----------------- */
+const NCQ1_ANCHOR = `  if (value && value.status === "busy" && typeof beginProjectAsyncMutation === "function") {
+    beginProjectAsyncMutation(guidedPromptOpLabel(kind, value.action), key);
+  }`;
+const NCQ1_BREAK = `  /* the lease, no longer taken */`;
+
+async function ncq1_leaseNotTaken() {
+  anchorIn("public/creation-studio.js", NCQ1_ANCHOR, "NC-QUIET-1");
+  const gate = quietGate();
+  const page = await render("#/create", rawFixture(), {
+    fetch: gate.hook,
+    mutateSource: replacing("creation-studio.js", NCQ1_ANCHOR, NCQ1_BREAK),
+  });
+  await evaluateAsync(page.context, `await flushPendingProjectSave(); return 1;`);
+  evaluate(page.context, `globalThis.__improve = buildBlockingPrompt("L1-01", true); return 1;`);
+  await ncUntilCompile(gate);
+  const seen = evaluate(page.context, `return {
+    busy: !!guidedPromptOp("blocking", "L1-01", ""),
+    leases: projectAsyncMutationsInFlight().length,
+    refusal: projectQuiescenceRefusal() };`);
+  equal(seen.busy, true, "NC-QUIET-1: the operation is genuinely running");
+  equal(seen.leases, 0, "NC-QUIET-1 REPRODUCED: but it holds no lease");
+  equal(seen.refusal, "", "NC-QUIET-1 REPRODUCED: so the project reports itself quiescent while it is not");
+  await mustFail("NC-QUIET-1", "holds a named project-mutation lease", async () => {
+    equal(seen.leases, 1, "it holds a named project-mutation lease while it is pending");
+  });
+  gate.releaseCompile();
+  await evaluateAsync(page.context, `try { await globalThis.__improve; } catch {} return 1;`);
+  note("NC-QUIET-1 if the shipped Blocking → Improve stops taking a lease, the project reports quiescence while that operation is still pending");
+}
+
+/* ---- 2. CREATION CHECKS ONLY projectSaveSettled(). -------------------- */
+async function ncq2_settledOnly() {
+  const gate = quietGate();
+  const page = await render("#/create", rawFixture(), {
+    fetch: gate.hook,
+    /* The gate replaced by the check it is NOT: saved, but not quiescent. */
+    mutateSource: replacing("creation-studio.js", NCQ_ANCHOR,
+      `    const busy = projectSaveSettled().settled ? "" : "not saved";
+    if (busy) return refuse(busy, "manual-start:not-quiescent");`),
+  });
+  await evaluateAsync(page.context, `await flushPendingProjectSave(); return 1;`);
+  evaluate(page.context, `ACTIVE_PROJECT_SLUG = "film-a"; return 1;`);
+  evaluate(page.context, `globalThis.__improve = buildBlockingPrompt("L1-01", true); return 1;`);
+  await ncUntilCompile(gate);
+  const settledButBusy = evaluate(page.context, `return {
+    settled: projectSaveSettled().settled, leases: projectAsyncMutationsInFlight().length };`);
+  equal(settledButBusy.settled, true, "NC-QUIET-2: the project IS saved");
+  equal(settledButBusy.leases, 1, "NC-QUIET-2: and is NOT quiescent");
+  await evaluateAsync(page.context, `
+    setCreationStartPath("scratch"); setManualStartField("title", "Film B");
+    await startManualProject(); return 1;`);
+  equal(gate.creates().length, 1,
+    "NC-QUIET-2 REPRODUCED: a settled-only check creates the project on top of pending work");
+  await mustFail("NC-QUIET-2", "no project was created while the operation was pending", async () => {
+    equal(gate.creates().length, 0, "no project was created while the operation was pending");
+  });
+  gate.releaseCompile();
+  await evaluateAsync(page.context, `try { await globalThis.__improve; } catch {} return 1;`);
+  note("NC-QUIET-2 checking only projectSaveSettled() lets a creation begin on a saved project that is still busy — saved and quiescent are different questions");
+}
+
+/* ---- 3. A GAP BETWEEN THE CHECK AND THE LOCK. ------------------------- */
+async function ncq3_checkThenLockGap() {
+  /* The gate moved BEFORE the fence, with an await in between — the ordering the
+     correction exists to avoid. */
+  const gapped = `  const busy = typeof projectQuiescenceRefusal === "function" ? projectQuiescenceRefusal() : "";
+  if (busy) return refuse(busy, "manual-start:not-quiescent");
+  await Promise.resolve();
+  beginInteractionFence("opening that project");`;
+  anchorIn("public/creation-studio.js", `  beginInteractionFence("opening that project");`, "NC-QUIET-3");
+  const gate = quietGate();
+  const page = await render("#/create", rawFixture(), {
+    fetch: gate.hook,
+    mutateSource: (name, contents) => {
+      if (name !== "creation-studio.js") return contents;
+      return String(contents).replace(/\r\n/g, "\n")
+        .split(NCQ_ANCHOR).join("")
+        .split(`  beginInteractionFence("opening that project");`).join(gapped);
+    },
+  });
+  await evaluateAsync(page.context, `await flushPendingProjectSave(); return 1;`);
+  evaluate(page.context, `ACTIVE_PROJECT_SLUG = "film-a"; return 1;`);
+
+  /* Quiescent at the check; a job starts inside the gap. */
+  const raced = await evaluateAsync(page.context, `
+    setCreationStartPath("scratch"); setManualStartField("title", "Film B");
+    const quietAtCheck = projectQuiescenceRefusal() === "";
+    const press = startManualProject();
+    /* The gap: the fence is not up yet, so this starts. */
+    const fenceUpImmediately = interactionFenceActive();
+    globalThis.__improve = buildBlockingPrompt("L1-01", true);
+    const leases = projectAsyncMutationsInFlight().length;
+    await press;
+    return { quietAtCheck, fenceUpImmediately, leases };`);
+  equal(raced.quietAtCheck, true, "NC-QUIET-3: the project was quiescent when the gate read it");
+  equal(raced.fenceUpImmediately, false,
+    "NC-QUIET-3 REPRODUCED: the fence was NOT yet up, so new work could start inside the gap");
+  equal(raced.leases, 1, "NC-QUIET-3 REPRODUCED: and it did — a lease exists on a transaction that accepted quiescence");
+  await mustFail("NC-QUIET-3", "owns the window before quiescence is acted on", async () => {
+    equal(raced.fenceUpImmediately, true, "the interaction fence owns the window before quiescence is acted on");
+  });
+  gate.releaseCompile();
+  await evaluateAsync(page.context, `try { await globalThis.__improve; } catch {} return 1;`);
+  note("NC-QUIET-3 checking quiescence before taking the fence, with any await between, lets new project-mutating work start after the answer was accepted");
+}
+
+/* ---- 4. A LEASE THAT IS NOT RELEASED ON FAILURE. ---------------------- */
+const NCQ4_ANCHOR = `  if (typeof releaseProjectAsyncMutationsByKey === "function") releaseProjectAsyncMutationsByKey(key);`;
+const NCQ4_BREAK = `  if (typeof releaseProjectAsyncMutationsByKey === "function" && value && value.status === "busy") releaseProjectAsyncMutationsByKey(key);`;
+
+async function ncq4_leaseNotReleased() {
+  anchorIn("public/creation-studio.js", NCQ4_ANCHOR, "NC-QUIET-4");
+  const gate = quietGate();
+  const page = await render("#/create", rawFixture(), {
+    fetch: gate.hook,
+    mutateSource: replacing("creation-studio.js", NCQ4_ANCHOR, NCQ4_BREAK),
+  });
+  await evaluateAsync(page.context, `await flushPendingProjectSave(); return 1;`);
+  evaluate(page.context, `globalThis.__improve = buildBlockingPrompt("L1-01", true); return 1;`);
+  await ncUntilCompile(gate);
+  gate.releaseCompile();
+  await evaluateAsync(page.context, `try { await globalThis.__improve; } catch {} return 1;`);
+  const stranded = evaluate(page.context, `return {
+    leases: projectAsyncMutationsInFlight().length, refusal: projectQuiescenceRefusal() };`);
+  equal(stranded.leases, 1,
+    "NC-QUIET-4 REPRODUCED: the completed operation left its lease behind");
+  ok(stranded.refusal.length > 0,
+    "NC-QUIET-4 REPRODUCED: so CineBraid believes the project is permanently busy and no creation can ever begin");
+  await mustFail("NC-QUIET-4", "released afterwards", async () => {
+    equal(stranded.leases, 0, "and released afterwards — a failure never leaves CineBraid believing the project is busy");
+  });
+  note("NC-QUIET-4 releasing the lease only on the busy path strands it after the operation finishes, and the project can never be created from again");
+}
+
+/* ---- 5. ONE OF SEVERAL LEASES REPORTING QUIESCENCE. ------------------- */
+async function ncq5_partialQuiescence() {
+  const page = await render("#/create", rawFixture(), {
+    /* Quiescence answered from the FIRST lease rather than from all of them. */
+    mutateSource: replacing("app.js",
+      `  if (!pending.length && !automationRunning) return "";`,
+      `  if (pending.length <= 1 && !automationRunning) return "";`),
+  });
+  const seen = evaluate(page.context, `
+    const a = beginProjectAsyncMutation("Frame prompt compilation", "frame:L1-01:frame-a");
+    const b = beginProjectAsyncMutation("Motion prompt compilation", "motion:L1-01:");
+    const both = projectQuiescenceRefusal();
+    a.release();
+    const afterOne = projectQuiescenceRefusal();
+    const inFlightAfterOne = projectAsyncMutationsInFlight().length;
+    b.release();
+    return { both, afterOne, inFlightAfterOne };`);
+  equal(seen.inFlightAfterOne, 1, "NC-QUIET-5: one operation is still pending after the other finishes");
+  equal(seen.afterOne, "",
+    "NC-QUIET-5 REPRODUCED: yet quiescence is reported, because the answer came from a count rather than from every lease");
+  await mustFail("NC-QUIET-5", "releasing one is not quiescence", async () => {
+    ok(seen.afterOne.length > 0, "releasing one is not quiescence");
+  });
+  note("NC-QUIET-5 answering quiescence from anything but ALL pending leases reports a quiet project while an operation is still running");
+}
+
+/* ---- 6. THE dirty() SUPPRESSION, RESTORED. ---------------------------- */
+/* Kept from the previous slice: the lease registry only helps if the mutation it
+   fails to prevent is still recorded honestly. */
+const NCQ6_ANCHOR = `function dirty() {
+  clearTimeout(saveTimer);`;
+const NCQ6_BREAK = `function dirty() {
+  clearTimeout(saveTimer);
+  if (PROJECT_TRANSITION && PROJECT_TRANSITION_WORK === 0) return;`;
+
+async function ncq6_dirtySuppression() {
+  anchorIn("public/app.js", NCQ6_ANCHOR, "NC-QUIET-6");
+  const gate = quietGate();
+  gate.holdSwitch();
+  const page = await render("#/create", rawFixture(), {
+    fetch: gate.hook,
+    mutateSource: replacing("app.js", NCQ6_ANCHOR, NCQ6_BREAK),
+  });
+  await evaluateAsync(page.context, `await flushPendingProjectSave(); return 1;`);
+  evaluate(page.context, `ACTIVE_PROJECT_SLUG = "film-a"; return 1;`);
+  evaluate(page.context, `
+    setCreationStartPath("scratch"); setManualStartField("title", "Film B");
+    globalThis.__press = startManualProject(); return 1;`);
+  for (let i = 0; i < 400 && gate.calls.filter((row) => row.url === "/api/projects/switch").length === 0; i++) await tick();
+  const seen = evaluate(page.context, `
+    const beforeDocument = JSON.stringify(P);
+    const beforeRevision = SAVE_REVISION;
+    P.meta.logline = "BACKGROUND-MUTATION";
+    dirty();
+    return { changed: JSON.stringify(P) !== beforeDocument,
+             revisionMoved: SAVE_REVISION !== beforeRevision,
+             settled: projectSaveSettled().settled };`);
+  equal(seen.changed, true, "NC-QUIET-6 REPRODUCED: the document changed");
+  equal(seen.revisionMoved, false, "NC-QUIET-6 REPRODUCED: and the counters did not");
+  equal(seen.settled, true, "NC-QUIET-6 REPRODUCED: so the window reports a settled project it no longer describes");
+  await mustFail("NC-QUIET-6", "dirty() recorded it", async () => {
+    ok(seen.revisionMoved, "dirty() recorded it, so the window is truthfully unsaved");
+  });
+  gate.releaseSwitch();
+  await evaluateAsync(page.context, `try { await globalThis.__press; } catch {} return 1;`);
+  note("NC-QUIET-6 restoring the dirty() suppression reproduces `P changed / counters unchanged / settled true`, which no certificate and no lease can detect");
+}
+
+/* ---- AND THE SEAM MUST NOT DEGRADE INTO A LIST OF OPERATIONS. --------- */
+function ncq_seamNotAList() {
+  const studio = codeOnly(readLF("public/creation-studio.js"));
+  const at = studio.indexOf("function setGuidedPromptOp(");
+  ok(at >= 0, "NC-QUIET: setGuidedPromptOp is still the seam every prompt build passes through");
+  const seam = studio.slice(at, studio.indexOf("\n}", at));
+  ok(/beginProjectAsyncMutation\s*\(/.test(seam), "NC-QUIET: and it takes the lease");
+  ok(/releaseProjectAsyncMutationsByKey\s*\(/.test(seam), "NC-QUIET: and releases it");
+  for (const op of ["buildBlockingPrompt", "buildGuidedFramePrompt", "buildGuidedMotionPrompt", "buildAssetCreationPrompt"]) {
+    ok(!new RegExp(op).test(seam),
+      `NC-QUIET RETIRED: the seam must not name ${op} — the guarantee is the shared helper, not a list of operations`);
+  }
+  const app = codeOnly(readLF("public/app.js"));
+  const quiescence = app.slice(app.indexOf("function projectQuiescenceRefusal()"),
+    app.indexOf("\n}", app.indexOf("function projectQuiescenceRefusal()")));
+  ok(/projectAsyncMutationsInFlight\s*\(/.test(quiescence),
+    "NC-QUIET: quiescence is answered from the registry, not from a named operation");
+  note("NC-QUIET the lease is taken and released at the shared prompt-op helper, which names no operation, and quiescence is answered from the registry");
+}
 async function main() {
   await nc_b1_resolvedFlushIsNotSaved();
   await nc_b2_openProjectWriterReturns();
@@ -1121,6 +1471,14 @@ async function main() {
   await ncm4_installOwnershipRemoved();
   await ncm5_fenceNeverReleases();
   ncm_fenceNotAList();
+  await ncq0_shippedReproduction();
+  await ncq1_leaseNotTaken();
+  await ncq2_settledOnly();
+  await ncq3_checkThenLockGap();
+  await ncq4_leaseNotReleased();
+  await ncq5_partialQuiescence();
+  await ncq6_dirtySuppression();
+  ncq_seamNotAList();
   console.log(`AT1 boundary corrections negative controls: ${checks} checks passed`);
   for (const line of notes) console.log("  - " + line);
 }

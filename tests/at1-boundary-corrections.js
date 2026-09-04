@@ -1657,6 +1657,331 @@ async function modal_commitIsModal() {
   note("MODAL the commit is modal at the interaction boundary: trusted +Add/Scene-Save/+Project/Settings and their keyboard equivalents are never delivered, so the document is deep-equal before and after and no counter moves because no mutation happened; a background mutation is recorded normally by dirty(), makes the certificate stale and is saved rather than lost; and the fence releases on success and on every failure path");
 }
 
+/* ===========================================================================
+   QUIET — A REPLACEMENT BEGINS ONLY ON A SAVED AND QUIESCENT PROJECT.
+
+   The interaction fence stops a person STARTING work during a replacement. It
+   cannot stop work already running, and independent review found the gap: press
+   Blocking → Improve, hold /api/prompt/compile, begin a manual creation, and the
+   prompt's continuation lands during the activation round trip —
+   `c.blockingBuilds.push(build); … dirty()` — mutating the project the
+   replacement is about to install over, taking the completed build with it.
+
+   The lease registry answers the other half. Work that begins against the open
+   project, awaits, and can mutate `P` when it resumes holds a lease while it is
+   pending, and a replacement will not begin while one is held.
+
+   THE SEAM IS setGuidedPromptOp(), which all six shipped interactive prompt
+   builders already call — busy before their await, cleared after their
+   continuation has mutated the project. That bracket IS the dangerous window.
+   guidedPromptRequest() would have been the wrong place: it returns before its
+   caller pushes the build, so a lease released there would report quiescence
+   while the mutation was still queued.
+   =========================================================================== */
+
+function quietHarness({ createSlug = "film-b", sourceSlug = "film-a" } = {}) {
+  const calls = [];
+  let activeProject = sourceSlug;
+  let saveStatus = 200;
+  let saveBody = null;
+  let releaseCompile = null;
+  const compileGate = new Promise((r) => { releaseCompile = r; });
+  let compileStatus = 200;
+  return {
+    calls,
+    releaseCompile: () => releaseCompile(),
+    setCompileStatus(status) { compileStatus = status; },
+    setSaveStatus(status, body) { saveStatus = status; saveBody = body || null; },
+    setActiveProject(slug) { activeProject = slug; },
+    activeProject: () => activeProject,
+    creates: () => calls.filter((row) => row.url === "/api/projects/new"),
+    switchCalls: () => calls.filter((row) => row.url === "/api/projects/switch"),
+    saves: () => calls.filter((row) => row.method !== "GET" && /\/api\/projects\/[^/]+\/project$/.test(row.url)),
+    marker() { return calls.length; },
+    since(m) { return calls.slice(m); },
+    hook: async (url, options, respond) => {
+      const method = (options && options.method) || "GET";
+      const body = String((options && options.body) || "");
+      calls.push({ url, method, body });
+      /* THE HELD REQUEST — the exact one the reproduction holds. */
+      if (url === "/api/prompt/compile") {
+        await compileGate;
+        if (compileStatus !== 200) return respond({ error: "compile failed" }, compileStatus);
+        /* The field the shipped builder actually reads. */
+        return respond({ compiledPrompt: "An improved blocking prompt", profileId: "gpt-image-2/t2i", profileName: "GPT Image 2" }, 200);
+      }
+      if (url === "/api/projects/new") {
+        const request = (() => { try { return JSON.parse(body); } catch { return {}; } })();
+        if (request.activate !== false) activeProject = createSlug;
+        return respond({ ok: true, slug: createSlug }, 200);
+      }
+      if (url === "/api/projects/switch") {
+        const request = (() => { try { return JSON.parse(body); } catch { return {}; } })();
+        if (Object.prototype.hasOwnProperty.call(request, "expectedActiveProject")
+          && String(request.expectedActiveProject || "") !== activeProject) {
+          return respond({ ok: false, code: "PROJECT_ACTIVE_CONFLICT", error: "changed", activeProject }, 409);
+        }
+        activeProject = String(request.slug || activeProject);
+        return respond({ ok: true, slug: activeProject }, 200);
+      }
+      if (method === "GET" && /\/api\/projects\/[^/]+\/project$/.test(url)) {
+        const slug = url.split("/")[3];
+        const project = rawFixture();
+        project.meta.title = slug === createSlug ? "Film B" : "Film C";
+        return respond(project, 200, { "x-cinebraid-project-slug": slug, "x-cinebraid-project-revision": `rev-${slug}`, etag: `rev-${slug}` });
+      }
+      if (method === "GET" && url.startsWith("/api/scan")) {
+        return respond({ anchors: [], plates: [], props: [], vehicles: [], audio: [], media: [], shots: {} }, 200);
+      }
+      if (/\/api\/projects\/[^/]+\/(project|canon-transition)$/.test(url)) {
+        if (saveStatus === 200) {
+          return respond({ ok: true, revision: `rev-${calls.length}` }, 200, { "x-cinebraid-project-revision": `rev-${calls.length}` });
+        }
+        return respond(saveBody || { error: "refused", code: "PROJECT_VALIDATION_FAILED" }, saveStatus);
+      }
+      return null;
+    },
+  };
+}
+
+/* Start the SHIPPED Blocking → Improve on the fixture's shot, without awaiting
+   it. This is the exact reproduction's first step. */
+function startBlockingImprove(page, shotId = "L1-01") {
+  return evaluate(page.context, `
+    globalThis.__improve = buildBlockingPrompt(${JSON.stringify(shotId)}, true);
+    return {
+      busy: !!guidedPromptOp("blocking", ${JSON.stringify(shotId)}, ""),
+      leases: projectAsyncMutationsInFlight().map((row) => row.label),
+    };`);
+}
+async function untilCompileInFlight(gate) {
+  for (let i = 0; i < 400; i++) {
+    if (gate.calls.some((row) => row.url === "/api/prompt/compile")) return;
+    await tick();
+  }
+  throw new Error("the prompt compile never reached the wire");
+}
+
+async function quiet_projectQuiescence() {
+  /* ---- QUIET-1: the exact reproduction, closed. ------------------------- */
+  const gate = quietHarness();
+  const page = await render("#/create", rawFixture(), { fetch: gate.hook });
+  await evaluateAsync(page.context, `await flushPendingProjectSave(); return 1;`);
+  evaluate(page.context, `ACTIVE_PROJECT_SLUG = "film-a"; return 1;`);
+
+  const started = startBlockingImprove(page);
+  await untilCompileInFlight(gate);
+  equal(started.busy, true, "QUIET-1: Blocking → Improve is running");
+  equal(started.leases.join("|"), "Blocking prompt improvement",
+    "QUIET-1: and it holds a named project-mutation lease while it is pending");
+
+  const buildsBefore = evaluate(page.context, `
+    return ensureShotCreation(shotById("L1-01")).blockingBuilds.length;`);
+  const marker = gate.marker();
+  await evaluateAsync(page.context, `
+    setCreationStartPath("scratch");
+    setManualStartField("title", "Film B");
+    await startManualProject();
+    return 1;`);
+
+  const refusedSeen = evaluate(page.context, `
+    const main = (document.getElementById("main")||{innerHTML:""}).innerHTML;
+    return { title: P.meta.title, hash: location.hash,
+             fence: interactionFenceActive(),
+             stillBusy: !!guidedPromptOp("blocking", "L1-01", ""),
+             pending: (window.__cinebraidManualStartPending||{}).slug || "",
+             refusal: main.indexOf('data-action-refusal="manual-start"') >= 0,
+             refusalText: (main.split("CineBraid did not make this change</b><span>")[1]||"").split("</span>")[0] };`);
+  equal(gate.since(marker).filter((row) => row.url === "/api/projects/new").length, 0,
+    "QUIET-1: no project was created while the operation was pending");
+  equal(gate.since(marker).filter((row) => row.url === "/api/projects/switch").length, 0,
+    "QUIET-1: and nothing was activated");
+  equal(refusedSeen.title, "Render Harness Project", "QUIET-1: Film A remains current");
+  equal(refusedSeen.pending, "", "QUIET-1: nothing is left pending, because nothing was created");
+  equal(refusedSeen.fence, false, "QUIET-1: and the interaction fence released");
+  equal(refusedSeen.stillBusy, true, "QUIET-1: the pending operation is still alive — it was not cancelled");
+  equal(refusedSeen.refusal, true, "QUIET-1: the refusal is persistent");
+  ok(/Blocking prompt improvement is still running/.test(refusedSeen.refusalText),
+    "QUIET-1: and NAMES the operation: " + refusedSeen.refusalText);
+
+  /* THE RESPONSE LANDS, and the build is recorded normally. */
+  gate.releaseCompile();
+  await evaluateAsync(page.context, `try { await globalThis.__improve; } catch {} return 1;`);
+  const landed = evaluate(page.context, `
+    return { builds: ensureShotCreation(shotById("L1-01")).blockingBuilds.length,
+             leases: projectAsyncMutationsInFlight().length,
+             settled: projectSaveSettled().settled };`);
+  ok(landed.builds > buildsBefore, "QUIET-1: the build mutated Film A normally when the response landed");
+  equal(landed.leases, 0, "QUIET-1: and its lease was released");
+  equal(landed.settled, false, "QUIET-1: dirty() recorded it, so the window is truthfully unsaved");
+
+  await evaluateAsync(page.context, `await flushPendingProjectSave(); return 1;`);
+  const saved = gate.saves().find((row) => String(row.body).includes("An improved blocking prompt"));
+  ok(saved, "QUIET-1: the build reached durable storage");
+  equal(evaluate(page.context, `return projectSaveSettled().settled;`), true, "QUIET-1: and Film A is Saved again");
+
+  /* NOW the creation proceeds normally. */
+  const marker2 = gate.marker();
+  await evaluateAsync(page.context, `
+    setManualStartField("title", "Film B");
+    await startManualProject();
+    return 1;`);
+  equal(gate.since(marker2).filter((row) => row.url === "/api/projects/new").length, 1,
+    "QUIET-1: once saved and quiescent, the retry creates the project");
+  equal(evaluate(page.context, `return P.meta.title;`), "Film B", "QUIET-1: and it opens");
+
+  /* ---- QUIET-2: the completion's save is refused. ----------------------- */
+  const refusedGate = quietHarness();
+  const page2 = await render("#/create", rawFixture(), { fetch: refusedGate.hook });
+  await evaluateAsync(page2.context, `await flushPendingProjectSave(); return 1;`);
+  evaluate(page2.context, `ACTIVE_PROJECT_SLUG = "film-a"; return 1;`);
+  startBlockingImprove(page2);
+  await untilCompileInFlight(refusedGate);
+  refusedGate.setSaveStatus(422, { error: "Project failed validation.", code: "PROJECT_VALIDATION_FAILED" });
+  refusedGate.releaseCompile();
+  await evaluateAsync(page2.context, `try { await globalThis.__improve; } catch {} return 1;`);
+  await evaluateAsync(page2.context, `await flushPendingProjectSave(); return 1;`);
+
+  const afterRefusal = evaluate(page2.context, `
+    return { builds: ensureShotCreation(shotById("L1-01")).blockingBuilds.length,
+             blocked: SAVE_BLOCKED, settled: projectSaveSettled().settled };`);
+  ok(afterRefusal.builds > 0, "QUIET-2: the build is on Film A");
+  equal(afterRefusal.blocked, true, "QUIET-2: and its save was refused");
+  const marker3 = refusedGate.marker();
+  await evaluateAsync(page2.context, `
+    setCreationStartPath("scratch");
+    setManualStartField("title", "Film B");
+    await startManualProject();
+    return 1;`);
+  equal(refusedGate.since(marker3).filter((row) => row.url === "/api/projects/new").length, 0,
+    "QUIET-2: creation still does not begin");
+  const stillA = evaluate(page2.context, `
+    return { title: P.meta.title, builds: ensureShotCreation(shotById("L1-01")).blockingBuilds.length,
+             blocked: SAVE_BLOCKED };`);
+  equal(stillA.title, "Render Harness Project", "QUIET-2: Film A remains current");
+  equal(stillA.builds, afterRefusal.builds, "QUIET-2: the build remains");
+  equal(stillA.blocked, true, "QUIET-2: and the refusal remains");
+
+  /* ---- QUIET-3: no check → lock gap. ------------------------------------ */
+  const orderGate = quietHarness();
+  const page3 = await render("#/create", rawFixture(), { fetch: orderGate.hook });
+  await evaluateAsync(page3.context, `await flushPendingProjectSave(); return 1;`);
+  evaluate(page3.context, `ACTIVE_PROJECT_SLUG = "film-a"; return 1;`);
+  const ordering = evaluate(page3.context, `
+    /* The fence must already own the window by the time quiescence is read, so
+       there is no instant at which both a new job and the transaction are
+       admitted. Observed from inside the same synchronous stretch. */
+    setCreationStartPath("scratch");
+    setManualStartField("title", "Film B");
+    const seen = [];
+    const originalBegin = window.beginProjectAsyncMutation;
+    window.beginProjectAsyncMutation = (label, key) => {
+      seen.push({ label, fenceUp: interactionFenceActive() });
+      return originalBegin(label, key);
+    };
+    globalThis.__press = startManualProject();
+    /* A trusted press cannot arrive here — the fence is up — but a job that
+       tried would find it already owned. */
+    const fenceAtCheck = interactionFenceActive();
+    window.beginProjectAsyncMutation = originalBegin;
+    return { fenceAtCheck, seen };`);
+  equal(ordering.fenceAtCheck, true,
+    "QUIET-3: the interaction fence owns the window before quiescence is acted on — no gap to slip a job into");
+  await evaluateAsync(page3.context, `try { await globalThis.__press; } catch {} return 1;`);
+  /* And the reverse ordering: a job that starts FIRST makes the creation refuse. */
+  const raceGate = quietHarness();
+  const page3b = await render("#/create", rawFixture(), { fetch: raceGate.hook });
+  await evaluateAsync(page3b.context, `await flushPendingProjectSave(); return 1;`);
+  evaluate(page3b.context, `ACTIVE_PROJECT_SLUG = "film-a"; return 1;`);
+  startBlockingImprove(page3b);
+  await untilCompileInFlight(raceGate);
+  const marker4 = raceGate.marker();
+  await evaluateAsync(page3b.context, `
+    setCreationStartPath("scratch"); setManualStartField("title", "Film B");
+    await startManualProject(); return 1;`);
+  equal(raceGate.since(marker4).filter((row) => row.url === "/api/projects/new").length, 0,
+    "QUIET-3: and when the job wins the race, the creation refuses — never both");
+  raceGate.releaseCompile();
+  await evaluateAsync(page3b.context, `try { await globalThis.__improve; } catch {} return 1;`);
+
+  /* ---- QUIET-4: two leases, one released. ------------------------------- */
+  const twoPage = await render("#/create", rawFixture());
+  const two = evaluate(twoPage.context, `
+    const a = beginProjectAsyncMutation("Frame prompt compilation", "frame:L1-01:frame-a");
+    const b = beginProjectAsyncMutation("Motion prompt compilation", "motion:L1-01:");
+    const both = projectQuiescenceRefusal();
+    a.release();
+    const afterOne = projectQuiescenceRefusal();
+    b.release();
+    const afterBoth = projectQuiescenceRefusal();
+    return { both, afterOne, afterBoth };`);
+  ok(two.both.length > 0, "QUIET-4: two pending operations block a creation");
+  ok(two.afterOne.length > 0, "QUIET-4: releasing one is not quiescence");
+  equal(two.afterBoth, "", "QUIET-4: only when both are released is the project quiet");
+
+  /* ---- QUIET-5: every failure path releases its lease. ------------------ */
+  for (const [label, arrange] of [
+    ["a rejected request", (g) => g.setCompileStatus(500)],
+    ["a successful request", () => {}],
+  ]) {
+    const failGate = quietHarness();
+    arrange(failGate);
+    const failPage = await render("#/create", rawFixture(), { fetch: failGate.hook });
+    startBlockingImprove(failPage);
+    await untilCompileInFlight(failGate);
+    equal(evaluate(failPage.context, `return projectAsyncMutationsInFlight().length;`), 1,
+      `QUIET-5 (${label}): the lease is held while pending`);
+    failGate.releaseCompile();
+    await evaluateAsync(failPage.context, `try { await globalThis.__improve; } catch {} return 1;`);
+    equal(evaluate(failPage.context, `return projectAsyncMutationsInFlight().length;`), 0,
+      `QUIET-5 (${label}): and released afterwards — a failure never leaves CineBraid believing the project is busy`);
+    equal(evaluate(failPage.context, `return projectQuiescenceRefusal();`), "",
+      `QUIET-5 (${label}): so the project reports itself quiet again`);
+  }
+  /* A continuation that throws must release too. */
+  const throwPage = await render("#/create", rawFixture());
+  const threw = evaluate(throwPage.context, `
+    const lease = beginProjectAsyncMutation("A prompt compilation", "k");
+    let caught = false;
+    try { try { throw new Error("continuation failed"); } finally { lease.release(); } }
+    catch { caught = true; }
+    return { caught, inFlight: projectAsyncMutationsInFlight().length };`);
+  equal(threw.caught, true, "QUIET-5: a throwing continuation still propagates");
+  equal(threw.inFlight, 0, "QUIET-5: and its lease is released by the finally");
+
+  /* ---- QUIET-6: read-only asynchronous work does not block. ------------- */
+  const readPage = await render("#/create", rawFixture(), { fetch: quietHarness().hook });
+  const readOnly = await evaluateAsync(readPage.context, `
+    const before = projectAsyncMutationsInFlight().length;
+    /* A poll and a plain read: neither can mutate P when it resumes, so neither
+       takes a lease. */
+    await fetch("/api/scan");
+    await fetch("/api/config");
+    return { before, after: projectAsyncMutationsInFlight().length, refusal: projectQuiescenceRefusal() };`);
+  equal(readOnly.after, readOnly.before, "QUIET-6: read-only asynchronous work takes no lease");
+  equal(readOnly.refusal, "", "QUIET-6: and does not prevent a creation");
+
+  /* ---- QUIET-7: the fast path is unchanged. ----------------------------- */
+  const fast = quietHarness();
+  const fastPage = await render("#/create", rawFixture(), { fetch: fast.hook });
+  await evaluateAsync(fastPage.context, `await flushPendingProjectSave(); return 1;`);
+  evaluate(fastPage.context, `ACTIVE_PROJECT_SLUG = "film-a"; return 1;`);
+  equal(evaluate(fastPage.context, `return projectQuiescenceRefusal();`), "",
+    "QUIET-7: with nothing pending the project is quiescent");
+  await evaluateAsync(fastPage.context, `
+    setCreationStartPath("scratch"); setManualStartField("title", "Film B");
+    await startManualProject(); return 1;`);
+  const fastSeen = evaluate(fastPage.context, `return { title: P.meta.title, hash: location.hash,
+    fence: interactionFenceActive(), leases: projectAsyncMutationsInFlight().length };`);
+  equal(fast.creates().length, 1, "QUIET-7: one create");
+  equal(fast.switchCalls().length, 1, "QUIET-7: one conditional activation");
+  equal(fastSeen.title, "Film B", "QUIET-7: one synchronous install");
+  equal(fastSeen.hash, "#/production", "QUIET-7: and the window moves into it");
+  equal(fastSeen.fence, false, "QUIET-7: with the fence released");
+  equal(fastSeen.leases, 0, "QUIET-7: and no lease left behind");
+
+  note("QUIET a replacement begins only on a saved AND quiescent project: the shipped Blocking → Improve holds a named lease across its whole operation, a creation attempted while it is pending refuses without cancelling it, the build then lands, saves and lets the retry succeed; a refused completion keeps the refusal and still blocks; the fence takes the window before quiescence is read so there is no gap; leases release on success, failure and a throwing continuation; and read-only work never blocks");
+}
 async function main() {
   await b1_createRequiresConfirmedSave();
   await b2_manualStartIsolation();
@@ -1666,6 +1991,7 @@ async function main() {
   await active_clientActivatesOnlyOnCommit();
   await final_b1_atomicReplacement();
   await modal_commitIsModal();
+  await quiet_projectQuiescence();
   console.log(`AT1 boundary corrections: ${checks} checks passed`);
   for (const line of notes) console.log("  - " + line);
 }

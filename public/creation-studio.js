@@ -16,10 +16,45 @@ function guidedPromptOpKey(kind, shotId, frameId = "") {
 function guidedPromptOp(kind, shotId, frameId = "") {
   return GUIDED_PROMPT_OPS.get(guidedPromptOpKey(kind, shotId, frameId)) || null;
 }
+/* THE ONE SEAM EVERY INTERACTIVE PROMPT BUILD ALREADY PASSES THROUGH.
+ *
+ * All six shipped prompt builders — blocking, frame, motion, asset creation and
+ * entity state — mark themselves busy here BEFORE their await and clear
+ * themselves here AFTER the continuation has mutated the project. That bracket
+ * is exactly the window in which a completed request can land on a document a
+ * replacement is about to install over, which is the window independent review
+ * reproduced through Blocking → Improve.
+ *
+ * So the project-mutation lease is taken and released HERE, at the helper, and
+ * not in any of the six. `guidedPromptRequest()` would have been the tempting
+ * place and is the wrong one: it returns BEFORE its caller pushes the build, so
+ * a lease released there would report quiescence while the mutation was still
+ * queued.
+ *
+ * BUSY MEANS PENDING; ANYTHING ELSE MEANS DONE. A build that fails records an
+ * `error` status and a build that completes clears the key, so both release the
+ * lease through the same line — which is what makes this exception-safe without
+ * a `finally` in six places. Releasing by key first also means a restart under
+ * the same key replaces its lease instead of leaking a second one. */
 function setGuidedPromptOp(kind, shotId, frameId, value) {
   const key = guidedPromptOpKey(kind, shotId, frameId);
+  if (typeof releaseProjectAsyncMutationsByKey === "function") releaseProjectAsyncMutationsByKey(key);
+  if (value && value.status === "busy" && typeof beginProjectAsyncMutation === "function") {
+    beginProjectAsyncMutation(guidedPromptOpLabel(kind, value.action), key);
+  }
   if (value) GUIDED_PROMPT_OPS.set(key, value);
   else GUIDED_PROMPT_OPS.delete(key);
+}
+/* What to call this operation when a filmmaker is asked to wait for it. */
+function guidedPromptOpLabel(kind, action) {
+  const what = {
+    blocking: "Blocking prompt",
+    frame: "Frame prompt",
+    motion: "Motion prompt",
+    asset: "Reference prompt",
+    "asset-state": "Continuity-state prompt",
+  }[String(kind)] || "A prompt";
+  return `${what} ${String(action) === "improve" ? "improvement" : "compilation"}`;
 }
 async function guidedPromptRequest(url, options, timeoutMs, label) {
   const controller = new AbortController();
@@ -6077,6 +6112,22 @@ window.startManualProject = async () => {
      boundary every user action crosses, rather than on the controls. */
   beginInteractionFence("opening that project");
   try {
+    /* QUIESCENCE IS CHECKED AFTER THE FENCE IS UP, AND THE ORDER IS THE POINT.
+     *
+     * Checking first and acquiring the fence afterwards leaves exactly the gap
+     * this gate exists to close: a trusted press between the two starts new
+     * project-mutating work, and the transaction proceeds believing the project
+     * is quiet. Everything from beginInteractionFence() to this line is
+     * synchronous, so no interaction and no continuation can be admitted in
+     * between — by the time the answer is read, nothing new can have started,
+     * and the finally below releases the fence if the answer is no.
+     *
+     * WORK ALREADY RUNNING IS WAITED FOR, NOT CANCELLED. A prompt improvement
+     * that has been running for a minute is the filmmaker's, and discarding it
+     * to make room for a project creation would be the same class of loss this
+     * whole slice exists to prevent. */
+    const busy = typeof projectQuiescenceRefusal === "function" ? projectQuiescenceRefusal() : "";
+    if (busy) return refuse(busy, "manual-start:not-quiescent");
     return await startManualProjectCommit(draft, title, refuse, transition);
   } finally {
     /* RELEASED ON EVERY PATH — success, refusal, or a throw nobody predicted.
