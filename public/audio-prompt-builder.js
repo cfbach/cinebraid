@@ -17,6 +17,26 @@ window.buildSceneAudioPrompts = async (sceneId) => {
   if (!sc) return;
   const audio = v642SceneAudio(sc);
   const activityId = typeof v641StartManualActivity === "function" ? v641StartManualActivity("LOCAL AI · AUDIO PROMPT BUILDER", `Build music and ambience prompts — ${sc.title || sc.id}`, "Collecting scene intent, shot-level dialogue/SFX, existing prompts, and mix notes before sending them to the configured local AI.", { route: `#/scene/${sceneId}` }) : "";
+  /* THIS BUILD MUTATES THE PROJECT AFTER AN AWAIT, SO IT DECLARES ITSELF.
+   *
+   * The assistant round trip below is followed by writes to the scene's music,
+   * Suno, ambience and notes fields, a promptBuilds entry and dirty(). A manual
+   * project replacement that began while this was pending would install the new
+   * project over all of it — the closure review reproduced exactly that loss.
+   *
+   * The lease is taken BEFORE the request is dispatched, so there is no instant
+   * in which the operation is pending and undeclared, and it is held across the
+   * response, every field written, the build record and dirty() — released only
+   * once the save that makes those durable has settled. The `finally` covers the
+   * success path, a refused response and a rejected request alike: a failed audio
+   * build must never leave CineBraid believing the project is permanently busy.
+   *
+   * The other prompt builders take theirs through setGuidedPromptOp(), which this
+   * one does not use — so it takes the same lease from the same registry
+   * directly, rather than being taught to pretend it is a guided prompt op. */
+  const lease = typeof beginProjectAsyncMutation === "function"
+    ? beginProjectAsyncMutation("Scene audio prompt building", `scene-audio:${sceneId}`)
+    : null;
   try {
     if (activityId && typeof v641UpdateManualActivity === "function") v641UpdateManualActivity(activityId, { detail: "The scene audio brief was sent to the local AI. Waiting for separate Eleven Music, Suno, ambience/SFX, and mix-direction outputs." });
     const response = await fetch("/api/llm/build-scene-audio-prompts", {
@@ -43,5 +63,9 @@ window.buildSceneAudioPrompts = async (sceneId) => {
   } catch (error) {
     if (activityId && typeof v641FinishManualActivity === "function") v641FinishManualActivity(activityId, "failed", error?.message || "Audio prompt building failed.");
     toast(error?.message || "Audio prompt building failed");
+  } finally {
+    /* After the last project mutation and the save that makes it durable — and
+       on every failure path, so a refused build releases the project too. */
+    if (lease) lease.release();
   }
 };

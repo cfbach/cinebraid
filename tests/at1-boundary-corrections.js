@@ -1982,6 +1982,232 @@ async function quiet_projectQuiescence() {
 
   note("QUIET a replacement begins only on a saved AND quiescent project: the shipped Blocking → Improve holds a named lease across its whole operation, a creation attempted while it is pending refuses without cancelling it, the build then lands, saves and lets the retry succeed; a refused completion keeps the refusal and still blocks; the fence takes the window before quiescence is read so there is no gap; leases release on success, failure and a throwing continuation; and read-only work never blocks");
 }
+/* ===========================================================================
+   AUDIO — THE ONE UNCOVERED ASYNC CONTINUATION, CLOSED.
+
+   The finite closure review enumerated the shipped continuations that can mutate
+   `P` after an await and returned a single uncovered row:
+   buildSceneAudioPrompts(). BUILD / IMPROVE WITH AI posts to
+   /api/llm/build-scene-audio-prompts, awaits the assistant, and then writes the
+   scene's music, Suno, ambience and notes fields, pushes a promptBuilds entry and
+   calls dirty(). It took no lease, so a manual creation begun while it was
+   pending proceeded and Film B installed over the completed audio build.
+
+   It does not go through setGuidedPromptOp(), so it takes the same lease from the
+   same registry directly. Nothing else about B1 changes.
+   =========================================================================== */
+
+function audioHarness({ createSlug = "film-b", sourceSlug = "film-a" } = {}) {
+  const calls = [];
+  let activeProject = sourceSlug;
+  let saveStatus = 200;
+  let saveBody = null;
+  let releaseAudio = null;
+  const audioGate = new Promise((r) => { releaseAudio = r; });
+  let audioStatus = 200;
+  return {
+    calls,
+    releaseAudio: () => releaseAudio(),
+    setAudioStatus(status) { audioStatus = status; },
+    setSaveStatus(status, body) { saveStatus = status; saveBody = body || null; },
+    activeProject: () => activeProject,
+    creates: () => calls.filter((row) => row.url === "/api/projects/new"),
+    switchCalls: () => calls.filter((row) => row.url === "/api/projects/switch"),
+    saves: () => calls.filter((row) => row.method !== "GET" && /\/api\/projects\/[^/]+\/project$/.test(row.url)),
+    marker() { return calls.length; },
+    since(m) { return calls.slice(m); },
+    hook: async (url, options, respond) => {
+      const method = (options && options.method) || "GET";
+      const body = String((options && options.body) || "");
+      calls.push({ url, method, body });
+      /* THE HELD REQUEST — the exact one the reproduction holds. */
+      if (url === "/api/llm/build-scene-audio-prompts") {
+        await audioGate;
+        if (audioStatus !== 200) return respond({ error: "The assistant was unavailable." }, audioStatus);
+        return respond({
+          result: {
+            elevenLabsPrompt: "AUDIO-MUSIC-RESULT",
+            sunoPrompt: "AUDIO-SUNO-RESULT",
+            ambiencePrompt: "AUDIO-AMBIENCE-RESULT",
+            audioNotes: "AUDIO-NOTES-RESULT",
+            summary: "Model-ready scene audio prompts created.",
+            changes: ["Music prompt rewritten"],
+          },
+        }, 200);
+      }
+      if (url === "/api/projects/new") {
+        const request = (() => { try { return JSON.parse(body); } catch { return {}; } })();
+        if (request.activate !== false) activeProject = createSlug;
+        return respond({ ok: true, slug: createSlug }, 200);
+      }
+      if (url === "/api/projects/switch") {
+        const request = (() => { try { return JSON.parse(body); } catch { return {}; } })();
+        if (Object.prototype.hasOwnProperty.call(request, "expectedActiveProject")
+          && String(request.expectedActiveProject || "") !== activeProject) {
+          return respond({ ok: false, code: "PROJECT_ACTIVE_CONFLICT", error: "changed", activeProject }, 409);
+        }
+        activeProject = String(request.slug || activeProject);
+        return respond({ ok: true, slug: activeProject }, 200);
+      }
+      if (method === "GET" && /\/api\/projects\/[^/]+\/project$/.test(url)) {
+        const slug = url.split("/")[3];
+        const project = rawFixture();
+        project.meta.title = slug === createSlug ? "Film B" : "Film C";
+        return respond(project, 200, { "x-cinebraid-project-slug": slug, "x-cinebraid-project-revision": `rev-${slug}`, etag: `rev-${slug}` });
+      }
+      if (method === "GET" && url.startsWith("/api/scan")) {
+        return respond({ anchors: [], plates: [], props: [], vehicles: [], audio: [], media: [], shots: {} }, 200);
+      }
+      if (/\/api\/projects\/[^/]+\/(project|canon-transition)$/.test(url)) {
+        if (saveStatus === 200) {
+          return respond({ ok: true, revision: `rev-${calls.length}` }, 200, { "x-cinebraid-project-revision": `rev-${calls.length}` });
+        }
+        return respond(saveBody || { error: "refused", code: "PROJECT_VALIDATION_FAILED" }, saveStatus);
+      }
+      return null;
+    },
+  };
+}
+async function untilAudioInFlight(gate) {
+  for (let i = 0; i < 400; i++) {
+    if (gate.calls.some((row) => row.url === "/api/llm/build-scene-audio-prompts")) return;
+    await tick();
+  }
+  throw new Error("the scene audio request never reached the wire");
+}
+const sceneAudioOf = (context, sceneId) => evaluate(context, `
+  const scene = sceneById(${JSON.stringify(sceneId)}) || {};
+  const audio = scene.audio || {};
+  return { music: audio.music || "", suno: audio.sunoAltPrompt || "",
+           ambience: audio.ambience || "", notes: audio.notes || "",
+           builds: (audio.promptBuilds || []).length };`);
+
+async function audio_sceneAudioQuiescence() {
+  const sceneId = "SC-01";
+
+  /* ---- AUDIO-1: the exact reproduction, closed. ------------------------- */
+  const gate = audioHarness();
+  const page = await render("#/create", rawFixture(), { fetch: gate.hook });
+  await evaluateAsync(page.context, `await flushPendingProjectSave(); return 1;`);
+  evaluate(page.context, `ACTIVE_PROJECT_SLUG = "film-a"; return 1;`);
+  const before = sceneAudioOf(page.context, sceneId);
+
+  /* THE SHIPPED CONTINUATION, started and left pending. */
+  const started = evaluate(page.context, `
+    globalThis.__audio = buildSceneAudioPrompts(${JSON.stringify(sceneId)});
+    return { leases: projectAsyncMutationsInFlight().map((row) => row.label) };`);
+  await untilAudioInFlight(gate);
+  equal(started.leases.join("|"), "Scene audio prompt building",
+    "AUDIO-1: the scene audio build holds a named project-mutation lease before its request is pending");
+  const quiescence = evaluate(page.context, `return projectQuiescenceRefusal();`);
+  ok(/Scene audio prompt building is still running/.test(quiescence),
+    "AUDIO-1: and quiescence reports THAT operation by name: " + quiescence);
+
+  const marker = gate.marker();
+  await evaluateAsync(page.context, `
+    setCreationStartPath("scratch");
+    setManualStartField("title", "Film B");
+    await startManualProject();
+    return 1;`);
+  const refusedSeen = evaluate(page.context, `
+    const main = (document.getElementById("main")||{innerHTML:""}).innerHTML;
+    return { title: P.meta.title, slug: ACTIVE_PROJECT_SLUG, fence: interactionFenceActive(),
+             pending: (window.__cinebraidManualStartPending||{}).slug || "",
+             refusalText: (main.split("CineBraid did not make this change</b><span>")[1]||"").split("</span>")[0] };`);
+  equal(gate.since(marker).filter((row) => row.url === "/api/projects/new").length, 0,
+    "AUDIO-1: Film B is not created while the audio build is pending");
+  equal(gate.since(marker).filter((row) => row.url === "/api/projects/switch").length, 0,
+    "AUDIO-1: and nothing is activated");
+  equal(refusedSeen.title, "Render Harness Project", "AUDIO-1: Film A remains current");
+  equal(refusedSeen.pending, "", "AUDIO-1: nothing is left pending, because nothing was created");
+  equal(refusedSeen.fence, false, "AUDIO-1: the interaction fence released");
+  ok(/Scene audio prompt building is still running/.test(refusedSeen.refusalText),
+    "AUDIO-1: and the refusal names the audio operation: " + refusedSeen.refusalText);
+  equal(evaluate(page.context, `return projectAsyncMutationsInFlight().length;`), 1,
+    "AUDIO-1: the pending audio work is still alive — it was not cancelled");
+
+  /* THE RESPONSE LANDS. */
+  gate.releaseAudio();
+  await evaluateAsync(page.context, `try { await globalThis.__audio; } catch {} return 1;`);
+  const after = sceneAudioOf(page.context, sceneId);
+  equal(after.music, "AUDIO-MUSIC-RESULT", "AUDIO-1: the music prompt was written to Film A");
+  equal(after.suno, "AUDIO-SUNO-RESULT", "AUDIO-1: the Suno prompt too");
+  equal(after.ambience, "AUDIO-AMBIENCE-RESULT", "AUDIO-1: the ambience prompt too");
+  equal(after.notes, "AUDIO-NOTES-RESULT", "AUDIO-1: and the audio notes");
+  equal(after.builds, before.builds + 1, "AUDIO-1: with a promptBuilds record");
+  const saved = gate.saves().find((row) => String(row.body).includes("AUDIO-MUSIC-RESULT"));
+  ok(saved, "AUDIO-1: dirty() recorded it and the mutation reached storage");
+  equal(evaluate(page.context, `return projectAsyncMutationsInFlight().length;`), 0,
+    "AUDIO-1: the lease clears only afterwards");
+  equal(evaluate(page.context, `return projectQuiescenceRefusal();`), "",
+    "AUDIO-1: so the project is quiescent again");
+
+  /* AND THE RETRY SUCCEEDS. */
+  const marker2 = gate.marker();
+  await evaluateAsync(page.context, `
+    setManualStartField("title", "Film B");
+    await startManualProject();
+    return 1;`);
+  equal(gate.since(marker2).filter((row) => row.url === "/api/projects/new").length, 1,
+    "AUDIO-1: once saved and quiescent, the retry creates the project");
+  equal(evaluate(page.context, `return P.meta.title;`), "Film B", "AUDIO-1: and Film B opens");
+
+  /* ---- AUDIO-2: the completion's save is refused. ----------------------- */
+  for (const [label, status, body] of [
+    ["a 409", 409, { error: "This project changed in storage.", code: "PROJECT_REVISION_CONFLICT" }],
+    ["a 422", 422, { error: "Project failed validation.", code: "PROJECT_VALIDATION_FAILED" }],
+  ]) {
+    const refusedGate = audioHarness();
+    const page2 = await render("#/create", rawFixture(), { fetch: refusedGate.hook });
+    await evaluateAsync(page2.context, `await flushPendingProjectSave(); return 1;`);
+    evaluate(page2.context, `ACTIVE_PROJECT_SLUG = "film-a"; return 1;`);
+    evaluate(page2.context, `globalThis.__audio = buildSceneAudioPrompts(${JSON.stringify(sceneId)}); return 1;`);
+    await untilAudioInFlight(refusedGate);
+    refusedGate.setSaveStatus(status, body);
+    refusedGate.releaseAudio();
+    await evaluateAsync(page2.context, `try { await globalThis.__audio; } catch {} return 1;`);
+
+    const audioAfter = sceneAudioOf(page2.context, sceneId);
+    equal(audioAfter.music, "AUDIO-MUSIC-RESULT", `AUDIO-2 (${label}): the audio result is on Film A`);
+    equal(evaluate(page2.context, `return projectSaveSettled().settled;`), false,
+      `AUDIO-2 (${label}): and its save was refused`);
+    equal(evaluate(page2.context, `return projectAsyncMutationsInFlight().length;`), 0,
+      `AUDIO-2 (${label}): the lease released even though the save was refused`);
+
+    const marker3 = refusedGate.marker();
+    await evaluateAsync(page2.context, `
+      setCreationStartPath("scratch"); setManualStartField("title", "Film B");
+      await startManualProject(); return 1;`);
+    equal(refusedGate.since(marker3).filter((row) => row.url === "/api/projects/new").length, 0,
+      `AUDIO-2 (${label}): creation remains blocked — by the save refusal, not by a stranded lease`);
+    const stillA = evaluate(page2.context, `
+      const main = (document.getElementById("main")||{innerHTML:""}).innerHTML;
+      return { title: P.meta.title, settled: projectSaveSettled().settled,
+               refusal: main.indexOf('data-action-refusal="manual-start"') >= 0 };`);
+    equal(stillA.title, "Render Harness Project", `AUDIO-2 (${label}): Film A remains current`);
+    equal(sceneAudioOf(page2.context, sceneId).music, "AUDIO-MUSIC-RESULT",
+      `AUDIO-2 (${label}): the audio result remains`);
+    equal(stillA.settled, false, `AUDIO-2 (${label}): the refusal remains truthful`);
+    equal(stillA.refusal, true, `AUDIO-2 (${label}): and is on screen`);
+  }
+
+  /* ---- AUDIO-3: a failed build releases its lease. ---------------------- */
+  const failGate = audioHarness();
+  failGate.setAudioStatus(503);
+  const page3 = await render("#/create", rawFixture(), { fetch: failGate.hook });
+  evaluate(page3.context, `globalThis.__audio = buildSceneAudioPrompts(${JSON.stringify(sceneId)}); return 1;`);
+  await untilAudioInFlight(failGate);
+  equal(evaluate(page3.context, `return projectAsyncMutationsInFlight().length;`), 1,
+    "AUDIO-3: the lease is held while the request is pending");
+  failGate.releaseAudio();
+  await evaluateAsync(page3.context, `try { await globalThis.__audio; } catch {} return 1;`);
+  equal(evaluate(page3.context, `return projectAsyncMutationsInFlight().length;`), 0,
+    "AUDIO-3: and a refused build releases it — a failure never blocks creation forever");
+  equal(evaluate(page3.context, `return projectQuiescenceRefusal();`), "",
+    "AUDIO-3: so the project reports itself quiescent again");
+
+  note("AUDIO the scene audio prompt builder takes the same project-mutation lease before its request is pending and holds it across the response, every field it writes, its promptBuilds record, dirty() and the save: a creation attempted meanwhile is refused by name without cancelling it, the result then lands and reaches storage, the retry succeeds, a refused save keeps the result and the refusal, and a failed build releases the lease");
+}
 async function main() {
   await b1_createRequiresConfirmedSave();
   await b2_manualStartIsolation();
@@ -1992,6 +2218,7 @@ async function main() {
   await final_b1_atomicReplacement();
   await modal_commitIsModal();
   await quiet_projectQuiescence();
+  await audio_sceneAudioQuiescence();
   console.log(`AT1 boundary corrections: ${checks} checks passed`);
   for (const line of notes) console.log("  - " + line);
 }

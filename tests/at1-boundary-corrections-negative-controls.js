@@ -1453,6 +1453,142 @@ function ncq_seamNotAList() {
     "NC-QUIET: quiescence is answered from the registry, not from a named operation");
   note("NC-QUIET the lease is taken and released at the shared prompt-op helper, which names no operation, and quiescence is answered from the registry");
 }
+/* ===========================================================================
+   NC-AUDIO — THE SCENE-AUDIO LEASE, REMOVED.
+
+   One control, and it restores the closure review's exact reproduction: a pending
+   scene-audio build, a manual creation that proceeds anyway, the assistant
+   response mutating Film A during the transaction, Film B installing over it, and
+   the audio result and its build record going with it.
+
+   Only the scene-audio lease is removed. Every other lease, the modal fence, the
+   certificate, the conditional activation and the install ownership check are
+   left exactly as shipped — so what this proves is that THIS row was load-bearing.
+   =========================================================================== */
+
+const NCA_AUDIO_ANCHOR = `  const lease = typeof beginProjectAsyncMutation === "function"
+    ? beginProjectAsyncMutation("Scene audio prompt building", \`scene-audio:\${sceneId}\`)
+    : null;`;
+const NCA_AUDIO_BREAK = `  const lease = null;`;
+
+function audioGateNC({ createSlug = "film-b", sourceSlug = "film-a" } = {}) {
+  const calls = [];
+  let activeProject = sourceSlug;
+  let releaseAudio = null;
+  let releaseSwitch = null;
+  const audioGate = new Promise((r) => { releaseAudio = r; });
+  const switchGate = new Promise((r) => { releaseSwitch = r; });
+  let holdSwitch = false;
+  return {
+    calls,
+    releaseAudio: () => releaseAudio(),
+    releaseSwitch: () => releaseSwitch(),
+    holdSwitch() { holdSwitch = true; },
+    creates: () => calls.filter((row) => row.url === "/api/projects/new"),
+    switchCalls: () => calls.filter((row) => row.url === "/api/projects/switch"),
+    hook: async (url, options, respond) => {
+      const method = (options && options.method) || "GET";
+      const body = String((options && options.body) || "");
+      calls.push({ url, method, body });
+      if (url === "/api/llm/build-scene-audio-prompts") {
+        await audioGate;
+        return respond({
+          result: {
+            elevenLabsPrompt: "AUDIO-MUSIC-RESULT", sunoPrompt: "AUDIO-SUNO-RESULT",
+            ambiencePrompt: "AUDIO-AMBIENCE-RESULT", audioNotes: "AUDIO-NOTES-RESULT",
+            summary: "Model-ready scene audio prompts created.", changes: [],
+          },
+        }, 200);
+      }
+      if (url === "/api/projects/new") {
+        const request = (() => { try { return JSON.parse(body); } catch { return {}; } })();
+        if (request.activate !== false) activeProject = createSlug;
+        return respond({ ok: true, slug: createSlug }, 200);
+      }
+      if (url === "/api/projects/switch") {
+        const request = (() => { try { return JSON.parse(body); } catch { return {}; } })();
+        if (Object.prototype.hasOwnProperty.call(request, "expectedActiveProject")
+          && String(request.expectedActiveProject || "") !== activeProject) {
+          if (holdSwitch) await switchGate;
+          return respond({ ok: false, code: "PROJECT_ACTIVE_CONFLICT", error: "changed", activeProject }, 409);
+        }
+        activeProject = String(request.slug || activeProject);
+        if (holdSwitch) await switchGate;
+        return respond({ ok: true, slug: activeProject }, 200);
+      }
+      if (method === "GET" && /\/api\/projects\/[^/]+\/project$/.test(url)) {
+        const slug = url.split("/")[3];
+        const project = rawFixture();
+        project.meta.title = slug === createSlug ? "Film B" : "Film C";
+        return respond(project, 200, { "x-cinebraid-project-slug": slug, "x-cinebraid-project-revision": `rev-${slug}`, etag: `rev-${slug}` });
+      }
+      if (method === "GET" && url.startsWith("/api/scan")) {
+        return respond({ anchors: [], plates: [], props: [], vehicles: [], audio: [], media: [], shots: {} }, 200);
+      }
+      if (/\/api\/projects\/[^/]+\/(project|canon-transition)$/.test(url)) {
+        return respond({ ok: true, revision: `rev-${calls.length}` }, 200, { "x-cinebraid-project-revision": `rev-${calls.length}` });
+      }
+      return null;
+    },
+  };
+}
+
+async function nca_sceneAudioLeaseRemoved() {
+  anchorIn("public/audio-prompt-builder.js", NCA_AUDIO_ANCHOR, "NC-AUDIO");
+  const gate = audioGateNC();
+  gate.holdSwitch();
+  const page = await render("#/create", rawFixture(), {
+    fetch: gate.hook,
+    mutateSource: replacing("audio-prompt-builder.js", NCA_AUDIO_ANCHOR, NCA_AUDIO_BREAK),
+  });
+  await evaluateAsync(page.context, `await flushPendingProjectSave(); return 1;`);
+  evaluate(page.context, `ACTIVE_PROJECT_SLUG = "film-a"; return 1;`);
+
+  /* 1-3. The scene audio build is running, its response held. */
+  evaluate(page.context, `globalThis.__audio = buildSceneAudioPrompts("SC-01"); return 1;`);
+  for (let i = 0; i < 400 && !gate.calls.some((row) => row.url === "/api/llm/build-scene-audio-prompts"); i++) await tick();
+  const undeclared = evaluate(page.context, `return {
+    leases: projectAsyncMutationsInFlight().length, refusal: projectQuiescenceRefusal() };`);
+  equal(undeclared.leases, 0, "NC-AUDIO REPRODUCED: the pending audio build declares nothing");
+  equal(undeclared.refusal, "",
+    "NC-AUDIO REPRODUCED: so the project reports itself quiescent while the assistant round trip is open");
+
+  /* 4. The creation proceeds anyway. */
+  evaluate(page.context, `
+    setCreationStartPath("scratch");
+    setManualStartField("title", "Film B");
+    globalThis.__press = startManualProject();
+    return 1;`);
+  for (let i = 0; i < 400 && gate.switchCalls().length === 0; i++) await tick();
+  equal(gate.creates().length, 1,
+    "NC-AUDIO REPRODUCED: Film B is created while the audio build is still pending");
+
+  /* 5-6. The response lands during the transaction and mutates Film A. */
+  gate.releaseAudio();
+  await evaluateAsync(page.context, `try { await globalThis.__audio; } catch {} return 1;`);
+  const mutated = evaluate(page.context, `
+    const audio = (sceneById("SC-01") || {}).audio || {};
+    return { music: audio.music || "", builds: (audio.promptBuilds || []).length };`);
+  equal(mutated.music, "AUDIO-MUSIC-RESULT",
+    "NC-AUDIO REPRODUCED: the assistant response wrote the audio prompts onto Film A mid-transaction");
+  ok(mutated.builds > 0, "NC-AUDIO REPRODUCED: with its build record");
+
+  /* 7. And Film B installs over it. */
+  gate.releaseSwitch();
+  await evaluateAsync(page.context, `try { await globalThis.__press; } catch {} return 1;`);
+  const lost = evaluate(page.context, `
+    const audio = (sceneById("SC-01") || {}).audio || {};
+    return { title: P.meta.title, music: audio.music || "", builds: (audio.promptBuilds || []).length };`);
+  equal(lost.title, "Film B", "NC-AUDIO REPRODUCED: Film B installed over the newer Film A");
+  equal(lost.music, "", "NC-AUDIO REPRODUCED: and the audio result is gone with it");
+  equal(lost.builds, 0, "NC-AUDIO REPRODUCED: including its build record");
+
+  /* AND THE GUARANTEE GOES RED AGAINST IT. */
+  await mustFail("NC-AUDIO", "Film B is not created while the audio build is pending", async () => {
+    equal(gate.creates().length, 0, "Film B is not created while the audio build is pending");
+  });
+  note("NC-AUDIO removing only the scene-audio lease restores the closure review's exact reproduction: the pending assistant response mutates Film A during the transaction and Film B installs over the audio result and its build record");
+}
 async function main() {
   await nc_b1_resolvedFlushIsNotSaved();
   await nc_b2_openProjectWriterReturns();
@@ -1479,6 +1615,7 @@ async function main() {
   await ncq5_partialQuiescence();
   await ncq6_dirtySuppression();
   ncq_seamNotAList();
+  await nca_sceneAudioLeaseRemoved();
   console.log(`AT1 boundary corrections negative controls: ${checks} checks passed`);
   for (const line of notes) console.log("  - " + line);
 }
