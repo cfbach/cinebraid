@@ -249,8 +249,39 @@
         <article data-mi-domain="ledger"><span>Durable media identity</span>${fact(row.identity.ledger, { unknown: "No durable identity yet" })}</article>
         <article data-mi-domain="library"><span>Project library row</span>${fact(row.identity.library, { unknown: "Not a library row" })}</article>
         <article data-mi-domain="path"><span>Stored at</span><b>${esc(row.identity.path || "Unknown location")}</b></article>
+        ${localFileMarkup(row)}
       </div>
     </section>`;
+  }
+
+  /* LOCAL FILE AFFORDANCES V1 — a QUIET slot beside the identity domains, which is
+     where it belongs: reaching the file on disk is a fact about identity, not a
+     production decision.
+
+     Deliberately NOT in the action bar. That row carries approve / reject /
+     restore — acts that change what a production believes — and putting `Show in
+     Explorer` beside them would give a file-manager convenience the same weight as
+     an approval. It is also why these two are not added to the projection's
+     `actions` list: public/shared-production-media.js decides which DECISIONS are
+     valid on a piece of media, and revealing a file is not one of them.
+
+     The slot renders itself from the shared contract and hydrates after the paint.
+     This file learns no path and performs no fetch. */
+  function localFileMarkup(row) {
+    const local = window.CineBraidLocalFile;
+    if (!local || typeof local.localFileSlotMarkup !== "function") return "";
+    return local.localFileSlotMarkup(row, { label: "On this computer" });
+  }
+
+  /* Called after every paint of the Inspector, including the repaint a decision
+     triggers, because the modal is rebuilt wholesale each time and the slot that
+     was hydrated belonged to the markup that has just been replaced. Fire and
+     forget: whether a file is on disk must never hold up a modal. */
+  function hydrateLocalFile() {
+    const local = window.CineBraidLocalFile;
+    if (!local || typeof local.hydrateLocalFileSlots !== "function") return;
+    const modal = document.getElementById("modal");
+    Promise.resolve(local.hydrateLocalFileSlots(modal || document)).catch(() => {});
   }
 
   /* PRODUCTION STATUS, and the reason the three blocks are three blocks. A single
@@ -440,6 +471,7 @@
        resurface behind a later modal. */
     INSPECTED_KEY = row.key;
     openModal(inspectorMarkup(row));
+    hydrateLocalFile();
     return true;
   }
 
@@ -454,6 +486,7 @@
     const row = recordFor(INSPECTED_KEY);
     if (!row) return false;
     openModal(inspectorMarkup(row));
+    hydrateLocalFile();
     return true;
   }
 

@@ -472,6 +472,8 @@ async function main() {
     "launch-language-convergence-real-browser.py",
     "launch-language-convergence.js",
     "live-activity.js",
+    "local-file-affordances-negative-controls.js",
+    "local-file-affordances.js",
     "local-only-policy.js",
     "manual-first-parity.js",
     "manual-first-real-browser.py",

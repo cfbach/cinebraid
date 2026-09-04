@@ -63,6 +63,12 @@ const { createRequestBoundary, createRequestPosture } = require("./request-origi
    module and never to media-assets/-store/-indexer/-verify directly, so there is
    one answer to when the identity ledger changes and who changed it. */
 const MediaAssetService = require("./media-asset-service");
+/* Local File Affordances V1. Resolves a durable media identity to an authoritative
+   path inside the project it belongs to, and opens Explorer on it. server.js hands
+   it an identity and a contained slug and never a filesystem path — see that
+   module's header for why there is deliberately no path-taking endpoint. */
+const LocalFileAffordance = require("./local-file-affordance");
+const { isLoopbackRequest } = require("./loopback-request");
 
 const app = express();
 const PORT = process.env.PORT || 4477;
@@ -2223,6 +2229,107 @@ app.get("/api/scan", (req, res) => {
   noteProjectActivity("scan");
   res.json(scan);
 });
+
+/* ---- Local File Affordances V1 -------------------------------------------
+
+   Three routes, and the shape of all three is the same: a DURABLE MEDIA IDENTITY
+   plus an optional contained project slug in, an authoritative answer out.
+
+   THERE IS DELIBERATELY NO ENDPOINT THAT TAKES A FILESYSTEM PATH. `key` is
+   `asset:<ledger id>` or `path:<project-relative media path>` — the same key the
+   production-media projection already mints — and the reach it grants is exactly
+   the reach GET /assets/<path> already grants. The project root is resolved here,
+   from a slug proven to be one segment below the projects root, so an identity
+   belonging to Film A cannot be revealed through Film B's root by naming a file
+   they happen to share.
+
+   LOOPBACK ONLY, whatever the bind address is. `--lan` exists so a phone or a
+   second workstation can reach the workspace, and both of these operations act on
+   the computer CineBraid is RUNNING on: revealing opens a window on that desktop,
+   and copying hands back that machine's directory layout. Neither is meaningful to
+   a remote viewer and the first is a window nobody asked for, so the peer socket
+   address decides — the same rule the account-connection routes already use, and
+   for the same reason. */
+function localFileScope(req) {
+  const requested = String(req.body?.projectSlug ?? req.body?.project ?? "").trim();
+  if (!requested) return { ok: true, slug: activeSlug() || "" };
+  const slug = containedProjectSlug(requested);
+  if (!slug || !fs.existsSync(path.join(projectsRoot(), slug, "project.json")))
+    return { ok: false, status: 404, error: "No such project.", code: "PROJECT_NOT_FOUND" };
+  return { ok: true, slug };
+}
+function requireLocalMachine(req, res) {
+  if (isLoopbackRequest(req)) return true;
+  res.status(403).json({
+    error: "Files can only be opened on the computer running CineBraid.",
+    code: "LOOPBACK_REQUIRED",
+  });
+  return false;
+}
+/* WHAT IT IS, AND WHERE. The one resolution both `Show in Explorer` and `Copy file
+   path` read, so the two can never disagree about which file they mean. It reveals
+   nothing a caller could not already fetch — it names, for media this client is
+   entitled to, where that media is on this machine. */
+app.post("/api/local-file/resolve", (req, res) => {
+  if (!requireLocalMachine(req, res)) return;
+  const scope = localFileScope(req);
+  if (!scope.ok) return res.status(scope.status).json({ error: scope.error, code: scope.code });
+  const answer = LocalFileAffordance.localFileAffordance({
+    projectsRoot: projectsRoot(),
+    slug: scope.slug,
+    key: String(req.body?.key || ""),
+  });
+  res.json({ ...answer, slug: scope.slug });
+});
+app.post("/api/local-file/reveal", async (req, res) => {
+  if (!requireLocalMachine(req, res)) return;
+  const scope = localFileScope(req);
+  if (!scope.ok) return res.status(scope.status).json({ error: scope.error, code: scope.code });
+  try {
+    const result = await LocalFileAffordance.revealLocalFile({
+      projectsRoot: projectsRoot(),
+      slug: scope.slug,
+      key: String(req.body?.key || ""),
+    });
+    /* A refusal is a 200 carrying the truth, not a 500. "This file is no longer at
+       its recorded local path" is an ANSWER the surface has to render, and an error
+       status would send it down a generic failure path that prints something
+       vaguer than what CineBraid actually knows. */
+    res.json({ ...result, slug: scope.slug });
+  } catch (error) {
+    res.status(500).json({
+      ok: false,
+      state: "unresolvable",
+      error: "CineBraid could not open Windows Explorer.",
+      code: error?.code || "LOCAL_FILE_LAUNCH_FAILED",
+    });
+  }
+});
+/* PROJECT-SCOPED, AND RESOLVED FROM THE SLUG. Never rebuilt from the project's
+   title: two projects may share a title, and only one of them is the folder the
+   filmmaker is working in. */
+app.post("/api/local-file/project-folder", async (req, res) => {
+  if (!requireLocalMachine(req, res)) return;
+  const scope = localFileScope(req);
+  if (!scope.ok) return res.status(scope.status).json({ error: scope.error, code: scope.code });
+  if (!scope.slug)
+    return res.json({ ok: false, state: "unresolvable", message: "No project is open.", slug: "" });
+  try {
+    const result = await LocalFileAffordance.openProjectFolder({
+      projectsRoot: projectsRoot(),
+      slug: scope.slug,
+    });
+    res.json({ ...result, slug: scope.slug });
+  } catch (error) {
+    res.status(500).json({
+      ok: false,
+      state: "unresolvable",
+      error: "CineBraid could not open Windows Explorer.",
+      code: error?.code || "LOCAL_FILE_LAUNCH_FAILED",
+    });
+  }
+});
+
 app.post(
   "/api/shots/:id/take",
   express.raw({ type: "*/*", limit: "400mb" }),

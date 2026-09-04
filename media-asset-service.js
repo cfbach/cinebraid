@@ -481,6 +481,50 @@ function identityIndex(options = {}) {
   return index;
 }
 
+/* LOCAL FILE AFFORDANCES V1 — the inverse projection: one durable assetId -> the
+ * project-relative path the ledger recorded for it.
+ *
+ * WHY IT IS HERE rather than in the module that needs it. C1 made this file the
+ * single production importer of the ledger and pinned that count at one
+ * (tests/media-asset-activation-boundary.js). A file-reveal feature that read the
+ * sidecar for itself would be a second answer to "who reads the ledger", which is
+ * exactly the property activation was granted in exchange for. So the reveal seam
+ * asks here, and the ledger stays behind one door.
+ *
+ * WHY IT IS NOT identityIndex() INVERTED. That projection SKIPS rows marked
+ * `storage.missing`, deliberately, so a retained identity can never shadow a live
+ * file at the same path. Inverting it would therefore answer "unknown" for exactly
+ * the case this feature has to tell the truth about — a durable record whose file
+ * has gone — and the surface would say "CineBraid cannot locate this" when the
+ * honest answer is "the file is no longer at its recorded local path". The flag is
+ * reported instead of filtered, and the caller decides.
+ *
+ * A PROJECTION, granting nothing. It reads, it cannot write, it reads no media
+ * bytes, and it never throws: an unreadable or absent ledger answers `known:false`,
+ * which is the normal state of every project that has not yet had a pass. */
+function assetLocation(options = {}) {
+  const unknown = { known: false, path: "", missing: false };
+  const assetId = String(options.assetId || "").trim();
+  if (!assetId) return unknown;
+  const projectDir = resolveProjectDir(options.projectsRoot, options.slug);
+  if (!projectDir) return unknown;
+  try {
+    const loaded = readLedger(projectDir);
+    if (!loaded.exists) return unknown;
+    const row = (loaded.ledger.assets || []).find(
+      (asset) => asset && String(asset.assetId || "") === assetId,
+    );
+    if (!row || !row.storage) return unknown;
+    const storagePath = String(row.storage.path || "");
+    if (!storagePath) return unknown;
+    return { known: true, path: storagePath, missing: row.storage.missing === true };
+  } catch {
+    /* LedgerUnreadableError and anything else. A file action must not fail
+       because a sidecar is busy; it degrades to "no durable identity here". */
+    return unknown;
+  }
+}
+
 /* Deliberate, bounded, caller-named byte reads. The escalation path for a caller
    that wants a digest badly enough to pay for it, and what the rename proofs use
    to establish byte identity before renaming. */
@@ -571,6 +615,7 @@ module.exports = {
   activateProject,
   activationStatus,
   anchorBeforeRename,
+  assetLocation,
   chooseVerificationTargets,
   countUnverified,
   identityIndex,

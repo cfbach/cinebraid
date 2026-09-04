@@ -122,6 +122,12 @@ const nodeSuites = [
   "check:media-asset-verify",
   "check:media-asset-activation",
   "check:media-asset-activation-negative",
+  /* Local File Affordances V1. Listed beside the MediaAsset activation suites
+     because they read the same durable identity from the other side: those prove
+     the ledger records which file is which, these prove a filmmaker can reach that
+     exact file — and that CineBraid says so plainly when it cannot. */
+  "check:local-file",
+  "check:local-file-negative",
   "check:media-disposition",
   "check:media-disposition-negative",
   "check:shot-media-identity",

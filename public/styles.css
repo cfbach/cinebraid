@@ -5568,6 +5568,23 @@ body[data-focused-workspace="1"] .guided-frame-body,
 .mi-identity-domains span{display:block;font:600 9px var(--mono);letter-spacing:.09em;text-transform:uppercase;color:var(--muted)}
 .mi-identity-domains b{display:block;margin-top:3px;font:600 11px var(--mono);overflow-wrap:anywhere}
 
+/* LOCAL FILE AFFORDANCES V1. Quiet by construction: the slot sits with the identity
+   domains because reaching the file is a fact about identity, not a production
+   decision, and it borrows their dashed-panel treatment rather than introducing a
+   look of its own. Hierarchy and art direction belong to the later Surface Polish
+   pass; nothing here competes with the approval treatment above it. */
+.local-file-slot{grid-column:1/-1}
+.local-file-body{display:flex;flex-direction:column;gap:5px;margin-top:3px}
+.local-file-body b{display:block;font:600 11px var(--mono);overflow-wrap:anywhere}
+.local-file-body .local-file-here{color:var(--fg)}
+.local-file-body .local-file-gone{color:var(--amber)}
+.local-file-body .local-file-remote,.local-file-body .local-file-pending{color:var(--muted)}
+.local-file-path{display:block;font:500 10px var(--mono);color:var(--muted);overflow-wrap:anywhere;user-select:all}
+.local-file-path-gone{text-decoration:line-through;opacity:.75}
+.local-file-note{display:block;color:var(--muted);font-size:10px;line-height:1.45}
+.local-file-actions{display:flex;flex-wrap:wrap;gap:6px;margin-top:2px}
+.local-file-btn{font-size:11px;padding:4px 9px}
+
 /* PRODUCTION STATUS. Four blocks, and the human decision is the only one that reads
    as authority — it is the widest, it carries the accent border when approved, and
    nothing else in the grid can take that treatment. */
