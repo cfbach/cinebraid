@@ -32,7 +32,11 @@ const ROOT = path.join(__dirname, "..");
 const Affordance = require(path.join(ROOT, "local-file-affordance"));
 const Shared = require(path.join(ROOT, "public", "shared-local-file"));
 
-const TEMP = fs.mkdtempSync(path.join(os.tmpdir(), "cinebraid-localfile-"));
+/* Canonicalised at the source. P1 makes the resolver answer with the PHYSICAL
+   project directory, and %TEMP% is itself under a reparse point on some Windows
+   installs — so a fixture rooted at the uncanonicalised temp path would compare
+   unequal for a reason that has nothing to do with what is being tested. */
+const TEMP = fs.realpathSync.native(fs.mkdtempSync(path.join(os.tmpdir(), "cinebraid-localfile-")));
 const PROJECTS_ROOT = path.join(TEMP, "projects");
 const CONFIG_PATH = path.join(TEMP, "config.json");
 
@@ -158,6 +162,43 @@ writeLedger(A_DIR, [
   { assetId: ASSET_A_FLAGGED, path: "shots/S-01/takes/S-01_FLAGGED.png", missing: true },
 ]);
 writeLedger(B_DIR, [{ assetId: ASSET_B_ANCHOR, path: "anchors/CHAR-RHEA.png" }]);
+
+/* ---------------------------------------------------------------------------
+   P1 FIXTURE — the two reparse points at the PROJECT-ROOT boundary.
+
+   `film-alias` and `film-escape` are junctions, not directories. Both carry a
+   readable project.json through the link (the outside one is a complete project),
+   so the server's own scope check passes and the request reaches the resolver —
+   which is the code path that has to refuse. A fixture whose junction failed the
+   scope check earlier would prove nothing about the boundary.
+
+   Junction creation needs no privilege on Windows, but it can be refused by a
+   locked-down environment, so it is recorded rather than assumed and the P1
+   sections skip with a stated reason if it did not happen. */
+const OUTSIDE_PROJECT = path.join(TEMP, "outside-project");
+const FILM_ALIAS = "film-alias";
+const FILM_ESCAPE = "film-escape";
+const ALIAS_DIR = path.join(PROJECTS_ROOT, FILM_ALIAS);
+const ESCAPE_DIR = path.join(PROJECTS_ROOT, FILM_ESCAPE);
+const ASSET_OUTSIDE = "asset-" + "7".repeat(32);
+
+makeProject(OUTSIDE_PROJECT, "Outside The Root");
+writeLedger(OUTSIDE_PROJECT, [{ assetId: ASSET_OUTSIDE, path: "anchors/CHAR-RHEA.png" }]);
+
+let JUNCTIONS = { cross: false, escape: false, why: "" };
+try {
+  fs.symlinkSync(A_DIR, ALIAS_DIR, "junction");
+  JUNCTIONS.cross = true;
+} catch (error) {
+  JUNCTIONS.why = String(error && error.code);
+}
+try {
+  fs.symlinkSync(OUTSIDE_PROJECT, ESCAPE_DIR, "junction");
+  JUNCTIONS.escape = true;
+} catch (error) {
+  JUNCTIONS.why = String(error && error.code);
+}
+
 fs.writeFileSync(CONFIG_PATH, JSON.stringify({
   activeProject: FILM_A,
   assistant: { provider: "ollama", visionProvider: "ollama" },
@@ -696,11 +737,244 @@ async function httpSeam() {
     assert.strictEqual(revealEscape.data.ok, false);
     assert.strictEqual(revealEscape.data.state, "unresolvable");
     ok("a traversal key through the reveal route opens nothing");
+
+    /* P1 OVER HTTP — the routes themselves, which is where the blocked candidate
+       returned Film A's absolute path and dispatched Explorer.
+
+       These call the REAL reveal and project-folder routes with no stub, which is
+       safe precisely because the assertion is that nothing launches: a refusal
+       happens before the launcher is reached. If this correction regressed, the
+       assertion fails AND a stray Explorer window is the visible symptom. */
+    for (const [label, slug, key, leaked] of [
+      ["P1-A cross-project", FILM_ALIAS, `asset:${ASSET_A_ANCHOR}`, A_DIR],
+      ["P1-B outside-root", FILM_ESCAPE, `asset:${ASSET_OUTSIDE}`, OUTSIDE_PROJECT],
+    ]) {
+      const made = slug === FILM_ALIAS ? JUNCTIONS.cross : JUNCTIONS.escape;
+      if (!made) continue;
+      /* The scope check passes — project.json is readable through the junction — so
+         the request really does reach the resolver. */
+      const scoped = await post("/api/local-file/resolve", { key, projectSlug: slug });
+      assert.strictEqual(scoped.status, 200, `${label}: the request must reach the resolver, not stop at scope`);
+      assert.strictEqual(scoped.data.state, "unresolvable", `${label}: the route must refuse`);
+      assert.strictEqual(scoped.data.path || "", "", `${label}: the route must return no absolute path`);
+      assert.ok(!JSON.stringify(scoped.data).toLowerCase().includes(leaked.toLowerCase()),
+        `${label}: the route must not disclose ${leaked}`);
+
+      const revealed = await post("/api/local-file/reveal", { key, projectSlug: slug });
+      assert.strictEqual(revealed.data.ok, false, `${label}: reveal must refuse`);
+      assert.strictEqual(revealed.data.path || "", "", `${label}: reveal must return no path`);
+
+      const folder = await post("/api/local-file/project-folder", { projectSlug: slug });
+      assert.strictEqual(folder.data.ok, false, `${label}: Open project folder must refuse`);
+      assert.strictEqual(folder.data.path || "", "", `${label}: Open project folder must return no path`);
+      assert.ok(!JSON.stringify(folder.data).toLowerCase().includes(leaked.toLowerCase()),
+        `${label}: Open project folder must not disclose ${leaked}`);
+    }
+    if (JUNCTIONS.cross || JUNCTIONS.escape)
+      ok("P1 over HTTP: resolve, reveal and project-folder all refuse a junctioned project root, disclose no path and launch nothing");
+
+    /* P1-C over HTTP: the ordinary project still answers. */
+    const ordinary = await post("/api/local-file/resolve", { key: `asset:${ASSET_A_FRAME}`, projectSlug: FILM_A });
+    assert.strictEqual(ordinary.data.state, "available");
+    assert.strictEqual(ordinary.data.path, path.join(A_DIR, "shots", "S-01", "takes", "S-01_FRAME_A.png"));
+    ok("P1-C over HTTP: an ordinary physical project still resolves to its exact file");
   } finally {
     const dead = new Promise((resolve) => child.once("exit", resolve));
     child.kill();
     await dead;
   }
+}
+
+/* ===========================================================================
+   12. P1 — A REPARSE POINT AT THE PROJECT-ROOT BOUNDARY.
+
+   THE FROZEN INVARIANT:
+
+       A PROJECT SLUG IDENTIFIES ITS OWN PHYSICAL DIRECTORY UNDERNEATH THE
+       AUTHORITATIVE PROJECTS ROOT. A SYMLINK OR JUNCTION AT THE PROJECT-ROOT
+       BOUNDARY MUST NOT REDIRECT THAT IDENTITY.
+
+   What shipped in the blocked candidate validated the project directory
+   LEXICALLY, which is a statement about a NAME. `projects/film-b` as a junction
+   passed every one of those tests and named `projects/film-a` — so the seam read
+   Film A's ledger under Film B's identity, returned Film A's absolute path, and
+   dispatched Explorer. Measured, not theorised: both cases answered `available`.
+
+   Every assertion here is named `P1-x` so that a regression to lexical-only
+   validation fails at a sentence that says what broke. */
+async function projectRootJunctions() {
+  section("12. P1 — a junction at the project-root boundary redirects nothing");
+
+  if (!JUNCTIONS.cross && !JUNCTIONS.escape) {
+    ok(`(P1 junction proofs skipped — this environment refused to create one: ${JUNCTIONS.why})`);
+    return;
+  }
+
+  /* A spawner that records instead of launching. Every adversarial case below goes
+     through the real reveal path; none of them opens a window. */
+  const launches = [];
+  const spy = (file, args) => { launches.push({ file, args }); return {}; };
+
+  /* ---- P1-A: cross-project root junction ---- */
+  if (JUNCTIONS.cross) {
+    assert.ok(fs.lstatSync(ALIAS_DIR).isSymbolicLink(), "fixture invalid: film-alias must be a junction");
+    assert.ok(fs.existsSync(path.join(ALIAS_DIR, "project.json")),
+      "fixture invalid: the junction must carry a readable project.json, or the refusal proves nothing");
+    assert.strictEqual(
+      fs.realpathSync.native(ALIAS_DIR).toLowerCase(), A_DIR.toLowerCase(),
+      "fixture invalid: film-alias must physically be film-a");
+
+    /* The project directory is refused BEFORE any ledger read. */
+    const resolved = require(path.join(ROOT, "media-asset-service"))
+      .resolvePhysicalProjectDir(PROJECTS_ROOT, FILM_ALIAS);
+    assert.strictEqual(resolved.ok, false, "P1-A project-directory validation must refuse a cross-project junction");
+    assert.strictEqual(resolved.reason, "project-root-redirected");
+    assert.strictEqual(resolved.realDir, "", "P1-A a refused project directory yields no directory at all");
+    ok("P1-A project-directory validation refuses `film-alias -> film-a` and names the reason");
+
+    /* The ledger is never consulted: Film A's id does not answer under the alias. */
+    const located = require(path.join(ROOT, "media-asset-service")).assetLocation({
+      projectsRoot: PROJECTS_ROOT, slug: FILM_ALIAS, assetId: ASSET_A_ANCHOR,
+    });
+    assert.strictEqual(located.known, false, "P1-A the ledger must not be read through a redirected project root");
+    ok("P1-A assetLocation refuses too — Film A's ledger is not read under Film B's identity");
+
+    /* The affordance refuses, and discloses no path. */
+    const answer = Affordance.localFileAffordance({
+      projectsRoot: PROJECTS_ROOT, slug: FILM_ALIAS, key: `asset:${ASSET_A_ANCHOR}`,
+    });
+    assert.strictEqual(answer.state, "unresolvable", "P1-A a Film A asset must not resolve under an aliased slug");
+    assert.strictEqual(answer.reason, "project-root-redirected");
+    assert.strictEqual(answer.path, "", "P1-A no absolute path may be returned");
+    assert.strictEqual(answer.recordedPath, "", "P1-A and none may leak through recordedPath either");
+    ok("P1-A Show in Explorer / Copy file path resolve to nothing — no Film A path is disclosed");
+
+    /* Including by stored path, which is the other domain. */
+    const byPath = Affordance.localFileAffordance({
+      projectsRoot: PROJECTS_ROOT, slug: FILM_ALIAS, key: "path:anchors/CHAR-RHEA.png",
+    });
+    assert.strictEqual(byPath.state, "unresolvable");
+    assert.strictEqual(byPath.path, "");
+    ok("P1-A and the `path:` domain is refused identically — the boundary is checked before the domain");
+
+    /* Nothing is launched. */
+    const revealed = await Affordance.revealLocalFile({
+      projectsRoot: PROJECTS_ROOT, slug: FILM_ALIAS, key: `asset:${ASSET_A_ANCHOR}`,
+      platform: "win32", spawner: spy,
+    });
+    assert.strictEqual(revealed.ok, false);
+    assert.strictEqual(revealed.path, "");
+    assert.deepStrictEqual(launches, [], "P1-A Explorer must not be spawned for an aliased project");
+    ok("P1-A Explorer is not spawned");
+
+    /* And Film A / Film B separation is untouched by the correction. */
+    assert.strictEqual(
+      Affordance.localFileAffordance({ projectsRoot: PROJECTS_ROOT, slug: FILM_A, key: `asset:${ASSET_A_ANCHOR}` }).path,
+      path.join(A_DIR, "anchors", "CHAR-RHEA.png"));
+    assert.strictEqual(
+      Affordance.localFileAffordance({ projectsRoot: PROJECTS_ROOT, slug: FILM_B, key: `asset:${ASSET_B_ANCHOR}` }).path,
+      path.join(B_DIR, "anchors", "CHAR-RHEA.png"));
+    assert.strictEqual(
+      Affordance.localFileAffordance({ projectsRoot: PROJECTS_ROOT, slug: FILM_B, key: `asset:${ASSET_A_ANCHOR}` }).state,
+      "unresolvable");
+    ok("P1-A Film A / Film B separation still holds through their real directories");
+  }
+
+  /* ---- P1-B: outside-root junction ---- */
+  if (JUNCTIONS.escape) {
+    assert.ok(fs.lstatSync(ESCAPE_DIR).isSymbolicLink(), "fixture invalid: film-escape must be a junction");
+    assert.ok(fs.existsSync(path.join(ESCAPE_DIR, "media-assets.json")),
+      "fixture invalid: the outside project must be complete, or the refusal proves nothing");
+
+    const resolved = require(path.join(ROOT, "media-asset-service"))
+      .resolvePhysicalProjectDir(PROJECTS_ROOT, FILM_ESCAPE);
+    assert.strictEqual(resolved.ok, false, "P1-B a project root pointing outside the root must be refused");
+    assert.strictEqual(resolved.reason, "project-root-redirected");
+    ok("P1-B project-directory validation refuses a junction leading outside the projects root");
+
+    const located = require(path.join(ROOT, "media-asset-service")).assetLocation({
+      projectsRoot: PROJECTS_ROOT, slug: FILM_ESCAPE, assetId: ASSET_OUTSIDE,
+    });
+    assert.strictEqual(located.known, false, "P1-B no ledger outside the projects root may be read");
+    ok("P1-B the outside project's ledger is not read");
+
+    const answer = Affordance.localFileAffordance({
+      projectsRoot: PROJECTS_ROOT, slug: FILM_ESCAPE, key: `asset:${ASSET_OUTSIDE}`,
+    });
+    assert.strictEqual(answer.state, "unresolvable");
+    assert.strictEqual(answer.path, "");
+    assert.strictEqual(answer.recordedPath, "");
+    /* Belt and braces: nothing anywhere in the answer names the outside location. */
+    assert.ok(!JSON.stringify(answer).toLowerCase().includes(OUTSIDE_PROJECT.toLowerCase()),
+      "P1-B no path outside the projects root may appear anywhere in the answer");
+    ok("P1-B asset resolution refuses and discloses no outside absolute path");
+
+    const before = launches.length;
+    await Affordance.revealLocalFile({
+      projectsRoot: PROJECTS_ROOT, slug: FILM_ESCAPE, key: `asset:${ASSET_OUTSIDE}`,
+      platform: "win32", spawner: spy,
+    });
+    assert.strictEqual(launches.length, before, "P1-B nothing may be launched for an escaping project root");
+    ok("P1-B nothing is launched");
+  }
+
+  /* ---- P1-D: the project folder, against BOTH junction cases ---- */
+  for (const [label, slug, made] of [["cross-project", FILM_ALIAS, JUNCTIONS.cross], ["outside-root", FILM_ESCAPE, JUNCTIONS.escape]]) {
+    if (!made) continue;
+    const folder = Affordance.projectFolderAffordance({ projectsRoot: PROJECTS_ROOT, slug });
+    assert.strictEqual(folder.state, "unresolvable", `P1-D Open project folder must refuse the ${label} junction`);
+    assert.strictEqual(folder.reason, "project-root-redirected");
+    assert.strictEqual(folder.path, "", `P1-D and disclose no directory for the ${label} junction`);
+
+    const before = launches.length;
+    const opened = await Affordance.openProjectFolder({
+      projectsRoot: PROJECTS_ROOT, slug, platform: "win32", spawner: spy,
+    });
+    assert.strictEqual(opened.ok, false);
+    assert.strictEqual(launches.length, before, `P1-D Explorer must not open the ${label} junction`);
+  }
+  ok("P1-D Open project folder uses the same validation and follows neither junction");
+
+  /* ---- P1-C: an ordinary physical project is unaffected ---- */
+  const ordinary = require(path.join(ROOT, "media-asset-service"))
+    .resolvePhysicalProjectDir(PROJECTS_ROOT, FILM_B);
+  assert.strictEqual(ordinary.ok, true, "P1-C an ordinary project directory must still validate");
+  assert.strictEqual(ordinary.realDir, B_DIR);
+  assert.strictEqual(
+    Affordance.projectFolderAffordance({ projectsRoot: PROJECTS_ROOT, slug: FILM_B }).path, B_DIR);
+  assert.strictEqual(
+    Affordance.localFileAffordance({ projectsRoot: PROJECTS_ROOT, slug: FILM_B, key: "path:anchors/CHAR-RHEA.png" }).state,
+    "available");
+  const stillWorks = await Affordance.revealLocalFile({
+    projectsRoot: PROJECTS_ROOT, slug: FILM_A, key: `asset:${ASSET_A_ANCHOR}`,
+    platform: "win32", spawner: spy,
+  });
+  assert.strictEqual(stillWorks.ok, true, "P1-C an ordinary project must still reveal");
+  assert.strictEqual(launches.length, 1, "P1-C exactly one launch, and it is the legitimate one");
+  assert.strictEqual(launches[0].args[0], `/select,"${path.join(A_DIR, "anchors", "CHAR-RHEA.png")}"`);
+  ok("P1-C ordinary physical projects are untouched — resolve, folder and reveal all still work");
+
+  /* ---- P1-E: the supported workspace.mediaRoot mechanism is not redefined ---- */
+  const stripComments = (source) => source.replace(/\/\*[\s\S]*?\*\//g, "").replace(/(^|[^:])\/\/.*$/gm, "$1");
+  const affordanceSource = stripComments(fs.readFileSync(path.join(ROOT, "local-file-affordance.js"), "utf8"));
+  const serviceSource = stripComments(fs.readFileSync(path.join(ROOT, "media-asset-service.js"), "utf8"));
+  for (const [name, source] of [["local-file-affordance.js", affordanceSource], ["media-asset-service.js", serviceSource]])
+    for (const token of ["mediaRoot", "syncConfiguredMediaRoot", "copyMissingTree", "configuredWorkspacePath"])
+      assert.ok(!source.includes(token), `P1-E ${name} must not reach the workspace media-root mechanism (${token})`);
+  const serverSource = stripComments(fs.readFileSync(path.join(ROOT, "server.js"), "utf8"));
+  assert.ok(/function syncConfiguredMediaRoot\(/.test(serverSource),
+    "P1-E the supported media-root sync must still exist, unchanged by this seam");
+  const localFileBlock = serverSource.slice(
+    serverSource.indexOf("function localFileScope"),
+    serverSource.indexOf("app.post(", serverSource.indexOf('app.post("/api/local-file/project-folder"') + 20));
+  assert.ok(!localFileBlock.includes("mediaRoot") && !localFileBlock.includes("syncConfiguredMediaRoot"),
+    "P1-E no local-file route touches the media-root mechanism");
+  /* And behaviourally: media that arrived through a media-root sync is an ordinary
+     file in the project's own media/ folder, and still resolves. */
+  assert.strictEqual(
+    Affordance.localFileAffordance({ projectsRoot: PROJECTS_ROOT, slug: FILM_A, key: "path:media/planning-board.png" }).state,
+    "available");
+  ok("P1-E workspace.mediaRoot is untouched — synced media is an ordinary project file and still resolves");
 }
 
 /* ---------------------------------------------------------------------------
@@ -784,6 +1058,7 @@ function structure() {
   await hostileFilenames();
   await projectFolder();
   directoriesAreNotFiles();
+  await projectRootJunctions();
   await httpSeam();
   structure();
   console.log(`\nLOCAL FILE AFFORDANCES V1 — ${passes} assertions held.`);

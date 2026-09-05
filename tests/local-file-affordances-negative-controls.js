@@ -15,9 +15,16 @@
  * were unreachable, which is exactly the failure mode a negative-control suite
  * exists to catch.
  *
- * The three the slice named explicitly are controls 1, 2 and 3. Controls 4 to 7 are
- * the defects this seam actually came close to shipping, one of which it DID ship
- * during development and which no argv assertion would have caught.
+ * The three the slice named explicitly are controls 1, 2 and 3. Controls 4 to 8 are
+ * the defects this seam came close to shipping, two of which it DID ship during
+ * development and which no argv assertion would have caught.
+ *
+ * CONTROL 9 IS DIFFERENT IN KIND, and it is the reason this file is worth reading:
+ * it restores the defect an independent review actually BLOCKED a candidate for —
+ * lexical-only project-root validation, which let a junction at `projects/film-b`
+ * resolve Film A's media under Film B's identity and let `Open project folder` send
+ * Explorer anywhere on the machine. It reproduces both, against the same fixture,
+ * and then shows the shipped seam refusing them at a named reason.
  */
 
 const assert = require("assert");
@@ -30,7 +37,11 @@ const ROOT = path.join(__dirname, "..");
 const Affordance = require(path.join(ROOT, "local-file-affordance"));
 const Shared = require(path.join(ROOT, "public", "shared-local-file"));
 
-const TEMP = fs.mkdtempSync(path.join(os.tmpdir(), "cinebraid-localfile-neg-"));
+/* Canonicalised at the source. P1 makes the resolver answer with the PHYSICAL
+   project directory, and %TEMP% is itself under a reparse point on some Windows
+   installs — so a fixture rooted at the uncanonicalised temp path would compare
+   unequal for a reason that has nothing to do with what is being tested. */
+const TEMP = fs.realpathSync.native(fs.mkdtempSync(path.join(os.tmpdir(), "cinebraid-localfile-neg-")));
 const PROJECTS_ROOT = path.join(TEMP, "projects");
 const A_DIR = path.join(PROJECTS_ROOT, "film-a");
 const B_DIR = path.join(PROJECTS_ROOT, "film-b");
@@ -488,6 +499,141 @@ function rest() {
       const decoded = asAttribute.replace(/&#39;/g, "'").replace(/&quot;/g, '"').replace(/&amp;/g, "&");
       assert.strictEqual(decoded, key, "a data attribute round-trips the key exactly");
       ok("and an apostrophe in a data attribute decodes back to an apostrophe, not to a broken string");
+    }
+
+    /* =======================================================================
+       CONTROL 9 — P1: LEXICAL-ONLY PROJECT-ROOT VALIDATION.
+
+       THE DEFECT THIS SLICE ACTUALLY SHIPPED AND WAS BLOCKED FOR. Project-directory
+       validation proved, by path semantics, that `<root>/<slug>` is one segment
+       below the projects root — a correct and complete statement about a NAME, and
+       silent about what that name refers to.
+
+       `projects/film-b` can be a junction. Every lexical test passes. The directory
+       is `projects/film-a`, so the ledger read under `film-b` IS FILM A'S LEDGER,
+       every id in it answers, the seam returns Film A's absolute path and Explorer
+       is dispatched — under a request that said `film-b`. And a junction pointing
+       outside the root did the same for any directory on the machine.
+
+       This control restores the lexical rule verbatim and reproduces both. */
+    section("control 9 — P1: lexical-only project-root validation");
+    {
+      const OUT_PROJECT = path.join(TEMP, "outside-project");
+      fs.mkdirSync(path.join(OUT_PROJECT, "anchors"), { recursive: true });
+      fs.writeFileSync(path.join(OUT_PROJECT, "anchors", "CHAR-RHEA.png"), Buffer.concat([PNG, Buffer.from("outside")]));
+      fs.writeFileSync(path.join(OUT_PROJECT, "project.json"), JSON.stringify({ meta: { title: "Outside" } }));
+      const ASSET_OUT = "asset-" + "7".repeat(32);
+      writeLedger(OUT_PROJECT, [{ assetId: ASSET_OUT, path: "anchors/CHAR-RHEA.png" }]);
+
+      const ALIAS = path.join(PROJECTS_ROOT, "film-alias");
+      const ESCAPE = path.join(PROJECTS_ROOT, "film-escape");
+      let cross = false;
+      let escape = false;
+      try { fs.symlinkSync(A_DIR, ALIAS, "junction"); cross = true; } catch { /* environment refused */ }
+      try { fs.symlinkSync(OUT_PROJECT, ESCAPE, "junction"); escape = true; } catch { /* environment refused */ }
+
+      if (!cross && !escape) {
+        ok("(P1 control skipped — this environment refused to create a junction)");
+      } else {
+        /* THE DEFECT, restored verbatim: the lexical rule and nothing else. This is
+           what media-asset-service.js resolveProjectDir() does, which is right for a
+           name and was wrong as the whole of a file action's validation. */
+        function lexicalOnlyProjectDir(projectsRoot, slug) {
+          const root = String(projectsRoot || "").trim();
+          const name = String(slug || "").trim();
+          if (!root || !name) return "";
+          if (name !== path.basename(name)) return "";
+          const base = path.resolve(root);
+          const target = path.resolve(base, name);
+          const rel = path.relative(base, target);
+          if (!rel || path.isAbsolute(rel)) return "";
+          if (rel === ".." || rel.startsWith(`..${path.sep}`)) return "";
+          if (rel.split(/[\\/]/).length !== 1) return "";
+          return target;
+        }
+        /* And the resolution the blocked candidate then performed on top of it. */
+        function defectiveResolve(slug, assetId) {
+          const dir = lexicalOnlyProjectDir(PROJECTS_ROOT, slug);
+          if (!dir || !fs.existsSync(dir)) return { state: "unresolvable", path: "" };
+          const ledgerFile = path.join(dir, "media-assets.json");
+          if (!fs.existsSync(ledgerFile)) return { state: "unresolvable", path: "" };
+          const row = JSON.parse(fs.readFileSync(ledgerFile, "utf8")).assets
+            .find((asset) => asset.assetId === assetId);
+          if (!row) return { state: "unresolvable", path: "" };
+          const target = path.join(dir, row.storage.path);
+          return fs.existsSync(target) ? { state: "available", path: target } : { state: "missing", path: "" };
+        }
+
+        const Service = require(path.join(ROOT, "media-asset-service"));
+
+        if (cross) {
+          /* THE REVIEW'S EXACT REPRODUCTION: Film A's asset, under Film B's identity.
+             ASSET_A_S01 rather than ASSET_A, because control 6 above deletes Film A's
+             anchor to prove the `missing` case — and a control that resolved to a file
+             that is not there would be reproducing the wrong thing. */
+          const aFile = path.join(A_DIR, "shots", "S-01", "takes", "BLOCK.png");
+          assert.ok(fs.existsSync(aFile), "control invalid: Film A's take must still be on disk");
+          const fallen = defectiveResolve("film-alias", ASSET_A_S01);
+          assert.strictEqual(fallen.state, "available",
+            "control invalid: lexical-only validation was supposed to resolve Film A under the alias");
+          assert.strictEqual(
+            fs.realpathSync.native(fallen.path).toLowerCase(), aFile.toLowerCase(),
+            "control invalid: the resolved file was supposed to physically be Film A's");
+          ok("lexical-only validation resolves Film A's asset under a `film-alias -> film-a` junction");
+
+          /* THE SHIPPED SEAM REFUSES, at the named P1 reason. */
+          const resolved = Service.resolvePhysicalProjectDir(PROJECTS_ROOT, "film-alias");
+          assert.strictEqual(resolved.ok, false);
+          assert.strictEqual(resolved.reason, "project-root-redirected");
+          const answer = shipped("film-alias", `asset:${ASSET_A_S01}`);
+          assert.strictEqual(answer.state, "unresolvable");
+          assert.strictEqual(answer.reason, "project-root-redirected");
+          assert.strictEqual(answer.path, "");
+          assert.strictEqual(
+            Service.assetLocation({ projectsRoot: PROJECTS_ROOT, slug: "film-alias", assetId: ASSET_A_S01 }).known,
+            false, "the ledger must not be read through a redirected project root");
+          ok("the shipped seam refuses it before the ledger is read, and returns no path");
+        }
+
+        if (escape) {
+          /* And the same rule let a project point anywhere on the machine. */
+          const fallen = defectiveResolve("film-escape", ASSET_OUT);
+          assert.strictEqual(fallen.state, "available",
+            "control invalid: lexical-only validation was supposed to resolve outside the root");
+          assert.ok(
+            fs.realpathSync.native(fallen.path).toLowerCase().startsWith(OUT_PROJECT.toLowerCase()),
+            "control invalid: the resolved file was supposed to be outside the projects root");
+          ok("and it resolves a file outside the projects root through a `film-escape -> outside` junction");
+
+          /* The project folder is the half that reads harmless and is not. */
+          const lexicalFolder = lexicalOnlyProjectDir(PROJECTS_ROOT, "film-escape");
+          assert.ok(lexicalFolder && fs.statSync(lexicalFolder).isDirectory(),
+            "control invalid: Open project folder was supposed to accept the junction");
+          assert.strictEqual(
+            fs.realpathSync.native(lexicalFolder).toLowerCase(), OUT_PROJECT.toLowerCase(),
+            "control invalid: that directory was supposed to be outside the root");
+          ok("and Open project folder accepts it, sending Explorer outside the projects root");
+
+          const answer = shipped("film-escape", `asset:${ASSET_OUT}`);
+          assert.strictEqual(answer.state, "unresolvable");
+          assert.strictEqual(answer.reason, "project-root-redirected");
+          assert.ok(!JSON.stringify(answer).toLowerCase().includes(OUT_PROJECT.toLowerCase()),
+            "no outside path may appear anywhere in the shipped answer");
+          const folder = Affordance.projectFolderAffordance({ projectsRoot: PROJECTS_ROOT, slug: "film-escape" });
+          assert.strictEqual(folder.state, "unresolvable");
+          assert.strictEqual(folder.reason, "project-root-redirected");
+          assert.strictEqual(folder.path, "");
+          ok("the shipped seam refuses both, and Open project folder uses the very same validation");
+        }
+
+        /* AND THE CORRECTION IS NOT A BLANKET REFUSAL. An ordinary physical project
+           still validates, or the control above would pass for the wrong reason. */
+        const ordinary = Service.resolvePhysicalProjectDir(PROJECTS_ROOT, "film-b");
+        assert.strictEqual(ordinary.ok, true, "an ordinary project must still validate");
+        assert.strictEqual(ordinary.realDir, B_DIR);
+        assert.strictEqual(shipped("film-b", `asset:${ASSET_B}`).state, "available");
+        ok("and an ordinary physical project still validates — the correction refuses redirection, not projects");
+      }
     }
 
     console.log(`\nLOCAL FILE AFFORDANCES V1 NEGATIVE CONTROLS — ${passes} controls held.`);

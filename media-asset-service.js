@@ -107,6 +107,102 @@ function resolveProjectDir(projectsRoot, slug) {
   return target;
 }
 
+/* Windows realpath casing is not stable enough to compare raw, and a case-sensitive
+   equality test on `C:\Films\Film-B` vs `C:\films\film-b` would refuse a legitimate
+   project. server.js settles the same question the same way at insideRealDirectory(). */
+function samePhysicalPath(left, right) {
+  const normalise = (value) => (process.platform === "win32" ? String(value).toLowerCase() : String(value));
+  return path.resolve(normalise(left)) === path.resolve(normalise(right));
+}
+
+/* P1 — PHYSICAL project-directory containment. THE resolver every local-file
+ * affordance goes through, and the one that has to run BEFORE the ledger is read.
+ *
+ * WHY resolveProjectDir() ABOVE IS NOT ENOUGH, and why that is not a criticism of
+ * it. That function proves a slug is one segment below the projects root BY PATH
+ * SEMANTICS, which is exactly the right rule for a NAME: it stops `..`, a drive
+ * letter, a UNC share and a nested path from being spelled as a project. It says
+ * nothing about what the directory that name refers to actually IS, because until
+ * now nothing needed it to — the ledger passes it owns are scoped to whatever
+ * `projects/<slug>` resolves to, and that is the project by definition.
+ *
+ * A FILE ACTION BREAKS THAT ASSUMPTION. `projects/film-b` can be a junction. Every
+ * lexical test passes — the string plainly is one segment under the root — and the
+ * directory it names is `projects/film-a`, or somewhere outside the root entirely.
+ * The seam then reads FILM A'S LEDGER while the request says `film-b`, hands back
+ * Film A's absolute path, and opens Explorer on it. Measured on Windows 11, not
+ * theorised: both cases resolved `available` before this function existed.
+ *
+ * THE INVARIANT, stated so a future change has to argue with it:
+ *
+ *     A PROJECT SLUG IDENTIFIES ITS OWN PHYSICAL DIRECTORY UNDERNEATH THE
+ *     AUTHORITATIVE PROJECTS ROOT. A REPARSE POINT AT THE PROJECT-ROOT BOUNDARY
+ *     MUST NOT REDIRECT THAT IDENTITY.
+ *
+ * "Still somewhere under projects" is deliberately NOT the test. `film-b` pointing
+ * at `film-a` never leaves the root and is precisely the cross-project failure this
+ * exists to stop, so the requirement is EQUALITY with this slug's own canonical
+ * location — not containment within the root.
+ *
+ * The root itself may be a link, and that is untouched: a workspace on `D:` reached
+ * through `C:\CineBraid\Projects` canonicalises the ROOT first and every project
+ * under it compares equal. Only the project boundary is pinned.
+ *
+ * Returns { ok, dir, realDir, realRoot, reason }. `dir` is the configured-root
+ * spelling, for display and for launching; `realDir` is the physical directory,
+ * which is what containment for anything INSIDE the project is then measured
+ * against. It never throws: an unreadable root or a vanished project is a refusal
+ * with a named reason, never an exception into a request. */
+function resolvePhysicalProjectDir(projectsRoot, slug) {
+  const refuse = (reason) => ({ ok: false, dir: "", realDir: "", realRoot: "", reason });
+
+  /* 1. The existing one-segment project identity, unchanged and still first. */
+  const dir = resolveProjectDir(projectsRoot, slug);
+  if (!dir) return refuse("no-contained-project");
+  const name = String(slug || "").trim();
+
+  /* 2. The AUTHORITATIVE root, canonicalised once. Everything below is measured
+        against this rather than against the configured spelling. */
+  let realRoot;
+  try {
+    realRoot = fs.realpathSync.native(path.resolve(String(projectsRoot)));
+  } catch {
+    return refuse("no-projects-root");
+  }
+
+  /* 3. Where this slug's directory must physically be. */
+  const expected = path.join(realRoot, name);
+
+  /* 4 + 5. It must be there, be a directory, and not be a redirect. lstat does not
+        follow the LAST component, which is the whole point: a junction reports as a
+        symbolic link on Windows (server.js direntKind() says so at its own
+        declaration), so this is where a reparse point at the boundary is named. */
+  let entry;
+  try {
+    entry = fs.lstatSync(dir);
+  } catch {
+    return refuse("no-project-directory");
+  }
+  if (entry.isSymbolicLink()) return refuse("project-root-redirected");
+  if (!entry.isDirectory()) return refuse("not-a-directory");
+
+  /* 6. The physical directory. */
+  let realDir;
+  try {
+    realDir = fs.realpathSync.native(dir);
+  } catch {
+    return refuse("no-project-directory");
+  }
+
+  /* 7. And it must be THIS slug's own directory. Checked independently of step 5
+        rather than as a formality: a redirect introduced between the lstat and the
+        realpath, or a form of reparse point lstat does not flag, still fails here,
+        and this is the assertion that actually encodes the invariant. */
+  if (!samePhysicalPath(realDir, expected)) return refuse("project-root-redirected");
+
+  return { ok: true, dir, realDir, realRoot, reason: "" };
+}
+
 function stateFor(projectDir, slug) {
   let state = RUNTIME.get(projectDir);
   if (!state) {
@@ -501,13 +597,22 @@ function identityIndex(options = {}) {
  *
  * A PROJECTION, granting nothing. It reads, it cannot write, it reads no media
  * bytes, and it never throws: an unreadable or absent ledger answers `known:false`,
- * which is the normal state of every project that has not yet had a pass. */
+ * which is the normal state of every project that has not yet had a pass.
+ *
+ * P1 — IT RESOLVES ITS OWN DIRECTORY, PHYSICALLY, AND TAKES NO DIRECTORY FROM A
+ * CALLER. Reading the ledger is the first thing that can go wrong: with a junction
+ * at `projects/film-b`, `media-assets.json` read "under film-b" IS FILM A'S LEDGER,
+ * so every id in it answers, and the cross-project separation is gone before any
+ * path check runs. Accepting a pre-validated directory as an argument would move
+ * that guarantee into whoever called — this function keeps it, so it cannot be
+ * pointed at another project's ledger by any caller, including a future one. */
 function assetLocation(options = {}) {
   const unknown = { known: false, path: "", missing: false };
   const assetId = String(options.assetId || "").trim();
   if (!assetId) return unknown;
-  const projectDir = resolveProjectDir(options.projectsRoot, options.slug);
-  if (!projectDir) return unknown;
+  const resolved = resolvePhysicalProjectDir(options.projectsRoot, options.slug);
+  if (!resolved.ok) return unknown;
+  const projectDir = resolved.realDir;
   try {
     const loaded = readLedger(projectDir);
     if (!loaded.exists) return unknown;
@@ -621,6 +726,7 @@ module.exports = {
   identityIndex,
   readAssets,
   resetActivationState,
+  resolvePhysicalProjectDir,
   resolveProjectDir,
   verifyNow,
 };

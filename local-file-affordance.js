@@ -91,12 +91,27 @@ class LocalFileError extends Error {
 /* ---------------------------------------------------------------------------
    RESOLUTION.
 
-   `resolveProjectDir` is MediaAssetService's own containment helper: a slug must
-   be exactly one path segment directly below the projects root, proven by path
-   semantics rather than by string prefix. Reused rather than restated, so there is
-   one answer to "is this slug inside the root" on this seam too. */
+   P1 — ONE PROJECT-DIRECTORY RESOLVER FOR THIS WHOLE SEAM, and it is PHYSICAL.
+
+   `MediaAssetService.resolvePhysicalProjectDir` proves the slug is one segment
+   below the projects root AND that the directory it names really is that slug's
+   own directory under the canonical root — so a junction at `projects/film-b`
+   cannot make Film A's media, Film A's ledger or Film A's folder answer under Film
+   B's identity, and cannot point a project at somewhere outside the root at all.
+
+   EVERY entry point below goes through this one function. There is deliberately
+   not a stricter rule for revealing a file and a weaker one for opening a folder:
+   that split is exactly how the first version of this seam ended up refusing a
+   junctioned media path while happily opening a junctioned project root. */
 function projectDirectory(projectsRoot, slug) {
-  return MediaAssetService.resolveProjectDir(projectsRoot, slug);
+  return MediaAssetService.resolvePhysicalProjectDir(projectsRoot, slug);
+}
+
+/* Which refusals the caller is owed a distinct reason for. A redirected project
+   root is not "no such project" — the directory is right there — and saying so is
+   what makes the state debuggable rather than mysterious. */
+function projectRefusalReason(resolved) {
+  return resolved && resolved.reason ? resolved.reason : "no-contained-project";
 }
 
 /* Containment, proven the way server.js's insideDirectory() proves it, and applied
@@ -131,12 +146,19 @@ function containedFile(projectDir, relativePath) {
    native window on a location and is a filesystem-authority act, closer in kind to
    the migration write that established this rule than to serving bytes over a
    socket. CineBraid's supported way to keep media elsewhere is `workspace.mediaRoot`,
-   which copies it in, not a reparse point under the project root. */
-function escapesRealRoot(projectDir, target) {
+   which copies it in, not a reparse point under the project root.
+
+   P1 — `realProjectDir` IS PASSED IN, ALREADY PROVEN. It used to be derived here
+   with `fs.realpathSync(projectDir)`, which made the comparison worthless the
+   moment the PROJECT directory was itself a junction: the real target and the real
+   project root both resolved into Film A, `path.relative` said "contained", and the
+   check passed while the whole project identity had been redirected. The boundary
+   is now settled once, before this runs, and this measures against that answer. */
+function escapesRealRoot(realProjectDir, target) {
   let realRoot;
   let realTarget;
   try {
-    realRoot = fs.realpathSync.native(projectDir);
+    realRoot = fs.realpathSync.native(realProjectDir);
   } catch {
     return false; /* no root to compare against; ordinary containment already held */
   }
@@ -182,9 +204,13 @@ function localFileAffordance(options = {}) {
 
   if (!parsed.domain) return answer("unresolvable", { reason: "malformed-identity" });
 
-  const projectDir = projectDirectory(options.projectsRoot, options.slug);
-  if (!projectDir) return answer("unresolvable", { reason: "no-contained-project" });
-  if (!fs.existsSync(projectDir)) return answer("unresolvable", { reason: "no-project-directory" });
+  /* P1 — THE PROJECT DIRECTORY IS VALIDATED BEFORE ANYTHING ELSE HAPPENS, and in
+     particular before the ledger is read. A junctioned project root would otherwise
+     have already answered from another project's ledger by the time any path was
+     examined. */
+  const resolved = projectDirectory(options.projectsRoot, options.slug);
+  if (!resolved.ok) return answer("unresolvable", { reason: projectRefusalReason(resolved) });
+  const projectDir = resolved.realDir;
 
   /* IDENTITY FIRST. A durable assetId survives the rename an approval performs; a
      stored path does not. When the ledger knows this id, its recorded path is the
@@ -241,8 +267,19 @@ function localFileAffordance(options = {}) {
    NEVER reconstructed from the project's title. Two projects may share a title;
    only one of them is the directory the filmmaker is working in. */
 function projectFolderAffordance(options = {}) {
-  const projectDir = projectDirectory(options.projectsRoot, options.slug);
-  if (!projectDir) return { state: "unresolvable", path: "", reason: "no-contained-project", message: localFileWords("unresolvable") };
+  /* P1 — THE SAME RESOLVER THE MEDIA PATH USES. Opening a folder looked like the
+     harmless half of this seam and was the more dangerous one: it took the project
+     directory at its word, so a junction pointed `Open project folder` at another
+     project — or at any directory on the machine — and Explorer went there. */
+  const resolved = projectDirectory(options.projectsRoot, options.slug);
+  if (!resolved.ok)
+    return {
+      state: "unresolvable",
+      path: "",
+      reason: projectRefusalReason(resolved),
+      message: localFileWords("unresolvable"),
+    };
+  const projectDir = resolved.realDir;
   let stat;
   try {
     stat = fs.statSync(projectDir);
