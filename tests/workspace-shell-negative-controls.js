@@ -242,9 +242,9 @@ function structuralControls() {
 
   control("C16 a second rail region is appended", "checkMarkup",
     { markup: mutate(SOURCES.markup,
-        '<aside id="cb-shell-rail" class="cb-shell-slot" data-shell-slot="rail" aria-label="Assistant"><div class="cb-shell-slot-body"></div></aside>',
-        '<aside id="cb-shell-rail" class="cb-shell-slot" data-shell-slot="rail" aria-label="Assistant"><div class="cb-shell-slot-body"></div></aside>'
-        + '<aside id="cb-shell-rail" class="cb-shell-slot" data-shell-slot="rail" aria-label="Assistant"><div class="cb-shell-slot-body"></div></aside>',
+        '<aside id="cb-shell-rail" class="cb-shell-slot" data-shell-slot="rail" aria-label="Braidy"><div class="cb-shell-slot-body"></div></aside>',
+        '<aside id="cb-shell-rail" class="cb-shell-slot" data-shell-slot="rail" aria-label="Braidy"><div class="cb-shell-slot-body"></div></aside>'
+        + '<aside id="cb-shell-rail" class="cb-shell-slot" data-shell-slot="rail" aria-label="Braidy"><div class="cb-shell-slot-body"></div></aside>',
         "C16") },
     "Two nodes with the same region id is a second shell, and the one a consumer mounted into is then decided by document order.");
 

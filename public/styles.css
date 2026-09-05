@@ -6784,3 +6784,66 @@ body[data-focused-route="library"]:has(.library-grid .library-card) .topbar-add:
 body[data-focused-route="library"]:has(.library-grid .library-card) #app[data-surf="light"] .add-btn,
 body[data-focused-route="library"]:has(.library-grid .library-card) #app[data-surf="light"] .topbar-add{
   color:var(--ink)!important}
+
+/* ===========================================================================
+   SURFACE POLISH V1 — FINAL PRESENTATION CORRECTIONS
+
+   Three bounded fixes on the accepted candidate. No composition is reopened.
+   =========================================================================== */
+
+/* 1 — THE SHELL ADD CONTROL STAYS ON ONE LINE.
+   `＋ Add` is one text node with a space in it, so the button's min-content
+   width was the word "Add" and a tight topbar shrank it to that, breaking the
+   label across two lines. `nowrap` makes the whole label the minimum instead,
+   which is the intrinsic-sizing fix rather than a hard width: the control still
+   sizes to its own text, keeps its accent emphasis, its handler and the
+   `@media(max-width:800px)` rule that hides it. */
+.topbar-add{white-space:nowrap}
+
+/* 2 — REFERENCE CATEGORY CUES.
+   A restrained, extensible cue for what KIND of reference a card is, keyed off
+   the category the card now declares. Five tokens in one scoped set rather than
+   literals in a renderer, so a new entity list is one line here.
+
+   SUBORDINATE TO PRODUCTION TRUTH, DELIBERATELY. None of these hues is a
+   semantic colour: canon green, historic and warning amber, destructive red and
+   the cyan of current work all keep their exact meanings, and the card's state
+   badge keeps its own colour on the media. The category shows up twice, quietly
+   and only in the caption — a 7px mark beside the category word and a 2px edge
+   on the caption block — so a Historic Prop still reads Historic on the image
+   while reading Prop underneath it. Nothing fills the card. */
+:root{
+  --cat-character:#8f8bd6;
+  --cat-location:#6fa3c9;
+  --cat-prop:#c99a86;
+  --cat-vehicle:#7fb3a8;
+  --cat-audio:#b39ad0;
+  --cat-default:var(--faint);
+}
+/* On white these need their own darker values to stay legible at 7px and 2px. */
+#app[data-surf="light"]{
+  --cat-character:#5b56a8;
+  --cat-location:#3d6f95;
+  --cat-prop:#95604a;
+  --cat-vehicle:#3f7a6d;
+  --cat-audio:#7a5b9c;
+}
+.library-card-shell[data-reference-category]{--cat:var(--cat-default)}
+.library-card-shell[data-reference-category="characters"]{--cat:var(--cat-character)}
+.library-card-shell[data-reference-category="locations"]{--cat:var(--cat-location)}
+.library-card-shell[data-reference-category="props"]{--cat:var(--cat-prop)}
+.library-card-shell[data-reference-category="vehicles"]{--cat:var(--cat-vehicle)}
+.library-card-shell[data-reference-category="audio"]{--cat:var(--cat-audio)}
+
+.library-card-shell[data-reference-category] .library-body{
+  padding-left:10px;border-left:2px solid color-mix(in srgb,var(--cat) 62%,transparent)}
+.library-card-shell[data-reference-category] .library-body>.review-kind{
+  display:flex;align-items:center;gap:6px}
+.library-card-shell[data-reference-category] .library-body>.review-kind::before{
+  content:"";flex:0 0 auto;width:7px;height:7px;border-radius:2px;background:var(--cat)}
+
+/* Hover, focus and selection are unchanged and still win: the category edge is
+   on the caption, the interaction states are on the card. */
+.library-card-shell[data-reference-category] .library-card:hover .library-body,
+.library-card-shell[data-reference-category] .library-card:focus-visible .library-body{
+  border-left-color:var(--cat)}

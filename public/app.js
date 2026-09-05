@@ -6578,7 +6578,17 @@ function libraryCard(list, x, canonOnly = false) {
   const enlarge = previewMedia && !isAudio(previewMedia.name) && !isVideo(previewMedia.name)
     ? `<button type="button" class="media-enlarge-btn library-enlarge" onclick="event.preventDefault();event.stopPropagation();inspectMediaFile('${attr(encodeURIComponent(previewMedia.url))}','${attr(previewMedia.assetId || "")}','${attr(encodeURIComponent(`${x.name || x.id} · ${previewMedia.name}`))}','image')" aria-label="Inspect the ${attr(x.name || x.id)} reference image">Inspect</button>`
     : "";
-  return `<div class="library-card-shell"><a class="library-card ${status}" href="#/${route}/${x.id}"><div class="library-preview">${preview}<span class="library-status ${status}">${statusLabel}</span></div><div class="library-body"><span class="review-kind">${type}</span><b>${esc(x.name || x.id)}</b><small>${description}</small></div></a>${enlarge}</div>`;
+  /* THE CATEGORY IS DECLARED ON THE CARD, so the shelf can say what kind of
+     thing a reference is without a renderer deciding what that looks like.
+     `list` is the entity list this card came from, which is the same key the
+     route and ENTITY_ROUTE already use, so vehicles and audio carry their
+     category for free and a future list needs no change here.
+
+     IT IS NOT A STATE. `status` above is the production truth — canon,
+     reference, historic, candidate, missing — and keeps its own class, its own
+     badge and its own semantic colour on the media. This attribute only says
+     which kind of record it is, and nothing reads it but the stylesheet. */
+  return `<div class="library-card-shell" data-reference-category="${attr(list)}"><a class="library-card ${status}" href="#/${route}/${x.id}"><div class="library-preview">${preview}<span class="library-status ${status}">${statusLabel}</span></div><div class="library-body"><span class="review-kind">${type}</span><b>${esc(x.name || x.id)}</b><small>${description}</small></div></a>${enlarge}</div>`;
 }
 function libraryView(tab = "all") {
   /* "approved" is still accepted as an incoming route so an old bookmark or a
