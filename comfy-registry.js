@@ -13,7 +13,15 @@
  *     format         api | ui | unknown | unparseable, from comfy-workflow.js.
  *     mapping        the CONFIRMED semantic bindings, or none.
  *     mappedHash     the hash the mapping was confirmed AGAINST.
- *     lastValidation the result of checking that mapping against that content.
+ *     validatedAtConfirmation  that the mapping fitted the file WHEN A HUMAN AGREED TO IT.
+ *
+ * That last field is deliberately not called `lastValidation`. Whether a mapping still
+ * fits is never read from this record — workflowState() recomputes it from the bytes on
+ * disk on every single read, so a workflow edited outside CineBraid is caught by the next
+ * screen that looks at it rather than by the dispatch that used it. A stored `valid` flag
+ * would be a second answer to a question that already has one, and the older answer is
+ * always the wrong one. What IS worth keeping is the historical fact: at this moment, a
+ * person looked at this mapping against this content and it fitted.
  *
  * `contentHash` and `mappedHash` are two fields on purpose. One says what the file is;
  * the other says what a human was looking at when they agreed to it. A workflow whose
@@ -427,7 +435,8 @@ function confirmMapping(configuredFolder, relativePath, requestedBindings) {
     format: described.format,
     nodeCount: described.nodeCount,
     mapping,
-    lastValidation: { at: confirmedAt, ok: true, problems: [] },
+    /* A historical fact, not a live one — see the module header. */
+    validatedAtConfirmation: { at: confirmedAt, contentHash: described.contentHash, ok: true },
   };
   const index = registry.workflows.findIndex((entry) => text(entry.relativePath) === described.relativePath);
   if (index >= 0) row.registeredAt = text(registry.workflows[index].registeredAt) || row.registeredAt;
