@@ -195,7 +195,13 @@
       panel && {
         id: "open-stage-work",
         stageId,
-        label: `${verb} ${stageLabel(stageId)}`,
+        /* TRAVEL SAYS WHERE IT GOES. `invoke` is open-panel and `advances` is
+           false: this control performs no work and completes no stage, so
+           "Review Frames" claimed something it does not do. The verb still
+           carries the completion state; it now reads as the journey it is. */
+        label: verb === "Review"
+          ? `Open ${stageLabel(stageId).toLowerCase()} review`
+          : `${verb} ${stageLabel(stageId)}`,
         /* Copied, never re-decided. This is the whole contract in one line. */
         availability: state.availability,
         disabledReason: state.blockedReason,

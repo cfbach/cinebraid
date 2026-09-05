@@ -598,7 +598,7 @@ async function testRequirementAndDemandCannotContradict() {
   /* A REFERENCE A SHOT USES gets the other half of the sentence. */
   const cast = await surface(convergenceFixture({ cast: true }), COVERAGE_STORAGE);
   const castIntro = within(cast.html, '<div class="entity-coverage-intro">', "</div></div>");
-  ok(/What the production is actually waiting on is listed under What this production needs/.test(castIntro),
+  ok(/What the production is actually waiting on is listed under Production needs/.test(castIntro),
     "a reference in use is pointed at the panel that answers the demand question");
   ok(!/No shot uses this character yet/.test(castIntro),
     "and is never told nothing uses it");

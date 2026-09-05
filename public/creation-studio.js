@@ -4256,7 +4256,7 @@ function shotIntentControl(s) {
   }).join("");
   const needs = shotIntentNeedsPhrase(intent.needs);
   const workflow = !declared
-    ? "Every stage is open until you say how this shot is made. Say it, and the workflow leads with the part that applies."
+    ? ""
     : exposure.adapt
       ? "No frame inputs required, so the frame work starts folded. Existing frames are kept."
       : "Frames stay in the workflow — this intent animates from an approved frame.";
@@ -4286,7 +4286,7 @@ function shotIntentControl(s) {
      first time it is seen and remembers the filmmaker's choice separately after. */
   const undeclaredStatement = declared
     ? ""
-    : `<p class="prompt-check shot-intent-undeclared" data-shot-intent-undeclared="1">Execution route not chosen. Nothing has been assumed for you: until you say how this shot is made, it owes no frame and no motion, and everything already attached to it is kept.</p>`;
+    : `<p class="prompt-check shot-intent-undeclared" data-shot-intent-undeclared="1">No production route chosen yet. Frames and motion stay optional until you decide.</p>`;
   const sectionKey = declared ? `${s.id}:shot-intent` : `${s.id}:shot-intent:undeclared`;
   /* `data-frames-required` keeps its shipped meaning — "should the Frames workflow be
      put in front of this filmmaker" — which is why an undeclared shot carries a 1 there
@@ -4297,13 +4297,13 @@ function shotIntentControl(s) {
   const framesRelevance = !exposure.known ? "undeclared" : exposure.required ? "required" : "not-required";
   return `<details class="shot-intent-control" data-shot-intent-control="1" data-shot-id="${attr(s.id)}" data-shot-intent="${attr(intent.route)}" data-shot-intent-reading="${attr(intent.reading)}" data-frames-required="${exposure.required ? "1" : "0"}" data-frames-relevance="${attr(framesRelevance)}" ${workspaceSectionOpen(sectionKey, !declared) ? "open" : ""} ontoggle="rememberWorkspaceSection('${attr(sectionKey)}',this.open)"><summary><b>Shot intent</b><span>${esc(summary)}</span></summary>
     ${undeclaredStatement}
-    <div class="shot-intent-fields"><label for="shot-intent-${attr(s.id)}">How is this shot made?</label>
+    <div class="shot-intent-fields"><label for="shot-intent-${attr(s.id)}">How will this shot be made?</label>
     <select id="shot-intent-${attr(s.id)}" onchange="setShotIntent('${attr(s.id)}',this.value)">${options}</select>
     ${needs ? `<small class="hint shot-intent-needs">Uses ${esc(needs)}.</small>` : ""}
     <small class="hint shot-intent-workflow">${esc(workflow)}</small>
     ${narrowing ? `<small class="hint shot-intent-narrowing" title="${attr(narrowingDetail)}">${esc(narrowing)}</small>` : ""}
     ${warning}
-    <small class="hint">Changing this changes which stages lead. Nothing is ever deleted — every frame, reference, candidate, approval and generation stays exactly where it is.</small></div></details>`;
+    <small class="hint shot-intent-keeps">Changing the route changes which stages lead. Nothing is deleted — frames, references, candidates and approvals stay exactly where they are.</small></div></details>`;
 }
 
 /* THE ONLY WRITER OF A DECLARED ROUTE IN THE APPLICATION, and it writes through Slice

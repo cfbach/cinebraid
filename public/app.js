@@ -3909,6 +3909,10 @@ function openModal(inner) {
   m.classList.remove("hidden");
   /* Modal content never goes through route(), so its reference imagery is bound here. */
   bindIntrinsicAspect(m);
+  /* The shell's surfaces are told when a route renders; a modal never goes
+     through route(), so anything the shell decorates inside one would be missed.
+     Content-free on purpose: this says a dialog opened, not what is in it. */
+  if (typeof CustomEvent === "function") window.dispatchEvent(new CustomEvent("cinebraid:modal-opened"));
   m.onclick = (event) => { if (event.target === m) closeModal(); };
   if (MODAL_KEY_HANDLER) m.removeEventListener?.("keydown", MODAL_KEY_HANDLER);
   MODAL_KEY_HANDLER = (event) => {
@@ -6627,7 +6631,7 @@ function libraryView(tab = "all") {
   const title = "References";
   const subtitle = tab === "canon"
     ? "Only media you explicitly approved as canon. Supporting views, historic pointers, candidates and automation are hidden."
-    : "Import work made anywhere, organize it into authoritative states and views, and use optional assisted tools only when needed.";
+    : "Bring in visual references from anywhere, then organize the characters, locations, props, states and views your production uses.";
   return `<div class="view-head"><div><div class="eyebrow">References</div><span class="view-title">${title}</span><div class="view-sub">${subtitle}</div></div>${add}</div>${tabs}${pager}<div class="library-grid bounded-source-section">${referencePage.rows.map(({list,entity}) => libraryCard(list,entity,tab === "canon")).join("") || `<div class="empty-state"><div class="empty-mark">＋</div><h2>${tab === "canon" ? "Nothing is canon yet" : "No references yet"}</h2><p>${tab === "canon" ? "Approve an imported file as canon to add it here." : "Add a character, location, prop, vehicle, or audio asset."}</p><button class="add-btn" onclick="openGlobalAdd()">Add reference</button></div>`}</div>${pager}`;
 }
 

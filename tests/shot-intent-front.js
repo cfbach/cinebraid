@@ -938,7 +938,7 @@ async function checkHierarchy() {
 
   /* H2 — the route choice is visible and states the undeclared fact. */
   assert.strictEqual(layout.intentOpen, true, "H2: the Shot Intent control is open while nothing has been declared");
-  assert(/Execution route not chosen/.test(main), "H2: and says so in the filmmaker's words");
+  assert(/No production route chosen yet/.test(main), "H2: and says so in the filmmaker's words");
   assert(/data-shot-intent-undeclared="1"/.test(main), "H2: and states it for any reader");
   /* `data-frames-required` on this control keeps its shipped meaning — should Frames be
      exposed — so it reads 1 on a shot that owes nothing. The relevance beside it is the

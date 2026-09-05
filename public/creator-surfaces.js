@@ -1231,7 +1231,47 @@
     button.disabled = !enabled;
     button.setAttribute("aria-expanded", open ? "true" : "false");
     button.classList.toggle("open", open);
-    button.title = open ? "Close the Assistant rail" : "Open the Assistant rail";
+    button.title = open ? "Close the Braidy rail" : "Open the Braidy rail";
+    /* THE CONTROL WEARS THE SHIPPED BRAIDY, from the one table that turns a
+       Braidy state into a file. The package's own static FRONT view, not frame
+       zero of an animation nobody is playing: a toggle sitting in the topbar is
+       not an operation, so it is still by construction. Written once - a repaint
+       that rewrote it every time would be work for no change. */
+    decorateAssistantMarks();
+  }
+
+  /* THE ONE PLACE A MARK BECOMES THE SHIPPED BRAIDY.
+   *
+   * This file is one of the four the reachability rule in tests/braidy-rail.js
+   * allows to know Braidy exists, and it already owns Braidy's presence in the
+   * shell - so the decorating happens here and nowhere else. A production path
+   * that wants a mark writes an empty `[data-assistant-mark]` span and stops;
+   * it never learns what fills it, and an undecorated span is inert.
+   *
+   * THE PACKAGE'S OWN STATIC FRONT VIEW, not frame zero of an animation nobody
+   * is playing. A toggle in a topbar and a review panel with no request in
+   * flight are not operations, so neither of them animates - which is also why
+   * reduced motion needs nothing extra here.
+   *
+   * WRITTEN ONCE PER NODE. `data-braidy-sprite` is the receipt; a repaint that
+   * rewrote every mark on every route change would be work for no change. */
+  function decorateAssistantMarks(root) {
+    if (typeof window.braidySprite !== "function") return;
+    const marks = (root || document).querySelectorAll(
+      "[data-assistant-mark], .topbar-braidy-mark");
+    if (!marks.length) return;
+    const sprite = window.braidySprite("idle", { reducedMotion: true });
+    if (!sprite) return;
+    marks.forEach((mark) => {
+      if (mark.dataset.braidySprite) return;
+      mark.classList.add("cb-braidy-presence");
+      mark.dataset.braidyArt = "v32";
+      mark.dataset.braidyPose = "idle";
+      mark.dataset.braidyStill = "1";
+      mark.dataset.braidySprite = sprite.file;
+      mark.style.backgroundImage = `url("${sprite.url}")`;
+      mark.style.backgroundSize = `${sprite.sheetWidth}px ${sprite.size}px`;
+    });
   }
 
   function setRail(open) {
@@ -1262,6 +1302,7 @@
   document.addEventListener("toggle", rememberDisclosure, true);
   window.addEventListener("hashchange", paint);
   window.addEventListener("cinebraid:route-rendered", paint);
+  window.addEventListener("cinebraid:modal-opened", () => decorateAssistantMarks());
   window.addEventListener("cinebraid:workspace-updated", paint);
   window.addEventListener("cinebraid:activity-updated", paint);
   window.addEventListener("load", paint);

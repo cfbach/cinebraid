@@ -27,7 +27,7 @@ assert(index.includes(`styles.css?v=${RELEASE_VERSION}`));
    rather than as a filing cabinet. The consolidation property this file exists
    to guard is unchanged and is asserted more strictly below — there must be
    exactly three, and the retired id must still resolve rather than dangle. */
-for (const label of ["Primary reference", "What this production needs", "Details & history"])
+for (const label of ["Primary reference", "Production needs", "Details & history"])
   assert(entities.includes(`label:"${label}"`), `missing ${label} reference workspace`);
 assert(!entities.includes('label:manualFirstWorkflow()?"Choose & approve":"Review"'), "Choose & approve must no longer be a peer top-level reference stage");
 assert(entities.includes('review:"reference"'), "a stored or handed-off `review` selection must resolve onto the reference that owns candidate review");

@@ -6847,3 +6847,59 @@ body[data-focused-route="library"]:has(.library-grid .library-card) #app[data-su
 .library-card-shell[data-reference-category] .library-card:hover .library-body,
 .library-card-shell[data-reference-category] .library-card:focus-visible .library-body{
   border-left-color:var(--cat)}
+
+/* ===========================================================================
+   SURFACE POLISH V1 — BRAIDY IDENTITY, WORDING AND REVIEW FLOW
+
+   Presentation only. The sprite table in shared-braidy.js stays the one place a
+   Braidy state becomes a file; both marks below are the package's own static
+   FRONT view, written inline from that table by the code that renders them.
+   Nothing here animates: a toggle in a topbar and a panel with no request in
+   flight are not operations, and the rail keeps its animated states.
+   =========================================================================== */
+
+/* The presence box is 32px, which is the sprite's own size and the divisor every
+   sheet offset is computed from. Both marks below scale it with `zoom` rather
+   than resizing the box, so the background-size the renderer wrote from the
+   table stays the number the table gave it. */
+.topbar-braidy-mark,.candidate-assistant-mark{zoom:.72}
+/* Undecorated the slot occupies nothing, so a panel the shell never reached
+   reads exactly as it would without a mark at all. */
+.candidate-assistant-mark:not([data-braidy-sprite]){display:none}
+.creator-rail-toggle{gap:7px}
+
+/* The Braidy panel in candidate review. One raised block, because it is the one
+   optional operation on this column; the rubric and the summary below it stay
+   flat the way the accepted pass left them. */
+.candidate-braidy{
+  display:grid;gap:8px;margin:0 0 8px;padding:11px 12px;
+  border:1px solid color-mix(in srgb,var(--acc) 20%,var(--line));border-radius:9px;
+  background:var(--panel-2)}
+.candidate-braidy>header{display:flex;align-items:center;gap:10px}
+.candidate-braidy>header>div{display:grid;gap:2px;min-width:0;flex:1 1 auto}
+.candidate-braidy>header span{font:700 9.5px var(--mono);letter-spacing:.08em;text-transform:uppercase;color:var(--muted)}
+.candidate-braidy>header b{font-size:13px;overflow-wrap:anywhere}
+.candidate-braidy[data-braidy-reviewed="0"]>header b{color:var(--muted);font-weight:600}
+.candidate-braidy .candidate-braidy-run{flex:0 0 auto;width:auto;min-width:0;white-space:nowrap;font-size:11.5px;padding:7px 11px}
+.candidate-braidy-invite,.candidate-braidy-summary{margin:0;font-size:11.5px;line-height:1.5;color:var(--muted)}
+.candidate-braidy .candidate-structured-ai{border:0;border-top:1px solid var(--line-soft);border-radius:0;background:transparent}
+.candidate-braidy .candidate-structured-ai>summary{padding:8px 0}
+.candidate-braidy .candidate-structured-ai-body{padding:0 0 8px}
+
+/* The review-status row keeps its state tone and loses the face it was wearing:
+   it reports the state of the WHOLE review, the filmmaker's own recorded checks
+   included, so it is not Braidy speaking and no longer looks like it. */
+.candidate-review-state-mark{
+  width:10px;height:10px;justify-self:center;border:2px solid currentColor;border-radius:50%;
+  background:transparent}
+.candidate-review-readiness{grid-template-columns:20px minmax(0,1fr)}
+
+/* Travel keeps its arrow. `open-stage-work` invokes open-panel and advances
+   nothing, so the control that says "Open frames review" says it is a journey
+   too. Only that action: the strip's other actions are not all travel. */
+.cb-stage-action[data-action-id="open-stage-work"]::after{content:" 92";margin-left:2px}
+
+/* Shot intent reads as a sentence, and the line that promises nothing is lost
+   is the quietest thing in the control. */
+.shot-intent-control>summary b{text-transform:none;letter-spacing:.01em;font-size:11px}
+.shot-intent-fields .shot-intent-keeps{color:var(--faint);font-size:11.5px}

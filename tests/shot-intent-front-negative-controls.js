@@ -473,7 +473,7 @@ mustFailAsync("NC-15 a stored declared-state preference folds the undeclared con
 /* ===========================================================================
    NC-16 — THE UNDECLARED STATEMENT IS REMOVED.
    =========================================================================== */
-mustFailAsync("NC-16 the undeclared shot never says the route was not chosen", "Execution route not chosen", async () => {
+mustFailAsync("NC-16 the undeclared shot never says the route was not chosen", "No production route chosen yet", async () => {
   const project = projectWith(newShotRecord());
   const page = await render("#/shot/SC-01-01", project, {
     scan: scanFor(project),
@@ -482,8 +482,8 @@ mustFailAsync("NC-16 the undeclared shot never says the route was not chosen", "
       `  const undeclaredStatement = true\n    ? ""`,
       "NC-16"),
   });
-  assert(/Execution route not chosen/.test(String(page.map.get("main").innerHTML || "")),
-    "an undeclared shot must say Execution route not chosen");
+  assert(/No production route chosen yet/.test(String(page.map.get("main").innerHTML || "")),
+    "an undeclared shot must say No production route chosen yet");
 });
 
 /* ===========================================================================

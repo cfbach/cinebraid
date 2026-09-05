@@ -126,7 +126,7 @@ function demandHeadline(html) {
   return m ? m[1] : "";
 }
 function coverageTaskButton(html) {
-  const m = /<button type="button" class="focused-task-button ([^"]*)"[^>]*title="What this production needs — ([^"]*)"[\s\S]*?<small>([^<]*)<\/small>/.exec(html);
+  const m = /<button type="button" class="focused-task-button ([^"]*)"[^>]*title="Production needs — ([^"]*)"[\s\S]*?<small>([^<]*)<\/small>/.exec(html);
   return m ? { tone: m[1].trim().split(/\s+/)[0], status: m[2], note: m[3] } : null;
 }
 
