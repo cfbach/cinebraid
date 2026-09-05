@@ -100,6 +100,27 @@ function localAccounting(at) {
 const COMFY_COST_LABEL = "Local ComfyUI · no provider charge";
 
 /* ---------------------------------------------------------------------------
+   The status vocabulary is CineBraid's, and it is USED rather than merely cited.
+
+   Every status this module writes goes through here, so a typo cannot reach the ledger
+   and a state this product has no word for cannot be invented locally. That matters more
+   than it looks: `generation-poller.js`, the activity drawer, `blocksResubmission()` and
+   every surface that asks "is this still running" read these exact strings, and a backend
+   that quietly spelled one of them differently would be invisible to all of them while
+   looking correct in its own file. */
+function ledgerStatus(value) {
+  const status = text(value);
+  if (!Lifecycle.LEDGER_STATUSES.includes(status))
+    throw new ComfyGenerationError(
+      "COMFY_STATUS_UNKNOWN",
+      `CineBraid has no generation status called "${status}".`,
+      { status, known: Lifecycle.LEDGER_STATUSES },
+      500,
+    );
+  return status;
+}
+
+/* ---------------------------------------------------------------------------
    Configuration. Two scalars, in data/config.json where every other setting lives. */
 function comfyConfig(readConfig) {
   const c = readConfig() || {};
@@ -527,7 +548,7 @@ function registerComfyGeneration(app, context) {
       seed,
       createdAt: at,
       updatedAt: at,
-      status: "SUBMITTING",
+      status: ledgerStatus("SUBMITTING"),
       outputs: [],
       error: "",
       ingestedAt: "",
@@ -544,7 +565,7 @@ function registerComfyGeneration(app, context) {
       await commitJobLedger(owner, (jobs) => {
         const row = jobs.find((item) => item.id === jobId);
         if (!row) return null;
-        row.status = "FAILED";
+        row.status = ledgerStatus("FAILED");
         row.error = text(error.message);
         row.errorCode = text(error.code);
         row.errorDetail = isRecord(error.detail) ? error.detail : {};
@@ -559,7 +580,7 @@ function registerComfyGeneration(app, context) {
       if (!row) return job;
       row.externalId = submitted.promptId;
       row.queuePosition = Number.isFinite(submitted.queueNumber) ? submitted.queueNumber : null;
-      row.status = "IN_QUEUE";
+      row.status = ledgerStatus("IN_QUEUE");
       row.updatedAt = nowIso();
       row.comfy = { ...row.comfy, promptId: submitted.promptId, submittedAt: row.updatedAt };
       return row;
@@ -638,7 +659,7 @@ function registerComfyGeneration(app, context) {
         return commitJobLedger(owner, (jobs) => {
           const row = jobs.find((item) => item.id === jobId);
           if (!row) return job;
-          row.status = "FAILED";
+          row.status = ledgerStatus("FAILED");
           row.error = text(history.error) || "ComfyUI reported an error while running this workflow.";
           row.updatedAt = nowIso();
           row.comfy = { ...row.comfy, completedAt: row.updatedAt, statusText: history.statusText };
@@ -647,7 +668,7 @@ function registerComfyGeneration(app, context) {
       }
       if (history.state !== "completed") {
         const queue = history.state === "pending" ? await Client.queuePosition(cfg.baseUrl, job.externalId) : { state: "running", position: 0 };
-        const status = queue.state === "queued" ? "IN_QUEUE" : queue.state === "running" ? "IN_PROGRESS" : job.status;
+        const status = ledgerStatus(queue.state === "queued" ? "IN_QUEUE" : queue.state === "running" ? "IN_PROGRESS" : job.status);
         return commitJobLedger(owner, (jobs) => {
           const row = jobs.find((item) => item.id === jobId);
           if (!row) return job;
@@ -663,7 +684,7 @@ function registerComfyGeneration(app, context) {
         return commitJobLedger(owner, (jobs) => {
           const row = jobs.find((item) => item.id === jobId);
           if (!row) return job;
-          row.status = "FAILED";
+          row.status = ledgerStatus("FAILED");
           row.error = "ComfyUI finished this workflow but saved no image. A workflow CineBraid can deliver ends in a Save node.";
           row.updatedAt = nowIso();
           return row;
@@ -714,7 +735,7 @@ function registerComfyGeneration(app, context) {
       return commitJobLedger(owner, (jobs) => {
         const row = jobs.find((item) => item.id === jobId);
         if (!row) return job;
-        row.status = "COMPLETED";
+        row.status = ledgerStatus("COMPLETED");
         row.outputs = outputs;
         row.ingestedAt = nowIso();
         row.updatedAt = row.ingestedAt;
