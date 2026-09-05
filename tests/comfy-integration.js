@@ -937,6 +937,71 @@ async function ordinaryCandidate() {
 }
 
 /* ===========================================================================
+   12a. AN UNSUPPLIED SEED IS ABSENT, NOT ZERO.
+
+   Found by the FIRST REAL GENERATION, not by this suite — which is the finding worth
+   recording. The dispatch dialog says "Leave empty for the workflow's own seed"; the
+   browser sends `seed: null` for an empty field; `Number(null)` is 0 and
+   `Number.isFinite(0)` is true, so the run applied a deliberate seed of 0 over the
+   workflow author's 42 and recorded it as an APPLIED input.
+
+   This suite missed it because every fixture either passed a real seed or omitted the
+   key entirely — and `undefined` happens to fail the finite-check, so the bug was
+   invisible to exactly the two shapes a test writer reaches for. The browser's own
+   shape, an explicit null, is the one that was never tried.
+
+   All three absence shapes are pinned here, and 0 is pinned as a REAL seed: a filmmaker
+   who types 0 means 0, and treating it as absence would be the same defect wearing the
+   other face. */
+async function unsuppliedSeedIsAbsent() {
+  const Generation = require(path.join(ROOT, "comfy-generation.js"));
+  for (const [label, seed] of [["null", null], ["undefined", undefined], ["empty string", ""]]) {
+    const job = Generation.contractJob({
+      jobId: "seed-check", shotId: "SC-01-01", frameId: "frame-a", prompt: "a lighthouse",
+      negativePrompt: "", references: [], seed, recipeId: "smoke.json", status: "preparing_inputs",
+    });
+    assert.strictEqual(job.settings.seedMode, "random", `${label} must read as no seed`);
+    assert(!("seed" in job.settings), `${label} must not put a seed in production intent`);
+  }
+  for (const [label, seed, expected] of [["zero", 0, 0], ["seven", 7, 7], ["numeric string", "12", 12]]) {
+    const job = Generation.contractJob({
+      jobId: "seed-check", shotId: "SC-01-01", frameId: "frame-a", prompt: "a lighthouse",
+      negativePrompt: "", references: [], seed, recipeId: "smoke.json", status: "preparing_inputs",
+    });
+    assert.strictEqual(job.settings.seedMode, "explicit", `${label} is a chosen seed`);
+    assert.strictEqual(job.settings.seed, expected, `${label} must survive as ${expected}`);
+  }
+
+  /* AND END TO END, through the route, with the browser's own payload shape. The
+     workflow's own seed must reach ComfyUI untouched and be RECORDED as kept. */
+  const comfy = await startFakeComfy();
+  const harness = await makeHarness({ comfyBaseUrl: comfy.baseUrl });
+  try {
+    const folder = writeWorkflowFolder(path.join(harness.dir, "workflows"), { "smoke.json": apiWorkflow() });
+    harness.Config.writeConfig(harness.Config.mergeConfig(harness.Config.readConfig(), { generation: { comfy: { workflowFolder: folder } } }));
+    await call(harness, "POST", "/api/generation/comfy/workflow/mapping", {
+      relativePath: "smoke.json",
+      bindings: { positivePrompt: { nodeId: "6", input: "text" }, seed: { nodeId: "3", input: "seed" } },
+    });
+    const sent = await call(harness, "POST", "/api/generation/comfy/jobs", {
+      shotId: "SC-01-01", frameId: "frame-a", frameLabel: "A", relativePath: "smoke.json",
+      prompt: "a lighthouse", negativePrompt: "", seed: null, references: {},
+    });
+    assert.strictEqual(sent.status, 200, JSON.stringify(sent.data));
+    const graph = comfy.state.prompts[0].graph;
+    assert.strictEqual(graph["3"].inputs.seed, 12345,
+      "an empty seed field must leave the workflow author's seed exactly where it was");
+    const job = harness.jobs().at(-1);
+    assert.strictEqual(job.comfy.seed, null, "and the provenance must record no seed rather than a zero");
+    assert(job.comfy.keptWorkflowValues.some((row) => row.key === "seed" && row.keptWorkflowValue),
+      "and must record that the workflow's own seed is what ran");
+    assert(!job.comfy.appliedInputs.some((row) => row.key === "seed"),
+      "and must not claim CineBraid applied a seed it never chose");
+    note("unsupplied seed: null, undefined and \"\" all read as absent while 0 stays a real seed; an empty field leaves the author's 12345 in the graph and is recorded as kept, not applied");
+  } finally { harness.close(); comfy.close(); }
+}
+
+/* ===========================================================================
    13. THE BROWSER HOLDS ONE LEDGER, AND ROUTES ON THE BACKEND THAT OWNS EACH ROW.
 
    Found by the browser dogfood, not by reading. A delivered ComfyUI candidate appeared
@@ -1054,6 +1119,7 @@ async function main() {
   await provenanceAndCost();
   await refusals();
   await changedUnderDispatch();
+  await unsuppliedSeedIsAbsent();
   console.log("ComfyUI foothold V1 suite passed:");
   for (const line of notes) console.log(`  - ${line}`);
 }

@@ -13,6 +13,7 @@
  *   NC-6  a local render is recorded as a hosted charge
  *   NC-7  a raw filesystem path is accepted as workflow identity
  *   NC-8  a non-loopback ComfyUI address is dialled
+ *   NC-9  an unsupplied seed is applied as zero
  *
  * NOTHING IS WRITTEN TO DISK AND NOTHING IS REVERTED WITH GIT. Each defect is introduced
  * by compiling a MODIFIED COPY of the real source in memory and installing it in the
@@ -446,6 +447,44 @@ async function nc8() {
   });
 }
 
+/* ===========================================================================
+   NC-9 — an unsupplied seed is applied as zero.
+
+   Restores the finite-check the first real generation caught. `Number(null)` is 0 and
+   `Number.isFinite(0)` is true, so an empty seed field became a deliberate seed of 0,
+   overwrote the workflow author's own seed, and was recorded as an APPLIED input — the
+   dialog promising "Leave empty for the workflow's own seed" while the run did the
+   opposite.
+
+   This is the only control here whose defect reached a real render before a test did,
+   which is why it exists: the suite's fixtures either passed a seed or omitted the key,
+   and `undefined` happens to fail the finite-check. The browser's own shape — an
+   explicit null — was the one nothing tried. */
+async function nc9() {
+  await mustBeCaught("NC-9 an unsupplied seed is applied as zero", () => withHarness({
+    mutate: () => {
+      installBroken("comfy-generation.js", (source, label) => mutateOnce(
+        source,
+        "    const seed = optionalNumber(request.seed);",
+        "    const seed = Number.isFinite(Number(request.seed)) ? Number(request.seed) : null;",
+        label,
+      ), "NC-9 absence test on the seed");
+    },
+  }, async ({ harness, comfy }) => {
+    await confirm(harness, { positivePrompt: { nodeId: "6", input: "text" }, seed: { nodeId: "3", input: "seed" } });
+    const sent = await Suite.call(harness, "POST", "/api/generation/comfy/jobs", {
+      ...DISPATCH, negativePrompt: "", seed: null, references: {},
+    });
+    assert.strictEqual(sent.status, 200, JSON.stringify(sent.data));
+    /* THE CLAIM: an empty field leaves the author's seed exactly where it was. */
+    assert.strictEqual(comfy.state.prompts[0].graph["3"].inputs.seed, 12345,
+      "an empty seed field must leave the workflow author's seed untouched");
+    const job = harness.jobs().at(-1);
+    assert(!job.comfy.appliedInputs.some((row) => row.key === "seed"),
+      "and CineBraid must not claim it applied a seed nobody chose");
+  }));
+}
+
 /* =========================================================================== */
 async function main() {
   await nc1();
@@ -456,6 +495,7 @@ async function main() {
   await nc6();
   await nc7();
   await nc8();
+  await nc9();
   assert.strictEqual(new Set(applied).size, applied.length, "every mutation label must be distinct");
   console.log(`ComfyUI foothold V1 negative controls passed: ${notes.length} deliberate defects reintroduced in memory, every one detected by the guard that owns it.`);
   for (const line of notes) console.log(`  - ${line}`);

@@ -74,6 +74,23 @@ function uid(prefix) {
   return `${prefix}-${Date.now().toString(36)}-${crypto.randomBytes(4).toString("hex")}`;
 }
 
+/* AN UNSUPPLIED NUMBER IS ABSENT, NOT ZERO.
+ *
+ * `Number(null)` is 0 and `Number.isFinite(0)` is true, so a plain finite-check reads an
+ * empty seed field as a deliberate seed of 0. The first real generation caught it: the
+ * dialog said "Leave empty for the workflow's own seed", the filmmaker left it empty, and
+ * the run recorded seed 0 as an APPLIED input — overwriting the workflow author's 42 and
+ * telling the provenance a value had been chosen that nobody chose.
+ *
+ * Absence is checked before conversion, and `""`, null and undefined are all absence.
+ * That distinction is the whole difference between "CineBraid set this" and "the
+ * workflow's own value ran", which is a fact the provenance has to get right. */
+function optionalNumber(value) {
+  if (value === null || value === undefined || value === "") return null;
+  const number = Number(value);
+  return Number.isFinite(number) ? number : null;
+}
+
 /* ---------------------------------------------------------------------------
    Cost truth. One shape, and it is not a number CineBraid made up.
 
@@ -203,7 +220,10 @@ function failureOf(error) {
  * production intent has learned the words `workflow`, `class_type`, `nodeid`,
  * `prompt_id` or `comfy`. Those are precisely the leaks this integration could produce,
  * and the validator that catches them already shipped. */
-function contractJob({ jobId, shotId, frameId, prompt, negativePrompt, references, seed, recipeId, status }) {
+function contractJob({ jobId, shotId, frameId, prompt, negativePrompt, references, seed: requestedSeed, recipeId, status }) {
+  /* Normalised at this boundary too, not only in dispatch(): this is a pure exported
+     function, and a caller that hands it "" must not get a deliberate seed of 0. */
+  const seed = optionalNumber(requestedSeed);
   const job = {
     jobId,
     target: { kind: "shot-frame", shotId, frameId: frameId || "", purpose: "frame" },
@@ -227,8 +247,10 @@ function contractJob({ jobId, shotId, frameId, prompt, negativePrompt, reference
     },
     output: { candidateCount: 1 },
     settings: {
-      seedMode: Number.isFinite(Number(seed)) ? "explicit" : "random",
-      ...(Number.isFinite(Number(seed)) ? { seed: Number(seed) } : {}),
+      /* `seed === null` is the absence test, not a finite-check — see optionalNumber().
+         A seed of 0 is a real, deliberate seed and must stay explicit. */
+      seedMode: seed === null || seed === undefined ? "random" : "explicit",
+      ...(seed === null || seed === undefined ? {} : { seed: Number(seed) }),
       routingIntent: "standard",
       negativePrompt: String(negativePrompt || ""),
     },
@@ -478,7 +500,7 @@ function registerComfyGeneration(app, context) {
       references.push({ key, role: Workflow.COMFY_SEMANTIC_INPUTS.find((e) => e.key === key).referenceRole, ...resolved });
     }
 
-    const seed = Number.isFinite(Number(request.seed)) ? Number(request.seed) : null;
+    const seed = optionalNumber(request.seed);
     const jobId = uid("comfy-job");
     /* Built and validated BEFORE the ledger row exists, so an intent CineBraid would
        not send never becomes a durable record of something it tried. */
