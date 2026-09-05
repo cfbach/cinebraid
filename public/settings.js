@@ -285,6 +285,19 @@ function generationConfigPatch() {
         maxConcurrent: Number(CONFIG.generation?.fal?.maxConcurrent || 1),
         requireConfirmation: true,
       },
+      /* Civitai's three fields ride with the panel that renders them. Guarded the same way
+         everything else on this panel is — an absent control means the panel is not on
+         screen and the value must not be carried from a stale CONFIG copy. There is no
+         credential here: `connectionId` names an AccountConnection whose tokens live in
+         `accounts[]` under the config secret registry, and /api/config refuses to touch
+         `accounts` at all. */
+      ...($("#cfg-civitai-enabled") ? {
+        civitai: {
+          enabled: !!$("#cfg-civitai-enabled").checked,
+          connectionId: String(v("#cfg-civitai-connection", CONFIG.generation?.civitai?.connectionId || "")).trim(),
+          resourceAir: String(v("#cfg-civitai-resource", CONFIG.generation?.civitai?.resourceAir || "")).trim(),
+        },
+      } : {}),
     },
   };
 }

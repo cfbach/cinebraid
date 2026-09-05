@@ -164,6 +164,12 @@
      same panel-state helpers, and before views.js's panel is ever shown. -->
 <script src="comfy-settings.js?v=6.7.0-dev.1"></script>
 <script src="comfy-shot.js?v=6.7.0-dev.1"></script>
+<!-- Civitai. The settings half sits beside comfy-settings.js for the same reason it does:
+     after settings.js, whose panel-state helpers it uses, and before views.js draws a
+     panel. The shot half sits before creation-studio.js, which asks every backend the same
+     four questions when it draws a frame's execution block. -->
+<script src="civitai-settings.js?v=6.7.0-dev.1"></script>
+<script src="civitai-shot.js?v=6.7.0-dev.1"></script>
 <script src="library-tools.js?v=6.7.0-dev.1"></script>
 <script src="review.js?v=6.7.0-dev.1"></script>
 <script src="scene-review.js?v=6.7.0-dev.1"></script>

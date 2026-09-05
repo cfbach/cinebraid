@@ -376,6 +376,8 @@ async function main() {
     "candidate-review-semantics-negative-controls.js",
     "candidate-review-semantics-real-browser.py",
     "candidate-review-semantics.js",
+    "civitai-integration-negative-controls.js",
+    "civitai-integration.js",
     "clarity-consolidation.js",
     "comfy-integration-negative-controls.js",
     "comfy-integration.js",

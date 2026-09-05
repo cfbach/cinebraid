@@ -56,6 +56,7 @@ const { SimpleZipWriter } = require("./zip-stream");
 const AgentSuite = require("./agent-suite");
 const { registerFalGeneration } = require("./fal-generation");
 const { registerComfyGeneration } = require("./comfy-generation");
+const { registerCivitaiGeneration } = require("./civitai-generation");
 const { registerAutomationRuns } = require("./automation-runs");
 const { createGenerationPoller } = require("./generation-poller");
 const { isAccountCallbackPath, registerAccountConnections } = require("./accounts-api");
@@ -5075,6 +5076,38 @@ const FalGeneration = registerFalGeneration(app, {
  * so until someone refreshes it, which is true rather than convenient. */
 registerComfyGeneration(app, {
   readConfig,
+  readProject,
+  writeProject,
+  activeSlug,
+  projectDirForSlug,
+});
+/* Civitai, mounted beside fal for a narrower reason than ComfyUI's.
+ *
+ * ComfyUI is not routed through registerFalGeneration's dispatcher because a free local
+ * render has nothing to authorise. Civitai has everything to authorise — it is the second
+ * paid backend — and is still mounted separately, because the first two lines of that
+ * dispatcher gate on FAL'S enablement flag and FAL'S API key. Threading Civitai through it
+ * would mean loosening the two gates that guard every fal dispatch on behalf of a caller
+ * that must never reach fal.
+ *
+ * What it reuses is the GUARANTEE rather than the function: paid-dispatch-permit.js is a
+ * provider-neutral module that imports nothing from fal, and single-use redemption comes
+ * from a ledger row naming the permit inside a commit turn — the same mechanism, not a
+ * copy of it. It also shares the generation ledger, the per-project commit chain and the
+ * returned-candidate writer, and receives the same context fal receives so it inherits the
+ * same cross-project containment rather than restating it.
+ *
+ * `writeConfig` is the one addition to that context, and it has exactly one use: storing a
+ * rotated OAuth refresh token after a refresh. A rotated token that is used and not stored
+ * is a connection that works precisely once.
+ *
+ * Nothing is handed back. Every route is loopback-only and there is no background poller:
+ * a paid job whose browser closed stays in the state it was last known to be in and says
+ * so, which is true rather than convenient — and a timer that woke up and contacted a paid
+ * provider is a behaviour the money boundary has not been asked to authorise. */
+registerCivitaiGeneration(app, {
+  readConfig,
+  writeConfig,
   readProject,
   writeProject,
   activeSlug,

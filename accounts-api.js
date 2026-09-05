@@ -240,6 +240,52 @@ function registerAccountConnections(app, context) {
     }
   }
 
+  /* ---- re-authorization -------------------------------------------------------
+   *
+   * A SECOND authorization for an account that is ALREADY connected, granting something
+   * the first one deliberately did not — for Civitai, permission to spend Buzz.
+   *
+   * It updates the existing connection IN PLACE rather than creating a sibling. That is
+   * not tidiness: connectionId is the identity every other part of CineBraid references,
+   * a generation job's routing.accountConnectionId among them, and minting a second row
+   * for the same account would leave the job pointing at the narrower grant while the
+   * person believed they had widened it.
+   *
+   * THE ACCOUNT MUST BE THE SAME ACCOUNT. Nothing stops a person signing into a different
+   * Civitai account on the consent screen, and if they do, the credential that comes back
+   * is a real credential for the wrong account. Writing it into this row would silently
+   * repoint a connection — and any generation configured against it — at somebody else's
+   * Buzz. So the new identity's providerUserId is compared to the stored one and a
+   * mismatch is refused with the credential discarded. */
+  async function reauthorizeConnection(connectionId, acquired, config) {
+    const existing = findConnection(storedAccounts(config), connectionId);
+    if (!existing) throw providerError("AUTHORIZATION_EXPIRED", "civitai");
+    const adapter = getAccountProvider(existing.providerId);
+    const identity = await adapter.fetchIdentity({ config, credential: acquired.credential });
+    if (String(identity.providerUserId || "") !== String(existing.identity?.providerUserId || ""))
+      throw providerError(
+        "AUTHORIZATION_FAILED",
+        existing.providerId,
+        "That authorization was granted by a different account, so CineBraid did not change this connection.",
+      );
+    const connection = {
+      ...existing,
+      status: "connected",
+      identity: { ...normalizeIdentity(identity), grantedScope: acquired.grantedScope || identity.grantedScope || "" },
+      credential: { ...existing.credential, ...acquired.credential },
+      lastVerifiedAt: nowIso(),
+      lastError: null,
+    };
+    const validation = validateConnection(connection);
+    if (!validation.ok) throw providerError("PROVIDER_RESPONSE_INVALID", existing.providerId);
+    /* Same guard persistVerified uses, and for the same reason: a disconnect that landed
+       while the consent screen was open must not be undone by an append. */
+    persistAccounts((accounts) => (
+      findConnection(accounts, connection.connectionId) ? upsertConnection(accounts, connection) : accounts
+    ));
+    return connection;
+  }
+
   /* A brand-new connection from a freshly acquired credential. Identity is proved
      BEFORE anything is written: a credential that cannot name an account is not a
      connection, and half-writing one leaves a record whose only future is to fail. */
@@ -285,17 +331,33 @@ function registerAccountConnections(app, context) {
     });
   });
 
+  /* `grant` selects WHICH authorization is being asked for, and the adapter owns the
+     vocabulary — this route passes a word, never a scope value, so no caller can ask a
+     person to grant a permission the product did not choose to request.
+
+     `connectionId` says the flow is a re-authorization of an account already connected.
+     It is remembered here rather than read from the callback, because the callback is a
+     navigation the provider caused and must carry no caller-chosen state beyond the
+     single-use `state` this server minted. */
   app.post("/api/accounts/:providerId/oauth/start", requireLoopbackRequest, (req, res) => {
     try {
       const config = readConfig();
       const adapter = getAccountProvider(req.params.providerId);
       const redirectUri = redirectUriFor(adapter);
-      const authorization = adapter.buildAuthorization({ config, redirectUri });
+      const grant = typeof req.body?.grant === "string" ? req.body.grant.trim() : "identity";
+      const connectionId = typeof req.body?.connectionId === "string" ? req.body.connectionId.trim() : "";
+      if (connectionId && !isValidConnectionId(connectionId))
+        return res.status(400).json({ error: "That is not an account connection.", code: "CONNECTION_ID_INVALID" });
+      if (connectionId && !findConnection(storedAccounts(config), connectionId))
+        return res.status(404).json({ error: "That account connection no longer exists.", code: "CONNECTION_NOT_FOUND" });
+      const authorization = adapter.buildAuthorization({ config, redirectUri, grant });
       pending.remember(authorization.state, {
         providerId: adapter.providerId,
         codeVerifier: authorization.codeVerifier,
         redirectUri,
         scope: authorization.scope,
+        grant: authorization.grant,
+        connectionId,
       });
       /* The verifier stays here. Only the URL and the state leave, and neither is
          a secret: the state is a nonce and the challenge in the URL is a digest. */
@@ -341,6 +403,16 @@ function registerAccountConnections(app, context) {
       const acquired = await adapter.exchangeAuthorizationCode({
         config, code, codeVerifier: flow.codeVerifier, redirectUri: flow.redirectUri,
       });
+      /* Which of the two things just happened is decided by the flow this server
+         remembered, never by anything in the callback URL. */
+      if (flow.connectionId) {
+        const updated = await reauthorizeConnection(flow.connectionId, acquired, config);
+        return res.type("html").send(callbackPage({
+          ok: true,
+          heading: "Civitai permissions updated",
+          message: `CineBraid can now generate on ${updated.identity.displayName}'s Civitai account. Nothing has been generated and nothing has been spent. You can close this tab.`,
+        }));
+      }
       const connection = await connectWithCredential(adapter.providerId, acquired, config);
       return res.type("html").send(callbackPage({
         ok: true,

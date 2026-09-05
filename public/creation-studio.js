@@ -3000,6 +3000,14 @@ function frameExecutionPaths(s, frame) {
       readiness: null,
     });
   }
+  /* Civitai answers the same four questions and fills the same descriptor. It names a
+     model where ComfyUI names a workflow and quotes in Buzz where fal estimates in
+     dollars, and neither is asked to pretend otherwise: the descriptor's `unitLabel` and
+     `costWords` exist precisely so each backend can say its own word. */
+  if (typeof civitaiFrameExecutionPath === "function") {
+    const hosted = civitaiFrameExecutionPath();
+    if (hosted) paths.push(hosted);
+  }
   return paths;
 }
 /* The path whose controls are on screen, or null while the filmmaker has genuinely not
@@ -3079,6 +3087,17 @@ function frameExecutionActionMarkup(s, frame, build, path) {
     if (!action) return "";
     return `<div class="frame-execution-action">${action}<small>Opens the local request review. Nothing runs until you confirm it there. <b>No provider charge.</b></small></div>`;
   }
+  if (path.id === "civitai") {
+    const action = typeof civitaiPromptAction === "function"
+      ? civitaiPromptAction(s.id, frame.id, build.id, { primary: true })
+      : "";
+    if (!action) return "";
+    /* The sentence says where the number comes from, not what it is: the figure is
+       obtained from Civitai inside that review, for this exact request, and nothing is
+       submitted until a person confirms it there. Printing a price here would mean
+       quoting a paid provider every time a frame is drawn. */
+    return `<div class="frame-execution-action is-paid">${action}<small>Opens the paid request review. Civitai prices this exact request there, and <b>nothing is spent until you confirm that figure</b>.</small></div>`;
+  }
   const action = typeof falPromptAction === "function" ? falPromptAction(s.id, "frame", frame.id, build.id, "") : "";
   if (!action) return "";
   return `<div class="frame-execution-action is-paid">${action}<small>Opens the paid request review at fal. You choose the model and authorize the charge there.</small></div>`;
@@ -3130,14 +3149,16 @@ function frameExecutionBlockMarkup(s, frame, build) {
 /* ---------------------------------------------------------------------------
    4. ONE STATUS POSITION, between the controls and the result.
 
-   Both backends' strips are drawn here, always, and each is its own backend's. A
+   Every backend's strip is drawn here, always, and each is its own backend's. A
    filmmaker looking at local ComfyUI must still be able to see an unresolved paid
    submission on this frame: hiding a job because a different backend is selected would
-   be hiding a request that may already have been charged. */
+   be hiding a request that may already have been charged. That reasoning is what put
+   Civitai's strip in this list rather than behind its own selection. */
 function frameOperationStatusMarkup(s, frame) {
   const strips = [
     typeof falGenerationInline === "function" ? falGenerationInline(s.id, "frame", frame.id) : "",
     typeof comfyGenerationInline === "function" ? comfyGenerationInline(s.id, frame.id) : "",
+    typeof civitaiGenerationInline === "function" ? civitaiGenerationInline(s.id, frame.id) : "",
   ].filter(Boolean);
   if (!strips.length) return "";
   return `<section class="frame-operation-status" data-frame-operations="${strips.length}"><header><span>THIS OPERATION</span></header>${strips.join("")}</section>`;

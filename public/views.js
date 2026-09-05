@@ -299,7 +299,25 @@ const ROUTES = {
       ${field("Estimated cost per second of motion (USD)", `<input id="cfg-fal-motion-rate" type="number" min="0" max="100" step="0.001" value="${attr(Number(fal.motionRate?.usdPerSecond || 0))}" placeholder="0.00"><small>Video is billed by the second, not by the image. Left at zero, CineBraid shows motion cost as unavailable rather than guessing — it ships no prices of its own.</small>`)}
       ${field("Where that motion price came from", `<input id="cfg-fal-motion-rate-source" type="text" maxlength="200" value="${attr(String(fal.motionRate?.source || ""))}" placeholder="fal pricing page"><small>Your own note, shown beside the estimate. CineBraid cannot check a provider's pricing page and will not claim it did.</small>`)}
       ${field("Date you read it", `<input id="cfg-fal-motion-rate-asof" type="date" value="${attr(String(fal.motionRate?.asOf || ""))}"><small>Left empty, the estimate says its freshness is unknown — which is better than a date nobody checked.</small>`)}
-    </div><div class="settings-actions"><button class="add-btn" onclick="saveConfig('generation')">Save generation settings</button><span id="fal-test-note" class="settings-state-chip" data-tone="${fal.enabled ? (fal.apiKey || fal.keySource === "environment" ? "ready" : "attention") : "off"}">${fal.enabled ? (fal.apiKey || fal.keySource === "environment" ? "FAL generation is set up" : "FAL generation is on, but needs a key") : "FAL generation is off"}</span>${panelState("manual", "Save records these defaults; nothing is generated and nothing is charged.")}</div><p class="hint fal-security-note">Paid generation is only submitted after confirmation.</p></section>`;
+    </div>${(() => {
+      /* CIVITAI SITS ON THE GENERATION PANEL, BESIDE FAL, AND NOT ON INTEGRATIONS.
+       *
+       * Integrations is "Generation tools running on this machine" and states in words
+       * that "Nothing on this panel can spend money". Civitai spends Buzz, so putting it
+       * there would make that sentence false — and moving it would be a settings-tab
+       * change this slice has no reason to make. Generation is already the panel that
+       * configures a hosted provider that bills, which is exactly what this is.
+       *
+       * THREE FIELDS AND NO CREDENTIAL. The account is referenced by connection, and the
+       * connection lives in Accounts with its tokens in the config secret registry. There
+       * is no address field either: Civitai's endpoints are constants inside the adapter,
+       * so there is nothing here to point somewhere else. */
+      const civ = c.generation?.civitai || {};
+      return `<section class="settings-subblock civitai-settings" data-integration="civitai"><div class="settings-title-row"><div><h4>Civitai</h4><p class="hint">Generate a frame on Civitai, paid from your own Civitai account in Buzz. CineBraid asks Civitai what each request costs and shows you that figure before anything is submitted — nothing here spends on its own.</p></div></div><label class="checkline"><input id="cfg-civitai-enabled" type="checkbox" ${civ.enabled ? "checked" : ""}> Generate with Civitai</label><div class="two-col">
+      ${field("Civitai account that pays", `<select id="cfg-civitai-connection">${typeof civitaiConnectionOptions === "function" ? civitaiConnectionOptions(String(civ.connectionId || "")) : ""}</select><small>Connect the account in Settings → Accounts first, and allow generation on it there.</small>`)}
+      ${field("Model (Civitai AIR)", `<input id="cfg-civitai-resource" value="${attr(String(civ.resourceAir || ""))}" placeholder="urn:air:sdxl:checkpoint:civitai:101055@128078"><small>Civitai's own identifier for a model version. Open the model on Civitai and copy its AIR. CineBraid generates with SDXL checkpoints in this version.</small>`)}
+    </div><div class="settings-actions"><button class="ghost-btn" onclick="checkCivitaiResource()">Check model</button><span id="civitai-resource-note" class="settings-state-chip" data-tone="${civ.enabled ? "attention" : "off"}">${civ.enabled ? "Not checked yet — press Check model" : "Civitai generation is off"}</span></div></section>`;
+    })()}<div class="settings-actions"><button class="add-btn" onclick="saveConfig('generation')">Save generation settings</button><span id="fal-test-note" class="settings-state-chip" data-tone="${fal.enabled ? (fal.apiKey || fal.keySource === "environment" ? "ready" : "attention") : "off"}">${fal.enabled ? (fal.apiKey || fal.keySource === "environment" ? "FAL generation is set up" : "FAL generation is on, but needs a key") : "FAL generation is off"}</span>${panelState("manual", "Save records these defaults; nothing is generated and nothing is charged.")}</div><p class="hint fal-security-note">Paid generation is only submitted after confirmation.</p></section>`;
     /* Integrations — generation tools running on this machine.
      *
      * Separate from Generation, which configures a HOSTED provider that bills. Nothing
@@ -339,7 +357,33 @@ const ROUTES = {
           : row.status === "connecting" ? "Connecting…"
             : row.status === "error" ? "Needs attention"
               : "Not connected");
-    const accountConnectedRow = (row) => `<article class="account-row" data-account-status="${attr(row.status)}"><div><b>${esc(row.providerLabel || row.providerId)}</b><span class="account-identity">${esc(row.identity?.displayName ? `@${row.identity.displayName}` : "Connected account")}</span><small>${esc(accountStateWords(row))}${row.identity?.tier ? ` · ${esc(row.identity.tier)}` : ""}${row.identity?.accountStatus && row.identity.accountStatus !== "active" ? ` · ${esc(row.identity.accountStatus)}` : ""}</small>${row.lastError ? `<small class="account-note" role="status">${esc(row.lastError.message)}</small>` : ""}</div><div class="account-row-actions"><button class="ghost-btn" onclick="recheckAccountConnection('${attr(row.connectionId)}')">Recheck</button><button class="ghost-btn" onclick="disconnectAccount('${attr(row.connectionId)}')">Disconnect</button></div></article>`;
+    /* THE SPEND GRANT, ON THE ROW, AND ONLY WHERE IT IS TRUE.
+     *
+     * Connecting an account is identity only and this panel's own heading promises that
+     * connecting "generates nothing and spends nothing". Permission to spend Buzz is
+     * therefore a SECOND, separate authorization, asked for here and never folded into
+     * Connect — which is what keeps that sentence true rather than nearly true.
+     *
+     * What is rendered is CineBraid's own boolean from /api/generation/civitai/grants,
+     * never the provider's scope value: safeConnection deliberately does not project the
+     * bitmask, and a bitmask is not something to put in front of a person. */
+    const accountGrantMarkup = (row) => {
+      const grant = (typeof civitaiGrantFor === "function" ? civitaiGrantFor(row.connectionId) : null);
+      if (!grant) return "";
+      if (grant.tokenSource === "api_key")
+        return `<small class="account-note">Connected with an API key, which carries whatever your Civitai account allows. CineBraid cannot check it in advance — Civitai decides at the moment of generating.</small>`;
+      return grant.generationAuthorized
+        ? `<small class="account-note">CineBraid may generate on this account. Each generation is still priced and confirmed before anything is spent.</small>`
+        : `<small class="account-note">Connected for identity only — CineBraid cannot generate on this account yet.</small>`;
+    };
+    const accountGrantAction = (row) => {
+      const grant = (typeof civitaiGrantFor === "function" ? civitaiGrantFor(row.connectionId) : null);
+      if (!grant || grant.tokenSource === "api_key" || !onLocalMachine) return "";
+      return grant.generationAuthorized
+        ? ""
+        : `<button class="add-btn" onclick="allowCivitaiGeneration('${attr(row.connectionId)}')">Allow generation</button>`;
+    };
+    const accountConnectedRow = (row) => `<article class="account-row" data-account-status="${attr(row.status)}"><div><b>${esc(row.providerLabel || row.providerId)}</b><span class="account-identity">${esc(row.identity?.displayName ? `@${row.identity.displayName}` : "Connected account")}</span><small>${esc(accountStateWords(row))}${row.identity?.tier ? ` · ${esc(row.identity.tier)}` : ""}${row.identity?.accountStatus && row.identity.accountStatus !== "active" ? ` · ${esc(row.identity.accountStatus)}` : ""}</small>${accountGrantMarkup(row)}${row.lastError ? `<small class="account-note" role="status">${esc(row.lastError.message)}</small>` : ""}</div><div class="account-row-actions">${accountGrantAction(row)}<button class="ghost-btn" onclick="recheckAccountConnection('${attr(row.connectionId)}')">Recheck</button><button class="ghost-btn" onclick="disconnectAccount('${attr(row.connectionId)}')">Disconnect</button></div></article>`;
     /* The service is named from its own label rather than written in, so this row
        is still correct the day a second provider is registered. Today that renders
        exactly "Connect Civitai". */
@@ -363,6 +407,11 @@ const ROUTES = {
        state above and this replaces it when the answer arrives. */
     if (selected === "integrations")
       setTimeout(() => { if (typeof refreshComfyWorkflowList === "function") refreshComfyWorkflowList(); }, 0);
+    /* Which Civitai connections may generate is a server answer, so it is fetched rather
+       than rendered — the same reason the workflow list above is. Both panels draw their
+       own honest empty state first and are redrawn when the answer arrives. */
+    if (selected === "accounts" || selected === "generation")
+      setTimeout(() => { if (typeof refreshCivitaiGrants === "function") refreshCivitaiGrants(); }, 0);
     return `<div class="view-head"><div><div class="eyebrow">Settings</div><span class="view-title">Settings</span><div class="view-sub">Appearance, where files are kept, how they are named, and the optional services CineBraid may use.</div></div></div>${tabbar}<div class="settings-selected-tab" data-settings-tab="${attr(selected)}">${body}</div>`;
   },
 };

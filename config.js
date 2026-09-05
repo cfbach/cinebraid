@@ -141,6 +141,29 @@ const DEFAULT_CONFIG = {
       baseUrl: "http://127.0.0.1:8188",
       workflowFolder: "",
     },
+    /* Civitai — a HOSTED provider that bills in Buzz, and the settings it needs are
+     * deliberately only three.
+     *
+     * THERE IS NO ADDRESS FIELD, unlike ComfyUI's. Civitai's orchestrator and site API are
+     * constants inside civitai-client.js, so there is nothing here for an operator to set
+     * and therefore nothing for anything else to steer at a credentialed request. That is
+     * a security property, not a simplification.
+     *
+     * THERE IS NO CREDENTIAL FIELD EITHER. `connectionId` names an AccountConnection —
+     * which already lives in `accounts[]` with its tokens declared in CONFIG_SECRETS — so
+     * this block holds a reference and never a secret. It is a connectionId rather than a
+     * providerId because a person may hold two Civitai accounts and only one of them is
+     * paying for this project's renders.
+     *
+     * `resourceAir` is Civitai's own canonical identifier for the model, which is
+     * simultaneously the request parameter and the durable provenance. It is a plain
+     * public string; masking it would only hide the one value an operator needs to read
+     * back when a resource stops being generatable. */
+    civitai: {
+      enabled: false,
+      connectionId: "",
+      resourceAir: "",
+    },
   },
   appearance: {
     accent: "blue",
@@ -426,6 +449,19 @@ function normalizeConfig(config, options = {}) {
   merged.generation.comfy.baseUrl = String(merged.generation.comfy.baseUrl || "").trim().slice(0, 300)
     || DEFAULT_CONFIG.generation.comfy.baseUrl;
   merged.generation.comfy.workflowFolder = String(merged.generation.comfy.workflowFolder || "").trim().slice(0, 500);
+  /* Civitai. Both strings are trimmed and bounded and NEITHER is validated for existence
+     here, for the reason ComfyUI's fields are not: normalisation runs at startup and on
+     every save, and an account that is temporarily unreachable or a model that is briefly
+     unavailable must not be silently erased from a person's settings. Whether the
+     connection can pay and whether the resource can be generated with are decided at the
+     moment of generation, by civitai-generation.js, where a refusal can name the reason. */
+  merged.generation.civitai = deepMerge(
+    DEFAULT_CONFIG.generation.civitai,
+    isPlainObject(merged.generation.civitai) ? merged.generation.civitai : {},
+  );
+  merged.generation.civitai.enabled = merged.generation.civitai.enabled === true;
+  merged.generation.civitai.connectionId = String(merged.generation.civitai.connectionId || "").trim().slice(0, 64);
+  merged.generation.civitai.resourceAir = String(merged.generation.civitai.resourceAir || "").trim().slice(0, 300);
   merged.appearance = deepMerge(DEFAULT_CONFIG.appearance, merged.appearance || {});
   merged.appearance.accent = ["blue", "green", "amber", "rust"].includes(merged.appearance.accent) ? merged.appearance.accent : "blue";
   merged.appearance.surface = ["night", "cool", "warm", "light"].includes(merged.appearance.surface) ? merged.appearance.surface : "night";

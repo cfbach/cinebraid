@@ -51,6 +51,72 @@ const REDIRECT_PATH = "/api/accounts/civitai/callback";
 const PHASE_SCOPE = "1";
 
 /* ---------------------------------------------------------------------------
+   THE GENERATION GRANT, and why it is a SECOND authorization rather than a wider
+   first one.
+ *
+ * Connecting an account and authorizing spending are different decisions and CineBraid
+ * makes them at different moments. Settings says, in the panel a person reads before
+ * pressing Connect, "Connecting an account generates nothing and spends nothing" — so
+ * Connect asks for PHASE_SCOPE and nothing else, exactly as it always has. Permission to
+ * spend Buzz is asked for later, in the place where generating is the subject, by
+ * re-running /authorize with this wider value.
+ *
+ * Civitai's own scopes documentation endorses this directly: a client may request "any
+ * subset of those bits on any individual /authorize call", for the case where "one user
+ * only needs read access but another wants to spend buzz".
+ *
+ * WHAT IS IN IT, AND THE ONE THING DELIBERATELY LEFT OUT:
+ *
+ *   UserRead        1      granted on every token Civitai issues no matter what is
+ *                          asked for, so naming it is honesty rather than a request.
+ *   AIServicesRead  16384  "View generation & training history" — reading back the
+ *                          workflow CineBraid submitted, including after a restart.
+ *   AIServicesWrite 32768  "Generate, train & scan" — the bit that spends.
+ *
+ *   BuzzRead        65536  NOT REQUESTED. It grants "View buzz balance & history", and
+ *                          no endpoint in Civitai's published API returns a balance for
+ *                          an OAuth app to read — see balanceSupported below. Asking a
+ *                          person to grant a permission nothing uses is asking them to
+ *                          trust a claim CineBraid cannot cash.
+ *
+ * The value is COMPUTED from the named bits rather than written as 49153, so the reason
+ * for the number is readable at the line that produces it. */
+const CIVITAI_SCOPE_BITS = {
+  UserRead: 1,
+  AIServicesRead: 16384,
+  AIServicesWrite: 32768,
+};
+const GENERATION_SCOPE = String(
+  CIVITAI_SCOPE_BITS.UserRead | CIVITAI_SCOPE_BITS.AIServicesRead | CIVITAI_SCOPE_BITS.AIServicesWrite,
+);
+
+/* Which of the two grants a caller is asking for. A free-text scope is deliberately not
+   accepted: a route that could be handed an arbitrary bitmask is a route that could be
+   talked into asking a person for VaultWrite. */
+const AUTHORIZATION_GRANTS = { identity: PHASE_SCOPE, generation: GENERATION_SCOPE };
+
+/* Does a stored grant actually permit generating?
+ *
+ * The BITMASK IS PARSED HERE and nowhere else. account-connections.js stores
+ * grantedScope as an opaque string and its header says why — another provider's may be a
+ * space-delimited list of names, or absent — so the one file that knows the encoding is
+ * this one.
+ *
+ * An UNREADABLE OR ABSENT scope answers false. Civitai echoes the granted scope on both
+ * the token response and /api/v1/me, so a connection with nothing there is either older
+ * than this code or came back malformed; assuming it can spend would mean discovering
+ * otherwise at the provider, after a permit had been minted. Refusing early costs one
+ * re-authorization and cannot cost Buzz. */
+function hasGenerationGrant(grantedScope) {
+  const raw = String(grantedScope == null ? "" : grantedScope).trim();
+  if (!/^\d+$/.test(raw)) return false;
+  const granted = Number(raw);
+  if (!Number.isSafeInteger(granted) || granted < 0) return false;
+  const required = CIVITAI_SCOPE_BITS.AIServicesRead | CIVITAI_SCOPE_BITS.AIServicesWrite;
+  return (granted & required) === required;
+}
+
+/* ---------------------------------------------------------------------------
    PKCE. Node's crypto only — nothing here reimplements a digest.
 
    base64url without padding, per RFC 7636 §4.1/§4.2. The verifier is 32 random
@@ -130,9 +196,14 @@ function normalizeStatus(status, body) {
 
 /* ---------------------------------------------------------------------------
    Authorization URL. */
-function buildAuthorization({ config = {}, redirectUri = "" } = {}) {
+function buildAuthorization({ config = {}, redirectUri = "", grant = "identity" } = {}) {
   const id = clientId(config);
   if (!id) throw providerError("PROVIDER_NOT_CONFIGURED", PROVIDER_ID);
+  /* An unknown grant is a refusal, not a silent fall back to identity: a caller that
+     asked for generation and quietly received identity would send a person through a
+     consent screen and leave them with a connection that still cannot generate. */
+  const scope = AUTHORIZATION_GRANTS[String(grant || "identity")];
+  if (!scope) throw providerError("SCOPE_INSUFFICIENT", PROVIDER_ID);
   const codeVerifier = createCodeVerifier();
   const codeChallenge = codeChallengeFor(codeVerifier);
   const state = createState();
@@ -141,7 +212,7 @@ function buildAuthorization({ config = {}, redirectUri = "" } = {}) {
     client_id: id,
     redirect_uri: redirectUri,
     /* Decimal bitmask, as a string. Not a scope name, and not a list. */
-    scope: PHASE_SCOPE,
+    scope,
     state,
     code_challenge: codeChallenge,
     code_challenge_method: "S256",
@@ -151,7 +222,8 @@ function buildAuthorization({ config = {}, redirectUri = "" } = {}) {
     state,
     codeVerifier,
     codeChallenge,
-    scope: PHASE_SCOPE,
+    grant: String(grant || "identity"),
+    scope,
     redirectUri,
   };
 }
@@ -297,6 +369,9 @@ async function fetchIdentity({ credential = {} } = {}) {
 }
 
 module.exports = {
+  AUTHORIZATION_GRANTS,
+  CIVITAI_SCOPE_BITS,
+  GENERATION_SCOPE,
   PHASE_SCOPE,
   PROVIDER_ID,
   PROVIDER_LABEL,
@@ -309,12 +384,14 @@ module.exports = {
   balanceSupported: false,
   redirectPath: REDIRECT_PATH,
   authenticateApiKey,
+  bearerFor,
   buildAuthorization,
   codeChallengeFor,
   createCodeVerifier,
   createState,
   exchangeAuthorizationCode,
   fetchIdentity,
+  hasGenerationGrant,
   isConfigured,
   refreshCredential,
 };
