@@ -4165,6 +4165,40 @@ body[data-focused-workspace="1"] .guided-frame-body,
 .settings-state-chip[data-tone="attention"]{color:var(--amber);border-color:color-mix(in srgb,var(--amber) 45%,var(--line))}
 .settings-state-chip[data-tone="checking"]{color:var(--acc);border-color:color-mix(in srgb,var(--acc) 45%,var(--line))}
 
+/* ---- Settings → Integrations → Local ComfyUI --------------------------------
+   No new type scale, no new colour and no new component: the workflow rows are the
+   settings card's own border-marks-state rule applied per file, and every state word
+   is an existing .settings-state-chip. What is new is only the LIST, because a folder
+   of files the product does not own has no existing shape here. */
+.comfy-workflow-list{margin-top:10px}
+.comfy-workflow-summary{margin:0 0 10px}
+.comfy-workflow-rows{list-style:none;margin:0;padding:0;display:grid;gap:10px}
+.comfy-workflow-row{display:grid;gap:6px;padding:12px 14px;border:1px solid var(--line);background:var(--panel-2)}
+.comfy-workflow-identity{display:flex;align-items:center;gap:10px;flex-wrap:wrap;justify-content:space-between}
+.comfy-workflow-identity>b{font-size:13px;overflow-wrap:anywhere;min-width:0}
+.comfy-workflow-row .hint{margin:0}
+/* A refusal is stated in words, never only in colour. */
+.comfy-workflow-problem{color:var(--amber)}
+.comfy-workflow-action{color:var(--muted)}
+.comfy-workflow-problems{margin:0;padding-left:18px;color:var(--muted);font-size:11px;line-height:1.5}
+.comfy-workflow-problems em{color:var(--acc);font-style:normal}
+.comfy-workflow-actions{display:flex;gap:8px;flex-wrap:wrap}
+.comfy-workflow-actions .ghost-btn{width:auto;flex:0 0 auto}
+.comfy-cost-note{margin-top:14px}
+/* The mapping editor: one production input per row, each a label, a control and the
+   stated basis for whatever is pre-selected. */
+.comfy-map-rows{display:grid;gap:14px;margin:14px 0}
+.comfy-map-row{display:grid;gap:5px}
+.comfy-map-row label{display:grid;gap:2px}
+.comfy-map-row label>b{font-size:13px}
+.comfy-map-row label>small{color:var(--muted);font-size:11px;line-height:1.45}
+.comfy-map-row select{width:100%}
+.comfy-map-basis{margin:0;font-size:11px;color:var(--muted)}
+.comfy-map-basis[data-basis="suggested"]{color:var(--acc)}
+.comfy-dispatch-inputs{display:grid;gap:12px;margin:14px 0}
+.comfy-dispatch-inputs label{display:grid;gap:4px}
+.comfy-dispatch-inputs label>span{font:700 9px var(--mono);letter-spacing:.14em;text-transform:uppercase;color:var(--muted)}
+
 /* Preview cards read as three separate statements because they are three. */
 .settings-preview-card,.filename-preview{display:grid;gap:6px;padding:12px 14px;border:1px solid var(--line)}
 .settings-preview-card>*,.filename-preview>*{display:block;min-width:0}

@@ -288,6 +288,24 @@ function generationConfigPatch() {
     },
   };
 }
+/* The Integrations panel. Three fields, sent only when the panel that owns them is the
+   one on screen — the same `if (!$(...)) return {}` guard every other collector uses,
+   for the reason tests/settings-consistency.js exists to hold: a save must not carry a
+   value read from a control the open panel did not render. */
+function integrationsConfigPatch() {
+  const enabled = $("#cfg-comfy-enabled");
+  if (!enabled) return {};
+  const v = (id, fallback = "") => $(id)?.value ?? fallback;
+  return {
+    generation: {
+      comfy: {
+        enabled: !!enabled.checked,
+        baseUrl: String(v("#cfg-comfy-base-url", CONFIG.generation?.comfy?.baseUrl || "")).trim(),
+        workflowFolder: String(v("#cfg-comfy-workflow-folder", CONFIG.generation?.comfy?.workflowFolder || "")).trim(),
+      },
+    },
+  };
+}
 /* The Accounts panel holds exactly one setting: the public application id Civitai
    uses to recognise CineBraid. The connections themselves are not settings and are
    never patched through here — /api/config refuses to touch `accounts` at all, so
@@ -300,8 +318,15 @@ function accountsConfigPatch() {
 window.saveConfig = async (scope = "assistant") => {
   const generation = scope === "generation";
   const accounts = scope === "accounts";
-  const body = accounts ? accountsConfigPatch() : generation ? generationConfigPatch() : assistantConfigPatch();
-  const failed = accounts ? "Could not save account settings" : generation ? "Could not save generation settings" : "Could not save assistant settings";
+  const integrations = scope === "integrations";
+  const body = integrations ? integrationsConfigPatch()
+    : accounts ? accountsConfigPatch()
+      : generation ? generationConfigPatch()
+        : assistantConfigPatch();
+  const failed = integrations ? "Could not save ComfyUI settings"
+    : accounts ? "Could not save account settings"
+      : generation ? "Could not save generation settings"
+        : "Could not save assistant settings";
   setSettingsPanelState("saving");
   let r;
   try {
@@ -323,7 +348,10 @@ window.saveConfig = async (scope = "assistant") => {
      request on an explicit action rather than any kind of polling. */
   if (typeof refreshAgentStatus === "function") await refreshAgentStatus(false);
   settingsPanelSaved();
-  toast(accounts ? "Account settings saved" : generation ? "Generation settings saved" : "Assistant settings saved");
+  toast(integrations ? "ComfyUI settings saved"
+    : accounts ? "Account settings saved"
+      : generation ? "Generation settings saved"
+        : "Assistant settings saved");
   route();
 };
 

@@ -197,6 +197,7 @@ const ROUTES = {
       ["project", "Project", "Title, prompts and exports"],
       ["assistant", "Assistant", "AI provider configuration"],
       ["generation", "Generation", "Optional FAL image defaults"],
+      ["integrations", "Integrations", "Generation tools running on this machine"],
       ["accounts", "Accounts", "Connect the services you have an account with"],
       ["recovery", "Recovery & advanced", "Backups and diagnostics"],
     ];
@@ -205,7 +206,10 @@ const ROUTES = {
     /* Backups, server status and diagnostics are not AI-assisted services, so they no
        longer sit under a heading that says they are. */
     const tabGroup = (heading, rows) => `<section><span>${heading}</span><div class="settings-tabs">${rows.map(tabButton).join("")}</div></section>`;
-    const tabbar = `<nav class="settings-nav-shell" aria-label="Settings sections">${tabGroup("WORKSPACE", tabs.slice(0, 5))}${tabGroup("OPTIONAL ASSISTED SERVICES", tabs.slice(5, 8))}${tabGroup("BACKUPS & DIAGNOSTICS", tabs.slice(8))}</nav>`;
+    /* The slices are POSITIONAL, so a tab added anywhere before the end moves every
+       later boundary. Integrations sits with the other optional services, which is why
+       that group is now 5..9 rather than 5..8. */
+    const tabbar = `<nav class="settings-nav-shell" aria-label="Settings sections">${tabGroup("WORKSPACE", tabs.slice(0, 5))}${tabGroup("OPTIONAL ASSISTED SERVICES", tabs.slice(5, 9))}${tabGroup("BACKUPS & DIAGNOSTICS", tabs.slice(9))}</nav>`;
     /* One statement per subsection about how it stores changes, in the same place on
        every panel. "Save" records the setting; "Apply" records it and acts on the
        folders on disk straight away; the project record saves itself. */
@@ -296,6 +300,27 @@ const ROUTES = {
       ${field("Where that motion price came from", `<input id="cfg-fal-motion-rate-source" type="text" maxlength="200" value="${attr(String(fal.motionRate?.source || ""))}" placeholder="fal pricing page"><small>Your own note, shown beside the estimate. CineBraid cannot check a provider's pricing page and will not claim it did.</small>`)}
       ${field("Date you read it", `<input id="cfg-fal-motion-rate-asof" type="date" value="${attr(String(fal.motionRate?.asOf || ""))}"><small>Left empty, the estimate says its freshness is unknown — which is better than a date nobody checked.</small>`)}
     </div><div class="settings-actions"><button class="add-btn" onclick="saveConfig('generation')">Save generation settings</button><span id="fal-test-note" class="settings-state-chip" data-tone="${fal.enabled ? (fal.apiKey || fal.keySource === "environment" ? "ready" : "attention") : "off"}">${fal.enabled ? (fal.apiKey || fal.keySource === "environment" ? "FAL generation is set up" : "FAL generation is on, but needs a key") : "FAL generation is off"}</span>${panelState("manual", "Save records these defaults; nothing is generated and nothing is charged.")}</div><p class="hint fal-security-note">Paid generation is only submitted after confirmation.</p></section>`;
+    /* Integrations — generation tools running on this machine.
+     *
+     * Separate from Generation, which configures a HOSTED provider that bills. Nothing
+     * on this panel can spend money, and the panel says so in words rather than leaving
+     * the reader to infer it from an absent price field.
+     *
+     * The workflow folder is a typed path rather than a folder picker, and that is a
+     * recorded choice: CineBraid ships no directory chooser, and local-file-affordance.js
+     * — the module that reveals a known file — is built on the rule that the browser
+     * never names a filesystem path. Extending it to accept one would break the
+     * guarantee it exists to hold, so a validated field is used and the folder is
+     * checked when it is read. Project root and Media root above are typed the same way
+     * for the same reason. */
+    const comfy = c.generation?.comfy || {};
+    const integrationsPanel = `<section class="settings-block comfy-settings" data-integration="comfyui"><div class="settings-title-row"><div><h3>Local ComfyUI</h3><p class="hint">Run your own ComfyUI workflows from a shot. CineBraid connects to a ComfyUI on this machine, sends the shot's prompt and reference images into a workflow you have mapped, and brings the result back as a candidate to review. Nothing here contacts a paid service.</p></div><button class="ghost-btn" onclick="testComfyConnection()">Test connection</button></div><label class="checkline"><input id="cfg-comfy-enabled" type="checkbox" ${comfy.enabled ? "checked" : ""}> Generate with a local ComfyUI</label><div class="two-col">
+      ${field("ComfyUI server address", `<input id="cfg-comfy-base-url" value="${attr(comfy.baseUrl || "http://127.0.0.1:8188")}" placeholder="http://127.0.0.1:8188"><small>CineBraid connects only to a ComfyUI on this machine. An address on your network or on the internet is refused, and says so.</small>`)}
+      ${field("Workflow folder", `<input id="cfg-comfy-workflow-folder" value="${attr(comfy.workflowFolder || "")}" placeholder="D:\\ComfyUI\\user\\default\\workflows"><small>The full path to the folder holding your workflow files. CineBraid reads this folder and never writes to it.</small>`)}
+    </div><div class="settings-actions"><button class="add-btn" onclick="saveConfig('integrations')">Save ComfyUI settings</button><span id="comfy-test-note" class="settings-state-chip" data-tone="${comfy.enabled ? "attention" : "off"}">${comfy.enabled ? "Not checked yet — press Test connection" : "Local ComfyUI is off"}</span>${panelState("manual", "Save records the address and folder; nothing is generated and nothing is charged.")}</div>
+    <div class="settings-subheading"><span>Workflows</span><small>A workflow becomes available to a shot once you have told CineBraid which of its nodes carry the prompt and the images.</small></div>
+    <div id="comfy-workflow-list" class="comfy-workflow-list" data-state="idle"><p class="hint">Save a workflow folder, then press Test connection or reload this panel to list what is in it.</p></div>
+    <p class="hint comfy-cost-note">Local ComfyUI · no provider charge. A workflow that runs here uses your own machine, so no hosted service is contacted and none can bill for it.</p></section>`;
     /* Accounts. Deliberately plain: an account is either connected to a named
        person or it is not, and everything a user can do about it is one button.
        None of the machinery behind it — the grant type, the redirect, the token
@@ -331,8 +356,13 @@ const ROUTES = {
       ${field("Civitai application ID", `<input id="cfg-civitai-client-id" value="${attr(c.accountProviders?.civitai?.clientId || "")}" placeholder="from your Civitai account's application list"><span class="hint">Not a secret. It is how Civitai recognises CineBraid when you sign in.</span>`)}
     </div><div class="settings-actions"><button class="add-btn" onclick="saveConfig('accounts')">Save account settings</button><span id="account-note" class="hint"></span>${panelState("manual", "Save records the application ID; connecting an account is the button above.")}</div></section>`;
     const recoveryPanel = `<section class="settings-block project-recovery"><div class="settings-title-row"><div><h3>Recovery & advanced</h3><p class="hint">Rotating backups, diagnostics and support records.</p></div><button class="ghost-btn" onclick="createManualProjectBackup()">Create backup now</button></div><div class="settings-health-grid"><article><span>Server</span><b>${health.ok === false ? "Needs attention" : "Running"}</b><small>${esc(health.message || health.status || "Local CineBraid service")}</small></article><article><span>Project folder</span><b>${esc(activeProjectSlug() || "—")}</b><small>The folder name this project is stored under. Use Reports for integrity checks and the project log.</small></article></div><div id="project-backup-note" class="hint"></div>${backupData.error ? `<p class="hint backup-list-error" role="alert">${esc(backupData.error)}</p>` : (backupData.backups || []).length ? `<div class="project-backup-list">${backupData.backups.map((item) => `<article><div><b title="${attr(item.name)}">${esc(item.name)}</b><small>${esc(new Date(item.modifiedAt).toLocaleString())} · ${Math.max(1,Math.round(Number(item.size || 0) / 1024))} KB</small></div><button class="ghost-btn backup-restore-btn" onclick="restoreProjectBackup('${attr(item.name)}')">Restore</button></article>`).join("")}</div>` : `<p class="hint">No rotating backups yet. A backup is created before each validated save.</p>`}<div class="settings-save-line"><span class="settings-save-state" data-state="none" role="status">Nothing on this panel is a setting.</span><small class="settings-save-model">Every control here acts as soon as you use it, so there is nothing to save.</small></div><div class="settings-actions"><a class="ghost-btn" href="#/reports">Open project log & reports</a><button class="ghost-btn" onclick="downloadJSON()">Download JSON backup</button></div></section>`;
-    const body = { appearance: appearancePanel, files: filesPanel, access: accessPanel, naming: namingPanel, project: projectPanel, assistant: assistantPanel, generation: generationPanel, accounts: accountsPanel, recovery: recoveryPanel }[selected] || appearancePanel;
+    const body = { appearance: appearancePanel, files: filesPanel, access: accessPanel, naming: namingPanel, project: projectPanel, assistant: assistantPanel, generation: generationPanel, integrations: integrationsPanel, accounts: accountsPanel, recovery: recoveryPanel }[selected] || appearancePanel;
     setTimeout(() => { if (typeof initSettingsPanel === "function") initSettingsPanel(); }, 0);
+    /* The workflow list is fetched rather than rendered, because it reads a folder on
+       disk and a Settings render must not block on one. The panel draws its own empty
+       state above and this replaces it when the answer arrives. */
+    if (selected === "integrations")
+      setTimeout(() => { if (typeof refreshComfyWorkflowList === "function") refreshComfyWorkflowList(); }, 0);
     return `<div class="view-head"><div><div class="eyebrow">Settings</div><span class="view-title">Settings</span><div class="view-sub">Appearance, where files are kept, how they are named, and the optional services CineBraid may use.</div></div></div>${tabbar}<div class="settings-selected-tab" data-settings-tab="${attr(selected)}">${body}</div>`;
   },
 };

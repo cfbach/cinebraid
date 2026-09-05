@@ -35,9 +35,9 @@ const views = fs.readFileSync(path.join(ROOT, "public", "views.js"), "utf8");
 const settingsSource = fs.readFileSync(path.join(ROOT, "public", "settings.js"), "utf8");
 const appSource = fs.readFileSync(path.join(ROOT, "public", "app.js"), "utf8");
 
-const TABS = ["appearance", "files", "access", "naming", "project", "assistant", "generation", "recovery"];
+const TABS = ["appearance", "files", "access", "naming", "project", "assistant", "generation", "integrations", "recovery"];
 /* Subsections holding editable settings that are stored only on an explicit action. */
-const EXPLICIT = ["appearance", "files", "access", "naming", "assistant", "generation"];
+const EXPLICIT = ["appearance", "files", "access", "naming", "assistant", "generation", "integrations"];
 
 /* The desktop column model lives outside any @media block; a narrow-width override
    must never be able to stand in for the rule these checks are about. */
