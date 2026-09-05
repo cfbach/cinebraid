@@ -5,6 +5,19 @@ const fs = require("fs");
 const path = require("path");
 const { parseAspectRatio, h3AspectSupport, shotAspectLabel, referenceAspectLabel } = require("./public/shared-aspect");
 const { readJobLedger, writeJobLedgerSync, JobLedgerUnreadableError } = require("./generation-job-store");
+/* The per-project serialisation chains, at module scope so every backend shares one.
+   See generation-commit.js's header: a chain only orders the callers that share its
+   Map, and this module's `commit`/`commitProject` comments record the defect that
+   proves it. */
+const {
+  commitJobLedger,
+  commitProjectDocument,
+  serializeJobOperation: serializeJobOperationShared,
+} = require("./generation-commit");
+/* The one writer of a returned candidate, shared with every other backend. It holds
+   the row fal used to build inline, unchanged — see that module's header for why one
+   writer with two callers beats two writers that agree today. */
+const { markShotAwaitingReview, writeShotCandidates } = require("./generation-candidate-ingest");
 /* WHICH AUTHORIZATION A PAID DISPATCH BELONGS TO. Locates the record that owns the
    ceiling; owns no ceiling, no price and no plan of its own. See the module header. */
 const PaidPermit = require("./paid-dispatch-permit");
@@ -187,19 +200,15 @@ function registerFalGeneration(app, context) {
      `commit` serialises mutations per project and RE-READS the durable ledger
      inside its own turn, so a mutation always applies to current state rather
      than to what the request saw minutes ago. Provider I/O happens outside the
-     turn; `mutate` is synchronous by contract and must not await. */
-  const commitChains = new Map();
+     turn; `mutate` is synchronous by contract and must not await.
+
+     THE CHAIN ITSELF NOW LIVES IN generation-commit.js. It was moved there
+     unchanged, for the reason that module's header states: a chain only orders the
+     callers that share its Map, so a second backend holding its own Map would not be
+     a second chain — it would be the absence of one, and this exact defect would
+     return through it. This is a one-line delegation and behaves identically. */
   function commit(owner, mutate) {
-    const key = owner.dir;
-    const previous = commitChains.get(key) || Promise.resolve();
-    const next = previous.catch(() => {}).then(() => {
-      const jobs = readJobs(owner);
-      const result = mutate(jobs);
-      writeJobLedgerSync(owner.dir, jobs);
-      return result;
-    });
-    commitChains.set(key, next.catch(() => {}));
-    return next;
+    return commitJobLedger(owner, mutate);
   }
 
   /* ---- one project-write turn per project ------------------------------------
@@ -230,19 +239,16 @@ function registerFalGeneration(app, context) {
 
      KEYED ON owner.dir, deliberately. Two different projects never wait on each other;
      a background sweep of project B cannot be the reason a save in project A is slow.
-     The narrowest key that still protects the record being written. */
-  const projectChains = new Map();
+     The narrowest key that still protects the record being written.
+
+     THE CHAIN ITSELF NOW LIVES IN generation-commit.js, shared with every other
+     backend — see `commit` above and that module's header. The owner-addressed
+     reader and writer are still this module's; only the Map moved. */
   function commitProject(owner, mutate) {
-    const key = owner.dir;
-    const previous = projectChains.get(key) || Promise.resolve();
-    const next = previous.catch(() => {}).then(() => {
-      const project = ownerProject(owner);
-      const result = mutate(project);
-      saveOwnerProject(owner, project);
-      return result;
+    return commitProjectDocument(owner, mutate, {
+      readProject: (owner) => ownerProject(owner),
+      writeProject: (owner, project) => saveOwnerProject(owner, project),
     });
-    projectChains.set(key, next.catch(() => {}));
-    return next;
   }
 
   /* P4-SEM-C4 — the job record follows the bytes it delivered.
@@ -305,15 +311,11 @@ function registerFalGeneration(app, context) {
 
   /* Whole-operation serialisation for one job. Two refreshes of the same job
      must not both pass the `!job.ingestedAt` check and ingest the same result
-     twice; ordering them makes the second observe the first's durable outcome. */
-  const jobOperationChains = new Map();
-  function serializeJobOperation(owner, jobId, run) {
-    const key = `${owner.dir}::${jobId}`;
-    const previous = jobOperationChains.get(key) || Promise.resolve();
-    const next = previous.catch(() => {}).then(run);
-    jobOperationChains.set(key, next.catch(() => {}));
-    return next;
-  }
+     twice; ordering them makes the second observe the first's durable outcome.
+
+     Shared with every other backend through generation-commit.js, for the reason
+     stated on `commit` above. */
+  const serializeJobOperation = serializeJobOperationShared;
   /* ---- what the SERVER took delivery of ---------------------------------------
    *
    * A result collected by the ingest reaper's sweep rather than by a browser refresh.
@@ -2274,60 +2276,28 @@ function registerFalGeneration(app, context) {
           P.mediaAssets.push(asset);
           outputs.push({ type: "blocking", assetId: asset.id, frameId: job.frameId || "", frameLabel: job.frameLabel || "", name, url: `/assets/${asset.storagePath}` });
         } else {
-          const dir = path.join(owner.dir, "shots", shot.id, "takes");
-          fs.mkdirSync(dir, { recursive: true });
-          const frameLabel = job.frameLabel || "A";
-          const correction = job.purpose === "correction";
-          const stem = correction
-            ? `${shot.id}_FRAME_${frameLabel}_CORRECTION_FAL_${index + 1}${ext}`
-            : `${shot.id}_FRAME_${frameLabel}_FAL_${index + 1}${ext}`;
-          const name = nextFile(dir, safeName(stem, `${shot.id}_FAL${ext}`));
-          fs.writeFileSync(path.join(dir, name), downloaded.buffer);
-          const candidate = {
-            stored: name,
-            original: downloaded.originalName,
-            addedAt: now(),
-            decision: "unreviewed",
-            notes: "",
-            labels: [],
-            frameId: job.frameId || "",
-            sourceBuildId: job.sourceBuildId || "",
-            sourcePackageId: job.sourceBuildId || job.packageId || "",
-            sourcePackageLabel: job.packageId || "FAL generation",
-            generationProvider: "fal",
-            generationModel: job.model,
-            generationJobId: job.id,
-            generationRequestId: job.externalId,
-            automationRunId: job.automationRunId || "",
-            automationStepKey: job.automationStepKey || "",
-            generationQuality: job.quality,
-            generationResolution: job.resolution,
-          };
-          if (correction) {
-            candidate.correctionOf = job.sourceCandidate || "";
-            candidate.correctionBuildId = job.sourceBuildId || "";
-            candidate.correctionParentBuildId = job.parentBuildId || "";
-            candidate.correctionParentPackageId = job.parentPackageId || "";
-            candidate.correctionGuideAssetId = job.guideAssetId || "";
-            candidate.correctionReferenceCount = job.references.length;
-            candidate.correctionGeneratedAt = now();
-            const source = shot.candidateFiles.find((item) => (item.stored || item.name) === job.sourceCandidate);
-            if (source) {
-              source.correctionResultNames = Array.isArray(source.correctionResultNames) ? source.correctionResultNames : [];
-              source.correctionJobIds = Array.isArray(source.correctionJobIds) ? source.correctionJobIds : [];
-              if (!source.correctionResultNames.includes(name)) source.correctionResultNames.push(name);
-              if (!source.correctionJobIds.includes(job.id)) source.correctionJobIds.push(job.id);
-            }
-          }
-          shot.candidateFiles.push(candidate);
-          outputs.push({ type: "candidate", name, url: `/assets/shots/${shot.id}/takes/${name}`, frameId: job.frameId || "", correctionOf: job.sourceCandidate || "" });
+          /* THE SHARED WRITER. The row this produces, the filename it chooses and the
+             folder it writes into are unchanged; what changed is that a second backend
+             can now produce the same row without a second copy of this code existing.
+             See generation-candidate-ingest.js's header. One download at a time,
+             because the loop above still owns the ordering fal's outputs arrive in. */
+          outputs.push(...writeShotCandidates({
+            ownerDir: owner.dir,
+            project: P,
+            shot,
+            downloads: [downloaded],
+            job,
+            provider: "fal",
+            fileStem: "FAL",
+            packageLabel: "FAL generation",
+            correction: job.purpose === "correction",
+            /* fal names its files by ordinal across the whole delivery, so the index is
+               supplied rather than recomputed from a single-element array. */
+            ordinal: index + 1,
+          }));
         }
       }
-      if (job.purpose === "frame" || job.purpose === "correction") {
-        shot.workflowStatus = "IN PROGRESS";
-        shot.status = "BUILT";
-        shot.reviewStatus = "PENDING";
-      }
+      if (job.purpose === "frame" || job.purpose === "correction") markShotAwaitingReview(shot);
       return outputs;
     });
     job.outputs = outputs;

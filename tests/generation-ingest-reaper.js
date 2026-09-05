@@ -31,6 +31,17 @@ const express = require("express");
 const { spawn } = require("child_process");
 
 const ROOT = path.join(__dirname, "..");
+
+/* EVERY GENERATION BACKEND IN THE PRODUCT. The structural half of the overlap proof
+   below asserts that none of them opens a project-commit chain of its own — a chain only
+   orders the callers that share its Map, so a backend holding a private one would not be
+   a second chain, it would be the absence of one, and the snapshot-clobbering defect this
+   suite proves is closed would return through it. A backend added without being listed
+   here is a backend nobody checked, so the list is asserted to be complete rather than
+   maintained by hand. */
+const BACKEND_MODULES = fs.readdirSync(ROOT)
+  .filter((name) => /^[a-z0-9-]+-generation\.js$/.test(name))
+  .sort();
 const { registerFalGeneration, CLAIM_RECOVERY_HEADER } = require(path.join(ROOT, "fal-generation"));
 const { registerAutomationRuns, runnerAbandoned, LEASE_MS } = require(path.join(ROOT, "automation-runs"));
 const { createGenerationPoller, pollEligibility, eligibleJobs } = require(path.join(ROOT, "generation-poller"));
@@ -786,12 +797,45 @@ async function differentJobOverlapChecks() {
     const commitBody = source.slice(source.indexOf("function commitProject("), source.indexOf("function commitProject(") + 400);
     assert(commitBody.includes("saveOwnerProject(owner, project)"),
       "and that writer must be commitProject, which re-reads the document inside its own turn");
-    assert(commitBody.includes("const project = ownerProject(owner);"),
+
+    /* THE TURN ITSELF NOW LIVES IN generation-commit.js.
+     *
+     * ComfyUI V1 moved it there, unchanged, and the reason is this assertion's own
+     * argument taken one step further: a chain only orders the callers that share its
+     * Map. While fal was the only backend, a Map inside registerFalGeneration() was a
+     * chain. A second backend with its own Map would not be a second chain — it would
+     * be the absence of one, and the snapshot-clobbering defect proven above would
+     * return through the door marked "new provider".
+     *
+     * So the mechanism is asserted where it now lives, and fal is asserted to reach it
+     * rather than to reimplement it. The claim is strictly stronger than before: it is
+     * now made about the writer EVERY backend uses, not about fal's private copy. */
+    const commitModule = fs.readFileSync(path.join(ROOT, "generation-commit.js"), "utf8").replace(/\r\n/g, "\n");
+    assert(/commitProjectDocument\(owner, mutate, \{/.test(commitBody),
+      "fal's commitProject must delegate to the shared project turn, not open one of its own");
+    assert(commitModule.includes("const project = read(owner);"),
       "re-reading inside the turn is the whole mechanism: a turn that trusted the caller's copy would be the snapshot write again");
+    assert(commitModule.includes("write(owner, project);"),
+      "and the write must happen inside the same turn as the read");
     /* THE KEY IS THE NARROWEST ONE THAT PROTECTS THE RECORD. Per project, so a slow
        background collection in one project can never be why a save in another waits. */
-    assert(/function commitProject\(owner, mutate\) \{\s*const key = owner\.dir;/.test(source),
+    assert(/function commitProjectDocument\(owner, mutate, io\) \{[\s\S]{0,400}?chain\(projectChains, owner\.dir,/.test(commitModule),
       "the project turn must be keyed on owner.dir, so unrelated projects never block each other");
+    /* ONE Map, AT MODULE SCOPE. A chain declared inside a function is a new chain per
+       call, which orders nothing. */
+    assert(/^const projectChains = new Map\(\);$/m.test(commitModule),
+      "the project chain's Map must be module-scoped, so every backend that requires it shares one");
+    /* AND NO BACKEND MAY KEEP ITS OWN. This is the assertion that actually protects the
+       invariant now: fal, and anything added later, must reach the shared turn. The list
+       is discovered from the tree rather than typed, so a new backend is covered the day
+       it lands rather than the day someone remembers this file. */
+    assert(BACKEND_MODULES.includes("fal-generation.js"), `the backend census found ${JSON.stringify(BACKEND_MODULES)}`);
+    for (const file of BACKEND_MODULES) {
+      const backend = fs.readFileSync(path.join(ROOT, file), "utf8").replace(/\r\n/g, "\n")
+        .replace(/\/\*[\s\S]*?\*\//g, "").replace(/(^|[^:])\/\/[^\n]*/g, "$1");
+      assert(!/projectChains\s*=\s*new Map\(/.test(backend),
+        `${file} must not hold a second project-commit chain; it must use generation-commit.js`);
+    }
     note("overlap: a held sweep of job A and a live refresh of job B in one project — both candidates survive, ledger and project agree, 0 submissions, and the project has exactly one writer");
   } finally { h.close(); }
 }
