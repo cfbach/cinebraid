@@ -6153,16 +6153,22 @@ select:hover{border-color:var(--line-2)}
 @media(max-width:1180px){.creation-manual-identity .creation-identity-grid{grid-template-columns:1fr}}
 @media(max-width:900px){.import-summary-head{display:block}.import-summary-head .creation-state{display:inline-block;margin-top:10px}}
 
-/* ===========================================================================
-   SURFACE POLISH V1 — SHARED TREATMENTS 1-5, SCOPED TO PRODUCTION
 
-   Checkpoint A. The five shared treatments applied to exactly one surface, so
-   the direction can be judged on a real screen before it reaches the other
-   four. This is not a design system and must not become one: every value is an
-   existing token or the existing literal from the rule it replaces, every
-   class already existed, and the only structural change in the renderer is
-   that two queues that were always adjacent in intent are now adjacent in the
-   DOM.
+/* ===========================================================================
+   SURFACE POLISH V1 — SHARED TREATMENTS, SCOPED TO PRODUCTION
+   Checkpoint A.1: the product-owner refinement of Checkpoint A.
+
+   The shared treatments applied to exactly one surface, so the direction can be
+   judged on a real screen before it reaches the other four. This is not a design
+   system and must not become one: every value is an existing token or the
+   existing literal from the rule it replaces, and the renderer changes are
+   composition only — no projection, count, handler or route moved.
+
+   A.1 answers five findings against A: the work region still read as text, then
+   more text, then a small picture; the project title was printed a third time;
+   the four metrics had gone from four cards to four scattered columns; canvas,
+   work and context sat too close in perceived weight; and the collapsed
+   disclosures still looked like primary work.
 
    THE PRODUCTION-SCOPED CLASSES WERE REMOVED FROM THE BROAD PANEL LISTS above
    rather than being overridden down here. Those lists repaint two dozen
@@ -6176,42 +6182,94 @@ select:hover{border-color:var(--line-2)}
 /* --- TREATMENT 1: THREE LEVELS OF CONTAINER EMPHASIS ---------------------- */
 
 /* LEVEL 1 — the one raised panel on this page: current work.
-   The projected next action and the returned-result inbox render as the two
-   parts of a single card. They are still two renderers reading two owners;
-   the card is a composition, not a merge, and neither one has learned what
-   the other counts. One edge colour, declared once, so the seam between them
-   cannot drift apart in a later edit. */
-.production-work{--production-work-edge:rgba(79,216,204,.18);display:grid;margin:0 0 26px}
-.production-work>.production-next{margin:0;border-color:var(--production-work-edge);border-radius:20px 20px 0 0}
-.production-work>.production-inbox{
-  margin:0;padding:15px 20px 17px;
-  border:1px solid var(--production-work-edge);border-top:1px solid var(--line-soft);
-  border-radius:0 0 20px 20px;box-shadow:none;
-  background:linear-gradient(180deg,rgba(17,24,34,.62),rgba(12,18,27,.72))}
-#app[data-surf="light"] .production-work{--production-work-edge:color-mix(in srgb,var(--acc) 26%,var(--line))}
-#app[data-surf="light"] .production-work>.production-inbox{background:var(--panel)}
+   ONE CARD, TWO COLUMNS, TWO OWNERS. The returned frame leads on the left and
+   the projected next action states the decision beside it. They are still two
+   renderers reading two owners: the inbox counts only what
+   returnedResultsAwaitingReview() returns, the card states only what
+   projectPrimaryProductionAction() won, and neither has learned what the other
+   holds. The grid is the composition; nothing is merged, and when the two
+   happen to agree about a shot they say so twice because they are two
+   independent answers that agreed — not one answer printed twice.
 
-/* LEVEL 3 — supporting groups, on the page canvas rather than in a panel.
-   A passive metric group, a closed disclosure and a progress list are not
-   peers of the decision above them and stop being drawn as though they were. */
-.production-summary{gap:0 30px;margin:0 0 24px;padding:12px 0;
-  border-top:1px solid var(--line-soft);border-bottom:1px solid var(--line-soft)}
-.production-summary article{padding:0;border:0;border-radius:0;background:transparent;box-shadow:none}
-.production-context{display:grid;gap:8px;margin:0 0 26px}
-.production-context .production-readiness{margin:0;background:transparent;border-color:var(--line-soft)}
-/* Opened, it is being read, so it becomes a legible panel again. */
-.production-context .production-readiness[open]{background:var(--panel);border-color:var(--line)}
+   `display:contents` on the inbox lets its list and its caption take their own
+   places in this grid without the two owners sharing a renderer. The element
+   carries no accessible name, so it is not a landmark and nothing is lost from
+   the accessibility tree; it had no box of its own left to draw either. */
+.production-work{
+  display:grid;grid-template-columns:minmax(0,320px) minmax(0,1fr);
+  align-items:start;gap:0 26px;margin:0 0 22px;padding:20px 22px;
+  border:1px solid color-mix(in srgb,var(--acc) 20%,var(--line-2));border-radius:20px;
+  background:var(--panel-2);box-shadow:0 18px 44px rgba(0,0,0,.32)}
+#app[data-surf="light"] .production-work{box-shadow:0 12px 30px rgba(21,37,54,.10)}
+.production-work>.production-inbox{display:contents}
+.production-work .production-inbox-list{grid-column:1;grid-row:1;gap:0}
+.production-work>.production-next{grid-column:2;grid-row:1}
+/* The queue names itself under the work it produced, across the whole card, so
+   the frame is the first thing in the region and "shown above, in Production"
+   still describes where the decision is. Same strings, same order. */
+.production-work .production-inbox>header{
+  grid-column:1/-1;grid-row:2;margin:18px 0 0;padding-top:11px;border-top:1px solid var(--line-soft)}
+@media(min-width:1600px){.production-work{grid-template-columns:minmax(0,360px) minmax(0,1fr)}}
+
+/* With no returned frame there is no left column to lead with, so the decision
+   takes the full card rather than sitting beside an empty well. */
+.production-work:has(.production-inbox-empty){grid-template-columns:minmax(0,1fr)}
+.production-work:has(.production-inbox-empty)>.production-next{grid-column:1;grid-row:1}
+.production-work:has(.production-inbox-empty) .production-inbox>header{grid-column:1;grid-row:2}
+.production-work:has(.production-inbox-empty) .production-inbox-empty{grid-column:1;grid-row:3;margin-top:10px}
+@media(max-width:1080px){
+  .production-work{grid-template-columns:minmax(0,1fr);gap:0}
+  .production-work>.production-next{grid-column:1;grid-row:2;margin-top:16px}
+  .production-work .production-inbox-list{grid-row:1}
+  .production-work .production-inbox>header{grid-row:3}
+}
+
+/* Both halves are transparent inside that one card. */
+.production-work>.production-next{margin:0;padding:0;border:0;border-radius:0;background:none;box-shadow:none}
+
+/* THE PRIMARY RETURNED RESULT, STACKED AND LARGE. `:first-child` rather than a
+   class the renderer writes, so this stays a presentation rule: every item the
+   inbox returns is still rendered, in the order the queue put them in, and a
+   project with four returned results gets a lead and three rows rather than a
+   page built for exactly one. */
+.production-work .production-inbox-list>:first-child .production-inbox-item,
+.production-work .production-inbox-list>.production-inbox-item:first-child{
+  grid-template-columns:minmax(0,1fr) auto;gap:9px 12px;padding:0;border:0;border-radius:0;background:transparent}
+.production-work .production-inbox-list>:first-child .production-inbox-item>div{
+  grid-column:1/-1;width:100%;height:auto;max-height:340px}
+.production-work .production-inbox-list>:first-child .production-inbox-item>section{grid-column:1}
+.production-work .production-inbox-list>:first-child .production-inbox-item>i{grid-column:2;align-self:start}
+/* Inspect stops being a corner overlay on the lead: a stacked row is taller
+   than its media, so an offset measured from the row would land on the caption.
+   It becomes a quiet control under the travel link instead. */
+.production-work .production-inbox-shell:first-child{display:grid;gap:7px}
+.production-work .production-inbox-list>:first-child .production-enlarge{
+  position:static;justify-self:start;box-shadow:none;
+  border-color:var(--line-2);background:var(--panel);color:var(--muted)}
+.production-work .production-inbox-list>:first-child .production-enlarge:hover{
+  color:var(--ink);border-color:var(--acc);filter:none}
+
+/* Any further returned results stay compact rows in the same column. */
+.production-work .production-inbox-list>:not(:first-child){
+  margin-top:11px;padding-top:11px;border-top:1px solid var(--line-soft)}
+.production-work .production-inbox-list>:not(:first-child) .production-inbox-item,
+.production-work .production-inbox-list>.production-inbox-item:not(:first-child){
+  --img-overview-w:84px;--img-overview-h:47px;
+  padding:0;border:0;border-radius:0;background:transparent;gap:10px}
+.production-work .production-inbox-list>:not(:first-child) .production-inbox-item>div{max-height:72px}
+.production-work .production-inbox-list>:not(:first-child) .production-enlarge{display:none}
+.production-work .production-inbox-item:hover{background:transparent}
+.production-work .production-inbox-item:hover b{color:var(--acc)}
+
+/* LEVEL 3 — supporting context, on the page canvas. A metric readout, a
+   collapsed disclosure and a progress list are not peers of the decision above
+   them and stop being drawn as though they were. */
+.production-context{display:grid;gap:0;margin:0 0 22px}
 .production-active,.production-scenes{
-  margin:26px 0 0;padding:18px 0 0;background:transparent;border:0;border-radius:0;box-shadow:none;
+  margin:24px 0 0;padding:18px 0 0;background:transparent;border:0;border-radius:0;box-shadow:none;
   border-top:1px solid var(--line-soft)}
 
 /* Rows separated by spacing and one soft rule instead of a box each. */
-.production-work .production-inbox-list{gap:0}
-.production-work .production-inbox-item{
-  padding:10px 8px;border:0;border-bottom:1px solid var(--line-soft);border-radius:0;background:transparent}
-.production-work .production-inbox-shell:last-child .production-inbox-item,
-.production-work .production-inbox-list>a:last-child{border-bottom:0}
-.production-work .production-inbox-item:hover{background:var(--panel-2);border-color:var(--line-soft)}
 .production-active-list{gap:0}
 .production-active-list>a{
   padding:10px 8px;border:0;border-bottom:1px solid var(--line-soft);border-radius:0;background:transparent}
@@ -6234,71 +6292,109 @@ select:hover{border-color:var(--line-2)}
 /* Zero and idle states stay calm and stop being a large dashed box. */
 .production-inbox-empty{padding:13px 14px;text-align:left;border-style:dashed;border-color:var(--line-soft);border-radius:var(--r-sm);font-size:12.5px}
 
+/* --- DISCLOSURES RECEDE -------------------------------------------------- */
+/* Collapsed, these are three lines of contextual status, so they are drawn as
+   three lines: no box, no fill, one hairline between them. Opened, they are
+   being worked in, so the panel comes back. Every row, count, control and
+   default state is exactly what it was. */
+.production-context .production-readiness{
+  margin:0;background:transparent;border:0;border-top:1px solid var(--line-soft);border-radius:0}
+.production-context .production-readiness:last-child{border-bottom:1px solid var(--line-soft)}
+.production-context .production-readiness>summary{padding:12px 2px}
+.production-context .production-readiness[open]{
+  margin:8px 0;padding-bottom:2px;border:1px solid var(--line);border-radius:var(--r-panel);background:var(--panel)}
+.production-context .production-readiness[open]>summary{padding:13px 15px}
+
 /* --- TREATMENT 2: IDENTITY / DECISION / METADATA SCALES ------------------- */
 
-/* Identity 28-32. The surface names itself; the project is the context line
-   above it, readable prose rather than a 10px accent stamp. */
+/* Identity 28-32. The surface names itself; the project is named by the two
+   persistent shell surfaces that own it and is not reprinted here. */
 .production-home-head .view-title{font-size:30px}
-.production-home-head .production-home-project{
-  font-family:var(--body);font-size:12.5px;font-weight:600;letter-spacing:0;text-transform:none;color:var(--muted)}
+/* The head is a title and its controls, on one line. With the project line
+   gone the actions wrapped into a stack that floated above the title, and
+   every flex fix hit the same wall: as a flex item the button group resolved
+   to the width of its widest button and wrapped inside that, or refused to
+   shrink and ran 84px off the right edge. A grid track sized `auto` takes the
+   group's real max-content width, which for a nowrap row is both buttons plus
+   the gap, so the pair fits on one row or the whole group drops to its own
+   line. Nothing about the controls, their order or their handlers changes. */
+.production-home-head{display:grid;grid-template-columns:minmax(0,1fr) auto;align-items:end;gap:10px 24px}
+.production-home-actions{flex-wrap:nowrap;align-items:center;justify-self:end}
+.production-home-actions>*{white-space:nowrap}
+@media(max-width:900px){
+  .production-home-head{grid-template-columns:minmax(0,1fr)}
+  .production-home-actions{justify-self:start;flex-wrap:wrap}
+}
 
-/* Current decision 20-24, its explanation at control scale. */
-.production-work .production-next h2{font-size:22px}
-.production-work .production-next p{font-size:13px;line-height:1.5}
-/* Sections 16-18. The inbox heading supports the decision above it and must
-   not read as a second one. */
-.production-work .production-inbox h2{font-size:16px}
-.production-work .production-inbox p{font-size:12.5px;line-height:1.5}
+/* Current decision 20-24, its explanation at control scale, and a measure that
+   does not run the width of a 1920 screen. */
+.production-work .production-next h2{font-size:22px;max-width:32ch}
+.production-work .production-next p{font-size:13px;line-height:1.55;max-width:58ch}
+/* The lead caption is the row's own label for the frame above it. It supports
+   the decision beside it and must not compete with it. */
+.production-work .production-inbox-list>:first-child .production-inbox-item b{font-size:13px}
+.production-work .production-inbox-list>:first-child .production-inbox-item small{font-size:11.5px;margin-top:3px}
+.production-work .production-inbox-list>:not(:first-child) b{font-size:12.5px}
+.production-work .production-inbox-list>:not(:first-child) small{font-size:11px}
+/* The queue caption is one band, not a third heading. */
+.production-work .production-inbox>header>div{display:flex;flex-wrap:wrap;align-items:baseline;gap:3px 12px}
+.production-work .production-inbox>header h2{font-size:12.5px;font-weight:600;margin:0}
+.production-work .production-inbox>header p{font-size:11.5px;line-height:1.5;margin:0}
 .production-active>header h2,.production-scenes>header h2{font-size:16px}
 
-/* Short codes and stamps 10-11. The kickers and standing pills were 9px and
-   below, which is where quiet had become unreadable; the strings themselves
-   and the counts they carry are unchanged. */
+/* Section labels 10-11. Sentence case is now in the strings themselves, with
+   product-owner approval, so the letter-spacing that carried the uppercase
+   stamp comes off with it. Identifiers, status words and codes keep theirs. */
 .production-work .production-next>div>span,
 .production-work .production-inbox>header span,
 .production-active>header span,.production-scenes>header span,
-.production-context .production-readiness>summary div>span{font-size:10px}
-.production-context .production-readiness>summary>span{font-size:10.5px}
-.production-context .production-readiness>summary b{font-size:14.5px}
+.production-context .production-readiness>summary div>span{
+  font-size:10.5px;letter-spacing:.02em;text-transform:none}
+.production-context .production-readiness>summary>span{font-size:11px;letter-spacing:.02em;text-transform:none}
+.production-context .production-readiness>summary b{font-size:14px;font-weight:600}
 .production-enlarge{font-size:9.5px;padding:4px 7px;letter-spacing:.04em}
 
-/* Supporting information 11-12: the metrics are context for the decision, not
-   four headlines. The decisions tile keeps its own amber standing on the
-   number it is about — the same semantic the amber card edge carried. */
-.production-summary b{font-size:17px;line-height:1.25}
-.production-summary span{font-size:11.5px}
+/* --- THE METRICS ARE ONE READOUT, NOT FOUR COLUMNS ----------------------- */
+/* Four equal grid tracks spread the same four numbers across the full page and
+   made them read as four separate things. One inline group, sized to its own
+   content, separated by middots. All four values, labels and tooltips are
+   exactly what they were, and there is no composite score. */
+.production-summary{
+  display:flex;flex-wrap:wrap;align-items:baseline;gap:4px 0;width:max-content;max-width:100%;
+  margin:0 0 20px;padding:9px 0;border-top:1px solid var(--line-soft);border-bottom:1px solid var(--line-soft)}
+.production-summary article{
+  display:inline-flex;align-items:baseline;gap:6px;padding:0;border:0;border-radius:0;background:transparent;box-shadow:none}
+.production-summary article+article::before{content:"·";margin:0 12px;color:var(--faint)}
+.production-summary b{display:inline;font:700 15px var(--display);line-height:1.3;letter-spacing:-.01em}
+.production-summary span{font-size:11.5px;color:var(--muted)}
+/* The decisions figure keeps its own amber standing when a decision is actually
+   waiting — the same semantic the amber card edge carried, on the number the
+   tile is about. */
 .production-summary article.review b{color:var(--amber)}
 
-/* Returned rows carry a shot identity, so it is readable at row scale. */
-.production-work .production-inbox-item b{font-size:14px}
-.production-work .production-inbox-item small{font-size:12px;margin-top:4px}
-
-/* --- TREATMENT 3: A COMPACT WORKING RHYTHM -------------------------------- */
-/* 6-8 inside a label/value group, 12-16 between related evidence, 24-32
-   between distinct work sections. The section gaps are on the containers
-   above; these are the two inner ones. */
-.production-work>.production-next{padding:20px 22px}
-.production-work .production-inbox>header{margin-bottom:8px}
-.production-work .production-next>div{display:grid;gap:6px}
-.production-work .production-next h2{margin:0}
-.production-work .production-next p{margin:0}
-
-/* --- TREATMENT 4: MEDIA SIZED TO THE DECISION ----------------------------- */
-/* A LOCAL token override, deliberately: --img-overview-w is also the shot
-   input tray width and the entity-angle chooser neighbour, and a returned
-   frame a filmmaker is being asked to review is a different decision from a
-   thumbnail in a tray. Nothing outside this region changes size. The well
-   keeps its aspect derivation, its neutral background and object-fit contain,
-   so no candidate is cropped to fit the larger box. The cap is the sheet own
-   formula: round(208 / (16/9) * 1.5). */
-.production-work .production-inbox{--img-overview-w:208px;--img-overview-h:117px}
-.production-work .production-inbox-item>div{max-height:176px}
+/* --- CYAN BELONGS TO CURRENT, ACTIONABLE WORK ---------------------------- */
+/* The accent was doing duty as decoration in the passive half of the page: a
+   standing count, a travel arrow into a list and a row chevron all wore the
+   same cyan as the one control the page wants pressed. Semantic amber, green
+   and red are untouched, and current work keeps every cyan it had. */
+.production-context .production-readiness>summary>span{color:var(--muted)}
+.production-context .production-readiness-list>a i{color:var(--muted)}
+.production-active-list>a i{color:var(--muted)}
+.production-active>header>a,.production-scenes>header>a{font-size:12px;color:var(--muted)}
+.production-active>header>a:hover,.production-scenes>header>a:hover{color:var(--acc)}
+.production-active-list>a:hover i,.production-context .production-readiness-list>a:hover i{color:var(--acc)}
+/* Travel INTO the current decision is the exception the brief names: that row
+   is the returned result, and opening it is the decision. */
+.production-work .production-inbox-item i{font-size:12px;color:var(--acc)}
 
 /* --- TREATMENT 5: PRIMARY / SECONDARY / TRAVEL ---------------------------- */
-/* The winning action is the filled one. .assemble-btn is already the sheet
-   primary fill and the card already used it; what changed is what stands
-   beside it. */
-.production-work .production-next>a{min-height:44px;padding:0 18px;font-size:13px}
+/* The decision column reads top-down and its control sits under its own
+   sentence. Checkpoint A left the card as a space-between flex row, which at
+   1920 put half a screen of empty track between the reason and the button. */
+.production-work .production-next{display:grid;justify-items:start;gap:12px}
+.production-work .production-next>div{display:grid;gap:7px}
+.production-work .production-next h2,.production-work .production-next p{margin:0}
+.production-work .production-next>a{min-height:44px;padding:0 20px;font-size:13px;margin-top:2px}
 
 /* A NARROW EXCEPTION, NOT ANOTHER LAYER. .add-btn, .topbar-add and
    .approve-btn are filled accent under !important, which made a global
@@ -6319,10 +6415,3 @@ body[data-focused-route="production"] .topbar-add:hover{
    readable ink, and only on this surface. */
 #app[data-surf="light"] .production-home-actions .add-btn,
 body[data-focused-route="production"] #app[data-surf="light"] .topbar-add{color:var(--ink)!important}
-
-/* Travel stays quiet, and keeps its arrow and its wording. */
-.production-active>header>a,.production-scenes>header>a{font-size:12px;color:var(--muted)}
-.production-active>header>a:hover,.production-scenes>header>a:hover{color:var(--acc)}
-/* Travel INTO the current decision is the exception the brief names: that row
-   is the returned result, and opening it is the decision. */
-.production-work .production-inbox-item i{font-size:12px}

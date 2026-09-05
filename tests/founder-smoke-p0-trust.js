@@ -240,7 +240,7 @@ async function testNextActionAgreesWithReadiness() {
 
   const html = app.context.document.getElementById("main").innerHTML;
   assert(/0 shots have work that can start now/.test(html), "the readiness headline must be unchanged");
-  assert(!/NEXT ACTION<\/span><h2>L1-01/.test(html), "NEXT ACTION must not headline a blocked shot");
+  assert(!/next action<\/span><h2>L1-01/i.test(html), "Next action must not headline a blocked shot");
   assert(/data-next-action-kind="blocker"/.test(html), "the rendered NEXT ACTION must declare what kind of action it is");
 
   vm.runInContext("continueProduction()", app.context);

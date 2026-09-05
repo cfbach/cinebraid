@@ -5876,7 +5876,7 @@ function productionResultInbox(limit = 6) {
      uses for something else. Both now say `returned result`, which is the only
      thing this section has ever been about, so an empty inbox can sit beside an
      outstanding filmmaker decision without the two contradicting each other. */
-  return `<section class="production-inbox"><header><div><span>RETURNED RESULTS</span><h2>${items.length ? `${plural(waiting, "returned result")} waiting for review` : "No returned result is waiting for review"}</h2><p>Results uploaded inside a frame or motion step appear here automatically. Decisions about approved work are shown above, in Production.</p></div></header>${items.length ? `<div class="production-inbox-list">${items.map((item) => {
+  return `<section class="production-inbox"><header><div><span>${waiting === 1 ? "Returned result" : "Returned results"}</span><h2>${items.length ? `${plural(waiting, "returned result")} waiting for review` : "No returned result is waiting for review"}</h2><p>Results uploaded inside a frame or motion step appear here automatically. Decisions about approved work are shown above, in Production.</p></div></header>${items.length ? `<div class="production-inbox-list">${items.map((item) => {
     if (item.shot) {
       const takes = takesFor(item.shot.id), media = item.type === "video" ? takes.filter((take) => isVideo(take.name)).at(-1) : takes.filter((take) => !isVideo(take.name) && !isAudio(take.name)).at(-1);
       const preview = media ? (isVideo(media.name) ? `<video muted preload="metadata" src="${attr(media.url)}#t=0.1"></video>` : `<img src="${attr(media.url)}" alt="">`) : `<span>${item.type === "video" ? "VIDEO" : "FRAME"}</span>`;
@@ -6121,11 +6121,11 @@ function historicConfirmationMarkup(feed) {
      the NEXT ACTION card above states the first of these decisions outright. What
      changes is that four rows of administration no longer own the first viewport
      of a film's production page. One click is the whole list back. */
-  return `<details class="production-readiness historic-confirm" data-readiness-action-surface="production-historic-confirmation"><summary><div><span>EXISTING SELECTIONS</span><b>${plural(queue.uniqueTargets, "existing selection")} need${queue.uniqueTargets === 1 ? "s" : ""} your confirmation</b></div><span>${queue.occurrences} REQUIREMENT${queue.occurrences === 1 ? "" : "S"}</span></summary><div class="historic-confirm-body"><p>These references are already in the project and nobody has approved them. Confirming one approves it everywhere it is used.</p><ul class="historic-confirm-list">${rows}</ul>${bulk}</div></details>`;
+  return `<details class="production-readiness historic-confirm" data-readiness-action-surface="production-historic-confirmation"><summary><div><span>Existing selections</span><b>${plural(queue.uniqueTargets, "existing selection")} need${queue.uniqueTargets === 1 ? "s" : ""} your confirmation</b></div><span>${plural(queue.occurrences, "requirement")}</span></summary><div class="historic-confirm-body"><p>These references are already in the project and nobody has approved them. Confirming one approves it everywhere it is used.</p><ul class="historic-confirm-list">${rows}</ul>${bulk}</div></details>`;
 }
 function shotReadinessFeedMarkup(feed, decisions = null) {
   if (!feed) return "";
-  if (feed.error) return `<details class="production-readiness"><summary><div><span>PRODUCTION READINESS</span><b>Readiness could not be derived</b></div><span>UNAVAILABLE</span></summary><div class="production-readiness-list"><p>${esc(feed.error)}</p></div></details>`;
+  if (feed.error) return `<details class="production-readiness"><summary><div><span>Production readiness</span><b>Readiness could not be derived</b></div><span>Unavailable</span></summary><div class="production-readiness-list"><p>${esc(feed.error)}</p></div></details>`;
   const counts = feed.counts || { ready: 0, blocked: 0, needsDecision: 0, complete: 0 };
   /* ONE PROJECT TRUTH PROBLEM, RENDERED ONCE.
    *
@@ -6154,9 +6154,9 @@ function shotReadinessFeedMarkup(feed, decisions = null) {
      filmmaker looking for twelve things to decide. */
   const decided = decisions || projectFilmmakerDecisions(feed);
   const pill = decided.available
-    ? `${decided.count} ${FILMMAKER_DECISION_LABEL.toUpperCase()}${decided.count === 1 ? "" : "S"} · ${counts.blocked} BLOCKED`
-    : "UNAVAILABLE";
-  return `<details class="production-readiness shot-readiness" data-readiness-verdict="1" data-filmmaker-decisions="${attr(String(decided.count))}" ${counts.ready || feed.truthProblem ? "open" : ""}><summary><div><span>PRODUCTION READINESS</span><b>${esc(headline)}</b></div><span>${esc(pill)}</span></summary>${problem}<div class="production-readiness-list shot-readiness-list">${rows || "<p>This project has no shots yet.</p>"}</div>${feed.mediaCheck === "not-checked" ? `<p class="readiness-media-note">Readiness has not been given a media listing, so every approval's file is reported as unverified rather than assumed present.</p>` : ""}</details>`;
+    ? `${plural(decided.count, FILMMAKER_DECISION_LABEL)} · ${counts.blocked} blocked`
+    : "Unavailable";
+  return `<details class="production-readiness shot-readiness" data-readiness-verdict="1" data-filmmaker-decisions="${attr(String(decided.count))}" ${counts.ready || feed.truthProblem ? "open" : ""}><summary><div><span>Production readiness</span><b>${esc(headline)}</b></div><span>${esc(pill)}</span></summary>${problem}<div class="production-readiness-list shot-readiness-list">${rows || "<p>This project has no shots yet.</p>"}</div>${feed.mediaCheck === "not-checked" ? `<p class="readiness-media-note">Readiness has not been given a media listing, so every approval's file is reported as unverified rather than assumed present.</p>` : ""}</details>`;
 }
 /* THE LEGACY PROJECTION, AS WHAT IT ACTUALLY IS.
  *
@@ -6172,7 +6172,7 @@ function shotReadinessFeedMarkup(feed, decisions = null) {
  * has stopped making the claim. */
 function projectSetupIssuesMarkup(setup) {
   const issues = setup?.issues || [];
-  return `<details class="production-readiness project-setup" data-project-setup="1"><summary><div><span>PROJECT SETUP</span><b>${issues.length ? `${plural(issues.length, "setup item")} to resolve` : "No setup items found"}</b></div><span>${issues.length} ITEM${issues.length === 1 ? "" : "S"}</span></summary><div class="production-readiness-list">${issues.map((issue) => `<a href="${attr(issue.href || "#/production")}"${issue.kind === "unresolved-reference" && issue.targetId ? ` onclick="boundedWriteFocusedTask('${SHOT_STAGE_SCOPE}','${attr(issue.targetId)}','inputs')"` : ""}><b>${esc(String(issue.kind || "setup").replace(/-/g," "))}</b><span>${esc(issue.message || "Setup item")}</span><i>Open →</i></a>`).join("") || `<p>No missing descriptions, durations, canon text, reference pointers or absent files were found. This says nothing about whether a shot can be produced — see Production readiness above.</p>`}</div></details>`;
+  return `<details class="production-readiness project-setup" data-project-setup="1"><summary><div><span>Project setup</span><b>${issues.length ? `${plural(issues.length, "setup item")} to resolve` : "No setup items found"}</b></div><span>${plural(issues.length, "item")}</span></summary><div class="production-readiness-list">${issues.map((issue) => `<a href="${attr(issue.href || "#/production")}"${issue.kind === "unresolved-reference" && issue.targetId ? ` onclick="boundedWriteFocusedTask('${SHOT_STAGE_SCOPE}','${attr(issue.targetId)}','inputs')"` : ""}><b>${esc(String(issue.kind || "setup").replace(/-/g," "))}</b><span>${esc(issue.message || "Setup item")}</span><i>Open →</i></a>`).join("") || `<p>No missing descriptions, durations, canon text, reference pointers or absent files were found. This says nothing about whether a shot can be produced — see Production readiness above.</p>`}</div></details>`;
 }
 /* CONFIRMATION IS APPROVAL, AND IT GOES THROUGH THE SHIPPED COMMAND.
  *
@@ -6295,18 +6295,20 @@ async function productionHomeView() {
   const isDelivered = (shot) => (decisions.available ? deliveredIds.has(shot.id) : shotIsDelivered(shot));
   const activeRows = P.shots.map((shot) => ({ shot, next: shotProductionNextAction(shot, readinessByShot.get(shot.id)) }))
     .filter((row) => !isDelivered(row.shot)).slice(0, 8);
-  /* THE SURFACE NAMES ITSELF; THE PROJECT IS THE CONTEXT IT NAMES ITSELF IN.
-     The 42px headline was the project title, which the rail head and the topbar
-     both already state — so the one line set at page-identity scale said the
-     thing the screen had said twice, and the word Production was a 9px kicker.
-     Same two strings, same order, swapped emphasis: nothing here is derived
-     differently and no string is new. */
+  /* THE SURFACE NAMES ITSELF, AND SAYS THE PROJECT ONCE — WHICH IS NOT HERE.
+     The 42px headline was the project title. Checkpoint A demoted it to a
+     context line above `Production`; the review found that a third printing of
+     the same string, because the rail head and the topbar both carry it
+     permanently and the topbar prints it directly above this line with the
+     word Production underneath. So the body stops repeating it. Nothing is
+     hidden: the two persistent shell surfaces that own project identity are
+     unchanged, and neither the title nor the routing is touched. */
   const nextCard = next
-    ? `<section class="production-next" data-next-action-kind="${attr(next.kind)}"${next.shotId ? ` data-next-action-shot="${attr(next.shotId)}"` : ""}${next.unblocks ? ` data-next-action-unblocks="${attr(String(next.unblocks))}"` : ""}><div><span>NEXT ACTION</span><h2>${esc(next.title)}</h2><p>${esc(next.message)}</p></div><a class="assemble-btn" href="${attr(next.href)}">${esc(next.actionLabel)} →</a></section>`
+    ? `<section class="production-next" data-next-action-kind="${attr(next.kind)}"${next.shotId ? ` data-next-action-shot="${attr(next.shotId)}"` : ""}${next.unblocks ? ` data-next-action-unblocks="${attr(String(next.unblocks))}"` : ""}><div><span>Next action</span><h2>${esc(next.title)}</h2><p>${esc(next.message)}</p></div><a class="assemble-btn" href="${attr(next.href)}">${esc(next.actionLabel)} →</a></section>`
     : hasShots
-      ? `<section class="production-next complete"><div><span>NOTHING OUTSTANDING</span><h2>All ${plural(P.shots.length, "shot")} are delivered</h2><p>Every declared unit holds approved authority and you have marked every shot final. Open Shots to inspect the delivered media, or add another shot.</p></div><a class="ghost-btn" href="#/shots/board">Open Shots →</a></section>`
-      : `<section class="production-next"><div><span>NO SHOTS YET</span><h2>This project has no shots</h2><p>Add the first shot to start tracking scenes, frames and deliveries.</p></div><a class="assemble-btn" href="#/shots/board">Open Shots →</a></section>`;
-  return `<div class="view-head production-home-head"><div><div class="eyebrow production-home-project">${esc(P.meta.title)}</div><span class="view-title">Production</span><div class="view-sub">Continue the film from the next unfinished decision. Detailed tools stay inside each shot.</div></div><div class="production-home-actions"><button class="${next ? "ghost-btn" : "assemble-btn"}" onclick="continueProduction()">${esc(primaryAction.label)}</button><button class="add-btn" onclick="openContextualAdd('shot')">＋ Add shot</button></div></div>
+      ? `<section class="production-next complete"><div><span>Nothing outstanding</span><h2>All ${plural(P.shots.length, "shot")} are delivered</h2><p>Every declared unit holds approved authority and you have marked every shot final. Open Shots to inspect the delivered media, or add another shot.</p></div><a class="ghost-btn" href="#/shots/board">Open Shots →</a></section>`
+      : `<section class="production-next"><div><span>No shots yet</span><h2>This project has no shots</h2><p>Add the first shot to start tracking scenes, frames and deliveries.</p></div><a class="assemble-btn" href="#/shots/board">Open Shots →</a></section>`;
+  return `<div class="view-head production-home-head"><div><span class="view-title">Production</span><div class="view-sub">Continue the film from the next unfinished decision. Detailed tools stay inside each shot.</div></div><div class="production-home-actions"><button class="${next ? "ghost-btn" : "assemble-btn"}" onclick="continueProduction()">${esc(primaryAction.label)}</button><button class="add-btn" onclick="openContextualAdd('shot')">＋ Add shot</button></div></div>
   <!-- ONE CURRENT-WORK REGION, TWO UNCHANGED QUEUES.
        The projected next action and the returned-result inbox are the same two
        renderings they have always been, from the same two owners, in the same
@@ -6336,8 +6338,8 @@ async function productionHomeView() {
   ${historicConfirmationMarkup(shotReadiness)}
   ${projectSetupIssuesMarkup(setup)}
   </div>
-  <section class="production-active"><header><div><span>NOT YET DELIVERED</span><h2>Shots and their next action</h2></div><a href="#/shots/board">View all shots →</a></header>${activeRows.length ? `<div class="production-active-list">${activeRows.map(({shot,next}) => `<a href="#/shot/${shot.id}"><span class="next-${next.key}" title="Next action for this shot">${esc(next.label)}</span><div><b>${esc(shot.id)} · ${esc(shot.title)}</b><small>${esc(sceneById(shot.scene)?.title || shot.scene)} · ${esc(next.detail)}</small></div><i>→</i></a>`).join("")}</div>` : `<div class="production-inbox-empty">${hasShots ? "Every shot has been delivered." : "No shots have been added yet."}</div>`}</section>
-  <section class="production-scenes"><header><div><span>SCENES</span><h2>Production progress</h2></div><a href="#/shots/scenes">Manage scenes →</a></header>${P.scenes.length ? `<div class="scene-progress-grid">${P.scenes.map((scene) => {
+  <section class="production-active"><header><div><span>Not yet delivered</span><h2>Shots and their next action</h2></div><a href="#/shots/board">View all shots →</a></header>${activeRows.length ? `<div class="production-active-list">${activeRows.map(({shot,next}) => `<a href="#/shot/${shot.id}"><span class="next-${next.key}" title="Next action for this shot">${esc(next.label)}</span><div><b>${esc(shot.id)} · ${esc(shot.title)}</b><small>${esc(sceneById(shot.scene)?.title || shot.scene)} · ${esc(next.detail)}</small></div><i>→</i></a>`).join("")}</div>` : `<div class="production-inbox-empty">${hasShots ? "Every shot has been delivered." : "No shots have been added yet."}</div>`}</section>
+  <section class="production-scenes"><header><div><span>Scenes</span><h2>Production progress</h2></div><a href="#/shots/scenes">Manage scenes →</a></header>${P.scenes.length ? `<div class="scene-progress-grid">${P.scenes.map((scene) => {
     /* THE SCENE CARD SUMMARISES THE SAME PROJECTION THE TILE ABOVE IT COUNTS.
        It used to say "N shots waiting for review" from its own scene-local read of
        NEEDS_DECISION — a third vocabulary for the same fact, and one that collided

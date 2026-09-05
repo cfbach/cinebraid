@@ -878,7 +878,7 @@ async function render(hash, project, options = {}) {
 async function main() {
   const fixture = buildFixture();
   const cases = [
-    ["#/production", fixture, ["Production", "CONTINUE PRODUCTION", "RETURNED RESULTS"]],
+    ["#/production", fixture, ["Production", "CONTINUE PRODUCTION", "Returned result"]],
     /* Batch 2 Slice 2. #/create opens on the intent chooser, whose default intent is
        the recommended assisted one; the manual workspace is what the scratch intent
        renders, which is why it needs the stored preference below rather than a

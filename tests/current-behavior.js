@@ -980,7 +980,7 @@ async function main() {
      present AND that it is the only thing on the page declaring readiness. */
   assert.strictEqual((productionRender.html.match(/data-readiness-verdict="1"/g) || []).length, 1,
     "Production must expose exactly one shared read-only readiness roll-up");
-  assert(productionRender.html.includes("PRODUCTION READINESS"), "and it must be labelled as the readiness verdict");
+  assert(productionRender.html.includes("Production readiness"), "and it must be labelled as the readiness verdict");
   assert(!productionRender.html.includes("Ready for production work"),
     "no other block on Production may declare the project ready");
   const reportsRender = await render("#/reports", fixture);

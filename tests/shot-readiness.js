@@ -1098,9 +1098,9 @@ async function renderedSurfaceSection() {
   /* EXACTLY ONE THING ON THIS PAGE DECLARES READINESS. */
   equal((html.match(/data-readiness-verdict="1"/g) || []).length, 1, "exactly one readiness verdict block is rendered");
   equal((html.match(/data-project-setup="1"/g) || []).length, 1, "and exactly one setup block beside it");
-  ok(html.includes("PRODUCTION READINESS"), "the verdict block is labelled as the readiness verdict");
-  ok(html.includes("PROJECT SETUP"), "and the legacy block is labelled as setup");
-  ok(!html.includes("PROJECT READINESS"), "the legacy block no longer calls itself readiness");
+  ok(html.includes("Production readiness"), "the verdict block is labelled as the readiness verdict");
+  ok(html.includes("Project setup"), "and the legacy block is labelled as setup");
+  ok(!/project readiness/i.test(html), "the legacy block no longer calls itself readiness");
 
   /* AND THE EMPTY LEGACY LIST NO LONGER SAYS READY. */
   ok(!html.includes("Ready for production work"), "an empty setup list must not claim the project is ready for production");
