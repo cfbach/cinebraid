@@ -2904,9 +2904,386 @@ function guidedPromptWarningsMarkup(warnings) {
   if (!items.length) return "";
   return `<details class="guided-prompt-notes"><summary><b>${items.length} prompt note${items.length === 1 ? "" : "s"}</b><span>Details</span></summary><ul>${items.map((warning) => `<li>${esc(warning)}</li>`).join("")}</ul></details>`;
 }
-function guidedFramePromptResult(s, frame, build) {
-  return `<article class="guided-prompt-result guided-frame-prompt-result"><header><div><span>FRAME ${esc(frame.label)} PROMPT READY</span><b>${esc(build.profileName || build.profileId)}</b><small>${esc(guidedPromptModeLabel(build.mode))}${build.references?.length ? ` · ${build.references.length} input${build.references.length === 1 ? "" : "s"}` : ""}${build.packageId ? ` · ${esc(build.packageId)}` : ""}</small></div><div><button class="copy-btn" onclick="copyText(${JSON.stringify(build.prompt || "").replace(/"/g, "&quot;")})">COPY</button>${typeof falPromptAction === "function" ? falPromptAction(s.id,"frame",frame.id,build.id,`<button class="chip" onclick="downloadGuidedFramePrompt('${s.id}','${frame.id}','${build.id}')">Download</button>`) : `<button class="chip" onclick="downloadGuidedFramePrompt('${s.id}','${frame.id}','${build.id}')">Download</button>`}${typeof comfyPromptAction === "function" ? comfyPromptAction(s.id,frame.id,build.id) : ""}</div></header>${guidedPromptWarningsMarkup(build.warnings)}${guidedProductionRisksMarkup(build.productionRisks)}<details><summary>View full model prompt</summary><pre>${esc(build.prompt || "")}</pre>${typeof falGenerationReady === "function" && falGenerationReady() ? `<button class="text-link-btn" onclick="downloadGuidedFramePrompt('${s.id}','${frame.id}','${build.id}')">Download prompt file</button>` : ""}</details>${promptOriginDetails(build)}${typeof falGenerationInline === "function" ? falGenerationInline(s.id,"frame",frame.id) : ""}${typeof comfyGenerationInline === "function" ? comfyGenerationInline(s.id,frame.id) : ""}</article>`;
+/* ===========================================================================
+   THE FRAME'S GENERATION SECTION — Generation Surface Polish V1.
+ *
+ * Prompt → backend/workflow → generate → running → returned → review, in that order,
+ * because that is the order the questions are asked in. Everything below composes
+ * controls, values and handlers that already existed; nothing here dispatches, ingests,
+ * decides eligibility, or writes a durable field.
+ *
+ * WHAT MOVED, AND WHAT DID NOT. The execution path used to live at the bottom of an
+ * "optional assisted creation" disclosure, below the candidate gallery, inside a prompt
+ * card whose actual prompt was collapsed. It now has its own bounded place, the prompt
+ * is the first thing in it, and the tools that BUILT the prompt sit under it. The
+ * compiler, the dialogs, the job lifecycle, the ingest, the review projection and every
+ * refusal are untouched — this is where things are drawn, not what they mean.
+   =========================================================================== */
+
+/* WHICH EXECUTION PATH THE CARD IS CURRENTLY PRESENTING — display state, and only that.
+ *
+ * Held in memory for the life of the page. It is not a preference, is never persisted,
+ * never travels in a payload and never dispatches: it decides which of the existing
+ * execution controls are on screen and nothing else. A reload forgets it, which is
+ * correct — CineBraid has no stored answer to "which backend does this filmmaker mean"
+ * and this slice is not the place to invent one.
+ *
+ * AND IT IS NOT A DEFAULT WHEN THERE IS A CHOICE. With one available path there is
+ * nothing to choose and the card names it. With two, the card says so and asks, rather
+ * than promoting a list position into a claim about where the filmmaker's money goes. */
+const FRAME_EXECUTION_VIEW = new Map();
+function frameExecutionViewKey(shotId, frameId) {
+  return `${String(shotId || "")}:${String(frameId || "")}`;
 }
+function frameExecutionView(shotId, frameId) {
+  return FRAME_EXECUTION_VIEW.get(frameExecutionViewKey(shotId, frameId)) || { backend: "", workflow: "" };
+}
+function setFrameExecutionView(shotId, frameId, patch) {
+  const key = frameExecutionViewKey(shotId, frameId);
+  FRAME_EXECUTION_VIEW.set(key, { ...frameExecutionView(shotId, frameId), ...patch });
+  route();
+}
+/* SELECTING A BACKEND SPENDS NOTHING. It changes which existing controls are drawn and
+   returns. The paid press is still the paid dialog's, behind the paid dialog's own
+   authorization, exactly as before. */
+window.setFrameExecutionBackend = (shotId, frameId, backend) => {
+  setFrameExecutionView(shotId, frameId, { backend: String(backend || "") });
+};
+window.setFrameExecutionWorkflow = (shotId, frameId, workflow) => {
+  setFrameExecutionView(shotId, frameId, { workflow: String(workflow || "") });
+};
+
+/* Every execution path this frame could actually take, each backend answering the same
+   four generic questions in its own terms. The list is built from the two readers that
+   already decide whether a path is offered at all, so a path appears here exactly when
+   its own action would have appeared before.
+ *
+ * DELIBERATELY NOT A PROVIDER ABSTRACTION. There is no registry, no resolver and no
+ * shared capability contract here — just the slots this one card draws. A future backend
+ * with no mappings, no local address and no workflow file fills the same slots with
+ * different facts, and one that cannot answer a question leaves it empty rather than
+ * being made to invent an answer. */
+function frameExecutionPaths(s, frame) {
+  const view = frameExecutionView(s.id, frame.id);
+  const paths = [];
+  if (typeof comfyFrameExecutionPath === "function") {
+    const local = comfyFrameExecutionPath(view.workflow);
+    if (local) paths.push(local);
+  }
+  if (typeof falGenerationReady === "function" && falGenerationReady()) {
+    /* The hosted request's model is resolved by the paid dialog against the server's
+       own option list; the card has not asked and does not guess. What it can state
+       truthfully before that is the route and the charge, and it says exactly that.
+       The prompt profile's name is NOT borrowed here — a compiler target is not an
+       execution identity, and printing one where the other belongs is the confusion
+       this block exists to end. */
+    const rate = typeof generationRateFor === "function" ? generationRateFor("image") : null;
+    const quantity = Number(falGenerationConfig()?.frameOutputs || 2);
+    const price = typeof generationPriceLine === "function"
+      ? generationPriceLine({ rate, quantity, local: false })
+      : { headline: "", detail: "" };
+    paths.push({
+      id: "fal",
+      backend: "Hosted provider · fal",
+      where: "At the provider",
+      paid: true,
+      costWords: price.headline || "",
+      costDetail: price.detail || "",
+      costKind: price.kind || "",
+      unitLabel: "Model",
+      unit: "",
+      unresolved: false,
+      /* Not a readiness claim about a model nobody has resolved yet — a statement of
+         where the choice is actually made. */
+      unitPending: "Chosen in the paid request review",
+      options: [],
+      readiness: null,
+    });
+  }
+  return paths;
+}
+/* The path whose controls are on screen, or null while the filmmaker has genuinely not
+   chosen between two. One available path is not a choice and resolves itself. */
+function frameSelectedExecutionPath(s, frame, paths) {
+  if (!paths.length) return null;
+  if (paths.length === 1) return paths[0];
+  const chosen = frameExecutionView(s.id, frame.id).backend;
+  return paths.find((path) => path.id === chosen) || null;
+}
+
+/* ---------------------------------------------------------------------------
+   1. THE PROMPT, before the machinery that built it.
+
+   The prepared prompt is the first thing in the section and its opening lines are
+   visible without opening anything. Copy and Download stay beside it as the quiet
+   utilities they are; they are not dispatch and no longer look like it.
+
+   The block is a <details> so a filmmaker's own choice about it survives a rerender —
+   app.js restores disclosure state by key, and `data-ui-state-key` is that key. Its
+   computed default closes to a summary once a result is reviewable and never yanks an
+   open panel shut, because the restored state wins over the default. */
+function guidedFramePromptResult(s, frame, build, options = {}) {
+  const reviewable = options.reviewable === true;
+  const prompt = String(build.prompt || "");
+  const identity = `${esc(build.profileName || build.profileId)}`;
+  const detail = `${esc(guidedPromptModeLabel(build.mode))}${build.references?.length ? ` · ${build.references.length} input${build.references.length === 1 ? "" : "s"}` : ""}${build.packageId ? ` · ${esc(build.packageId)}` : ""}`;
+  const utilities = `<div class="frame-prompt-utilities"><button class="text-link-btn" onclick="copyText(${JSON.stringify(prompt).replace(/"/g, "&quot;")})">Copy</button><button class="text-link-btn" onclick="downloadGuidedFramePrompt('${s.id}','${frame.id}','${build.id}')">Download</button></div>`;
+  /* Always open. Once a result is reviewable it is the PREPARATION as a whole — this
+     block, its tools and the execution facts — that reduces to one summary, so a
+     second collapsed layer inside it would put the prompt two clicks from the eye. */
+  return `<details class="frame-prompt-block" data-frame-prompt-phase="${attr(reviewable ? "returned" : "preparing")}" data-ui-state-key="frame-prompt:${attr(s.id)}:${attr(frame.id)}" open><summary class="frame-prompt-summary"><div><span>PREPARED PROMPT</span><b>${identity}</b><small>${detail} · ${prompt.length.toLocaleString()} characters</small></div><i class="compact-chevron">⌄</i></summary><div class="frame-prompt-body">${guidedPromptWarningsMarkup(build.warnings)}${guidedProductionRisksMarkup(build.productionRisks)}<div class="frame-prompt-preview"><pre class="frame-prompt-text">${esc(prompt)}</pre><details class="frame-prompt-expand" data-ui-state-key="frame-prompt-full:${attr(s.id)}:${attr(frame.id)}"><summary>Show the whole prompt</summary></details></div>${utilities}</div></details>`;
+}
+/* ---------------------------------------------------------------------------
+   2. THE TOOLS THAT BUILT IT, subordinate once there is something to run.
+
+   Every control here is the one that was already on the card: the same target select,
+   the same deterministic Build, the same optional Braidy Improve with the same
+   capability gate, the same additional-direction field and the same previous-frame
+   input toggle. What changed is that they no longer stand between the filmmaker and the
+   prompt they already have.
+
+   WHAT STAYS OUTSIDE THIS DISCLOSURE: an input that still needs approval. That is a
+   reason a request would be refused or would compile without something the filmmaker
+   asked for, and a refusal behind a closed panel is a refusal nobody reads. */
+function guidedFramePromptTools(s, frame, index, state, refs, mode, profileId, busy, busyLabel, previous, previousApproved, hasBuild) {
+  const target = esc((PROMPT_LIBRARY?.profiles || []).find((item) => item.id === profileId)?.name || profileId);
+  const previousToggle = index > 0
+    ? `<label class="guided-previous-frame-toggle"><input type="checkbox" ${state.usePreviousFrame ? "checked" : ""} ${previousApproved ? "" : "disabled"} onchange="setGuidedFrameField('${s.id}','${frame.id}','usePreviousFrame',this.checked)"><span><b>Use approved Frame ${esc(previous?.label || "A")} as an image input</b><small>${previousApproved ? "Useful for controlled endpoint changes and first/last-frame workflows." : `Approve Frame ${esc(previous?.label || "A")} first.`}</small></span></label>`
+    : "";
+  const inputs = `<div class="guided-frame-input-summary"><button onclick="openGuidedPanel('${s.id}','inputs')"><b>${refs.filter((ref) => ref.url).length}</b><span>approved input${refs.filter((ref) => ref.url).length === 1 ? "" : "s"}</span></button><span>Inputs ready</span></div>`;
+  const direction = `<details class="guided-shot-options" data-ui-state-key="frame-direction:${attr(s.id)}:${attr(frame.id)}" ${(state.staging || state.camera || state.notes) ? "open" : ""}><summary>Additional prompt direction</summary>${field("Optional direction", `<textarea data-focus-key="frame-direction:${attr(s.id)}:${attr(frame.id)}" placeholder="Placement, camera, contact points, or anything that must stay unchanged." onchange="setGuidedFrameAdditionalDirection('${s.id}','${frame.id}',this.value)">${esc([state.staging,state.camera,state.notes].filter(Boolean).join("\n"))}</textarea>`)}</details>`;
+  const compile = `<div class="guided-compile-bar guided-frame-compile"><details class="guided-inline-defaults" data-ui-state-key="frame-target:${attr(s.id)}:${attr(frame.id)}"><summary>Target: ${target}</summary><label><span>Image target</span><select data-focus-key="frame-target:${attr(s.id)}:${attr(frame.id)}" ${busy ? "disabled" : ""} onchange="setGuidedFrameField('${s.id}','${frame.id}','profileId',this.value)">${creationProfileOptions(mode, profileId)}</select></label></details><div><button class="assemble-btn" ${busy ? "disabled" : ""} onclick="buildGuidedFramePrompt('${s.id}','${frame.id}',false)">${busy && busyLabel === "compile" ? `<span class="spin">◌</span> Compiling…` : hasBuild ? "Rebuild prompt" : "Build prompt"}</button><button class="ghost-btn" ${busy ? "disabled" : ""} onclick="buildGuidedFramePrompt('${s.id}','${frame.id}',true)"${aiDisabledAttrs("text")}>${busy && busyLabel === "improve" ? `<span class="spin">◌</span> Improving…` : "Improve"}</button></div></div>`;
+  const assistant = typeof capabilityState === "function" ? capabilityState("text") : { ready: true };
+  /* Concise, local, and it still reaches the setup detail it always did. The full
+     assistant-setup explanation used to sit in the execution path's way. */
+  const assistantNote = assistant.ready
+    ? ""
+    : `<p class="frame-prompt-tools-note">Improve uses the optional Braidy assistant, which is unavailable right now. ${esc(assistant.message || "")} <a href="#/settings">Assistant setup →</a></p>`;
+  return `<details class="frame-prompt-tools" data-ui-state-key="frame-prompt-tools:${attr(s.id)}:${attr(frame.id)}"><summary><span>PROMPT TOOLS</span><small>${hasBuild ? "Rebuild, improve, retarget, or add direction" : "Build the prompt CineBraid will run"}</small><i class="compact-chevron">⌄</i></summary><div class="frame-prompt-tools-body">${previousToggle}${inputs}${direction}${compile}${assistantNote}</div></details>`;
+}
+
+/* ---------------------------------------------------------------------------
+   3. WHERE IT RUNS, ON WHAT, WHETHER THAT IS READY, AND WHAT IT COSTS — one scan.
+
+   Backend, unit, readiness and provider cost sit together above the action, and the
+   action belongs to the selected path. Local and paid keep separate controls, separate
+   handlers and separate dialogs; there is no single button that could quietly become
+   the other one. */
+function frameExecutionActionMarkup(s, frame, build, path) {
+  if (!path) return "";
+  if (path.id === "comfy") {
+    const workflow = path.unresolved ? "" : path.unit;
+    const action = typeof comfyPromptAction === "function"
+      ? comfyPromptAction(s.id, frame.id, build.id, { primary: true, workflow })
+      : "";
+    if (!action) return "";
+    return `<div class="frame-execution-action">${action}<small>Opens the local request review. Nothing runs until you confirm it there. <b>No provider charge.</b></small></div>`;
+  }
+  const action = typeof falPromptAction === "function" ? falPromptAction(s.id, "frame", frame.id, build.id, "") : "";
+  if (!action) return "";
+  return `<div class="frame-execution-action is-paid">${action}<small>Opens the paid request review at fal. You choose the model and authorize the charge there.</small></div>`;
+}
+function frameExecutionBlockMarkup(s, frame, build) {
+  const paths = frameExecutionPaths(s, frame);
+  if (!paths.length) {
+    return `<section class="frame-execution" data-frame-execution="none"><header><span>WHERE THIS RUNS</span></header><p class="frame-execution-empty">No generation backend is connected, so this frame has no place to run. Import an image instead, or connect local ComfyUI or a hosted provider in <a href="#/settings">Settings → Integrations</a>.</p></section>`;
+  }
+  const selected = frameSelectedExecutionPath(s, frame, paths);
+  /* TWO PATHS AND NO ANSWER IS A REAL STATE, and it is said out loud rather than
+     resolved by list position. Each choice carries its own charge fact, so the
+     difference between them is readable before either is picked. */
+  const choices = paths.length > 1
+    ? `<div class="frame-execution-choices" role="radiogroup" aria-label="Where this frame runs">${paths.map((path) => `<button type="button" role="radio" class="frame-execution-choice ${selected?.id === path.id ? "is-selected" : ""}" aria-checked="${selected?.id === path.id ? "true" : "false"}" data-frame-backend="${attr(path.id)}" onclick="setFrameExecutionBackend('${attr(s.id)}','${attr(frame.id)}','${attr(path.id)}')"><b>${esc(path.backend)}</b><small>${esc(path.paid ? (path.costWords || "Paid at the provider") : path.costWords)}</small></button>`).join("")}</div>`
+    : "";
+  if (!selected) {
+    return `<section class="frame-execution" data-frame-execution="unresolved"><header><span>WHERE THIS RUNS</span><b>Choose backend/workflow</b></header>${choices}<p class="frame-execution-empty">Choosing shows that path's workflow, readiness and cost. Choosing spends nothing — each path keeps its own confirmation.</p></section>`;
+  }
+  const unitLine = selected.unresolved
+    ? `<span class="frame-execution-unit is-pending">${esc(selected.chooseWords || `Choose a ${String(selected.unitLabel || "workflow").toLowerCase()}`)}</span>`
+    : selected.unit
+      ? `<span class="frame-execution-unit">${esc(selected.unit)}</span>`
+      : selected.unitPending
+        ? `<span class="frame-execution-unit is-pending">${esc(selected.unitPending)}</span>`
+        : "";
+  /* The backend's own control, drawn only where a choice genuinely exists. It changes
+     which facts are displayed; the dialog then opens on the same one. */
+  const unitControl = selected.options?.length > 1
+    ? `<label class="frame-execution-unit-control"><span>${esc(selected.unitLabel)}</span><select data-focus-key="frame-workflow:${attr(s.id)}:${attr(frame.id)}" onchange="setFrameExecutionWorkflow('${attr(s.id)}','${attr(frame.id)}',this.value)"><option value="">${esc(selected.chooseWords || "Choose a workflow")}</option>${selected.options.map((option) => `<option value="${attr(option.value)}" ${option.value === selected.unit ? "selected" : ""}>${esc(option.label)}${option.changed ? " · changed since confirmed" : ""}</option>`).join("")}</select></label>`
+    : "";
+  const readiness = selected.readiness
+    ? `<i class="frame-execution-readiness" data-tone="${attr(selected.readiness.tone)}">${esc(selected.readiness.words)}</i>`
+    : "";
+  const cost = selected.costWords
+    ? `<em class="frame-execution-cost" data-paid="${selected.paid ? "1" : "0"}">${esc(selected.costWords)}</em>`
+    : "";
+  /* An actionable readiness reason and a paid-cost caveat are decisions, not technical
+     detail, so neither is allowed behind a disclosure. */
+  const reason = selected.readiness?.detail
+    ? `<p class="frame-execution-reason" data-tone="${attr(selected.readiness.tone)}">${esc(selected.readiness.detail)}</p>`
+    : "";
+  const costDetail = selected.paid && selected.costDetail
+    ? `<p class="frame-execution-cost-detail">${esc(selected.costDetail)}</p>`
+    : "";
+  return `<section class="frame-execution" data-frame-execution="${attr(selected.id)}" data-frame-execution-paid="${selected.paid ? "1" : "0"}"><header><span>WHERE THIS RUNS</span></header>${choices}<div class="frame-execution-identity"><b class="frame-execution-backend">${esc(selected.backend)}</b>${unitLine}<span class="frame-execution-standing">${readiness}${readiness && cost ? '<span aria-hidden="true"> · </span>' : ""}${cost}</span></div>${unitControl}${reason}${costDetail}${frameExecutionActionMarkup(s, frame, build, selected)}</section>`;
+}
+
+/* ---------------------------------------------------------------------------
+   4. ONE STATUS POSITION, between the controls and the result.
+
+   Both backends' strips are drawn here, always, and each is its own backend's. A
+   filmmaker looking at local ComfyUI must still be able to see an unresolved paid
+   submission on this frame: hiding a job because a different backend is selected would
+   be hiding a request that may already have been charged. */
+function frameOperationStatusMarkup(s, frame) {
+  const strips = [
+    typeof falGenerationInline === "function" ? falGenerationInline(s.id, "frame", frame.id) : "",
+    typeof comfyGenerationInline === "function" ? comfyGenerationInline(s.id, frame.id) : "",
+  ].filter(Boolean);
+  if (!strips.length) return "";
+  return `<section class="frame-operation-status" data-frame-operations="${strips.length}"><header><span>THIS OPERATION</span></header>${strips.join("")}</section>`;
+}
+
+/* ---------------------------------------------------------------------------
+   5. THE RESULT POSITION — the shipped returned-review projection, in this flow.
+
+   The item, the words, the actions and the review handler are the ones the shot's
+   returned handoff already uses; this is the same record read in the place the
+   generation flow leaves the filmmaker. It creates no second result model, decides
+   nothing, approves nothing, and routes to the EXACT candidate the projection named
+   rather than to whatever is newest. */
+/* A RESULT IS A RETURN ONLY WHEN SOMETHING ACTUALLY RAN.
+ *
+ * The projection correctly reports every undecided candidate on a shot, an imported one
+ * included, because the SHOT's handoff is about decisions and not about backends. That
+ * stays exactly as it is. This section is about generation, so it asks the narrower
+ * question the candidate row already answers — did a generation job produce this file —
+ * using the identity ingest stamps on every generated candidate.
+ *
+ * The distinction is the difference between "a returned result is waiting" and "you
+ * imported an image and have not decided about it yet". Treating the second as the
+ * first would open a generation flow on a frame that never entered one, which is the
+ * manual-first guarantee this product has already made. */
+function frameReturnedReviewItem(s, frame) {
+  if (typeof returnedReviewProjectionForBrowser !== "function") return null;
+  const projection = returnedReviewProjectionForBrowser();
+  if (!projection || !projection.available) return null;
+  const rows = (projection.queue || []).filter((row) => {
+    if (row.shotId !== s.id) return false;
+    if (row.owner?.kind !== "shot-frame") return false;
+    if (String(row.owner.frameId || "") !== String(frame.id)) return false;
+    /* Read-only: `create` is false, so asking this question never writes a candidate
+       row into a project that did not have one. */
+    const record = typeof candidateRecord === "function" ? candidateRecord(s, row.candidate?.name, false) : null;
+    return !!(String(record?.generationJobId || "").trim() || String(record?.generationProvider || "").trim());
+  });
+  /* The projection's own order, filtered in place. Nothing here re-sorts, and nothing
+     picks "the newest" — the first row still waiting is the one it named. */
+  return rows.length ? { item: rows[0], waiting: rows.length } : null;
+}
+function frameReturnedResultMarkup(s, frame, returned, step) {
+  if (!returned) return "";
+  const { item, waiting } = returned;
+  const history = step?.candidates?.length || 0;
+  const candidate = item.candidate;
+  const unitWords = `Frame ${item.owner.frameLabel || frame.label || "A"}`;
+  const inspect = `inspectMediaFile('${attr(encodeURIComponent(candidate.url))}','${attr(candidate.assetId || "")}','${attr(encodeURIComponent(`${unitWords} · ${candidate.name}`))}','${candidate.mediaType === "video" ? "video" : "image"}')`;
+  /* CONTAINED, AT THE SOURCE'S OWN RATIO. A square render is shown square. The well
+     never crops the frame that is being judged. */
+  const media = candidate.url
+    ? candidate.mediaType === "video"
+      ? `<div class="frame-returned-media"><video controls muted preload="metadata" src="${attr(candidate.url)}#t=0.1"></video><button class="media-enlarge-btn" onclick="${inspect}">Larger preview</button></div>`
+      : `<button type="button" class="frame-returned-media image" onclick="${inspect}" aria-label="Inspect the returned ${attr(unitWords)} result"><img src="${attr(candidate.url)}" alt=""><span>View larger</span></button>`
+    : `<div class="frame-returned-media is-empty"><span>RETURNED RESULT</span></div>`;
+  const more = waiting > 1
+    ? `<span class="frame-returned-more">${esc(plural(waiting - 1, "more returned result"))} on this frame</span>`
+    : "";
+  /* THE WAY INTO THE REST OF THE HISTORY, from the result that is leading. The tray
+     itself is immediately below and unchanged; what this adds is the count and a way
+     to reach it without hunting, because at the narrow target the tray sits under the
+     fold behind a 280px result. It selects nothing and decides nothing. */
+  const historyEntry = history > 1
+    ? `<a class="frame-returned-history" href="#" onclick="event.preventDefault();document.getElementById('frame-candidates-${attr(frame.id)}')?.scrollIntoView({block:'start'})">${esc(plural(history, "image"))} on this frame — see the others ↓</a>`
+    : "";
+  /* SECONDARY, AND EXPLICITLY SO. The three shipped decisions keep their exact
+     handlers, their exact eligibility and their exact words; what they stop doing is
+     standing at the same weight as Review, and standing beside the tray's own APPROVE
+     so that one card offered two differently-worded ways to approve the same file.
+     The full review behind the leading action carries all three as well, so nothing
+     here is the only route to any of them. */
+  const decisions = typeof returnedReviewActionMarkup === "function" ? returnedReviewActionMarkup(item) : "";
+  const secondary = decisions
+    ? `<details class="frame-returned-decisions" data-ui-state-key="frame-returned-decisions:${attr(s.id)}:${attr(frame.id)}"><summary>Decide without opening review</summary><div class="frame-returned-decision-row">${decisions}</div></details>`
+    : "";
+  return `<section class="frame-returned-result" data-frame-returned="1" data-frame-returned-key="${attr(item.key)}" data-frame-returned-file="${attr(candidate.name)}" data-frame-returned-waiting="${attr(String(waiting))}">${media}<div class="frame-returned-copy"><span class="frame-returned-standing">Returned · Review needed</span><b>${esc(candidate.name)}</b><small>${esc(unitWords)} — it came back and nobody has decided about it. Returning is not approval.</small><div class="frame-returned-actions"><button class="assemble-btn frame-returned-review" onclick="openReturnedResultReview('${attr(s.id)}','${attr(item.key)}')">Review this result →</button>${more}</div>${historyEntry}${secondary}</div></section>`;
+}
+
+/* ---------------------------------------------------------------------------
+   THE WHOLE SECTION, in order. */
+function guidedFrameGenerationSection(s, frame, index, step, state, refs, mode, profileId, operation, previous, previousApproved, returned) {
+  const busy = operation?.status === "busy";
+  const busyLabel = operation?.action || "";
+  const error = operation?.status === "error";
+  const build = step.latest;
+  const reviewable = !!returned;
+  const tools = guidedFramePromptTools(s, frame, index, state, refs, mode, profileId, busy, busyLabel, previous, previousApproved, !!build);
+  /* A REASON A REQUEST CANNOT BE PREPARED IS NEVER TUCKED AWAY. */
+  const missingInputs = refs.filter((ref) => !ref.url).length;
+  const inputWarning = missingInputs
+    ? `<p class="frame-prompt-refusal" data-tone="attention">${esc(`${missingInputs} selected input${missingInputs === 1 ? " needs" : "s need"} approval before they can be used in this prompt.`)} <button class="text-link-btn" onclick="openGuidedPanel('${s.id}','inputs')">Open inputs</button></p>`
+    : "";
+  const promptArea = busy
+    ? assistantWorkingCard(busyLabel === "improve" ? "Improving the frame prompt for this model…" : "Compiling the frame prompt…", busyLabel === "improve" ? "The assistant may take up to three minutes per attempt. It is checking the shot, numbered references, camera, staging, and model-specific format." : "The deterministic compiler is assembling the approved inputs and production constraints.", { mode: busyLabel === "improve" ? "assistant" : "compile" })
+    : error
+      ? guidedPromptErrorMarkup(operation.error, `buildGuidedFramePrompt('${s.id}','${frame.id}',${busyLabel === "improve" ? "true" : "false"})`)
+      : build
+        ? guidedFramePromptResult(s, frame, build, { reviewable })
+        : `<p class="frame-prompt-missing">No prompt has been built for this frame yet. Build one below, or import an image instead — generation is optional.</p>`;
+  /* The execution block needs a prompt to send, which is the same condition the
+     dispatch dialogs already refuse on. Without one the card shows the tools and says
+     so rather than drawing a control that must then refuse. */
+  const execution = build ? frameExecutionBlockMarkup(s, frame, build) : "";
+  const origin = build ? promptOriginDetails(build) : "";
+  const preparation = `${promptArea}${tools}${execution}`;
+  const status = frameOperationStatusMarkup(s, frame);
+  const result = frameReturnedResultMarkup(s, frame, returned, step);
+  if (!reviewable) return `${inputWarning}${preparation}${status}${result}${origin}`;
+  /* ONCE SOMETHING HAS COME BACK, PREPARING IT IS NO LONGER THE QUESTION.
+   *
+   * The whole preparation — prompt, its tools and the execution facts — reduces to one
+   * summary line so the result, its standing and its review action are what the frame
+   * is showing. Nothing is removed: expanding this gives back the prompt, the tools and
+   * the execution block with its own Generate control, which is the "generate another
+   * is secondary" reading rather than a control that has gone missing.
+   *
+   * THE PHASE IS PART OF THE KEY, and that is what makes the default honest. app.js
+   * restores a disclosure's open state by key across a rerender — which is what stops a
+   * rerender shutting a panel somebody just opened, and equally means a computed
+   * default only ever applies once per key. This surface renders at least twice before
+   * a result is visible, because the returned-review projection waits on the media
+   * answer. Under a single key the summary default would be computed while nothing had
+   * returned yet and could never take effect afterwards. Preparing and reviewing are
+   * different questions, so each keeps its own remembered answer, and inside either the
+   * filmmaker's own choice still wins in both directions. */
+  return `${inputWarning}<details class="frame-preparation" data-ui-state-key="frame-preparation:${attr(s.id)}:${attr(frame.id)}:returned"><summary class="frame-preparation-summary"><div><span>PREPARED</span><b>${esc(framePreparationWords(s, frame, build))}</b></div><i class="compact-chevron">⌄</i></summary><div class="frame-preparation-body">${preparation}</div></details>${status}${result}${origin}`;
+}
+
+/* The one line the collapsed preparation stands for: what was prepared, and where it
+   was going to run. Every value is the one the expanded block shows — this restates,
+   it does not summarise into something the facts below would contradict. */
+function framePreparationWords(s, frame, build) {
+  const parts = [String(build?.profileName || build?.profileId || "Prompt build")];
+  const paths = frameExecutionPaths(s, frame);
+  const selected = frameSelectedExecutionPath(s, frame, paths);
+  if (!paths.length) parts.push("No backend connected");
+  else if (!selected) parts.push("Choose backend/workflow");
+  else {
+    parts.push(selected.backend);
+    if (selected.unit) parts.push(selected.unit);
+    if (selected.costWords) parts.push(selected.costWords);
+  }
+  return parts.join(" · ");
+}
+
 function guidedFrameCandidateCard(s, frame, take, approved, selectedName) {
   const row = candidateRecord(s, take.name);
   const current = approved?.name === take.name;
@@ -2930,15 +3307,29 @@ function guidedFrameCandidatesPanel(s, frame, index, takes, step) {
           ? "Import existing images here, or use the optional prompt tools below to create more choices."
           : "Drop or choose existing images here. Optional prompt tools are available below.";
   const candidatePage = boundedPage(step.candidates, "candidates", `shot:${s.id}:frame:${frame.id}`, BOUNDED_PAGE_SIZES.candidates);
+  /* SUPPORTING HISTORY, NOT THE HEADLINE. The tray keeps every candidate's identity,
+     the projection's ordering, its paging, its exact selection and both of its
+     review/enlarge actions; what it gives up is the visual weight it used to take from
+     the result that has actually just come back. Selected is still not approved. */
   const candidateGallery = step.candidates.length
-    ? `<div class="guided-frame-candidate-grid bounded-source-section" role="listbox" aria-label="Frame ${esc(frame.label)} candidates">${candidatePage.rows.map((take) => guidedFrameCandidateCard(s, frame, take, step.approved, state.selectedCandidate)).join("")}</div>${boundedPagerMarkup("candidates",`shot:${s.id}:frame:${frame.id}`,candidatePage,`Frame ${frame.label} candidates`)}`
+    ? `<div class="guided-frame-candidate-grid bounded-source-section is-compact" role="listbox" aria-label="Frame ${esc(frame.label)} candidates">${candidatePage.rows.map((take) => guidedFrameCandidateCard(s, frame, take, step.approved, state.selectedCandidate)).join("")}</div>${boundedPagerMarkup("candidates",`shot:${s.id}:frame:${frame.id}`,candidatePage,`Frame ${frame.label} candidates`)}`
     : `<div class="guided-frame-candidate-grid"><div class="guided-empty-inline"><b>No Frame ${esc(frame.label)} images yet.</b><span>Drop finished artwork, a storyboard frame, a photograph, a render, or any other existing image. Generation is optional.</span></div></div>`;
   const actions = [];
   if (state.selectedCandidate && (!step.approved || changingWinner)) actions.push(`<button class="approve-btn guided-approve-selected" onclick="approveGuidedFrame('${s.id}','${frame.id}','${attr(state.selectedCandidate)}')">APPROVE</button>`);
   if (step.approved) actions.push(`<details class="guided-inline-actions"><summary>Frame options</summary><button class="chip danger" onclick="resetGuidedFrameApproval('${s.id}','${frame.id}')">Reset approval</button></details>`);
   const complete = !!step.approved && !changingWinner;
   const kicker = complete ? "✓ FRAME COMPLETE" : "RETURN RESULTS";
-  return `<section class="guided-frame-return ${step.candidates.length ? "has-candidates" : "needs-candidates"} ${complete ? "is-approved" : ""}"><header><div><span>${kicker}</span><b>${esc(message)}</b></div>${actions.length ? `<div class="guided-frame-return-actions">${actions.join("")}</div>` : ""}</header>${candidateGallery}<div class="dropzone dropzone-lg guided-frame-dropzone" data-frame-dropzone="${attr(frame.id)}">DROP OR CHOOSE FRAME ${esc(frame.label)} CANDIDATES<input type="file" id="frame-file-${attr(frame.id)}" multiple accept="image/*" style="display:none"></div></section>`;
+  const count = step.candidates.length
+    ? `<small class="guided-frame-candidate-count">${esc(plural(step.candidates.length, "image"))} on this frame</small>`
+    : "";
+  /* THE DROP TARGET STAYS FIRST-CLASS AND STOPS SHOUTING. Empty, it is the large,
+     obvious way to bring an image in and keeps every word of that. Populated, the same
+     control, the same handlers and the same file input become one quiet row, because
+     by then the filmmaker is choosing between images rather than looking for the way
+     to add one. */
+  const populated = step.candidates.length > 0;
+  const dropzone = `<div class="dropzone ${populated ? "guided-frame-dropzone is-quiet" : "dropzone-lg guided-frame-dropzone"}" data-frame-dropzone="${attr(frame.id)}">${populated ? `Drop or choose more Frame ${esc(frame.label)} images` : `DROP OR CHOOSE FRAME ${esc(frame.label)} CANDIDATES`}<input type="file" id="frame-file-${attr(frame.id)}" multiple accept="image/*" style="display:none"></div>`;
+  return `<section id="frame-candidates-${attr(frame.id)}" class="guided-frame-return ${populated ? "has-candidates" : "needs-candidates"} ${complete ? "is-approved" : ""}"><header><div><span>${kicker}</span><b>${esc(message)}</b>${count}</div>${actions.length ? `<div class="guided-frame-return-actions">${actions.join("")}</div>` : ""}</header>${candidateGallery}${dropzone}</section>`;
 }
 /* WHO IS IN THIS FRAME — the smallest control that makes the contract reachable.
 
@@ -3003,18 +3394,41 @@ function guidedFrameCard(s, frame, index, takes) {
   const openDefault = busy || error || !approved;
   const statusTone = error ? "attention" : busy ? "active" : approved ? "complete" : step.candidates?.length ? "attention" : "pending";
   const statusLabel = error ? "Needs attention" : busy ? "Working" : approved ? "Complete" : step.label;
-  const operationBody = busy
-    ? assistantWorkingCard(busyLabel === "improve" ? "Improving the frame prompt for this model…" : "Compiling the frame prompt…", busyLabel === "improve" ? "The assistant may take up to three minutes per attempt. It is checking the shot, numbered references, camera, staging, and model-specific format." : "The deterministic compiler is assembling the approved inputs and production constraints.", { mode: busyLabel === "improve" ? "assistant" : "compile" })
-    : error
-      ? guidedPromptErrorMarkup(operation.error, `buildGuidedFramePrompt('${s.id}','${frame.id}',${busyLabel === "improve" ? "true" : "false"})`)
-      : step.latest ? guidedFramePromptResult(s, frame, step.latest) : `<div class="guided-next-note"><b>Optional:</b> build a prompt when you need CineBraid to help create another candidate.</div>`;
-  // Prompt history remains available in manual-first projects, but history alone
-  // must not reopen the assisted toolset every time the frame is visited.
-  const assistedOpen = !manualFirstWorkflow() || busy || error;
+  /* UNIT 1 — GENERATION HAS A PLACE, AND IT IS NOT "OPTIONAL ASSISTED CREATION".
+   *
+   * The section opens itself when this frame is actually generating: a build or improve
+   * is running, one failed, a backend job exists, or something has come back that
+   * nobody has reviewed. Otherwise it is a quiet closed entry and manual import keeps
+   * the first line of the frame.
+   *
+   * HISTORY ALONE IS NOT ENTERING GENERATION. A manual-first frame that happens to
+   * carry an old prompt build is still a manual-first frame, and reopening this every
+   * time it is visited would be the "assisted creation is the doorway to everything"
+   * reading the whole slice exists to remove. A filmmaker's own toggle is remembered by
+   * app.js and outranks this default in both directions. */
+  const returnedForFrame = frameReturnedReviewItem(s, frame);
+  const backendJobActive = (typeof falGenerationJob === "function" && !!falGenerationJob(s.id, "frame", frame.id))
+    || (typeof comfyJobFor === "function" && !!comfyJobFor(s.id, frame.id));
+  const generationEntered = busy || error || backendJobActive || !!returnedForFrame;
+  const generationOpen = generationEntered || (!manualFirstWorkflow() && !approved);
+  const generationBody = guidedFrameGenerationSection(s, frame, index, step, state, refs, mode, profileId, operation, previous, previousApproved, returnedForFrame);
+  const generationStanding = returnedForFrame
+    ? "Returned · review needed"
+    : busy
+      ? "Preparing the prompt…"
+      : error
+        ? "Needs attention"
+        : backendJobActive
+          ? "Running"
+          : step.latest
+            ? "Prompt ready"
+            : "Not started";
+  const generationSection = `<details class="frame-generation ${generationEntered ? "is-active" : ""}" data-ui-state-key="frame-generation:${attr(s.id)}:${attr(frame.id)}" data-frame-generation="${generationEntered ? "active" : "idle"}" ${generationOpen ? "open" : ""}><summary class="frame-generation-head"><div><span>GENERATE THIS FRAME</span><b>Prompt, where it runs, and what comes back</b><small>Optional. Imported and manually approved images remain the authority.</small></div><i class="frame-generation-standing">${esc(generationStanding)}</i><i class="compact-chevron">⌄</i></summary><div class="frame-generation-body">${generationBody}</div></details>`;
+  /* The words the manual-first control asserts on, kept where a filmmaker who is
+     looking for the old doorway will still find them. */
   const manualPromptHistory = manualFirstWorkflow() && step.latest
-    ? `<div class="guided-assisted-history-note"><b>Assisted history available</b><span>A previous prompt build is preserved inside Optional assisted creation.</span></div>`
+    ? `<div class="guided-assisted-history-note"><b>Optional assisted creation</b><span>A previous prompt build is preserved in this frame's generation section above.</span></div>`
     : "";
-  const assistedTools = `<details class="guided-assisted-tools frame-assisted-tools" ${assistedOpen ? "open" : ""}><summary><div><span>OPTIONAL ASSISTED CREATION</span><b>Build a prompt or generate another candidate</b><small>Your imported and manually approved images remain the authority.</small></div></summary><div class="guided-assisted-tools-body">${index > 0 ? `<label class="guided-previous-frame-toggle"><input type="checkbox" ${state.usePreviousFrame ? "checked" : ""} ${previousApproved ? "" : "disabled"} onchange="setGuidedFrameField('${s.id}','${frame.id}','usePreviousFrame',this.checked)"><span><b>Use approved Frame ${esc(previous?.label || "A")} as an image input</b><small>${previousApproved ? "Useful for controlled endpoint changes and first/last-frame workflows." : `Approve Frame ${esc(previous?.label || "A")} first.`}</small></span></label>` : ""}<div class="guided-frame-input-summary"><button onclick="openGuidedPanel('${s.id}','inputs')"><b>${refs.filter((ref) => ref.url).length}</b><span>approved input${refs.filter((ref) => ref.url).length === 1 ? "" : "s"}</span></button>${refs.filter((ref) => !ref.url).length ? `<span class="warn">${refs.filter((ref) => !ref.url).length} selected input${refs.filter((ref) => !ref.url).length === 1 ? " needs" : "s need"} approval</span>` : `<span>Inputs ready</span>`}</div><details class="guided-shot-options" ${(state.staging || state.camera || state.notes) ? "open" : ""}><summary>Additional prompt direction</summary>${field("Optional direction", `<textarea placeholder="Placement, camera, contact points, or anything that must stay unchanged." onchange="setGuidedFrameAdditionalDirection('${s.id}','${frame.id}',this.value)">${esc([state.staging,state.camera,state.notes].filter(Boolean).join("\n"))}</textarea>`)}</details><div class="guided-compile-bar guided-frame-compile"><details class="guided-inline-defaults"><summary>Target: ${esc((PROMPT_LIBRARY?.profiles || []).find((item) => item.id === profileId)?.name || profileId)}</summary><label><span>Image target</span><select ${busy ? "disabled" : ""} onchange="setGuidedFrameField('${s.id}','${frame.id}','profileId',this.value)">${creationProfileOptions(mode, profileId)}</select></label></details><div><button class="assemble-btn" ${busy ? "disabled" : ""} onclick="buildGuidedFramePrompt('${s.id}','${frame.id}',false)">${busy && busyLabel === "compile" ? `<span class="spin">◌</span> Compiling…` : "Build prompt"}</button><button class="ghost-btn" ${busy ? "disabled" : ""} onclick="buildGuidedFramePrompt('${s.id}','${frame.id}',true)"${aiDisabledAttrs("text")}>${busy && busyLabel === "improve" ? `<span class="spin">◌</span> Improving…` : "Improve"}</button></div></div>${operationBody}</div></details>`;
   const sequenceInputsForCard = guidedFrameSequenceInputs(s, takes);
   const sequenceReviewForCard = guidedFrameSequenceReviewState(s, sequenceInputsForCard);
   const motionAllowedForCard = sequenceInputsForCard.length < 2 || !!sequenceReviewForCard?.pass;
@@ -3025,7 +3439,26 @@ function guidedFrameCard(s, frame, index, takes) {
   const deliveredForCard = guidedShotDelivered(s);
   const motionHandoffForCard = guidedMotionHandoffWords(s);
   const approvedPreview = approved ? `<button type="button" class="guided-frame-approved-preview guided-thumb-preview" onclick="openMediaTheatre('${attr(encodeURIComponent(approved.url))}','${attr(encodeURIComponent(`Approved Frame ${frame.label} · ${approved.name}`))}','image')" aria-label="View approved Frame ${esc(frame.label)} larger"><img src="${attr(approved.url)}" alt="Approved Frame ${esc(frame.label)}"><span>View larger</span></button><b>Approved Frame ${esc(frame.label)}</b><div class="guided-frame-context-actions"><a href="${attr(approved.url)}" download>Download image ↓</a>${deliveredForCard ? "" : motionAllowedForCard ? `<button type="button" class="approve-btn" onclick="openGuidedMotionFromFrames('${attr(s.id)}','create')">${esc(motionHandoffForCard)} →</button>` : `<button type="button" class="chip" onclick="reviewGuidedFrameSequence('${attr(s.id)}')"${aiDisabledAttrs("vision")}>Review sequence first</button>`}</div>` : "";
-  return `<details class="guided-frame-card state-${statusClass} compact-work-section" data-frame-id="${attr(frame.id)}" ${workspaceSectionOpen(`${s.id}:${openKey}`, openDefault) ? "open" : ""} ontoggle="rememberWorkspaceSection('${attr(s.id)}:${attr(openKey)}',this.open)"><summary class="guided-frame-head"><div class="guided-frame-number">${esc(frame.label)}</div><div><span>${index === 0 ? "START FRAME" : index === 1 ? "OPTIONAL END FRAME" : "ADDITIONAL FRAME"}</span><h3>${esc(frame.title || title)}</h3><small>${approved ? `Approved · ${esc(approved.name)}` : step.label}</small></div>${approved ? `<img class="guided-frame-summary-thumb" src="${attr(approved.url)}" alt="">` : ""}${workspaceStatusPill(statusLabel, statusTone)}<i class="compact-chevron">⌄</i></summary><div class="guided-frame-collapse-body">${index > 0 ? `<div class="compact-section-actions"><button class="chip danger" onclick="removeGuidedFrame('${s.id}','${frame.id}')">Remove frame</button></div>` : ""}<div class="guided-frame-body"><aside class="guided-frame-context">${approved ? approvedPreview : previousApproved && index > 0 ? `<button type="button" class="guided-frame-approved-preview guided-thumb-preview" onclick="openMediaTheatre('${attr(encodeURIComponent(previousApproved.url))}','${attr(encodeURIComponent(`Frame ${previous.label} input · ${previousApproved.name}`))}','image')"><img src="${attr(previousApproved.url)}" alt="Previous approved frame"><span>View larger</span></button><b>Frame ${esc(previous.label)} input</b><small>${state.usePreviousFrame ? "Included as a starting reference" : "Available for optional assisted creation"}</small>` : `<div class="guided-frame-placeholder"><span>FRAME ${esc(frame.label)}</span><p>${index === 0 ? "Import or choose the shot's first approved image." : "Add another composition only when the shot needs it."}</p></div>`}</aside><div class="guided-frame-work">${field(index === 0 ? "Frame description / production note" : `Frame ${frame.label} description / production note`, `<textarea class="guided-primary-brief" placeholder="Describe what the approved image should show. This remains useful even when the image was made elsewhere." onchange="setGuidedFrameField('${s.id}','${frame.id}','action',this.value,true)">${esc(state.action)}</textarea>`)}${guidedFramePresencePanel(s, frame)}${guidedFrameCandidatesPanel(s, frame, index, takes, step)}${manualPromptHistory}${assistedTools}</div></div></div></details>`;
+  /* UNIT 2 — THE CONTEXT COLUMN EARNS ITS WIDTH OR IT DOES NOT TAKE ANY.
+   *
+   * The aside is real when it holds real imagery: this frame's approved image, or the
+   * previous frame's approved image where that is an available input. An empty
+   * placeholder is not worth 300px of a 710px working span, so when there is nothing
+   * to show the body is one column and the frame's work gets all of it. */
+  const contextMarkup = approved
+    ? approvedPreview
+    : previousApproved && index > 0
+      ? `<button type="button" class="guided-frame-approved-preview guided-thumb-preview" onclick="openMediaTheatre('${attr(encodeURIComponent(previousApproved.url))}','${attr(encodeURIComponent(`Frame ${previous.label} input · ${previousApproved.name}`))}','image')"><img src="${attr(previousApproved.url)}" alt="Previous approved frame"><span>View larger</span></button><b>Frame ${esc(previous.label)} input</b><small>${state.usePreviousFrame ? "Included as a starting reference" : "Available as a generation input"}</small>`
+      : "";
+  const contextAside = contextMarkup ? `<aside class="guided-frame-context">${contextMarkup}</aside>` : "";
+  const candidatesPanel = guidedFrameCandidatesPanel(s, frame, index, takes, step);
+  /* UNIT 7 — THE CURRENT RESULT LEADS AND THE TRAY SUPPORTS IT, once generation is
+     actually under way. A manual-only frame keeps import in the first position and the
+     generation entry below it, which is the order that work is actually done in. */
+  const flow = generationEntered
+    ? `${generationSection}${candidatesPanel}`
+    : `${candidatesPanel}${generationSection}`;
+  return `<details class="guided-frame-card state-${statusClass} compact-work-section" data-frame-id="${attr(frame.id)}" ${workspaceSectionOpen(`${s.id}:${openKey}`, openDefault) ? "open" : ""} ontoggle="rememberWorkspaceSection('${attr(s.id)}:${attr(openKey)}',this.open)"><summary class="guided-frame-head"><div class="guided-frame-number">${esc(frame.label)}</div><div><span>${index === 0 ? "START FRAME" : index === 1 ? "OPTIONAL END FRAME" : "ADDITIONAL FRAME"}</span><h3>${esc(frame.title || title)}</h3><small>${approved ? `Approved · ${esc(approved.name)}` : step.label}</small></div>${approved ? `<img class="guided-frame-summary-thumb" src="${attr(approved.url)}" alt="">` : ""}${workspaceStatusPill(statusLabel, statusTone)}<i class="compact-chevron">⌄</i></summary><div class="guided-frame-collapse-body">${index > 0 ? `<div class="compact-section-actions"><button class="chip danger" onclick="removeGuidedFrame('${s.id}','${frame.id}')">Remove frame</button></div>` : ""}<div class="guided-frame-body ${contextAside ? "" : "is-single"}">${contextAside}<div class="guided-frame-work">${field(index === 0 ? "Frame description / production note" : `Frame ${frame.label} description / production note`, `<textarea class="guided-primary-brief" data-focus-key="frame-action:${attr(s.id)}:${attr(frame.id)}" placeholder="Describe what the approved image should show. This remains useful even when the image was made elsewhere." onchange="setGuidedFrameField('${s.id}','${frame.id}','action',this.value,true)">${esc(state.action)}</textarea>`)}${guidedFramePresencePanel(s, frame)}</div></div><div class="guided-frame-flow">${flow}${manualPromptHistory}</div></div></details>`;
 }
 
 function guidedFrameRailMarkup(s, frames, takes, selectedId) {

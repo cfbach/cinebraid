@@ -154,6 +154,7 @@ const nodeSuites = [
      records a provider charge — never on a helper's return value. */
   "check:comfy",
   "check:comfy-negative",
+  "check:generation-surface",
   "check:quiet-shell",
   "check:shell-ownership",
   /* A2. Named beside the A1 ownership suite because they guard the same shell

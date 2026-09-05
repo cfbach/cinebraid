@@ -493,9 +493,23 @@
   };
 
   const framePromptResult606 = guidedFramePromptResult;
-  guidedFramePromptResult = window.guidedFramePromptResult = function guidedFramePromptResult607(s, frame, build) {
-    let html = framePromptResult606(s, frame, build);
-    if (build.droppedReferences?.length) html = html.replace("</article>", `<details class="composer-package-dropped-result"><summary>${build.droppedReferences.length} reference${build.droppedReferences.length === 1 ? "" : "s"} omitted by target limits</summary>${build.droppedReferences.map((ref) => `<span>${esc(ref.label || "Reference")} — ${esc(ref.dropReason || "target limit")}</span>`).join("")}</details></article>`);
+  /* EVERY ARGUMENT IS FORWARDED. This wrapper took (s, frame, build) and dropped
+     anything after it, so the prompt block's phase option never reached the renderer
+     and a returned frame kept drawing its preparing-phase default. Rest-and-spread
+     rather than a fourth named parameter, so the next option added upstream arrives
+     here without this line having to be found again.
+
+     The omitted-reference note is anchored on the utilities row, the way this file
+     already anchors the package preview on the compile bar. Its previous anchor was
+     `</article>`, an element the prompt block no longer has — a replace() that matches
+     nothing fails silently, and the note would have disappeared without a word. */
+  guidedFramePromptResult = window.guidedFramePromptResult = function guidedFramePromptResult607(s, frame, build, ...rest) {
+    let html = framePromptResult606(s, frame, build, ...rest);
+    if (build.droppedReferences?.length) {
+      const note = `<details class="composer-package-dropped-result"><summary>${build.droppedReferences.length} reference${build.droppedReferences.length === 1 ? "" : "s"} omitted by target limits</summary>${build.droppedReferences.map((ref) => `<span>${esc(ref.label || "Reference")} — ${esc(ref.dropReason || "target limit")}</span>`).join("")}</details>`;
+      const anchor = '<div class="frame-prompt-utilities">';
+      html = html.includes(anchor) ? html.replace(anchor, `${note}${anchor}`) : html.replace("</article>", `${note}</article>`);
+    }
     return html;
   };
 

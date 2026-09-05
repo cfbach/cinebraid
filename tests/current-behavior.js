@@ -450,6 +450,7 @@ async function main() {
     "generation-simple-advanced-negative-controls.js",
     "generation-simple-advanced-real-browser.py",
     "generation-simple-advanced.js",
+    "generation-surface-polish.js",
     "generation-truth-real-browser.py",
     "generation-truth-routing-negative-controls.js",
     "generation-truth-routing.js",

@@ -206,7 +206,11 @@ async function main() {
     const assistedFrame = assisted.find((row) => row.route === "shot frames");
     const assistedLook = assisted.find((row) => row.route === "shot look");
     const assistedMotion = assisted.find((row) => row.route === "shot motion");
-    assert(assistedFrame.allLabels.some((label) => /^Build prompt$/i.test(label)), "assisted frames must retain Build prompt");
+    /* Build OR Rebuild, the same pair the blocking assertion two lines down already
+       accepts: a frame that has a build offers to rebuild it, which is what the motion
+       and blocking paths have always said in the same situation. The guarantee is that
+       an assisted frame keeps its prompt-building control, not which tense it is in. */
+    assert(assistedFrame.allLabels.some((label) => /^(?:Rebuild|Build) prompt$/i.test(label)), "assisted frames must retain Build prompt");
     assert(assistedFrame.allLabels.some((label) => /^Improve$/i.test(label)), "assisted frames must retain Improve");
     assert(assistedFrame.allLabels.some((label) => /^Automate full shot$/i.test(label)), "assisted frames must expose full-shot automation");
     assert(assistedLook.allLabels.some((label) => /^(?:Rebuild|Build) prompt$/i.test(label)), "assisted blocking must retain prompt building");

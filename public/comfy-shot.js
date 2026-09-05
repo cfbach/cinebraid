@@ -86,15 +86,74 @@ function comfyJobWords(job) {
 /* ---------------------------------------------------------------------------
    The two things the frame card renders. */
 
-/* The action, beside the paid one. A chip rather than the primary button, because the
-   shot's established path is the primary one and this is an alternative, not a
-   replacement. */
-window.comfyPromptAction = (shotId, frameId, buildId) => {
+/* The action, beside the paid one. A chip by default, because on the surfaces that draw
+   both the shot's established path is the primary one and this is an alternative.
+   `options.primary` is for the frame execution block, where the filmmaker has already
+   CHOSEN local and the chosen path owns the leading action — and where `options.workflow`
+   carries the workflow the card was previewing, so the dialog opens on the same one
+   rather than resetting to whatever sits first in the list. */
+window.comfyPromptAction = (shotId, frameId, buildId, options = {}) => {
   if (!comfyShotConfigured()) return "";
   if (!COMFY_SHOT.loadedWorkflows) setTimeout(() => loadComfyWorkflows().then(() => { if (typeof route === "function") route(); }), 0);
   const runnable = comfyRunnableWorkflows();
   if (!runnable.length) return "";
-  return `<button class="chip comfy-generate-btn" onclick="openComfyGenerationModal('${attr(shotId)}','${attr(frameId || "")}','${attr(buildId || "")}')">GENERATE LOCALLY</button>`;
+  const workflow = String(options.workflow || "");
+  const classes = options.primary ? "approve-btn comfy-generate-btn" : "chip comfy-generate-btn";
+  return `<button class="${classes}" onclick="openComfyGenerationModal('${attr(shotId)}','${attr(frameId || "")}','${attr(buildId || "")}','${attr(workflow)}')">GENERATE LOCALLY</button>`;
+};
+
+/* ---------------------------------------------------------------------------
+   WHAT THIS BACKEND IS, IN THE GENERIC SLOTS A FRAME'S EXECUTION BLOCK DRAWS.
+ *
+ * The frame card asks every available backend the same four questions — who runs it,
+ * what will it run, is that ready, and what will a provider charge — and draws the
+ * answers in one scan. This answers them for local ComfyUI out of the registry the
+ * shot side already holds, and invents nothing: `unit` is the workflow's own
+ * `relativePath`, because no friendly-name field exists on it and a prompt profile's
+ * name is not this workflow's name.
+ *
+ * IT RESOLVES NOTHING BY POSITION. With one confirmed workflow there is no choice to
+ * make and it is named. With several, `unresolved` is true and the card says so rather
+ * than promoting `[0]` into a claim about what is going to run — and it never reads the
+ * last job's workflow, which is a record of what already ran and not a request.
+ *
+ * A DESCRIPTOR, NOT A PROVIDER ABSTRACTION. Nothing dispatches from here and no other
+ * backend is required to fill the same fields: a backend with no mappings, no local
+ * address and no workflow file answers the same four questions differently. */
+window.comfyFrameExecutionPath = (chosenWorkflow = "") => {
+  if (!comfyShotConfigured()) return null;
+  if (!COMFY_SHOT.loadedWorkflows) setTimeout(() => loadComfyWorkflows().then(() => { if (typeof route === "function") route(); }), 0);
+  const runnable = comfyRunnableWorkflows();
+  if (!runnable.length) return null;
+  const requested = String(chosenWorkflow || "");
+  const chosen = runnable.find((row) => row.relativePath === requested)
+    || (runnable.length === 1 ? runnable[0] : null);
+  return {
+    id: "comfy",
+    backend: "Local ComfyUI",
+    where: "This machine",
+    paid: false,
+    /* The shipped words for this route's cost, from the constant this file already
+       holds — sentence-cased for a line it now starts, and not reworded. A local
+       render is not free; nobody is going to bill for it, and that is all this says. */
+    costWords: COMFY_SHOT_COST_WORDS.charAt(0).toUpperCase() + COMFY_SHOT_COST_WORDS.slice(1),
+    unitLabel: "Workflow",
+    unit: chosen ? chosen.relativePath : "",
+    unresolved: !chosen,
+    chooseWords: `Choose one of ${runnable.length} confirmed workflows`,
+    options: runnable.map((row) => ({
+      value: row.relativePath,
+      label: row.relativePath,
+      changed: row.state === "changed",
+    })),
+    /* The registry's own readiness, with the registry's own reason. A card may not
+       claim "ready" over a mapping the settings panel is still calling changed. */
+    readiness: chosen
+      ? chosen.state === "changed"
+        ? { tone: "attention", words: "Workflow changed — review mappings", detail: String(chosen.reason || "") }
+        : { tone: "ready", words: "Inputs confirmed", detail: "" }
+      : null,
+  };
 };
 
 window.comfyGenerationInline = (shotId, frameId) => {
@@ -159,7 +218,7 @@ window.refreshComfyGeneration = async (jobId, announce = true) => {
    The dispatch dialog. */
 let COMFY_REQUEST = null;
 
-window.openComfyGenerationModal = async (shotId, frameId = "", buildId = "") => {
+window.openComfyGenerationModal = async (shotId, frameId = "", buildId = "", workflowPath = "") => {
   const shot = typeof shotById === "function" ? shotById(shotId) : null;
   if (!shot) return toast("That shot is no longer open");
   const frames = typeof guidedFrames === "function" ? guidedFrames(shot) : [];
@@ -180,6 +239,12 @@ window.openComfyGenerationModal = async (shotId, frameId = "", buildId = "") => 
     frameLabel: frame?.label || "A",
     buildId: build?.id || "",
     prompt,
+    /* THE CHOICE THE CARD WAS ALREADY SHOWING. A filmmaker who picked a workflow on
+       the frame's execution block read its name, its readiness and its cost there;
+       reopening the dialog on a different one would dispatch something they had not
+       been shown. Honoured only when it is still runnable — a workflow that has since
+       broken falls back to the list rather than to a stale press. */
+    workflow: runnable.some((row) => row.relativePath === String(workflowPath || "")) ? String(workflowPath) : "",
   };
   openModal(comfyDispatchMarkup(shot, runnable, COMFY_REQUEST));
   comfyRenderWorkflowInputs();
@@ -206,7 +271,7 @@ function comfyShotImages(shot) {
 }
 
 function comfyDispatchMarkup(shot, runnable, request) {
-  const options = runnable.map((row) => `<option value="${attr(row.relativePath)}">${esc(row.relativePath)}${row.state === "changed" ? " · changed since confirmed" : ""}</option>`).join("");
+  const options = runnable.map((row) => `<option value="${attr(row.relativePath)}" ${row.relativePath === request.workflow ? "selected" : ""}>${esc(row.relativePath)}${row.state === "changed" ? " · changed since confirmed" : ""}</option>`).join("");
   return `<h3>Generate with local ComfyUI</h3>
     <div class="modal-sub">${esc(`${shot.id} · Frame ${request.frameLabel}`)}</div>
     <p class="modal-confirm-message">CineBraid sends this shot's prompt into a workflow you have set up, on the ComfyUI running on this machine, and brings the result back as a candidate to review.</p>

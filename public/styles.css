@@ -6937,3 +6937,259 @@ body[data-focused-route="library"]:has(.library-grid .library-card) #app[data-su
    is the quietest thing in the control. */
 .shot-intent-control>summary b{text-transform:none;letter-spacing:.01em;font-size:11px}
 .shot-intent-fields .shot-intent-keeps{color:var(--faint);font-size:11.5px}
+
+/* ===========================================================================
+   GENERATION SURFACE POLISH V1 — the frame's generation section.
+
+   Composition only. Every colour below is an existing token carrying its existing
+   meaning: --acc for the current action and the current selection, --green for a
+   backend that is ready or a result that has returned, --amber for readiness that
+   needs a decision, --red for failure, --muted for passive metadata and utilities.
+   No new palette, no gradient, no glow, no provider-coloured card fill, and nothing
+   hard-coded that would survive a change of appearance.
+   =========================================================================== */
+
+/* 1. THE FRAME BODY GIVES ITS WIDTH TO THE WORK.
+
+   The two-column model is unchanged wherever there is real imagery to put in the
+   context column. When there is not, the aside is not rendered at all and the body
+   is one track — a 300px empty placeholder beside a 370px operation was the single
+   largest waste of the 1280 layout. The generation flow sits below that row and
+   spans the whole frame, so prompt, execution and result read across the full
+   working span at every width. */
+.guided-frame-body.is-single{grid-template-columns:minmax(0,1fr)!important}
+.guided-frame-flow{min-width:0;display:grid;gap:12px;padding:0 12px 12px}
+.guided-frame-body+.guided-frame-flow{padding-top:0}
+
+/* 2. THE SECTION ITSELF — one bounded place, one outer surface, light separators.
+      Nested bordered subsections are what made every part of this look equally
+      important; inside here they are spacing and rules instead. */
+.frame-generation{
+  min-width:0;border:1px solid var(--line);border-radius:var(--r-tile);
+  background:var(--surface,var(--panel));overflow:hidden}
+.frame-generation.is-active{border-color:color-mix(in srgb,var(--acc) 26%,var(--line))}
+.frame-generation>summary.frame-generation-head{
+  display:grid;grid-template-columns:minmax(0,1fr) auto auto;gap:12px;align-items:center;
+  padding:11px 13px;cursor:pointer;list-style:none}
+.frame-generation>summary::-webkit-details-marker{display:none}
+.frame-generation-head>div{display:grid;gap:2px;min-width:0}
+.frame-generation-head span{font:800 8px var(--mono);letter-spacing:.12em;color:var(--acc)}
+.frame-generation-head b{font-size:12px}
+.frame-generation-head small{color:var(--muted);font-size:9px}
+.frame-generation-standing{
+  font:700 9px var(--mono);font-style:normal;color:var(--muted);white-space:nowrap}
+.frame-generation.is-active .frame-generation-standing{color:var(--green)}
+.frame-generation-body{display:grid;gap:12px;padding:0 13px 13px;min-width:0}
+.frame-generation[open]>summary.frame-generation-head{border-bottom:1px solid var(--line-soft);margin-bottom:12px}
+
+/* 3. THE PROMPT, FIRST AND READABLE.
+
+   No decorative accent border: a prepared prompt is passive information until
+   something is done with it, and the cyan outline this wrapper used to carry was
+   competing with the action for the same meaning. */
+.frame-prompt-block{border:1px solid var(--line-soft);border-radius:var(--r-sm);background:transparent;min-width:0}
+.frame-prompt-block>summary.frame-prompt-summary{
+  display:grid;grid-template-columns:minmax(0,1fr) auto;gap:10px;align-items:center;
+  padding:9px 11px;cursor:pointer;list-style:none}
+.frame-prompt-block>summary::-webkit-details-marker{display:none}
+.frame-prompt-summary>div{display:grid;gap:2px;min-width:0}
+.frame-prompt-summary span{font:800 8px var(--mono);letter-spacing:.1em;color:var(--muted)}
+.frame-prompt-summary b{font-size:11px;overflow-wrap:anywhere}
+.frame-prompt-summary small{color:var(--muted);font-size:9px;overflow-wrap:anywhere}
+.frame-prompt-body{display:grid;gap:9px;padding:0 11px 11px;min-width:0}
+.frame-prompt-preview{min-width:0}
+/* Five lines by default, the rest one explicit control away. The whole prompt is in
+   the DOM either way, so Copy, Download and assistive technology always have all of
+   it — only the visible run is shortened. */
+.frame-prompt-text{
+  margin:0;white-space:pre-wrap;overflow-wrap:anywhere;
+  font:500 10.5px/1.6 var(--mono);color:var(--ink);
+  display:-webkit-box;-webkit-box-orient:vertical;-webkit-line-clamp:5;line-clamp:5;overflow:hidden}
+.frame-prompt-preview:has(>.frame-prompt-expand[open])>.frame-prompt-text{
+  display:block;-webkit-line-clamp:none;line-clamp:none;max-height:340px;overflow:auto}
+.frame-prompt-expand>summary{
+  margin-top:6px;cursor:pointer;color:var(--muted);font:800 9px var(--mono);letter-spacing:.06em}
+.frame-prompt-preview:has(>.frame-prompt-expand[open])>.frame-prompt-expand>summary::after{content:" — show less"}
+.frame-prompt-utilities{display:flex;gap:12px;flex-wrap:wrap}
+.frame-prompt-utilities .text-link-btn{color:var(--muted);font-size:10px}
+.frame-prompt-missing{margin:0;color:var(--muted);font-size:11px;line-height:1.5}
+/* A refusal is a decision, so it is body text in the flow rather than a badge. */
+.frame-prompt-refusal{
+  margin:0;padding:9px 11px;border:1px solid color-mix(in srgb,var(--amber) 42%,var(--line));
+  border-radius:var(--r-sm);color:var(--amber);font-size:11px;line-height:1.5}
+.frame-prompt-refusal .text-link-btn{color:inherit;text-decoration:underline}
+
+/* 4. THE TOOLS THAT BUILT IT, subordinate. */
+.frame-prompt-tools{border:1px solid var(--line-soft);border-radius:var(--r-sm);min-width:0}
+.frame-prompt-tools>summary{
+  display:flex;gap:9px;align-items:center;padding:8px 11px;cursor:pointer;list-style:none}
+.frame-prompt-tools>summary::-webkit-details-marker{display:none}
+.frame-prompt-tools>summary span{font:800 8px var(--mono);letter-spacing:.12em;color:var(--muted)}
+.frame-prompt-tools>summary small{color:var(--faint);font-size:9px;flex:1 1 auto;min-width:0}
+.frame-prompt-tools-body{display:grid;gap:9px;padding:0 11px 11px;min-width:0}
+.frame-prompt-tools-body .guided-previous-frame-toggle,
+.frame-prompt-tools-body .guided-frame-input-summary{margin:0}
+.frame-prompt-tools-note{margin:0;color:var(--muted);font-size:10px;line-height:1.5}
+
+/* 5. WHERE IT RUNS — backend, unit, readiness and cost as one scan. */
+.frame-execution{
+  min-width:0;display:grid;gap:9px;padding:11px;
+  border:1px solid var(--line);border-radius:var(--r-sm);background:var(--surface-2,transparent)}
+.frame-execution>header{display:flex;gap:9px;align-items:baseline;flex-wrap:wrap}
+.frame-execution>header span{font:800 8px var(--mono);letter-spacing:.12em;color:var(--muted)}
+.frame-execution>header b{font-size:11px;color:var(--ink)}
+.frame-execution-empty{margin:0;color:var(--muted);font-size:10.5px;line-height:1.5}
+/* The choice between paths. Selection is cyan because it is the current selection;
+   neither path is given a colour of its own, and no provider gets a coloured fill. */
+.frame-execution-choices{display:flex;gap:8px;flex-wrap:wrap}
+.frame-execution-choice{
+  display:grid;gap:3px;min-width:0;flex:1 1 200px;padding:9px 11px;text-align:left;
+  border:1px solid var(--line);border-radius:var(--r-sm);background:transparent;
+  color:var(--ink);cursor:pointer}
+.frame-execution-choice b{font-size:11px;overflow-wrap:anywhere}
+.frame-execution-choice small{color:var(--muted);font-size:9.5px;overflow-wrap:anywhere}
+.frame-execution-choice.is-selected{
+  border-color:var(--acc);background:var(--acc-soft);color:var(--ink)}
+.frame-execution-identity{display:grid;gap:3px;min-width:0}
+.frame-execution-backend{font-size:13px;line-height:1.3;overflow-wrap:anywhere}
+/* The workflow's own filename, wrapped rather than truncated: a long one is still
+   the only name this thing has, and an ellipsis in the middle of it hides which
+   workflow is about to run. */
+.frame-execution-unit{
+  font:500 11px/1.45 var(--mono);color:var(--muted);overflow-wrap:anywhere;word-break:break-word}
+.frame-execution-unit.is-pending{color:var(--amber);font-style:normal}
+.frame-execution-standing{display:block;font-size:11px;line-height:1.5;color:var(--muted)}
+.frame-execution-readiness{font-style:normal;font-weight:700}
+.frame-execution-readiness[data-tone="ready"]{color:var(--green)}
+.frame-execution-readiness[data-tone="attention"]{color:var(--amber)}
+.frame-execution-cost{font-style:normal;color:var(--muted)}
+.frame-execution-cost[data-paid="1"]{color:var(--ink)}
+.frame-execution-reason{margin:0;font-size:10.5px;line-height:1.5;color:var(--muted)}
+.frame-execution-reason[data-tone="attention"]{color:var(--amber)}
+.frame-execution-cost-detail{margin:0;font-size:10.5px;line-height:1.5;color:var(--muted)}
+.frame-execution-unit-control{display:grid;gap:4px;min-width:0}
+.frame-execution-unit-control>span{font:800 8px var(--mono);letter-spacing:.1em;color:var(--muted)}
+.frame-execution-unit-control select{width:100%;min-width:0;max-width:100%}
+
+/* 6. THE ACTION, and what pressing it does. Copy, Download and Build are text and
+      ghost controls; only the dispatch for the chosen path is filled. */
+.frame-execution-action{display:grid;gap:6px;justify-items:start;min-width:0}
+.frame-execution-action>button{min-width:0;max-width:100%}
+.frame-execution-action>small{color:var(--muted);font-size:10px;line-height:1.5}
+.frame-execution-action>small b{color:var(--green);font-weight:700}
+.frame-execution-action.is-paid>small{color:var(--ink)}
+
+/* 7. ONE STATUS POSITION. The strips belong to their backends; this is where they sit. */
+.frame-operation-status{display:grid;gap:8px;min-width:0}
+.frame-operation-status>header>span{font:800 8px var(--mono);letter-spacing:.12em;color:var(--muted)}
+.frame-operation-status .fal-job-strip{margin:0}
+
+/* 8. THE RESULT POSITION. The returned image is the reason to stay on the surface,
+      and it is shown whole: contained, at the source's own ratio, never cropped and
+      never clipped by a well shaped for something else. */
+.frame-returned-result{
+  display:grid;grid-template-columns:minmax(0,auto) minmax(220px,1fr);gap:14px;align-items:start;
+  min-width:0;padding:12px;border:1px solid color-mix(in srgb,var(--green) 34%,var(--line));
+  border-radius:var(--r-sm);background:var(--surface,var(--panel))}
+.frame-returned-media{
+  position:relative;display:grid;place-items:center;padding:0;border:0;
+  border-radius:var(--r-sm);overflow:hidden;background:var(--media-well,var(--img-well-bg));
+  cursor:zoom-in}
+.frame-returned-media img,.frame-returned-media video{
+  display:block;width:auto;height:auto;max-width:min(300px,100%);max-height:300px;object-fit:contain}
+.frame-returned-media.is-empty{
+  width:180px;height:120px;cursor:default;font:800 9px var(--mono);letter-spacing:.12em;color:var(--muted)}
+.frame-returned-media>span{
+  position:absolute;right:7px;bottom:7px;padding:5px 7px;border-radius:7px;
+  background:var(--preview-overlay);color:#fff;font:800 8px var(--mono);letter-spacing:.06em;
+  opacity:0;transform:translateY(3px);transition:opacity .16s,transform .16s}
+.frame-returned-media:hover>span,.frame-returned-media:focus-visible>span{opacity:1;transform:none}
+.frame-returned-copy{display:grid;gap:5px;min-width:0;align-content:start}
+/* Returned is a backend fact, not a human approval — green says the run succeeded
+   and the words say a person still has to decide. */
+.frame-returned-standing{font:800 9px var(--mono);letter-spacing:.1em;color:var(--green)}
+.frame-returned-copy>b{font-size:12px;overflow-wrap:anywhere}
+.frame-returned-copy>small{color:var(--muted);font-size:10px;line-height:1.5}
+.frame-returned-actions{display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-top:4px}
+.frame-returned-more{color:var(--muted);font-size:9.5px}
+@media(max-width:900px){.frame-returned-result{grid-template-columns:1fr}}
+
+/* 9. THE CANDIDATE TRAY IS HISTORY, and reads like it once it has anything in it. */
+.guided-frame-candidate-count{display:block;margin-top:3px;color:var(--muted);font-size:9px}
+.guided-frame-candidate-grid.is-compact{grid-template-columns:repeat(auto-fill,minmax(180px,1fr));gap:8px}
+.guided-frame-candidate-grid.is-compact .guided-frame-candidate{padding:7px}
+.guided-frame-candidate-grid.is-compact .guided-frame-candidate b{font-size:9px}
+.guided-frame-candidate-grid.is-compact .guided-frame-candidate small{font-size:8px}
+.guided-frame-dropzone.is-quiet{
+  padding:8px 11px;margin-top:9px;border-style:dashed;border-color:var(--line-soft);
+  border-radius:var(--r-sm);font-size:9.5px;letter-spacing:.02em;text-transform:none;color:var(--faint)}
+
+/* 10. THE RETURNED HERO STOPS CLIPPING AT 1280.
+
+   The card's own media query already asked the picture to be contained, and the
+   request could not be honoured: `max-height:100%` inside a button whose own
+   `height:100%` resolves against an aspect-ratio well is an indefinite percentage,
+   so it was dropped and a 351px-tall square render sat inside a 198px well with
+   `overflow:hidden` taking the bottom off it. The cap is a LENGTH here — the same
+   selection-tier height the card already uses — so it is definite wherever the well
+   ends up, and the well follows the picture instead of a ratio the picture does not
+   have. Above 1300px nothing changes. */
+@media(max-width:1300px){
+  .returned-review-card .guided-lifecycle-preview{aspect-ratio:auto;min-height:0}
+  .returned-review-card .guided-lifecycle-preview .guided-lifecycle-media{height:auto}
+  .returned-review-card .guided-lifecycle-preview .guided-lifecycle-media img,
+  .returned-review-card .guided-lifecycle-preview .guided-lifecycle-media video{
+    width:auto;max-width:100%;
+    height:auto;max-height:var(--cb-selection-h,246px);
+    object-fit:contain}
+}
+
+/* The three shipped decisions, kept and demoted. They are one explicit control away
+   rather than standing at the weight of Review — and rather than standing beside the
+   candidate tray's own APPROVE, which is how one frame card came to offer two
+   differently-worded ways to approve the same file. */
+.frame-returned-decisions{margin-top:2px}
+.frame-returned-decisions>summary{
+  cursor:pointer;color:var(--muted);font:800 9px var(--mono);letter-spacing:.06em}
+.frame-returned-decision-row{display:flex;gap:7px;flex-wrap:wrap;margin-top:7px}
+
+/* 11. PREPARATION, ONCE SOMETHING HAS COME BACK.
+
+   One summary line standing for the prompt, its tools and the execution facts, so the
+   returned result and its review action are what the frame is showing. Expanding it
+   returns all three unchanged, Generate included. */
+.frame-preparation{border:1px solid var(--line-soft);border-radius:var(--r-sm);min-width:0}
+.frame-preparation>summary.frame-preparation-summary{
+  display:grid;grid-template-columns:minmax(0,1fr) auto;gap:10px;align-items:center;
+  padding:9px 11px;cursor:pointer;list-style:none}
+.frame-preparation>summary::-webkit-details-marker{display:none}
+.frame-preparation-summary>div{display:grid;gap:2px;min-width:0}
+.frame-preparation-summary span{font:800 8px var(--mono);letter-spacing:.1em;color:var(--muted)}
+.frame-preparation-summary b{font-size:11px;font-weight:600;color:var(--muted);overflow-wrap:anywhere}
+.frame-preparation-body{display:grid;gap:12px;padding:0 11px 11px;min-width:0}
+
+/* At the narrow target the proof preview keeps the brief's 260-300px range and takes
+   the lower end, so the complete image, its identity and Review this result all sit
+   above the terminal without the picture being shrunk out of judgement. */
+@media(max-width:1400px){
+  .frame-returned-media img,.frame-returned-media video{max-width:min(280px,100%);max-height:280px}
+}
+
+/* 12. AT THE NARROW TARGET THE RHYTHM TIGHTENS, THE TYPE DOES NOT.
+
+   The two-path state carries one more row than the resolved one — the choice between
+   backends — and at 1280 that pushed the hosted path's action just below the terminal.
+   The space comes out of the gaps rather than out of the text: nothing here changes a
+   font size, and no fact moves behind a disclosure to make room. */
+@media(max-width:1400px){
+  .frame-generation-body{gap:10px}
+  .frame-generation[open]>summary.frame-generation-head{margin-bottom:10px}
+  .frame-execution{gap:8px;padding:10px}
+  .frame-prompt-body{gap:8px}
+}
+
+/* The way into the rest of the history from the result that is leading. Quiet: it is
+   travel to a tray that is already immediately below, not a second result. */
+.frame-returned-history{
+  display:inline-block;margin-top:2px;color:var(--muted);font-size:10px;text-decoration:none}
+.frame-returned-history:hover,.frame-returned-history:focus-visible{color:var(--acc);text-decoration:underline}

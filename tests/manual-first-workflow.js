@@ -127,10 +127,16 @@ async function testManualShotAndApprovedLibrary() {
   const shot = await render("#/shot/L1-01", project, { storage, agentStatus: disabledAgents() });
   assert(shot.html.includes("Import, choose, and approve images"));
   assert(shot.html.includes("guided-frame-dropzone"), "manual frame intake must remain available even when canonical readiness names an earlier blocker");
+  /* Generation Surface Polish V1 moved the execution path out of the "optional
+     assisted creation" disclosure and into the frame's own generation section. The
+     rule this asserts is unchanged and is the reason it exists: on a manual-first
+     frame, the way to bring an image IN comes before the way to generate one, and the
+     generation section is a quiet closed entry rather than the doorway to the frame. */
   const dropIndex = shot.html.indexOf("guided-frame-dropzone");
-  const assistedIndex = shot.html.indexOf("OPTIONAL ASSISTED CREATION");
-  assert(dropIndex >= 0 && assistedIndex > dropIndex, "manual result intake must appear before prompt generation tools");
-  assert(!/frame-assisted-tools[^>]*open/.test(shot.html), "frame prompt tools must be collapsed when no assisted operation is active");
+  const generationIndex = shot.html.indexOf('data-frame-generation=');
+  assert(dropIndex >= 0 && generationIndex > dropIndex, "manual result intake must appear before prompt generation tools");
+  assert(!/<details class="frame-generation[^>]*\sopen/.test(shot.html), "the frame generation section must be collapsed when no generation is active");
+  assert(/data-frame-generation="idle"/.test(shot.html), "a manual-only frame must not be reported as generating");
   assert(shot.html.indexOf("guided-frame-workflow") < shot.html.indexOf("shot-stage-automation"), "manual frame workflow must appear before automation");
 
   const approved = await render("#/library/approved", project, { agentStatus: disabledAgents() });
