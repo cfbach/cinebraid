@@ -936,8 +936,62 @@ async function ordinaryCandidate() {
   } finally { harness.close(); comfy.close(); }
 }
 
+/* ===========================================================================
+   13. THE BROWSER HOLDS ONE LEDGER, AND ROUTES ON THE BACKEND THAT OWNS EACH ROW.
+
+   Found by the browser dogfood, not by reading. A delivered ComfyUI candidate appeared
+   correctly in Generated Media — right shot, right frame, reviewable — underneath the
+   sentence "Generation records are not loaded in this session, so provider, model and
+   cost cannot be shown", on a project where all three were recorded. The browser only
+   read the generation ledger when fal was configured, and this installation had never
+   configured fal.
+
+   Both halves are asserted here because they are one change: the browser must LOAD the
+   local ledger on its own condition, and must not let a local row be ROUTED as a fal
+   one. A ComfyUI job carries `purpose: "frame"` exactly as a fal frame job does, so
+   without the ownership filter a local render would draw fal's strip — offering Cancel
+   and Try again against a provider that was never contacted.
+
+   Asserted against the source because both are statements about the module's shape:
+   public/fal-generation.js and public/app.js are browser scripts that cannot be required
+   in node, and a runtime copy of either rule would be a second rule. */
+function browserLedgerOwnership() {
+  const app = fs.readFileSync(path.join(ROOT, "public", "app.js"), "utf8").replace(/\r\n/g, "\n");
+  const fal = fs.readFileSync(path.join(ROOT, "public", "fal-generation.js"), "utf8").replace(/\r\n/g, "\n");
+
+  /* THE EARLY RETURN GOES THROUGH THE LOCAL READ, not past it. This exact line is the
+     defect: `return prepared;` here is what produced the wrong sentence. */
+  assert(/if \(!\(falConfig\.enabled && falConfig\.keySource !== "none"\)\) return prepareLocalGenerationLedger\(prepared\);/.test(app),
+    "a keyless fal must still read the local generation ledger");
+  assert(!/keySource !== "none"\)\) return prepared;/.test(app),
+    "the early return that skipped the local ledger must be gone, not merely bypassed");
+
+  /* AND IT GATES ON ITS OWN CONDITION. */
+  const local = app.slice(app.indexOf("async function prepareLocalGenerationLedger"));
+  assert(/if \(prepared\.config\.generation\?\.comfy\?\.enabled !== true\) return prepared;/.test(local.slice(0, 600)),
+    "the local ledger read must gate on the local integration, never on fal");
+  assert(/prepared\.falLedgerLoaded = true;/.test(local.slice(0, 1400)),
+    "a local ledger that answered is a loaded ledger");
+
+  /* THE ROUTING FILTER. */
+  assert(/function falOwnedJob\(job\) \{/.test(fal), "fal must have an explicit ownership predicate");
+  const predicate = fal.slice(fal.indexOf("function falOwnedJob(job) {"), fal.indexOf("function falGenerationJob("));
+  assert(/backendId === "fal-queue"/.test(predicate),
+    "and it must name fal's own backend id rather than excluding a list of others");
+  assert(/const backendId = String\(job\?\.backendId \|\| ""\)\.trim\(\);\s*\n\s*return !backendId \|\| backendId === "fal-queue";/.test(predicate),
+    "a row with no backend id is fal's — that is the only backend whose rows predate the field");
+  assert(/\.filter\(falOwnedJob\)/.test(fal.slice(fal.indexOf("function falGenerationJob("), fal.indexOf("function falGenerationJob(") + 400)),
+    "falGenerationJob must route on ownership, or a local render draws fal's strip");
+  /* fal-queue is the id fal's own adapters declare; if it is renamed there, the
+     predicate above is silently wrong, so the two are joined here. */
+  const backend = fs.readFileSync(path.join(ROOT, "fal-image-backend.js"), "utf8");
+  assert(/backendId: "fal-queue"/.test(backend), "the predicate's id must be the one fal's adapter actually stamps");
+  note("browser ledger: a keyless fal still loads the local ledger and reports it loaded, and fal's shot strip routes on an explicit ownership predicate joined to the backend id its own adapter stamps");
+}
+
 /* =========================================================================== */
 async function main() {
+  browserLedgerOwnership();
   formatTruth();
   suggestionIsNotConfirmation();
   changeDetection();

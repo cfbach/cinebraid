@@ -21,8 +21,25 @@ function falGenerationReady() {
   const cfg = falGenerationConfig();
   return cfg.enabled === true && Boolean(cfg.apiKey || cfg.keySource === "environment");
 }
+/* WHICH JOBS ARE FAL'S.
+ *
+ * The browser holds ONE generation ledger because the project has one — a ComfyUI job
+ * and a fal job are rows in the same file, and every provenance reader joins them by
+ * `generationJobId`. What must not be shared is the ROUTING: this function decides which
+ * strip a shot draws, and a local ComfyUI job carries `purpose: "frame"` exactly as a
+ * fal frame job does, so without this a local render would be drawn as a fal one —
+ * offering Cancel and Try again against a provider that was never contacted.
+ *
+ * Positive on fal rather than negative on everything else: a row that does not say which
+ * backend owns it is fal's, because that is the only backend whose rows predate the
+ * field. A new backend adds a backendId and is excluded by having one. */
+function falOwnedJob(job) {
+  const backendId = String(job?.backendId || "").trim();
+  return !backendId || backendId === "fal-queue";
+}
 function falGenerationJob(shotId, purpose, frameId = "") {
   return [...(FAL_GENERATION_JOBS || [])]
+    .filter(falOwnedJob)
     .filter((job) => job.shotId === shotId && job.purpose === purpose && (!frameId || job.frameId === frameId))
     .sort((a, b) => String(b.createdAt || "").localeCompare(String(a.createdAt || "")))[0] || null;
 }

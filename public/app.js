@@ -1754,7 +1754,11 @@ async function prepareProjectSnapshot({ claimRecovery = false, slug = "" } = {})
    entry in the Promise.all above. It is still entirely inside PREPARE. */
 async function prepareGenerationLedger(prepared, { claimRecovery = false } = {}) {
   const falConfig = prepared.config.generation?.fal || {};
-  if (!(falConfig.enabled && falConfig.keySource !== "none")) return prepared;
+  /* A keyless fal has nothing to read, and the local ledger still does — so the early
+     return goes THROUGH the local read rather than past it. Returning straight out here
+     is what left a delivered ComfyUI candidate beside "Generation records are not loaded
+     in this session" on an installation that had never configured fal at all. */
+  if (!(falConfig.enabled && falConfig.keySource !== "none")) return prepareLocalGenerationLedger(prepared);
   /* What the server collected through its own background recovery rather than
      through a refresh from here — which is all the server can know, and all it
      says. The header marks THIS request as the one that takes delivery of the
@@ -1799,6 +1803,39 @@ async function prepareGenerationLedger(prepared, { claimRecovery = false } = {})
       prepared.falJobs = [];
       prepared.falLedgerLoaded = false;
     });
+  await prepareLocalGenerationLedger(prepared);
+  return prepared;
+}
+
+/* THE LOCAL HALF OF THE SAME LEDGER.
+ *
+ * projects/<slug>/generation-jobs.json holds every backend's jobs, but the read above
+ * is fal's route and returns fal's rows, so a ComfyUI result arrived in the project as
+ * a candidate the media surfaces could see and a generation record they could not.
+ * Generated Media said "Generation records are not loaded in this session, so provider,
+ * model and cost cannot be shown" beside a picture whose provider, model and cost are
+ * all recorded — which is a worse statement than saying nothing.
+ *
+ * It runs on its OWN condition, not fal's. The early return above is correct for fal —
+ * a keyless fal has nothing to read — and it would be wrong here, because a local
+ * ComfyUI has a history whether or not this installation has ever paid for a render.
+ *
+ * MERGED, NOT KEPT APART, because there is one generation ledger and every reader of it
+ * joins on `generationJobId`. What must not merge is the ROUTING: falGenerationJob()
+ * decides which strip a shot draws, so it now excludes rows another backend owns. */
+async function prepareLocalGenerationLedger(prepared) {
+  if (prepared.config.generation?.comfy?.enabled !== true) return prepared;
+  await fetch("/api/generation/comfy/jobs")
+    .then((r) => (r.ok ? r.json() : null))
+    .then((data) => {
+      if (!data || !Array.isArray(data.jobs)) return;
+      prepared.falJobs = [...(prepared.falJobs || []), ...data.jobs];
+      /* Loaded means the request was made AND answered — the same standard the fal read
+         above holds itself to. A local ledger that answered is a loaded ledger even
+         when fal never ran. */
+      prepared.falLedgerLoaded = true;
+    })
+    .catch(() => {});
   return prepared;
 }
 
