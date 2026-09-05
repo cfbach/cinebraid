@@ -6295,19 +6295,47 @@ async function productionHomeView() {
   const isDelivered = (shot) => (decisions.available ? deliveredIds.has(shot.id) : shotIsDelivered(shot));
   const activeRows = P.shots.map((shot) => ({ shot, next: shotProductionNextAction(shot, readinessByShot.get(shot.id)) }))
     .filter((row) => !isDelivered(row.shot)).slice(0, 8);
-  return `<div class="view-head production-home-head"><div><div class="eyebrow">Production</div><span class="view-title">${esc(P.meta.title)}</span><div class="view-sub">Continue the film from the next unfinished decision. Detailed tools stay inside each shot.</div></div><div class="production-home-actions"><button class="${next ? "ghost-btn" : "assemble-btn"}" onclick="continueProduction()">${esc(primaryAction.label)}</button><button class="add-btn" onclick="openContextualAdd('shot')">＋ Add shot</button></div></div>
+  /* THE SURFACE NAMES ITSELF; THE PROJECT IS THE CONTEXT IT NAMES ITSELF IN.
+     The 42px headline was the project title, which the rail head and the topbar
+     both already state — so the one line set at page-identity scale said the
+     thing the screen had said twice, and the word Production was a 9px kicker.
+     Same two strings, same order, swapped emphasis: nothing here is derived
+     differently and no string is new. */
+  const nextCard = next
+    ? `<section class="production-next" data-next-action-kind="${attr(next.kind)}"${next.shotId ? ` data-next-action-shot="${attr(next.shotId)}"` : ""}${next.unblocks ? ` data-next-action-unblocks="${attr(String(next.unblocks))}"` : ""}><div><span>NEXT ACTION</span><h2>${esc(next.title)}</h2><p>${esc(next.message)}</p></div><a class="assemble-btn" href="${attr(next.href)}">${esc(next.actionLabel)} →</a></section>`
+    : hasShots
+      ? `<section class="production-next complete"><div><span>NOTHING OUTSTANDING</span><h2>All ${plural(P.shots.length, "shot")} are delivered</h2><p>Every declared unit holds approved authority and you have marked every shot final. Open Shots to inspect the delivered media, or add another shot.</p></div><a class="ghost-btn" href="#/shots/board">Open Shots →</a></section>`
+      : `<section class="production-next"><div><span>NO SHOTS YET</span><h2>This project has no shots</h2><p>Add the first shot to start tracking scenes, frames and deliveries.</p></div><a class="assemble-btn" href="#/shots/board">Open Shots →</a></section>`;
+  return `<div class="view-head production-home-head"><div><div class="eyebrow production-home-project">${esc(P.meta.title)}</div><span class="view-title">Production</span><div class="view-sub">Continue the film from the next unfinished decision. Detailed tools stay inside each shot.</div></div><div class="production-home-actions"><button class="${next ? "ghost-btn" : "assemble-btn"}" onclick="continueProduction()">${esc(primaryAction.label)}</button><button class="add-btn" onclick="openContextualAdd('shot')">＋ Add shot</button></div></div>
+  <!-- ONE CURRENT-WORK REGION, TWO UNCHANGED QUEUES.
+       The projected next action and the returned-result inbox are the same two
+       renderings they have always been, from the same two owners, in the same
+       order of priority. They are adjacent here because they are the same
+       question -- what is waiting for me right now -- and three full-width
+       readiness disclosures used to sit between them, which is what pushed the
+       actual returned frame past the fold at 1280x800. Nothing is merged: the
+       inbox still counts only what returnedResultsAwaitingReview() returns and
+       the card still states only what projectPrimaryProductionAction() won. -->
+  <section class="production-work">${nextCard}${productionResultInbox()}</section>
   <div class="production-summary"><article title="A shot is delivered once you have marked it final in Finish &amp; Delivery. That decision is recorded as a production approval you can withdraw later, and a leftover file pointer with no approval behind it does not count."><b>${deliveredCount}/${P.shots.length}</b><span>${pluralWord(P.shots.length, "shot")} delivered</span></article><article title="A shot is signed off once its workflow status reaches Signed off. Signing a shot off is not the same as delivering it, and neither one approves an image."><b>${approvedCount}/${P.shots.length}</b><span>${pluralWord(P.shots.length, "shot")} signed off</span></article><article class="${decisions.available && decisions.count ? "review" : ""}" title="Shots that cannot move without a decision only you can make. This is the one decision count in CineBraid: the readiness list, the scene cards and the shot filters all report this same number.">${decisions.available ? `<b>${decisions.count}</b><span>${pluralWord(decisions.count, FILMMAKER_DECISION_LABEL)} ${decisions.count === 1 ? "needs" : "need"} you</span>` : `<b>—</b><span>decisions unavailable</span>`}</article><article><b>${mmss(plannedRuntimeOf(P.shots).seconds)}</b><span>planned runtime across ${plural(P.scenes.length, "scene")}${esc(unplannedRuntimeNote(plannedRuntimeOf(P.shots)))}</span></article></div>
   <!-- THE ORDER OF THIS PAGE IS THE POINT.
        What to do now, then the outstanding decisions behind it, then the detail.
        The next action used to render THIRD, below a four-row confirmation backlog
        that filled the first viewport with administration -- and the backlog's own
        first row is usually this very action, so the page led with the long form of
-       its own answer. Nothing is derived differently; the card is the same card. -->
-  ${next ? `<section class="production-next" data-next-action-kind="${attr(next.kind)}"${next.shotId ? ` data-next-action-shot="${attr(next.shotId)}"` : ""}${next.unblocks ? ` data-next-action-unblocks="${attr(String(next.unblocks))}"` : ""}><div><span>NEXT ACTION</span><h2>${esc(next.title)}</h2><p>${esc(next.message)}</p></div><a class="assemble-btn" href="${attr(next.href)}">${esc(next.actionLabel)} →</a></section>` : hasShots ? `<section class="production-next complete"><div><span>NOTHING OUTSTANDING</span><h2>All ${plural(P.shots.length, "shot")} are delivered</h2><p>Every declared unit holds approved authority and you have marked every shot final. Open Shots to inspect the delivered media, or add another shot.</p></div><a class="ghost-btn" href="#/shots/board">Open Shots →</a></section>` : `<section class="production-next"><div><span>NO SHOTS YET</span><h2>This project has no shots</h2><p>Add the first shot to start tracking scenes, frames and deliveries.</p></div><a class="assemble-btn" href="#/shots/board">Open Shots →</a></section>`}
+       its own answer. Nothing is derived differently; the card is the same card.
+
+       The metrics strip and these three disclosures now render BELOW that work
+       region rather than above and between it. Every one of them is the same
+       projection, the same count and the same disclosure default it was: the
+       readiness feed still ships open when a shot can start, the confirmation
+       queue and the setup list still ship closed, and none of them is filtered.
+       They moved; they did not change what they claim. -->
+  <div class="production-context">
   ${shotReadinessFeedMarkup(shotReadiness, decisions)}
   ${historicConfirmationMarkup(shotReadiness)}
   ${projectSetupIssuesMarkup(setup)}
-  ${productionResultInbox()}
+  </div>
   <section class="production-active"><header><div><span>NOT YET DELIVERED</span><h2>Shots and their next action</h2></div><a href="#/shots/board">View all shots →</a></header>${activeRows.length ? `<div class="production-active-list">${activeRows.map(({shot,next}) => `<a href="#/shot/${shot.id}"><span class="next-${next.key}" title="Next action for this shot">${esc(next.label)}</span><div><b>${esc(shot.id)} · ${esc(shot.title)}</b><small>${esc(sceneById(shot.scene)?.title || shot.scene)} · ${esc(next.detail)}</small></div><i>→</i></a>`).join("")}</div>` : `<div class="production-inbox-empty">${hasShots ? "Every shot has been delivered." : "No shots have been added yet."}</div>`}</section>
   <section class="production-scenes"><header><div><span>SCENES</span><h2>Production progress</h2></div><a href="#/shots/scenes">Manage scenes →</a></header>${P.scenes.length ? `<div class="scene-progress-grid">${P.scenes.map((scene) => {
     /* THE SCENE CARD SUMMARISES THE SAME PROJECTION THE TILE ABOVE IT COUNTS.
