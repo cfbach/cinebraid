@@ -435,11 +435,35 @@ for (const modelId of ["z-image/turbo", "krea-2/turbo"]) {
   });
   assert.strictEqual(connections["fal-queue"].connected, true);
   assert.strictEqual(connections.runware.connected, false, "an unrelated account never connects a provider");
-  assert.strictEqual(connections["comfy-local"].connected, false);
-  assert(/no local generation runtime/i.test(connections["comfy-local"].reason),
-    "the local reason must be about the missing runtime, not about a missing key");
-  assert.strictEqual(connections["comfy-local"].action, "",
-    "there is nothing a filmmaker can do about an unimplemented runtime, so nothing is suggested");
+  /* ComfyUI V1 shipped a local runtime, so the old sentence — "CineBraid has no local
+     generation runtime yet" — is no longer true and is no longer asserted. What replaces
+     it is the SAME claim this block is about: a connection is what this installation is
+     set up for, never an account it happens to hold. A real Civitai account still
+     connects nothing here, and a fal key still connects nothing here. */
+  assert.strictEqual(connections["comfy-local"].connected, false,
+    "a fal key and a Civitai account connect nothing on the local surface");
+  assert(/switched off in Settings/i.test(connections["comfy-local"].reason),
+    "the local reason must name what is missing on the local surface, not a provider key");
+  assert(/Settings/i.test(connections["comfy-local"].action),
+    "and it must say where to go, because there is now something a filmmaker can do about it");
+
+  /* Both halves are necessary, and neither alone is a connection. */
+  const comfyOnNoFolder = generationConnections({ generation: { comfy: { enabled: true, workflowFolder: "" } } });
+  assert.strictEqual(comfyOnNoFolder["comfy-local"].connected, false,
+    "a ComfyUI switched on with no workflow folder has nothing to run");
+  assert(/workflow folder/i.test(comfyOnNoFolder["comfy-local"].reason));
+  const comfyFolderOff = generationConnections({ generation: { comfy: { enabled: false, workflowFolder: "D:/wf" } } });
+  assert.strictEqual(comfyFolderOff["comfy-local"].connected, false,
+    "a workflow folder on a switched-off integration is not a connection");
+  const comfyReady = generationConnections({ generation: { comfy: { enabled: true, workflowFolder: "D:/wf" } } });
+  assert.strictEqual(comfyReady["comfy-local"].connected, true);
+  assert.strictEqual(comfyReady["comfy-local"].reason, "");
+  assert.strictEqual(comfyReady["comfy-local"].action, "");
+  /* AND IT IS STILL NOT A PROBE. Nothing above contacted anything: the same answer is
+     produced for a machine whose ComfyUI is not running, which is why Settings tests the
+     address separately and this does not pretend to. */
+  assert.strictEqual(comfyReady["fal-queue"].connected, false,
+    "and configuring ComfyUI connects nothing at fal");
 }
 
 /* ===========================================================================

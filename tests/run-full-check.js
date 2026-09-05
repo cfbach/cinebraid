@@ -147,6 +147,13 @@ const nodeSuites = [
      "which half broke" readable from the run. */
   "check:braidy",
   "check:braidy-negative",
+  /* ComfyUI Foothold V1. Listed individually rather than behind an aggregate so a
+     failure names the invariant that broke: the integration suite drives a real
+     express app against a real loopback ComfyUI fixture and fails on a result that
+     reaches the wrong shot, a stale mapping that dispatches, or a local render that
+     records a provider charge — never on a helper's return value. */
+  "check:comfy",
+  "check:comfy-negative",
   "check:quiet-shell",
   "check:shell-ownership",
   /* A2. Named beside the A1 ownership suite because they guard the same shell

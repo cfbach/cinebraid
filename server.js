@@ -55,6 +55,7 @@ const { resolvePromptBuild, resolvePromptBuildList, normalizePromptBuildHistory,
 const { SimpleZipWriter } = require("./zip-stream");
 const AgentSuite = require("./agent-suite");
 const { registerFalGeneration } = require("./fal-generation");
+const { registerComfyGeneration } = require("./comfy-generation");
 const { registerAutomationRuns } = require("./automation-runs");
 const { createGenerationPoller } = require("./generation-poller");
 const { isAccountCallbackPath, registerAccountConnections } = require("./accounts-api");
@@ -5025,6 +5026,33 @@ function buildMarkdown(P) {
    generation ledger follows the bytes without acquiring a second writer — see
    fal-generation.js repairJobMediaIdentity for why the commit chain matters. */
 const FalGeneration = registerFalGeneration(app, {
+  readConfig,
+  readProject,
+  writeProject,
+  activeSlug,
+  projectDirForSlug,
+});
+/* Local ComfyUI, mounted beside fal rather than through it.
+ *
+ * Deliberately NOT routed through registerFalGeneration's dispatcher: that function is
+ * the paid boundary, gated on a provider key and a spent permit, and a render that
+ * happens on this machine has nothing to authorise —
+ * generation-contracts.js:requiresExplicitAuthorization() returns false for
+ * `free_local`. Sharing the boundary would mean loosening the two enablement gates that
+ * guard every paid dispatch, for a caller that must never reach a paid provider.
+ *
+ * What it DOES share is everything durable: the same generation ledger, the same
+ * per-project commit chain, and the same returned-candidate writer. It receives exactly
+ * the context fal receives, including projectDirForSlug, so it inherits the same
+ * cross-project containment rather than restating it.
+ *
+ * Nothing is handed back. fal returns a handle because POST /api/media/rename has to
+ * repair its job records through the same commit chain; ComfyUI has no such consumer
+ * yet, and the background ingest reaper is deliberately NOT given a ComfyUI collector
+ * in V1 — see IMPLEMENTATION_NOTES. A local render finishes in seconds with the
+ * filmmaker watching, and a job whose browser closed mid-render stays IN QUEUE and says
+ * so until someone refreshes it, which is true rather than convenient. */
+registerComfyGeneration(app, {
   readConfig,
   readProject,
   writeProject,

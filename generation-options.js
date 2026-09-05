@@ -182,12 +182,31 @@ function generationConnections(config = {}) {
           : "",
       action: !falOn || !falKey ? "Open Settings and connect fal." : "",
     },
-    "comfy-local": {
-      connected: false,
-      label: "Local ComfyUI",
-      reason: "CineBraid has no local generation runtime yet, so nothing can run on this machine.",
-      action: "",
-    },
+    /* Local ComfyUI. `connected` here means what it means for fal one entry above:
+       THIS INSTALLATION IS SET UP FOR THIS SURFACE. It is not a live probe — fal's
+       `connected: true` does not prove fal answered either — and the two facts are kept
+       apart deliberately: Settings → Integrations tests the address and says whether
+       ComfyUI replied, while this says whether CineBraid has been given what it needs
+       to try. Collapsing them would make a picker's answer depend on whether a GPU
+       happened to be busy.
+
+       Both halves are necessary. An address with no workflow folder is a ComfyUI
+       CineBraid can reach and has nothing to run on it. */
+    "comfy-local": (() => {
+      const comfy = (config.generation && config.generation.comfy) || {};
+      const on = comfy.enabled === true;
+      const folder = Boolean(String(comfy.workflowFolder || "").trim());
+      return {
+        connected: on && folder,
+        label: "Local ComfyUI",
+        reason: !on
+          ? "Local ComfyUI is switched off in Settings."
+          : !folder
+            ? "Local ComfyUI is on, but no workflow folder is set, so CineBraid has nothing to run."
+            : "",
+        action: !on || !folder ? "Open Settings → Integrations to set up local ComfyUI." : "",
+      };
+    })(),
     runware: {
       connected: false,
       label: "Runware",

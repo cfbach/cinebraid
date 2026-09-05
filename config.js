@@ -122,6 +122,25 @@ const DEFAULT_CONFIG = {
         asOf: "",
       },
     },
+    /* Local ComfyUI. Two settings and a switch, and deliberately nothing else.
+     *
+     * NO CREDENTIAL, so nothing here belongs in CONFIG_SECRETS. The V1 client speaks
+     * only to loopback, where ComfyUI has no authentication, and it sends, stores and
+     * logs none. A field is secret because it is declared secret — and declaring a
+     * plain server address secret would mask the one value an operator needs to read
+     * back when a connection fails.
+     *
+     * `workflowFolder` is where a filmmaker keeps their own ComfyUI workflows.
+     * CineBraid reads that folder and never writes to it. The REGISTRY of which
+     * workflows have had their inputs confirmed is data/comfy-workflows.json rather
+     * than a key here, because PUT /api/config is a deep merge and a deep merge over a
+     * list cannot express a removal — a workflow deleted from the folder would survive
+     * every later save. See comfy-registry.js's header. */
+    comfy: {
+      enabled: false,
+      baseUrl: "http://127.0.0.1:8188",
+      workflowFolder: "",
+    },
   },
   appearance: {
     accent: "blue",
@@ -393,6 +412,20 @@ function normalizeConfig(config, options = {}) {
   merged.generation.fal.motionRate.asOf = isCalendarDate(motionAsOf) ? motionAsOf : "";
   merged.generation.fal.blockingQuality = ["low", "medium", "high", "auto"].includes(merged.generation.fal.blockingQuality) ? merged.generation.fal.blockingQuality : "low";
   merged.generation.fal.frameQuality = ["low", "medium", "high", "auto"].includes(merged.generation.fal.frameQuality) ? merged.generation.fal.frameQuality : "high";
+  /* Local ComfyUI. Both strings are trimmed and bounded and NEITHER is validated for
+     reachability here: normalisation runs at startup and on every save, and a folder on
+     an unplugged drive or a server that is not running yet must not be silently erased
+     from a person's settings because it could not be reached at that instant. Whether
+     the address is one CineBraid may connect to is decided at the moment of connection,
+     by comfy-client.js's loopback boundary, where a refusal can name the reason. */
+  merged.generation.comfy = deepMerge(
+    DEFAULT_CONFIG.generation.comfy,
+    isPlainObject(merged.generation.comfy) ? merged.generation.comfy : {},
+  );
+  merged.generation.comfy.enabled = merged.generation.comfy.enabled === true;
+  merged.generation.comfy.baseUrl = String(merged.generation.comfy.baseUrl || "").trim().slice(0, 300)
+    || DEFAULT_CONFIG.generation.comfy.baseUrl;
+  merged.generation.comfy.workflowFolder = String(merged.generation.comfy.workflowFolder || "").trim().slice(0, 500);
   merged.appearance = deepMerge(DEFAULT_CONFIG.appearance, merged.appearance || {});
   merged.appearance.accent = ["blue", "green", "amber", "rust"].includes(merged.appearance.accent) ? merged.appearance.accent : "blue";
   merged.appearance.surface = ["night", "cool", "warm", "light"].includes(merged.appearance.surface) ? merged.appearance.surface : "night";
