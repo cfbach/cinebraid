@@ -989,9 +989,60 @@ function browserLedgerOwnership() {
   note("browser ledger: a keyless fal still loads the local ledger and reports it loaded, and fal's shot strip routes on an explicit ownership predicate joined to the backend id its own adapter stamps");
 }
 
+/* ===========================================================================
+   14. THE ROUTES THAT READ THIS MACHINE ANSWER ONLY THIS MACHINE.
+
+   Every /api route is already editor-gated, and an editor can already set a workspace
+   root — but "may configure this production" and "may read directories on the machine
+   hosting it" are different powers, and four of these routes exercise the second: they
+   list a folder, read files out of it and report what is inside them.
+
+   So they carry the same loopback gate local-file-affordance.js applies, for the same
+   reason. Dispatch, collection and status are deliberately NOT gated: those act on
+   production, which an editor on the network is entitled to do.
+
+   Asserted structurally because the predicate itself — isLoopbackRequest, which reads
+   the socket's peer address and ignores Host, X-Forwarded-For and every other
+   caller-controlled header — is already exhaustively proven against real sockets by
+   tests/account-lan-safety.js. What is worth pinning here is that these four routes
+   reach it and the other four do not. */
+function localOnlyConfigurationRoutes() {
+  const source = fs.readFileSync(path.join(ROOT, "comfy-generation.js"), "utf8").replace(/\r\n/g, "\n");
+  assert(/const \{ isLoopbackRequest \} = require\("\.\/loopback-request"\);/.test(source),
+    "the gate must use the shipped peer-address predicate, not a header check written here");
+  assert(/function requireLocalMachine\(req, res\) \{\s*\n\s*if \(isLoopbackRequest\(req\)\) return true;/.test(source),
+    "and it must permit on the predicate rather than deny on a guess");
+
+  const routeBody = (route) => {
+    const at = source.indexOf(route);
+    assert(at >= 0, `route ${route} must exist`);
+    return source.slice(at, at + 260);
+  };
+  for (const route of [
+    'app.get("/api/generation/comfy/workflows"',
+    'app.post("/api/generation/comfy/workflow"',
+    'app.post("/api/generation/comfy/workflow/mapping"',
+    'app.post("/api/generation/comfy/workflow/forget"',
+  ])
+    assert(/if \(!requireLocalMachine\(req, res\)\) return;/.test(routeBody(route)),
+      `${route} reads this machine's filesystem and must answer only this machine`);
+
+  /* AND THE PRODUCTION ROUTES ARE NOT GATED. Asserted so the gate cannot quietly spread
+     to the routes a filmmaker on a LAN tablet is entitled to use. */
+  for (const route of [
+    'app.get("/api/generation/comfy/jobs"',
+    'app.post("/api/generation/comfy/jobs"',
+    'app.post("/api/generation/comfy/jobs/:id/refresh"',
+  ])
+    assert(!/requireLocalMachine/.test(routeBody(route)),
+      `${route} acts on production, not on this machine's filesystem, and must not be loopback-gated`);
+  note("local-only configuration: the four routes that read the host's filesystem go through the shipped peer-address gate; the three that act on production do not");
+}
+
 /* =========================================================================== */
 async function main() {
   browserLedgerOwnership();
+  localOnlyConfigurationRoutes();
   formatTruth();
   suggestionIsNotConfirmation();
   changeDetection();

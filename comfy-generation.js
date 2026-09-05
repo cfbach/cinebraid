@@ -44,6 +44,7 @@ const { readJobLedger, JobLedgerUnreadableError } = require("./generation-job-st
 const { commitJobLedger, commitProjectDocument, serializeJobOperation } = require("./generation-commit");
 const { markShotAwaitingReview, writeShotCandidates } = require("./generation-candidate-ingest");
 const { isProjectRelativeMediaPath } = require("./public/shared-local-file");
+const { isLoopbackRequest } = require("./loopback-request");
 
 /* CineBraid's word for what produced a candidate. Rendered verbatim by the media
    inspector's Provider row, so it is the product's real name rather than a slug. */
@@ -336,8 +337,36 @@ function registerComfyGeneration(app, context) {
     }
   });
 
-  /* ---- the workflow folder ------------------------------------------------ */
+  /* ---- the workflow folder ------------------------------------------------
+   *
+   * THESE FOUR ROUTES READ THE SERVER'S OWN FILESYSTEM, so they answer only this
+   * machine. Every /api route is already editor-gated, and an editor can already set a
+   * workspace root — but "may configure this production" and "may read directories on
+   * the machine hosting it" are different powers, and this integration has no reason to
+   * grant the second to a browser on the network. The ComfyUI it drives is loopback-only
+   * and the folder it reads is local, so a request from another device is configuring
+   * something it cannot see.
+   *
+   * The same rule local-file-affordance.js applies, applied for the same reason: the
+   * shipped predicate reads the socket's peer address and deliberately ignores Host,
+   * X-Forwarded-For and every other header a caller controls.
+   *
+   * Dispatch, collection and status are NOT gated here — those act on production, which
+   * an editor on the network is entitled to do. IMPLEMENTATION_NOTES records that a
+   * remote browser therefore sees no workflow list and no GENERATE LOCALLY control,
+   * which is the honest consequence: local ComfyUI is set up from the machine it runs
+   * on. */
+  function requireLocalMachine(req, res) {
+    if (isLoopbackRequest(req)) return true;
+    res.status(403).json({
+      error: "Local ComfyUI is set up on the computer running CineBraid.",
+      code: "LOOPBACK_REQUIRED",
+    });
+    return false;
+  }
+
   app.get("/api/generation/comfy/workflows", (req, res) => {
+    if (!requireLocalMachine(req, res)) return;
     try {
       const cfg = comfyConfig(readConfig);
       if (!cfg.workflowFolder)
@@ -350,6 +379,7 @@ function registerComfyGeneration(app, context) {
   });
 
   app.post("/api/generation/comfy/workflow", (req, res) => {
+    if (!requireLocalMachine(req, res)) return;
     try {
       const cfg = comfyConfig(readConfig);
       res.json(Registry.describeForMapping(cfg.workflowFolder, text(req.body?.relativePath)));
@@ -363,6 +393,7 @@ function registerComfyGeneration(app, context) {
      /workflow above and has no storage; it becomes a binding only by being posted back
      here, which is a person pressing Save. */
   app.post("/api/generation/comfy/workflow/mapping", (req, res) => {
+    if (!requireLocalMachine(req, res)) return;
     try {
       const cfg = comfyConfig(readConfig);
       res.json(Registry.confirmMapping(cfg.workflowFolder, text(req.body?.relativePath), req.body?.bindings));
@@ -373,6 +404,7 @@ function registerComfyGeneration(app, context) {
   });
 
   app.post("/api/generation/comfy/workflow/forget", (req, res) => {
+    if (!requireLocalMachine(req, res)) return;
     try {
       res.json(Registry.forgetWorkflow(text(req.body?.relativePath)));
     } catch (error) {
