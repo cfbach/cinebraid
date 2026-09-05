@@ -358,6 +358,11 @@ function mappingFromRequest(request, inspection, confirmedAt) {
   if (!stamp)
     throw new ComfyWorkflowError("COMFY_MAPPING_UNCONFIRMED", "A workflow mapping is only saved when someone confirms it.");
   const rows = isRecord(request) ? request : {};
+  /* The graph the filmmaker is confirming against, indexed once. inspectWorkflow() is
+     accepted here as either an inspection or a raw document, exactly as validateMapping()
+     accepts it, so the writer and the validator read the same shape. */
+  const inspected = Array.isArray(inspection?.nodes) ? inspection : inspectWorkflow(inspection);
+  const nodes = new Map(inspected.nodes.map((node) => [node.nodeId, node]));
   const bindings = {};
   for (const key of COMFY_SEMANTIC_KEYS) {
     const row = rows[key];
@@ -372,7 +377,20 @@ function mappingFromRequest(request, inspection, confirmedAt) {
         `${COMFY_SEMANTIC_BY_KEY.get(key).label} needs both a node and an input, or neither.`,
         { key },
       );
-    bindings[key] = { nodeId, input, confirmedAt: stamp };
+    /* THE NODE CLASS IS PART OF WHAT WAS CONFIRMED, and it is read from the GRAPH rather
+       than taken from the caller. A confirmation certifies two things — that this input
+       carries this production value, and that the node carrying it is the kind of node
+       the filmmaker was looking at. Persisting only the id and the input name makes the
+       second half unprovable: a later graph can keep node 6 and turn it from a
+       CLIPTextEncode into a PrimitiveString, and a validator with nothing to compare
+       against has no way to notice.
+
+       Derived here, never accepted from the request. A client that could name the class
+       could certify a compatibility nobody checked, which is the same defect with an
+       extra step. An unknown node id is left without one and validateMapping() refuses it
+       on the next line as a missing node. */
+    const node = nodes.get(nodeId);
+    bindings[key] = { nodeId, input, classType: node ? node.classType : "", confirmedAt: stamp };
   }
   const mapping = { mappingVersion: COMFY_MAPPING_VERSION, bindings, confirmedAt: stamp };
   const validated = validateMapping(mapping, inspection);
@@ -437,7 +455,23 @@ function validateMapping(mapping, inspection) {
       fail("missing-node", `${semantic.label} pointed at node ${binding.nodeId}, which is no longer in this workflow.`, "Choose the node that carries this input now.");
       continue;
     }
-    if (text(binding.classType) && text(binding.classType) !== node.classType) {
+    /* THE CLASS MUST BE PRESENT, AND IT MUST STILL MATCH.
+     *
+     * A confirmation with no recorded class cannot prove what was confirmed, so it is not
+     * treated as confirmed. That is the safe direction and the only honest one: the
+     * alternative — assuming the class is whatever the node is today — would certify a
+     * compatibility nobody ever checked, and would do it silently at exactly the moment
+     * the node had been replaced. Nothing here invents a historical class; it asks for
+     * the mapping to be confirmed again against the graph as it now stands. */
+    if (!text(binding.classType)) {
+      fail(
+        "class-unconfirmed",
+        `${semantic.label} was confirmed before CineBraid recorded which kind of node it pointed at, so that agreement cannot be checked against this workflow.`,
+        "Confirm this input again.",
+      );
+      continue;
+    }
+    if (text(binding.classType) !== node.classType) {
       fail("class-changed", `${semantic.label} pointed at a ${binding.classType} node; node ${node.nodeId} is now a ${node.classType}.`, "Confirm which node carries this input now.");
       continue;
     }

@@ -2680,6 +2680,27 @@ app.put("/api/config", (req, res) => {
     }
   }
 
+  /* Local ComfyUI's host configuration is not editable from another device.
+   *
+   * `generation.comfy.baseUrl` decides which service ON THIS MACHINE the CineBraid host
+   * connects to, and `workflowFolder` decides which of its directories the host reads.
+   * comfy-generation.js already refuses every ComfyUI route from a non-loopback peer;
+   * without this, a LAN browser could still set the address through the general config
+   * endpoint and leave it waiting for the next local action to use it. A boundary that
+   * refuses the trigger but accepts the aim is not a boundary.
+   *
+   * DELIBERATELY THE NARROWEST RULE THAT CLOSES IT. It is not "/api/config is
+   * loopback-only" — appearance, naming, the assistant and every other setting keep the
+   * behaviour they have always had, from any editor. Only this one block is refused, and
+   * only from a peer that is not this machine, and the caller is told where it belongs
+   * rather than having the change silently dropped. */
+  if (!isLoopbackRequest(req) && Object.prototype.hasOwnProperty.call(body.generation || {}, "comfy")) {
+    return res.status(403).json({
+      error: "Local ComfyUI is set up on the computer running CineBraid, not from another device.",
+      code: "LOOPBACK_REQUIRED",
+    });
+  }
+
   const patch = restoreSecrets(body, current);
   delete patch.accounts;
 

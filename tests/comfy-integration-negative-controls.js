@@ -14,6 +14,8 @@
  *   NC-7  a raw filesystem path is accepted as workflow identity
  *   NC-8  a non-loopback ComfyUI address is dialled
  *   NC-9  an unsupplied seed is applied as zero
+ *   NC-10 a confirmed mapping does not certify the node class
+ *   NC-11 a LAN caller can steer a host-local request
  *
  * NOTHING IS WRITTEN TO DISK AND NOTHING IS REVERTED WITH GIT. Each defect is introduced
  * by compiling a MODIFIED COPY of the real source in memory and installing it in the
@@ -335,11 +337,19 @@ async function nc5() {
     /* Exactly what suggestMappings produces, posted straight into the registry with no
        confirmation stamp — a machine agreeing with itself. */
     const suggested = W.suggestMappings(inspection).positivePrompt[0];
-    const unconfirmed = { mappingVersion: 1, bindings: { positivePrompt: { nodeId: suggested.nodeId, input: suggested.input } } };
+    /* The class IS carried here, deliberately. It is exactly what a suggestion knows, and
+       including it isolates the guard this control is named for: without it the binding
+       would now be refused for having no recorded class, and NC-5 would be quietly
+       detecting NC-10's guard while claiming to test the confirmation stamp. The ONLY
+       thing missing is the stamp. */
+    const unconfirmed = {
+      mappingVersion: 1,
+      bindings: { positivePrompt: { nodeId: suggested.nodeId, input: suggested.input, classType: suggested.classType } },
+    };
     const checked = W.validateMapping(unconfirmed, inspection);
     assert.strictEqual(checked.ok, false, "a binding with no confirmation must never validate");
     assert(checked.problems.some((row) => row.code === "unconfirmed"),
-      "and the reason must be that nobody confirmed it");
+      `and the reason must be that nobody confirmed it, got ${JSON.stringify(checked.problems.map((row) => row.code))}`);
     void harness;
   }));
 }
@@ -485,6 +495,122 @@ async function nc9() {
   }));
 }
 
+/* ===========================================================================
+   NC-10 — a confirmed mapping does not certify the node class.
+
+   Removes ONLY the classType persistence from the real confirmation writer, exactly as
+   the review specified. The validator's class check is left completely intact — and that
+   is the point: with nothing stored to compare against, the check can never fire, so the
+   defect is invisible to any test that supplies the field itself.
+
+   The reproduction restored here is the exact one: confirm CLIPTextEncode.text on node 6,
+   replace node 6 with a PrimitiveString, and watch the workflow report `changed` while
+   the mapping reports no problem and dispatch proceeds. */
+async function nc10() {
+  await mustBeCaught("NC-10 a confirmed mapping does not certify the node class", () => withHarness({
+    mutate: () => {
+      installBroken("comfy-workflow.js", (source, label) => mutateOnce(
+        source,
+        "    bindings[key] = { nodeId, input, classType: node ? node.classType : \"\", confirmedAt: stamp };",
+        "    bindings[key] = { nodeId, input, confirmedAt: stamp };",
+        label,
+      ), "NC-10 classType persistence in the confirmation writer");
+      /* The legacy gate would otherwise catch the missing class on its own. It is the
+         SAFETY NET, not the guard under test, so it is stood down to leave the original
+         defect exactly as it was: a class check with nothing to check against. */
+      installBroken("comfy-registry.js", (source, label) => mutateOnce(
+        source,
+        "  if (state.state !== \"ready\" && state.state !== \"changed\")",
+        "  if (state.state !== \"ready\" && state.state !== \"changed\" && state.state !== \"broken\")",
+        label,
+      ), "NC-10 loadForDispatch broken-state gate");
+    },
+  }, async ({ harness, comfy, folder }) => {
+    await confirm(harness, { positivePrompt: { nodeId: "6", input: "text" } });
+    const swapped = Suite.apiWorkflow();
+    swapped["6"] = { class_type: "PrimitiveString", inputs: { text: "a cat" }, _meta: { title: "Positive Prompt" } };
+    fs.writeFileSync(path.join(folder, "smoke.json"), JSON.stringify(swapped, null, 2));
+
+    /* THE GREEN-PATH CLAIM, restated as the assertions the defect must break. */
+    const row = (await Suite.call(harness, "GET", "/api/generation/comfy/workflows")).data.workflows
+      .find((entry) => entry.relativePath === "smoke.json");
+    assert.strictEqual(row.state, "broken",
+      "a node replaced by a different class must break its confirmed mapping");
+    const attempt = await Suite.call(harness, "POST", "/api/generation/comfy/jobs", DISPATCH);
+    assert.strictEqual(attempt.data.code, "COMFY_MAPPING_BROKEN", "and dispatch must refuse");
+    assert.strictEqual(comfy.state.prompts.length, 0, "and nothing may reach ComfyUI");
+  }));
+}
+
+/* ===========================================================================
+   NC-11 — a LAN caller can steer a host-local request.
+
+   Removes ONLY the inbound peer guard from the ComfyUI test route and the scoped config
+   restriction, and restores the exact reproduction: a non-loopback browser writes
+   `generation.comfy.baseUrl` to an attacker-selected loopback port, calls /test, and the
+   HOST knocks on that port.
+
+   The decoy listener is the assertion. "Refused" is proven by nothing arriving, not by a
+   status code — a guard that returned 403 after making the request would pass a
+   status-only check and fail this one. */
+async function nc11() {
+  const os = require("os");
+  const lanAddress = Object.values(os.networkInterfaces()).flat()
+    .filter(Boolean)
+    .find((row) => row.family === "IPv4" && !row.internal)?.address;
+  if (!lanAddress) {
+    note("NC-11 SKIPPED — this machine exposes no non-loopback IPv4 address, so the reproduction cannot be staged");
+    return;
+  }
+
+  const http = require("http");
+  const intercepted = [];
+  const decoy = http.createServer((req, res) => {
+    intercepted.push(req.url);
+    res.writeHead(200, { "content-type": "application/json" });
+    res.end(JSON.stringify({ system: { comfyui_version: "decoy" }, devices: [{ name: "decoy" }] }));
+  });
+  await new Promise((resolve) => decoy.listen(49199, "127.0.0.1", resolve));
+
+  /* Mutating a SPAWNED server means editing the two files on disk, running the control,
+     and restoring them. Every other control compiles its defect in memory; this one
+     cannot, because the defect spans server.js and a child process. The restore is in a
+     finally, the originals are held in memory, and the suite asserts the bytes came back
+     before it finishes. */
+  const targets = [
+    { file: path.join(ROOT, "comfy-generation.js"), find: "  app.post(\"/api/generation/comfy/test\", async (req, res) => {\n    if (!requireLocalMachine(req, res)) return;", replace: "  app.post(\"/api/generation/comfy/test\", async (req, res) => {", label: "NC-11 inbound peer guard on the test route" },
+    { file: path.join(ROOT, "server.js"), find: "  if (!isLoopbackRequest(req) && Object.prototype.hasOwnProperty.call(body.generation || {}, \"comfy\")) {", replace: "  if (false) {", label: "NC-11 scoped config restriction" },
+  ];
+  const originals = targets.map((target) => ({ ...target, bytes: fs.readFileSync(target.file) }));
+  let comfy = null;
+  let spawned = null;
+  try {
+    for (const target of targets) {
+      const source = readLF(target.file);
+      fs.writeFileSync(target.file, mutateOnce(source, target.find, target.replace, target.label), "utf8");
+    }
+    comfy = await Suite.startFakeComfy();
+    spawned = await Suite.startRealServer({ comfyBaseUrl: comfy.baseUrl, host: "0.0.0.0" });
+
+    const wrote = await spawned.request("PUT", "/api/config", { generation: { comfy: { baseUrl: "http://127.0.0.1:49199" } } }, lanAddress);
+    const tested = await spawned.request("POST", "/api/generation/comfy/test", {}, lanAddress);
+    note(`NC-11 with the guards removed: config write -> ${wrote.status}, test -> ${tested.status}, `
+      + `intercepted on 49199 -> ${JSON.stringify(intercepted)}`);
+    assert(intercepted.length > 0,
+      "NC-11 DID NOT REPRODUCE — with both guards removed a LAN caller should have reached 127.0.0.1:49199");
+    notes.push(`NC-11 a LAN caller can steer a host-local request → reproduced: ${intercepted.length} request(s) reached the attacker-selected port `
+      + `(${intercepted.join(", ")}), which the shipped guards prevent`);
+  } finally {
+    if (spawned) await spawned.close();
+    if (comfy) comfy.close();
+    decoy.close();
+    for (const original of originals) fs.writeFileSync(original.file, original.bytes);
+    for (const original of originals)
+      assert(fs.readFileSync(original.file).equals(original.bytes),
+        `NC-11 FAILED TO RESTORE ${path.basename(original.file)} — the working tree is not what it was`);
+  }
+}
+
 /* =========================================================================== */
 async function main() {
   await nc1();
@@ -496,6 +622,8 @@ async function main() {
   await nc7();
   await nc8();
   await nc9();
+  await nc10();
+  await nc11();
   assert.strictEqual(new Set(applied).size, applied.length, "every mutation label must be distinct");
   console.log(`ComfyUI foothold V1 negative controls passed: ${notes.length} deliberate defects reintroduced in memory, every one detected by the guard that owns it.`);
   for (const line of notes) console.log(`  - ${line}`);

@@ -167,7 +167,7 @@ function startFakeComfy(options = {}) {
 /* ---------------------------------------------------------------------------
    A CineBraid, in miniature. A real express app carrying the real routes, a real
    temp project tree, and the real config and registry modules pointed at temp files. */
-async function makeHarness({ shots = ["SC-01-01"], comfyBaseUrl, workflowFolder, activeSlug = "film-a", mutate } = {}) {
+async function makeHarness({ shots = ["SC-01-01"], comfyBaseUrl, workflowFolder, activeSlug = "film-a", mutate, bindAll = false } = {}) {
   const dir = fs.mkdtempSync(path.join(fs.realpathSync.native(os.tmpdir()), "cb-comfy-"));
   const projectsRoot = path.join(dir, "projects");
   const configPath = path.join(dir, "config.json");
@@ -232,7 +232,11 @@ async function makeHarness({ shots = ["SC-01-01"], comfyBaseUrl, workflowFolder,
   /* Awaited, because express's listen is asynchronous and server.address() is null
      until it fires — a harness that hands back a port it does not have yet fails in a
      way that looks like a product bug rather than a harness one. */
-  const server = app.listen(0, "127.0.0.1");
+  /* `bindAll` binds 0.0.0.0 so a genuine non-loopback peer can reach the routes. Only
+     the LAN-boundary section asks for it; everything else stays on loopback, because a
+     test server reachable from the network is not something to leave switched on by
+     default. */
+  const server = app.listen(0, bindAll ? "0.0.0.0" : "127.0.0.1");
   await new Promise((resolve) => server.once("listening", resolve));
   return {
     dir, projectsRoot, configPath, registryPath, Config, Registry, api, app, server,
@@ -374,15 +378,40 @@ function changeDetection() {
   assert(!retypedResult.ok && retypedResult.problems.some((row) => row.code === "input-is-linked"),
     "an input now driven by another node cannot be set, and CineBraid refuses rather than disconnecting the graph");
 
+  /* THE NODE CLASS COMES FROM THE WRITER, NOT FROM THE TEST.
+   *
+   * This block used to hand validateMapping() a binding with `classType` spliced in by
+   * hand, and passed — while the real confirmation writer stored no class at all, so the
+   * guard it claimed to prove could never fire in production. A test that supplies the
+   * field it is asserting about is testing itself.
+   *
+   * `mapping` above came from mappingFromRequest(), so what is checked here is what a
+   * filmmaker's confirmation actually persists. */
+  assert.strictEqual(mapping.bindings.positivePrompt.classType, "CLIPTextEncode",
+    "the confirmation writer must persist the node class it was confirmed against");
+  assert.strictEqual(mapping.bindings.seed.classType, "KSampler");
+
   const classSwapped = apiWorkflow();
   classSwapped["6"] = { class_type: "PrimitiveString", inputs: { text: "x" }, _meta: { title: "Positive Prompt" } };
-  const swapResult = W.validateMapping(
-    { ...mapping, bindings: { ...mapping.bindings, positivePrompt: { ...mapping.bindings.positivePrompt, classType: "CLIPTextEncode" } } },
-    W.inspectWorkflow(classSwapped),
-  );
+  const swapResult = W.validateMapping(mapping, W.inspectWorkflow(classSwapped));
   assert(!swapResult.ok && swapResult.problems.some((row) => row.code === "class-changed"),
     "a node id reused by a different kind of node is a broken mapping, not a working one");
-  note("change detection: unchanged / harmless / new node all keep every mapping; a removed node, a renamed input, a newly linked input and a reused node id each break exactly the one that no longer fits");
+  assert(!swapResult.kept.positivePrompt, "and the swapped binding must not survive as kept");
+  assert(swapResult.kept.seed, "while the untouched binding does");
+
+  /* A CONFIRMATION THAT CANNOT PROVE WHAT IT AGREED TO IS NOT CONFIRMED. Legacy records
+     written before the class was persisted fail into reconfirmation rather than being
+     assumed compatible with whatever the node happens to be now. */
+  const legacy = {
+    mappingVersion: mapping.mappingVersion,
+    confirmedAt: mapping.confirmedAt,
+    bindings: { positivePrompt: { nodeId: "6", input: "text", confirmedAt: mapping.confirmedAt } },
+  };
+  const legacyResult = W.validateMapping(legacy, inspection);
+  assert(!legacyResult.ok && legacyResult.problems.some((row) => row.code === "class-unconfirmed"),
+    "a stored confirmation with no recorded class must ask to be confirmed again");
+  assert(!legacyResult.kept.positivePrompt, "and must not be kept as though it had been checked");
+  note("change detection: unchanged / harmless / new node all keep every mapping; a removed node, a renamed input, a newly linked input and a reused node id each break exactly the one that no longer fits; the class is read off the real confirmation writer, and a confirmation with no class fails into reconfirmation");
 }
 
 /* ===========================================================================
@@ -937,6 +966,101 @@ async function ordinaryCandidate() {
 }
 
 /* ===========================================================================
+   12b. A CONFIRMED MAPPING CERTIFIES THE NODE CLASS — MAP-C1..C4.
+
+   Driven through the REAL confirmation route and the REAL dispatch route, against a
+   durable registry on disk, because the defect this closes lived precisely in the gap
+   between what the writer stored and what the validator could check. A unit test that
+   constructs the binding itself cannot see that gap. */
+async function mappingCertifiesNodeClass() {
+  const comfy = await startFakeComfy();
+  const harness = await makeHarness({ comfyBaseUrl: comfy.baseUrl });
+  try {
+    const folder = writeWorkflowFolder(path.join(harness.dir, "workflows"), { "smoke.json": apiWorkflow() });
+    harness.Config.writeConfig(harness.Config.mergeConfig(harness.Config.readConfig(), { generation: { comfy: { workflowFolder: folder } } }));
+    const target = path.join(folder, "smoke.json");
+    const dispatch = { shotId: "SC-01-01", frameId: "frame-a", frameLabel: "A", relativePath: "smoke.json", prompt: "a lighthouse" };
+    const confirmPrompt = () => call(harness, "POST", "/api/generation/comfy/workflow/mapping", {
+      relativePath: "smoke.json", bindings: { positivePrompt: { nodeId: "6", input: "text" } },
+    });
+
+    /* --- MAP-C1: the exact reproduction. CLIPTextEncode.text confirmed, then node 6
+       becomes a PrimitiveString while keeping its id. ------------------------------ */
+    const saved = await confirmPrompt();
+    assert.strictEqual(saved.status, 200, JSON.stringify(saved.data));
+    const stored = JSON.parse(fs.readFileSync(harness.registryPath, "utf8"));
+    assert.strictEqual(stored.workflows[0].mapping.bindings.positivePrompt.classType, "CLIPTextEncode",
+      "the class must reach DISK, not merely the in-memory mapping");
+
+    const swapped = apiWorkflow();
+    swapped["6"] = { class_type: "PrimitiveString", inputs: { text: "a cat" }, _meta: { title: "Positive Prompt" } };
+    fs.writeFileSync(target, JSON.stringify(swapped, null, 2));
+
+    const listed = await call(harness, "GET", "/api/generation/comfy/workflows");
+    const row = listed.data.workflows.find((entry) => entry.relativePath === "smoke.json");
+    assert.notStrictEqual(row.contentHash, row.mappedHash, "MAP-C1: the workflow must read as changed");
+    assert.strictEqual(row.state, "broken", `MAP-C1: and the mapping must read as broken, got ${row.state}`);
+    assert(row.problems.some((problem) => problem.code === "class-changed"),
+      `MAP-C1: naming the class change, got ${JSON.stringify(row.problems.map((p) => p.code))}`);
+    assert(row.problems.some((problem) => /confirm/i.test(problem.action || "")),
+      "MAP-C1: and asking the filmmaker to confirm it again");
+
+    const refused = await call(harness, "POST", "/api/generation/comfy/jobs", dispatch);
+    assert.strictEqual(refused.status, 409, JSON.stringify(refused.data));
+    assert.strictEqual(refused.data.code, "COMFY_MAPPING_BROKEN", "MAP-C1: dispatch must refuse");
+    assert.strictEqual(comfy.state.prompts.length, 0, "MAP-C1: and nothing may reach ComfyUI");
+    assert.strictEqual(harness.jobs().length, 0, "MAP-C1: and no job row may be minted");
+
+    /* Reconfirmation against the graph as it now stands restores it — the filmmaker is
+       asked, not blocked forever. */
+    const reconfirmed = await confirmPrompt();
+    assert.strictEqual(reconfirmed.data.state, "ready", JSON.stringify(reconfirmed.data));
+    assert.strictEqual(reconfirmed.data.bindings.positivePrompt.classType, "PrimitiveString",
+      "reconfirming certifies the class that is there now");
+
+    /* --- MAP-C2: an unrelated node is added. Nothing may be invalidated. ---------- */
+    fs.writeFileSync(target, JSON.stringify(apiWorkflow(), null, 2));
+    await confirmPrompt();
+    const withExtra = apiWorkflow();
+    withExtra["11"] = { class_type: "PreviewImage", inputs: { images: ["8", 0] }, _meta: { title: "Preview" } };
+    fs.writeFileSync(target, JSON.stringify(withExtra, null, 2));
+    const afterAdd = (await call(harness, "GET", "/api/generation/comfy/workflows")).data.workflows
+      .find((entry) => entry.relativePath === "smoke.json");
+    assert.strictEqual(afterAdd.state, "changed", `MAP-C2: unreviewed, not broken — got ${afterAdd.state}`);
+    assert.deepStrictEqual(afterAdd.problems, [], "MAP-C2: an unrelated node must raise no mapping problem");
+    const ran = await call(harness, "POST", "/api/generation/comfy/jobs", dispatch);
+    assert.strictEqual(ran.status, 200, `MAP-C2: a still-compatible mapping must still run — ${JSON.stringify(ran.data)}`);
+
+    /* --- MAP-C3: the mapped node, and then the mapped input, go. ----------------- */
+    const removedInput = apiWorkflow();
+    removedInput["6"] = { class_type: "CLIPTextEncode", inputs: { prompt: "a cat", clip: ["4", 1] }, _meta: { title: "Positive Prompt" } };
+    fs.writeFileSync(target, JSON.stringify(removedInput, null, 2));
+    let broken = await call(harness, "POST", "/api/generation/comfy/jobs", dispatch);
+    assert.strictEqual(broken.data.code, "COMFY_MAPPING_BROKEN", "MAP-C3: a renamed input still refuses");
+    const removedNode = apiWorkflow();
+    delete removedNode["6"];
+    fs.writeFileSync(target, JSON.stringify(removedNode, null, 2));
+    broken = await call(harness, "POST", "/api/generation/comfy/jobs", dispatch);
+    assert.strictEqual(broken.data.code, "COMFY_MAPPING_BROKEN", "MAP-C3: a removed node still refuses");
+
+    /* --- MAP-C4: a persisted confirmation with no class cannot dispatch. ---------- */
+    fs.writeFileSync(target, JSON.stringify(apiWorkflow(), null, 2));
+    await confirmPrompt();
+    const registry = JSON.parse(fs.readFileSync(harness.registryPath, "utf8"));
+    delete registry.workflows[0].mapping.bindings.positivePrompt.classType;
+    fs.writeFileSync(harness.registryPath, JSON.stringify(registry, null, 2));
+    const legacyRow = (await call(harness, "GET", "/api/generation/comfy/workflows")).data.workflows
+      .find((entry) => entry.relativePath === "smoke.json");
+    assert.strictEqual(legacyRow.state, "broken", `MAP-C4: an unprovable confirmation is not confirmed — got ${legacyRow.state}`);
+    assert(legacyRow.problems.some((problem) => problem.code === "class-unconfirmed"), JSON.stringify(legacyRow.problems));
+    const legacyDispatch = await call(harness, "POST", "/api/generation/comfy/jobs", dispatch);
+    assert.strictEqual(legacyDispatch.data.code, "COMFY_MAPPING_BROKEN",
+      "MAP-C4: and it must not silently dispatch as confirmed");
+    note("mapping certifies the node class: MAP-C1 the real writer stores CLIPTextEncode to disk and a PrimitiveString on the same node id reads changed + broken + refused with nothing queued, and reconfirming restores it; MAP-C2 an unrelated node stays compatible and still runs; MAP-C3 a renamed input and a removed node still refuse; MAP-C4 a stored confirmation with the class deleted cannot dispatch");
+  } finally { harness.close(); comfy.close(); }
+}
+
+/* ===========================================================================
    12a. AN UNSUPPLIED SEED IS ABSENT, NOT ZERO.
 
    Found by the FIRST REAL GENERATION, not by this suite — which is the finding worth
@@ -1071,6 +1195,216 @@ function browserLedgerOwnership() {
    caller-controlled header — is already exhaustively proven against real sockets by
    tests/account-lan-safety.js. What is worth pinning here is that these four routes
    reach it and the other four do not. */
+/* ===========================================================================
+   14b. A LAN CALLER CANNOT STEER A HOST-LOCAL REQUEST — LAN-C1..C5.
+
+   The defect this closes, exactly as it was reproduced: comfy-client.js constrains where
+   CineBraid may CONNECT, and that says nothing about who chose the address. A LAN browser
+   wrote `generation.comfy.baseUrl` through /api/config, called /test, and made the host
+   issue requests to 127.0.0.1:49199 — a private service on the operator's machine the
+   browser could not reach itself. The destination being loopback is not the property that
+   matters; the caller controlling it is.
+
+   Driven over REAL SOCKETS against a server bound to 0.0.0.0, with the requests made to a
+   non-loopback local address, the same way tests/account-lan-safety.js proves its own
+   boundary. A fabricated `req` object would be testing this file's idea of a peer rather
+   than the socket the server actually sees.
+
+   THE INTERCEPTOR IS THE ASSERTION. A listener on 49199 records every connection, so
+   "refused" is proven by nothing arriving rather than by a status code alone. */
+async function lanCallerCannotSteerHostRequests() {
+  const os = require("os");
+  /* A real non-loopback address on this machine. Without one there is no way to make a
+     genuine LAN-shaped request, and a control that silently degraded to loopback would
+     report itself green while proving the opposite. */
+  const lanAddress = Object.values(os.networkInterfaces()).flat()
+    .filter(Boolean)
+    .find((row) => row.family === "IPv4" && !row.internal)?.address;
+  if (!lanAddress) {
+    note("LAN boundary: SKIPPED — this machine exposes no non-loopback IPv4 address, so no genuine LAN peer could be simulated");
+    return;
+  }
+
+  /* The attacker-selected host-local service. It answers nothing useful; its only job is
+     to notice if CineBraid is ever made to knock. */
+  const intercepted = [];
+  const decoy = http.createServer((req, res) => {
+    intercepted.push(req.url);
+    res.writeHead(200, { "content-type": "application/json" });
+    res.end(JSON.stringify({ system: { comfyui_version: "decoy" }, devices: [] }));
+  });
+  await new Promise((resolve) => decoy.listen(49199, "127.0.0.1", resolve));
+
+  const comfy = await startFakeComfy();
+  /* THE REAL server.js, spawned and bound to 0.0.0.0. The config half of this boundary
+     lives in PUT /api/config, which the in-process harness does not mount — and a
+     harness that re-implemented that rule would be proving its own copy rather than the
+     product's. tests/generation-ingest-reaper.js spawns a real server for the same
+     reason. */
+  const spawned = await startRealServer({ comfyBaseUrl: comfy.baseUrl, host: "0.0.0.0" });
+  try {
+    /* A confirmed, runnable workflow, so LAN-C3's refusal is the boundary rather than an
+       unregistered workflow refusing for an unrelated reason. */
+    const asLoopback = (method, route, body) => spawned.request(method, route, body, "127.0.0.1");
+    const confirmed = await asLoopback("POST", "/api/generation/comfy/workflow/mapping", {
+      relativePath: "smoke.json", bindings: { positivePrompt: { nodeId: "6", input: "text" } },
+    });
+    assert.strictEqual(confirmed.status, 200, JSON.stringify(confirmed.data));
+
+    const harness = spawned;
+    const call = asLoopback;
+    const asLan = (method, route, body) => spawned.request(method, route, body, lanAddress);
+
+    /* --- LAN-C1: the exact reproduction. --------------------------------------- */
+    const wrote = await asLan("PUT", "/api/config", { generation: { comfy: { baseUrl: "http://127.0.0.1:49199" } } });
+    assert.strictEqual(wrote.status, 403, `LAN-C1: the config write must be refused — ${JSON.stringify(wrote.data)}`);
+    assert.strictEqual(wrote.data.code, "LOOPBACK_REQUIRED");
+    assert.strictEqual(spawned.Config.readConfig().generation.comfy.baseUrl, comfy.baseUrl,
+      "LAN-C1: and must not be persisted");
+
+    const tested = await asLan("POST", "/api/generation/comfy/test");
+    assert.strictEqual(tested.status, 403, `LAN-C1: the test route must be refused — ${JSON.stringify(tested.data)}`);
+    assert.strictEqual(tested.data.code, "LOOPBACK_REQUIRED");
+    assert.deepStrictEqual(intercepted, [], "LAN-C1: and nothing may reach 49199");
+
+    /* --- LAN-C2: the malicious address is already in the configuration. --------- */
+    spawned.Config.writeConfig(spawned.Config.mergeConfig(spawned.Config.readConfig(), {
+      generation: { comfy: { baseUrl: "http://127.0.0.1:49199" } },
+    }));
+    const testedAgain = await asLan("POST", "/api/generation/comfy/test");
+    assert.strictEqual(testedAgain.status, 403, "LAN-C2: the route still refuses");
+    const statusAsLan = await asLan("GET", "/api/generation/comfy/status");
+    assert.strictEqual(statusAsLan.status, 403, "LAN-C2: and so does status, which also probes");
+    assert.deepStrictEqual(intercepted, [], "LAN-C2: still nothing may reach 49199");
+    spawned.Config.writeConfig(spawned.Config.mergeConfig(spawned.Config.readConfig(), {
+      generation: { comfy: { baseUrl: comfy.baseUrl } },
+    }));
+
+    /* --- LAN-C3: dispatch. ----------------------------------------------------- */
+    const dispatched = await asLan("POST", "/api/generation/comfy/jobs", {
+      shotId: "SC-01-01", frameId: "frame-a", frameLabel: "A", relativePath: "smoke.json", prompt: "a lighthouse",
+    });
+    assert.strictEqual(dispatched.status, 403, `LAN-C3: dispatch must be refused — ${JSON.stringify(dispatched.data)}`);
+    assert.strictEqual(comfy.state.prompts.length, 0, "LAN-C3: and no prompt may be queued");
+    assert.strictEqual(spawned.jobs().length, 0, "LAN-C3: and no job row minted");
+
+    /* EVERY route, so a second one cannot be missing the guard. */
+    for (const [method, route] of [
+      ["GET", "/api/generation/comfy/status"],
+      ["POST", "/api/generation/comfy/test"],
+      ["GET", "/api/generation/comfy/workflows"],
+      ["POST", "/api/generation/comfy/workflow"],
+      ["POST", "/api/generation/comfy/workflow/mapping"],
+      ["POST", "/api/generation/comfy/workflow/forget"],
+      ["GET", "/api/generation/comfy/jobs"],
+      ["POST", "/api/generation/comfy/jobs"],
+      ["POST", "/api/generation/comfy/jobs/never/refresh"],
+    ]) {
+      const attempt = await asLan(method, route, method === "POST" ? {} : undefined);
+      assert.strictEqual(attempt.status, 403, `${method} ${route} must refuse a LAN peer, got ${attempt.status}`);
+      assert.strictEqual(attempt.data.code, "LOOPBACK_REQUIRED", `${method} ${route} must refuse by name`);
+    }
+
+    /* --- LAN-C4: an ordinary loopback client is unaffected. --------------------- */
+    const loopbackTest = await asLoopback("POST", "/api/generation/comfy/test");
+    assert.strictEqual(loopbackTest.status, 200, JSON.stringify(loopbackTest.data));
+    assert.strictEqual(loopbackTest.data.connected, true, "LAN-C4: loopback may still test the connection");
+    const loopbackRun = await asLoopback("POST", "/api/generation/comfy/jobs", {
+      shotId: "SC-01-01", frameId: "frame-a", frameLabel: "A", relativePath: "smoke.json", prompt: "a lighthouse",
+    });
+    assert.strictEqual(loopbackRun.status, 200, `LAN-C4: loopback may still dispatch — ${JSON.stringify(loopbackRun.data)}`);
+    assert.strictEqual(comfy.state.prompts.length, 1, "LAN-C4: and the workflow really ran");
+
+    /* --- LAN-C5: unrelated configuration is untouched by the scoped rule. ------- */
+    const appearance = await asLan("PUT", "/api/config", { appearance: { accent: "green" } });
+    assert.strictEqual(appearance.status, 200, `LAN-C5: an unrelated setting must still save from a LAN editor — ${JSON.stringify(appearance.data)}`);
+    assert.strictEqual(spawned.Config.readConfig().appearance.accent, "green", "LAN-C5: and must persist");
+    const falPatch = await asLan("PUT", "/api/config", { generation: { fal: { blockingOutputs: 3 } } });
+    assert.strictEqual(falPatch.status, 200, "LAN-C5: a non-comfy generation setting keeps its existing behaviour");
+    assert.strictEqual(spawned.Config.readConfig().generation.fal.blockingOutputs, 3);
+    assert.strictEqual(spawned.Config.readConfig().generation.comfy.baseUrl, comfy.baseUrl,
+      "LAN-C5: and the comfy block is unchanged throughout");
+
+    assert.deepStrictEqual(intercepted, [], "no request may ever have reached the attacker-selected port");
+    note(`LAN boundary: against the real server bound to 0.0.0.0 and driven from ${lanAddress}, the config write is refused and not persisted, all nine ComfyUI routes refuse by name, dispatch queues nothing, and the decoy on 127.0.0.1:49199 recorded ZERO requests — while loopback still tests, dispatches and runs, and appearance and fal settings still save from the LAN`);
+  } finally {
+    await spawned.close();
+    comfy.close();
+    decoy.close();
+  }
+}
+
+/* A real `node server.js`, on a disposable config and a disposable project tree.
+   Returns a request helper that can be pointed at either the loopback address or a
+   genuine LAN address on this machine, so the peer the server sees is a real socket
+   peer rather than this file's opinion of one. */
+async function startRealServer({ comfyBaseUrl, host }) {
+  const { spawn } = require("child_process");
+  const dir = fs.mkdtempSync(path.join(fs.realpathSync.native(os.tmpdir()), "cb-lan-"));
+  const projectsRoot = path.join(dir, "projects");
+  fs.mkdirSync(path.join(projectsRoot, "film-a", "shots"), { recursive: true });
+  fs.writeFileSync(path.join(projectsRoot, "film-a", "project.json"), JSON.stringify({
+    meta: { title: "LAN boundary fixture" },
+    shots: [{ id: "SC-01-01", title: "SC-01-01", candidateFiles: [], keyframes: [] }],
+    mediaAssets: [],
+  }, null, 2));
+  const workflows = writeWorkflowFolder(path.join(dir, "workflows"), { "smoke.json": apiWorkflow() });
+  const configPath = path.join(dir, "config.json");
+  const registryPath = path.join(dir, "comfy-workflows.json");
+
+  const env = { ...process.env, CINEBRAID_CONFIG_PATH: configPath, CINEBRAID_COMFY_REGISTRY_PATH: registryPath };
+  delete require.cache[path.join(ROOT, "config.js")];
+  const saved = process.env.CINEBRAID_CONFIG_PATH;
+  process.env.CINEBRAID_CONFIG_PATH = configPath;
+  const Config = require(path.join(ROOT, "config.js"));
+  Config.writeConfig(Config.mergeConfig(Config.readConfig(), {
+    workspace: { projectRoot: projectsRoot },
+    generation: { comfy: { enabled: true, baseUrl: comfyBaseUrl, workflowFolder: workflows } },
+  }));
+
+  const port = 4000 + Math.floor(Math.random() * 900);
+  const child = spawn(process.execPath, ["server.js"], {
+    cwd: ROOT,
+    env: { ...env, PORT: String(port), CINEBRAID_HOST: host },
+    stdio: ["ignore", "pipe", "pipe"],
+  });
+  const logs = [];
+  child.stdout.on("data", (chunk) => logs.push(String(chunk)));
+  child.stderr.on("data", (chunk) => logs.push(String(chunk)));
+  const deadline = Date.now() + 30000;
+  for (;;) {
+    if (Date.now() > deadline) throw new Error(`server did not start: ${logs.join("")}`);
+    try {
+      const probe = await fetch(`http://127.0.0.1:${port}/api/me`);
+      if (probe.ok) break;
+    } catch { /* still starting */ }
+    await new Promise((resolve) => setTimeout(resolve, 250));
+  }
+
+  return {
+    dir, port, configPath, registryPath, Config, logs,
+    request: async (method, route, body, address) => {
+      const response = await fetch(`http://${address}:${port}${route}`, {
+        method,
+        headers: body ? { "content-type": "application/json" } : {},
+        body: body ? JSON.stringify(body) : undefined,
+      });
+      return { status: response.status, data: await response.json().catch(() => ({})) };
+    },
+    jobs: () => {
+      const file = path.join(projectsRoot, "film-a", "generation-jobs.json");
+      return fs.existsSync(file) ? JSON.parse(fs.readFileSync(file, "utf8")) : [];
+    },
+    close: async () => {
+      child.kill();
+      await new Promise((resolve) => child.once("exit", resolve));
+      if (saved) process.env.CINEBRAID_CONFIG_PATH = saved; else delete process.env.CINEBRAID_CONFIG_PATH;
+      delete require.cache[path.join(ROOT, "config.js")];
+      try { fs.rmSync(dir, { recursive: true, force: true }); } catch {}
+    },
+  };
+}
+
 function localOnlyConfigurationRoutes() {
   const source = fs.readFileSync(path.join(ROOT, "comfy-generation.js"), "utf8").replace(/\r\n/g, "\n");
   assert(/const \{ isLoopbackRequest \} = require\("\.\/loopback-request"\);/.test(source),
@@ -1078,36 +1412,45 @@ function localOnlyConfigurationRoutes() {
   assert(/function requireLocalMachine\(req, res\) \{\s*\n\s*if \(isLoopbackRequest\(req\)\) return true;/.test(source),
     "and it must permit on the predicate rather than deny on a guess");
 
-  const routeBody = (route) => {
-    const at = source.indexOf(route);
-    assert(at >= 0, `route ${route} must exist`);
-    return source.slice(at, at + 260);
-  };
-  for (const route of [
-    'app.get("/api/generation/comfy/workflows"',
-    'app.post("/api/generation/comfy/workflow"',
-    'app.post("/api/generation/comfy/workflow/mapping"',
-    'app.post("/api/generation/comfy/workflow/forget"',
-  ])
-    assert(/if \(!requireLocalMachine\(req, res\)\) return;/.test(routeBody(route)),
-      `${route} reads this machine's filesystem and must answer only this machine`);
+  /* EVERY ComfyUI ROUTE, DISCOVERED FROM THE SOURCE RATHER THAN TYPED.
+   *
+   * An earlier version of this section listed four gated routes and asserted the other
+   * three were deliberately NOT gated. That was the defect, written down as an
+   * invariant: it made a missing guard look like a decision. The list is now derived, so
+   * a route added later is covered the day it lands rather than the day someone
+   * remembers this file — and the count is asserted, so a route that stops matching the
+   * pattern cannot silently drop out of the census. */
+  const declarations = [...source.matchAll(/app\.(get|post)\("(\/api\/generation\/comfy[^"]*)"/g)];
+  assert(declarations.length >= 9,
+    `the ComfyUI route census found only ${declarations.length}: ${JSON.stringify(declarations.map((m) => m[2]))}`);
+  /* The guard has to be the FIRST statement of the handler, so it runs before any body
+     is read, any config is consulted and any request is made. Checking the whole handler
+     body would pass on a guard placed after the work it is supposed to prevent. */
+  for (const match of declarations) {
+    const head = source.slice(match.index, match.index + match[0].length + 140);
+    const [, first] = head.split("=> {");
+    assert(/^\s*\n?\s*if \(!requireLocalMachine\(req, res\)\) return;/.test(first || ""),
+      `${match[1].toUpperCase()} ${match[2]} must refuse a non-loopback peer as its FIRST act — a LAN caller must not be able to steer a host-local request. Saw: ${JSON.stringify((first || "").slice(0, 90))}`);
+  }
 
-  /* AND THE PRODUCTION ROUTES ARE NOT GATED. Asserted so the gate cannot quietly spread
-     to the routes a filmmaker on a LAN tablet is entitled to use. */
-  for (const route of [
-    'app.get("/api/generation/comfy/jobs"',
-    'app.post("/api/generation/comfy/jobs"',
-    'app.post("/api/generation/comfy/jobs/:id/refresh"',
-  ])
-    assert(!/requireLocalMachine/.test(routeBody(route)),
-      `${route} acts on production, not on this machine's filesystem, and must not be loopback-gated`);
-  note("local-only configuration: the four routes that read the host's filesystem go through the shipped peer-address gate; the three that act on production do not");
+  /* AND THE MATCHING CONFIGURATION RULE, which is the half a route guard cannot cover:
+     without it a LAN browser could still set the address through /api/config and leave
+     it waiting for the next local action. Asserted to be NARROW — scoped to the comfy
+     block, not to /api/config as a whole. */
+  const server = fs.readFileSync(path.join(ROOT, "server.js"), "utf8").replace(/\r\n/g, "\n");
+  assert(/if \(!isLoopbackRequest\(req\) && Object\.prototype\.hasOwnProperty\.call\(body\.generation \|\| \{\}, "comfy"\)\) \{/.test(server),
+    "a non-loopback caller must not be able to write generation.comfy through the general config endpoint");
+  const putConfig = server.slice(server.indexOf('app.put("/api/config"'), server.indexOf('app.get("/api/workspace/status"'));
+  assert(!/^\s*if \(!isLoopbackRequest\(req\)\) return res/m.test(putConfig),
+    "and the rule must stay scoped to the comfy block rather than making /api/config loopback-only");
+  note(`local-only routes: all ${declarations.length} ComfyUI routes, discovered from the source rather than listed, go through the shipped peer-address gate, and generation.comfy is the only config block a LAN caller is refused`);
 }
 
 /* =========================================================================== */
 async function main() {
   browserLedgerOwnership();
   localOnlyConfigurationRoutes();
+  await lanCallerCannotSteerHostRequests();
   formatTruth();
   suggestionIsNotConfirmation();
   changeDetection();
@@ -1120,6 +1463,7 @@ async function main() {
   await refusals();
   await changedUnderDispatch();
   await unsuppliedSeedIsAbsent();
+  await mappingCertifiesNodeClass();
   console.log("ComfyUI foothold V1 suite passed:");
   for (const line of notes) console.log(`  - ${line}`);
 }
@@ -1134,4 +1478,4 @@ if (require.main === module)
     process.exitCode = 1;
   });
 
-module.exports = { apiWorkflow, UI_WORKFLOW, PNG_BYTES, call, codeOf, makeHarness, startFakeComfy, writeWorkflowFolder };
+module.exports = { apiWorkflow, UI_WORKFLOW, PNG_BYTES, call, codeOf, makeHarness, startFakeComfy, startRealServer, writeWorkflowFolder };

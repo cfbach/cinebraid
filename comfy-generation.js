@@ -357,6 +357,7 @@ function registerComfyGeneration(app, context) {
   }
 
   app.get("/api/generation/comfy/status", async (req, res) => {
+    if (!requireLocalMachine(req, res)) return;
     try {
       res.json(await connectionStatus());
     } catch (error) {
@@ -368,6 +369,7 @@ function registerComfyGeneration(app, context) {
   /* A real round trip, deliberately, rather than a config check. "Test connection" that
      only re-reads the settings the user just typed answers a question nobody asked. */
   app.post("/api/generation/comfy/test", async (req, res) => {
+    if (!requireLocalMachine(req, res)) return;
     try {
       const cfg = comfyConfig(readConfig);
       /* The address under test is whatever Settings holds; an unsaved field is not a
@@ -380,25 +382,32 @@ function registerComfyGeneration(app, context) {
     }
   });
 
-  /* ---- the workflow folder ------------------------------------------------
+  /* ---- THE PEER-ADDRESS BOUNDARY, ON EVERY ComfyUI ROUTE ---------------------
    *
-   * THESE FOUR ROUTES READ THE SERVER'S OWN FILESYSTEM, so they answer only this
-   * machine. Every /api route is already editor-gated, and an editor can already set a
-   * workspace root — but "may configure this production" and "may read directories on
-   * the machine hosting it" are different powers, and this integration has no reason to
-   * grant the second to a browser on the network. The ComfyUI it drives is loopback-only
-   * and the folder it reads is local, so a request from another device is configuring
-   * something it cannot see.
+   * EVERY route in this module answers only this machine. An earlier version gated just
+   * the four that read the filesystem and left status, test, dispatch and collection
+   * open on the reasoning that those "act on production, which an editor on the network
+   * is entitled to do". That reasoning was wrong, and the review that found it showed
+   * exactly why: a LAN browser could write `generation.comfy.baseUrl` through
+   * /api/config, call /test, and make THIS HOST issue requests to any loopback port it
+   * chose — reaching a private service on the operator's machine that the browser cannot
+   * reach itself. Intercepted requests to 127.0.0.1:49199 proved it.
    *
-   * The same rule local-file-affordance.js applies, applied for the same reason: the
-   * shipped predicate reads the socket's peer address and deliberately ignores Host,
-   * X-Forwarded-For and every other header a caller controls.
+   * THE DESTINATION BEING LOOPBACK IS NOT THE PROPERTY THAT MATTERS. comfy-client.js
+   * checks where CineBraid may connect; that stops the server dialling the internet, and
+   * it does nothing about who chose the address. A remote caller steering a host-local
+   * request is using CineBraid as a proxy whether or not the target is 127.0.0.1, so the
+   * guard has to sit at the INBOUND boundary as well as the outbound one.
    *
-   * Dispatch, collection and status are NOT gated here — those act on production, which
-   * an editor on the network is entitled to do. IMPLEMENTATION_NOTES records that a
-   * remote browser therefore sees no workflow list and no GENERATE LOCALLY control,
-   * which is the honest consequence: local ComfyUI is set up from the machine it runs
-   * on. */
+   * The predicate is the shipped one local-file-affordance.js uses: it reads the
+   * socket's peer address and deliberately ignores Host, X-Forwarded-For and every other
+   * header a caller controls.
+   *
+   * The honest consequence, unchanged from before and now wider: a remote browser sees
+   * no workflow list, no connection status and no GENERATE LOCALLY control, and cannot
+   * dispatch or collect. Local ComfyUI is configured and driven from the machine it runs
+   * on. Nothing else about CineBraid's LAN behaviour is altered — see server.js's
+   * PUT /api/config for the matching, equally narrow, configuration rule. */
   function requireLocalMachine(req, res) {
     if (isLoopbackRequest(req)) return true;
     res.status(403).json({
@@ -458,6 +467,7 @@ function registerComfyGeneration(app, context) {
 
   /* ---- the ledger --------------------------------------------------------- */
   app.get("/api/generation/comfy/jobs", (req, res) => {
+    if (!requireLocalMachine(req, res)) return;
     try {
       const owner = captureOwner();
       res.json({ jobs: comfyJobs(owner), costLabel: COMFY_COST_LABEL });
@@ -782,6 +792,7 @@ function registerComfyGeneration(app, context) {
   }
 
   app.post("/api/generation/comfy/jobs", async (req, res) => {
+    if (!requireLocalMachine(req, res)) return;
     let owner;
     try {
       owner = captureOwner();
@@ -799,6 +810,7 @@ function registerComfyGeneration(app, context) {
   });
 
   app.post("/api/generation/comfy/jobs/:id/refresh", async (req, res) => {
+    if (!requireLocalMachine(req, res)) return;
     let owner;
     try {
       owner = captureOwner();
