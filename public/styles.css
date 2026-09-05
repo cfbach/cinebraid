@@ -6415,3 +6415,372 @@ body[data-focused-route="production"] .topbar-add:hover{
    readable ink, and only on this surface. */
 #app[data-surf="light"] .production-home-actions .add-btn,
 body[data-focused-route="production"] #app[data-surf="light"] .topbar-add{color:var(--ink)!important}
+
+
+
+
+
+
+
+
+
+
+
+/* ===========================================================================
+   SURFACE POLISH V1 — UNITS 7-10
+
+   The four remaining surfaces, on the direction accepted at Checkpoint A.1:
+   work hierarchy over container hierarchy, media weighted to the decision it
+   supports, one obvious current decision, passive context receding, cyan
+   concentrated on actionable work, sentence case for ordinary section labels,
+   and borders reserved for actual work and state.
+
+   FIVE TOOLS, NOT FIVE COPIES OF THE PRODUCTION CARD. Production coordinates,
+   Shot creates, Review judges, References browses and Reference detail
+   establishes identity — so none of these gets Production's two-column work
+   card. What they share is the type scale, the action vocabulary and the rule
+   about which containers earn a border.
+
+   Composition only. No projection, count, handler, route, write, approval gate
+   or truth rule is touched by anything below.
+   =========================================================================== */
+
+/* ===========================================================================
+   UNIT 7 — SHOT WORKSPACE: actively making this shot
+   Current: stage strip, breadcrumbs, a small shot name, four central metric
+   tiles, four MORE metric tiles in the inspector saying the same things, an
+   intent block with an inset panel inside it, and only then the returned
+   frame — which at 1280x800 started below the terminal.
+   =========================================================================== */
+
+/* IDENTITY. The shot is the thing this page is about and was set smaller than
+   the References page sets a filter pill. The input, the breadcrumbs, the
+   previous/next controls and the Shot actions button all stay exactly where
+   they are and keep their handlers. */
+.shot-title-display,.shot-title-input{font-size:29px;line-height:1.15}
+.guided-shot-head .shot-head-main small,.shot-head-main small{font-size:11.5px}
+
+/* CENTRAL STATUS BECOMES A LINE OF METADATA, not four cards. Every one of the
+   four values, its label and its supporting phrase is unchanged; they stop
+   being four boxes with their own fills and shadows and become one row of
+   facts, which is what they are. The inspector states four related facts a
+   few hundred pixels to the right, and two competing walls of tiles was the
+   duplication the brief named. */
+.shot-command-summary{
+  display:flex;flex-wrap:wrap;align-items:baseline;gap:4px 0;width:max-content;max-width:100%;
+  margin:10px 0 14px;padding:9px 0;
+  border-top:1px solid var(--line-soft);border-bottom:1px solid var(--line-soft)}
+.shot-command-summary article{
+  display:inline-flex;align-items:baseline;gap:6px;min-width:0;
+  padding:0;border:0;border-radius:0;background:none;box-shadow:none}
+.shot-command-summary article+article::before{content:"·";margin:0 12px;color:var(--faint)}
+.shot-command-summary span{font-size:10.5px;letter-spacing:.02em}
+.shot-command-summary b{font:700 15px var(--display);line-height:1.3}
+.shot-command-summary small{font-size:11.5px}
+
+/* THE INSPECTOR STATES FACTS; IT DOES NOT NEED A CARD PER FACT. Same four
+   values, same labels, same order, same sticky column and same smaller-width
+   behaviour — the boxes come off and a hairline separates the pairs. */
+.focused-inspector{padding:14px}
+.focused-inspector-facts{gap:0 14px}
+.focused-inspector-facts article{
+  padding:9px 0;border:0;border-bottom:1px solid var(--line-soft);border-radius:0;background:none}
+.focused-inspector-facts article:nth-last-child(-n+2){border-bottom:0}
+.focused-inspector-facts span{font-size:10px;letter-spacing:.04em}
+.focused-inspector-facts b{margin-top:3px;font-size:13.5px}
+
+/* THE CENTRE GETS THE WIDTH BACK. 230-290 for a column of read-only facts
+   against a shot's actual media was the wrong trade at 1280. The inspector
+   keeps every control it had and its own smaller-width rules below 1180 are
+   untouched. */
+/* The inspector track is set by `:has(> .focused-inspector)` further up, which
+   outranks a bare class selector, and the FIRST track is deliberately `auto` so a
+   collapsed navigator costs 34px and an open one 270px. Both are preserved; only
+   the inspector's own 230-290 becomes 220-240. */
+@media(min-width:1181px){
+  .focused-workspace-shell:has(> .focused-inspector){
+    grid-template-columns:auto minmax(0,1fr) minmax(220px,240px)}
+}
+
+/* SHOT INTENT KEEPS ITS DEFAULTS AND ITS UNRESOLVED STATE, and loses the panel
+   inside the panel. Nothing is collapsed, nothing is preselected and the
+   amber unrecognised-reading treatment is untouched: this is the same control
+   with its explanation set as prose instead of as a boxed system message. */
+.shot-intent-control{background:transparent;border-color:var(--line-soft)}
+.shot-intent-control[open]{background:var(--panel);border-color:var(--line)}
+.shot-intent-control>summary b{font-size:10px;letter-spacing:.03em}
+.shot-intent-control>summary span{font-size:12.5px}
+.shot-intent-control .shot-intent-undeclared{
+  margin:0 12px;padding:0 0 2px;border:0;border-radius:0;background:none;
+  grid-template-columns:1fr;font-size:12.5px;line-height:1.55}
+.shot-intent-control .shot-intent-undeclared>span:first-child{display:none}
+.shot-intent-fields{gap:8px 16px;padding:8px 12px 11px}
+.shot-intent-fields label{font-size:10px;letter-spacing:.03em}
+/* The two sentences about what declaring an intent does are a pair, so at a
+   width that fits them they sit as a pair instead of as four stacked lines.
+   Both are still shown in full and neither is collapsed. */
+@media(min-width:900px){
+  .shot-intent-fields .hint{flex:1 1 300px;min-width:280px}
+}
+
+/* HEADER CHROME, REDUCED. The head keeps its sticky behaviour, its breadcrumbs,
+   its previous/next controls and the Shot actions button exactly where they
+   are; it stops being a bordered card floating over the work below it. */
+.shot-workspace-head{
+  margin:0 0 10px;padding:6px 0 8px;border:0;border-radius:0;box-shadow:none;
+  background:color-mix(in srgb,var(--bg) 92%,transparent)}
+.shot-workspace-head+*{margin-top:0}
+
+/* THE RETURNED FRAME IS THE WORK. Its large-desktop scale is retained exactly;
+   what changed is everything that used to sit above it. At 1280 the card keeps
+   a readable explanation column beside a complete image rather than dropping
+   the image to a thumbnail. */
+.returned-review-card .guided-lifecycle-preview{min-width:0}
+/* A LOCAL TOKEN OVERRIDE, so the pair stays proportional. The selection tier is
+   438x246 and the shot writes it inline, so at 1280 the well narrowed to ~333px
+   but kept the full 246px height: a 16:9 candidate sat letterboxed inside 59px
+   of empty well, and the card was 59px taller than the picture it held. The
+   height now follows the ratio the shot itself declares, capped by the tier it
+   already had. The ratio, the containment and the large-desktop 438x246 are
+   exactly what they were. */
+@media(max-width:1300px){
+  .returned-review-card .guided-lifecycle-preview{
+    height:auto;aspect-ratio:var(--cb-well-aspect,var(--cb-production-aspect,16/9));
+    max-height:var(--cb-selection-h,246px)}
+  /* The picture is sized with the well rather than to the old fixed height: at
+     100% of an auto-height box it kept the tier's 246px and overflowed a 187px
+     well, which `overflow:hidden` would have turned into a silent crop of the
+     exact frame being judged. */
+  .returned-review-card .guided-lifecycle-preview img,
+  .returned-review-card .guided-lifecycle-preview video{
+    width:100%;height:auto;max-height:100%;object-fit:contain}
+}
+/* The stage strip, its stage action and the workspace below it were separated
+   by three full gaps before any of the shot appeared. */
+.focused-taskbar{margin:0 0 8px}
+.bounded-shot-taskbar+*,.focused-taskbar+*{margin-top:0}
+
+/* THE FRAME EDITOR GIVES ITS ROOM TO THE CANDIDATE, not to the empty well
+   beside it. An approved-frame well with nothing in it is a placeholder and is
+   drawn as one; the moment it holds an approval it is a normal well again.
+   Optional assisted creation and the continuity tools keep their position
+   below the candidate work. */
+.guided-frame-body .guided-frame-approved-preview:not(:has(img)):not(:has(video)){
+  background:transparent;border-style:dashed;border-color:var(--line-soft);box-shadow:none}
+.guided-assisted-tools,.reference-assisted-tools{box-shadow:none}
+
+/* ===========================================================================
+   UNIT 8 — RETURNED-RESULT REVIEW: result, assessment, then the decision
+   The image already wins here and keeps every pixel of that advantage. The
+   weakness was fine print and a footer that had floated away from the content
+   it belongs to.
+   =========================================================================== */
+
+/* THE FOOTER STOPPED TAKING THE FLEXIBLE TRACK.
+   `.candidate-review-modal` is five auto/1fr rows assigned BY POSITION, and
+   `.candidate-review-complete` — the approval notice — is optional. Without
+   it the children shift up one: the layout landed in an `auto` row and the
+   decision footer landed in `minmax(0,1fr)`, so the footer absorbed all the
+   spare height and stood ~120px tall at 1280 and ~197px at 1920, with a band
+   of empty panel between the assessment and the buttons.
+   A column flex box assigns the flexible space BY IDENTITY instead. Every
+   optional section keeps its place in the semantic order and sizes to its own
+   content, and the footer is as tall as its controls — growing only when they
+   genuinely wrap. */
+.candidate-review-modal{display:flex;flex-direction:column}
+.candidate-review-modal>*{flex:0 0 auto}
+.candidate-review-modal>.candidate-review-layout{flex:1 1 auto;min-height:0}
+
+/* Media keeps 55-60% of the review width, its neutral well, its containment
+   and every view mode. */
+@media(min-width:981px){
+  .candidate-review-layout{grid-template-columns:minmax(0,1.18fr) minmax(340px,.82fr)}
+}
+
+/* ONE ASSESSMENT AREA. Assistant Read, the rubric, the reference diagnosis and
+   the director summary were five equally boxed panels stacked down the column.
+   They become one flat column separated by rules; severity borders, field
+   boxes and the approval/correction notices keep their own edges. */
+.candidate-review-form>.candidate-review-rubric,
+.candidate-review-form>.candidate-review-evidence,
+.candidate-review-form>.candidate-reference-review-section,
+.candidate-review-form>.candidate-structured-ai,
+.candidate-review-form>.candidate-review-summary{
+  border:0;border-top:1px solid var(--line-soft);border-radius:0;background:transparent}
+.candidate-review-form>.candidate-review-rubric[open],
+.candidate-review-form>.candidate-review-evidence[open],
+.candidate-review-form>.candidate-reference-review-section[open],
+.candidate-review-form>.candidate-structured-ai[open],
+.candidate-review-form>.candidate-review-summary[open]{background:var(--panel-2);border-radius:9px}
+.candidate-review-form>*:first-child{border-top:0}
+.candidate-review-form{gap:0}
+.candidate-review-form>.candidate-review-readiness{margin-bottom:8px}
+
+/* READABLE, NOT LOUDER. 8px help and 10px category names were the real defect;
+   the answer is legible type, not a bigger AI score. The advisory read keeps
+   its existing size relative to the human controls below it. */
+.candidate-review-form>*>summary{padding:11px 11px}
+.candidate-review-rubric>summary>div span{font-size:9.5px;letter-spacing:.04em}
+.candidate-review-rubric>summary>div b{font-size:13px;margin-top:3px}
+.candidate-rubric-row b,.candidate-reference-review b{font-size:12.5px}
+.candidate-rubric-row small,.candidate-reference-review small{font-size:11px;line-height:1.5;margin-top:3px}
+.candidate-rubric-row,.candidate-reference-review{border-top-color:var(--line-soft)}
+.candidate-rubric-row>summary,.candidate-reference-review>summary{padding:10px 11px}
+.candidate-rubric-editor label span,.candidate-reference-editor label span{font-size:9.5px}
+.candidate-structured-ai-body>p{font-size:11.5px;line-height:1.5}
+.candidate-structured-ai-body>div b{font-size:10px}
+.candidate-structured-ai-body>div span{font-size:11.5px;line-height:1.5}
+.candidate-review-summary>summary span{font-size:10px}
+.candidate-review-summary textarea{font-size:12px}
+.candidate-review-readiness span{font-size:9.5px;letter-spacing:.06em}
+.candidate-review-readiness b{font-size:13px;margin-top:3px}
+.candidate-review-readiness small{font-size:11px;line-height:1.5;margin-top:2px}
+
+/* THE HUMAN DECISION IS A NAMED GROUP. The three controls, their handlers,
+   their order and the approval gate are exactly what they were; the label
+   says whose call this is, and the approve label stops being 9px. */
+.candidate-review-decisions{gap:8px}
+.candidate-review-decisions-label{
+  margin-right:2px;font:600 11.5px var(--body);color:var(--muted);white-space:nowrap}
+.candidate-review-decisions .chip,
+.candidate-review-decisions .approve-btn{font-size:12px;min-height:38px;padding:0 14px}
+.candidate-review-tools>button,.candidate-review-more>summary{font-size:11.5px}
+.candidate-review-actions{padding:12px 15px}
+
+/* ===========================================================================
+   UNIT 9 — REFERENCES: the visual collection is the content
+   =========================================================================== */
+
+/* THE SHELF. auto-fill from a 300px minimum with a flexible maximum, bounded at
+   360 on the card itself. A definite 360px maximum in the track would make the
+   repetition count divide by 360 rather than 300, which cost the third column at
+   1280; the bound belongs on the card, where it stops one character stretching
+   across a 1920 screen without costing anyone a column. Paging and bounded
+   rendering are untouched. */
+@media(min-width:861px){
+  .library-grid{grid-template-columns:repeat(auto-fill,minmax(300px,1fr));gap:18px;justify-content:start}
+}
+.library-card-shell{max-width:360px}
+@media(min-width:861px) and (max-width:1180px){
+  .library-grid{grid-template-columns:repeat(auto-fill,minmax(260px,1fr))}
+}
+
+/* THE IMAGE FORMS THE CARD. A rounded outer shell around a dark inset around
+   the picture is two frames for one reference; the picture keeps its own
+   corners and the card stops drawing a second edge around it. Hover, focus and
+   the selected state are kept — they are the states worth a border. */
+.library-card{border-color:transparent;background:transparent;border-radius:14px}
+.library-card:hover{border-color:var(--line-2);background:var(--panel);transform:translateY(-2px)}
+.library-card:focus-visible{outline:2px solid var(--acc);outline-offset:2px}
+.library-preview{border-radius:12px}
+
+/* CAPTION: the name, then what kind of thing it is, then where it stands.
+   `order` rather than a renderer change — the markup, and every count in it,
+   is exactly what it was. */
+.library-body{gap:3px;padding:11px 4px 4px;align-items:stretch}
+.library-body>b{order:1;font:700 16px var(--display);line-height:1.25}
+.library-body>.review-kind{order:2;font-size:11px;color:var(--muted);text-transform:none;letter-spacing:0}
+.library-body>small{order:3;margin-top:2px;font-family:var(--body);font-size:11.5px;line-height:1.45;color:var(--muted)}
+.library-body>.workflow-chip{order:4}
+
+/* INSPECT GETS ITS OWN CORNER OF THE MEDIA, so it cannot land on top of the
+   historic/supporting counts the way it did in the card body. */
+.library-card-shell .library-enlarge{right:9px;bottom:auto;top:9px;font-size:9.5px;padding:4px 8px}
+
+/* THE FILTER BAND STOPS COMPETING WITH THE SHELF. Inactive pills lose their
+   fill, the selected one keeps its accent, and every filter, count and route
+   is unchanged. */
+body[data-focused-route="library"] .view-sub{
+  font-family:var(--body);font-size:12.5px;line-height:1.55;max-width:78ch}
+body[data-focused-route="library"] .view-head{margin-bottom:16px}
+body[data-focused-route="library"] .workspace-tabs{gap:6px;padding-bottom:16px;border-bottom:0}
+body[data-focused-route="library"] .workspace-tab{background:transparent;border-color:var(--line-soft);padding:8px 13px}
+body[data-focused-route="library"] .workspace-tab:hover{border-color:var(--line-2)}
+body[data-focused-route="library"] .workspace-tab.on{
+  background:var(--acc-soft);border-color:color-mix(in srgb,var(--acc) 42%,var(--line))}
+
+/* A SPARSE COLLECTION LOOKS DELIBERATELY SPARSE. The empty state spans the
+   content rather than standing up as one tall narrow card in the first grid
+   track, and keeps its own wording and its own action. */
+.library-grid>.empty-state{
+  grid-column:1/-1;display:grid;justify-items:start;gap:9px;
+  max-width:none;margin:0;padding:22px 24px;text-align:left;
+  border:1px dashed var(--line-soft);border-radius:var(--r-panel);background:transparent}
+.library-grid>.empty-state .empty-mark{margin:0 0 4px;width:40px;height:40px;font-size:18px}
+.library-grid>.empty-state h2{margin:0;font-size:19px}
+.library-grid>.empty-state p{margin:0;max-width:64ch}
+
+/* ===========================================================================
+   UNIT 10 — REFERENCE DETAIL: identity, standing, and the next decision
+   =========================================================================== */
+
+/* ONE IMAGE HAS AUTHORITY. 180px for the image a filmmaker is deciding about,
+   beside 290px of read-only inspector, was the wrong balance. The hero uses
+   the reference's own shape rather than forcing every primary preview into an
+   emphatic square, and keeps containment and its bounded height. */
+/* Scoped above the width where the sheet already stacks this hero: an
+   unmediated rule here outranks that stacking and runs the copy column off a
+   phone viewport. Every existing non-desktop rule is left in charge. */
+@media(min-width:821px){
+  .reference-primary-hero{grid-template-columns:minmax(240px,280px) minmax(0,1fr);gap:20px;padding:18px}
+}
+@media(min-width:1600px){.reference-primary-hero{grid-template-columns:minmax(300px,360px) minmax(0,1fr)}}
+.reference-primary-preview{aspect-ratio:var(--cb-intrinsic-aspect,4/3);max-height:420px;border-radius:12px}
+.reference-primary-preview span{font-size:9.5px;letter-spacing:.06em}
+
+/* THE CENTRE GETS THE WIDTH. ~180 navigator and ~220 inspector leaves the
+   central column the 570-600px the work actually needs at 1280. Both rails
+   keep every control and their existing behaviour below 1180. */
+@media(min-width:1181px){
+  .focused-entity-shell{grid-template-columns:minmax(160px,180px) minmax(0,1fr) minmax(200px,220px)}
+}
+
+/* THE CANON SUMMARY STAYS EXACTLY AS TRUE AND GETS QUIETER. Every state, every
+   file name, every HISTORIC / not-approved label and both prop states keep
+   their own line and their own standing — this is a compact summary of the
+   same facts, with supporting thumbnails sized as supporting thumbnails,
+   because the large image is now the hero above it. */
+.entity-authority-summary{
+  background:transparent;border-color:var(--line-soft);padding:9px 11px;margin:8px 0 12px}
+.entity-authority-summary>header{margin-bottom:6px}
+.entity-authority-summary>div{gap:8px}
+.entity-authority-summary small,.entity-authority-summary span{line-height:1.4}
+
+/* The three stage tabs stay recognisable and keep their own labels and states;
+   their repeated sublabels stop being three paragraphs of standing instruction
+   between the entity's name and its image. Nothing is clamped that the sheet
+   was not already truncating. */
+.focused-entity-shell .clarity-taskbar .focused-task-button{padding:8px 10px!important}
+.focused-entity-shell .clarity-taskbar .focused-task-button small{font-size:10.5px;line-height:1.35}
+.entity-authority-thumb-button{width:calc(var(--img-angle-w) - 18px)}
+.entity-authority-thumb-button .entity-authority-thumb{width:calc(var(--img-angle-w) - 18px)}
+
+/* Flattened supporting chrome: an empty candidate message, an in-use note and
+   a facts panel are statements, not workspaces. */
+.entity-demand-summary,.entity-candidate-empty,.reference-manual-hub{box-shadow:none}
+.focused-entity-shell .focused-inspector{padding:14px}
+
+/* CONTINUITY STATES READ AS STATE, IMAGE, STANDING, DECISION. Closed and
+   Opened keep separate rows and separate standing; nothing collapses two
+   states into one approved badge. A long explanation stacks under its image
+   rather than being squeezed into a filename-wide column. */
+.continuity-states{background:transparent}
+.continuity-states[open]{background:var(--panel)}
+.state-approved-preview{border-radius:10px}
+@media(max-width:1400px){
+  .continuity-state-card .two-col{grid-template-columns:minmax(0,1fr)}
+}
+
+/* ADD DOES NOT OUTSHINE A POPULATED COLLECTION. The same narrow, route-scoped
+   exception Production uses, and only while the shelf actually holds
+   references: an empty library — or an empty Canon tab — keeps Add reference as
+   its primary action, which is the one thing a filmmaker can do there. */
+body[data-focused-route="library"]:has(.library-grid .library-card) .add-btn,
+body[data-focused-route="library"]:has(.library-grid .library-card) .topbar-add{
+  background:var(--panel-2)!important;border-color:var(--line-2)!important;color:var(--ink)!important}
+body[data-focused-route="library"]:has(.library-grid .library-card) .add-btn:hover,
+body[data-focused-route="library"]:has(.library-grid .library-card) .topbar-add:hover{
+  border-color:var(--acc)!important;background:var(--panel)!important}
+body[data-focused-route="library"]:has(.library-grid .library-card) #app[data-surf="light"] .add-btn,
+body[data-focused-route="library"]:has(.library-grid .library-card) #app[data-surf="light"] .topbar-add{
+  color:var(--ink)!important}
