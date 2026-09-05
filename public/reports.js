@@ -84,7 +84,26 @@ function reportsRecordedCostMarkup(cost) {
     unrecorded ? `${unrecorded} predate${unrecorded === 1 ? "s" : ""} cost recording` : "",
     unpriced ? `${unpriced} had no rate configured at the time` : "",
   ].filter(Boolean).join(" · ");
-  return `<article><span>Recorded cost estimate</span><b>${priced ? `$${Number(cost.amount || 0).toFixed(2)}` : "Not recorded"}</b><small>${esc(`${priced} of ${jobs} generation job${jobs === 1 ? "" : "s"} recorded an estimate at submission${gaps ? ` · ${gaps}` : ""}. Estimated when submitted, not provider billing; changing the Settings rate does not change it.`)}</small></article>`;
+  /* ONE FIGURE PER CURRENCY, NEVER ONE FIGURE ACROSS THEM.
+   *
+   * summarizeRecordedCost keeps the USD total and any other currency apart on purpose —
+   * CineBraid holds no exchange rate and a converted total would be invented. So this
+   * prints what is actually known: the dollars, then each other currency beside them.
+   *
+   * The dollar figure is printed when there is a dollar amount, and also when there is
+   * no other currency at all, which is what keeps a USD-only project's line byte-for-byte
+   * what it has always been — including a genuine $0.00 for a history of free renders. */
+  const others = Array.isArray(cost.otherUnits) ? cost.otherUnits : [];
+  const parts = [];
+  if (Number(cost.amount || 0) > 0 || !others.length) parts.push(`$${Number(cost.amount || 0).toFixed(2)}`);
+  for (const row of others) {
+    const value = Number(row?.amount || 0);
+    parts.push(`${Number.isInteger(value) ? value : value.toFixed(2)} ${String(row?.unit || "").toUpperCase()}`);
+  }
+  const split = others.length
+    ? " Amounts in different currencies are listed separately and are never added together."
+    : "";
+  return `<article><span>Recorded cost estimate</span><b>${priced ? esc(parts.join(" · ")) : "Not recorded"}</b><small>${esc(`${priced} of ${jobs} generation job${jobs === 1 ? "" : "s"} recorded an estimate at submission${gaps ? ` · ${gaps}` : ""}. Estimated when submitted, not provider billing; changing the Settings rate does not change it.${split}`)}</small></article>`;
 }
 function reportsOptimizationMarkup(summary) {
   if (!summary) return "";

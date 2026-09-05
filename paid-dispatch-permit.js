@@ -174,15 +174,44 @@ function writePaidPermitsSync(projectDir, permits) {
  *                               see would refuse honest requests.
  *   outputCount                 the paid quantity. One image and four images are not the
  *                               same purchase.
+ *   requestFingerprint          WHICH PROVIDER REQUEST, for a provider that prices one.
+ *                               Empty for every backend that does not, which is every
+ *                               backend that existed before Civitai — see below.
  *
  * DELIBERATELY ABSENT: model and capability. modelIdentityRefusal() and the control plan
  * already refuse a mismatch there, and a second owner of the same question is how two
  * owners come to disagree.
  *
+ * WHY requestFingerprint EXISTS, AND WHY IT IS EMPTY ON THE FAL PATH.
+ *
+ * The eight fields above describe the PURCHASE — which production object, which package,
+ * how many results. On the fal path that is the whole of the paid identity: the amount
+ * comes from a rate an operator configured, the model is resolved server-side inside the
+ * boundary, and there is no provider-supplied number for a caller to attach itself to.
+ * Nothing provider-side can change between authorization and dispatch, so there is
+ * nothing provider-side to bind, and this field stays "".
+ *
+ * A provider that QUOTES breaks that. Civitai prices one exact request body and returns a
+ * Buzz figure for it; the same purchase identity — same shot, same frame, same build, same
+ * count — covers a cheap request and an expensive one. A permit that bound only the eight
+ * fields would let a quote obtained for request A authorize the submission of request B,
+ * which is the "membership as a claim the request makes about itself" failure this module
+ * was written to end, reappearing one layer out. So the adapter hashes the canonical bytes
+ * it estimated and hands the digest in here, and the boundary recomputes it from the body
+ * it is about to send.
+ *
+ * IT LIVES HERE RATHER THAN IN THE ADAPTER for the same reason spentness lives in the
+ * ledger: the alternative is a second, adapter-owned store keyed by permit id, written
+ * next to this one and not with it. Two files, two writes, no transaction — the exact
+ * shape the coverage-durability correction already removed from this repository.
+ *
  * Deterministic by construction: a fixed key order written out here rather than
  * Object.keys() on a caller-built object, so a caller cannot change the hash by changing
- * insertion order, and every value is normalised to a string except the count. */
-const SCOPE_FIELDS = ["purpose", "surface", "viewMode", "shotId", "frameId", "entityList", "entityId", "buildId"];
+ * insertion order, and every value is normalised to a string except the count. A caller
+ * that omits requestFingerprint gets "" and therefore the behaviour it had before the
+ * field existed — the value is normalised by the same String(row[key] ?? "") rule as
+ * every other member, so no existing issuance path had to learn about it. */
+const SCOPE_FIELDS = ["purpose", "surface", "viewMode", "shotId", "frameId", "entityList", "entityId", "buildId", "requestFingerprint"];
 function paidScopeFingerprint(scope) {
   const row = scope && typeof scope === "object" ? scope : {};
   const canonical = {};

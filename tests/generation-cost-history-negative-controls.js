@@ -145,8 +145,11 @@ async function main() {
   /* -------------------------------------------------------------------------
      NC-A — Reports ignores the stored estimate and recomputes from Settings.
      The original defect, verbatim: job count times today's per-image rate. */
+  /* The anchor follows the renderer. It moved when the price line learned to print one
+     figure per currency; the DEFECT it reintroduces is unchanged — a headline computed
+     from the current Settings rate instead of read from what the jobs recorded. */
   const NC_A_EDITS = [[
-    '<b>${priced ? `$${Number(cost.amount || 0).toFixed(2)}` : "Not recorded"}</b>',
+    '<b>${priced ? esc(parts.join(" · ")) : "Not recorded"}</b>',
     '<b>${`$${(Number(cost.jobs || 0) * Number(CONFIG?.generation?.fal?.estimatedCostPerImage || 0)).toFixed(2)}`}</b>',
   ]];
   await control({
@@ -359,6 +362,38 @@ async function main() {
       } finally { kit.close(); }
     }),
     guarded: () => patched("automation-runs.js", NC_F_EDITS, () => freshSuite().main()),
+  });
+
+  /* -------------------------------------------------------------------------
+     NC-G — the summary adds every recorded amount together regardless of the unit it
+     was recorded in, which is precisely what it did before a second paid backend
+     existed. With one Buzz job in the ledger it reports ten US dollars that nobody
+     was ever charged. This is the defect CASE 6 was written for. */
+  const NC_G_EDITS = [[
+    "    const unit = estimateUnit(estimate);\n"
+    + "    /* A free render is priced and costs nothing anywhere. It joins no total. */\n"
+    + "    if (unit === \"none\") continue;\n"
+    + "    if (unit === CURRENCY) { amount += value; continue; }",
+    "    const unit = estimateUnit(estimate);\n"
+    + "    amount += value;\n"
+    + "    if (true) continue;",
+  ]];
+  await control({
+    id: "NC-G",
+    label: "recorded amounts are summed across currencies, so 10 Buzz becomes USD 10.00",
+    guards: "CASE 6 — a Buzz amount must never land in the US dollar total",
+    defect: () => patched("generation-cost.js", NC_G_EDITS, async () => {
+      const { summarizeRecordedCost } = require(path.join(ROOT, "generation-cost.js"));
+      const summary = summarizeRecordedCost([{
+        accounting: {
+          costClass: "metered_credits",
+          estimate: { costClass: "metered_credits", unit: "buzz", amount: 10, confidence: "quoted", quotedAt: "2026-09-05T00:00:00.000Z" },
+        },
+      }]);
+      /* Ten Buzz, reported as ten of whatever `currency` claims — which is "usd". */
+      return Math.abs(Number(summary.amount) - 10) < 1e-9 && summary.currency === "usd";
+    }),
+    guarded: () => patched("generation-cost.js", NC_G_EDITS, () => freshSuite().main()),
   });
 
   /* The real modules, green, after every control has been undone. */

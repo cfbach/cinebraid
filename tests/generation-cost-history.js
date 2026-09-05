@@ -353,6 +353,74 @@ async function main() {
     assert(unpricedMarkup.includes("Not recorded"), "no configured rate must not render as $0.00");
     assert(/no rate configured/.test(unpricedMarkup));
 
+    /* ---------------------------------------------------------------------
+       CASE 6 — ONE LEDGER, MORE THAN ONE CURRENCY, AND THEY ARE NEVER ADDED.
+
+       There is one generation ledger per project and every backend writes into it, so a
+       Buzz-priced hosted render and a USD-priced hosted render can sit side by side.
+       Before this case the summary summed `amount` over all of them and labelled the
+       result `currency: "usd"`, which turned a ten-Buzz generation into USD 10.00 on the
+       automation report. CineBraid holds no exchange rate and must not invent one. */
+    const buzzJob = {
+      accounting: {
+        costClass: "metered_credits",
+        estimate: { costClass: "metered_credits", unit: "buzz", amount: 10, confidence: "quoted", quotedAt: "2026-09-05T00:00:00.000Z" },
+        recordedAt: "2026-09-05T00:00:00.000Z",
+      },
+    };
+    assert(validateCostEstimate(buzzJob.accounting.estimate).ok, "a quoted Buzz cost must satisfy the shipped contract unchanged");
+
+    const buzzOnly = summarizeRecordedCost([buzzJob]);
+    assert.strictEqual(buzzOnly.amount, 0, "CASE 6: a Buzz amount must never land in the US dollar total");
+    assert.deepStrictEqual(buzzOnly.otherUnits, [{ unit: "buzz", amount: 10, priced: 1 }],
+      "CASE 6: Buzz is reported under its own name with its own count");
+    assert.strictEqual(buzzOnly.priced, 1, "CASE 6: a quoted Buzz job is still a priced job");
+    const buzzMarkup = reports.reportsRecordedCostMarkup(buzzOnly);
+    assert(buzzMarkup.includes("10 BUZZ"), "CASE 6: the surface names the currency it is reporting");
+    assert(!buzzMarkup.includes("$10"), "CASE 6: 10 Buzz must never be rendered as ten dollars");
+    assert(!buzzMarkup.includes("$0.00"), "CASE 6: a Buzz-only history must not report a confident zero in dollars");
+
+    /* Mixed. Built from explicit rows rather than from the live ledger, which by this
+       point carries CASE 4's legacy job and would make `complete` false for a reason
+       that has nothing to do with currency.
+
+       The dollar total is exactly the dollars, and the Buzz is beside it rather than
+       inside it. `complete` is false because a dollar figure is not the whole story once
+       money was also spent in another currency — which is the one question `complete`
+       exists to answer. */
+    const usdJob = {
+      accounting: {
+        costClass: "metered_api",
+        estimate: { costClass: "metered_api", unit: "usd", amount: 0.84, confidence: "estimated" },
+      },
+    };
+    const mixedCurrency = summarizeRecordedCost([usdJob, buzzJob]);
+    assert.strictEqual(usd(mixedCurrency.amount), 0.84, "CASE 6: the US dollar total is unchanged by the presence of a Buzz job");
+    assert.deepStrictEqual(mixedCurrency.otherUnits, [{ unit: "buzz", amount: 10, priced: 1 }]);
+    assert.strictEqual(mixedCurrency.priced, 2);
+    assert.strictEqual(mixedCurrency.complete, false, "CASE 6: a dollar total is not complete when Buzz was also spent");
+    const mixedMarkup = reports.reportsRecordedCostMarkup(mixedCurrency);
+    assert(mixedMarkup.includes("$0.84") && mixedMarkup.includes("10 BUZZ"), "CASE 6: both figures are shown, separately");
+    assert(/never added together/.test(mixedMarkup), "CASE 6: the surface says why there are two figures");
+
+    /* A legacy row that recorded an amount before `unit` existed is still US dollars.
+       Every amount CineBraid has ever recorded was one, and moving history into an
+       unknown bucket would make every pre-existing project read as incomplete. */
+    const unitless = { accounting: { costClass: "metered_api", estimate: { costClass: "metered_api", amount: 0.5, confidence: "estimated" } } };
+    const legacyUnit = summarizeRecordedCost([unitless]);
+    assert.strictEqual(usd(legacyUnit.amount), 0.5, "CASE 6: an amount recorded before units existed is read as US dollars");
+    assert.deepStrictEqual(legacyUnit.otherUnits, []);
+    assert.strictEqual(legacyUnit.complete, true, "CASE 6: a unitless legacy amount must not make a record read as incomplete");
+
+    /* A free local render is priced and costs nothing in any currency. It joins no total
+       and — this is the half that would otherwise regress — it does not make a project
+       that has ever used ComfyUI report itself as incomplete. */
+    const freeJob = { accounting: { costClass: "free_local", estimate: { costClass: "free_local", unit: "none", amount: 0, confidence: "quoted", quotedAt: "2026-09-05T00:00:00.000Z" } } };
+    const withFree = summarizeRecordedCost([usdJob, freeJob]);
+    assert.strictEqual(usd(withFree.amount), 0.84, "CASE 6: a free local render adds nothing to the dollar total");
+    assert.deepStrictEqual(withFree.otherUnits, [], "CASE 6: 'none' is not a currency and must not appear beside real ones");
+    assert.strictEqual(withFree.complete, true, "CASE 6: a free render must not make a complete record read as incomplete");
+
     /* Motion is billed on a different basis, so a per-image rate must not be
        multiplied into a confident number for it. */
     const motion = submissionAccounting({ purpose: "motion-h3", outputCount: 1, ratePerImage: 0.06, at: "2026-08-10T00:00:00.000Z" });
@@ -374,6 +442,7 @@ async function main() {
       "  - CASE 3: same rate and double the images doubles the estimate, from the job's own quantity",
       "  - CASE 4: a legacy job reads as not recorded, is never re-priced, and is never written to on read",
       "  - CASE 5: every figure stays an estimate; no record or surface implies confirmed provider spend",
+      "  - CASE 6: Buzz is reported as Buzz — never summed into the US dollar total, never rendered as dollars",
       "  - unpriced and motion jobs record confidence:unknown instead of a confident $0.00",
       "  - 3 provider dispatches, all to a loopback mock; $0 of real spend",
     ].join("\n"));

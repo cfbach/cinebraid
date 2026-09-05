@@ -201,6 +201,26 @@ function recordedAmount(job) {
   return Number.isFinite(amount) && amount >= 0 ? amount : null;
 }
 
+/* WHICH CURRENCY ONE RECORDED ESTIMATE IS IN.
+ *
+ * `unit` is the CostEstimate's own field and the contract already constrains it
+ * (COST_UNITS: none · usd · buzz · images · videoSeconds). Three answers matter here and
+ * they are three different facts:
+ *
+ *   ""     a legacy row that recorded an amount before `unit` was written. Every such
+ *          amount WAS a USD figure — fal is the only backend that ever produced one — so
+ *          it is read as usd. Treating it as unknown would move history into a bucket it
+ *          does not belong in and would make every pre-existing project incomplete.
+ *   none   a free render. Not money in any currency: it belongs to no total, and it is
+ *          not a gap either. `free_local` is the only class the contract permits `none`
+ *          on, and validateCostEstimate already forces its amount to 0.
+ *   other  a real currency that is not US dollars. Buzz is the first.
+ */
+function estimateUnit(estimate) {
+  const unit = String(isRecord(estimate) ? estimate.unit || "" : "").trim();
+  return unit || CURRENCY;
+}
+
 /* Aggregate across a set of jobs, keeping the three populations apart because they
    mean different things and collapsing them into one dollar figure is how a partial
    record starts reading as a complete one:
@@ -210,17 +230,46 @@ function recordedAmount(job) {
    `complete` is the flag a surface uses to decide whether its total is the whole
    story. Amounts are what was ESTIMATED AT SUBMISSION for every recorded job,
    including ones that later failed; matching that against what a provider actually
-   billed is reconciliation, which this does not attempt and does not claim. */
+   billed is reconciliation, which this does not attempt and does not claim.
+
+   ONE LEDGER, MORE THAN ONE CURRENCY — and they are never added together.
+
+   There is one generation ledger per project and every backend writes into it, so a
+   hosted provider priced in Buzz and a hosted provider priced in US dollars can sit in
+   the same array. This used to sum `recordedAmount` over all of them and label the
+   result `currency: "usd"`, which turned a ten-Buzz render into USD 10.00 on the
+   automation report. CineBraid holds no exchange rate, must not invent one, and a
+   fabricated conversion would be a worse answer than an admitted split.
+
+   So `amount` remains exactly what it has always been — the USD total, over USD rows —
+   and anything else is reported beside it under its own name, with its own count. That
+   keeps every existing reader correct without a migration and without a second summary
+   shape. `complete` gains one clause: a USD total is not the whole story when money was
+   also spent in another currency, which is precisely what `complete` exists to say. */
 function summarizeRecordedCost(jobs) {
   const rows = Array.isArray(jobs) ? jobs : [];
   let amount = 0, priced = 0, unpriced = 0, unrecorded = 0;
+  const others = new Map();
   for (const job of rows) {
-    if (!recordedEstimate(job)) { unrecorded++; continue; }
+    const estimate = recordedEstimate(job);
+    if (!estimate) { unrecorded++; continue; }
     const value = recordedAmount(job);
     if (value == null) { unpriced++; continue; }
-    amount += value;
     priced++;
+    const unit = estimateUnit(estimate);
+    /* A free render is priced and costs nothing anywhere. It joins no total. */
+    if (unit === "none") continue;
+    if (unit === CURRENCY) { amount += value; continue; }
+    const row = others.get(unit) || { unit, amount: 0, priced: 0 };
+    row.amount += value;
+    row.priced++;
+    others.set(unit, row);
   }
+  /* Sorted by unit so two calls over the same ledger produce the same array, whatever
+     order the rows happen to sit in. */
+  const otherUnits = [...others.values()]
+    .map((row) => ({ unit: row.unit, amount: Math.round(row.amount * 1e6) / 1e6, priced: row.priced }))
+    .sort((a, b) => (a.unit < b.unit ? -1 : a.unit > b.unit ? 1 : 0));
   return {
     basis: RECORDED_BASIS,
     currency: CURRENCY,
@@ -228,8 +277,11 @@ function summarizeRecordedCost(jobs) {
     priced,
     unpriced,
     unrecorded,
+    /* Empty for every project that has only ever generated in US dollars, which is
+       every project that existed before this field did. */
+    otherUnits,
     jobs: rows.length,
-    complete: rows.length > 0 && unpriced === 0 && unrecorded === 0,
+    complete: rows.length > 0 && unpriced === 0 && unrecorded === 0 && otherUnits.length === 0,
   };
 }
 
