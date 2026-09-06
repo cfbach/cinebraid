@@ -468,23 +468,92 @@ function normalizeWorkflow(body) {
    The bytes.
 
    No bearer. The URL is already signed, and attaching a credential would mean sending it
-   to whatever host the provider response named — see the header's point 4. */
+   to whatever host the provider response named — see the header's point 4.
+
+   ------------------------------------------------------------------------------
+   REDIRECTS: FOLLOWED ONLY WITHIN THE ORIGIN THE PROVIDER ITSELF NAMED.
+
+   This function used to refuse every 3xx outright. The first real paid generation showed
+   why that was too blunt: Civitai serves a completed result from
+
+       GET  https://orchestration-new.civitai.com/v2/consumer/blobs/<id>?sig=…&exp=…
+       301  Location: /v2/consumer/blobs/content/<opaque token>      <- RELATIVE, same host
+       200  image/jpeg
+
+   so a legitimate retrieval from the very host the authenticated workflow named was
+   refused, and a paid result sat undelivered. The refusal was conservative in the right
+   direction — nothing was lost, nothing was claimed, and the job stayed recoverable
+   without paying twice — but it was wrong.
+
+   THE RULE, and it is deliberately not an allowlist of Civitai hostnames:
+
+     the trust boundary is the ORIGIN OF THE URL THE AUTHENTICATED WORKFLOW RETURNED.
+
+   A hostname list would be a standing claim about Civitai's infrastructure that CineBraid
+   cannot keep current — `orchestration-new.civitai.com` is not the API host, and nothing
+   published says what tomorrow's is. Deriving the boundary from the response instead means
+   the only thing ever trusted is the host Civitai just told an authenticated caller to
+   fetch from, and a redirect may move within it but never out of it.
+
+   Every hop re-runs assertDownloadableBlobUrl(), so scheme, loopback, private, link-local
+   and carrier-grade-NAT refusals apply to redirect targets exactly as they apply to the
+   first URL — belt and braces, since a public origin cannot resolve to those, but the
+   check is cheap and a boundary that only guards its front door is not a boundary.
+
+   Depth is capped, one timeout covers the whole chain so hops cannot extend the budget,
+   and no credential is sent on any hop. */
+const MAX_BLOB_REDIRECTS = 3;
+
 async function fetchBlob(url) {
-  const target = assertDownloadableBlobUrl(url);
+  /* The origin the provider named. Everything below may move within it and nowhere else. */
+  const first = assertDownloadableBlobUrl(url);
+  const boundary = first.origin;
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), TIMEOUTS.blob);
+  let target = first;
   let response;
   try {
-    response = await fetch(target.toString(), { signal: controller.signal, redirect: "manual" });
-  } catch (error) {
-    if (error?.name === "AbortError")
-      throw new CivitaiClientError("CIVITAI_BLOB_TIMEOUT", "Downloading the Civitai result timed out.", {}, 504);
-    throw new CivitaiClientError("CIVITAI_BLOB_UNREACHABLE", "CineBraid could not download the Civitai result.", {}, 502);
+    for (let hop = 0; ; hop++) {
+      try {
+        response = await fetch(target.toString(), { signal: controller.signal, redirect: "manual" });
+      } catch (error) {
+        if (error?.name === "AbortError")
+          throw new CivitaiClientError("CIVITAI_BLOB_TIMEOUT", "Downloading the Civitai result timed out.", {}, 504);
+        throw new CivitaiClientError("CIVITAI_BLOB_UNREACHABLE", "CineBraid could not download the Civitai result.", {}, 502);
+      }
+      if (!(response.status >= 300 && response.status < 400)) break;
+
+      if (hop >= MAX_BLOB_REDIRECTS)
+        throw new CivitaiClientError(
+          "CIVITAI_BLOB_REDIRECT_DEPTH",
+          "The Civitai result address redirected too many times, so CineBraid stopped following it.",
+          { hops: hop + 1 },
+          502,
+        );
+      const location = text(response.headers.get("location"));
+      if (!location)
+        throw new CivitaiClientError("CIVITAI_BLOB_REDIRECT_INVALID", "Civitai redirected the result address without saying where.", { status: response.status }, 502);
+      let next;
+      try {
+        /* Resolved against the CURRENT target, because the real redirect is relative. */
+        next = new URL(location, target);
+      } catch {
+        throw new CivitaiClientError("CIVITAI_BLOB_REDIRECT_INVALID", "Civitai redirected the result address somewhere CineBraid could not read.", {}, 502);
+      }
+      /* The same gate the first URL passed. */
+      next = assertDownloadableBlobUrl(next.toString());
+      if (next.origin !== boundary)
+        throw new CivitaiClientError(
+          "CIVITAI_BLOB_REDIRECTED",
+          "The Civitai result address redirected to a different host, so CineBraid did not follow it.",
+          { from: boundary, to: next.origin },
+          502,
+        );
+      target = next;
+    }
   } finally {
     clearTimeout(timer);
   }
-  if (response.status >= 300 && response.status < 400)
-    throw new CivitaiClientError("CIVITAI_BLOB_REDIRECTED", "The Civitai result address redirected elsewhere, so CineBraid did not follow it.", { status: response.status }, 502);
   if (!response.ok)
     throw new CivitaiClientError(
       /* A signed URL that has expired answers 401/403 and is a DIFFERENT fact from a
@@ -548,6 +617,7 @@ module.exports = {
   CivitaiClientError,
   MOCK_ORCHESTRATOR,
   MAX_BLOB_BYTES,
+  MAX_BLOB_REDIRECTS,
   MAX_WAIT_SECONDS,
   ORCHESTRATION_BASE,
   SITE_BASE,

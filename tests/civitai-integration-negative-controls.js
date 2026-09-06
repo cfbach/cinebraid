@@ -20,6 +20,9 @@
  *   NC-11  Buzz is recorded in the units a US-dollar backend uses
  *   NC-12  Connect asks for permission to spend, breaking the promise Settings prints
  *   NC-13  a scope CineBraid cannot read is treated as permission to spend
+ *   NC-14  a media redirect is followed wherever it points (the SSRF boundary removed)
+ *   NC-15  every redirect is refused, so an already-paid result cannot be collected
+ *   NC-16  the redirect depth cap is removed, so a loop reports a timeout instead
  *
  * NOTHING IS WRITTEN TO DISK AND NOTHING IS REVERTED WITH GIT. Each defect is introduced
  * by compiling a MODIFIED COPY of the real source in memory and installing it in the
@@ -321,6 +324,73 @@ async function main() {
       '  if (!/^\\d+$/.test(raw)) return true;',
       label,
     ), "NC-13"),
+  });
+
+  /* -------------------------------------------------------------------------
+     NC-14 — the redirect fix is "just follow redirects".
+
+     The tempting wrong answer to the real paid-job blocker. With the origin check gone, a
+     result address returned by the provider can steer CineBraid at any host it likes —
+     which is the SSRF boundary the original refusal existed to hold, removed in the name
+     of fixing a bug. */
+  await control({
+    id: "NC-14",
+    label: "a media redirect is followed wherever it points",
+    guards: "every way out of the provider's own origin is refused",
+    mutate: () => installBroken("civitai-client.js", (source, label) => mutateOnce(
+      source,
+      "      if (next.origin !== boundary)",
+      "      if (false && next.origin !== boundary)",
+      label,
+    ), "NC-14"),
+  });
+
+  /* -------------------------------------------------------------------------
+     NC-15 — the original blocker, restored.
+
+     Every 3xx refused outright. This is what actually happened on the first real paid
+     generation: Civitai's own same-origin 301 was rejected and a paid result could not be
+     collected. The recovery property is what catches it. */
+  await control({
+    id: "NC-15",
+    label: "every redirect is refused, so a paid result cannot be collected",
+    guards: "a same-origin 301 delivers and the already-paid job recovers",
+    mutate: () => installBroken("civitai-client.js", (source, label) => mutateOnce(
+      source,
+      "      if (!(response.status >= 300 && response.status < 400)) break;",
+      "      if (response.status >= 300 && response.status < 400) throw new CivitaiClientError(\"CIVITAI_BLOB_REDIRECTED\", \"refused\", {}, 502);\n      break;",
+      label,
+    ), "NC-15"),
+  });
+
+  /* -------------------------------------------------------------------------
+     NC-16 — the redirect depth cap is removed entirely.
+
+     WHAT THIS CONTROL IS ACTUALLY FOR. Merely RAISING the cap proves nothing: a loop with a
+     larger cap still ends in the same `CIVITAI_BLOB_REDIRECT_DEPTH` refusal, only later, so
+     the property under test never inverts. That was this control's first mistake and it is
+     recorded rather than quietly rewritten.
+
+     The real guarantee is narrower and worth holding: THE CAP IS WHAT MAKES A LOOP FAIL
+     FAST AND LEGIBLY instead of consuming the entire blob budget and reporting a timeout —
+     a wrong diagnosis that sends the next reader looking at the network rather than at the
+     redirect.
+
+     So the check is removed outright, and the blob timeout is shortened alongside it. The
+     shortened timeout is NOT part of the defect; it only stops the control from taking two
+     real minutes to demonstrate it. Without the cap the loop runs until the budget is gone
+     and the job reports a timeout, which is a different — and less useful — answer than the
+     one the depth check gives. */
+  await control({
+    id: "NC-16",
+    label: "the redirect depth cap is removed, so a loop burns the blob budget and reports a timeout",
+    guards: "a redirect loop is refused as a depth refusal, not as a timeout",
+    mutate: () => installBroken("civitai-client.js", (source, label) => mutateOnce(
+      mutateOnce(source, "  blob: 120000,", "  blob: 2500,", label),
+      "      if (hop >= MAX_BLOB_REDIRECTS)",
+      "      if (false)",
+      label,
+    ), "NC-16"),
   });
 
   /* The real modules, green, after every control has been undone. */

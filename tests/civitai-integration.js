@@ -56,6 +56,10 @@ function startMockOrchestrator() {
     cost: 10,
     nextStatus: "succeeded",
     blobBroken: false,
+    /* HOW THE RESULT IS SERVED. `redirect` is the shape the real Civitai uses and the one
+       the first paid generation exposed: a same-origin 301 to a /content/<token> path. The
+       `escape*` modes are the ones that must still be refused. */
+    blobMode: "direct",
     canGenerate: true,
     checkPermission: false,
   };
@@ -119,8 +123,32 @@ function startMockOrchestrator() {
         baseModel: "SDXL 1.0", air: AIR, availability: "Public",
         canGenerate: state.canGenerate, checkPermission: state.checkPermission,
       });
+    /* The result address the workflow hands out. What it does depends on blobMode, so one
+       fixture covers the legitimate redirect and every refusal that must survive it. */
     if (url.pathname === "/blob/output.png") {
       if (state.blobBroken) return send(403, { code: "EXPIRED" });
+      const away = (location) => { res.statusCode = 302; res.setHeader("location", location); return res.end(); };
+      switch (state.blobMode) {
+        case "redirect":
+          /* The real shape: 301, RELATIVE, same origin, to a /content/<token> path. */
+          res.statusCode = 301;
+          res.setHeader("location", "/blob/content/opaque-token-abc123");
+          return res.end();
+        case "escape-external":  return away("https://example.com/stolen.png");
+        case "escape-loopback":  return away("http://127.0.0.1:9/other-port.png");
+        case "escape-private":   return away("https://10.0.0.5/internal.png");
+        case "escape-linklocal": return away("https://169.254.169.254/latest/meta-data/");
+        case "escape-scheme":    return away("file:///etc/passwd");
+        case "loop":             return away("/blob/output.png");
+        case "no-location":      { res.statusCode = 302; return res.end(); }
+        default:
+          res.statusCode = 200;
+          res.setHeader("content-type", "image/png");
+          return res.end(PNG);
+      }
+    }
+    /* Where the legitimate same-origin redirect lands. */
+    if (url.pathname === "/blob/content/opaque-token-abc123") {
       res.statusCode = 200;
       res.setHeader("content-type", "image/png");
       return res.end(PNG);
@@ -818,7 +846,91 @@ async function main() {
     }
 
     /* =====================================================================
-       11. NO REAL PROVIDER WAS CONTACTED, AND NO BUZZ WAS SPENT. */
+       11. THE RETURNED-MEDIA REDIRECT, AND RECOVERY OF AN ALREADY-PAID JOB.
+
+       Written from a real paid generation. Civitai served the result as
+
+           GET  /v2/consumer/blobs/<id>?sig=…&exp=…
+           301  Location: /v2/consumer/blobs/content/<token>     <- RELATIVE, same origin
+           200  image/jpeg
+
+       and fetchBlob() refused every 3xx outright, so a paid result sat undelivered. The
+       refusal was conservative in the right direction — nothing lost, nothing claimed,
+       the remote identity kept — but it was wrong, and the fix must not become "follow
+       redirects". The boundary is now the ORIGIN THE AUTHENTICATED WORKFLOW NAMED. */
+    kit = await makeHarness({ orchestratorUrl: mock.baseUrl });
+    {
+      mock.state.blobMode = "escape-external";
+      const paidBefore = mock.state.workflows.size;
+      const run = await generate(kit);
+      assert(run.dispatch.ok, JSON.stringify(run.dispatch.body));
+      const jobId = run.dispatch.body.job.id;
+      const paidAfterSubmit = mock.state.workflows.size;
+      assert.strictEqual(paidAfterSubmit, paidBefore + 1, "exactly one paid workflow was created");
+
+      /* The failure, reproduced: provider success, collection refused. */
+      let refreshed = await kit.call(`/api/generation/civitai/jobs/${jobId}/refresh`, { method: "POST", body: {} });
+      let job = refreshed.body.job;
+      assert.strictEqual(job.status, "UNRESOLVED", "a refused collection is uncertain, not failed and not delivered");
+      assert.strictEqual(job.ingestedAt, "", "nothing may claim delivery");
+      assert.strictEqual(job.errorCode, "CIVITAI_BLOB_REDIRECTED");
+      assert.strictEqual(job.civitai.remoteStatus, "succeeded", "the provider success is retained");
+      assert(job.externalId, "the remote identity is retained, which is what makes recovery possible");
+      assert.strictEqual(kit.takes().length, 0);
+
+      /* RECOVERY. The same job, the same remote id, the legitimate redirect this time. */
+      const remoteId = job.externalId;
+      const paidBeforeRecovery = mock.state.workflows.size;
+      mock.state.blobMode = "redirect";
+      refreshed = await kit.call(`/api/generation/civitai/jobs/${jobId}/refresh`, { method: "POST", body: {} });
+      job = refreshed.body.job;
+      assert.strictEqual(job.status, "COMPLETED", "the already-paid job is recovered and delivered");
+      assert(job.ingestedAt, "delivery is stamped only once bytes are on disk");
+      assert.strictEqual(job.externalId, remoteId, "recovery reused the SAME remote job identity");
+      assert.strictEqual(mock.state.workflows.size, paidBeforeRecovery,
+        "RECOVERY SUBMITTED NOTHING — no second paid workflow was created");
+      assert.strictEqual(kit.takes().length, 1, "the redirected bytes were materialized exactly once");
+      const delivered = kit.project().shots.find((row) => row.id === "SC-01-01");
+      assert.strictEqual(delivered.candidateFiles.length, 1, "one candidate, not two");
+      assert.strictEqual(delivered.candidateFiles[0].decision, "unreviewed");
+      assert.strictEqual(job.civitai.materializationFailedAt, "", "the earlier failure is cleared by the successful collection");
+
+      /* NO CREDENTIAL REACHES THE MEDIA HOST, on the first hop or the redirected one. */
+      const blobCalls = mock.state.requests.filter((row) => row.path.startsWith("/blob/"));
+      assert(blobCalls.length >= 2, "both the signed address and the redirect target were fetched");
+      for (const call of blobCalls)
+        assert.strictEqual(call.authorization, "", `a bearer must never be sent to a media address (${call.path})`);
+      note("a same-origin 301 delivers, the already-paid job recovers with no second submission, and no bearer reaches the media host");
+
+      /* EVERY WAY OUT OF THE BOUNDARY IS STILL REFUSED — proved on the same paid job, so
+         each attempt is also a proof that a refused collection never resubmits. */
+      const escapes = [
+        ["escape-external", "CIVITAI_BLOB_REDIRECTED", "an arbitrary external host"],
+        ["escape-loopback", "CIVITAI_BLOB_REDIRECTED", "a different loopback port"],
+        ["escape-private", "CIVITAI_BLOB_URL_REFUSED", "an RFC1918 address"],
+        ["escape-linklocal", "CIVITAI_BLOB_URL_REFUSED", "a link-local metadata address"],
+        ["escape-scheme", "CIVITAI_BLOB_URL_REFUSED", "a file:// scheme"],
+        ["loop", "CIVITAI_BLOB_REDIRECT_DEPTH", "a redirect loop"],
+        ["no-location", "CIVITAI_BLOB_REDIRECT_INVALID", "a redirect with no Location"],
+      ];
+      for (const [mode, expected, what] of escapes) {
+        const fresh = await generate(kit);
+        const id = fresh.dispatch.body.job.id;
+        const created = mock.state.workflows.size;
+        mock.state.blobMode = mode;
+        const attempt = await kit.call(`/api/generation/civitai/jobs/${id}/refresh`, { method: "POST", body: {} });
+        assert.strictEqual(attempt.body.job.status, "UNRESOLVED", `${what}: must not deliver`);
+        assert.strictEqual(attempt.body.job.errorCode, expected, `${what}: refused for the right reason`);
+        assert.strictEqual(attempt.body.job.ingestedAt, "", `${what}: nothing claims delivery`);
+        assert.strictEqual(mock.state.workflows.size, created, `${what}: a refused collection never resubmits`);
+      }
+      mock.state.blobMode = "direct";
+      note(`every way out of the provider's own origin is refused (${escapes.length} routes), and none of them resubmits`);
+    }
+    kit.close();
+
+    /* =====================================================================
+       12. NO REAL PROVIDER WAS CONTACTED, AND NO BUZZ WAS SPENT. */
     assert(mock.baseUrl.startsWith("http://127.0.0.1:"), "the only Civitai this suite can reach is loopback");
     assert.strictEqual(process.env.CINEBRAID_CIVITAI_ORCHESTRATION_BASE, mock.baseUrl);
     for (const row of mock.state.requests)
