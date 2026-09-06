@@ -306,6 +306,81 @@ for (const selector of REFERENCE_WELLS) {
 }
 note(`wells: ${SHOT_OUTPUT_WELLS.length} shot-output surfaces follow the production format, ${REFERENCE_WELLS.length} reference surfaces stay intrinsic`);
 
+/* AND EVERY WELL THAT READS THE VARIABLE HAS SOMETHING THAT WRITES IT.
+ *
+ * `--cb-intrinsic-aspect` is written by exactly one place -- `applyIntrinsicAspect()`,
+ * over the wells named in app.js's `CB_INTRINSIC_WELLS`. A stylesheet rule can read the
+ * variable without that query ever selecting its element, and nothing complains: the
+ * `var()` fallback simply stands in forever. That is not hypothetical. The reference
+ * detail hero, `.reference-primary-preview`, declared `var(--cb-intrinsic-aspect,4/3)`
+ * and was never named in the query, so every reference in the product was framed 4/3
+ * whatever its real shape -- a 2:3 character sheet showed half of itself and a 1:3
+ * costume plate a quarter, hard-clipped by the well's own `overflow:hidden`.
+ *
+ * So the two halves are asserted against each other rather than each on its own: every
+ * selector that READS the property must be covered by a selector that gets it WRITTEN. */
+{
+  const wellsSource = fs.readFileSync(path.join(ROOT, 'public', 'app.js'), 'utf8');
+  const declared = wellsSource.match(/const CB_INTRINSIC_WELLS\s*=\s*"([^"]+)"/);
+  assert(declared, 'app.js must declare CB_INTRINSIC_WELLS as one string literal');
+  const written = declared[1].split(',').map((part) => part.trim()).filter(Boolean);
+
+  /* Selector groups from the full stylesheet, media queries included: a well declared
+     only inside one still needs a writer. */
+  const readers = new Set();
+  const rule = /([^{}]+)\{([^{}]*)\}/g;
+  let match;
+  while ((match = rule.exec(css))) {
+    if (!/--cb-intrinsic-aspect/.test(match[2])) continue;
+    for (const selector of match[1].split(',')) {
+      const trimmed = selector.trim().replace(/\s+/g, ' ');
+      if (trimmed && !trimmed.startsWith('@')) readers.add(trimmed);
+    }
+  }
+  assert(readers.size > 0, 'the stylesheet must contain wells that read --cb-intrinsic-aspect');
+
+  /* A writer covers a reader when it selects the same element: either the identical
+     selector, or the reader's own trailing compound (`.a .b` is written by `.b`). The
+     boundary check keeps `.thumb` from appearing to cover `.other-thumb`. */
+  function covers(writer, reader) {
+    if (writer === reader) return true;
+    if (!reader.endsWith(writer)) return false;
+    return /[\s>+~]/.test(reader[reader.length - writer.length - 1] || '');
+  }
+
+  for (const reader of readers) {
+    assert(
+      written.some((writer) => covers(writer, reader)),
+      `${reader}: reads --cb-intrinsic-aspect but no CB_INTRINSIC_WELLS selector writes it, so it is stuck on its var() fallback forever`,
+    );
+  }
+  assert(
+    readers.has('.reference-primary-preview'),
+    "the reference detail hero must still take the reference's own shape",
+  );
+  note(`intrinsic wells: ${readers.size} selectors read --cb-intrinsic-aspect, all covered by ${written.length} writers`);
+}
+
+/* AND THE HERO'S MEDIA ROW CANNOT OUTGROW THE WELL. The hero is a grid, and its media
+ * sat in an implicit, content-sized row: a tall reference laid out at its full intrinsic
+ * height (1074px inside a 270px well), `height:100%` resolved against that overflowing
+ * row rather than against the well, and `object-fit:contain` never got to contain
+ * anything -- `overflow:hidden` simply cut the rest off. An explicit track bounds it. */
+{
+  const rows = declaration('.reference-primary-preview', 'grid-template-rows');
+  assert(rows, '.reference-primary-preview must declare an explicit grid-template-rows');
+  assert(
+    /minmax\(\s*0/.test(rows),
+    `.reference-primary-preview: its media row must be bounded by the well (minmax(0,...)), or a tall reference overflows it and is clipped. Got "${rows}"`,
+  );
+  assert.strictEqual(
+    declaration('.reference-primary-preview img', 'object-fit'),
+    'contain',
+    'the hero must contain its reference, never crop it',
+  );
+  note('reference hero: bounded media row + object-fit:contain, so every reference shape is shown whole');
+}
+
 /* ================================================================================
    4. Selection policy — constant-area review canvases
    ================================================================================ */

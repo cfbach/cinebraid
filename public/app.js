@@ -463,9 +463,17 @@ function shotCanvasStyle(shot) {
 
    The reference wells are named once here rather than tagged at every render site, so a
    new reference surface joins by adding one selector and no rendering code ever has to
-   know what an aspect ratio is. Some of these wells are the image itself. */
+   know what an aspect ratio is. Some of these wells are the image itself.
+
+   `.reference-primary-preview` is the reference detail hero, and it was the one well that
+   declared `--cb-intrinsic-aspect` in the stylesheet without ever being named here. The
+   variable was therefore never written for it, so the hero fell back to 4/3 for every
+   reference: a 2:3 character sheet showed half of itself and a 1:3 costume plate a
+   quarter, hard-clipped by the well's own `overflow:hidden`. Joining the list is the
+   whole repair -- the hero now takes the same clamped intrinsic shape every other
+   reference surface already had. */
 const CB_INTRINSIC_WELLS =
-  ".library-preview,.guided-input-thumb,.entity-authority-thumb,.state-approved-preview,.state-validation-thumbs img";
+  ".library-preview,.guided-input-thumb,.entity-authority-thumb,.state-approved-preview,.state-validation-thumbs img,.reference-primary-preview";
 
 function applyIntrinsicAspect(well, img) {
   if (!well || !well.style || typeof well.style.setProperty !== "function") return;

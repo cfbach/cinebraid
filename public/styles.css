@@ -2393,9 +2393,22 @@ body[data-focused-workspace="1"] .coverage-slot-card.focused-slot-selected .cove
 @media(max-width:760px){.entity-batch-review-panel>header,.entity-batch-review-summary{align-items:stretch;flex-direction:column}.entity-batch-review-actions{justify-content:flex-start}.entity-batch-review-actions button{flex:1 1 145px}.entity-batch-review-summary .approve-btn{width:100%}.entity-batch-approval-modal{width:100%}.entity-candidate-filters{padding-left:8px;padding-right:8px}}
 
 /* v6.6.2.0 clarity & consolidation */
-.clarity-taskbar{display:grid!important;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));overflow:visible!important;gap:8px}
+.clarity-taskbar{display:grid!important;grid-template-columns:repeat(auto-fit,minmax(260px,1fr));overflow:visible!important;gap:8px}
 .clarity-taskbar .focused-task-button{min-width:0!important}
-.entity-clarity-head{display:flex;align-items:flex-start;gap:16px;justify-content:space-between;margin:8px 0 12px}.entity-head-meta,.entity-head-actions{display:flex;align-items:center;gap:8px;flex-wrap:wrap}.entity-clarity-head .page-title-input{min-width:0;max-width:780px}.entity-authority-summary{border:1px solid var(--line);background:var(--panel);padding:10px;margin:10px 0 14px}.entity-authority-summary>header{display:flex;justify-content:space-between;margin-bottom:8px}.entity-authority-summary>header span{font:700 10px/1 var(--mono);letter-spacing:.12em;color:var(--muted)}.entity-authority-summary>div{display:grid;grid-template-columns:repeat(auto-fit,minmax(210px,1fr));gap:6px}.entity-authority-row{display:grid;grid-template-columns:minmax(0,1fr) auto;align-items:center;gap:6px;padding:6px;border:1px solid var(--line);background:var(--surface)}.entity-authority-open{display:grid;grid-template-columns:44px minmax(0,1fr) auto;align-items:center;gap:9px;min-width:0;text-align:left;border:0;background:transparent;padding:0}.entity-authority-extract{white-space:nowrap}.entity-authority-row.missing{opacity:.72}.entity-authority-thumb{width:44px;height:38px;display:grid;place-items:center;background:#10151d;overflow:hidden}.entity-authority-thumb img,.entity-authority-thumb video{width:100%;height:100%;object-fit:cover}.entity-authority-open span:nth-child(2){min-width:0}.entity-authority-open b,.entity-authority-open small{display:block;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.entity-authority-open em{font:700 9px/1 var(--mono);color:var(--muted)}
+/* AND ITS DESCRIPTION IS READABLE AT 1280. The shared task button sets its `small` to
+   `nowrap` + ellipsis, which is right for a wide strip and wrong for this one: a 150px
+   minimum track fitted three reference tasks into the 584px centre column, leaving each
+   description a 145px column for a line that measures 322px. 56% was cut, and what is
+   cut is the tail, which is where the count lives -- "The approved image and its
+   candidates - 7 candidates to choose from" read "The approved image and its c...", so
+   the strip whose job is to route the filmmaker to the outstanding work would not say
+   how much of it there was. A second line alone was not enough (two 145px lines still
+   lost the count), so the track minimum above carries the repair and the wrap finishes
+   it: 1280 lays out two ~288px tasks per row and both lines fit. At 1920 the strip is
+   still three across on one line and nothing moves. Scoped to `.clarity-taskbar`, which
+   `stage-surfaces.js` deliberately does not carry, so the shot stage strip is untouched. */
+.clarity-taskbar .focused-task-button small{white-space:normal;overflow:hidden;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical}
+.entity-clarity-head{display:flex;align-items:flex-start;gap:16px;justify-content:space-between;margin:8px 0 12px}.entity-head-meta,.entity-head-actions{display:flex;align-items:center;gap:8px;flex-wrap:wrap}.entity-clarity-head .page-title-input{min-width:0;max-width:780px}.entity-authority-summary{border:1px solid var(--line);background:var(--panel);padding:10px;margin:10px 0 14px}.entity-authority-summary>header{display:flex;justify-content:space-between;margin-bottom:8px}.entity-authority-summary>header span{font:700 10px/1 var(--mono);letter-spacing:.12em;color:var(--muted)}.entity-authority-summary>div{display:grid;grid-template-columns:repeat(auto-fit,minmax(300px,1fr));gap:6px}.entity-authority-row{display:grid;grid-template-columns:minmax(0,1fr) auto;align-items:center;gap:6px;padding:6px;border:1px solid var(--line);background:var(--surface)}.entity-authority-open{display:grid;grid-template-columns:44px minmax(0,1fr) auto;align-items:center;gap:9px;min-width:0;text-align:left;border:0;background:transparent;padding:0}.entity-authority-extract{white-space:nowrap}.entity-authority-row.missing{opacity:.72}.entity-authority-thumb{width:44px;height:38px;display:grid;place-items:center;background:#10151d;overflow:hidden}.entity-authority-thumb img,.entity-authority-thumb video{width:100%;height:100%;object-fit:cover}.entity-authority-open span:nth-child(2){min-width:0}.entity-authority-open b,.entity-authority-open small{display:block;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.entity-authority-open em{font:700 9px/1 var(--mono);color:var(--muted)}
 .entity-subworkspace-tabs,.settings-tabs,.board-action-filters{display:flex;gap:7px;flex-wrap:wrap;margin:0 0 12px}.entity-subworkspace-tabs button,.settings-tabs button,.board-action-filters button{border:1px solid var(--line);background:var(--panel);padding:9px 12px;text-align:left}.entity-subworkspace-tabs button.selected,.settings-tabs button.selected,.board-action-filters button.selected{border-color:var(--accent);box-shadow:inset 0 -2px var(--accent)}.settings-tabs button{display:flex;flex-direction:column;min-width:150px}.settings-tabs small{color:var(--muted)}.board-action-filters button{display:flex;align-items:center;gap:8px}.board-action-filters b{font:700 11px var(--mono);background:var(--surface);padding:2px 6px}
 .continuity-state-rail{display:grid;grid-template-columns:repeat(auto-fit,minmax(170px,1fr));gap:7px;margin:10px 0}.continuity-state-rail button{display:grid;grid-template-columns:8px minmax(0,1fr);gap:8px;text-align:left;padding:9px;border:1px solid var(--line);background:var(--panel)}.continuity-state-rail button.selected{border-color:var(--accent);box-shadow:inset 3px 0 var(--accent)}.continuity-state-rail i{width:7px;height:7px;border-radius:50%;background:var(--muted);margin-top:4px}/* CORRECTION 1 — FOUR TONES, AND TWO OF THEM WERE INVISIBLE. `--ok` and `--warn`
    are declared nowhere in this stylesheet, so both dots resolved to
@@ -6760,7 +6773,24 @@ body[data-focused-route="library"] .workspace-tab.on{
 }
 @media(min-width:1600px){.reference-primary-hero{grid-template-columns:minmax(300px,360px) minmax(0,1fr)}}
 .reference-primary-preview{aspect-ratio:var(--cb-intrinsic-aspect,4/3);max-height:420px;border-radius:12px}
+/* AND THE MEDIA ROW IS BOUNDED BY THE WELL, so `object-fit:contain` above can do its
+   job. The well is a grid, and its single implicit row was content-sized: a tall
+   reference laid out at its full intrinsic height (a 1:3 plate reached 1074px inside a
+   270px well), `height:100%` resolved against that overflowing row rather than the well,
+   and `overflow:hidden` cut the rest off. An explicit `minmax(0,1fr)` track cannot exceed
+   the well, so the image is contained instead of clipped at every reference shape. */
+.reference-primary-preview{grid-template-rows:minmax(0,1fr)}
 .reference-primary-preview span{font-size:9.5px;letter-spacing:.06em}
+
+/* THE CANON SUMMARY GETS A TRACK IT CAN ACTUALLY SET A FILENAME IN. Its rows were laid
+   out at `minmax(210px,1fr)`, which fits two tracks into the 570px centre column at
+   1280 and five into 1186px at 1920. Either way each row's text column collapsed to
+   ~115px, and the one sentence that says which image is approved -- the filename plus
+   its standing -- wrapped to six ribbon lines, breaking `CHAR-SWEEP_PRIMARY_V001.png`
+   mid-token across three of them with the CANON badge stranded beside it. The minimum
+   is now wide enough that a cramped multi-column layout collapses to full-width rows
+   rather than shredding them; the three-state reference this project ships still lays
+   out three across at 1920, unchanged. */
 
 /* THE CENTRE GETS THE WIDTH. ~180 navigator and ~220 inspector leaves the
    central column the 570-600px the work actually needs at 1280. Both rails
