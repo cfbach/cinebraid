@@ -551,51 +551,121 @@ async function main() {
     function element(dataset = {}) {
       return { dataset, textContent: "", innerHTML: "", value: "", options: [] };
     }
-    const note = element({ civitaiGrantNote: CONNECTION });
-    const action = element({ civitaiGrantAction: CONNECTION });
-    /* A picker the person has already changed and NOT saved. The configured value is the
-       other account; the unsaved choice must outrank it. */
-    const picker = element({ configured: "conn-ffffffffffffffffffffffffffffffff" });
-    picker.value = CONNECTION;
-    picker.options = [{ value: CONNECTION }];
+    const OTHER = "conn-ffffffffffffffffffffffffffffffff";
 
-    let routeCalls = 0;
-    let elementsCreated = 0;
-    const context = {
-      console,
-      /* If the module ever calls this again, the count is the failure. */
-      route: () => { routeCalls++; },
-      esc: (value) => String(value ?? ""),
-      attr: (value) => String(value ?? ""),
-      fetch: async () => ({
-        ok: true,
-        json: async () => ({ grants: [{ connectionId: CONNECTION, displayName: "fixture", tokenSource: "oauth", generationAuthorized: false }] }),
-      }),
-      document: {
-        querySelectorAll: (selector) => {
-          elementsCreated++;
-          if (selector === "[data-civitai-grant-note]") return [note];
-          if (selector === "[data-civitai-grant-action]") return [action];
-          return [];
+    /* A picker that behaves like a real <select>: rewriting innerHTML rebuilds its options
+       and resets `value` to whichever option carries `selected`, which is exactly the
+       mechanism a repaint has to survive. A stub that ignored innerHTML would let a broken
+       repaint pass. */
+    function makePicker(dataset) {
+      const picker = { dataset, value: "", options: [], textContent: "" };
+      Object.defineProperty(picker, "innerHTML", {
+        get() { return picker._html || ""; },
+        set(value) {
+          picker._html = value;
+          picker.options = [...String(value).matchAll(/value="([^"]*)"/g)].map((match) => ({ value: match[1] }));
+          const selected = String(value).match(/value="([^"]*)"[^>]*selected/);
+          picker.value = selected ? selected[1] : (picker.options[0] ? picker.options[0].value : "");
         },
-        getElementById: (id) => (id === "cfg-civitai-connection" ? picker : null),
-      },
-    };
-    context.window = context;
-    vm.createContext(context);
-    vm.runInContext(civitaiSettings, context, { filename: "civitai-settings.js" });
+      });
+      return picker;
+    }
 
-    await context.refreshCivitaiGrants();
+    /* One refresh against a fresh context, returning everything the assertions need. */
+    async function refreshWith({ picker, grants } = {}) {
+      const note = element({ civitaiGrantNote: CONNECTION });
+      const action = element({ civitaiGrantAction: CONNECTION });
+      let routeCalls = 0;
+      let lookups = 0;
+      const context = {
+        console,
+        /* If the module ever calls this again, the count is the failure. */
+        route: () => { routeCalls++; },
+        esc: (value) => String(value ?? ""),
+        attr: (value) => String(value ?? ""),
+        fetch: async () => ({
+          ok: true,
+          json: async () => ({
+            grants: grants || [{ connectionId: CONNECTION, displayName: "fixture", tokenSource: "oauth", generationAuthorized: false }],
+          }),
+        }),
+        document: {
+          querySelectorAll: (selector) => {
+            lookups++;
+            if (selector === "[data-civitai-grant-note]") return [note];
+            if (selector === "[data-civitai-grant-action]") return [action];
+            return [];
+          },
+          getElementById: (id) => (id === "cfg-civitai-connection" ? (picker || null) : null),
+        },
+      };
+      context.window = context;
+      vm.createContext(context);
+      vm.runInContext(civitaiSettings, context, { filename: "civitai-settings.js" });
+      await context.refreshCivitaiGrants();
+      return { note, action, routeCalls, lookups, context };
+    }
 
-    assert.strictEqual(routeCalls, 0,
-      "a Civitai grants refresh must never ask the router to redraw — that is the render loop that made Settings uneditable");
-    assert(elementsCreated > 0, "the refresh must actually have looked for its containers");
-    assert(/identity only/i.test(note.textContent),
-      "the grant line must be painted into its own container from the server's answer");
-    assert(/Allow generation/.test(action.innerHTML),
-      "the contextual spend authorization must be offered on a connection that lacks it");
-    assert.strictEqual(picker.value, CONNECTION,
-      "a repaint must preserve an unsaved account choice rather than resetting it to the configured one");
+    const bothGrants = [
+      { connectionId: CONNECTION, displayName: "fixture", tokenSource: "oauth", generationAuthorized: true },
+      { connectionId: OTHER, displayName: "other", tokenSource: "oauth", generationAuthorized: true },
+    ];
+
+    /* 5. THE RENDER LOOP MUST NOT RETURN, and 4. the grant contents still refresh. */
+    {
+      const touched = makePicker({ configured: OTHER, userChoice: "1" });
+      touched.innerHTML = `<option value=""></option><option value="${CONNECTION}"></option>`;
+      touched.value = CONNECTION;
+      const { note, action, routeCalls, lookups } = await refreshWith({ picker: touched });
+      assert.strictEqual(routeCalls, 0,
+        "a Civitai grants refresh must never ask the router to redraw — that is the render loop that made Settings uneditable");
+      assert(lookups > 0, "the refresh must actually have looked for its containers");
+      assert(/identity only/i.test(note.textContent),
+        "the grant line must be painted into its own container from the server's answer");
+      assert(/Allow generation/.test(action.innerHTML),
+        "the contextual spend authorization must be offered on a connection that lacks it");
+      /* 1. A NONEMPTY UNSAVED SELECTION SURVIVES. */
+      assert.strictEqual(touched.value, CONNECTION,
+        "a repaint must preserve an unsaved account choice rather than resetting it to the configured one");
+    }
+
+    /* 2. AN EXPLICITLY CLEARED SELECTION SURVIVES — the C1 defect.
+     *
+     * This read `picker.value || picker.dataset.configured`, which cannot tell an
+     * intentional clear from an untouched control: both are "", so `||` fell through and a
+     * background refresh silently put back the account somebody had just removed. "" is a
+     * choice, and the mark on the element is what says a person made it. */
+    {
+      const cleared = makePicker({ configured: OTHER, userChoice: "1" });
+      cleared.innerHTML = `<option value=""></option><option value="${OTHER}"></option>`;
+      cleared.value = "";
+      await refreshWith({ picker: cleared, grants: bothGrants });
+      assert.strictEqual(cleared.value, "",
+        "an intentionally cleared account selection must survive a background grant refresh, not be refilled from the configured value");
+    }
+
+    /* 3. AN UNTOUCHED CONTROL STILL INITIALISES FROM THE CONFIGURED VALUE. Without the
+       mark there is no live choice to protect, so the saved account is what belongs there. */
+    {
+      const untouched = makePicker({ configured: OTHER });
+      untouched.innerHTML = `<option value=""></option>`;
+      untouched.value = "";
+      await refreshWith({ picker: untouched, grants: bothGrants });
+      assert.strictEqual(untouched.value, OTHER,
+        "an untouched picker must still be initialised from the configured connection");
+    }
+
+    /* And the mark is only ever set by the control's own change handler, which the rendered
+       markup carries — so it cannot appear on a control nobody touched. */
+    {
+      const fresh = makePicker({ configured: OTHER });
+      const { context } = await refreshWith({ picker: fresh, grants: bothGrants });
+      assert.strictEqual(fresh.dataset.userChoice, undefined, "a repaint must not mark the control as user-chosen");
+      context.civitaiConnectionChosen(fresh);
+      assert.strictEqual(fresh.dataset.userChoice, "1", "the change handler is what marks a live choice");
+      assert(/onchange="civitaiConnectionChosen\(this\)"/.test(views),
+        "the rendered picker must carry the handler that marks a live choice");
+    }
 
     /* The other half of the contract: the panel renders EMPTY containers, so nothing on
        screen depends on an async answer having already arrived. */
@@ -605,7 +675,7 @@ async function main() {
       "views.js must not read the grants cache while rendering; the painter owns those nodes");
   }
 
-  console.log("settings consistency and persistence assertions passed, including that a Civitai grants refresh paints its own containers and never re-renders Settings");
+  console.log("settings consistency and persistence assertions passed, including that a Civitai grants refresh paints its own containers, never re-renders Settings, and preserves a live account choice — an intentional clear included");
 }
 
 main().catch((error) => {

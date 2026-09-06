@@ -174,6 +174,48 @@ function assertPinnedBase(base, label) {
    thing a provider response could steer, and nothing else. A DNS name that resolves to a
    private address still passes, which is stated rather than hidden: closing that needs
    resolution-time checking and belongs to the outbound policy when someone writes it. */
+/* THE FIRST HEXTET OF AN IPv6 LITERAL, as a number.
+ *
+ * The ranges below are CIDR blocks whose boundaries fall inside the first 16 bits, so the
+ * first hextet is all that has to be read — and reading it is the whole point, because
+ * matching the TEXT was the defect: `startsWith("fe80")` catches `fe80::1` and misses
+ * `fe90::1`, which is equally link-local. A prefix string is not a range.
+ *
+ * `::1` and `::ffff:…` both begin with the compressed run, so an address starting `::`
+ * has a first hextet of zero; otherwise the text before the first colon is it. WHATWG URL
+ * has already lower-cased and compressed the literal by the time it reaches here, so no
+ * further normalisation is needed to read that one group. Anything unparseable returns
+ * null and is judged by the explicit checks instead of by a number nobody can trust. */
+function ipv6FirstHextet(host) {
+  if (host.startsWith("::")) return 0;
+  const head = host.split(":")[0];
+  if (!/^[0-9a-f]{1,4}$/.test(head)) return null;
+  const value = parseInt(head, 16);
+  return Number.isInteger(value) ? value : null;
+}
+
+/* WHICH IPv6 LITERALS A PROVIDER RESPONSE MAY NOT SEND CINEBRAID TO.
+ *
+ *   ::1            loopback, exactly.
+ *   ::ffff:…       IPv4-mapped. Refused wholesale rather than only for private mapped
+ *                  addresses — that is the boundary as it already shipped and narrowing
+ *                  it here would be a broadening of what a response can reach.
+ *   fe80::/10      link-local. (h & 0xffc0) === 0xfe80 covers fe80 through febf, which is
+ *                  the actual range; the retired text check covered only the first of the
+ *                  sixty-four hextets in it.
+ *   fc00::/7       unique local. (h & 0xfe00) === 0xfc00 covers fc00 through fdff, which
+ *                  is exactly what the retired `fc`/`fd` text check covered — restated as
+ *                  arithmetic so both ranges are read the same way, with no change in
+ *                  which addresses are refused. */
+function refusedV6(host) {
+  if (host === "::1" || /^::ffff:/.test(host)) return true;
+  const first = ipv6FirstHextet(host);
+  if (first === null) return false;
+  if ((first & 0xffc0) === 0xfe80) return true;
+  if ((first & 0xfe00) === 0xfc00) return true;
+  return false;
+}
+
 const PRIVATE_V4 = [
   /^10\./,
   /^127\./,
@@ -221,7 +263,7 @@ function assertDownloadableBlobUrl(value) {
   const literalV6 = host.includes(":");
   if (literalV4 && PRIVATE_V4.some((range) => range.test(host)))
     throw new CivitaiClientError("CIVITAI_BLOB_URL_REFUSED", "CineBraid will not follow a Civitai result address that points back into this network.", { host }, 502);
-  if (literalV6 && (host === "::1" || host.startsWith("fc") || host.startsWith("fd") || host.startsWith("fe80") || /^::ffff:/.test(host)))
+  if (literalV6 && refusedV6(host))
     throw new CivitaiClientError("CIVITAI_BLOB_URL_REFUSED", "CineBraid will not follow a Civitai result address that points back into this network.", { host }, 502);
   if (loopbackHostname(host) && url.protocol === "https:")
     throw new CivitaiClientError("CIVITAI_BLOB_URL_REFUSED", "CineBraid will not follow a Civitai result address that points back at this machine.", { host }, 502);

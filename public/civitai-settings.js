@@ -89,15 +89,40 @@ function paintCivitaiGrants() {
   }
   const picker = document.getElementById("cfg-civitai-connection");
   if (picker) {
-    /* THE PERSON'S OWN UNSAVED CHOICE OUTRANKS THE SAVED ONE. A background read that
-       reset a picker somebody had just changed would be the same defect as the render
-       loop, one control smaller. */
-    const chosen = picker.value || picker.dataset.configured || "";
+    /* THE PERSON'S OWN UNSAVED CHOICE OUTRANKS THE SAVED ONE, AND "NONE" IS A CHOICE.
+     *
+     * This read `picker.value || picker.dataset.configured`, which cannot tell an
+     * intentional clear from an untouched control: both give an empty string, so `||`
+     * fell through to the configured account and a background grant refresh silently put
+     * back the connection somebody had just removed. That is the same defect as the
+     * render loop — a background read overwriting live input — one control smaller, and
+     * "" is precisely the value it destroyed.
+     *
+     * So the two states are distinguished by a MARK the control carries only after a
+     * person has actually changed it, not by whether its value is truthy. The mark lives
+     * on the element, so a full views re-render — which builds a fresh control from the
+     * configured value — correctly starts unmarked again.
+     *
+     * NOTHING IS SAVED HERE. A cleared picker stays cleared on screen; whether that
+     * becomes durable is still the Save button's business and this touches no
+     * persistence. */
+    const chosenByPerson = picker.dataset.userChoice === "1";
+    const chosen = chosenByPerson ? picker.value : (picker.dataset.configured || "");
     const markup = window.civitaiConnectionOptions(chosen);
     if (picker.innerHTML !== markup) picker.innerHTML = markup;
-    if (chosen && [...picker.options].some((option) => option.value === chosen)) picker.value = chosen;
+    /* Re-applied after the options are rewritten, because replacing innerHTML resets the
+       selection to whichever option carries `selected`. An explicit "" is applied too —
+       it is a value the person chose, not an absence to be filled in. */
+    if (chosen === "" || [...picker.options].some((option) => option.value === chosen)) picker.value = chosen;
   }
 }
+
+/* The mark that makes an intentional clear survive a background refresh. Attached from the
+   rendered control's own `onchange`, so it is present on the element a person touched and
+   absent on a freshly rendered one. */
+window.civitaiConnectionChosen = (select) => {
+  if (select) select.dataset.userChoice = "1";
+};
 window.paintCivitaiGrants = paintCivitaiGrants;
 
 /* The account picker on the Generation panel, built from the grants list rather than from

@@ -843,7 +843,90 @@ async function main() {
       assert.strictEqual(refused("https://172.16.4.4/x"), "CIVITAI_BLOB_URL_REFUSED");
       assert.strictEqual(refused("not a url"), "CIVITAI_BLOB_URL_INVALID");
       assert.strictEqual(refused("https://blobs.civitai.com/signed.png"), "", "a real signed URL is permitted");
-      note("a provider-supplied result address cannot be a file, a private range or a link-local address");
+
+      /* IPv6 LINK-LOCAL IS A RANGE, NOT A PREFIX STRING.
+       *
+       * The retired check was `host.startsWith("fe80")`, which catches fe80::1 and misses
+       * fe90::1 — equally link-local, and reproduced reaching fetch. fe80::/10 spans fe80
+       * through febf, so it is read as arithmetic on the first hextet:
+       * (h & 0xffc0) === 0xfe80. */
+      for (const host of ["fe80::1", "fe90::1", "fea0::1", "feb0::1", "febf::1", "fe80:0:0:0:0:0:0:1", "FEBF::abcd"])
+        assert.strictEqual(refused(`https://[${host}]/blob`), "CIVITAI_BLOB_URL_REFUSED", `${host} is inside fe80::/10 and must be refused`);
+
+      /* The boundary, to verify the mask arithmetic and nothing else. These two sit just
+         outside fe80::/10, so the link-local rule must NOT be what decides them — and no
+         other protection is weakened to make that true: whatever the broader address policy
+         says about them is left exactly as it is. */
+      for (const host of ["fe7f::1", "fec0::1"])
+        assert.notStrictEqual(refused(`https://[${host}]/blob`), "CIVITAI_BLOB_URL_REFUSED",
+          `${host} is outside fe80::/10, so the mask must not claim it`);
+
+      /* Everything the same rewrite had to keep.
+         `::1` and `::ffff:…` are deliberately NOT asserted here: this suite points the
+         client at a loopback mock, which switches on the documented mock exemption, so
+         loopback is legitimately permitted in this context. Their refusal is asserted
+         below against the real production base, where that exemption is off. */
+      for (const host of ["fc00::1", "fd12:3456::1", "fdff::1"])
+        assert.strictEqual(refused(`https://[${host}]/blob`), "CIVITAI_BLOB_URL_REFUSED", `${host} (ULA) must stay refused`);
+      assert.strictEqual(refused("https://100.64.0.1/x"), "CIVITAI_BLOB_URL_REFUSED", "CGNAT must stay refused");
+
+      /* THE PRODUCTION BOUNDARY, in a child process with the real pinned base, because
+         MOCK_ORCHESTRATOR is decided once at module load from the environment. */
+      const production = JSON.parse(require("child_process").execFileSync(process.execPath, ["-e", `
+        const C = require(${JSON.stringify(path.join(ROOT, "civitai-client.js"))});
+        const code = (u) => { try { C.assertDownloadableBlobUrl(u); return ""; } catch (e) { return String(e.code || ""); } };
+        const hosts = ["::1", "::ffff:127.0.0.1", "fe80::1", "fe90::1", "febf::1", "fc00::1"];
+        const out = { mock: C.MOCK_ORCHESTRATOR };
+        for (const h of hosts) out[h] = code("https://[" + h + "]/blob");
+        out["127.0.0.1"] = code("https://127.0.0.1/blob");
+        out["blobs.civitai.com"] = code("https://blobs.civitai.com/signed.jpg");
+        process.stdout.write(JSON.stringify(out));
+      `], {
+        env: {
+          ...process.env,
+          CINEBRAID_CIVITAI_ORCHESTRATION_BASE: "https://orchestration.civitai.com",
+          CINEBRAID_CIVITAI_API_BASE: "https://civitai.com",
+        },
+        encoding: "utf8",
+      }));
+      assert.strictEqual(production.mock, false, "the production check must run with the mock exemption OFF");
+      for (const host of ["::1", "::ffff:127.0.0.1", "fe80::1", "fe90::1", "febf::1", "fc00::1", "127.0.0.1"])
+        assert.strictEqual(production[host], "CIVITAI_BLOB_URL_REFUSED", `${host} must be refused against the real provider base`);
+      assert.strictEqual(production["blobs.civitai.com"], "", "and a genuine public Civitai media host is still permitted");
+      note("a provider-supplied result address cannot be a file, a private range, or any address in fe80::/10 — the whole range, not a text prefix");
+    }
+
+    /* =====================================================================
+       10b. LINK-LOCAL REFUSES BEFORE FETCH, ON THE FIRST URL AND THROUGH A REDIRECT.
+
+       The gate is what matters, not just the predicate: nothing may reach the network. So
+       global fetch is replaced with a counter and asserted never to have been called. */
+    {
+      const Client = require(path.join(ROOT, "civitai-client.js"));
+      const realFetch = globalThis.fetch;
+      let fetches = [];
+      globalThis.fetch = async (input) => { fetches.push(String(input)); throw new Error("the gate let a refused address reach the network"); };
+      try {
+        for (const host of ["fe80::1", "fe90::1", "fea0::1", "febf::1"]) {
+          fetches = [];
+          let code = "";
+          try { await Client.fetchBlob(`https://[${host}]/v2/consumer/blobs/x.jpg`); } catch (error) { code = String(error.code || ""); }
+          assert.strictEqual(code, "CIVITAI_BLOB_URL_REFUSED", `${host} as the initial media address must be refused`);
+          assert.deepStrictEqual(fetches, [], `${host} must be refused BEFORE fetch, not after`);
+        }
+
+        /* And through the one redirect shape that IS allowed — a same-origin relative hop.
+           The per-hop gate runs the same check, so a link-local origin is refused at the
+           first hop and the redirect is never followed. */
+        fetches = [];
+        let code = "";
+        try { await Client.fetchBlob("https://[fe90::1]/v2/consumer/blobs/x.jpg?sig=a&exp=b"); } catch (error) { code = String(error.code || ""); }
+        assert.strictEqual(code, "CIVITAI_BLOB_URL_REFUSED");
+        assert.deepStrictEqual(fetches, [], "a link-local origin is refused before any hop, so its relative redirect is never reachable");
+      } finally {
+        globalThis.fetch = realFetch;
+      }
+      note("every address in fe80::/10 is refused before a single fetch — as the initial media address and as a redirect origin");
     }
 
     /* =====================================================================

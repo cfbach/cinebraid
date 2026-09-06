@@ -25,6 +25,7 @@
  *   NC-16  the redirect depth cap is removed, so a loop reports a timeout instead
  *   NC-17  the Civitai ledger branch is removed, so a Civitai-only install cannot show
  *          the cost it recorded
+ *   NC-18  IPv6 link-local matched as a text prefix, so most of fe80::/10 escapes
  *
  * NOTHING IS REVERTED WITH GIT. Every defect from NC-1 to NC-16 is introduced by compiling
  * a MODIFIED COPY of the real source in memory and installing it in the module cache before
@@ -442,6 +443,23 @@ async function main() {
     assert(detected, 'NEGATIVE CONTROL NC-17 FAILED: with the Civitai ledger branch removed, the suite still passed.');
     note(`NC-17: the Civitai ledger branch is removed, so a Civitai-only install shows "record unavailable" -> caught by "a Civitai-only install loads its ledger" (${String(detected.message).split("\n")[0].slice(0, 90)})`);
   }
+
+  /* -------------------------------------------------------------------------
+     NC-18 — link-local matched as a text prefix instead of as a range.
+
+     The defect exactly as Astra reproduced it: `startsWith("fe80")` catches fe80::1 and
+     lets fe90::1 through, though both are link-local. A prefix string is not a CIDR. */
+  await control({
+    id: "NC-18",
+    label: "IPv6 link-local is matched by text prefix, so most of fe80::/10 escapes",
+    guards: "every address in fe80::/10 is refused before a single fetch",
+    mutate: () => installBroken("civitai-client.js", (source, label) => mutateOnce(
+      source,
+      "  if ((first & 0xffc0) === 0xfe80) return true;",
+      '  if (host.startsWith("fe80")) return true;',
+      label,
+    ), "NC-18"),
+  });
 
   /* The real modules, green, after every control has been undone. */
   for (const key of Object.keys(require.cache))
