@@ -51,6 +51,7 @@
     "check:recovery": "node tests/data-recovery-focused-state.js",
     "check:bounded": "node tests/bounded-rendering.js",
     "check:browser-real": "node tests/run-python-check.js tests/real-browser-workflow.py",
+    "check:reference-automation-routing": "node tests/reference-automation-provider-routing.js",
     "check:reference-creation-review": "node tests/reference-creation-review.js",
     "check:reference-repair": "node tests/reference-workflow-repair.js",
     "check:reference-loop-browser": "node tests/run-python-check.js tests/reference-automation-real-browser.py",

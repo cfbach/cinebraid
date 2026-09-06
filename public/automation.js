@@ -1522,8 +1522,51 @@ window.startPlannedShotAutomation = async () => {
 function v627EntityPreflight(list, entity, stateIds) {
   const errors = [], warnings = [], lineageGaps = [], selected = new Set(stateIds || []), states = entityStateListRead(entity, true), byId = new Map(states.map((state) => [state.id, state]));
   if (!falGenerationReady()) errors.push("FAL GPT Image 2 generation is not enabled.");
-  if (!capabilityState("text").ready) errors.push(capabilityState("text").message || "The text assistant is unavailable.");
-  if (!capabilityState("vision").ready) errors.push(capabilityState("vision").message || "The vision assistant is unavailable.");
+  /* THE GATE ASKS FOR WHAT THE RUN ACTUALLY NEEDS, AND NAMES WHOSE READINESS IT IS.
+   *
+   * The Last Seat dogfood could not start a Braidy run on Folding Chair. The modal
+   * refused with "Ollama is not reachable at http://127.0.0.1:18434" while Braidy's
+   * text assistant was a working OpenAI-compatible server serving qwen3.8-27b-fp8 —
+   * the same assistant that had just refined Rex's prompt through this very build.
+   *
+   * Two things were wrong here, and neither of them was the provider routing.
+   *
+   * FIRST, VISION WAS A BLOCKING REQUIREMENT THE RUN DOES NOT HAVE. The executor has
+   * always handled an unavailable reviewer correctly: it records `reviewUnavailable`,
+   * logs "generated successfully, but optional AI review was unavailable. Keeping it
+   * for human review", buys no correction pass, and parks on the human gate. So this
+   * gate was strictly stricter than the runtime — it refused a run the product is
+   * fully able to perform and already degrades honestly. Vision is a warning now, and
+   * the warning says what the filmmaker will actually get. Nothing substitutes text
+   * review for visual review: the run returns candidates for a person to look at,
+   * which is exactly what it would have done had vision failed mid-run.
+   *
+   * SECOND, THE REFUSAL WORE THE WRONG CAPABILITY'S NAME. `capabilityState(name)`
+   * carries one provider's diagnostic, and pushing it bare put a VISION provider's
+   * reachability failure under a heading about starting a Braidy run. Each capability
+   * is named now, so a vision provider's message can never again be read as a
+   * statement about the assistant that is working.
+   *
+   * The resolution is unchanged and stays the accepted one: capabilityState() reads
+   * the server's assistantCapabilities(), which resolves text from
+   * cfg.assistant.provider and vision from resolvedVisionProvider(). No provider is
+   * named here, no local-model inventory is consulted, and nothing in this gate knows
+   * Ollama exists. Whichever provider the filmmaker actually chose is the one whose
+   * readiness is read and whose words are shown. */
+  const braidyText = capabilityState("text");
+  if (!braidyText.ready) errors.push(`Braidy's text assistant is unavailable. ${[braidyText.message, braidyText.action].filter(Boolean).join(" ")}`.trim());
+  const braidyVision = capabilityState("vision");
+  /* OFF AND BROKEN ARE DIFFERENT WARNINGS, and only one of them is the filmmaker's
+     to act on. Vision deliberately not set up needs no provider diagnostic — telling
+     someone to start Ollama for a capability they turned off is the noise this
+     dogfood reported. A vision model that IS named and did not answer keeps its
+     diagnostic, because that is a fault and the address is the useful part. */
+  if (!braidyVision.ready) {
+    const visionOff = typeof visionIsOff === "function" ? visionIsOff(braidyVision) : false;
+    warnings.push(visionOff
+      ? "Vision is off, so returned candidates come back for your review without an AI check. Nothing else about the run changes."
+      : `Vision is unavailable, so returned candidates come back for your review without an AI check. ${[braidyVision.message, braidyVision.action].filter(Boolean).join(" ")}`.trim());
+  }
   if (!selected.size) errors.push("Choose at least one continuity state.");
   const media = new Set(entityMedia(list, entity).map((item) => item.name));
   for (const id of selected) {
@@ -2505,7 +2548,20 @@ async function v626EntityBuild(run, list, entityId, stateId, round, revision = "
     throw new Error(operation?.error || `${state.name || "State"} deterministic prompt compilation failed`);
   }
   run.usage.assistantCalls = Number(run.usage.assistantCalls || 0) + 1;
-  await v641SetStepActivity(run, key, "waiting for local AI", `The ${state.name || "reference"} prompt was sent to the local prompt advisor for improvement.`, { system: "LOCAL AI · PROMPT ADVISOR", model: CONFIG?.ai?.text?.model || CONFIG?.ai?.model || "Configured local model" });
+  /* THE RUN REPORTS THE ASSISTANT IT IS ACTUALLY USING.
+   *
+   * This announced itself as a local prompt advisor waiting on local AI, and read its
+   * model from `CONFIG.ai.text.model` — a
+   * path the config schema does not contain, so the fallback "Configured local model"
+   * was the only value it ever showed. Under an OpenAI-compatible Braidy on another
+   * machine every one of those words is false, and together they are the reason a
+   * filmmaker reads this run as something that needs a local model.
+   *
+   * The model now comes from the same capability the gate above reads, so the run
+   * names the assistant that will actually answer. Braidy leads, as it does on the
+   * manual refinement this step calls into; the model stays beside it as provenance. */
+  const braidyStep = typeof capabilityState === "function" ? capabilityState("text") : null;
+  await v641SetStepActivity(run, key, "waiting for Braidy", `The ${state.name || "reference"} prompt was sent to Braidy for refinement.`, { system: "Braidy · Reference prompt refinement", model: (braidyStep && braidyStep.model) || "the configured assistant" });
   let improvedBuild = null;
   if (state.isDefault) {
     const before = assetPromptBuilds(entity).length;

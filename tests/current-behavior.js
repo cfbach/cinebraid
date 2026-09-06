@@ -551,6 +551,8 @@ async function main() {
     "reference-aspect-consistency.js",
     "reference-authority-deep-dive.js",
     "reference-automation-closed-loop.js",
+    "reference-automation-provider-routing-capture.py",
+    "reference-automation-provider-routing.js",
     "reference-automation-real-browser.py",
     "reference-creation-final-gate.py",
     "reference-creation-review-capture.py",

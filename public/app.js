@@ -5789,6 +5789,25 @@ function capabilityState(name) {
     action: "Open Settings to configure AI assistance.",
   };
 }
+/* IS VISION OFF, OR DID IT FAIL? ONE ANSWER, ASKED BY EVERY SURFACE THAT CARES.
+ *
+ * Reference Creation & Candidate Review V1 established the rule in Candidate Review
+ * and public/views.js states it for the Assistant panel: Vision reads Off when its
+ * provider is none/never AND when no vision model is named, "because a blank model is
+ * not an active provider... in both cases no image is read". Both are configuration
+ * rather than fault, and a capability nobody turned on has not failed — so neither
+ * should produce a provider's reachability diagnostic.
+ *
+ * It lives here because two surfaces now ask it — the candidate review panel and the
+ * reference-automation plan — and two copies of a predicate is how they come to
+ * disagree about whether a filmmaker has a problem. It reads the same capability
+ * record every other reader reads and decides nothing about vision itself. */
+function visionIsOff(capability) {
+  const row = capability && typeof capability === "object" ? capability : {};
+  const provider = String(row.provider || "").trim();
+  if (provider === "none" || provider === "never") return true;
+  return !String(row.model || "").trim();
+}
 function aiDisabledAttrs(name, extraRequirement = "") {
   const state = capabilityState(name),
     reason = [state.message, state.action, extraRequirement]

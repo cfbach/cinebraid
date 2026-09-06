@@ -738,9 +738,11 @@ function entityReviewBraidyAvailability(busy, review) {
    * Nothing about vision runtime or configuration is decided here. This reads the
    * capability record the server already sends and chooses which of its own words to
    * show. */
-  const provider = String(capability.provider || "").trim();
-  const model = String(capability.model || "").trim();
-  const off = provider === "none" || provider === "never" || !model;
+  /* The rule this panel established now lives beside capabilityState(), because the
+     reference-automation plan asks the same question and two copies would drift. */
+  const off = typeof visionIsOff === "function"
+    ? visionIsOff(capability)
+    : (String(capability.provider || "").trim() === "none" || !String(capability.model || "").trim());
   const headline = off
     ? "Braidy visual review unavailable — Vision is off."
     : "Braidy visual review unavailable.";
