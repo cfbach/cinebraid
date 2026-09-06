@@ -894,6 +894,12 @@ async function main() {
       assert.strictEqual(delivered.candidateFiles.length, 1, "one candidate, not two");
       assert.strictEqual(delivered.candidateFiles[0].decision, "unreviewed");
       assert.strictEqual(job.civitai.materializationFailedAt, "", "the earlier failure is cleared by the successful collection");
+      /* A DELIVERED JOB CARRIES NO FAILURE MESSAGE. The shot strip renders job.error
+         whenever it is present, so a recovered job that kept its collection error would
+         show a filmmaker a delivered candidate beside the reason it had not been
+         delivered. Found on the first real recovery. */
+      assert.strictEqual(job.error, "", "a recovered, delivered job must not still carry the collection failure message");
+      assert.strictEqual(job.errorCode, "", "nor its failure code");
 
       /* NO CREDENTIAL REACHES THE MEDIA HOST, on the first hop or the redirected one. */
       const blobCalls = mock.state.requests.filter((row) => row.path.startsWith("/blob/"));

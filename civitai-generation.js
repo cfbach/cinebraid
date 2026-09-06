@@ -1046,6 +1046,17 @@ function registerCivitaiGeneration(app, context) {
         row.ingestedAt = nowIso();
         row.updatedAt = row.ingestedAt;
         row.result = result;
+        /* A DELIVERED JOB CARRIES NO FAILURE MESSAGE.
+         *
+         * Found on the first real recovery: a job that failed to collect, was corrected and
+         * then delivered stayed COMPLETED while still carrying "CineBraid could not download
+         * the result". The shot strip renders job.error whenever it is present, so a
+         * filmmaker was shown a delivered candidate beside the reason it had not been
+         * delivered. The earlier failure is not erased — job.civitai.materializationFailedAt
+         * is cleared just below and the whole attempt is recoverable from the ledger's
+         * history — but the CURRENT state of this row is success, and the row must say so. */
+        row.error = "";
+        row.errorCode = "";
         row.civitai = {
           ...row.civitai,
           remoteStatus: workflow.status,
