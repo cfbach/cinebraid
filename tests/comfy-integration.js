@@ -1148,19 +1148,32 @@ function browserLedgerOwnership() {
   const app = fs.readFileSync(path.join(ROOT, "public", "app.js"), "utf8").replace(/\r\n/g, "\n");
   const fal = fs.readFileSync(path.join(ROOT, "public", "fal-generation.js"), "utf8").replace(/\r\n/g, "\n");
 
-  /* THE EARLY RETURN GOES THROUGH THE LOCAL READ, not past it. This exact line is the
-     defect: `return prepared;` here is what produced the wrong sentence. */
-  assert(/if \(!\(falConfig\.enabled && falConfig\.keySource !== "none"\)\) return prepareLocalGenerationLedger\(prepared\);/.test(app),
-    "a keyless fal must still read the local generation ledger");
-  assert(!/keySource !== "none"\)\) return prepared;/.test(app),
-    "the early return that skipped the local ledger must be gone, not merely bypassed");
+  /* THE EARLY RETURN GOES THROUGH THE OTHER BACKENDS' READ, not past it. This exact line
+     is the defect: `return prepared;` here is what produced the wrong sentence.
 
-  /* AND IT GATES ON ITS OWN CONDITION. */
-  const local = app.slice(app.indexOf("async function prepareLocalGenerationLedger"));
-  assert(/if \(prepared\.config\.generation\?\.comfy\?\.enabled !== true\) return prepared;/.test(local.slice(0, 600)),
-    "the local ledger read must gate on the local integration, never on fal");
-  assert(/prepared\.falLedgerLoaded = true;/.test(local.slice(0, 1400)),
-    "a local ledger that answered is a loaded ledger");
+     The loader was renamed when Civitai reproduced the same defect — a function that also
+     reads a hosted paid provider's ledger is not a "local" one — but the property is
+     unchanged and is what is asserted. */
+  assert(/if \(!\(falConfig\.enabled && falConfig\.keySource !== "none"\)\) return prepareBackendGenerationLedgers\(prepared\);/.test(app),
+    "a keyless fal must still read the other backends' generation ledger");
+  assert(!/keySource !== "none"\)\) return prepared;/.test(app),
+    "the early return that skipped the other backends' ledger must be gone, not merely bypassed");
+
+  /* AND EACH BACKEND GATES ON ITS OWN CONDITION — never on fal's, and never on another
+     backend's. ComfyUI's read must not depend on Civitai being configured, or the defect
+     simply moves. */
+  const local = app.slice(app.indexOf("async function prepareBackendGenerationLedgers"));
+  const body = local.slice(0, 600);
+  assert(/generation\.comfy\?\.enabled === true\) await appendBackendGenerationLedger\(prepared, "\/api\/generation\/comfy\/jobs"\)/.test(body),
+    "the ComfyUI ledger read must gate on the ComfyUI integration, never on fal");
+  assert(/generation\.civitai\?\.enabled === true\) await appendBackendGenerationLedger\(prepared, "\/api\/generation\/civitai\/jobs"\)/.test(body),
+    "the Civitai ledger read must gate on the Civitai integration, never on fal or ComfyUI");
+  assert(!/return prepared;\s*\n\s*if \(generation\.civitai/.test(body),
+    "one backend being switched off must not stop the next one from being read");
+  assert(/prepared\.falLedgerLoaded = true;/.test(local.slice(0, 2400)),
+    "a backend ledger that answered is a loaded ledger");
+  assert(/seen\.has\(String\(row\.id \|\| ""\)\)/.test(local.slice(0, 2400)),
+    "rows already held must not be appended twice — fal's route returns the whole ledger");
 
   /* THE ROUTING FILTER. */
   assert(/function falOwnedJob\(job\) \{/.test(fal), "fal must have an explicit ownership predicate");

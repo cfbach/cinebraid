@@ -23,10 +23,19 @@
  *   NC-14  a media redirect is followed wherever it points (the SSRF boundary removed)
  *   NC-15  every redirect is refused, so an already-paid result cannot be collected
  *   NC-16  the redirect depth cap is removed, so a loop reports a timeout instead
+ *   NC-17  the Civitai ledger branch is removed, so a Civitai-only install cannot show
+ *          the cost it recorded
  *
- * NOTHING IS WRITTEN TO DISK AND NOTHING IS REVERTED WITH GIT. Each defect is introduced
- * by compiling a MODIFIED COPY of the real source in memory and installing it in the
- * module cache before the routes are built, so the running code IS the broken code.
+ * NOTHING IS REVERTED WITH GIT. Every defect from NC-1 to NC-16 is introduced by compiling
+ * a MODIFIED COPY of the real source in memory and installing it in the module cache before
+ * the routes are built, so the running code IS the broken code and nothing is written to
+ * disk.
+ *
+ * NC-17 IS THE ONE EXCEPTION, and it is called out rather than hidden. public/app.js is a
+ * browser script the positive suite reads from disk, so there is no module cache to install
+ * a copy into. That control writes the broken source, runs, and restores it in a `finally`
+ * — then asserts the restored file is byte-identical to what it read. A control that could
+ * leave the working tree modified would be worse than no control.
  *
  * AN EXCEPTION IS NOT PROOF A CONTROL RAN. Every mutation carries a receipt: the anchor
  * must exist, must be unique, and must actually change the source. A control that silently
@@ -392,6 +401,47 @@ async function main() {
       label,
     ), "NC-16"),
   });
+
+  /* -------------------------------------------------------------------------
+     NC-17 — the Civitai ledger branch removed.
+
+     The defect exactly as the live proof found it: a Civitai-only installation delivers a
+     paid candidate and the browser never loads the generation ledger, so every provenance
+     surface reports the record unavailable and the recorded Buzz cost is withheld.
+
+     public/app.js is a browser script, so this control edits the SOURCE the positive suite
+     executes rather than a module in the require cache — which is why it does not go
+     through installBroken(). */
+  {
+    const file = path.join(ROOT, "public", "app.js");
+    const original = readLF(file);
+    const broken = mutateOnce(
+      original,
+      '  if (generation.civitai?.enabled === true) await appendBackendGenerationLedger(prepared, "/api/generation/civitai/jobs");\n',
+      "",
+      "NC-17",
+    );
+    applied = [];
+    fs.writeFileSync(file, broken);
+    let detected = null;
+    const log = console.log;
+    console.log = () => {};
+    try {
+      delete require.cache[require.resolve("./civitai-integration")];
+      await require("./civitai-integration").main();
+    } catch (error) {
+      if (error instanceof assert.AssertionError) detected = error;
+      else { console.log = log; fs.writeFileSync(file, original); throw error; }
+    } finally {
+      console.log = log;
+      /* Restored before anything else can read it, and verified byte-identical. */
+      fs.writeFileSync(file, original);
+      delete require.cache[require.resolve("./civitai-integration")];
+    }
+    assert.strictEqual(readLF(file), original, "NC-17 must restore public/app.js byte-identically");
+    assert(detected, 'NEGATIVE CONTROL NC-17 FAILED: with the Civitai ledger branch removed, the suite still passed.');
+    note(`NC-17: the Civitai ledger branch is removed, so a Civitai-only install shows "record unavailable" -> caught by "a Civitai-only install loads its ledger" (${String(detected.message).split("\n")[0].slice(0, 90)})`);
+  }
 
   /* The real modules, green, after every control has been undone. */
   for (const key of Object.keys(require.cache))

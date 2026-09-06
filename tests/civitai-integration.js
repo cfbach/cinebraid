@@ -26,6 +26,7 @@ const fs = require("fs");
 const http = require("http");
 const os = require("os");
 const path = require("path");
+const vm = require("vm");
 
 const ROOT = path.join(__dirname, "..");
 const notes = [];
@@ -936,7 +937,131 @@ async function main() {
     kit.close();
 
     /* =====================================================================
-       12. NO REAL PROVIDER WAS CONTACTED, AND NO BUZZ WAS SPENT. */
+       12. THE BROWSER'S GENERATION LEDGER, PER BACKEND.
+
+       Found in the live proof: a Civitai-only installation delivered a paid candidate and
+       its inspector read "Generation job — record unavailable", withholding a 10 Buzz cost
+       the record held correctly. public/app.js loaded the ledger from fal's route only when
+       fal was enabled and keyed, then fell through to a ComfyUI-only reader. There was no
+       Civitai branch, so the flag every provenance surface reads stayed false.
+
+       public/app.js is a browser script that cannot be required in node, so the two
+       functions are executed here against a stubbed fetch. That is a behavioural check on
+       the real source, not a restatement of it. */
+    {
+      const app = fs.readFileSync(path.join(ROOT, "public", "app.js"), "utf8").replace(/\r\n/g, "\n");
+      const from = app.indexOf("async function prepareBackendGenerationLedgers");
+      const end = app.indexOf("\n}", app.indexOf("async function appendBackendGenerationLedger"));
+      assert(from > 0 && end > from, "the ledger loaders must still be findable in public/app.js");
+      const source = app.slice(from, end + 2);
+
+      const CIVITAI_ROW = { id: "civitai-1", provider: "Civitai", backendId: "civitai", accounting: { estimate: { costClass: "metered_credits", unit: "buzz", amount: 10, confidence: "quoted", quotedAt: "2026-09-06T00:00:00.000Z" } } };
+      const COMFY_ROW = { id: "comfy-1", provider: "ComfyUI", backendId: "comfy", accounting: { estimate: { costClass: "free_local", unit: "none", amount: 0, confidence: "quoted", quotedAt: "2026-09-06T00:00:00.000Z" } } };
+
+      /* Each run gets a fresh context, so one case cannot leak into the next. */
+      async function loadWith(generation, routes) {
+        const calls = [];
+        const context = {
+          console,
+          fetch: async (url) => {
+            calls.push(String(url));
+            if (!(String(url) in routes)) return { ok: false, json: async () => null };
+            return { ok: true, json: async () => ({ jobs: routes[String(url)] }) };
+          },
+        };
+        vm.createContext(context);
+        vm.runInContext(source, context, { filename: "app.js" });
+        const prepared = { config: { generation }, falJobs: [], falLedgerLoaded: false };
+        await context.prepareBackendGenerationLedgers(prepared);
+        return { prepared, calls };
+      }
+
+      const COMFY_URL = "/api/generation/comfy/jobs";
+      const CIVITAI_URL = "/api/generation/civitai/jobs";
+
+      /* 1. CIVITAI-ONLY — the defect. No fal, no ComfyUI. */
+      {
+        const { prepared, calls } = await loadWith({ civitai: { enabled: true } }, { [CIVITAI_URL]: [CIVITAI_ROW] });
+        assert.strictEqual(prepared.falLedgerLoaded, true, "a Civitai-only install must report its ledger LOADED");
+        /* Array.from in THIS realm: an array built inside the vm has a different Array
+           prototype, and deepStrictEqual compares prototypes. */
+        assert.deepStrictEqual(Array.from(prepared.falJobs, (r) => r.id), ["civitai-1"]);
+        assert.deepStrictEqual(calls, [CIVITAI_URL], "it reads Civitai's own route and nothing else");
+        /* 2 and 3: the row that arrives is the one a candidate resolves against, and its
+           recorded cost is Buzz. `provenanceOf` joins on generationJobId, so a loaded
+           ledger is the whole difference between "record unavailable" and a cost. */
+        const Media = require(path.join(ROOT, "public", "shared-production-media.js"));
+        const project = {
+          shots: [{
+            id: "SC-01-01",
+            keyframes: [{ id: "F1", label: "A" }],
+            candidateFiles: [{ stored: "SC-01-01_FRAME_A_CIVITAI_1.jpg", decision: "unreviewed", frameId: "F1", generationProvider: "Civitai", generationJobId: "civitai-1", generationRequestId: "4322372-2026" }],
+          }],
+          mediaAssets: [],
+        };
+        const scan = { shots: { "SC-01-01": { takes: [{ name: "SC-01-01_FRAME_A_CIVITAI_1.jpg", url: "/assets/shots/SC-01-01/takes/SC-01-01_FRAME_A_CIVITAI_1.jpg" }] } } };
+        const withLedger = Media.productionMediaRecords({ project, scan, jobs: prepared.falJobs, jobsAvailable: prepared.falLedgerLoaded }).records[0].provenance;
+        assert.strictEqual(withLedger.job.state, "resolved", "the returned Civitai candidate resolves its exact durable job");
+        assert.strictEqual(withLedger.job.id.value, "civitai-1");
+        assert.strictEqual(withLedger.cost.state, "priced");
+        assert.strictEqual(withLedger.cost.amount, 10);
+        assert.strictEqual(withLedger.cost.currency, "buzz", "10 Buzz is Buzz");
+        assert.notStrictEqual(withLedger.cost.currency, "usd", "and is never dollars");
+        /* The same media WITHOUT the ledger is what the defect produced. */
+        const withoutLedger = Media.productionMediaRecords({ project, scan, jobs: [], jobsAvailable: false }).records[0].provenance;
+        assert.strictEqual(withoutLedger.job.state, "unavailable");
+        assert.strictEqual(withoutLedger.cost.state, "unavailable", "this is the symptom the fix removes");
+      }
+
+      /* 4. FAL-ONLY — unchanged. Neither branch fires, nothing is read, nothing claimed. */
+      {
+        const { prepared, calls } = await loadWith({ fal: { enabled: true, keySource: "config" } }, {});
+        assert.deepStrictEqual(calls, [], "with neither backend configured this reads nothing — fal's own route is the caller's job");
+        assert.strictEqual(prepared.falLedgerLoaded, false, "and it claims nothing it did not read");
+        assert.deepStrictEqual(Array.from(prepared.falJobs), []);
+      }
+
+      /* 5. COMFYUI-ONLY — unchanged from the ComfyUI foothold. */
+      {
+        const { prepared, calls } = await loadWith({ comfy: { enabled: true } }, { [COMFY_URL]: [COMFY_ROW] });
+        assert.strictEqual(prepared.falLedgerLoaded, true);
+        assert.deepStrictEqual(Array.from(prepared.falJobs, (r) => r.id), ["comfy-1"]);
+        assert.deepStrictEqual(calls, [COMFY_URL], "a ComfyUI-only install must not call Civitai's route");
+      }
+
+      /* 6. MIXED — every applicable row, none lost, none overwritten, none doubled. */
+      {
+        const { prepared, calls } = await loadWith(
+          { comfy: { enabled: true }, civitai: { enabled: true } },
+          { [COMFY_URL]: [COMFY_ROW], [CIVITAI_URL]: [CIVITAI_ROW] },
+        );
+        assert.deepStrictEqual(calls, [COMFY_URL, CIVITAI_URL]);
+        assert.deepStrictEqual(Array.from(prepared.falJobs, (r) => r.id).sort(), ["civitai-1", "comfy-1"],
+          "the second backend's read ADDS to the ledger and never replaces the first's");
+        assert.strictEqual(prepared.falLedgerLoaded, true);
+      }
+      /* And the row fal's route already delivered is not appended a second time — fal's
+         route returns the WHOLE project ledger, not only fal's rows. */
+      {
+        const calls = [];
+        const context = { console, fetch: async (url) => { calls.push(String(url)); return { ok: true, json: async () => ({ jobs: [CIVITAI_ROW] }) }; } };
+        vm.createContext(context);
+        vm.runInContext(source, context, { filename: "app.js" });
+        const prepared = { config: { generation: { civitai: { enabled: true } } }, falJobs: [CIVITAI_ROW], falLedgerLoaded: true };
+        await context.prepareBackendGenerationLedgers(prepared);
+        assert.strictEqual(prepared.falJobs.length, 1, "a row already held must not be appended twice");
+      }
+      /* A refused read leaves the flag alone rather than claiming an empty history. */
+      {
+        const { prepared } = await loadWith({ civitai: { enabled: true } }, {});
+        assert.strictEqual(prepared.falLedgerLoaded, false, "a route that refused is not a loaded ledger");
+        assert.deepStrictEqual(Array.from(prepared.falJobs), []);
+      }
+      note("a Civitai-only install loads its ledger and resolves the paid job's Buzz cost; fal-only and ComfyUI-only are unchanged; a mixed ledger keeps every row without doubling any");
+    }
+
+    /* =====================================================================
+       13. NO REAL PROVIDER WAS CONTACTED, AND NO BUZZ WAS SPENT. */
     assert(mock.baseUrl.startsWith("http://127.0.0.1:"), "the only Civitai this suite can reach is loopback");
     assert.strictEqual(process.env.CINEBRAID_CIVITAI_ORCHESTRATION_BASE, mock.baseUrl);
     for (const row of mock.state.requests)

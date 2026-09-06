@@ -1754,11 +1754,12 @@ async function prepareProjectSnapshot({ claimRecovery = false, slug = "" } = {})
    entry in the Promise.all above. It is still entirely inside PREPARE. */
 async function prepareGenerationLedger(prepared, { claimRecovery = false } = {}) {
   const falConfig = prepared.config.generation?.fal || {};
-  /* A keyless fal has nothing to read, and the local ledger still does — so the early
-     return goes THROUGH the local read rather than past it. Returning straight out here
-     is what left a delivered ComfyUI candidate beside "Generation records are not loaded
-     in this session" on an installation that had never configured fal at all. */
-  if (!(falConfig.enabled && falConfig.keySource !== "none")) return prepareLocalGenerationLedger(prepared);
+  /* A keyless fal has nothing to read, and the other backends still do — so the early
+     return goes THROUGH their read rather than past it. Returning straight out here is
+     what left a delivered ComfyUI candidate, and later a paid Civitai one, beside
+     "Generation records are not loaded in this session" on an installation that had never
+     configured fal at all. */
+  if (!(falConfig.enabled && falConfig.keySource !== "none")) return prepareBackendGenerationLedgers(prepared);
   /* What the server collected through its own background recovery rather than
      through a refresh from here — which is all the server can know, and all it
      says. The header marks THIS request as the one that takes delivery of the
@@ -1803,36 +1804,64 @@ async function prepareGenerationLedger(prepared, { claimRecovery = false } = {})
       prepared.falJobs = [];
       prepared.falLedgerLoaded = false;
     });
-  await prepareLocalGenerationLedger(prepared);
+  await prepareBackendGenerationLedgers(prepared);
   return prepared;
 }
 
-/* THE LOCAL HALF OF THE SAME LEDGER.
+/* THE HALF OF THE SAME LEDGER FAL'S ROUTE DOES NOT ANSWER FOR.
  *
  * projects/<slug>/generation-jobs.json holds every backend's jobs, but the read above
- * is fal's route and returns fal's rows, so a ComfyUI result arrived in the project as
- * a candidate the media surfaces could see and a generation record they could not.
- * Generated Media said "Generation records are not loaded in this session, so provider,
- * model and cost cannot be shown" beside a picture whose provider, model and cost are
- * all recorded — which is a worse statement than saying nothing.
+ * is fal's route and is only performed when fal is enabled and keyed, so a result from
+ * another backend arrived in the project as a candidate the media surfaces could see and
+ * a generation record they could not. Generated Media said "Generation records are not
+ * loaded in this session, so provider, model and cost cannot be shown" beside a picture
+ * whose provider, model and cost are all recorded — which is a worse statement than
+ * saying nothing.
  *
- * It runs on its OWN condition, not fal's. The early return above is correct for fal —
- * a keyless fal has nothing to read — and it would be wrong here, because a local
- * ComfyUI has a history whether or not this installation has ever paid for a render.
+ * That was fixed for ComfyUI and then reproduced exactly for Civitai: a Civitai-only
+ * installation delivered a paid candidate and its inspector read "Generation job — record
+ * unavailable", withholding a recorded 10 Buzz cost the record held correctly. So the
+ * shape is now per-backend rather than a second special case.
+ *
+ * EACH BACKEND ANSWERS ON ITS OWN CONDITION, never on fal's and never on each other's.
+ * The early return above is correct for fal — a keyless fal has nothing to read — and it
+ * would be wrong here, because a local ComfyUI has a history whether or not this
+ * installation has ever paid for a render, and a Civitai account has one whether or not
+ * ComfyUI is installed.
  *
  * MERGED, NOT KEPT APART, because there is one generation ledger and every reader of it
  * joins on `generationJobId`. What must not merge is the ROUTING: falGenerationJob()
- * decides which strip a shot draws, so it now excludes rows another backend owns. */
-async function prepareLocalGenerationLedger(prepared) {
-  if (prepared.config.generation?.comfy?.enabled !== true) return prepared;
-  await fetch("/api/generation/comfy/jobs")
+ * decides which strip a shot draws, so it excludes rows another backend owns.
+ *
+ * NO PROVIDER IS CONTACTED. Both routes read the project's own ledger file; inspecting
+ * recorded history must never cost a network call to somebody's paid API. */
+async function prepareBackendGenerationLedgers(prepared) {
+  const generation = prepared.config.generation || {};
+  if (generation.comfy?.enabled === true) await appendBackendGenerationLedger(prepared, "/api/generation/comfy/jobs");
+  if (generation.civitai?.enabled === true) await appendBackendGenerationLedger(prepared, "/api/generation/civitai/jobs");
+  return prepared;
+}
+
+/* One backend's rows, added to what this window already holds.
+ *
+ * APPENDED, NEVER SUBSTITUTED, and never twice. fal's route returns the WHOLE project
+ * ledger rather than only fal's rows, so on an installation that runs fal beside another
+ * backend the same row can arrive from two reads. Readers join on `generationJobId` and
+ * would survive a duplicate, but the activity counts drawn from this array would not — so
+ * rows already present are skipped by id. That is also what keeps a mixed project whole:
+ * a second backend's read adds to the ledger and can never overwrite the first's. */
+async function appendBackendGenerationLedger(prepared, url) {
+  await fetch(url)
     .then((r) => (r.ok ? r.json() : null))
     .then((data) => {
       if (!data || !Array.isArray(data.jobs)) return;
-      prepared.falJobs = [...(prepared.falJobs || []), ...data.jobs];
+      const held = prepared.falJobs || [];
+      const seen = new Set(held.map((row) => String(row?.id || "")));
+      prepared.falJobs = [...held, ...data.jobs.filter((row) => row && !seen.has(String(row.id || "")))];
       /* Loaded means the request was made AND answered — the same standard the fal read
-         above holds itself to. A local ledger that answered is a loaded ledger even
-         when fal never ran. */
+         above holds itself to. A backend ledger that answered is a loaded ledger even
+         when fal never ran. A refused or failed fetch leaves the flag alone, so a surface
+         still says the record is unavailable rather than claiming an empty history. */
       prepared.falLedgerLoaded = true;
     })
     .catch(() => {});
