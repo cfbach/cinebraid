@@ -38,6 +38,7 @@ const nodeSuites = [
   "check:safety",
   "check:focused",
   "check:reference-ux",
+  "check:dogfood-ux-clarity",
   "check:reference-repair",
   "check:reference-loop",
   "check:state-chain-recovery",

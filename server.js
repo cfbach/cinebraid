@@ -3087,10 +3087,12 @@ app.get("/api/system/health", async (req, res) => {
       configured: !!configured[provider],
       label:
         {
-          ollama: "Local AI",
+          /* U1 — named for the wire protocol the provider actually speaks, so
+             this label and the Settings chip a filmmaker pressed agree. */
+          ollama: "Ollama",
           anthropic: "Claude API",
           openai: "OpenAI API",
-          custom: "Custom AI server",
+          custom: "OpenAI-compatible server",
           none: "No AI",
         }[provider] || provider,
       text: publicCapability(capabilities.text),

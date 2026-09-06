@@ -5701,8 +5701,13 @@ function sceneAudioPanel(sc) {
   </div>`;
 }
 
+/* THE TAB DECLARES WHICH TAB IT IS, and nothing here decides what that looks
+   like. `data-tabs`/`data-tab-key` are the same shape `data-reference-category`
+   already uses on a library card: the stylesheet is the one place a category
+   becomes a colour, so the References shelf can mark its category chips with
+   the same token its cards carry, and every other tab bar is unaffected. */
 function workspaceTabs(base, active, tabs) {
-  return `<nav class="workspace-tabs">${tabs.map(([key, label, count]) => `<a class="workspace-tab ${active === key ? "on" : ""}" href="#/${base}/${key}">${esc(label)}${count != null ? ` <span>${count}</span>` : ""}</a>`).join("")}</nav>`;
+  return `<nav class="workspace-tabs" data-tabs="${attr(base)}">${tabs.map(([key, label, count]) => `<a class="workspace-tab ${active === key ? "on" : ""}" data-tab-key="${attr(key)}" href="#/${base}/${key}">${esc(label)}${count != null ? ` <span>${count}</span>` : ""}</a>`).join("")}</nav>`;
 }
 /* WHICH FRAMES THIS SHOT CURRENTLY OWES, asked of the one readiness owner.
  *
@@ -6648,9 +6653,16 @@ function libraryCard(list, x, canonOnly = false) {
   if (counts.historic) parts.push(`${plural(counts.historic, "historic pointer")} to confirm`);
   const unassigned = Math.max(0, media.length - counts.canon - counts.references - counts.historic);
   if (!canonOnly && unassigned) parts.push(plural(unassigned, "unassigned file"));
+  /* U4 — AN EMPTY CARD NO LONGER INSTRUCTS.
+     Every empty card printed "Add the first reference", so a shelf of twenty-
+     seven unstarted references printed the same sentence twenty-seven times and
+     the caption stopped carrying information. The state is already said three
+     times over — an empty media well, the EMPTY badge on it, the entity name
+     and its type — so the line is dropped rather than reworded, and the
+     affordance it was standing in for becomes a control below. */
   const description = parts.length
     ? parts.join(" · ")
-    : media.length ? `${plural(media.length, "imported file")} to organize` : "Add the first reference";
+    : media.length ? `${plural(media.length, "imported file")} to organize` : "";
   /* Same reasoning as the shot board: the card navigates, so the reference image
      gets its own inspection control that does not open the reference page. */
   const enlarge = previewMedia && !isAudio(previewMedia.name) && !isVideo(previewMedia.name)
@@ -6666,7 +6678,19 @@ function libraryCard(list, x, canonOnly = false) {
      reference, historic, candidate, missing — and keeps its own class, its own
      badge and its own semantic colour on the media. This attribute only says
      which kind of record it is, and nothing reads it but the stylesheet. */
-  return `<div class="library-card-shell" data-reference-category="${attr(list)}"><a class="library-card ${status}" href="#/${route}/${x.id}"><div class="library-preview">${preview}<span class="library-status ${status}">${statusLabel}</span></div><div class="library-body"><span class="review-kind">${type}</span><b>${esc(x.name || x.id)}</b><small>${description}</small></div></a>${enlarge}</div>`;
+  /* THE AFFORDANCE THAT REPLACES THE SENTENCE, AND WHY IT IS NOT A BUTTON.
+     The card is already a link to the one place a reference is added, so a
+     second control beside it would navigate to the same route while adding a
+     tab stop to every empty card — twenty-seven of them on this production's
+     shelf — and reading "＋ Add" twenty-seven times to a screen reader. The cue
+     therefore lives INSIDE the link, over the empty well, and surfaces on hover
+     and on the card's own keyboard focus: one focus target, one destination,
+     and the prompt appears exactly where the missing media would be. It is
+     decorative to assistive technology, which already has the link's name. */
+  const addCue = !media.length
+    ? `<span class="library-add-cue" aria-hidden="true">＋ Add reference</span>`
+    : "";
+  return `<div class="library-card-shell" data-reference-category="${attr(list)}"><a class="library-card ${status}" href="#/${route}/${x.id}"><div class="library-preview">${preview}<span class="library-status ${status}">${statusLabel}</span>${addCue}</div><div class="library-body"><span class="review-kind">${type}</span><b>${esc(x.name || x.id)}</b>${description ? `<small>${description}</small>` : ""}</div></a>${enlarge}</div>`;
 }
 function libraryView(tab = "all") {
   /* "approved" is still accepted as an incoming route so an old bookmark or a

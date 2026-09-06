@@ -187,8 +187,8 @@ async function callOllamaText(cfg, model, system, user, maxTokens, requestOption
     method: "POST",
     headers: { "content-type": "application/json" },
     body: JSON.stringify(payload),
-  }, TEXT_TIMEOUT_MS, "Local AI");
-  if (!r.ok) throw new Error("Local AI: " + (data.error || data.message || r.status));
+  }, TEXT_TIMEOUT_MS, "Ollama");
+  if (!r.ok) throw new Error("Ollama: " + (data.error || data.message || r.status));
   const text = assistantMessageText(data.message) || assistantMessageText(data);
   if (text) return text;
 
@@ -206,13 +206,13 @@ async function callOllamaText(cfg, model, system, user, maxTokens, requestOption
     method: "POST",
     headers: { "content-type": "application/json" },
     body: JSON.stringify(fallbackPayload),
-  }, TEXT_TIMEOUT_MS, "Local AI fallback");
-  if (!generateResponse.ok) throw new Error("Local AI fallback: " + (generateData.error || generateData.message || generateResponse.status));
+  }, TEXT_TIMEOUT_MS, "Ollama fallback");
+  if (!generateResponse.ok) throw new Error("Ollama fallback: " + (generateData.error || generateData.message || generateResponse.status));
   const fallbackText = assistantMessageText(generateData);
   if (fallbackText) return fallbackText;
 
   const thinking = String(data.message?.thinking || data.message?.reasoning || generateData.thinking || generateData.reasoning || "").trim();
-  if (thinking) throw new Error("Local AI returned reasoning but no final answer after both Ollama chat and generate attempts. Try the exact model name shown by `ollama list` or switch the text model to a standard instruct model.");
+  if (thinking) throw new Error("Ollama returned reasoning but no final answer after both Ollama chat and generate attempts. Try the exact model name shown by `ollama list` or switch the text model to a standard instruct model.");
   return "";
 }
 /* Whether a provider endpoint is genuinely on this machine.
@@ -331,7 +331,7 @@ async function llm(
       system,
       user,
       maxTokens,
-      "Custom AI server",
+      "OpenAI-compatible server",
       requestOptions,
       customRequestBody(cfg),
     );
@@ -373,8 +373,8 @@ async function callOllamaVision(
         { role: "user", content: user, images: imagesB64 },
       ],
     }),
-  }, VISION_TIMEOUT_MS, "Local vision");
-  if (!r.ok) throw new Error("Local vision: " + (data.error || r.status));
+  }, VISION_TIMEOUT_MS, "Ollama vision");
+  if (!r.ok) throw new Error("Ollama vision: " + (data.error || r.status));
   return data.message?.content || "";
 }
 /* Strict structured output for an OpenAI-compatible vision request.
@@ -572,7 +572,7 @@ async function vision(
       user,
       imagesB64,
       maxTokens,
-      "Custom vision",
+      "OpenAI-compatible vision",
       customRequestBody(cfg),
       requestOptions,
     );

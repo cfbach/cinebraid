@@ -7223,3 +7223,137 @@ body[data-focused-route="library"]:has(.library-grid .library-card) #app[data-su
 .frame-returned-history{
   display:inline-block;margin-top:2px;color:var(--muted);font-size:10px;text-decoration:none}
 .frame-returned-history:hover,.frame-returned-history:focus-visible{color:var(--acc);text-decoration:underline}
+
+/* ===========================================================================
+   DOGFOOD UX CLARITY V1
+
+   Eight corrections a real production run asked for, in the order they were
+   hit. Presentation only: no capability changes, no new semantic colours, and
+   every stored value stays where it was.
+   =========================================================================== */
+
+/* U1 - WHAT IS ACTIVE, STATED RATHER THAN INFERRED.
+   Three lines under the provider tiles, one per capability, each carrying the
+   provider it resolves to and the model it would call. `data-state` is the only
+   thing that colours them and it reuses tokens already in the theme: on,
+   incomplete, off. Nothing here is a new semantic hue. */
+.assistant-capability-lines{
+  display:grid;grid-template-columns:repeat(auto-fit,minmax(210px,1fr));gap:8px;margin:0 0 18px}
+.assistant-capability{
+  display:grid;gap:2px;padding:10px 12px;border:1px solid var(--line);border-radius:8px;
+  background:var(--panel-2);border-left-width:3px}
+.assistant-capability>span{
+  font:800 9px var(--mono);letter-spacing:.14em;text-transform:uppercase;color:var(--muted)}
+.assistant-capability>b{font-size:12px;overflow-wrap:anywhere}
+.assistant-capability>small{color:var(--muted);font-size:10px;overflow-wrap:anywhere}
+.assistant-capability[data-state="on"]{border-left-color:var(--acc)}
+.assistant-capability[data-state="on"]>span{color:var(--acc)}
+/* `--amber` is the palette's real declared token; `--warn` is referenced
+   elsewhere in this file with no definition, so it is not used here. */
+.assistant-capability[data-state="incomplete"]{border-left-color:var(--amber)}
+.assistant-capability[data-state="off"]{opacity:.72}
+
+/* U2 - A CAPABILITY THAT IS OFF LOOKS OFF, AND KEEPS ITS SETTINGS.
+   The fields stay in the DOM inside a closed disclosure, because
+   assistantConfigPatch() reads them by id and a closed <details> is still
+   queryable: saving while a capability is off cannot blank the value that
+   turning it back on needs. */
+.settings-inactive-fields{
+  grid-column:1/-1;border:1px dashed var(--line);border-radius:8px;
+  background:color-mix(in srgb,var(--panel-2) 60%,transparent);padding:0 12px}
+.settings-inactive-fields>summary{
+  display:grid;gap:2px;padding:10px 0;cursor:pointer;list-style:none;color:var(--muted)}
+.settings-inactive-fields>summary::-webkit-details-marker{display:none}
+.settings-inactive-fields>summary::after{
+  content:"Show";float:right;font:800 9px var(--mono);letter-spacing:.12em;
+  text-transform:uppercase;color:var(--acc)}
+.settings-inactive-fields[open]>summary::after{content:"Hide"}
+.settings-inactive-fields>summary b{font-size:11px;font-weight:700;color:var(--ink);opacity:.75}
+.settings-inactive-fields>summary small{font-size:10px}
+.settings-inactive-fields>summary:focus-visible{outline:2px solid var(--acc);outline-offset:2px}
+.settings-inactive-grid{padding:0 0 12px;opacity:.85}
+.capability-off-hint{color:var(--muted)}
+
+/* U3 - CATEGORY IDENTITY REACHES THE MEDIA WELL AND THE FILTER.
+   The tokens, the caption edge and the 7px mark are unchanged; this extends the
+   same `--cat` to the image area and to the shelf's own category chips, so a
+   filter and the cards it produces agree without a renderer picking a colour.
+
+   STILL SUBORDINATE TO PRODUCTION TRUTH. A hairline inset ring, not a fill: the
+   status badge keeps its own semantic colour on the media, and populated media
+   stays the dominant thing on the card. */
+.library-card-shell[data-reference-category] .library-preview{
+  position:relative;
+  box-shadow:inset 0 0 0 1px color-mix(in srgb,var(--cat) 46%,transparent)}
+.library-card-shell[data-reference-category] .library-card:hover .library-preview,
+.library-card-shell[data-reference-category] .library-card:focus-visible .library-preview{
+  box-shadow:inset 0 0 0 1px color-mix(in srgb,var(--cat) 72%,transparent)}
+
+/* The shelf's category chips carry the same token. `All` and `Canon` are left
+   alone: All is the current-action neutral, and Canon is production truth
+   rather than a category. */
+.workspace-tabs[data-tabs="library"] .workspace-tab[data-tab-key="characters"]{--cat:var(--cat-character)}
+.workspace-tabs[data-tabs="library"] .workspace-tab[data-tab-key="locations"]{--cat:var(--cat-location)}
+.workspace-tabs[data-tabs="library"] .workspace-tab[data-tab-key="props"]{--cat:var(--cat-prop)}
+.workspace-tabs[data-tabs="library"] .workspace-tab[data-tab-key="vehicles"]{--cat:var(--cat-vehicle)}
+.workspace-tabs[data-tabs="library"] .workspace-tab[data-tab-key="audio"]{--cat:var(--cat-audio)}
+.workspace-tabs[data-tabs="library"] .workspace-tab[data-tab-key="characters"],
+.workspace-tabs[data-tabs="library"] .workspace-tab[data-tab-key="locations"],
+.workspace-tabs[data-tabs="library"] .workspace-tab[data-tab-key="props"],
+.workspace-tabs[data-tabs="library"] .workspace-tab[data-tab-key="vehicles"],
+.workspace-tabs[data-tabs="library"] .workspace-tab[data-tab-key="audio"]{
+  position:relative;padding-left:22px}
+.workspace-tabs[data-tabs="library"] .workspace-tab[data-tab-key="characters"]::before,
+.workspace-tabs[data-tabs="library"] .workspace-tab[data-tab-key="locations"]::before,
+.workspace-tabs[data-tabs="library"] .workspace-tab[data-tab-key="props"]::before,
+.workspace-tabs[data-tabs="library"] .workspace-tab[data-tab-key="vehicles"]::before,
+.workspace-tabs[data-tabs="library"] .workspace-tab[data-tab-key="audio"]::before{
+  content:"";position:absolute;left:9px;top:50%;transform:translateY(-50%);
+  width:7px;height:7px;border-radius:2px;background:var(--cat)}
+
+/* U4 - AN EMPTY CARD STOPS REPEATING ITS INSTRUCTION.
+   The caption line is gone. What replaces it is a compact cue inside the card's
+   own link, over the empty well, surfaced by hover and by the card's keyboard
+   focus - so the shelf gains no second tab stop per card and the prompt appears
+   where the missing media would be. Always shown where there is no pointer. */
+.library-card-shell{position:relative}
+.library-preview{position:relative}
+.library-add-cue{
+  position:absolute;left:50%;bottom:14px;transform:translateX(-50%);
+  padding:4px 10px;border:1px solid var(--line);border-radius:999px;
+  background:color-mix(in srgb,var(--panel) 88%,transparent);color:var(--muted);
+  font:700 10px var(--mono);letter-spacing:.06em;white-space:nowrap;pointer-events:none;
+  opacity:0;transition:opacity .12s ease,color .12s ease,border-color .12s ease}
+.library-card:hover .library-add-cue,
+.library-card:focus-visible .library-add-cue{
+  opacity:1;color:var(--acc);border-color:color-mix(in srgb,var(--acc) 55%,var(--line))}
+@media(hover:none){.library-add-cue{opacity:1}}
+
+/* U5/U6/U8 - ONE UNMISTAKABLE FIRST TASK ON AN EMPTY REFERENCE.
+   The hero already owned "what the primary is and what is next"; at zero it
+   showed a page-sized cyan upload button and a coverage line in the same grey
+   as everything else. The task leads, the two real paths sit under it. */
+.reference-primary-hero.is-missing .reference-primary-visual{max-height:220px}
+.reference-primary-task{display:grid;gap:8px;margin:2px 0 2px}
+.reference-primary-task>p{margin:0;max-width:62ch}
+.reference-primary-paths{display:flex;flex-wrap:wrap;gap:10px;align-items:center}
+/* U6 - the upload is a standard secondary control, not a two-line banner. */
+.reference-primary-paths .reference-upload-btn,
+.reference-primary-paths .reference-generate-btn{
+  width:auto;flex:0 0 auto;white-space:nowrap;padding:9px 18px;font-size:12px}
+.reference-path-note{display:block;margin:0;color:var(--muted);font-size:11px;max-width:62ch}
+/* U8 - coverage stays visible and stays second. */
+.reference-primary-after{
+  display:block;margin-top:4px;color:var(--muted);font-size:11px;max-width:62ch}
+
+/* U7 - EMPTY DECISION MACHINERY, QUIETLY.
+   Only in the zero-candidate state. The moment a candidate exists the section
+   renders exactly as it always has: this quiets a fold, it does not change what
+   a candidate is or how one is decided. */
+.entity-candidate-section[data-candidates="0"]{opacity:.82}
+.entity-candidate-section[data-candidates="0"]>summary{font-size:12px}
+.entity-candidate-section[data-candidates="0"] .entity-candidate-filters{display:none}
+.entity-candidate-section[data-candidates="0"]>header{padding-bottom:4px}
+.entity-candidate-section[data-candidates="0"]>header span{opacity:.7}
+.entity-candidate-section[data-candidates="0"] .entity-candidate-empty{
+  padding:14px;border-style:dashed}

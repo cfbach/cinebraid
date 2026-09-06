@@ -47,6 +47,7 @@
     "check:sheet-gate": "node tests/reference-truth-sheet-gate.js",
     "check:sheet-gate-negative": "node tests/reference-truth-sheet-gate-negative-controls.js",
     "check:reference-ux": "node tests/reference-workspace-ux.js",
+    "check:dogfood-ux-clarity": "node tests/dogfood-ux-clarity.js",
     "check:recovery": "node tests/data-recovery-focused-state.js",
     "check:bounded": "node tests/bounded-rendering.js",
     "check:browser-real": "node tests/run-python-check.js tests/real-browser-workflow.py",

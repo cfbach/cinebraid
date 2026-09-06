@@ -416,6 +416,7 @@ async function main() {
     "deep-bot-safety.js",
     "dogfood-truth-reconciliation-negative-controls.js",
     "dogfood-truth-reconciliation.js",
+    "dogfood-ux-clarity.js",
     "dogfood2-p0-architecture.js",
     "dogfood2-p0-negative-controls.js",
     "entity-derivation-authority.js",
