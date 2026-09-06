@@ -1256,8 +1256,11 @@ async function main() {
     "every generation surface offers the reconciliation control for an uncertain submission", async (phase) => {
       const vm = require("vm");
       const { code } = modifiedSource("public/fal-generation.js", [[
-        "  const unknown = falJobUnresolved(job);\n  return `<div class=\"fal-job-strip ${unknown ? \"unresolved\" : active ? \"active\" : done ? \"done\" : failed ? \"failed\" : \"\"}\"><div><span>${unknown ? \"?\" : active ? '<i class=\"spin\">◌</i>' : done ? \"✓\" : failed ? \"!\" : \"·\"}</span><div><b>${esc(falJobStatusLabel(job))}</b><small>${unknown ? esc(falUnresolvedExplanation(job)) : `${job.continuityStateName",
-        "  const unknown = false;\n  return `<div class=\"fal-job-strip ${unknown ? \"unresolved\" : active ? \"active\" : done ? \"done\" : failed ? \"failed\" : \"\"}\"><div><span>${unknown ? \"?\" : active ? '<i class=\"spin\">◌</i>' : done ? \"✓\" : failed ? \"!\" : \"·\"}</span><div><b>${esc(falJobStatusLabel(job))}</b><small>${unknown ? esc(falUnresolvedExplanation(job)) : `${job.continuityStateName",
+        /* REFERENCE CREATION REVIEW V1 — the entity strip now computes its delivered
+           count between these two lines, so the anchor is the shortest text that is still
+           unique to this strip. The mutation and what it proves are unchanged. */
+        "  const unknown = falJobUnresolved(job);\n  /* R12",
+        "  const unknown = false;\n  /* R12",
       ]]);
       phase("MUTATION_LANDED");
       const escape = (value) => String(value == null ? "" : value).replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");

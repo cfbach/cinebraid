@@ -650,6 +650,70 @@ window.openCoverageSlotFromReview = (list, id, group, slotId) => {
   if (typeof returnToCoverageSlot === "function") returnToCoverageSlot(list, id, group, slotId);
   route();
 };
+/* R14 — THE CANDIDATE'S NEIGHBOURS, so "candidate 1 of 3" and prev/next are answers
+   about a real set rather than about whatever happens to be on screen.
+
+   The set is the undecided candidates for this reference, in the order the media
+   ledger already holds them — the same order and the same rows the grid draws, read
+   through the same predicate — so the review surface and the grid cannot disagree
+   about what the third candidate is. A rejected or approved file being reviewed is
+   still shown; it simply is not one of the peers being counted, because it is not
+   waiting for a decision any more. */
+function entityReviewPeers(list, entity, fileName) {
+  const media = typeof entityMedia === "function" ? entityMedia(list, entity) : [];
+  const undecided = media.filter((item) => {
+    const row = typeof entityCandidateRow === "function" ? entityCandidateRow(entity, item.name, false) : null;
+    const decision = String(row?.decision || "unreviewed");
+    return decision !== "rejected" && decision !== "approved";
+  });
+  const pool = undecided.some((item) => item.name === fileName) ? undecided : media;
+  const index = pool.findIndex((item) => item.name === fileName);
+  return {
+    total: pool.length,
+    index,
+    position: index >= 0 ? index + 1 : 0,
+    previous: index > 0 ? pool[index - 1] : null,
+    next: index >= 0 && index < pool.length - 1 ? pool[index + 1] : null,
+    rows: pool,
+  };
+}
+/* R14 — WHERE THIS IMAGE CAME FROM, from the records that already hold it.
+   The candidate row carries the provider and the generating job id; the job carries
+   the model, the mode and the provider's own request handle through the one honest
+   reader for it. Nothing is inferred from a filename, and a fact CineBraid does not
+   have is omitted rather than guessed at. */
+function entityReviewGenerationProvenance(entity, fileName) {
+  const row = typeof entityCandidateRow === "function" ? entityCandidateRow(entity, fileName, false) : null;
+  if (!row) return "";
+  const job = (typeof FAL_GENERATION_JOBS !== "undefined" ? FAL_GENERATION_JOBS || [] : []).find((item) => item.id === row.generationJobId) || null;
+  const requestId = job && typeof falJobProviderRequestId === "function" ? falJobProviderRequestId(job) : "";
+  const modelId = String(job?.model || row.generationModel || "");
+  const providerId = String(row.generationProvider || job?.provider || "");
+  const providerName = providerId.toLowerCase() === "fal" ? "FAL" : providerId;
+  const modelName = typeof falModelDisplayName === "function" ? falModelDisplayName(modelId) : modelId;
+  const rows = [
+    { label: "Provider", value: providerName },
+    { label: "Model", value: modelName },
+    { label: "Model id", value: modelName === modelId ? "" : modelId },
+    { label: "Mode", value: String(job?.mode || "") },
+    { label: "Provider request", value: String(requestId || "") },
+    { label: "Returned", value: job?.ingestedAt ? new Date(job.ingestedAt).toLocaleString() : "" },
+  ].filter((item) => item.value.trim());
+  if (!rows.length) return `<section class="entity-review-generation"><header><span>WHERE THIS CAME FROM</span></header><p class="entity-review-generation-empty">No generation record is attached to this file. It was imported rather than produced by a CineBraid request.</p></section>`;
+  return `<section class="entity-review-generation"><header><span>WHERE THIS CAME FROM</span></header><div class="entity-review-generation-grid">${rows.map((item) => `<div><span>${esc(item.label)}</span><b>${esc(item.value)}</b></div>`).join("")}</div></section>`;
+}
+/* R15 — WHETHER BRAIDY CAN LOOK AT THIS, ANSWERED TRUTHFULLY EITHER WAY.
+   Vision off is the real Rex configuration, and the honest sentence is that the
+   review is unavailable and why — with the one control that changes it, deep-linked
+   to the Assistant settings section that owns Vision. It is never phrased as though
+   an optional AI check were available and merely declined. */
+function entityReviewBraidyAvailability(busy, review) {
+  const capability = typeof capabilityState === "function" ? capabilityState("vision") : { ready: false, message: "", action: "" };
+  if (capability.ready === true) {
+    return `<section class="entity-review-braidy is-available"><div><span>BRAIDY VISUAL REVIEW</span><b>${review ? "Braidy has reviewed this candidate" : "Optional — ask Braidy to look at this candidate"}</b><small>Braidy reports what it observes against this continuity state. It is advisory: it cannot approve a reference or assign authority, and you can approve without it.</small></div><button class="ghost-btn" ${busy ? "disabled" : ""} onclick="runEntityCandidateVisionReview()">${busy ? `<span class="spin">◌</span> REVIEWING…` : review ? "Review with Braidy again" : "Review with Braidy"}</button></section>`;
+  }
+  return `<section class="entity-review-braidy is-unavailable"><div><span>BRAIDY VISUAL REVIEW</span><b>Braidy visual review unavailable — Vision is off.</b><small>${esc([capability.message, capability.action].filter(Boolean).join(" ") || "No vision model is configured, so Braidy cannot look at this image.")} Your own review and approval are unaffected.</small></div><button class="ghost-btn" onclick="openVisionSettingsFromReview()">Configure Vision</button></section>`;
+}
 function entityReviewModalMarkup(list, entity, media, state, review, busy = false, error = "") {
   const factors = ENTITY_REVIEW_FACTOR_LABELS[list] || ENTITY_REVIEW_FACTOR_LABELS.props;
   const score = Math.round(+review?.score || 0);
@@ -710,6 +774,24 @@ function entityReviewModalMarkup(list, entity, media, state, review, busy = fals
   const authorityGateFailures = (review?.hardGateFailures || []).filter((key) => (review?.requiredHardChecks || []).includes(key));
   const hardChecksMarkup = review?.requiredHardChecks?.length ? `<section class="entity-review-hard-checks"><header><div><span>AUTHORITY GATES</span><b>${authorityGateFailures.length ? `${authorityGateFailures.length} blocking issue${authorityGateFailures.length === 1 ? "" : "s"}` : "All authority-comparison gates passed"}</b><small>These compare the candidate against the approved authority images. They are not the whole verdict.</small></div></header>${review.requiredHardChecks.map((key) => { const row = review.hardChecks?.[key] || {}; return `<article class="${row.pass ? "pass" : "fail"}"><b>${esc(hardCheckLabels[key] || key)}</b><span>${esc(row.note || (row.returned === false ? "The reviewer did not return this mandatory check." : row.pass ? "Passed." : "Failed."))}</span></article>`; }).join("")}</section>` : "";
   const states = entityStateListRead(entity, true);
+  /* R14 — the identity, the position and the way to the neighbours. */
+  const peers = entityReviewPeers(list, entity, media.name);
+  const identity = `${entity.name || entity.id}${isSheet ? "" : ` · ${state.name || "Default"}`}`;
+  const positionLabel = peers.total > 1 && peers.position
+    ? `Candidate ${peers.position} of ${peers.total}`
+    : peers.total === 1 ? "The only candidate waiting" : "";
+  const navigate = (target, label, glyph) => target
+    ? `<button type="button" class="entity-review-step" onclick="openEntityCandidateReview('${attr(list)}','${attr(entity.id)}','${attr(target.name)}','${attr(state.id)}')" title="${attr(target.name)}" aria-label="${attr(label)}">${glyph}</button>`
+    : `<button type="button" class="entity-review-step" disabled aria-label="${attr(label)}">${glyph}</button>`;
+  const navigation = peers.total > 1
+    ? `<div class="entity-review-nav">${navigate(peers.previous, "Previous candidate", "‹")}<span>${esc(positionLabel)}</span>${navigate(peers.next, "Next candidate", "›")}</div>`
+    : positionLabel ? `<div class="entity-review-nav"><span>${esc(positionLabel)}</span></div>` : "";
+  /* The strip, only where there is more than one to strip. Each tile routes through
+     the same opener as prev/next, so there is one way to change candidate. */
+  const strip = peers.total > 1
+    ? `<div class="entity-review-strip">${peers.rows.map((item, index) => `<button type="button" class="entity-review-strip-tile ${item.name === media.name ? "is-current" : ""}" onclick="openEntityCandidateReview('${attr(list)}','${attr(entity.id)}','${attr(item.name)}','${attr(state.id)}')" title="${attr(item.name)}" aria-label="${attr(`Candidate ${index + 1}: ${item.name}`)}" ${item.name === media.name ? 'aria-current="true"' : ""}>${isVideo(item.name) ? `<video muted src="${attr(item.url)}"></video>` : `<img src="${attr(item.url)}" alt="">`}</button>`).join("")}</div>`
+    : "";
+  const fullSize = `<button type="button" class="ghost-btn entity-review-fullsize" onclick="openEntityCandidateFullSize('${attr(list)}','${attr(entity.id)}','${attr(media.name)}')">View full size</button>`;
   const isCoverageCrop = !!row.targetCoverageSlotId;
   const held = isCoverageCrop ? coverageSlotHoldingCandidate(list, entity, row, media.name) : null;
   const primaryAction = isSheet
@@ -718,10 +800,35 @@ function entityReviewModalMarkup(list, entity, media, state, review, busy = fals
       ? `<div class="entity-review-current-target" data-review-target-current="${attr(held.id)}"><span>ALREADY IN USE FOR ${esc(String(held.label || held.id).toUpperCase())}</span><button class="ghost-btn" onclick="openCoverageSlotFromReview('${attr(list)}','${attr(entity.id)}','${attr(row.coverageGroup === "expressions" ? "expressions" : "angles")}','${attr(held.id)}')">OPEN COVERAGE</button></div>`
       : isCoverageCrop
         ? `<button class="approve-btn large" onclick="closeModal();approveCoverageCandidate('${list}','${entity.id}','${attr(media.name)}','${attr(row.targetCoverageSlotId)}',${review?.pass ? "false" : "true"})">ASSIGN TO ${esc(String(row.targetCoverageSlotName || "VIEW").toUpperCase())}</button>`
-        : `<button class="approve-btn large" onclick="closeModal();approveEntityFile('${list}','${entity.id}','${attr(media.name)}','${attr(state.id)}')">APPROVE FOR ${esc((state.name || "DEFAULT").toUpperCase())}</button>`;
-  return `<div class="entity-candidate-review-modal"><header class="entity-candidate-review-title"><div><span>${esc(list.slice(0, -1).toUpperCase())} · ${isSheet ? "SHEET REVIEW" : "CANDIDATE REVIEW"}</span><h3>${esc(media.name)}</h3><p>${isSheet ? "Judge identity consistency and panel usefulness, then extract each angle into its own approved slot." : isCoverageCrop ? `Judge angle accuracy, identity, crop quality, and usefulness for ${esc(row.targetCoverageSlotName || "the selected coverage slot")}.` : "Judge this image for one explicit continuity state before approving it."}</p></div><div class="entity-candidate-review-title-actions"><span class="entity-review-score state-${statusTone}">${review ? `${statusLabel}${semanticApplies ? ` · ${semanticLabel}` : ""}` : statusLabel}</span>${review ? `<span class="entity-review-score-support" title="Advisory context only. A score cannot clear a declared requirement the candidate did not satisfy.">SCORE ${score}/100</span>` : ""}<button class="cancel" onclick="closeModal()">Close</button></div></header><div class="entity-candidate-review-layout"><section class="entity-candidate-review-visual">${isVideo(media.name) ? `<video controls muted src="${attr(media.url)}"></video>` : `<img src="${attr(media.url)}" alt="Entity candidate">`}<div class="entity-review-target"><span>${isSheet ? "SHEET AUTHORITY" : "REVIEW TARGET"}</span>${isSheet ? `<b>${esc(row.coverageSheetType === "expressions" ? "Expression sheet" : "Angle / viewpoint sheet")}</b><small>The sheet remains a source artifact. Individual panels become the approved coverage references.</small>` : `<select id="entity-review-state" onchange="changeEntityCandidateReviewState(this.value)">${states.map((item) => `<option value="${attr(item.id)}" ${item.id === state.id ? "selected" : ""}>${esc(item.name || "Default")}${item.appliesTo ? ` · ${esc(item.appliesTo)}` : ""}</option>`).join("")}</select><small>${esc(state.notes || (state.isDefault ? "Primary project-wide appearance and design." : "No state-specific notes have been entered."))}</small>`}</div></section><section class="entity-candidate-review-results">${busy ? (typeof assistantWorkingCard === "function" ? assistantWorkingCard("The configured vision reviewer is checking this candidate…", isSheet ? "Checking cross-panel identity, angle clarity, crop usefulness, and artifacts. Automatic recovery is enabled." : `Observing every declared requirement of ${state.name || "Default"} and all six factors. Automatic recovery is enabled if the vision response fails or is incomplete.`, { mode: "vision" }) : `<div class="guided-assistant-progress"><span class="spin">◌</span><div><b>The configured vision reviewer is checking this candidate…</b></div></div>`) : error ? `<div class="guided-prompt-error"><b>Review failed</b><span>${esc(error)}</span></div>` : ""}${review ? `<section class="entity-review-summary state-${statusTone}"><div><span>OVERALL RESULT</span><b>${statusLabel}${semanticApplies ? ` · DECLARED STATE ${semanticLabel}` : ""}</b><small>${esc(review.summary || "No summary returned.")}</small><em class="entity-review-score-support">Supporting score ${score}/100. Advisory context only — it cannot clear a declared requirement the candidate did not satisfy.</em></div><span>${esc(String(review.recommendation || "review").toUpperCase())}</span></section>` : `<section class="entity-review-summary state-pending"><div><span>OVERALL RESULT</span><b>${isSheet ? "Sheet not reviewed" : `Not reviewed for ${esc(state.name || "Default")}`}</b><small>The assistant result is advisory. Approval and extraction remain human decisions.</small></div></section>`}${entityReviewDeclaredStateMarkup(review)}${authorityMarkup}${stateMatchMarkup}${entityReviewHumanDecisionMarkup(row, review, entityCanonFiles(list, entity))}${blockersMarkup}${hardChecksMarkup}${entityReviewProvenanceMarkup(review)}<div class="entity-review-factor-grid">${categoriesMarkup}</div>${review?.referenceNotes?.length ? `<details class="entity-review-reference-notes"><summary>Reference comparisons <span>${review.referenceNotes.length}</span></summary>${review.referenceNotes.map((item) => `<div><b>${esc(item.label || "Reference")}</b><span>${esc(item.note || "")}</span></div>`).join("")}</details>` : ""}</section></div><footer class="entity-candidate-review-actions"><div><button class="ghost-btn" ${busy ? "disabled" : ""} onclick="runEntityCandidateVisionReview()"${aiDisabledAttrs("vision")}>${busy ? `<span class="spin">◌</span> REVIEWING…` : review ? "RUN REVIEW AGAIN" : "RUN AI REVIEW"}</button>${row.decision === "rejected" ? `<button class="chip" onclick="setEntityCandidateDecision('${list}','${entity.id}','${attr(media.name)}','unreviewed');closeModal()">RESTORE CANDIDATE</button>` : `<button class="chip danger" onclick="setEntityCandidateDecision('${list}','${entity.id}','${attr(media.name)}','rejected');closeModal()">REJECT CANDIDATE</button>`}</div>${primaryAction}</footer></div>`;
+        : `<button class="approve-btn large" onclick="closeModal();approveEntityFile('${list}','${entity.id}','${attr(media.name)}','${attr(state.id)}')">APPROVE FOR ${esc((state.name || "DEFAULT").toUpperCase())}…</button>`;
+  return `<div class="entity-candidate-review-modal"><header class="entity-candidate-review-title"><div><span>${esc(list.slice(0, -1).toUpperCase())} · ${isSheet ? "SHEET REVIEW" : "CANDIDATE REVIEW"}</span><h3>${esc(identity)}</h3><code class="entity-review-file">${esc(media.name)}</code><p>${isSheet ? "Judge identity consistency and panel usefulness, then extract each angle into its own approved slot." : isCoverageCrop ? `Judge angle accuracy, identity, crop quality, and usefulness for ${esc(row.targetCoverageSlotName || "the selected coverage slot")}.` : "Judge this image for one explicit continuity state before approving it."}</p></div><div class="entity-candidate-review-title-actions"><span class="entity-review-score state-${statusTone}">${review ? `${statusLabel}${semanticApplies ? ` · ${semanticLabel}` : ""}` : statusLabel}</span>${review ? `<span class="entity-review-score-support" title="Advisory context only. A score cannot clear a declared requirement the candidate did not satisfy.">SCORE ${score}/100</span>` : ""}<button class="cancel" onclick="closeModal()">Close</button></div></header><div class="entity-candidate-review-layout"><section class="entity-candidate-review-visual">${navigation}${isVideo(media.name) ? `<video controls muted src="${attr(media.url)}"></video>` : `<img src="${attr(media.url)}" alt="Entity candidate">`}${strip}${fullSize}<div class="entity-review-target"><span>${isSheet ? "SHEET AUTHORITY" : "REVIEW TARGET"}</span>${isSheet ? `<b>${esc(row.coverageSheetType === "expressions" ? "Expression sheet" : "Angle / viewpoint sheet")}</b><small>The sheet remains a source artifact. Individual panels become the approved coverage references.</small>` : `<select id="entity-review-state" onchange="changeEntityCandidateReviewState(this.value)">${states.map((item) => `<option value="${attr(item.id)}" ${item.id === state.id ? "selected" : ""}>${esc(item.name || "Default")}${item.appliesTo ? ` · ${esc(item.appliesTo)}` : ""}</option>`).join("")}</select><small>${esc(state.notes || (state.isDefault ? "Primary project-wide appearance and design." : "No state-specific notes have been entered."))}</small>`}</div></section><section class="entity-candidate-review-results">${entityReviewBraidyAvailability(busy, review)}${busy ? (typeof assistantWorkingCard === "function" ? assistantWorkingCard("The configured vision reviewer is checking this candidate…", isSheet ? "Checking cross-panel identity, angle clarity, crop usefulness, and artifacts. Automatic recovery is enabled." : `Observing every declared requirement of ${state.name || "Default"} and all six factors. Automatic recovery is enabled if the vision response fails or is incomplete.`, { mode: "vision" }) : `<div class="guided-assistant-progress"><span class="spin">◌</span><div><b>The configured vision reviewer is checking this candidate…</b></div></div>`) : error ? `<div class="guided-prompt-error"><b>Review failed</b><span>${esc(error)}</span></div>` : ""}${review ? `<section class="entity-review-summary state-${statusTone}"><div><span>OVERALL RESULT</span><b>${statusLabel}${semanticApplies ? ` · DECLARED STATE ${semanticLabel}` : ""}</b><small>${esc(review.summary || "No summary returned.")}</small><em class="entity-review-score-support">Supporting score ${score}/100. Advisory context only — it cannot clear a declared requirement the candidate did not satisfy.</em></div><span>${esc(String(review.recommendation || "review").toUpperCase())}</span></section>` : `<section class="entity-review-summary state-pending"><div><span>OVERALL RESULT</span><b>${isSheet ? "Sheet not reviewed" : `Not reviewed for ${esc(state.name || "Default")}`}</b><small>The assistant result is advisory. Approval and extraction remain human decisions.</small></div></section>`}${entityReviewDeclaredStateMarkup(review)}${authorityMarkup}${stateMatchMarkup}${entityReviewHumanDecisionMarkup(row, review, entityCanonFiles(list, entity))}${blockersMarkup}${hardChecksMarkup}${entityReviewProvenanceMarkup(review)}${entityReviewGenerationProvenance(entity, media.name)}<div class="entity-review-factor-grid">${categoriesMarkup}</div>${review?.referenceNotes?.length ? `<details class="entity-review-reference-notes"><summary>Reference comparisons <span>${review.referenceNotes.length}</span></summary>${review.referenceNotes.map((item) => `<div><b>${esc(item.label || "Reference")}</b><span>${esc(item.note || "")}</span></div>`).join("")}</details>` : ""}</section></div><footer class="entity-candidate-review-actions"><div>${row.decision === "rejected" ? `<button class="chip" onclick="setEntityCandidateDecision('${list}','${entity.id}','${attr(media.name)}','unreviewed');closeModal()">RESTORE CANDIDATE</button>` : `<button class="chip danger" onclick="setEntityCandidateDecision('${list}','${entity.id}','${attr(media.name)}','rejected');closeModal()">REJECT CANDIDATE</button>`}</div>${primaryAction}</footer></div>`;
 }
 
+/* R15 — CONFIGURE VISION LANDS ON THE ASSISTANT PANEL, not on the Settings page's
+   default tab. `selectBoundedTask` is the same call the Settings navigation's own
+   buttons make, so this is that navigation being used rather than a second one being
+   built. The hash is assigned first because the panel does not exist to select until
+   the Settings view has drawn. */
+/* R14 — THE GENERIC VIEWER, KEPT AND NAMED.
+   It used to be what a thumbnail click gave you instead of a review. It is still
+   here, still the same shipped lightbox, reached by a control that says what it does.
+   Returning to the review afterwards is the browser's back-to-modal behaviour the
+   lightbox already has, so nothing is stacked or re-implemented. */
+window.openEntityCandidateFullSize = (list, entityId, fileName) => {
+  const entity = P[list]?.find((item) => item.id === entityId);
+  const media = entity && typeof entityMedia === "function" ? entityMedia(list, entity) : [];
+  const index = media.findIndex((item) => item.name === fileName);
+  if (index < 0 || typeof openLBMedia !== "function") return toast("That image is unavailable");
+  /* The lightbox parses `decodeURIComponent(json)`, so the payload is encoded the
+     same way the candidate grid encodes its own — one contract, not two. */
+  openLBMedia(encodeURIComponent(JSON.stringify(media.map((item) => ({ name: item.name, url: item.url })))), index, entityId);
+};
+window.openVisionSettingsFromReview = () => {
+  closeModal();
+  location.hash = "#/settings";
+  const select = () => { if (typeof selectBoundedTask === "function") selectBoundedTask("settings-task", "settings", "assistant"); };
+  setTimeout(select, 60);
+};
 window.openEntityCandidateReview = (list, id, fileName, stateId = "", continueAction = "") => {
   const entity = P[list]?.find((item) => item.id === id);
   const media = entity ? entityMedia(list, entity).find((item) => item.name === fileName) : null;

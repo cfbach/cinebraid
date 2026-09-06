@@ -330,9 +330,16 @@ function generationPriceLine({ rate, quantity, local } = {}) {
       kind: "unavailable",
       amount: null,
       headline: CINEBRAID_RATE_UNAVAILABLE_LINE,
+      /* R10 — UNAVAILABLE, AND WHY, WHERE CINEBRAID KNOWS WHY.
+         The two branches are genuinely different states and always were; what was
+         missing was the second half of the second one. CineBraid knows exactly where a
+         verified rate would come from — an operator enters it, with a source and a
+         date, in Settings → Generation — so it says that instead of leaving the
+         filmmaker to wonder whether the provider is silent or the product is broken.
+         No number is invented in either branch, and neither is a price of zero. */
       detail: rateRecord(rate)?.configured === true
         ? "A rate is configured, but this request has nothing to price yet."
-        : "No verified rate is configured for this model and route, so CineBraid is not showing a number. This generation is still paid.",
+        : "No verified rate is recorded for this model and route, so CineBraid is not showing a number rather than guessing one. The provider does not publish a price CineBraid can read; a verified rate is entered in Settings → Generation. This generation is still paid.",
       provenance,
     };
   return {

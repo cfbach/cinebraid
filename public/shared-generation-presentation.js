@@ -694,6 +694,19 @@ function selectedModelStanding(option, recommendation) {
   if (presentationRecord(recommendation)?.available === true
     && presentationText(recommendation.modelId) === presentationText(row.modelId))
     return { label: `Recommended · ${name}`, detail: presentationText(recommendation.detail) };
+  /* R8 — A ROUTE MAY STATE ITS OWN STANDING, and only a route that HAS one does.
+   *
+   * "Compatible choice" is the honest answer where a picker resolved several models
+   * and CineBraid ranked none of them. It is the wrong answer on a fixed route, where
+   * there was never a choice to be compatible with: the entity-reference dialog
+   * dispatches through CineBraid's configured image path, and "compatible" invited a
+   * filmmaker to wonder what it had been compared against. A route that declares its
+   * standing gets that sentence instead; every other surface is untouched, and this
+   * still cannot manufacture a ranking, because a standing is a statement about
+   * configuration rather than a comparison between models. */
+  const declared = presentationRecord(row.routeStanding);
+  if (declared && presentationText(declared.label))
+    return { label: name, detail: presentationText(declared.detail) || presentationText(declared.label) };
   return {
     label: `Compatible choice · ${name}`,
     detail: "This model can do this job with the inputs this shot is carrying. CineBraid has not ranked it against the others.",

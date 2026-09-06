@@ -1671,7 +1671,7 @@ body:not([data-help="minimal"]) [data-tip]:focus-visible::before{content:"";posi
 .entity-media-unassigned .ghost-btn{width:100%;margin-top:5px;font:800 8px var(--mono);letter-spacing:.06em}
 .entity-rejected-candidates{margin:0 12px 12px;border:1px solid var(--line);border-radius:9px}.entity-rejected-candidates>summary{padding:9px 11px;font:800 9px var(--mono);letter-spacing:.06em;color:var(--muted)}.entity-rejected-candidates>summary span{margin-left:6px;color:var(--red)}
 .modal-box:has(.entity-approval-modal){width:min(1080px,calc(100vw - 32px));max-width:none;max-height:calc(100vh - 32px);overflow:auto}.entity-approval-modal{width:100%;min-width:0}.entity-approval-modal-layout{display:grid;grid-template-columns:minmax(300px,.92fr) minmax(360px,1.08fr);gap:18px;margin:14px 0}.entity-approval-fields{min-width:0}.entity-approval-continuation{margin-top:12px;padding:11px;border:1px solid var(--line);border-radius:8px;background:var(--surface-2)}.entity-approval-continuation small{display:block;margin-top:6px;color:var(--muted);line-height:1.45}.entity-approval-actions{align-items:center;gap:12px}.entity-approval-actions>div{display:flex;gap:8px;flex-wrap:wrap;justify-content:flex-end;margin-left:auto}.entity-approval-modal figure{margin:0;border:1px solid var(--line);border-radius:9px;background:#080909;overflow:hidden}.entity-approval-modal figure>div{display:flex;align-items:center;justify-content:center;height:min(48vh,430px)}.entity-approval-modal figure img,.entity-approval-modal figure video{max-width:100%;max-height:100%;object-fit:contain}.entity-approval-modal figcaption{padding:8px 10px;border-top:1px solid var(--line);font:700 8px var(--mono);color:var(--muted);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.entity-approval-target-summary{display:flex;flex-direction:column;gap:2px;margin:10px 0;padding:10px 11px;border:1px solid color-mix(in srgb,var(--green) 38%,var(--line));border-radius:8px;background:color-mix(in srgb,var(--green) 7%,var(--surface-2))}.entity-approval-target-summary span{font:800 7px var(--mono);letter-spacing:.1em;color:var(--green)}.entity-approval-target-summary b{font-size:13px}.entity-approval-target-summary small{color:var(--muted)}
-.modal-box:has(.entity-candidate-review-modal){width:min(1260px,calc(100vw - 32px));max-width:none;height:min(850px,calc(100vh - 32px));padding:0;overflow:hidden;border-radius:13px}.entity-candidate-review-modal{height:100%;display:grid;grid-template-rows:auto minmax(0,1fr) auto}.entity-candidate-review-title{display:flex;justify-content:space-between;gap:14px;align-items:flex-start;padding:15px 18px 12px;border-bottom:1px solid var(--line);background:var(--panel)}.entity-candidate-review-title>div:first-child{min-width:0}.entity-candidate-review-title span{font:800 8px var(--mono);letter-spacing:.12em;color:var(--accent)}.entity-candidate-review-title h3{margin:4px 0 3px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.entity-candidate-review-title p{margin:0;color:var(--muted);font-size:10px}.entity-candidate-review-title-actions{display:flex;gap:8px;align-items:center}.entity-review-score{padding:6px 9px;border:1px solid var(--line);border-radius:999px;font:800 8px var(--mono);white-space:nowrap}.entity-review-score.state-pass{color:var(--green);border-color:color-mix(in srgb,var(--green) 52%,var(--line))}.entity-review-score.state-flag{color:var(--red);border-color:color-mix(in srgb,var(--red) 45%,var(--line))}.entity-review-score.state-busy{color:var(--amber)}.entity-review-score.state-pending{color:var(--muted)}.entity-candidate-review-layout{display:grid;grid-template-columns:minmax(340px,.9fr) minmax(430px,1.1fr);min-height:0}.entity-candidate-review-visual{display:grid;grid-template-rows:minmax(0,1fr) auto;min-height:0;border-right:1px solid var(--line);background:#080909}.entity-candidate-review-visual>img,.entity-candidate-review-visual>video{width:100%;height:100%;min-height:0;object-fit:contain}.entity-review-target{display:flex;flex-direction:column;gap:5px;padding:11px 13px;border-top:1px solid var(--line);background:var(--panel)}.entity-review-target>span{font:800 7px var(--mono);letter-spacing:.1em;color:var(--accent)}.entity-review-target select{width:100%}.entity-review-target small{color:var(--muted);line-height:1.4}.entity-candidate-review-results{min-height:0;overflow:auto;padding:13px 15px;background:var(--surface)}.entity-review-summary{display:flex;justify-content:space-between;gap:12px;align-items:center;padding:11px 12px;border:1px solid var(--line);border-radius:9px;background:var(--surface-2);margin-bottom:11px}.entity-review-summary>div{display:flex;flex-direction:column;gap:2px}.entity-review-summary span{font:800 7px var(--mono);letter-spacing:.08em}.entity-review-summary b{font-size:15px}.entity-review-summary small{color:var(--muted);line-height:1.4}.entity-review-summary>span{padding:5px 7px;border:1px solid var(--line);border-radius:999px}.entity-review-summary.state-pass{border-color:color-mix(in srgb,var(--green) 42%,var(--line))}.entity-review-summary.state-pass span,.entity-review-summary.state-pass b{color:var(--green)}.entity-review-summary.state-flag{border-color:color-mix(in srgb,var(--red) 38%,var(--line))}.entity-review-summary.state-flag span,.entity-review-summary.state-flag b{color:var(--red)}.entity-review-summary.state-pending span{color:var(--muted)}.entity-review-factor-grid{display:grid;gap:8px}.entity-review-factor{padding:10px 11px;border:1px solid var(--line);border-left-width:3px;border-radius:8px;background:var(--surface-2)}.entity-review-factor header{display:flex;justify-content:space-between;gap:8px}.entity-review-factor header span{font-weight:700;font-size:11px}.entity-review-factor header b{font:800 7px var(--mono)}.entity-review-factor p{margin:5px 0 0;color:var(--muted);font-size:10px;line-height:1.45}.entity-review-factor.severity-pass{border-left-color:var(--green)}.entity-review-factor.severity-pass header b{color:var(--green)}.entity-review-factor.severity-minor{border-left-color:var(--amber)}.entity-review-factor.severity-minor header b{color:var(--amber)}.entity-review-factor.severity-major,.entity-review-factor.severity-blocking{border-left-color:var(--red)}.entity-review-factor.severity-major header b,.entity-review-factor.severity-blocking header b{color:var(--red)}.entity-review-reference-notes{margin-top:10px;border:1px solid var(--line);border-radius:8px}.entity-review-reference-notes summary{padding:9px 10px;font-size:10px}.entity-review-reference-notes>div{display:flex;flex-direction:column;gap:2px;padding:8px 10px;border-top:1px solid var(--line)}.entity-review-reference-notes>div b{font-size:10px}.entity-review-reference-notes>div span{color:var(--muted);font-size:10px}.entity-candidate-review-actions{display:flex;justify-content:space-between;gap:12px;align-items:center;padding:11px 15px;border-top:1px solid var(--line);background:var(--panel)}.entity-candidate-review-actions>div{display:flex;gap:7px;flex-wrap:wrap}
+.modal-box:has(.entity-candidate-review-modal){width:min(1260px,calc(100vw - 32px));max-width:none;height:min(850px,calc(100vh - 32px));padding:0;overflow:hidden;border-radius:13px}.entity-candidate-review-modal{height:100%;display:grid;grid-template-rows:auto minmax(0,1fr) auto}.entity-candidate-review-title{display:flex;justify-content:space-between;gap:14px;align-items:flex-start;padding:15px 18px 12px;border-bottom:1px solid var(--line);background:var(--panel)}.entity-candidate-review-title>div:first-child{min-width:0}.entity-candidate-review-title span{font:800 8px var(--mono);letter-spacing:.12em;color:var(--accent)}.entity-candidate-review-title h3{margin:4px 0 3px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.entity-candidate-review-title p{margin:0;color:var(--muted);font-size:10px}.entity-candidate-review-title-actions{display:flex;gap:8px;align-items:center}.entity-review-score{padding:6px 9px;border:1px solid var(--line);border-radius:999px;font:800 8px var(--mono);white-space:nowrap}.entity-review-score.state-pass{color:var(--green);border-color:color-mix(in srgb,var(--green) 52%,var(--line))}.entity-review-score.state-flag{color:var(--red);border-color:color-mix(in srgb,var(--red) 45%,var(--line))}.entity-review-score.state-busy{color:var(--amber)}.entity-review-score.state-pending{color:var(--muted)}.entity-candidate-review-layout{display:grid;grid-template-columns:minmax(340px,.9fr) minmax(430px,1.1fr);min-height:0}.entity-candidate-review-visual{display:grid;grid-template-rows:auto minmax(0,1fr) auto auto auto;min-height:0;border-right:1px solid var(--line);background:#080909}.entity-candidate-review-visual>img,.entity-candidate-review-visual>video{width:100%;height:100%;min-height:0;object-fit:contain}.entity-review-target{display:flex;flex-direction:column;gap:5px;padding:11px 13px;border-top:1px solid var(--line);background:var(--panel)}.entity-review-target>span{font:800 7px var(--mono);letter-spacing:.1em;color:var(--accent)}.entity-review-target select{width:100%}.entity-review-target small{color:var(--muted);line-height:1.4}.entity-candidate-review-results{min-height:0;overflow:auto;padding:13px 15px;background:var(--surface)}.entity-review-summary{display:flex;justify-content:space-between;gap:12px;align-items:center;padding:11px 12px;border:1px solid var(--line);border-radius:9px;background:var(--surface-2);margin-bottom:11px}.entity-review-summary>div{display:flex;flex-direction:column;gap:2px}.entity-review-summary span{font:800 7px var(--mono);letter-spacing:.08em}.entity-review-summary b{font-size:15px}.entity-review-summary small{color:var(--muted);line-height:1.4}.entity-review-summary>span{padding:5px 7px;border:1px solid var(--line);border-radius:999px}.entity-review-summary.state-pass{border-color:color-mix(in srgb,var(--green) 42%,var(--line))}.entity-review-summary.state-pass span,.entity-review-summary.state-pass b{color:var(--green)}.entity-review-summary.state-flag{border-color:color-mix(in srgb,var(--red) 38%,var(--line))}.entity-review-summary.state-flag span,.entity-review-summary.state-flag b{color:var(--red)}.entity-review-summary.state-pending span{color:var(--muted)}.entity-review-factor-grid{display:grid;gap:8px}.entity-review-factor{padding:10px 11px;border:1px solid var(--line);border-left-width:3px;border-radius:8px;background:var(--surface-2)}.entity-review-factor header{display:flex;justify-content:space-between;gap:8px}.entity-review-factor header span{font-weight:700;font-size:11px}.entity-review-factor header b{font:800 7px var(--mono)}.entity-review-factor p{margin:5px 0 0;color:var(--muted);font-size:10px;line-height:1.45}.entity-review-factor.severity-pass{border-left-color:var(--green)}.entity-review-factor.severity-pass header b{color:var(--green)}.entity-review-factor.severity-minor{border-left-color:var(--amber)}.entity-review-factor.severity-minor header b{color:var(--amber)}.entity-review-factor.severity-major,.entity-review-factor.severity-blocking{border-left-color:var(--red)}.entity-review-factor.severity-major header b,.entity-review-factor.severity-blocking header b{color:var(--red)}.entity-review-reference-notes{margin-top:10px;border:1px solid var(--line);border-radius:8px}.entity-review-reference-notes summary{padding:9px 10px;font-size:10px}.entity-review-reference-notes>div{display:flex;flex-direction:column;gap:2px;padding:8px 10px;border-top:1px solid var(--line)}.entity-review-reference-notes>div b{font-size:10px}.entity-review-reference-notes>div span{color:var(--muted);font-size:10px}.entity-candidate-review-actions{display:flex;justify-content:space-between;gap:12px;align-items:center;padding:11px 15px;border-top:1px solid var(--line);background:var(--panel)}.entity-candidate-review-actions>div{display:flex;gap:7px;flex-wrap:wrap}
 /* ALPHA R5 — where "ASSIGN TO <view>" used to stand on a candidate the view
    already holds. A statement of the current fact, and a way to go look at it. */
 .entity-review-current-target{display:flex;align-items:center;gap:9px}
@@ -7389,3 +7389,112 @@ body[data-focused-route="library"]:has(.library-grid .library-card) #app[data-su
 .entity-candidate-section[data-candidates="0"]>header span{opacity:.7}
 .entity-candidate-section[data-candidates="0"] .entity-candidate-empty{
   padding:14px;border-style:dashed}
+
+/* ==========================================================================
+   REFERENCE CREATION REVIEW V1 — the Create Reference section, the Braidy
+   working card's portrait, and the candidate review surface.
+
+   Every colour here is an existing token. Nothing in this block changes a
+   shared component's own rules; the new surfaces are named and scoped, so a
+   screen that does not draw them is byte-identical to before.
+   ========================================================================== */
+
+/* R1 — A TOP-LEVEL WORKING SECTION, not a nested diagnostic accordion. It reads
+   as the task it is: a title, one sentence of truth, and the two ways in. */
+.reference-create-section{margin:0 0 14px;padding:16px;border:1px solid var(--line);border-radius:14px;background:var(--panel)}
+.reference-create-head{display:flex;gap:14px;align-items:flex-start;justify-content:space-between;flex-wrap:wrap;margin-bottom:14px}
+.reference-create-head h3{margin:0;font-family:var(--display);font-size:17px;line-height:1.25;letter-spacing:-.01em;color:var(--ink)}
+.reference-create-head p{margin:5px 0 0;max-width:62ch;font-size:12px;line-height:1.5;color:var(--muted)}
+
+/* R2 — TWO PATHS, SIDE BY SIDE AND EQUALLY LEGIBLE. Braidy is offered first
+   because it is the shorter road, not because manual work is secondary; the
+   manual card carries the same weight and the same amount of explanation. */
+.reference-create-paths{display:grid;grid-template-columns:repeat(auto-fit,minmax(300px,1fr));gap:12px}
+.reference-create-path{display:grid;align-content:start;gap:7px;padding:14px;border:1px solid var(--line);border-radius:12px;background:var(--panel-2)}
+.reference-create-path.path-braidy{border-color:color-mix(in srgb,var(--accent) 40%,var(--line));background:linear-gradient(160deg,color-mix(in srgb,var(--accent-wash) 58%,var(--panel-2)),var(--panel-2))}
+.reference-create-path>b{font-family:var(--display);font-size:14px;letter-spacing:-.005em;color:var(--ink)}
+.reference-create-path>small{font-size:11.5px;line-height:1.5;color:var(--muted)}
+.reference-create-path>button{justify-self:start;margin-top:3px}
+
+/* The manual path. Closed it is one line; open it is the inputs, the action and
+   the action's result, in that order and with nothing between the last two. */
+.reference-create-manual{margin-top:12px;border:1px solid var(--line);border-radius:12px;background:var(--panel-2)}
+.reference-create-manual>summary{padding:10px 13px;cursor:pointer;font:600 11px var(--mono);letter-spacing:.08em;text-transform:uppercase;color:var(--muted)}
+.reference-create-manual[open]>summary{border-bottom:1px solid var(--line);color:var(--ink)}
+.reference-create-manual-body{padding:14px}
+.reference-create-manual-body .creation-actions{display:flex;flex-wrap:wrap;gap:9px;align-items:center;margin-top:12px}
+.creation-actions-note{display:block;margin-top:7px;font-size:11px;line-height:1.45;color:var(--muted)}
+/* R3 — THE RESULT SITS AGAINST ITS CAUSE. The rule is decorative; the ORDER is
+   in the markup, and this only makes the adjacency visible. */
+.reference-create-manual-body .creation-result{margin-top:12px;border-left:2px solid color-mix(in srgb,var(--accent) 45%,var(--line))}
+.reference-create-manual-body .creation-empty-result{margin-top:12px}
+.reference-create-section .automation-inline-card{margin-top:14px}
+
+/* R5 — BRAIDY'S OWN PORTRAIT IN THE WORKING CARD.
+   The card emits an undecorated mark; the rail owner fills it from the closed sprite
+   table when Braidy is present, exactly as it fills the topbar toggle. So the mark is
+   invisible until it has a sprite, and the drawn face withdraws only once it does —
+   which means a build with no assistant renders precisely what it rendered before.
+   The general sibling combinator is deliberate: the mark is emitted FIRST, so it can
+   speak for the neutral parts that follow it without this file needing :has(). */
+.assistant-portrait > .assistant-braidy-mark{display:none;flex:0 0 auto;width:32px;height:32px}
+.assistant-portrait > .assistant-braidy-mark[data-braidy-sprite]{display:block}
+.assistant-portrait > .assistant-braidy-mark[data-braidy-sprite][data-braidy-still="0"]{animation:cb-braidy-thinking 2160ms step-end infinite}
+.assistant-portrait > .assistant-braidy-mark[data-braidy-sprite] ~ .assistant-antenna,
+.assistant-portrait > .assistant-braidy-mark[data-braidy-sprite] ~ .assistant-face,
+.assistant-portrait > .assistant-braidy-mark[data-braidy-sprite] ~ .assistant-scan{display:none}
+@media(prefers-reduced-motion:reduce){.assistant-portrait > .assistant-braidy-mark{animation:none!important}}
+.assistant-working-activity{padding:3px 6px;border:1px solid var(--line);background:transparent;color:var(--accent);font:600 10px var(--mono);cursor:pointer}
+.assistant-working-activity:hover{border-color:var(--accent)}
+
+/* R8/R9 — THE FORMAT FACT SITS WITH THE OTHER DECIDING FACTS, above the
+   settings it constrains rather than as a chip trailing after them. */
+.fal-entity-format-facts{margin:10px 0;padding:11px 13px;border:1px solid var(--line);border-radius:10px;background:var(--panel-2)}
+.fal-entity-format-facts span{display:block;color:var(--muted);font:700 9px/1.2 var(--mono);letter-spacing:.14em;text-transform:uppercase}
+.fal-entity-format-facts b{display:block;margin-top:4px;font-size:14px;color:var(--ink)}
+.fal-entity-format-facts small{display:block;margin-top:4px;font-size:11px;line-height:1.45;color:var(--muted)}
+
+/* R12 — THE COMPLETION HANDOFF. The strip already lays itself out; the action
+   only needs to read as the primary thing in it. */
+.fal-job-strip.done .approve-btn{white-space:nowrap}
+
+/* R13 — REVIEW IS THE FIRST ACTION ON A CANDIDATE CARD. */
+.entity-candidate-actions .candidate-review-action{order:-1}
+
+/* R14 — THE CANDIDATE REVIEW SURFACE: identity, position, neighbours. */
+.entity-candidate-review-title .entity-review-file{display:block;margin-top:4px;font:500 11px var(--mono);color:var(--muted);overflow-wrap:anywhere}
+.entity-review-nav{display:flex;align-items:center;justify-content:center;gap:10px;padding:9px 12px;border-bottom:1px solid var(--line);background:var(--panel)}
+.entity-review-nav>span{font:600 10px var(--mono);letter-spacing:.08em;text-transform:uppercase;color:var(--muted)}
+.entity-review-step{width:26px;height:26px;border:1px solid var(--line);border-radius:6px;background:var(--panel-2);color:var(--ink);font-size:15px;line-height:1;cursor:pointer}
+.entity-review-step:hover:not(:disabled){border-color:var(--accent);color:var(--accent)}
+.entity-review-step:disabled{opacity:.35;cursor:default}
+.entity-review-strip{display:flex;gap:6px;overflow-x:auto;padding:9px 12px 7px;border-top:1px solid var(--line);background:var(--panel)}
+.entity-review-strip-tile{flex:0 0 auto;width:54px;height:54px;padding:0;border:1px solid var(--line);border-radius:7px;background:var(--panel-2);overflow:hidden;cursor:pointer}
+.entity-review-strip-tile img,.entity-review-strip-tile video{width:100%;height:100%;object-fit:cover;display:block}
+.entity-review-strip-tile.is-current{border-color:var(--accent);box-shadow:0 0 0 1px var(--accent)}
+.entity-review-fullsize{margin:0 12px 10px;width:calc(100% - 24px)}
+
+/* R15 — WHETHER BRAIDY CAN LOOK AT THIS, said before the empty result grid so a
+   filmmaker learns why there is no review before reading that there is none. */
+.entity-review-braidy{display:flex;gap:12px;align-items:flex-start;justify-content:space-between;flex-wrap:wrap;margin-bottom:11px;padding:12px 13px;border:1px solid var(--line);border-radius:10px;background:var(--panel-2)}
+.entity-review-braidy.is-available{border-color:color-mix(in srgb,var(--accent) 40%,var(--line))}
+.entity-review-braidy.is-unavailable{border-color:color-mix(in srgb,var(--warn) 34%,var(--line))}
+.entity-review-braidy>div{min-width:0;flex:1 1 260px}
+.entity-review-braidy span{display:block;color:var(--muted);font:700 9px/1.2 var(--mono);letter-spacing:.14em}
+.entity-review-braidy b{display:block;margin-top:4px;font-size:13px;line-height:1.35;color:var(--ink)}
+.entity-review-braidy small{display:block;margin-top:4px;font-size:11px;line-height:1.45;color:var(--muted)}
+.entity-review-braidy button{flex:0 0 auto}
+
+/* R14 — WHERE THIS IMAGE CAME FROM. */
+.entity-review-generation{margin:11px 0;padding:11px 13px;border:1px solid var(--line);border-radius:10px;background:var(--panel-2)}
+.entity-review-generation header span{color:var(--muted);font:700 9px/1.2 var(--mono);letter-spacing:.14em}
+.entity-review-generation-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:9px;margin-top:8px}
+.entity-review-generation-grid span{display:block;color:var(--muted);font:700 9px/1.2 var(--mono);letter-spacing:.1em}
+.entity-review-generation-grid b{display:block;margin-top:3px;font:500 11.5px var(--mono);color:var(--ink);overflow-wrap:anywhere}
+.entity-review-generation-empty{margin:7px 0 0;font-size:11px;line-height:1.45;color:var(--muted)}
+
+@media(max-width:900px){
+  .reference-create-paths{grid-template-columns:1fr}
+  .entity-review-braidy{flex-direction:column}
+  .entity-review-braidy button{width:100%}
+}

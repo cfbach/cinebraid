@@ -79,14 +79,27 @@ function generationViewSwitchMarkup(mode) {
    Model standing, route, price and time — in that order, because that is the order the
    questions are asked in. Every one of them says "unavailable" rather than guessing, and
    the word "estimated" appears in every priced sentence and cannot be configured out. */
+/* R8 — WHAT, HOW, AND WHAT IT COSTS, in that order and with nothing implied.
+ *
+ * "Via" and "Mode" were carried nowhere: the entity dialog said FAL and TEXT-TO-IMAGE
+ * in a subtitle above the block, which is not the same as the block stating them, and
+ * a future route that is not FAL would have had no slot to state itself in. They are
+ * rendered only when the option declares them, so no surface gains a fact it does not
+ * have — which is also what keeps the slot durable for a second provider without
+ * building the router that would choose one. */
 function generationAlwaysVisibleMarkup({ option, recommendation, rate, quantity }) {
   const standing = selectedModelStanding(option, recommendation);
   const placement = routePlacement(option);
   const price = generationPriceLine({ rate, quantity, local: placement.local });
   const time = generationTimeEstimate();
   const provenance = (price.provenance && price.provenance.line) || "";
+  const record = option && typeof option === "object" ? option : {};
+  const via = String(record.surfaceName || "").trim();
+  const mode = String(record.mode || "").trim();
   return '<div class="gen-view-always">'
     + `<div class="gen-view-fact gen-view-model"><span>Model</span><b>${esc(standing.label)}</b><small>${esc(standing.detail)}</small></div>`
+    + (via ? `<div class="gen-view-fact gen-view-via"><span>Via</span><b>${esc(via)}</b><small>${esc(String(record.modelId || "") || "Provider route")}</small></div>` : "")
+    + (mode ? `<div class="gen-view-fact gen-view-mode"><span>Mode</span><b>${esc(mode)}</b><small>What this request asks the model to do.</small></div>` : "")
     + `<div class="gen-view-fact gen-view-route"><span>Where it runs</span><b>${esc(placement.label)}</b><small>${esc(placement.detail)}</small></div>`
     + `<div class="gen-view-fact gen-view-price is-${attr(price.kind)}"><span>Provider cost</span><b>${esc(price.headline)}</b><small>${esc(price.detail)}</small>${provenance ? `<em class="gen-view-provenance">${esc(provenance)}</em>` : ""}</div>`
     + `<div class="gen-view-fact gen-view-time"><span>Estimated time</span><b>${esc(time.headline)}</b><small>${esc(time.detail)}</small></div>`

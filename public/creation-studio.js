@@ -16,6 +16,15 @@ function guidedPromptOpKey(kind, shotId, frameId = "") {
 function guidedPromptOp(kind, shotId, frameId = "") {
   return GUIDED_PROMPT_OPS.get(guidedPromptOpKey(kind, shotId, frameId)) || null;
 }
+/* Extra facts about a request already in flight — today, the activity id its
+   "View activity" control needs. Deliberately NOT setGuidedPromptOp(): that
+   function owns the project-mutation lease for this key, and re-entering it for a
+   presentation detail would release and retake a lease nothing has finished with. */
+function patchGuidedPromptOp(kind, shotId, frameId, patch) {
+  const row = GUIDED_PROMPT_OPS.get(guidedPromptOpKey(kind, shotId, frameId));
+  if (!row || !patch) return;
+  Object.assign(row, patch);
+}
 /* THE ONE SEAM EVERY INTERACTIVE PROMPT BUILD ALREADY PASSES THROUGH.
  *
  * All six shipped prompt builders — blocking, frame, motion, asset creation and
@@ -56,7 +65,7 @@ function guidedPromptOpLabel(kind, action) {
   }[String(kind)] || "A prompt";
   return `${what} ${String(action) === "improve" ? "improvement" : "compilation"}`;
 }
-async function guidedPromptRequest(url, options, timeoutMs, label) {
+async function guidedPromptRequest(url, options, timeoutMs, label, context = {}) {
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), timeoutMs);
   let activityId = "";
@@ -65,7 +74,23 @@ async function guidedPromptRequest(url, options, timeoutMs, label) {
     try { payload = typeof options?.body === "string" ? JSON.parse(options.body) : {}; } catch {}
     const usesAssistant = payload.useLLM === true || /improv|assistant|advisor/i.test(String(label || ""));
     const automationPromptActive = typeof V626_ACTIVE_AUTOMATION_RUNS !== "undefined" && [...V626_ACTIVE_AUTOMATION_RUNS].some((runId) => { const run = typeof v641RunById === "function" ? v641RunById(runId) : (AUTOMATION_RUNS || []).find((item) => item.id === runId); return run?.steps?.[run?.current?.stepKey || ""]?.kind === "prompt"; });
-    if (usesAssistant && !automationPromptActive && typeof v641StartManualActivity === "function") activityId = v641StartManualActivity("LOCAL AI · PROMPT ADVISOR", label || "Improving prompt", "Preparing context and sending the prompt to the configured local AI. Automatic recovery remains enabled.", { url });
+    /* R6 — THE ROW SAYS WHO IS DOING THE WORK, AND CAN BE OPENED.
+       "LOCAL AI · PROMPT ADVISOR" is a description of the plumbing; Braidy is the
+       product identity everywhere else, so the model and provider move to the detail
+       line as provenance and Braidy leads. `meta.route` is the key creator-surfaces
+       reads to make a row's name clickable — this passed `url`, an /api path no
+       reader consumes, so every prompt-refinement row in the Activity Terminal was a
+       dead label. */
+    if (usesAssistant && !automationPromptActive && typeof v641StartManualActivity === "function") {
+      const model = String(CONFIG?.ai?.text?.model || CONFIG?.ai?.model || "").trim();
+      activityId = v641StartManualActivity(
+        String(context.system || "Braidy · Prompt refinement"),
+        label || "Refining prompt",
+        `${model ? `Running on ${model}. ` : ""}Braidy is preparing context and sending the prompt to the configured model. Automatic recovery remains enabled.`,
+        { route: String(context.route || ""), model },
+      );
+      if (typeof context.onActivity === "function") context.onActivity(activityId);
+    }
     const response = await fetch(url, { ...options, signal: controller.signal });
     const text = await response.text();
     let data = {};
@@ -110,14 +135,78 @@ async function guidedPromptRequest(url, options, timeoutMs, label) {
 function guidedPromptErrorMarkup(message, retryCall) {
   return `<div class="guided-prompt-error"><div><b>Prompt build stopped</b><small>${esc(message || "The request did not finish.")}</small></div><button class="ghost-btn" onclick="${retryCall}">Retry</button></div>`;
 }
+/* BRAIDY, RUNNING — R5 and R6.
+ *
+ * Two legacy things were visible here in the reference flow and both were wrong.
+ *
+ * The eyebrow read CINEBRAID ASSISTANT — the pre-Braidy name for the same capability
+ * — beside a generic drawn robot face this product uses nowhere else. The portrait is
+ * the shipped V3.2 Braidy art, from the closed sprite table the rail owner reads:
+ * the same art, the same PROCESSING strip and the same 32px box the rail draws,
+ * requested through `braidySprite()` rather than assembled here, so this card cannot
+ * point at a file that table does not own.
+ *
+ * And "Activity & reports →" went to `#/reports`, the whole-project report page,
+ * which is where the dogfood lost the thread: the filmmaker asked to see the thing
+ * that was running and got a different screen. The Activity Terminal IS the activity
+ * owner, so the control expands it and scrolls this operation's own row into view.
+ *
+ * THE DURATION IS NOT INVENTED. The real Rex refinement took 2m33s on Qwen3.8, and
+ * nothing in CineBraid records per-model timing — so this says a local model can take
+ * minutes and that leaving is safe. No percentage, no countdown, no fabricated ETA. */
 function assistantWorkingCard(title, detail, options = {}) {
   const mode = options.mode || "assistant";
   const deterministic = mode === "compile";
-  const eyebrow = deterministic ? "CINEBRAID COMPILER" : "CINEBRAID ASSISTANT";
-  const recovery = deterministic ? "No assistant call · deterministic build" : "Recovery enabled · up to 3 total attempts";
+  const vision = mode === "vision";
+  const eyebrow = deterministic ? "CINEBRAID COMPILER" : vision ? "BRAIDY · VISION REVIEW" : "BRAIDY";
+  const recovery = deterministic ? "No Braidy call · deterministic build" : "Recovery enabled · up to 3 total attempts";
   const startedAt = Number(options.startedAt || Date.now());
-  return `<div class="assistant-working-card mode-${attr(mode)}" role="status" aria-live="polite" data-working-start="${startedAt}"><div class="assistant-portrait" aria-hidden="true"><span class="assistant-antenna"></span><div class="assistant-face"><i></i><i></i><b></b></div><span class="assistant-scan"></span></div><div class="assistant-working-copy"><span>${esc(eyebrow)}</span><b>${esc(title)}</b><small>${esc(detail)}</small><div class="assistant-working-local-status"><span>Started now</span><span>Safe to switch workspaces while this tab stays open</span><a href="#/reports">Activity & reports →</a></div><div class="assistant-attempt-track"><i></i><i></i><i></i><em>${esc(recovery)}</em></div></div><div class="assistant-thinking-dots" aria-hidden="true"><i></i><i></i><i></i></div></div>`;
+  const activityId = String(options.activityId || "");
+  /* A deterministic compile is local, synchronous and quick; the "this may take a
+     while, you can leave" guidance belongs to the model calls that actually can. */
+  const patience = deterministic
+    ? "Deterministic build · no model call"
+    : "Some local models take several minutes per attempt";
+  const persistence = deterministic
+    ? "Finishes in this tab"
+    : "Safe to leave or switch workspaces · the task continues";
+  return `<div class="assistant-working-card mode-${attr(mode)}" role="status" aria-live="polite" data-working-start="${startedAt}"${activityId ? ` data-working-activity="${attr(activityId)}"` : ""}><div class="assistant-portrait" aria-hidden="true">${braidyWorkingPortrait(deterministic)}</div><div class="assistant-working-copy"><span>${esc(eyebrow)}</span><b>${esc(title)}</b><small>${esc(detail)}</small><div class="assistant-working-local-status"><span>${esc(patience)}</span><span>${esc(persistence)}</span><button type="button" class="assistant-working-activity" onclick="openBraidyActivity('${attr(activityId)}')">View activity →</button></div><div class="assistant-attempt-track"><i></i><i></i><i></i><em>${esc(recovery)}</em></div></div><div class="assistant-thinking-dots" aria-hidden="true"><i></i><i></i><i></i></div></div>`;
 }
+/* THE PORTRAIT, DECLARED HERE AND DRAWN BY THE ONE FILE THAT OWNS BRAIDY.
+ *
+ * The first version of this read the rail's global contract directly, and the rail
+ * suite is right to refuse that: no production path may know the assistant rail
+ * exists, because a path that knows can come to need it, and the rail is optional by
+ * construction. Creating a reference must work identically with Braidy absent.
+ *
+ * So this emits a MARK — the same `data-assistant-mark` contract the topbar toggle
+ * already uses — and creator-surfaces.js, which owns the rail, fills it from the
+ * closed sprite table if and only if Braidy is present. The drawn face stays as the
+ * markup's own content and the stylesheet withdraws it once the mark has been
+ * decorated, so a build without Braidy renders exactly what it rendered before.
+ *
+ * A deterministic compile is not Braidy doing anything, so it carries no mark: it
+ * keeps the neutral face rather than borrowing Braidy's for work Braidy is not
+ * performing. */
+function braidyWorkingPortrait(deterministic) {
+  const neutral = `<span class="assistant-antenna"></span><div class="assistant-face"><i></i><i></i><b></b></div><span class="assistant-scan"></span>`;
+  if (deterministic) return neutral;
+  return `<span class="assistant-braidy-mark" data-assistant-mark="thinking" aria-hidden="true"></span>${neutral}`;
+}
+/* R6 — VIEW ACTIVITY LANDS ON THE ACTIVITY, and on this operation's row where it has
+ * one. `expandTerminal` is the shipped opener for the Activity Terminal and already
+ * scrolls a named row into view. No second activity surface is created here; the only
+ * thing added is the ability to name a manual row, which the opener could not address
+ * before. Where no terminal is mounted the deep record in Reports is still a truthful
+ * destination — just not the one this control prefers. */
+window.openBraidyActivity = (activityKey = "") => {
+  const surfaces = typeof window !== "undefined" ? window.CineBraidCreatorSurfaces : null;
+  if (surfaces && typeof surfaces.expandTerminal === "function") {
+    surfaces.expandTerminal(activityKey ? `manual:${activityKey}` : "");
+    return;
+  }
+  location.hash = "#/reports";
+};
 function creationSourceRows(rows) {
   const present = rows.filter((row) => String(row.value || "").trim());
   if (!present.length) return `<div class="prompt-origin-empty">No structured source details were recorded for this build.</div>`;
@@ -261,6 +350,24 @@ function creationAssetMedia(list, x) {
   const media = entityMedia(list, x).find((m) => m.name === file);
   return media ? { ...media, file } : null;
 }
+/* THE CREATE-REFERENCE SECTION, RECOMPOSED AROUND THE TASK RATHER THAN THE STAGES.
+ *
+ * R1/R2/R3/R4/R7 of the Last Seat reference-creation dogfood. What the filmmaker met
+ * when they pressed "Generate reference" was a nested disclosure inside a fold called
+ * OPTIONAL ASSISTED TOOLS, headed CREATE REFERENCE / "Describe the character anchor"
+ * with a "Not started" pill — three pieces of CineBraid's own workflow vocabulary in
+ * front of the one thing they had just chosen to do. Below it, in this order: the
+ * description they had already written, a button called "Build Prompt", a full-width
+ * idle automation panel, and only then the prompt that button compiled.
+ *
+ * So the order is now the order of the work: who this is for, the two ways to make it,
+ * and — inside the manual path — inputs, the action, and the action's result directly
+ * underneath it. Nothing sits between "Prepare prompt" and the prompt.
+ *
+ * The automation panel is LAST and exists only once there is a run. An idle panel
+ * announcing IDLE / "Ready to plan an automation run" was the largest block on the
+ * screen and described nothing that was happening; starting a run is the Braidy path
+ * above, which is one button and three true sentences. */
 function assetPromptStudio(list, x) {
   if (list === "audio") return "";
   const builds = assetPromptBuilds(x);
@@ -269,7 +376,21 @@ function assetPromptStudio(list, x) {
   const busy = operation?.status === "busy";
   const busyAction = operation?.action || "compile";
   const progress = busy
-    ? assistantWorkingCard(busyAction === "improve" ? `Improving the ${creationTargetType(list)} reference prompt…` : `Compiling the ${creationTargetType(list)} reference prompt…`, busyAction === "improve" ? "The assistant may take up to three minutes per attempt. It is shaping the asset description, validating the response, and will retry automatically if needed." : "The rules-based compiler is assembling the prompt without calling the assistant.", { mode: busyAction === "improve" ? "assistant" : "compile" })
+    ? assistantWorkingCard(
+        busyAction === "improve"
+          ? `Braidy is refining ${creationOwnerName(x)} reference prompt…`
+          : `Compiling the ${creationTargetType(list)} reference prompt…`,
+        busyAction === "improve"
+          /* THE BOUND THIS REQUEST ACTUALLY HAS. The copy here said "up to three
+             minutes per attempt"; GUIDED_PROMPT_TIMEOUTS.improve is 570000ms, so an
+             attempt is allowed nine and a half minutes and a filmmaker watching a
+             local model at four minutes was being told it had already failed. The
+             real Rex refinement took 2m33s on Qwen3.8 — well inside the bound and
+             well outside the sentence. */
+          ? "Braidy is shaping the description, validating the response, and retrying automatically if it comes back unusable. An attempt can run for up to nine and a half minutes before CineBraid stops it."
+          : "The rules-based compiler is assembling the prompt without calling Braidy.",
+        { mode: busyAction === "improve" ? "assistant" : "compile", activityId: operation?.activityId || "" },
+      )
     : operation?.status === "error"
       ? guidedPromptErrorMarkup(operation.error, `buildAssetCreationPrompt('${list}','${x.id}',${busyAction === "improve" ? "true" : "false"})`)
       : "";
@@ -278,6 +399,20 @@ function assetPromptStudio(list, x) {
     x.assetPromptProfile || P.meta?.promptDefaults?.imageProfile || "",
   );
   const approved = creationAssetMedia(list, x);
+  const owner = esc(creationOwnerName(x));
+  /* The state this section is actually establishing, read rather than assumed, so the
+     supporting sentence names the continuity state the approval will land on. */
+  const primaryState = typeof entityStateListRead === "function"
+    ? entityStateListRead(x, true).find((item) => item.isDefault)
+    : null;
+  const stateName = esc(primaryState?.name || "Default");
+  const sectionKey = `asset-prompt:${list}:${x.id}`;
+  const manualKey = `${sectionKey}:manual`;
+  /* The manual path opens on its own once there is work in it — a prepared prompt, a
+     request in flight, or an error to act on — and otherwise stays closed behind a
+     one-line control, which is what keeps the idle section compact. */
+  const manualOpen = workspaceSectionOpen(manualKey, busy || !!latest || operation?.status === "error");
+  const run = typeof v626LatestRun === "function" ? v626LatestRun("entity-chain", `${list}:${x.id}`, "default-only") : null;
   const label =
     list === "characters"
       ? "character anchor"
@@ -286,37 +421,74 @@ function assetPromptStudio(list, x) {
         : list === "vehicles"
           ? "vehicle reference"
           : "prop reference";
-  const sectionKey = `asset-prompt:${list}:${x.id}`;
-  const needsAttention = operation?.status === "error";
-  const statusTone = needsAttention ? "attention" : busy ? "active" : approved ? "complete" : latest ? "pending" : "optional";
-  const statusLabel = needsAttention ? "Needs attention" : busy ? "Working" : approved ? "Approved" : latest ? "Prompt ready" : "Not started";
-  const openDefault = busy || needsAttention || !approved;
-  return `<details class="creation-card asset-creation-card compact-work-section" ${workspaceSectionOpen(sectionKey, openDefault) ? "open" : ""} ontoggle="rememberWorkspaceSection('${attr(sectionKey)}',this.open)">
-    <summary class="compact-section-summary"><div><span class="creation-kicker">CREATE REFERENCE</span><h3>Describe the ${esc(label)}</h3><p>Build or improve the approved reference prompt and manage its automation.</p></div>${workspaceStatusPill(statusLabel, statusTone)}<i class="compact-chevron">⌄</i></summary>
-    <div class="compact-section-body">
-      <div class="creation-card-head compact-inner-head"><div><b>${esc(x.name || x.id)}</b><p>Write what it must look like. CineBraid combines this with the project-wide visual style and compiles a target-specific text-to-image prompt.</p></div>${approved ? `<a class="reference-download" href="${attr(approved.url)}" download>Download approved reference ↓</a>` : `<span class="creation-state">No approved reference yet</span>`}</div>
-      <div class="creation-grid asset-prompt-grid">
-        ${field(
-          "Visual description",
-          `<textarea class="creation-description" placeholder="${list === "characters" ? "Appearance, age, wardrobe, proportions, materials, distinguishing details…" : list === "locations" ? "Architecture, layout, materials, age, lighting, atmosphere, important geometry…" : list === "vehicles" ? "Vehicle class, silhouette, proportions, materials, finish, functional details, wear, identifying features…" : "Shape, materials, scale, wear, construction, identifying details…"}" onchange="setAssetCreationDescription('${list}','${x.id}',this.value)">${esc(creationAssetDescription(list, x))}</textarea>`,
-        )}
-        <div class="creation-side-fields">
-          ${field(
-            "Text-to-image target",
-            `<select onchange="setAssetPromptProfile('${list}','${x.id}',this.value)">${creationProfileOptions("t2i", selected)}</select>`,
-          )}
-          ${field(
-            "Asset-specific direction",
-            `<textarea placeholder="Optional framing, pose, coverage, or output direction" onchange="setAssetCreationNotes('${list}','${x.id}',this.value)">${esc(x.assetPromptNotes || "")}</textarea>`,
-          )}
-        </div>
-      </div>
-      <div class="creation-actions"><button class="assemble-btn" ${busy ? "disabled" : ""} onclick="buildAssetCreationPrompt('${list}','${x.id}',false)">${busy && busyAction === "compile" ? `<span class="spin">◌</span> Compiling…` : "Build Prompt"}</button><button class="ghost-btn" ${busy ? "disabled" : ""} onclick="buildAssetCreationPrompt('${list}','${x.id}',true)"${aiDisabledAttrs("text")}>${busy && busyAction === "improve" ? `<span class="spin">◌</span> Improving…` : "Improve"}</button></div>
-      ${typeof assetAutomationPanel === "function" ? assetAutomationPanel(list, x) : ""}
-      ${progress}
-      ${latest ? assetPromptResult(list, x, latest) : `<div class="creation-empty-result">No prompt compiled yet. The rules-based compiler works without an AI assistant.</div>`}
+  return `<section class="reference-create-section asset-creation-card" data-ui-state-key="${attr(sectionKey)}" data-create-target="${attr(`${list}:${x.id}`)}">
+    <header class="reference-create-head">
+      <div><h3>${approved ? `${owner} primary reference` : `Create ${owner} primary reference`}</h3>
+      <p>This establishes ${owner} ${stateName} appearance for the production. You approve the final reference.</p></div>
+      ${approved ? `<a class="reference-download" href="${attr(approved.url)}" download>Download approved reference ↓</a>` : ""}
+    </header>
+    <div class="reference-create-paths">
+      <article class="reference-create-path path-braidy">
+        <b>Create with Braidy</b>
+        <small>Braidy prepares and refines the prompt, generates bounded candidates, and brings the results back for your review. You make the approval decision — nothing becomes canon without it.</small>
+        <button class="approve-btn" onclick="openAssetAutomationModal('${list}','${x.id}')"${aiDisabledAttrs("text")}>Start Braidy run</button>
+      </article>
+      <article class="reference-create-path path-manual">
+        <b>Guide it myself</b>
+        <small>Write the ${esc(label)} description, prepare the prompt yourself, then choose the generation route and settings.</small>
+        <button class="ghost-btn" onclick="toggleReferenceManualPath('${list}','${x.id}')" aria-expanded="${manualOpen ? "true" : "false"}">${manualOpen ? "Hide manual controls" : "Guide it myself"}</button>
+      </article>
     </div>
-  </details>`;
+    <details class="reference-create-manual" ${manualOpen ? "open" : ""} ontoggle="rememberWorkspaceSection('${attr(manualKey)}',this.open)">
+      <summary>Describe, prepare, and generate manually</summary>
+      <div class="reference-create-manual-body">
+        <div class="creation-grid asset-prompt-grid">
+          ${field(
+            "Visual description",
+            `<textarea class="creation-description" placeholder="${list === "characters" ? "Appearance, age, wardrobe, proportions, materials, distinguishing details…" : list === "locations" ? "Architecture, layout, materials, age, lighting, atmosphere, important geometry…" : list === "vehicles" ? "Vehicle class, silhouette, proportions, materials, finish, functional details, wear, identifying features…" : "Shape, materials, scale, wear, construction, identifying details…"}" onchange="setAssetCreationDescription('${list}','${x.id}',this.value)">${esc(creationAssetDescription(list, x))}</textarea>`,
+          )}
+          <div class="creation-side-fields">
+            ${field(
+              "Text-to-image target",
+              `<select onchange="setAssetPromptProfile('${list}','${x.id}',this.value)">${creationProfileOptions("t2i", selected)}</select>`,
+            )}
+            ${field(
+              "Reference-specific direction",
+              `<textarea placeholder="Optional framing, pose, coverage, or output direction" onchange="setAssetCreationNotes('${list}','${x.id}',this.value)">${esc(x.assetPromptNotes || "")}</textarea>`,
+            )}
+          </div>
+        </div>
+        <div class="creation-actions">
+          <button class="assemble-btn" ${busy ? "disabled" : ""} onclick="buildAssetCreationPrompt('${list}','${x.id}',false)">${busy && busyAction === "compile" ? `<span class="spin">◌</span> Preparing…` : latest ? "Prepare prompt again" : "Prepare prompt"}</button>
+          ${latest || (busy && busyAction === "improve") ? `<button class="ghost-btn" ${busy ? "disabled" : ""} onclick="buildAssetCreationPrompt('${list}','${x.id}',true)"${aiDisabledAttrs("text")}>${busy && busyAction === "improve" ? `<span class="spin">◌</span> Refining…` : "Refine with Braidy"}</button>` : ""}
+        </div>
+        ${latest ? `<small class="creation-actions-note">Refining with Braidy is optional. The prepared prompt can be generated exactly as it is.</small>` : ""}
+        ${progress}
+        ${latest ? assetPromptResult(list, x, latest) : `<div class="creation-empty-result">No prompt prepared yet. The rules-based compiler works without Braidy.</div>`}
+      </div>
+    </details>
+    ${run && typeof assetAutomationPanel === "function" ? assetAutomationPanel(list, x) : ""}
+  </section>`;
+}
+/* The manual path's control opens the disclosure rather than writing the remembered
+   value itself. `ontoggle` above stays the single writer of that state, so the button
+   and the summary cannot disagree about what is open. */
+window.toggleReferenceManualPath = (list, id) => {
+  const rows = document.querySelectorAll("section.reference-create-section");
+  const target = `${list}:${id}`;
+  for (const row of rows) {
+    if (row.getAttribute("data-create-target") !== target) continue;
+    const host = row.querySelector("details.reference-create-manual");
+    if (!host) return;
+    host.open = !host.open;
+    if (host.open) host.scrollIntoView({ behavior: "smooth", block: "nearest" });
+    return;
+  }
+};
+/* The possessive the copy needs, built once rather than in five template holes. */
+function creationOwnerName(x) {
+  const name = String(x?.name || x?.id || "this reference");
+  return `${name}${/s$/i.test(name) ? "'" : "'s"}`;
 }
 function assetPromptResult(list, x, build) {
   const manual = `<button class="chip" onclick="downloadAssetPrompt('${list}','${x.id}','${build.id}')">Download</button>`;
@@ -718,7 +890,11 @@ window.buildAssetCreationPrompt = async (list, id, useLLM = false) => {
         directive: [lockedAssetSheetDirective(list, x), x.assetPromptNotes || "", x.assetAutomationRevisionRequest ? `AUTOMATION REVISION\n${x.assetAutomationRevisionRequest}` : ""].filter(Boolean).join("\n\n"),
         useLLM,
       }),
-    }, GUIDED_PROMPT_TIMEOUTS[action], useLLM ? `${creationTargetType(list)} prompt improvement` : `${creationTargetType(list)} prompt compilation`);
+    }, GUIDED_PROMPT_TIMEOUTS[action], useLLM ? `Refine ${x.name || id} reference prompt` : `${creationTargetType(list)} prompt compilation`, {
+      system: "Braidy · Reference prompt refinement",
+      route: `#/${(typeof ENTITY_ROUTE === "object" && ENTITY_ROUTE[list]) || "library"}/${encodeURIComponent(id)}`,
+      onActivity: (activityId) => { patchGuidedPromptOp("asset", `${list}:${id}`, "", { activityId }); route(); },
+    });
     const build = {
       id: "asset-prompt-" + Date.now().toString(36),
       date: new Date().toISOString(),

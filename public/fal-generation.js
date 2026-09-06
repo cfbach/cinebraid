@@ -153,17 +153,44 @@ function falBlockingRevisionPrompt(s, build, sourceAssetId, request) {
    that will be sent, so naming it here is reporting the request, not asserting a choice.
    Neither dialog resolves a picker, so neither gets a recommendation — and there is no
    guide for these jobs anyway, so there would be none to render. */
-function falFixedImageRoute() {
+/* R8 — THE ROUTE, STATED AS FACTS RATHER THAN AS A RANKING.
+ *
+ * This returned the raw configured model id as the model NAME, so the dialog read
+ * "Compatible choice · openai/gpt-image-2" — a provider's API slug where a filmmaker
+ * expects a model, under a phrase that sounds like a verdict CineBraid never reached.
+ *
+ * Three things change and none of them invents a fact. The model gets its product
+ * name where CineBraid knows one and keeps the exact id beside it where it does not.
+ * The provider is named as FAL rather than as the lowercase surface key. And the
+ * route declares its OWN standing — this is the configured default route for this
+ * operation — so the presenter can say that instead of implying a comparison. The id
+ * travels unchanged in `modelId`, which is what the request is built from. */
+const FAL_MODEL_DISPLAY_NAMES = {
+  "openai/gpt-image-2": "GPT Image 2",
+  "openai/gpt-image-1": "GPT Image 1",
+};
+function falModelDisplayName(modelId) {
+  const id = String(modelId || "").trim();
+  return FAL_MODEL_DISPLAY_NAMES[id] || id;
+}
+function falFixedImageRoute(options = {}) {
   const cfg = falGenerationConfig();
   const model = String(cfg.textModel || "").trim();
   if (!model) return null;
+  const name = falModelDisplayName(model);
   return {
     modelId: model,
-    modelName: model,
+    modelName: name,
     surfaceId: "fal",
-    surfaceName: "fal",
+    surfaceName: "FAL",
     surfaceKind: "api",
     where: "API",
+    /* Present only where the caller can say it truthfully. A surface that does not
+       declare a mode or a reason renders neither, rather than borrowing one. */
+    mode: String(options.mode || ""),
+    routeStanding: options.standing
+      ? { label: String(options.standing), detail: String(options.standingDetail || "") }
+      : null,
   };
 }
 
@@ -178,8 +205,29 @@ function falFixedImageRoute() {
    text/edit endpoints are not reached through a compiled plan - and the wrong PLACE for
    it: POST /api/generation/fal/jobs could not see the literal, so it could not enforce
    what these dialogs had decided. The values are unchanged; only their address is. */
+/* R9 — WHAT SIMPLE MUST ASK ABOUT ON THIS ROUTE.
+ *
+ * `resolution` is tier "advanced" globally, and the reasoning holds where it was
+ * written: a compiled frame resolves a sensible size from the shot's own format, so
+ * Simple gets a good answer without asking. A reference has no shot to resolve from,
+ * and the size of the image that will define a character for the whole production is
+ * not a machine setting — a filmmaker who never opens Advanced should not discover
+ * afterwards that their primary reference came back at the saved default.
+ *
+ * So it is PROMOTED here rather than re-tiered globally: `force` is the shipped
+ * mechanism for exactly this, it can only promote a control capability already allows,
+ * and it changes this surface and no other. Advanced still shows everything.
+ *
+ * The promotion is scoped to the entity-reference dialogs, which pass `reference: true`.
+ * The blocking revision and candidate correction dialogs share this route and keep the
+ * plan they had. */
 function falFixedImageControlPlan(mode, request) {
-  return generationRequestPlan({ surface: CINEBRAID_REQUEST_SURFACE_IDS.fixedImage, mode });
+  const reference = !!(request && request.reference === true);
+  return generationRequestPlan({
+    surface: CINEBRAID_REQUEST_SURFACE_IDS.fixedImage,
+    mode,
+    force: reference ? ["resolution"] : undefined,
+  });
 }
 
 function falFixedImageControlsMarkup(plan, ids, current) {
@@ -221,7 +269,7 @@ function falFixedImageControlsMarkup(plan, ids, current) {
  * a fixed object froze it to whatever the dialog opened at, so a filmmaker who chose four
  * read a quote for two above a promise of two below, and got four. Either shape is
  * accepted; a function is the one that stays true. */
-function renderFalFixedImageView(hostId, ids, current, limits, mode) {
+function renderFalFixedImageView(hostId, ids, current, limits, mode, route = null) {
   const host = document.getElementById(hostId);
   if (!host) return;
   const view = generationViewMode(mode || generationViewPreference());
@@ -230,11 +278,11 @@ function renderFalFixedImageView(hostId, ids, current, limits, mode) {
   /* WHAT THIS DIALOG IS, so a control change can redraw it from the values the filmmaker
      has actually chosen rather than from the ones it opened with. One slot, because one
      paid dialog is open at a time — the same reasoning as _generationViewRefresh. */
-  window._falFixedImageView = { hostId, ids, current: { ...current }, limits };
+  window._falFixedImageView = { hostId, ids, current: { ...current }, limits, route };
   host.innerHTML = generationViewMarkup({
     mode: view,
     plan,
-    option: falFixedImageRoute(),
+    option: route || falFixedImageRoute(),
     recommendation: generationRecommendation({ guide: null, options: [] }),
     rate: generationRateFor("image"),
     quantity,
@@ -269,7 +317,7 @@ window.refreshFalFixedImageView = (mode) => {
     count: Number.isFinite(count) && count > 0 ? Math.max(1, Math.min(4, Math.round(count))) : state.current.count,
     quality: read(state.ids.quality, state.current.quality),
     resolution: read(state.ids.resolution, state.current.resolution),
-  }, state.limits, mode);
+  }, state.limits, mode, state.route || null);
 };
 
 window.openFalGenerationModal = (purpose, shotId, frameId = "", buildId = "") => {
@@ -436,8 +484,51 @@ function falEntityGenerationInline(list, entityId, stateId = "") {
   if (!job) return "";
   const active = falJobActive(job), done = job.status === "COMPLETED", failed = job.status === "FAILED";
   const unknown = falJobUnresolved(job);
-  return `<div class="fal-job-strip ${unknown ? "unresolved" : active ? "active" : done ? "done" : failed ? "failed" : ""}"><div><span>${unknown ? "?" : active ? '<i class="spin">◌</i>' : done ? "✓" : failed ? "!" : "·"}</span><div><b>${esc(falJobStatusLabel(job))}</b><small>${unknown ? esc(falUnresolvedExplanation(job)) : `${job.continuityStateName ? `${esc(job.continuityStateName)} · ` : ""}${esc(job.model || "GPT Image 2")}${job.outputCount ? ` · ${job.outputCount} candidate${job.outputCount === 1 ? "" : "s"}` : ""}${job.error ? ` · ${esc(job.error)}` : ""}`}</small></div></div><div>${unknown ? `<button class="chip" onclick="openFalUnresolvedModal('${attr(job.id)}')">Check and resolve</button>` : active ? `<button class="chip" onclick="refreshFalGeneration('${job.id}',true)">Refresh</button><button class="chip danger" onclick="cancelFalGeneration('${job.id}')">Cancel</button>` : failed ? `<button class="chip" onclick="openFalEntityGenerationModal('${list}','${entityId}','','${stateId}')">Try again</button>` : ""}</div></div>`;
+  /* R12 — A FILMMAKER MUST NEVER HUNT FOR MEDIA THEY JUST ASKED FOR.
+   *
+   * The dogfood run finished, this strip said "Results returned · GPT Image 2 · 3
+   * candidates", and offered no control at all: the `done` branch of the action row
+   * was an empty string. The three Rex candidates were real and were on the page —
+   * far above, inside "Images waiting for your decision" — and the person who had
+   * pressed Generate was still down here, with no way of knowing that.
+   *
+   * So completion carries its own handoff. It does not duplicate the candidate grid,
+   * does not create a second gallery and does not re-render the rows: it opens the
+   * existing fold and scrolls to it. The count is the job's own delivered output
+   * count, so this cannot promise results the job did not return. */
+  const delivered = Number(job.outputCount || (job.outputs || []).length || 0);
+  return `<div class="fal-job-strip ${unknown ? "unresolved" : active ? "active" : done ? "done" : failed ? "failed" : ""}"><div><span>${unknown ? "?" : active ? '<i class="spin">◌</i>' : done ? "✓" : failed ? "!" : "·"}</span><div><b>${esc(done && delivered ? `${delivered} result${delivered === 1 ? "" : "s"} returned · ready for review` : falJobStatusLabel(job))}</b><small>${unknown ? esc(falUnresolvedExplanation(job)) : `${job.continuityStateName ? `${esc(job.continuityStateName)} · ` : ""}${esc(falModelDisplayName(job.model) || "GPT Image 2")}${job.outputCount ? ` · ${job.outputCount} candidate${job.outputCount === 1 ? "" : "s"}` : ""}${job.error ? ` · ${esc(job.error)}` : ""}`}</small></div></div><div>${unknown ? `<button class="chip" onclick="openFalUnresolvedModal('${attr(job.id)}')">Check and resolve</button>` : active ? `<button class="chip" onclick="refreshFalGeneration('${job.id}',true)">Refresh</button><button class="chip danger" onclick="cancelFalGeneration('${job.id}')">Cancel</button>` : failed ? `<button class="chip" onclick="openFalEntityGenerationModal('${list}','${entityId}','','${stateId}')">Try again</button>` : done && delivered ? `<button class="approve-btn" onclick="revealReturnedEntityCandidates('${list}','${entityId}','${attr(job.id)}')">Review ${delivered} result${delivered === 1 ? "" : "s"} →</button>` : ""}</div></div>`;
 }
+/* THE HANDOFF ITSELF, and the one place both the completion strip and the Activity
+   Terminal row use, so a returned candidate is reachable by exactly one mechanism.
+
+   It reveals rather than navigates: the candidate section is already on this page, so
+   opening its disclosure and scrolling to it preserves candidate identity and order
+   and keeps every existing decision control where it was. */
+window.revealReturnedEntityCandidates = (list, entityId, jobId = "") => {
+  const go = () => {
+    const section = document.querySelector("details.entity-candidate-section");
+    if (!section) return false;
+    section.open = true;
+    /* Prefer the exact files this job returned; fall back to the section itself when
+       the grid is paginated past them, which is a real state and not an error. */
+    const job = (FAL_GENERATION_JOBS || []).find((item) => item.id === jobId) || null;
+    const first = (job?.outputs || []).map((output) => String(output?.name || "")).filter(Boolean)[0] || "";
+    const card = first
+      ? section.querySelector(`.entity-candidate-card[data-candidate-file="${(window.CSS && CSS.escape) ? CSS.escape(first) : first}"]`)
+      : null;
+    const target = card || section;
+    target.scrollIntoView({ behavior: "smooth", block: card ? "center" : "start" });
+    target.classList.add("focus-flash");
+    setTimeout(() => target.classList.remove("focus-flash"), 1200);
+    return true;
+  };
+  const route = `#/${(typeof ENTITY_ROUTE === "object" && ENTITY_ROUTE[list]) || "library"}/${encodeURIComponent(entityId)}`;
+  if (go()) return;
+  /* Not on this reference's page — go there first, then reveal once it has drawn. */
+  location.hash = route;
+  setTimeout(go, 120);
+};
 function falEntityPromptAction(list, entityId, buildId, fallbackDownload = "") {
   if (!falGenerationReady()) return fallbackDownload;
   return `<button class="approve-btn fal-generate-btn" onclick="openFalEntityGenerationModal('${list}','${entityId}','${buildId}')">GENERATE</button>`;
@@ -612,21 +703,38 @@ window.openFalEntityGenerationModal = (list, entityId, buildId = "", stateId = "
   const count = Math.max(1, Math.min(4, Number(options.candidateCount) || Number(cfg.frameOutputs || 2)));
   const quality = cfg.frameQuality || "high", resolution = falResolutionValue("frame");
   const typeLabel = { characters: "character", locations: "location", props: "prop", vehicles: "vehicle" }[list] || "entity";
-  const workspaceAnchor = document.querySelector("details.asset-creation-card");
-  window._falEntityGenerationRequest = { list, entityId, buildId: build.id, stateId: state?.id || "", requestedMode, effectiveMode, anchorTop: workspaceAnchor?.getBoundingClientRect?.().top };
+  const workspaceAnchor = document.querySelector(".asset-creation-card");
+  /* `reference: true` travels with the REQUEST as well as with the view, because the
+     submission re-derives the control plan from it. Without it the plan at dispatch
+     would be the unpromoted one and restrictPayloadToPlan() would strip the size the
+     filmmaker had just been shown and chosen in Simple — the exact "shown but not
+     sent" failure the payload gate exists to prevent, in the other direction. */
+  window._falEntityGenerationRequest = { list, entityId, buildId: build.id, stateId: state?.id || "", requestedMode, effectiveMode, reference: true, anchorTop: workspaceAnchor?.getBoundingClientRect?.().top };
   const entityIds = { count: "fal-entity-output-count", quality: "fal-entity-quality", resolution: "fal-entity-resolution" };
-  const entityCurrent = { count, quality, resolution };
+  /* `reference: true` is what promotes size into Simple for this dialog, and only for
+     this dialog. It is a property of the request, so it travels with the record every
+     redraw reads rather than being re-decided at each call site. */
+  const entityCurrent = { count, quality, resolution, reference: true };
+  /* R8 — THE ROUTE NAMES ITSELF. Mode is read from whether this run carries reference
+     inputs, which is the same fact the subtitle has always stated; the standing says
+     this is the configured route for reference work rather than the winner of a
+     comparison CineBraid did not run. */
+  const entityRoute = falFixedImageRoute({
+    mode: refs.length ? "Image to image" : "Text to image",
+    standing: "Current route for character and reference generation",
+    standingDetail: `CineBraid's configured image path for ${typeLabel} references. It is the route this operation uses by default, not a ranking against other models.`,
+  });
   const drawEntityView = (mode) => renderFalFixedImageView("fal-entity-generation-view", entityIds, entityCurrent, (n) => ({
     rows: [{ value: n, label: n === 1 ? "candidate returned" : "candidates returned" }],
     stopEarly: `Every returned file is an unapproved ${typeLabel} candidate. Nothing becomes canon until you approve one.`,
-  }), mode);
+  }), mode, entityRoute);
   window._generationViewRefresh = (mode) => refreshFalFixedImageView(mode);
   /* Shown, not chosen. The prompt in `build` was compiled at this ratio minutes ago;
      a picker here could only disagree with it, and when it did the request won and the
      prompt was left describing a frame nobody was going to get. */
   const aspectLabel = referenceAspectLabel(list);
   const stateSummary = state ? `<div class="fal-revision-summary"><b>${esc(state.name || "Continuity state")}</b><p>${esc(state.notes || "No state delta entered.")}</p><small>${effectiveMode === "derive" ? `Editing from ${esc(parentInfo?.parent?.name || "parent state")} · ${esc(parentInfo?.file || "")}` : requestedMode === "derive" ? `The selected parent has no approved image, so this run will create independently.` : "Creating independently from entity canon and the state delta."}</small></div>` : "";
-  openModal(`<h3>Generate ${state ? `${esc(state.name || "state")} ` : ""}${esc(typeLabel)} reference candidates</h3><div class="modal-sub">FAL · GPT IMAGE 2${refs.length ? " EDIT / REFERENCE-GUIDED" : " TEXT-TO-IMAGE"}</div>${stateSummary}<div class="candidate-evidence-facts"><span>${esc(entity.id)}</span>${state ? `<span>Target · ${esc(state.name || "State")}</span>` : ""}<span>${refs.length} input${refs.length === 1 ? "" : "s"}</span><span>Candidate only · approval required</span></div><div id="fal-entity-generation-view"></div><div class="candidate-evidence-facts" data-fal-entity-aspect="${attr(aspectLabel)}"><span>Aspect ratio · ${esc(aspectLabel)}</span><span>${esc(typeLabel)} reference format · matches the compiled prompt</span></div><p class="hint">This submits a paid FAL image request. Returned files are added as unapproved ${esc(typeLabel)} candidates${state ? ` targeted to ${esc(state.name || "this state")}` : ""}. They do not become canon until you explicitly approve one.</p><div class="modal-actions"><button class="cancel" onclick="closeModal()">Cancel</button><button class="approve-btn large" onclick="startFalEntityGeneration()">START GENERATION</button></div>`);
+  openModal(`<h3>Generate ${state ? `${esc(state.name || "state")} ` : ""}${esc(typeLabel)} reference candidates</h3><div class="modal-sub">FAL · GPT IMAGE 2${refs.length ? " EDIT / REFERENCE-GUIDED" : " TEXT-TO-IMAGE"}</div>${stateSummary}<div class="candidate-evidence-facts"><span>${esc(entity.id)}</span>${state ? `<span>Target · ${esc(state.name || "State")}</span>` : ""}<span>${refs.length} input${refs.length === 1 ? "" : "s"}</span><span>Candidate only · approval required</span></div><div class="fal-entity-format-facts" data-fal-entity-aspect="${attr(aspectLabel)}"><div><span>Aspect ratio</span><b>${esc(aspectLabel)}</b><small>Fixed by the ${esc(typeLabel)} reference format. The prompt below was compiled at this ratio, so it is stated here rather than offered as a control that could disagree with it.</small></div></div><div id="fal-entity-generation-view"></div><p class="hint">This submits a paid FAL image request. Returned files are added as unapproved ${esc(typeLabel)} candidates${state ? ` targeted to ${esc(state.name || "this state")}` : ""}. They do not become canon until you explicitly approve one.</p><div class="modal-actions"><button class="cancel" onclick="closeModal()">Cancel</button><button class="approve-btn large" onclick="startFalEntityGeneration()">START GENERATION</button></div>`);
   setTimeout(() => drawEntityView(), 0);
 };
 
@@ -675,7 +783,7 @@ window.generateMoreEntityStateCandidates = async (list, entityId, stateId, build
 
 window.startFalEntityGeneration = async () => {
   const request = window._falEntityGenerationRequest || {};
-  const stableAnchorTop = Number.isFinite(request.anchorTop) ? request.anchorTop : document.querySelector("details.asset-creation-card")?.getBoundingClientRect?.().top;
+  const stableAnchorTop = Number.isFinite(request.anchorTop) ? request.anchorTop : document.querySelector(".asset-creation-card")?.getBoundingClientRect?.().top;
   const entity = (P[request.list] || []).find((item) => item.id === request.entityId);
   const state = entity && request.stateId ? entityStateById(entity, request.stateId) : null;
   const builds = entity ? (state ? assetStatePromptBuilds(state) : assetPromptBuilds(entity)) : [];
@@ -749,7 +857,7 @@ window.startFalEntityGeneration = async () => {
     toast("FAL entity reference generation queued");
     const restoreReferenceBuilderPosition = () => {
       if (!Number.isFinite(stableAnchorTop)) return;
-      const anchor = document.querySelector("details.asset-creation-card");
+      const anchor = document.querySelector(".asset-creation-card");
       if (!anchor) return;
       const delta = anchor.getBoundingClientRect().top - stableAnchorTop;
       if (Math.abs(delta) > 1) window.scrollBy?.(0, delta);

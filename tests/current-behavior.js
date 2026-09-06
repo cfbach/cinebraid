@@ -552,6 +552,8 @@ async function main() {
     "reference-authority-deep-dive.js",
     "reference-automation-closed-loop.js",
     "reference-automation-real-browser.py",
+    "reference-creation-review-capture.py",
+    "reference-creation-review.js",
     "reference-demand-negative-controls.js",
     "reference-demand-real-browser.py",
     "reference-demand.js",

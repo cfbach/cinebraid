@@ -786,8 +786,8 @@ async function main() {
     count: Number.isFinite(count) && count > 0 ? Math.max(1, Math.min(4, Math.round(count))) : state.current.count,
     quality: read(state.ids.quality, state.current.quality),
     resolution: read(state.ids.resolution, state.current.resolution),
-  }, state.limits, mode);`,
-      `  renderFalFixedImageView(state.hostId, state.ids, { ...state.current }, state.limits, mode);`,
+  }, state.limits, mode, state.route || null);`,
+      `  renderFalFixedImageView(state.hostId, state.ids, { ...state.current }, state.limits, mode, state.route || null);`,
     ]],
     probe: async (view) => {
       vm.runInContext(

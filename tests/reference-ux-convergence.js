@@ -412,8 +412,31 @@ async function testUnreviewedCandidateHasNoPassFactors() {
     "and the word PASS appears on no factor row");
   ok(unreviewed.includes("Run the AI review to check this factor"),
     "each factor says how to get an answer rather than implying it already has one");
-  ok(unreviewed.includes("RUN AI REVIEW"),
-    "and running the review is still one press away");
+  /* REFERENCE CREATION REVIEW V1 / R15 — THE REVIEW SURFACE TELLS THE TRUTH ABOUT
+     WHETHER BRAIDY CAN LOOK AT THIS, in both configurations.
+     This asserted the literal string RUN AI REVIEW. The control is Braidy's now and
+     it is stated where a filmmaker reads it — above the empty result rather than in
+     the footer under it — and, crucially, it is withdrawn and explained rather than
+     rendered disabled when no vision model is configured, which is the real Rex
+     configuration the dogfood ran in. */
+  ok(unreviewed.includes("Review with Braidy"),
+    "with vision configured, asking Braidy to review is one press away");
+  ok(!unreviewed.includes("Braidy visual review unavailable"),
+    "and no unavailable sentence is shown while it would be untrue");
+  const visionOff = vm.runInContext(`(() => {
+    const before = typeof AGENT_STATUS === "undefined" ? null : AGENT_STATUS;
+    AGENT_STATUS = { capabilities: { vision: { ready: false, message: "No vision model is configured.", action: "Open Settings to configure Vision." } } };
+    openEntityCandidateReview('characters','CHAR-UX','CHAR-UX-LOOSE.png','state-default');
+    const html = document.getElementById('modal').innerHTML;
+    AGENT_STATUS = before;
+    return html;
+  })()`, rendered.context);
+  ok(visionOff.includes("Braidy visual review unavailable"),
+    "with Vision off the modal says so plainly rather than offering a dead control");
+  ok(visionOff.includes("Configure Vision"),
+    "and the one action that would make a review possible is offered");
+  ok(!visionOff.includes("Review with Braidy"),
+    "and no review action is offered that could not run");
 
   /* WITH A REAL RESULT, the severities the reviewer returned are printed — the
      gate is the evidence, not a blanket refusal to say PASS. */

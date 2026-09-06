@@ -3974,7 +3974,7 @@ function openModal(inner) {
     ? document.activeElement
     : (dispatching && typeof dispatching.focus === "function" ? dispatching : null);
   MODAL_SCROLL_Y = Number(window.scrollY || document.documentElement?.scrollTop || 0);
-  const modalAnchor = MODAL_RETURN_FOCUS?.closest?.("details.asset-creation-card, details.entity-state-generation, .settings-block, .shot-main");
+  const modalAnchor = MODAL_RETURN_FOCUS?.closest?.(".asset-creation-card, details.entity-state-generation, .settings-block, .shot-main");
   MODAL_ANCHOR_TOP = modalAnchor?.getBoundingClientRect?.().top ?? null;
   let content = String(inner || "");
   if (/<h3\b/i.test(content)) content = content.replace(/<h3\b(?![^>]*\bid=)/i, '<h3 id="cinebraid-modal-title"');
@@ -4045,7 +4045,7 @@ window.closeModal = () => {
   setTimeout(() => {
     if (Number.isFinite(returnScroll)) window.scrollTo?.(0, returnScroll);
     returnFocus?.focus?.({ preventScroll: true });
-    const anchor = returnFocus?.closest?.("details.asset-creation-card, details.entity-state-generation, .settings-block, .shot-main");
+    const anchor = returnFocus?.closest?.(".asset-creation-card, details.entity-state-generation, .settings-block, .shot-main");
     if (anchor && Number.isFinite(returnAnchorTop)) {
       const delta = anchor.getBoundingClientRect().top - returnAnchorTop;
       if (Math.abs(delta) > 1) window.scrollBy?.(0, delta);

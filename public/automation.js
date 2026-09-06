@@ -1194,9 +1194,22 @@ window.blockingAutomationPanel = (shot) => {
   const description = "Build or improve the grayscale blocking prompt, generate bounded options, review composition and contact points, revise when needed, and select the best passing result as the active guide. No finished still is generated.";
   return `<div class="automation-inline-card blocking-only-automation"><div><b>Automate blocking creation</b><small>Runs build → generate → review → revise → retry, then installs the best passing grayscale guide.</small></div>${v626AutomationPanel(run, "Blocking automation", description, "shot-chain", shot.id, "blocking-only", `<button class="approve-btn" onclick="openBlockingAutomationModal('${shot.id}')">AUTOMATE BLOCKING</button>`)}</div>`;
 };
+/* R7 — RESUMABILITY, CLOSE-TAB GUIDANCE AND RUN STATUS ARE ANSWERS TO A RUNNING RUN.
+ *
+ * Idle, this drew the largest block on the reference page: "Automate the default
+ * reference", a "Default reference" heading, an IDLE token, "Ready to plan an
+ * automation run", a "What happens if I close this tab?" fold and AUTOMATE DEFAULT —
+ * six pieces of automation vocabulary in front of a filmmaker who had not started one.
+ *
+ * With no run there is nothing to report and nothing to resume, so it renders nothing;
+ * starting a run is the "Create with Braidy" path in the Create Reference section,
+ * which says in plain language what the run actually does. The moment a run exists —
+ * planned, running, parked on the human gate, recovering or finished — this is the
+ * panel it has always been, unchanged, including its human review gate. */
 window.assetAutomationPanel = (list, entity) => {
   const run = v626LatestRun("entity-chain", `${list}:${entity.id}`, "default-only");
-  return `<div class="automation-inline-card durable-automation-inline"><div><b>Automate the default reference</b><small>Build, improve, generate, review, and approve the base state. The run is resumable and never generates motion.</small></div>${v626AutomationPanel(run, "Default reference", "One approved base reference with bounded retries.", "entity-chain", `${list}:${entity.id}`, "default-only", `<button class="ghost-btn" onclick="openAssetAutomationModal('${list}','${entity.id}')">AUTOMATE DEFAULT</button>`)}</div>`;
+  if (!run) return "";
+  return `<div class="automation-inline-card durable-automation-inline"><div><b>Braidy run · default reference</b><small>Prepare, refine, generate and review the base state. The run is resumable, never generates motion, and always stops for your approval.</small></div>${v626AutomationPanel(run, "Default reference", "One approved base reference with bounded retries.", "entity-chain", `${list}:${entity.id}`, "default-only", `<button class="ghost-btn" onclick="openAssetAutomationModal('${list}','${entity.id}')">START ANOTHER RUN</button>`)}</div>`;
 };
 window.entityStateAutomationPanel = (list, entity, state) => {
   const scope = `state:${state.id}`, run = v626LatestRun("entity-chain", `${list}:${entity.id}`, scope);

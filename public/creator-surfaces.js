@@ -451,6 +451,18 @@
           state: String(job.status || ""),
         },
         technical: jobTechnical(job),
+        /* R12 — THE ROW THAT SAYS RESULTS RETURNED CAN OPEN THEM.
+           The same reveal the completion strip uses, named here rather than
+           re-implemented, so the Activity Terminal and the generation surface hand a
+           filmmaker to one candidate section by one mechanism. Only an entity
+           reference job that actually delivered something offers it. */
+        reveal: job.purpose === "entity-reference"
+          && job.status === "COMPLETED"
+          && job.entityList
+          && job.entityId
+          && Number(job.outputCount || (job.outputs || []).length || 0) > 0
+          ? { list: String(job.entityList), entityId: String(job.entityId), jobId: String(job.id) }
+          : null,
       };
     });
   }
@@ -808,6 +820,12 @@
     const openResult = isRun && fact.kind === "completed" && typeof window.openRunResult === "function"
       ? `<button type="button" class="cb-terminal-action" onclick="openRunResult('${attr(fact.id)}')">${fact.resultResolved ? "OPEN RESULT" : "OPEN WORKSPACE"}</button>`
       : "";
+    /* A completed reference generation is not a run, so it has no resolver and got no
+       handoff at all — the row announced returned candidates and left the filmmaker to
+       find them. This is the generation surface's own reveal, called by name. */
+    const openReturned = fact.reveal && typeof window.revealReturnedEntityCandidates === "function"
+      ? `<button type="button" class="cb-terminal-action" onclick="revealReturnedEntityCandidates('${attr(fact.reveal.list)}','${attr(fact.reveal.entityId)}','${attr(fact.reveal.jobId)}')">REVIEW RESULTS</button>`
+      : "";
     /* The run's own name is the same handoff, so it goes through the same resolver
        rather than assigning a route beside it. A non-run row has no resolver and keeps
        the route it was collected with. */
@@ -826,7 +844,7 @@
          The message is still shown either way, because it is what happened; only the
          styling follows the run's own tone. */
       + `${fact.technical.error.state === "known" ? `<small class="${tone === "attention" ? "cb-terminal-error" : "cb-terminal-note"}">${esc(fact.technical.error.value)}</small>` : ""}</div>`
-      + `<div class="cb-terminal-meta">${meta.map((part) => `<span>${esc(part)}</span>`).join("")}${fact.elapsed ? `<span>${esc(fact.elapsed)}</span>` : ""}${resolve}${openResult}${report}${dismiss}</div></article>`;
+      + `<div class="cb-terminal-meta">${meta.map((part) => `<span>${esc(part)}</span>`).join("")}${fact.elapsed ? `<span>${esc(fact.elapsed)}</span>` : ""}${resolve}${openReturned}${openResult}${report}${dismiss}</div></article>`;
   }
 
   /* C-1 — EQUIVALENT FAILURES COLLAPSE; NOTHING ELSE DOES.
@@ -1214,7 +1232,18 @@
     }
     if (changed) paint();
     if (!activityKey) return;
-    const row = DOCK_NODE?.querySelector?.(`[data-activity-key="run:${String(activityKey).replace(/["\\]/g, "")}"]`);
+    /* A KEY THAT ALREADY NAMES ITS SOURCE IS USED AS GIVEN.
+       Every caller used to pass a bare run id and this prefixed `run:` for them, so a
+       manual Braidy operation or a provider job — both of which have rows here, keyed
+       `manual:<id>` and `job:<id>` — could not be addressed at all, and "View activity"
+       on a prompt refinement had nothing to scroll to. A key that already carries one
+       of the three known prefixes is honoured; anything else keeps the previous
+       run-id behaviour, so no existing caller changes. */
+    const rawKey = String(activityKey).replace(/["\\]/g, "");
+    const prefixed = /^(run|manual|job):/.test(rawKey);
+    const row = prefixed
+      ? DOCK_NODE?.querySelector?.(`[data-activity-key="${rawKey}"]`)
+      : DOCK_NODE?.querySelector?.(`[data-activity-key="run:${rawKey}"]`);
     row?.scrollIntoView?.({ block: "nearest" });
   }
 
@@ -1255,19 +1284,36 @@
    *
    * WRITTEN ONCE PER NODE. `data-braidy-sprite` is the receipt; a repaint that
    * rewrote every mark on every route change would be work for no change. */
+/* A MARK MAY NAME THE POSE IT WANTS, and it still cannot name a file.
+ *
+ * The topbar toggle wants the still FRONT view because a toggle is not an operation.
+ * A working card is an operation in flight, and the package maps that onto PROCESSING
+ * — the `thinking` key — so it asks for that by NAME and the closed table decides
+ * whether such a pose exists and which strip it is. An unknown pose resolves to null
+ * there and is simply not decorated, which is the same fail-closed answer this
+ * function already gave when Braidy was absent altogether.
+ *
+ * This is the whole reason production surfaces emit a mark rather than reading the
+ * sprite table: a file that draws a reference must not know the assistant exists. */
   function decorateAssistantMarks(root) {
     if (typeof window.braidySprite !== "function") return;
     const marks = (root || document).querySelectorAll(
       "[data-assistant-mark], .topbar-braidy-mark");
     if (!marks.length) return;
-    const sprite = window.braidySprite("idle", { reducedMotion: true });
-    if (!sprite) return;
+    let reduced = false;
+    try { reduced = typeof matchMedia === "function" && matchMedia("(prefers-reduced-motion: reduce)").matches === true; } catch { reduced = false; }
     marks.forEach((mark) => {
       if (mark.dataset.braidySprite) return;
+      const pose = String(mark.dataset.assistantMark || "idle") || "idle";
+      /* The toggle keeps the still frame it has always had; a posed mark animates
+         unless the reader has asked it not to. */
+      const still = pose === "idle" || reduced;
+      const sprite = window.braidySprite(pose, { reducedMotion: still });
+      if (!sprite) return;
       mark.classList.add("cb-braidy-presence");
       mark.dataset.braidyArt = "v32";
-      mark.dataset.braidyPose = "idle";
-      mark.dataset.braidyStill = "1";
+      mark.dataset.braidyPose = pose;
+      mark.dataset.braidyStill = still ? "1" : "0";
       mark.dataset.braidySprite = sprite.file;
       mark.style.backgroundImage = `url("${sprite.url}")`;
       mark.style.backgroundSize = `${sprite.sheetWidth}px ${sprite.size}px`;
@@ -1303,6 +1349,10 @@
   window.addEventListener("hashchange", paint);
   window.addEventListener("cinebraid:route-rendered", paint);
   window.addEventListener("cinebraid:modal-opened", () => decorateAssistantMarks());
+  /* A mark can appear anywhere a route draws — the reference workspace's working card
+     is one — so the same repaint signal the shell already reacts to decorates them.
+     Decoration is idempotent: a mark that already carries a sprite is skipped. */
+  window.addEventListener("cinebraid:route-rendered", () => decorateAssistantMarks());
   window.addEventListener("cinebraid:workspace-updated", paint);
   window.addEventListener("cinebraid:activity-updated", paint);
   window.addEventListener("load", paint);

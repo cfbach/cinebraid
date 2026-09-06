@@ -1026,13 +1026,19 @@ async function main() {
     const view = routeParts[1], entityId = routeParts[2];
     const list = ({character:"characters",location:"locations",prop:"props",vehicle:"vehicles"})[view];
     const assetImproveBusy = await render(routeHash, fixture, { storage: { [`cinebraid-focused:fixture:entity-task:${list}:${entityId}`]: "primary" } });
+    const entity = (fixture[list] || []).find((item) => item.id === entityId) || { name: entityId };
     assetImproveBusy.context.setGuidedPromptOp("asset", operationKey, "", { status: "busy", action: "improve", startedAt: Date.now() });
     await assetImproveBusy.context.route();
     const assetImproveHtml = assetImproveBusy.context.document.getElementById("main").innerHTML;
-    assert(assetImproveHtml.includes("Improving…"), `${targetLabel} Improve must expose a visible busy button label`);
-    assert(assetImproveHtml.includes(`Improving the ${targetLabel} reference prompt…`), `${targetLabel} Improve must render persistent progress feedback`);
-    assert(assetImproveHtml.includes("The assistant may take up to three minutes"), `${targetLabel} Improve should explain that the assistant can take time`);
-    assert(/<button class="ghost-btn" disabled[^>]*>.*Improving…/s.test(assetImproveHtml), `${targetLabel} Improve must be disabled while its request is running`);
+    /* REFERENCE CREATION REVIEW V1 — the control is "Refine with Braidy" and the
+       running state is Braidy's, not "CineBraid Assistant"'s. The duration sentence is
+       asserted against the bound the request actually has: GUIDED_PROMPT_TIMEOUTS
+       .improve is 570000ms, so "three minutes" was never this request's limit. */
+    assert(assetImproveHtml.includes("Refining…"), `${targetLabel} refinement must expose a visible busy button label`);
+    assert(assetImproveHtml.includes(`Braidy is refining ${entity.name || entityId}`), `${targetLabel} refinement must render persistent progress feedback naming Braidy`);
+    assert(assetImproveHtml.includes("nine and a half minutes"), `${targetLabel} refinement should state the attempt bound it actually has`);
+    assert(!assetImproveHtml.includes("CINEBRAID ASSISTANT"), `${targetLabel} refinement must not carry the retired assistant branding`);
+    assert(/<button class="ghost-btn" disabled[^>]*>.*Refining…/s.test(assetImproveHtml), `${targetLabel} refinement must be disabled while its request is running`);
     assetImproveBusy.context.setGuidedPromptOp("asset", operationKey, "", null);
   }
 

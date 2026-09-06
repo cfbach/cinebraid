@@ -534,6 +534,14 @@ function entityCandidateCard(list, entity, media, index, mediaJson, rejected = f
   const batchStatus = typeof entityCandidateBatchStatusMarkup === "function" ? entityCandidateBatchStatusMarkup(list, entity.id, media.name) : "";
   const visionReady = typeof capabilityState === "function" && !!capabilityState("vision")?.ready;
   const storedReview = targetReview || (typeof entityLatestCandidateReviewRaw === "function" ? entityLatestCandidateReviewRaw(entity, media.name) : null);
+  /* R13/R15 — REVIEW IS THE FIRST THING A CANDIDATE OFFERS, AND IT ALWAYS EXISTS.
+     This control used to be the AI check, so it appeared only when a vision reviewer
+     was configured or a review was already on file. With Vision off — the real Rex
+     configuration — the card offered APPROVE… and REJECT and nothing in between, and
+     the dogfood asked out loud how to get Braidy to look at these. Reviewing a
+     candidate is a human act that a vision model may assist; the surface is the same
+     one either way, and what changes inside it is whether Braidy can be asked. */
+  const reviewAction = `<button class="approve-tile-btn candidate-review-action" onclick="openEntityCandidateReview('${list}','${entity.id}','${attr(media.name)}','${attr(targetStateId)}')">REVIEW</button>`;
   const aiAction = visionReady || targetReview
     ? `<button class="ghost-btn optional-ai-action" onclick="openEntityCandidateReview('${list}','${entity.id}','${attr(media.name)}','${attr(targetStateId)}')">${targetReview ? "AI CHECK DETAILS" : "OPTIONAL AI CHECK"}</button>`
     : "";
@@ -551,7 +559,7 @@ function entityCandidateCard(list, entity, media, index, mediaJson, rejected = f
   const reviewDescription = targetReview
     ? `${targetReview.pass ? "AI check passed" : "AI check flagged issues"} · human approval remains explicit`
     : "Choose, assign, or approve by human judgment; AI checking is optional";
-  return `<article class="entity-candidate-card ${rejected ? "is-rejected" : ""} ${approved ? "is-approved-authority" : ""} ${isSheet ? "is-coverage-sheet" : ""}" data-candidate-file="${attr(media.name)}" data-candidate-type="${attr(workflowType)}" data-media-role="${attr(disposition?.role || (rejected ? "rejected" : "candidate"))}"${authorityFor ? ` data-approved-for="${attr(authorityFor)}"` : ""}${disposition?.assetId ? ` data-asset-id="${attr(disposition.assetId)}"` : ""}><a class="entity-candidate-preview" href="javascript:void 0" onclick="openLBMedia('${mediaJson}',${index},'${attr(entity.id)}')" title="${attr(media.name)}">${isVideo(media.name) ? `<video muted src="${attr(media.url)}"></video>` : `<img src="${attr(media.url)}" alt="">`}${entityCandidateReviewOverlay(entity, media.name)}${targetName ? `<span class="entity-candidate-target">CONTINUITY · ${esc(targetName.toUpperCase())}</span>${parentName ? `<span class="entity-candidate-parent">FROM · ${esc(parentName.toUpperCase())}</span>` : ""}` : coverageName ? `<span class="entity-candidate-target">COVERAGE · ${esc(coverageName.toUpperCase())}</span>` : isSheet ? `<span class="entity-candidate-target">COVERAGE SHEET</span>` : ""}<span class="entity-tile-name">${esc(media.name)}</span></a><div class="entity-candidate-meta"><span class="entity-candidate-workflow-type">${esc(usedFor || entityCandidateWorkflowLabel(entity, media.name))}</span>${entityCandidateReviewBadge(entity, media.name)}${batchStatus}<small>${approved ? `Approved by you${authorityFor ? ` · authority for ${esc(authorityFor)}` : ""}${storedReview ? ` · AI ${Math.round(Number(storedReview.score || 0))} ${storedReview.pass ? "PASS" : "FLAG"} recorded` : " · approved without an AI review on record"}` : rejected ? `Rejected by you · kept on disk${storedReview ? ` · AI ${Math.round(Number(storedReview.score || 0))} ${storedReview.pass ? "PASS" : "FLAG"} recorded before the rejection` : " · no AI review was recorded"}` : `${sourceDescription} · ${reviewDescription}`}</small></div><div class="entity-candidate-actions">${approved ? `${aiAction}` : rejected ? `${rejectedReviewAction}<button class="chip" onclick="setEntityCandidateDecision('${list}','${entity.id}','${attr(media.name)}','unreviewed')">RESTORE</button>` : `<button class="approve-tile-btn human-approval-action" onclick="requestHumanEntityCandidateApproval('${list}','${entity.id}','${attr(media.name)}','${attr(targetStateId)}','${continuation}')">${humanLabel}</button>${aiAction}<button class="chip danger" onclick="setEntityCandidateDecision('${list}','${entity.id}','${attr(media.name)}','rejected')">REJECT</button>`}</div></article>`;
+  return `<article class="entity-candidate-card ${rejected ? "is-rejected" : ""} ${approved ? "is-approved-authority" : ""} ${isSheet ? "is-coverage-sheet" : ""}" data-candidate-file="${attr(media.name)}" data-candidate-type="${attr(workflowType)}" data-media-role="${attr(disposition?.role || (rejected ? "rejected" : "candidate"))}"${authorityFor ? ` data-approved-for="${attr(authorityFor)}"` : ""}${disposition?.assetId ? ` data-asset-id="${attr(disposition.assetId)}"` : ""}><a class="entity-candidate-preview" href="javascript:void 0" onclick="openEntityCandidateReview('${list}','${entity.id}','${attr(media.name)}','${attr(targetStateId)}')" title="Review ${attr(media.name)}">${isVideo(media.name) ? `<video muted src="${attr(media.url)}"></video>` : `<img src="${attr(media.url)}" alt="">`}${entityCandidateReviewOverlay(entity, media.name)}${targetName ? `<span class="entity-candidate-target">CONTINUITY · ${esc(targetName.toUpperCase())}</span>${parentName ? `<span class="entity-candidate-parent">FROM · ${esc(parentName.toUpperCase())}</span>` : ""}` : coverageName ? `<span class="entity-candidate-target">COVERAGE · ${esc(coverageName.toUpperCase())}</span>` : isSheet ? `<span class="entity-candidate-target">COVERAGE SHEET</span>` : ""}<span class="entity-tile-name">${esc(media.name)}</span></a><div class="entity-candidate-meta"><span class="entity-candidate-workflow-type">${esc(usedFor || entityCandidateWorkflowLabel(entity, media.name))}</span>${entityCandidateReviewBadge(entity, media.name)}${batchStatus}<small>${approved ? `Approved by you${authorityFor ? ` · authority for ${esc(authorityFor)}` : ""}${storedReview ? ` · AI ${Math.round(Number(storedReview.score || 0))} ${storedReview.pass ? "PASS" : "FLAG"} recorded` : " · approved without an AI review on record"}` : rejected ? `Rejected by you · kept on disk${storedReview ? ` · AI ${Math.round(Number(storedReview.score || 0))} ${storedReview.pass ? "PASS" : "FLAG"} recorded before the rejection` : " · no AI review was recorded"}` : `${sourceDescription} · ${reviewDescription}`}</small></div><div class="entity-candidate-actions">${approved ? `${reviewAction}${aiAction}` : rejected ? `${rejectedReviewAction}<button class="chip" onclick="setEntityCandidateDecision('${list}','${entity.id}','${attr(media.name)}','unreviewed')">RESTORE</button>` : `${reviewAction}<button class="chip human-approval-action" onclick="requestHumanEntityCandidateApproval('${list}','${entity.id}','${attr(media.name)}','${attr(targetStateId)}','${continuation}')">${humanLabel}</button><button class="chip danger" onclick="setEntityCandidateDecision('${list}','${entity.id}','${attr(media.name)}','rejected')">REJECT</button>`}</div></article>`;
 }
 
 function entityView(title, list, mediaList, extra) {
@@ -2070,7 +2078,7 @@ function referenceAssistedToolsMarkup(list, entity) {
   const expressionButton = list === "characters" ? `<button class="ghost-btn" onclick="openCoverageExpressionAutomation('${attr(entity.id)}')"><span>Generate expression sheet</span><small>Optional faces and performance coverage</small></button>` : "";
   const sectionKey = `reference-assisted:${list}:${entity.id}`;
   const open = workspaceSectionOpen(sectionKey, !manualFirstWorkflow());
-  return `<details class="reference-assisted-tools" data-ui-state-key="${attr(sectionKey)}" ${open ? "open" : ""} ontoggle="rememberWorkspaceSection('${attr(sectionKey)}',this.open)"><summary><div><span>OPTIONAL ASSISTED TOOLS</span><b>Prompt building, generation, and automation</b><small>Open this only when CineBraid should help create material you do not already have.</small></div><span>${!primaryReady ? "primary first" : assistedDormant ? "optional" : assistedOwed.known === true ? plural((assistedOwed.rows || []).length, "waiting") : `${missingRequired + missingStates} missing`}</span></summary><div class="reference-assisted-tools-body"><div class="reference-creation-actions reference-creation-actions-expanded"><button class="ghost-btn" onclick="openEntityCreationSection('${attr(list)}','${attr(entity.id)}')"><span>Build primary prompt</span><small>Compile a prompt without submitting generation</small></button><button class="ghost-btn" ${primaryReady ? "" : "disabled"} onclick="openCoverageAutomationModal('${attr(list)}','${attr(entity.id)}','hybrid')"><span>Generate angle / viewpoint coverage</span><small>${assistedDormant ? `${plural(missingRequired, "view")} available to build when you want ${pluralWord(missingRequired, "it", "them")}` : missingRequired ? `${missingRequired} required view${missingRequired === 1 ? "" : "s"} remain` : "Coverage is already complete or optional"}</small></button>${expressionButton}<button class="ghost-btn" ${primaryReady ? "" : "disabled"} onclick="openContinuityStateVariantHub('${attr(list)}','${attr(entity.id)}')"><span>Generate continuity-state variant</span><small>${assistedDormant ? `${plural(missingStates, "state reference")} available to build when you want ${pluralWord(missingStates, "it", "them")}` : missingStates ? `${missingStates} state reference${missingStates === 1 ? "" : "s"} remain` : "No required state reference is missing"}</small></button></div>${assetPromptStudio(list, entity)}</div></details>`;
+  return `<details class="reference-assisted-tools" data-ui-state-key="${attr(sectionKey)}" ${open ? "open" : ""} ontoggle="rememberWorkspaceSection('${attr(sectionKey)}',this.open)"><summary><div><span>OPTIONAL ASSISTED TOOLS</span><b>Prompt building, generation, and automation</b><small>Open this only when CineBraid should help create material you do not already have.</small></div><span>${!primaryReady ? "primary first" : assistedDormant ? "optional" : assistedOwed.known === true ? plural((assistedOwed.rows || []).length, "waiting") : `${missingRequired + missingStates} missing`}</span></summary><div class="reference-assisted-tools-body"><div class="reference-creation-actions reference-creation-actions-expanded"><button class="ghost-btn" onclick="openEntityCreationSection('${attr(list)}','${attr(entity.id)}')"><span>Build primary prompt</span><small>Compile a prompt without submitting generation</small></button><button class="ghost-btn" ${primaryReady ? "" : "disabled"} onclick="openCoverageAutomationModal('${attr(list)}','${attr(entity.id)}','hybrid')"><span>Generate angle / viewpoint coverage</span><small>${assistedDormant ? `${plural(missingRequired, "view")} available to build when you want ${pluralWord(missingRequired, "it", "them")}` : missingRequired ? `${missingRequired} required view${missingRequired === 1 ? "" : "s"} remain` : "Coverage is already complete or optional"}</small></button>${expressionButton}<button class="ghost-btn" ${primaryReady ? "" : "disabled"} onclick="openContinuityStateVariantHub('${attr(list)}','${attr(entity.id)}')"><span>Generate continuity-state variant</span><small>${assistedDormant ? `${plural(missingStates, "state reference")} available to build when you want ${pluralWord(missingStates, "it", "them")}` : missingStates ? `${missingStates} state reference${missingStates === 1 ? "" : "s"} remain` : "No required state reference is missing"}</small></button></div></div></details>`;
 }
 /* SECTIONS A AND B, in the order they are asked.
 
@@ -2090,20 +2098,31 @@ function referenceWorkspaceMarkup(list, entity, context = {}) {
   const mediaByName = context.mediaByName instanceof Map ? context.mediaByName : new Map(media.map((item) => [item.name, item]));
   const activeCandidates = Array.isArray(context.activeCandidates) ? context.activeCandidates : [];
   const candidatesMarkup = typeof context.candidatesMarkup === "string" ? context.candidatesMarkup : "";
-  return `${referencePrimaryHeroMarkup(list, entity, media, mediaByName, activeCandidates)}${candidatesMarkup}${referenceCreationHub(list, entity)}${referenceAssistedToolsMarkup(list, entity)}`;
+  /* R1 — THE TASK THE FILMMAKER JUST CHOSE IS A TOP-LEVEL SECTION.
+     `assetPromptStudio` used to be the last child of the OPTIONAL ASSISTED TOOLS
+     fold, so "Generate reference" on the hero scrolled two disclosures open and
+     landed the creator inside a nested accordion. It sits here now, between the
+     accepted empty-state hero and the candidates its own Generate produces —
+     which is also what puts returned results BELOW the action that returned
+     them. Same function, same prompt compiler, same generation action. */
+  return `${referencePrimaryHeroMarkup(list, entity, media, mediaByName, activeCandidates)}${typeof assetPromptStudio === "function" ? assetPromptStudio(list, entity) : ""}${candidatesMarkup}${referenceCreationHub(list, entity)}${referenceAssistedToolsMarkup(list, entity)}`;
 }
+/* R1 — THE HERO'S "GENERATE REFERENCE" NOW LANDS ON A SECTION, NOT INSIDE TWO FOLDS.
+ *
+ * This used to open `.reference-assisted-tools`, then open the `.asset-creation-card`
+ * disclosure nested inside it, then scroll — which is precisely the "jumps down into
+ * an awkward nested disclosure" the dogfood recorded. The Create Reference surface is
+ * top-level now, so there is one target and nothing to unfold to reach it. The manual
+ * disclosure inside it is opened too, because a filmmaker who pressed Generate has
+ * asked for the controls rather than for the summary of them. */
 window.openEntityCreationSection = (list, id) => {
   window.selectBoundedTask?.("entity-task", `${list}:${id}`, "reference");
-  const outer = document.querySelector(`.reference-assisted-tools`);
-  const section = document.querySelector(`.asset-creation-card`);
+  const section = document.querySelector(`.reference-create-section`);
   if (!section) return toast("Primary reference builder is unavailable");
-  if (outer?.tagName === "DETAILS") {
-    outer.open = true;
-    rememberWorkspaceSection(`reference-assisted:${list}:${id}`, true);
-  }
-  if (section.tagName === "DETAILS") {
-    section.open = true;
-    rememberWorkspaceSection(`asset-prompt:${list}:${id}`, true);
+  const manual = section.querySelector("details.reference-create-manual");
+  if (manual) {
+    manual.open = true;
+    rememberWorkspaceSection(`asset-prompt:${list}:${id}:manual`, true);
   }
   section.hidden = false;
   section.scrollIntoView({ behavior: "smooth", block: "start" });
