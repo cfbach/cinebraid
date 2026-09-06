@@ -7232,47 +7232,79 @@ body[data-focused-route="library"]:has(.library-grid .library-card) #app[data-su
    every stored value stays where it was.
    =========================================================================== */
 
-/* U1 - WHAT IS ACTIVE, STATED RATHER THAN INFERRED.
-   Three lines under the provider tiles, one per capability, each carrying the
-   provider it resolves to and the model it would call. `data-state` is the only
-   thing that colours them and it reuses tokens already in the theme: on,
-   incomplete, off. Nothing here is a new semantic hue. */
-.assistant-capability-lines{
-  display:grid;grid-template-columns:repeat(auto-fit,minmax(210px,1fr));gap:8px;margin:0 0 18px}
-.assistant-capability{
-  display:grid;gap:2px;padding:10px 12px;border:1px solid var(--line);border-radius:8px;
-  background:var(--panel-2);border-left-width:3px}
-.assistant-capability>span{
-  font:800 9px var(--mono);letter-spacing:.14em;text-transform:uppercase;color:var(--muted)}
-.assistant-capability>b{font-size:12px;overflow-wrap:anywhere}
-.assistant-capability>small{color:var(--muted);font-size:10px;overflow-wrap:anywhere}
-.assistant-capability[data-state="on"]{border-left-color:var(--acc)}
-.assistant-capability[data-state="on"]>span{color:var(--acc)}
-/* `--amber` is the palette's real declared token; `--warn` is referenced
-   elsewhere in this file with no definition, so it is not used here. */
-.assistant-capability[data-state="incomplete"]{border-left-color:var(--amber)}
-.assistant-capability[data-state="off"]{opacity:.72}
+/* A1-A5 - THE ASSISTANT SCREEN ANSWERS BEFORE IT ASKS.
+   Three capability cards carry the whole default surface: what Braidy runs on
+   and whether it is connected, whether Vision is on, whether Continuity is on.
+   `data-state` is the only thing that colours a card and it reuses tokens the
+   theme already declares - no new semantic hue is introduced here. */
+/* All three fit above the fold, because "can I answer at a glance" is the
+   requirement and a capability scrolled off the bottom cannot be glanced at. */
+.capability-cards{display:grid;gap:8px;margin:0 0 16px}
+.capability-card{
+  border:1px solid var(--line);border-left-width:3px;border-radius:10px;
+  background:var(--panel-2);padding:11px 14px}
+.capability-card>header{
+  display:flex;align-items:baseline;justify-content:space-between;gap:14px;flex-wrap:wrap}
+.capability-name{font:800 11px var(--mono);letter-spacing:.14em;text-transform:uppercase;color:var(--muted)}
+.capability-status{font-size:13px;font-weight:700}
+.capability-identity{display:flex;align-items:baseline;gap:8px;flex-wrap:wrap;margin-top:5px}
+.capability-identity>b{font-size:14px;overflow-wrap:anywhere}
+.capability-identity>small{color:var(--muted);font-size:11px}
+.capability-identity>code{
+  font:600 11px var(--mono);color:var(--muted);
+  padding:1px 7px;border:1px solid var(--line);border-radius:999px}
+.capability-detail{margin:4px 0 0;color:var(--muted);font-size:11px;max-width:76ch}
+/* Test re-checks the status beside it, so it sits on that row. */
+.capability-status-row{display:flex;align-items:center;gap:12px}
+.capability-test{flex:0 0 auto;width:auto;padding:5px 14px;font-size:11px}
+/* Empty until a test has run; it must cost no height before then. */
+.capability-test-note:empty{display:none}
+.capability-test-note{color:var(--ink);opacity:.85}
 
-/* U2 - A CAPABILITY THAT IS OFF LOOKS OFF, AND KEEPS ITS SETTINGS.
-   The fields stay in the DOM inside a closed disclosure, because
-   assistantConfigPatch() reads them by id and a closed <details> is still
-   queryable: saving while a capability is off cannot blank the value that
-   turning it back on needs. */
-.settings-inactive-fields{
-  grid-column:1/-1;border:1px dashed var(--line);border-radius:8px;
-  background:color-mix(in srgb,var(--panel-2) 60%,transparent);padding:0 12px}
-.settings-inactive-fields>summary{
-  display:grid;gap:2px;padding:10px 0;cursor:pointer;list-style:none;color:var(--muted)}
-.settings-inactive-fields>summary::-webkit-details-marker{display:none}
-.settings-inactive-fields>summary::after{
-  content:"Show";float:right;font:800 9px var(--mono);letter-spacing:.12em;
+/* Connected leads with the accent; a capability that is off recedes rather than
+   warning, because off is a choice. Only "needs attention" borrows amber, and
+   `--amber` is the palette's real declared token - `--warn` is referenced
+   elsewhere in this file with no definition and is not used here. */
+.capability-card[data-state="on"]{border-left-color:var(--acc)}
+.capability-card[data-state="on"] .capability-status{color:var(--acc)}
+.capability-card[data-state="off"]{opacity:.82}
+.capability-card[data-state="off"] .capability-status{color:var(--muted)}
+.capability-card[data-state="checking"] .capability-status{color:var(--muted)}
+.capability-card[data-state="incomplete"],
+.capability-card[data-state="unreachable"]{border-left-color:var(--amber)}
+.capability-card[data-state="incomplete"] .capability-status,
+.capability-card[data-state="unreachable"] .capability-status{color:var(--amber)}
+
+/* A2/A3/A4 - CONFIGURATION IS ONE INTERACTION DEEPER, AND STAYS IN THE DOCUMENT.
+   A closed <details> still holds its inputs, which is what lets a capability be
+   switched off without the save blanking the settings that turning it back on
+   needs: `assistantConfigPatch()` reads them by id either way. */
+.capability-configure,.capability-advanced{
+  margin-top:9px;border-top:1px solid var(--line);padding-top:1px}
+.capability-advanced{margin-top:14px;border-top-style:dashed}
+.capability-configure>summary,.capability-advanced>summary{
+  display:flex;align-items:baseline;gap:10px;flex-wrap:wrap;
+  padding:7px 0;cursor:pointer;list-style:none}
+.capability-configure>summary::-webkit-details-marker,
+.capability-advanced>summary::-webkit-details-marker{display:none}
+.capability-configure>summary::after,.capability-advanced>summary::after{
+  content:"Show";margin-left:auto;font:800 9px var(--mono);letter-spacing:.12em;
   text-transform:uppercase;color:var(--acc)}
-.settings-inactive-fields[open]>summary::after{content:"Hide"}
-.settings-inactive-fields>summary b{font-size:11px;font-weight:700;color:var(--ink);opacity:.75}
-.settings-inactive-fields>summary small{font-size:10px}
-.settings-inactive-fields>summary:focus-visible{outline:2px solid var(--acc);outline-offset:2px}
-.settings-inactive-grid{padding:0 0 12px;opacity:.85}
+.capability-configure[open]>summary::after,
+.capability-advanced[open]>summary::after{content:"Hide"}
+.capability-configure>summary b,.capability-advanced>summary b{font-size:12px}
+.capability-configure>summary small,.capability-advanced>summary small{
+  color:var(--muted);font-size:10px}
+.capability-configure>summary:focus-visible,
+.capability-advanced>summary:focus-visible{outline:2px solid var(--acc);outline-offset:2px}
+.capability-configure-body{padding:2px 0 10px}
+.capability-configure-body .two-col{margin-top:2px}
 .capability-off-hint{color:var(--muted)}
+.capability-off-switch{
+  display:flex;align-items:center;gap:12px;flex-wrap:wrap;margin-top:16px;
+  padding-top:12px;border-top:1px dashed var(--line)}
+.capability-off-switch>button{flex:0 0 auto;width:auto}
+.capability-off-switch>small{color:var(--muted);font-size:10px}
 
 /* U3 - CATEGORY IDENTITY REACHES THE MEDIA WELL AND THE FILTER.
    The tokens, the caption edge and the 7px mark are unchanged; this extends the

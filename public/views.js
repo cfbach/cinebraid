@@ -274,64 +274,99 @@ const ROUTES = {
      *
      * The ids are unchanged, so nothing stored has to move. Only the words that
      * were wrong are corrected, and each carries the servers it covers. */
+    /* A1-A5 — WHAT BRAIDY USES, WHETHER IT IS CONNECTED, AND WHAT IT CAN SEE.
+     *
+     * The panel that shipped in the first pass told the truth about provider
+     * names but still opened on five provider tiles and a column of endpoint,
+     * key, model and sampling fields — configuration first, status second. A
+     * filmmaker had to read a form to learn whether Braidy was working.
+     *
+     * Three capability cards now lead: Braidy, Vision, Continuity analysis. Each
+     * states what it resolves to and whether it is on, and each owns the
+     * disclosure that configures it. Provider choice and every technical field
+     * moved INSIDE those disclosures; nothing was deleted, renamed, re-keyed or
+     * re-routed, and `assistantConfigPatch()` sees the identical document —
+     * every input it reads by id is still rendered, because a closed <details>
+     * is still in the DOM. Saving from this screen produces the same PUT body
+     * it produced before this change. */
     const ASSISTANT_PROVIDERS = [
       ["ollama", "Ollama", "Ollama's own API on this machine"],
       ["anthropic", "Claude API", "Anthropic, over the internet"],
       ["openai", "OpenAI API", "OpenAI, over the internet"],
       ["custom", "OpenAI-compatible server", "vLLM, LM Studio, llama.cpp, or any /v1 server"],
-      ["none", "No AI", "Manual workflows only"],
     ];
-    const providerLabel = (id) => (ASSISTANT_PROVIDERS.find((row) => row[0] === id) || [])[1] || id;
+    /* A2 — "No AI" is not a fifth runtime, it is Braidy switched off, so it is
+       not a peer tile. The id is untouched and `setAssistantProvider('none')` is
+       still exactly what turns it off. */
+    const providerLabel = (id) => id === "none"
+      ? "Off"
+      : (ASSISTANT_PROVIDERS.find((row) => row[0] === id) || [])[1] || id;
     /* The model the CHOSEN provider would use for text, read from that
        provider's own stored field rather than from a status request, so the
        line is true before anything is contacted. */
     const providerTextModel = { ollama: c.ollamaModel, anthropic: c.anthropicModel || "claude-sonnet-4-6", openai: c.openaiModel || "gpt-5.2", custom: c.customModel }[provider] || "";
-    /* U2 - WHAT VISION IS, RESOLVED THE WAY THE SERVER RESOLVES IT.
-       "Same as main assistant" is not an answer, it is a pointer; a panel that
-       prints the pointer cannot say whether a model exists. This follows it once
-       and then asks the resolved provider for its own vision model, so
+    /* A1 — THE ADDRESS, WHEN THERE IS ONE WORTH SHOWING. Host and port identify a
+       server a filmmaker started themselves; a hosted API is identified by its
+       name and adding "api.openai.com" under it would be noise, not identity. */
+    const endpointHost = (url) => {
+      const raw = String(url || "").trim();
+      if (!raw) return "";
+      const match = /^[a-z][a-z0-9+.-]*:\/\/([^/?#]+)/i.exec(raw);
+      return match ? match[1] : raw.replace(/[/?#].*$/, "");
+    };
+    const braidyEndpoint = provider === "ollama"
+      ? endpointHost(c.ollamaUrl || "http://localhost:11434")
+      : provider === "custom" ? endpointHost(c.customBaseUrl) : "";
+    /* A1 — CONNECTED, OR NOT, OR NOT ASKED YET, AND THE THREE ARE DIFFERENT.
+     *
+     * This READS the readiness the workspace already holds. `AGENT_STATUS` is
+     * app.js's lexical binding, refreshed on load and after every save; nothing
+     * here starts a request, and a build that has not answered yet reports
+     * "Checking" rather than borrowing "not reachable" from a question nobody
+     * has asked. The `typeof` guard is braidy-rail.js's, for the same reason:
+     * the binding is simply absent outside the shell. */
+    const agentCapabilities = typeof AGENT_STATUS === "undefined" || !AGENT_STATUS
+      ? null : (AGENT_STATUS.capabilities || null);
+    const textReady = agentCapabilities ? !!agentCapabilities.text?.ready : null;
+    const braidyState = provider === "none" ? "off"
+      : !providerTextModel ? "incomplete"
+      : textReady === null ? "checking"
+      : textReady ? "on" : "unreachable";
+    const braidyStatus = { off: "Off", incomplete: "Needs a model", checking: "Checking…", on: "Connected", unreachable: "Not reachable" }[braidyState];
+    const braidyDetail = braidyState === "off"
+      ? "Prompt building stays rules-based and every manual workflow still runs."
+      : braidyState === "incomplete"
+        ? `${providerLabel(provider)} is selected but no text model is named yet.`
+        : braidyState === "unreachable"
+          ? String(agentCapabilities?.text?.message || "").trim() || `CineBraid could not reach ${providerLabel(provider)}.`
+          : braidyState === "checking" ? "Asking the server whether this provider answers." : "";
+    /* WHAT VISION IS, RESOLVED THE WAY THE SERVER RESOLVES IT.
+       "Same as the text assistant" is not an answer, it is a pointer; a panel
+       that prints the pointer cannot say whether a model exists. This follows it
+       once and then asks the resolved provider for its own vision model, so
        "configured" means a model was actually named. */
     const visionChoice = c.assistant?.visionProvider || "same";
     const visionProvider = visionChoice === "same" ? provider : visionChoice;
     const visionModel = { ollama: c.ollamaVisionModel, anthropic: c.anthropicModel || "claude-sonnet-4-6", openai: c.openaiVisionModel || c.openaiModel, custom: c.customVisionModel }[visionProvider] || "";
     const visionOff = visionProvider === "none" || visionProvider === "never";
     const visionConfigured = !visionOff && !!visionModel;
-    /* WHERE THE MISSING VISION MODEL WOULD BE TYPED. This panel only ever shows
-       the SELECTED ASSISTANT's fields, so when vision resolves to a different
-       provider there is no box on this screen that feeds it — and telling
-       someone to "name a vision model below" would point at the wrong one. */
+    /* A1 — A BLANK MODEL IS NOT AN ACTIVE PROVIDER. The status line reads Off in
+       both the disabled and the nothing-named case, because in both cases no
+       image is read; which of the two it is belongs in the detail line under it,
+       not in the word a filmmaker scans for. */
+    const visionStatus = visionConfigured ? "On" : "Off";
+    /* WHERE THE MISSING VISION MODEL WOULD BE TYPED. This panel only ever holds
+       the SELECTED ASSISTANT's model fields, so when vision resolves to a
+       different provider there is no box on this screen that feeds it. */
     const visionFieldIsHere = visionProvider === provider;
-    const visionRemedy = visionFieldIsHere
-      ? "Name a vision model below, or set Vision assistant to Disabled."
-      : `${providerLabel(visionProvider)} has no vision model saved. Its fields appear when ${providerLabel(visionProvider)} is the assistant above; until then image reading cannot run.`;
-    /* A field that is stored but not consulted. It stays in the DOM inside a
-       closed disclosure - `assistantConfigPatch()` reads it by id and a closed
-       <details> is still queryable - so saving while a capability is off cannot
-       blank the value that re-enabling it needs. */
-    const inactiveFields = (key, title, why, inner) => inner
-      ? `<details class="settings-inactive-fields" data-inactive="${attr(key)}"><summary><b>${esc(title)}</b><small>${esc(why)}</small></summary><div class="two-col settings-inactive-grid">${inner}</div></details>`
-      : "";
-    const visionModelField = provider === "ollama"
-      ? field("Ollama vision model", `<input id="cfg-vmodel" value="${attr(c.ollamaVisionModel || "")}">`)
-      : provider === "openai"
-        ? field("OpenAI vision model", `<input id="cfg-openai-vision" value="${attr(c.openaiVisionModel || c.openaiModel || "gpt-5.2")}">`)
-        : provider === "custom"
-          ? field("Vision model", `<input id="cfg-custom-vision" value="${attr(c.customVisionModel || "")}"><span class="hint">Served by the same base URL. Leave blank if this server answers text only.</span>`)
-          : "";
-    const providerTextFields = provider === "ollama"
-      ? `${field("Ollama endpoint", `<input id="cfg-ollama" value="${attr(c.ollamaUrl || "http://localhost:11434")}"><span class="hint">Ollama's own address. CineBraid posts <code>/api/chat</code> here — an OpenAI-compatible server belongs under OpenAI-compatible server instead.</span>`)}${field("Ollama text model", `<input id="cfg-omodel" value="${attr(c.ollamaModel || "")}" placeholder="the name shown by ollama list">`)}`
-      : provider === "anthropic"
-        ? `${field("Claude API key", `<input id="cfg-key" value="${attr(c.anthropicKey || "")}">`)}${field("Claude model", `<input id="cfg-model" value="${attr(c.anthropicModel || "claude-sonnet-4-6")}">`)}`
-        : provider === "openai"
-          ? `${field("OpenAI API key", `<input id="cfg-openai-key" value="${attr(c.openaiKey || "")}">`)}${field("OpenAI model", `<input id="cfg-openai-model" value="${attr(c.openaiModel || "gpt-5.2")}">`)}`
-          : provider === "custom"
-            ? `${field("Server base URL", `<input id="cfg-custom-url" value="${attr(c.customBaseUrl || "http://127.0.0.1:8000/v1")}"><span class="hint">The OpenAI-compatible base URL, including <code>/v1</code>.</span>`)}${field("API key", `<input id="cfg-custom-key" value="${attr(c.customKey || "")}" placeholder="blank if this server needs none">`)}${field("Text model", `<input id="cfg-custom-model" value="${attr(c.customModel || "")}">`)}${field("Sampling temperature", `<input id="cfg-custom-temperature" type="number" min="0" max="2" step="0.1" value="${attr(c.customTemperature === "" || c.customTemperature === undefined ? "" : Number(c.customTemperature))}" placeholder="server default"><span class="hint">Leave blank to send nothing. Low values such as 0.2 keep structured answers repeatable.</span>`)}${field("Top-K sampling", `<input id="cfg-custom-top-k" type="number" min="1" max="1000" step="1" value="${attr(c.customTopK === "" || c.customTopK === undefined ? "" : Number(c.customTopK))}" placeholder="server default"><span class="hint">Leave blank unless your server accepts top_k. Not every OpenAI-compatible server does.</span>`)}${field("Model thinking", `<select id="cfg-custom-thinking"><option value="auto" ${(c.customThinking || "auto") === "auto" ? "selected" : ""}>Server default</option><option value="disabled" ${c.customThinking === "disabled" ? "selected" : ""}>Ask the server to skip thinking</option></select><span class="hint">Reasoning servers can spend the whole token budget thinking and return an empty answer. Only choose the second option if your server understands it.</span>`)}`
-            : `<div class="settings-disabled-provider"><b>AI assistance is off</b><span>Deterministic prompt building and all manual workflows remain available.</span></div>`;
-    /* Vision's own field follows vision's own state: shown while vision can use
-       it, folded away and labelled as kept-not-used while it cannot. */
-    const providerFields = (visionConfigured && visionFieldIsHere) || (!visionOff && !visionModelField)
-      ? `${providerTextFields}${visionModelField}`
-      : `${providerTextFields}${inactiveFields("vision", visionOff ? "Vision model — kept, not in use" : "Vision model — kept, not in use by the selected vision provider", visionOff ? "Vision is off, so nothing here is sent. The value is still saved." : `Vision resolves to ${providerLabel(visionProvider)}, which this field does not feed. The value is still saved.`, visionModelField)}`;
+    const visionDetail = visionOff
+      ? "No image is sent for reading."
+      : visionConfigured
+        ? `${providerLabel(visionProvider)} · ${visionModel}`
+        : visionFieldIsHere
+          ? `${providerLabel(visionProvider)} is selected but no vision model is named, so image reading cannot run.`
+          : `${providerLabel(visionProvider)} has no vision model saved. Its fields appear when ${providerLabel(visionProvider)} is Braidy's provider; until then image reading cannot run.`;
+
     /* Continuity observation resolves separately from general vision because it
        is the one consumer that sends exactly one image per request, against a
        frozen schema. Two fields only: where it goes and which model answers.
@@ -339,22 +374,66 @@ const ROUTES = {
        preference. */
     const continuityConfig = c.continuity || {};
     const continuityInherited = continuityConfig.visionProvider === "openai" ? (c.openaiBaseUrl || "") : continuityConfig.visionProvider === "custom" ? (c.customBaseUrl || "") : "";
-    /* U2 - CONTINUITY THAT IS OFF LOOKS OFF.
-       Endpoint and model were rendered at full weight beside a provider select
-       reading "Not configured", so the panel showed two live-looking addresses
-       for a capability that sends nothing. Both fields stay in the DOM, because
-       `assistantConfigPatch()` reads them by id and a closed <details> is still
-       queryable - turning continuity off cannot blank the address that turning
-       it back on needs. */
     const continuityOn = !!continuityConfig.visionProvider;
-    const continuityDetailFields = `${field("Continuity endpoint", `<input id="cfg-continuity-base" value="${attr(continuityConfig.baseUrl || "")}" placeholder="${attr(continuityInherited || "http://127.0.0.1:8000/v1")}"><span class="hint">The OpenAI-compatible base URL, including <code>/v1</code>.${continuityInherited ? ` Leave blank to use ${esc(continuityInherited)}.` : " Leave blank to use the chosen provider's own address."}</span>`)}${field("Continuity model", `<input id="cfg-continuity-model" value="${attr(continuityConfig.visionModel || "")}" placeholder="the model this server serves"><span class="hint">Leave blank to use the provider's configured vision model.</span>`)}`;
-    const continuityProviderFields = `<div class="two-col"><div class="settings-subheading"><span>Continuity analysis</span><small>Checks declared references frame by frame. Configured on its own because it sends exactly one image per request — general vision settings do not apply to it, and it does not need the main assistant to be an OpenAI-compatible server.</small></div>${field("Continuity provider", `<select id="cfg-continuity-provider"><option value="" ${continuityConfig.visionProvider ? "" : "selected"}>Not configured — continuity checks stay off</option><option value="custom" ${continuityConfig.visionProvider === "custom" ? "selected" : ""}>OpenAI-compatible server</option><option value="openai" ${continuityConfig.visionProvider === "openai" ? "selected" : ""}>OpenAI API</option></select>${continuityOn ? "" : `<span class="hint capability-off-hint">Off. Nothing is sent and no continuity model is in use.</span>`}`)}${continuityOn ? continuityDetailFields : inactiveFields("continuity", "Continuity endpoint and model — kept, not in use", "Continuity is not configured, so neither is sent. Both values are still saved.", continuityDetailFields)}</div>`;
-    /* U1 - THE SELECTED PROVIDER IS THE TEXT ASSISTANT, AND THE PANEL SAYS SO.
-       Nothing on this screen connected the chip a filmmaker pressed to Braidy,
-       to prompt compilation, or to the button labelled "Test connection", so
-       "which of these is the thing that talks to me" was left to inference. */
-    const assistantCapabilityLines = `<div class="assistant-capability-lines"><div class="assistant-capability" data-capability="text" data-state="${attr(provider === "none" ? "off" : providerTextModel ? "on" : "incomplete")}"><span>TEXT ASSISTANT · BRAIDY</span><b>${esc(provider === "none" ? "Off" : providerLabel(provider))}</b><small>${provider === "none" ? "Prompt building stays rules-based and every manual workflow still runs." : providerTextModel ? esc(providerTextModel) : "No model named yet"}</small></div><div class="assistant-capability" data-capability="vision" data-state="${attr(visionOff ? "off" : visionConfigured ? "on" : "incomplete")}"><span>VISION</span><b>${esc(visionOff ? "Off" : visionConfigured ? providerLabel(visionProvider) : `${providerLabel(visionProvider)} — no model`)}</b><small>${visionOff ? "Image reading is not used." : visionConfigured ? esc(visionModel) : esc(visionRemedy)}</small></div><div class="assistant-capability" data-capability="continuity" data-state="${attr(continuityOn ? "on" : "off")}"><span>CONTINUITY</span><b>${esc(continuityOn ? (continuityConfig.visionProvider === "openai" ? "OpenAI API" : "OpenAI-compatible server") : "Off")}</b><small>${continuityOn ? esc(continuityConfig.visionModel || "the provider's vision model") : "Frame-by-frame checks are not configured."}</small></div></div>`;
-    const assistantPanel = `<section class="settings-block"><div class="settings-title-row"><div><h3>Assistant</h3><p class="hint">Choose one provider. It is the assistant Braidy speaks through and the one every prompt-building request goes to. Only that provider's settings are shown, and AI stays off until you choose one.</p></div><button class="ghost-btn" ${provider === "none" ? "disabled" : ""} onclick="testAssistantConnection()">${provider === "none" ? "Test text assistant" : `Test ${esc(providerLabel(provider))}`}</button></div><div class="policy-options assistant-options" role="radiogroup" aria-label="Text assistant provider">${ASSISTANT_PROVIDERS.map(([v,l,note]) => `<button class="policy-option ${provider === v ? "on" : ""}" role="radio" aria-checked="${provider === v ? "true" : "false"}" onclick="setAssistantProvider('${v}')"><b>${esc(l)}</b><span>${esc(note)}</span></button>`).join("")}</div>${assistantCapabilityLines}<div class="two-col">${field("Vision assistant", `<select id="assistant-vision-provider"><option value="same" ${visionChoice === "same" ? "selected" : ""}>Same as the text assistant${provider === "none" ? "" : ` (${esc(providerLabel(provider))})`}</option><option value="ollama" ${visionChoice === "ollama" ? "selected" : ""}>Ollama vision</option><option value="anthropic" ${visionChoice === "anthropic" ? "selected" : ""}>Claude vision</option><option value="openai" ${visionChoice === "openai" ? "selected" : ""}>OpenAI vision</option><option value="custom" ${visionChoice === "custom" ? "selected" : ""}>OpenAI-compatible vision</option><option value="none" ${visionChoice === "none" ? "selected" : ""}>Disabled</option></select>${visionOff ? `<span class="hint capability-off-hint">Off. No image is sent for reading.</span>` : visionConfigured ? "" : `<span class="hint capability-off-hint">${esc(visionRemedy)}</span>`}`)}${providerFields}</div>${continuityProviderFields}<div class="settings-actions"><button class="add-btn" onclick="saveConfig('assistant')">Save assistant settings</button><span id="assistant-test-note" class="hint"></span>${panelState("manual", "Choosing a provider above takes effect at once; the fields below are saved here.")}</div></section>`;
+    const continuityDetail = continuityOn
+      ? `${continuityConfig.visionProvider === "openai" ? "OpenAI API" : "OpenAI-compatible server"} · ${continuityConfig.visionModel || "the provider's vision model"}`
+      : "Frame-by-frame reference checks are not configured.";
+
+    /* A2/A3/A4 — ONE DISCLOSURE SHAPE, REMEMBERED.
+       `saveConfig` re-renders the panel, so a Configure that forgot it was open
+       would slam shut on every save. This is the same remembered-section
+       mechanism the reference workspace folds already use. */
+    const sectionOpen = (key, fallback) => (typeof workspaceSectionOpen === "function" ? workspaceSectionOpen(key, fallback) : fallback);
+    const disclosure = (cls, key, label, note, inner, fallbackOpen = false) => `<details class="${attr(cls)}" data-ui-state-key="${attr(key)}" ${sectionOpen(key, fallbackOpen) ? "open" : ""} ontoggle="rememberWorkspaceSection('${attr(key)}',this.open)"><summary><b>${esc(label)}</b>${note ? `<small>${esc(note)}</small>` : ""}</summary><div class="capability-configure-body">${inner}</div></details>`;
+
+    /* A3 — THE MINIMUM CONNECTION, AND THE TUNING BELOW IT.
+       Every field here is the same input, with the same id and the same stored
+       value, that the previous panel rendered in one flat column. Only which
+       disclosure it sits in changed, so a field moving under Advanced is saved
+       exactly as it was and nothing new is sent. */
+    const braidyConnectionFields = provider === "ollama"
+      ? `${field("Ollama endpoint", `<input id="cfg-ollama" value="${attr(c.ollamaUrl || "http://localhost:11434")}"><span class="hint">Ollama's own address. CineBraid posts <code>/api/chat</code> here — an OpenAI-compatible server belongs under OpenAI-compatible server instead.</span>`)}${field("Ollama text model", `<input id="cfg-omodel" value="${attr(c.ollamaModel || "")}" placeholder="the name shown by ollama list">`)}`
+      : provider === "anthropic"
+        ? `${field("Claude API key", `<input id="cfg-key" value="${attr(c.anthropicKey || "")}">`)}${field("Claude model", `<input id="cfg-model" value="${attr(c.anthropicModel || "claude-sonnet-4-6")}">`)}`
+        : provider === "openai"
+          ? `${field("OpenAI API key", `<input id="cfg-openai-key" value="${attr(c.openaiKey || "")}">`)}${field("OpenAI model", `<input id="cfg-openai-model" value="${attr(c.openaiModel || "gpt-5.2")}">`)}`
+          : provider === "custom"
+            ? `${field("Server base URL", `<input id="cfg-custom-url" value="${attr(c.customBaseUrl || "http://127.0.0.1:8000/v1")}"><span class="hint">The OpenAI-compatible base URL, including <code>/v1</code>.</span>`)}${field("API key", `<input id="cfg-custom-key" value="${attr(c.customKey || "")}" placeholder="blank if this server needs none">`)}${field("Text model", `<input id="cfg-custom-model" value="${attr(c.customModel || "")}">`)}`
+            : "";
+    const braidyAdvancedFields = provider === "custom"
+      ? `${field("Sampling temperature", `<input id="cfg-custom-temperature" type="number" min="0" max="2" step="0.1" value="${attr(c.customTemperature === "" || c.customTemperature === undefined ? "" : Number(c.customTemperature))}" placeholder="server default"><span class="hint">Leave blank to send nothing. Low values such as 0.2 keep structured answers repeatable.</span>`)}${field("Top-K sampling", `<input id="cfg-custom-top-k" type="number" min="1" max="1000" step="1" value="${attr(c.customTopK === "" || c.customTopK === undefined ? "" : Number(c.customTopK))}" placeholder="server default"><span class="hint">Leave blank unless your server accepts top_k. Not every OpenAI-compatible server does.</span>`)}${field("Model thinking", `<select id="cfg-custom-thinking"><option value="auto" ${(c.customThinking || "auto") === "auto" ? "selected" : ""}>Server default</option><option value="disabled" ${c.customThinking === "disabled" ? "selected" : ""}>Ask the server to skip thinking</option></select><span class="hint">Reasoning servers can spend the whole token budget thinking and return an empty answer. Only choose the second option if your server understands it.</span>`)}`
+      : "";
+    const braidyProviderChoice = `<div class="policy-options assistant-options" role="radiogroup" aria-label="Braidy's provider">${ASSISTANT_PROVIDERS.map(([v,l,note]) => `<button class="policy-option ${provider === v ? "on" : ""}" role="radio" aria-checked="${provider === v ? "true" : "false"}" onclick="setAssistantProvider('${v}')"><b>${esc(l)}</b><span>${esc(note)}</span></button>`).join("")}</div>`;
+    const braidyConfigure = `${provider === "none" ? `<p class="hint capability-off-hint">Braidy is off. Choose a provider to turn it on.</p>` : ""}${braidyProviderChoice}${braidyConnectionFields ? `<div class="two-col">${braidyConnectionFields}</div>` : ""}${braidyAdvancedFields ? disclosure("capability-advanced", "assistant-advanced:braidy", "Advanced", "Tuning this server accepts. Blank means CineBraid sends nothing.", `<div class="two-col">${braidyAdvancedFields}</div>`) : ""}${provider === "none" ? "" : `<div class="capability-off-switch"><button class="ghost-btn" onclick="setAssistantProvider('none')">Turn Braidy off</button><small>Prompt building stays rules-based and every manual workflow still runs.</small></div>`}`;
+
+    /* A4 — VISION CONFIGURES ITSELF, and the model box it owns is the one this
+       panel can actually save. `assistantConfigPatch()` reads a provider's
+       vision model only inside that provider's own block, so rendering some
+       other provider's box here would collect a value the save would drop. The
+       resolved provider is named in the status line above instead. */
+    const visionModelField = provider === "ollama"
+      ? field("Ollama vision model", `<input id="cfg-vmodel" value="${attr(c.ollamaVisionModel || "")}">`)
+      : provider === "openai"
+        ? field("OpenAI vision model", `<input id="cfg-openai-vision" value="${attr(c.openaiVisionModel || c.openaiModel || "gpt-5.2")}">`)
+        : provider === "custom"
+          ? field("Vision model", `<input id="cfg-custom-vision" value="${attr(c.customVisionModel || "")}"><span class="hint">Served by the same base URL as Braidy. Leave blank if this server answers text only.</span>`)
+          : "";
+    const visionConfigure = `<div class="two-col">${field("Vision assistant", `<select id="assistant-vision-provider"><option value="same" ${visionChoice === "same" ? "selected" : ""}>Same as Braidy${provider === "none" ? "" : ` (${esc(providerLabel(provider))})`}</option><option value="ollama" ${visionChoice === "ollama" ? "selected" : ""}>Ollama vision</option><option value="anthropic" ${visionChoice === "anthropic" ? "selected" : ""}>Claude vision</option><option value="openai" ${visionChoice === "openai" ? "selected" : ""}>OpenAI vision</option><option value="custom" ${visionChoice === "custom" ? "selected" : ""}>OpenAI-compatible vision</option><option value="none" ${visionChoice === "none" ? "selected" : ""}>Disabled</option></select>`)}${visionModelField}</div>${visionFieldIsHere || visionOff ? "" : `<p class="hint capability-off-hint">${esc(visionDetail)}</p>`}`;
+
+    const continuityConfigure = `<p class="hint">Checks declared references frame by frame. Configured on its own because it sends exactly one image per request — Vision's settings do not apply to it, and it does not need Braidy to be an OpenAI-compatible server.</p><div class="two-col">${field("Continuity provider", `<select id="cfg-continuity-provider"><option value="" ${continuityConfig.visionProvider ? "" : "selected"}>Not configured — continuity checks stay off</option><option value="custom" ${continuityConfig.visionProvider === "custom" ? "selected" : ""}>OpenAI-compatible server</option><option value="openai" ${continuityConfig.visionProvider === "openai" ? "selected" : ""}>OpenAI API</option></select>`)}${field("Continuity endpoint", `<input id="cfg-continuity-base" value="${attr(continuityConfig.baseUrl || "")}" placeholder="${attr(continuityInherited || "http://127.0.0.1:8000/v1")}"><span class="hint">The OpenAI-compatible base URL, including <code>/v1</code>.${continuityInherited ? ` Leave blank to use ${esc(continuityInherited)}.` : " Leave blank to use the chosen provider's own address."}</span>`)}${field("Continuity model", `<input id="cfg-continuity-model" value="${attr(continuityConfig.visionModel || "")}" placeholder="the model this server serves"><span class="hint">Leave blank to use the provider's configured vision model.</span>`)}</div>`;
+
+    /* A5 — TEST BELONGS TO BRAIDY. It sits inside Braidy's own card, under
+       Braidy's own identity line, so what it checks cannot be mistaken for
+       Vision or Continuity. The action, the endpoint and the note element are
+       the ones that already shipped. */
+    /* Test sits on the status row, beside the word it re-checks, so which
+       capability it belongs to is a matter of position rather than of reading a
+       label — and the three cards fit one screen instead of two. */
+    const braidyCard = `<article class="capability-card" data-capability="braidy" data-state="${attr(braidyState)}"><header><span class="capability-name">Braidy</span><span class="capability-status-row"><b class="capability-status">${esc(braidyStatus)}</b><button class="ghost-btn capability-test" ${provider === "none" ? "disabled" : ""} onclick="testAssistantConnection()" aria-label="${attr(provider === "none" ? "Test Braidy" : `Test Braidy's connection to ${providerLabel(provider)}`)}">Test</button></span></header><div class="capability-identity">${provider === "none" ? `<b>No provider selected</b>` : `<b>${esc(providerTextModel || "No model named yet")}</b><small>${esc(providerLabel(provider))}</small>${braidyEndpoint ? `<code>${esc(braidyEndpoint)}</code>` : ""}`}</div>${braidyDetail ? `<p class="capability-detail">${esc(braidyDetail)}</p>` : ""}<p id="assistant-test-note" class="capability-detail capability-test-note" role="status"></p>${disclosure("capability-configure", "assistant-configure:braidy", "Configure", "Provider, connection and tuning", braidyConfigure)}</article>`;
+    const visionCard = `<article class="capability-card" data-capability="vision" data-state="${attr(visionConfigured ? "on" : "off")}"><header><span class="capability-name">Vision</span><b class="capability-status">${esc(visionStatus)}</b></header><p class="capability-detail">${esc(visionDetail)}</p>${disclosure("capability-configure", "assistant-configure:vision", "Configure", "Which provider reads images, and with which model", visionConfigure)}</article>`;
+    const continuityCard = `<article class="capability-card" data-capability="continuity" data-state="${attr(continuityOn ? "on" : "off")}"><header><span class="capability-name">Continuity analysis</span><b class="capability-status">${esc(continuityOn ? "On" : "Off")}</b></header><p class="capability-detail">${esc(continuityDetail)}</p>${disclosure("capability-configure", "assistant-configure:continuity", "Configure", "Its own endpoint and model", continuityConfigure)}</article>`;
+
+    const assistantPanel = `<section class="settings-block assistant-settings"><div class="settings-title-row"><div><h3>Assistant</h3><p class="hint">What Braidy runs on, what it can see, and what checks continuity. Each capability states where it stands; the settings behind it open one step deeper.</p></div></div><div class="capability-cards">${braidyCard}${visionCard}${continuityCard}</div><div class="settings-actions"><button class="add-btn" onclick="saveConfig('assistant')">Save assistant settings</button>${panelState("manual", "Choosing a provider takes effect at once; the fields inside Configure are saved here.")}</div></section>`;
     const generationPanel = `<section class="settings-block fal-settings"><div class="settings-title-row"><div><h3>Generation</h3><p class="hint">Optional in-app FAL implementation. Manual external generation remains first-class.</p></div><button class="ghost-btn" onclick="testFalGenerationConnection()">Check setup</button></div><label class="checkline"><input id="cfg-fal-enabled" type="checkbox" ${fal.enabled ? "checked" : ""}> Enable FAL image and video generation</label><div class="two-col">
       ${field("FAL API key", `<input id="cfg-fal-key" type="password" autocomplete="off" value="${attr(fal.apiKey || "")}" placeholder="stored on this CineBraid server"><span class="hint">Key source: ${esc(fal.keySource || "none")}</span>`)}
       ${field("Text-to-image model", `<input id="cfg-fal-text-model" value="${attr(fal.textModel || "openai/gpt-image-2")}">`)}

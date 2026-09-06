@@ -4,7 +4,11 @@
  * tried to start The Last Seat, written as the thing they could not tell:
  *
  *   U1  which provider the chip they pressed actually talks to, and in what protocol
- *   U2  whether a capability that says it is off is off, and whether its settings survive
+ *   A1  what Braidy uses, whether it is connected, and whether Vision/Continuity are on
+ *   A2  provider choice living inside Configure rather than leading the screen
+ *   A3  the minimum connection immediate, tuning one step deeper
+ *   A4  Vision and Continuity configuring themselves
+ *   A5  Test belonging to Braidy and naming what it checks
  *   U3  which category a card on the shelf belongs to, and which chip filters to it
  *   U4  what an empty card is for, without being told twenty-seven times
  *   U5  what the single first task on an empty reference is
@@ -64,6 +68,14 @@ function within(html, openTag, closeHint) {
   return end >= 0 ? rest.slice(0, end) : rest;
 }
 const eq = (actual, expected, message) => { assert.strictEqual(actual, expected, message); checks++; };
+/* Everything in `block` after `key`. A disclosure that CONTAINS another one
+   cannot be sliced with `within`, because the first </details> encountered
+   closes the inner disclosure and would hide the rest of the outer one. */
+function afterKey(block, key) {
+  const start = block.indexOf(key);
+  assert.ok(start >= 0, `expected to find ${key}`);
+  return block.slice(start + key.length);
+}
 
 /* ---------------------------------------------------------------------------
    FIXTURE. One character in the exact state Rex Vandar was in: a default state
@@ -84,91 +96,162 @@ function emptyReferenceFixture() {
 
 async function main() {
   /* =======================================================================
-     U1 — A PROVIDER IS NAMED FOR THE SERVER IT ACTUALLY TALKS TO.
+     U1/A1 — A PROVIDER IS NAMED FOR THE SERVER IT ACTUALLY TALKS TO.
      The detour dogfood hit was a 404: "Local AI" was picked for a vLLM server,
      and `ollama` posts Ollama's own /api/chat, which vLLM does not serve. */
   const views = read("public/views.js");
   const server = read("server.js");
   const llm = read("llm.js");
 
-  ok(/\["ollama", "Ollama",/.test(views), "U1: the Ollama chip is named Ollama");
+  ok(/\["ollama", "Ollama",/.test(views), "U1: the Ollama choice is named Ollama");
   ok(/\["custom", "OpenAI-compatible server",/.test(views),
-    "U1: the custom chip is named for the protocol it speaks");
+    "U1: the custom choice is named for the protocol it speaks");
   ok(/vLLM, LM Studio, llama\.cpp/.test(views),
-    "U1: the OpenAI-compatible chip names the servers that belong to it");
+    "U1: the OpenAI-compatible choice names the servers that belong to it");
   /* THE IDS ARE THE STORED VALUES AND MUST NOT MOVE. A rename that migrated
      settings would be a different change from the one this pass made. */
-  ok(views.includes(`setAssistantProvider('ollama')`) || /"ollama"/.test(views),
-    "U1: the ollama id is unchanged");
-  ok(/"custom"/.test(views), "U1: the custom id is unchanged");
+  ok(/"ollama"/.test(views) && /"custom"/.test(views), "U1: the provider ids are unchanged");
+  ok(/setAssistantProvider\('none'\)/.test(views),
+    "A2: turning Braidy off is still the same `none` provider id");
   /* No user-facing label may still claim the old, untrue names. */
-  eq(/>Local AI</.test(views), false, "U1: no chip still reads Local AI");
-  eq(/>Custom server</.test(views), false, "U1: no chip still reads Custom server");
+  eq(/>Local AI</.test(views), false, "U1: nothing still reads Local AI");
+  eq(/>Custom server</.test(views), false, "U1: nothing still reads Custom server");
   eq(/"Local AI"|"Custom AI server"/.test(server), false,
     "U1: the server's provider label map names the real providers");
   eq(/"Local AI"|"Local vision"|"Custom AI server"/.test(llm), false,
     "U1: a runtime error names the server it actually called");
   ok(/"Ollama"/.test(llm) && /"OpenAI-compatible server"/.test(llm),
     "U1: llm.js labels name Ollama and the OpenAI-compatible server");
-  /* The selected provider is the text assistant, and the panel says so. */
-  ok(/TEXT ASSISTANT · BRAIDY/.test(views),
-    "U1: the panel names the selected provider as the text/Braidy assistant");
-  ok(/Test \$\{esc\(providerLabel\(provider\)\)\}/.test(views),
-    "U1: Test connection names the provider it tests");
 
   /* =======================================================================
-     U2 — A CAPABILITY THAT IS OFF LOOKS OFF, AND KEEPS ITS SETTINGS. */
-  const settings = read("public/settings.js");
-  ok(/settings-inactive-fields/.test(views),
-    "U2: an inactive capability's fields get their own subordinated group");
-  /* THE VALUES SURVIVE. Two independent guarantees, and the suite pins both:
-     the fields stay in the DOM (a closed <details> is still queryable), and the
-     reader falls back to the stored value even if an element is absent. */
-  ok(/inactiveFields\("vision"/.test(views) && /cfg-custom-vision/.test(views),
-    "U2: the vision model input is subordinated, not dropped");
-  ok(/inactiveFields\("continuity"/.test(views)
-    && /cfg-continuity-base/.test(views) && /cfg-continuity-model/.test(views),
-    "U2: the continuity endpoint and model inputs are subordinated, not dropped");
-  ok(/v\("#cfg-continuity-base", CONFIG\.continuity\?\.baseUrl \|\| ""\)/.test(settings)
-    && /v\("#cfg-custom-vision", CONFIG\.customVisionModel \|\| ""\)/.test(settings),
-    "U2: saving falls back to the stored value, so an off capability cannot be blanked");
-  /* A disabled capability must not print a model as if one were live. */
-  ok(/visionConfigured = !visionOff && !!visionModel/.test(views),
-    "U2: 'configured' means a model was actually named for the resolved provider");
-  ok(/visionFieldIsHere = visionProvider === provider/.test(views),
-    "U2: the remedy points at the box that actually feeds vision");
-
-  /* The rendered panel, against the fixture config above. */
+     A1 — CAPABILITY STATUS IS THE DEFAULT SURFACE. */
   const settingsHtml = (await render("#/settings", buildFixture(),
     { storage: { "cinebraid-focused:fixture:settings-task:settings": "assistant" } })).html;
-  ok(/class="policy-options assistant-options"/.test(settingsHtml),
-    "U2: the assistant panel renders");
-  ok(/>Ollama</.test(settingsHtml) && />OpenAI-compatible server</.test(settingsHtml),
-    "U1: the rendered chips carry the corrected names");
-  eq(/>Local AI</.test(settingsHtml) || />Custom server</.test(settingsHtml), false,
-    "U1: the rendered chips carry neither old name");
-  /* Each capability states its own standing, and the standing is derived rather
-     than asserted: text has a model, vision resolves to a provider that serves
-     none, continuity was never configured. */
-  const capabilityStates = [...settingsHtml.matchAll(
-    /class="assistant-capability" data-capability="([a-z]+)" data-state="([a-z]+)"/g)]
-    .reduce((acc, [, name, state]) => Object.assign(acc, { [name]: state }), {});
-  eq(Object.keys(capabilityStates).length, 3,
-    "U2: text, vision and continuity each state their own standing");
-  eq(capabilityStates.text, "on", "U2: a text assistant with a model reads as on");
-  eq(capabilityStates.vision, "incomplete",
-    "U2: vision pointed at a provider serving no model does not read as on");
-  eq(capabilityStates.continuity, "off", "U2: unconfigured continuity reads as off");
-  /* THE VALUES ARE STILL IN THE DOCUMENT. This is what makes saving while a
-     capability is off non-destructive: a closed <details> is still queryable, so
-     `assistantConfigPatch()` reads the stored value rather than a missing one. */
-  ok(settingsHtml.includes(`id="cfg-continuity-base"`),
-    "U2: the continuity endpoint input is still in the document");
-  ok(settingsHtml.includes(`id="cfg-continuity-model"`),
-    "U2: the continuity model input is still in the document");
-  const inactive = within(settingsHtml, `<details class="settings-inactive-fields" data-inactive="continuity">`, "</details>");
-  ok(inactive.includes(`id="cfg-continuity-base"`) && inactive.includes(`id="cfg-continuity-model"`),
-    "U2: and they are inside the subordinated group rather than at full weight");
+
+  const cards = [...settingsHtml.matchAll(/<article class="capability-card" data-capability="([a-z]+)" data-state="([a-z]+)">/g)];
+  eq(cards.length, 3, "A1: three capability cards carry the default surface");
+  assert.deepStrictEqual(cards.map(([, name]) => name), ["braidy", "vision", "continuity"],
+    "A1: Braidy first, then Vision, then Continuity");
+  checks++;
+  const cardBlock = (name) => within(settingsHtml,
+    `data-capability="${name}"`, "</article>");
+  /* Braidy states what it resolves to: the configured model id, the provider's
+     real name, and the address of a server the filmmaker started themselves. */
+  const braidy = cardBlock("braidy");
+  ok(/<span class="capability-name">Braidy<\/span>/.test(braidy), "A1: the card is named Braidy");
+  ok(braidy.includes("qwen3.8-27b-fp8"), "A1: Braidy prints the exact configured model id");
+  ok(braidy.includes("OpenAI-compatible server"), "A1: and the provider it resolves to");
+  ok(/<code>127\.0\.0\.1:18434<\/code>/.test(braidy),
+    "A1: and the endpoint identity, host and port, not the whole URL");
+  /* The fixture has no live status yet, so the panel must say it is checking
+     rather than borrow "not reachable" from a question nobody has asked. */
+  ok(/data-capability="braidy" data-state="(on|checking|unreachable)"/.test(settingsHtml),
+    "A1: Braidy's state is derived from readiness, not asserted");
+  /* A1 — A BLANK VISION MODEL IS NOT AN ACTIVE PROVIDER. */
+  const vision = cardBlock("vision");
+  ok(/data-capability="vision" data-state="off"/.test(settingsHtml),
+    "A1: vision with no usable model reads off");
+  ok(/<b class="capability-status">Off<\/b>/.test(vision),
+    "A1: and says Off rather than naming a provider it cannot use");
+  const continuity = cardBlock("continuity");
+  ok(/data-capability="continuity" data-state="off"/.test(settingsHtml),
+    "A1: unconfigured continuity reads off");
+  ok(/<b class="capability-status">Off<\/b>/.test(continuity), "A1: and says so");
+
+  /* A5 — TEST BELONGS TO BRAIDY AND SAYS WHAT IT CHECKS. */
+  ok(/class="ghost-btn capability-test"[^>]*onclick="testAssistantConnection\(\)"/.test(braidy),
+    "A5: the Test action lives in Braidy's card and calls the existing endpoint");
+  eq(/testAssistantConnection/.test(vision) || /testAssistantConnection/.test(continuity), false,
+    "A5: Vision and Continuity are given no test of their own in this pass");
+  ok(/aria-label="Test Braidy&#39;s connection to OpenAI-compatible server"/.test(braidy),
+    "A5: and it names the resolved text assistant it checks");
+  ok(settingsHtml.includes(`id="assistant-test-note"`),
+    "A5: the existing result element is still the one the test writes into");
+
+  /* =======================================================================
+     A2/A3/A4 — CONFIGURATION IS ONE INTERACTION DEEPER, IN THE RIGHT CARD. */
+  /* A card's Configure runs to the end of that card, not to the first
+     </details> — Advanced is nested inside it and would otherwise cut the slice
+     short, hiding everything below it from these assertions. */
+  const configureOf = (name, key) => afterKey(cardBlock(name), `data-ui-state-key="${key}"`);
+  const braidyConfigure = configureOf("braidy", "assistant-configure:braidy");
+  const visionConfigure = configureOf("vision", "assistant-configure:vision");
+  const continuityConfigure = configureOf("continuity", "assistant-configure:continuity");
+  /* NOT OPEN BY DEFAULT is the whole point: at page entry the surface is status,
+     not plumbing. */
+  for (const key of ["assistant-configure:braidy", "assistant-configure:vision", "assistant-configure:continuity"]) {
+    eq(new RegExp(`data-ui-state-key="${key}" open`).test(settingsHtml), false,
+      `A1: ${key} is closed at page entry`);
+  }
+  /* A2 — provider choice moved inside Braidy's Configure, and No AI is not a
+     fifth runtime tile there. */
+  ok(/policy-options assistant-options/.test(braidyConfigure),
+    "A2: the provider choice lives inside Braidy's Configure");
+  const providerTiles = [...braidyConfigure.matchAll(/onclick="setAssistantProvider\('([a-z]+)'\)"/g)]
+    .map(([, id]) => id);
+  assert.deepStrictEqual(providerTiles.filter((id) => id !== "none").sort(),
+    ["anthropic", "custom", "ollama", "openai"],
+    "A2: the four runtime providers, and only those, are offered as a choice");
+  checks++;
+  eq(/role="radio"[^>]*onclick="setAssistantProvider\('none'\)"/.test(braidyConfigure), false,
+    "A2: No AI is not presented as a peer runtime");
+  ok(/class="capability-off-switch"[\s\S]*setAssistantProvider\('none'\)/.test(braidyConfigure),
+    "A2: it is a switch that turns Braidy off, using the same id");
+  /* A3 — the minimum connection is immediate; tuning is one more step down. */
+  /* Advanced is the innermost disclosure, so its own </details> does close it. */
+  const advanced = within(braidyConfigure, `data-ui-state-key="assistant-advanced:braidy"`, "</details>");
+  for (const id of ["cfg-custom-url", "cfg-custom-key", "cfg-custom-model"]) {
+    ok(braidyConfigure.includes(`id="${id}"`), `A3: ${id} is a minimum connection field`);
+    eq(advanced.includes(`id="${id}"`), false, `A3: ${id} is not buried under Advanced`);
+  }
+  for (const id of ["cfg-custom-temperature", "cfg-custom-top-k", "cfg-custom-thinking"]) {
+    ok(advanced.includes(`id="${id}"`), `A3: ${id} moved under Advanced`);
+  }
+  eq(/data-ui-state-key="assistant-advanced:braidy" open/.test(settingsHtml), false,
+    "A3: Advanced is closed until asked for");
+  /* A4 — Vision and Continuity configure themselves, not inside Braidy's fields. */
+  ok(visionConfigure.includes(`id="assistant-vision-provider"`) && visionConfigure.includes(`id="cfg-custom-vision"`),
+    "A4: vision's provider and model are configured under Vision");
+  eq(braidyConfigure.includes(`id="assistant-vision-provider"`), false,
+    "A4: and not intermixed with Braidy's text-server fields");
+  for (const id of ["cfg-continuity-provider", "cfg-continuity-base", "cfg-continuity-model"]) {
+    ok(continuityConfigure.includes(`id="${id}"`), `A4: ${id} is configured under Continuity`);
+    eq(braidyConfigure.includes(`id="${id}"`), false, `A4: ${id} is not in Braidy's Configure`);
+  }
+
+  /* =======================================================================
+     THE CONTRACT THAT MATTERS MOST — MOVING A FIELD DID NOT CHANGE WHAT IS SAVED.
+     `assistantConfigPatch()` reads by id and gates whole blocks on one id being
+     present, so a control that stopped being rendered would silently fall back to
+     a default and a control read outside its gate would be dropped. Every id that
+     function touches for the selected provider must still be in the document —
+     a closed <details> keeps it there — and the ones belonging to other providers
+     must still be absent, exactly as before. */
+  const settingsSource = read("public/settings.js");
+  const patchBody = within(settingsSource, "function assistantConfigPatch() {", "\nfunction ");
+  const readIds = [...patchBody.matchAll(/["'`]#(cfg-[a-z-]+|assistant-vision-provider)["'`]/g)]
+    .map(([, id]) => id);
+  ok(readIds.length >= 18, "save: the reader's id list was found");
+  /* For this fixture (provider custom, vision ollama, continuity unconfigured). */
+  const presentForCustom = ["assistant-vision-provider", "cfg-continuity-provider", "cfg-continuity-base",
+    "cfg-continuity-model", "cfg-custom-url", "cfg-custom-key", "cfg-custom-model", "cfg-custom-vision",
+    "cfg-custom-temperature", "cfg-custom-top-k", "cfg-custom-thinking"];
+  for (const id of presentForCustom) {
+    ok(settingsHtml.includes(`id="${id}"`), `save: #${id} is still rendered, so its stored value is still sent`);
+  }
+  /* Another provider's gate id must stay absent, or its whole block would start
+     being written from defaults. */
+  for (const id of ["cfg-ollama", "cfg-key", "cfg-openai-key"]) {
+    eq(settingsHtml.includes(`id="${id}"`), false,
+      `save: #${id} belongs to another provider and is still not rendered`);
+  }
+  /* And the values are the stored ones, not placeholders. */
+  ok(settingsHtml.includes(`id="cfg-custom-url" value="http://127.0.0.1:18434/v1"`),
+    "save: the configured base URL round-trips into the field that sends it");
+  ok(settingsHtml.includes(`id="cfg-custom-model" value="qwen3.8-27b-fp8"`),
+    "save: the configured Qwen model round-trips into the field that sends it");
+  ok(/id="cfg-custom-thinking"[\s\S]{0,400}?<option value="disabled" selected>/.test(settingsHtml),
+    "save: skip-thinking survives the move under Advanced");
 
   /* =======================================================================
      U3 — THE SHELF'S CATEGORY CHIPS AND ITS CARDS AGREE. */
@@ -278,7 +361,7 @@ async function main() {
   eq(/data-first-task="primary"/.test(busy), false,
     "U7: with a candidate present the hero returns to its normal next-action shape");
 
-  console.log(`Dogfood UX clarity suite passed ${checks} checks across provider truth (U1), disabled-capability legibility with settings preserved (U2), category identity on the shelf (U3), the empty card's repeated line (U4), one first task with the two existing paths (U5/U6), and the quiet-then-restored decision surface with coverage kept second (U7/U8). Provider calls made: 0.`);
+  console.log(`Dogfood UX clarity suite passed ${checks} checks across provider truth (U1), capability status as the default surface with configuration one step deeper and the save body unmoved (A1-A5), category identity on the shelf (U3), the empty card's repeated line (U4), one first task with the two existing paths (U5/U6), and the quiet-then-restored decision surface with coverage kept second (U7/U8). Provider calls made: 0.`);
 }
 
 main().catch((error) => {
