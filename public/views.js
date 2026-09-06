@@ -314,7 +314,7 @@ const ROUTES = {
        * so there is nothing here to point somewhere else. */
       const civ = c.generation?.civitai || {};
       return `<section class="settings-subblock civitai-settings" data-integration="civitai"><div class="settings-title-row"><div><h4>Civitai</h4><p class="hint">Generate a frame on Civitai, paid from your own Civitai account in Buzz. CineBraid asks Civitai what each request costs and shows you that figure before anything is submitted — nothing here spends on its own.</p></div></div><label class="checkline"><input id="cfg-civitai-enabled" type="checkbox" ${civ.enabled ? "checked" : ""}> Generate with Civitai</label><div class="two-col">
-      ${field("Civitai account that pays", `<select id="cfg-civitai-connection">${typeof civitaiConnectionOptions === "function" ? civitaiConnectionOptions(String(civ.connectionId || "")) : ""}</select><small>Connect the account in Settings → Accounts first, and allow generation on it there.</small>`)}
+      ${field("Civitai account that pays", `<select id="cfg-civitai-connection" data-configured="${attr(String(civ.connectionId || ""))}">${typeof civitaiConnectionOptions === "function" ? civitaiConnectionOptions(String(civ.connectionId || "")) : ""}</select><small>Connect the account in Settings → Accounts first, and allow generation on it there.</small>`)}
       ${field("Model (Civitai AIR)", `<input id="cfg-civitai-resource" value="${attr(String(civ.resourceAir || ""))}" placeholder="urn:air:sdxl:checkpoint:civitai:101055@128078"><small>Civitai's own identifier for a model version. Open the model on Civitai and copy its AIR. CineBraid generates with SDXL checkpoints in this version.</small>`)}
     </div><div class="settings-actions"><button class="ghost-btn" onclick="checkCivitaiResource()">Check model</button><span id="civitai-resource-note" class="settings-state-chip" data-tone="${civ.enabled ? "attention" : "off"}">${civ.enabled ? "Not checked yet — press Check model" : "Civitai generation is off"}</span></div></section>`;
     })()}<div class="settings-actions"><button class="add-btn" onclick="saveConfig('generation')">Save generation settings</button><span id="fal-test-note" class="settings-state-chip" data-tone="${fal.enabled ? (fal.apiKey || fal.keySource === "environment" ? "ready" : "attention") : "off"}">${fal.enabled ? (fal.apiKey || fal.keySource === "environment" ? "FAL generation is set up" : "FAL generation is on, but needs a key") : "FAL generation is off"}</span>${panelState("manual", "Save records these defaults; nothing is generated and nothing is charged.")}</div><p class="hint fal-security-note">Paid generation is only submitted after confirmation.</p></section>`;
@@ -364,25 +364,26 @@ const ROUTES = {
      * therefore a SECOND, separate authorization, asked for here and never folded into
      * Connect — which is what keeps that sentence true rather than nearly true.
      *
-     * What is rendered is CineBraid's own boolean from /api/generation/civitai/grants,
+     * What appears here is CineBraid's own boolean from /api/generation/civitai/grants,
      * never the provider's scope value: safeConnection deliberately does not project the
-     * bitmask, and a bitmask is not something to put in front of a person. */
-    const accountGrantMarkup = (row) => {
-      const grant = (typeof civitaiGrantFor === "function" ? civitaiGrantFor(row.connectionId) : null);
-      if (!grant) return "";
-      if (grant.tokenSource === "api_key")
-        return `<small class="account-note">Connected with an API key, which carries whatever your Civitai account allows. CineBraid cannot check it in advance — Civitai decides at the moment of generating.</small>`;
-      return grant.generationAuthorized
-        ? `<small class="account-note">CineBraid may generate on this account. Each generation is still priced and confirmed before anything is spent.</small>`
-        : `<small class="account-note">Connected for identity only — CineBraid cannot generate on this account yet.</small>`;
-    };
-    const accountGrantAction = (row) => {
-      const grant = (typeof civitaiGrantFor === "function" ? civitaiGrantFor(row.connectionId) : null);
-      if (!grant || grant.tokenSource === "api_key" || !onLocalMachine) return "";
-      return grant.generationAuthorized
-        ? ""
-        : `<button class="add-btn" onclick="allowCivitaiGeneration('${attr(row.connectionId)}')">Allow generation</button>`;
-    };
+     * bitmask, and a bitmask is not something to put in front of a person.
+     *
+     * THESE ARE EMPTY CONTAINERS, FILLED AFTERWARDS, and that is not a style choice. The
+     * answer comes from the server, so drawing it needs an async read — and a read that
+     * asked the router to redraw once it arrived turned this panel into a render loop that
+     * detached inputs mid-keystroke. paintCivitaiGrants() writes into exactly these nodes
+     * and nothing else, which is the same shape refreshComfyWorkflowList() already uses on
+     * the Integrations panel. */
+    const accountGrantMarkup = (row) => (
+      row.providerId === "civitai"
+        ? `<small class="account-note" data-civitai-grant-note="${attr(row.connectionId)}"></small>`
+        : ""
+    );
+    const accountGrantAction = (row) => (
+      row.providerId === "civitai" && onLocalMachine
+        ? `<span class="account-grant-action" data-civitai-grant-action="${attr(row.connectionId)}"></span>`
+        : ""
+    );
     const accountConnectedRow = (row) => `<article class="account-row" data-account-status="${attr(row.status)}"><div><b>${esc(row.providerLabel || row.providerId)}</b><span class="account-identity">${esc(row.identity?.displayName ? `@${row.identity.displayName}` : "Connected account")}</span><small>${esc(accountStateWords(row))}${row.identity?.tier ? ` · ${esc(row.identity.tier)}` : ""}${row.identity?.accountStatus && row.identity.accountStatus !== "active" ? ` · ${esc(row.identity.accountStatus)}` : ""}</small>${accountGrantMarkup(row)}${row.lastError ? `<small class="account-note" role="status">${esc(row.lastError.message)}</small>` : ""}</div><div class="account-row-actions">${accountGrantAction(row)}<button class="ghost-btn" onclick="recheckAccountConnection('${attr(row.connectionId)}')">Recheck</button><button class="ghost-btn" onclick="disconnectAccount('${attr(row.connectionId)}')">Disconnect</button></div></article>`;
     /* The service is named from its own label rather than written in, so this row
        is still correct the day a second provider is registered. Today that renders

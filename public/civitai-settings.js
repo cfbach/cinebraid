@@ -15,17 +15,38 @@
  * Civitai's encoding, and what arrives here is CineBraid's own yes-or-no.
  */
 
-/* Answered by the server, cached for a render, and never guessed. An unloaded list draws
-   nothing rather than drawing "not authorized" — a claim CineBraid has not checked is not
-   a claim to put on a row. */
-const CIVITAI_SETTINGS = { grants: [], loaded: false };
+/* Answered by the server, held for the current screen, and never guessed. An unloaded list
+   draws nothing rather than drawing "not authorized" — a claim CineBraid has not checked is
+   not a claim to put on a row. */
+const CIVITAI_SETTINGS = { grants: [], loaded: false, loading: false };
 
 window.civitaiGrantFor = (connectionId) => {
   if (!CIVITAI_SETTINGS.loaded) return null;
   return (CIVITAI_SETTINGS.grants || []).find((row) => row.connectionId === String(connectionId || "")) || null;
 };
 
+/* ---------------------------------------------------------------------------
+   A BACKGROUND READ PAINTS ITS OWN CONTAINERS. IT NEVER RE-RENDERS THE SCREEN.
+ *
+ * This function used to end in `route()`. Settings schedules it whenever the Accounts or
+ * Generation panel is drawn, so that one line was a loop: render → fetch → route() →
+ * render → fetch → … It ran at about 26 iterations a second, and because every iteration
+ * REPLACES the settings subtree, the panel became unusable — an input was detached from
+ * the document before a keystroke could land, focus fell back to <body>, and a click on a
+ * tab was released over a node that no longer existed.
+ *
+ * The fix is the discipline comfy-settings.js's refreshComfyWorkflowList() already keeps
+ * and this file failed to copy: a panel that loads something asynchronously OWNS A
+ * CONTAINER and writes into it. It does not ask the router to redraw the world, so it
+ * cannot be part of a cycle, and it cannot destroy a control somebody is typing into —
+ * the only nodes it touches are the ones it is responsible for.
+ *
+ * `loading` is not a cache. It only stops two overlapping fetches; every render still gets
+ * a fresh answer, which is what keeps a disconnected account from lingering in the picker
+ * after `disconnectAccount()` redraws. */
 window.refreshCivitaiGrants = async () => {
+  if (CIVITAI_SETTINGS.loading) return;
+  CIVITAI_SETTINGS.loading = true;
   try {
     const response = await fetch("/api/generation/civitai/grants");
     const data = await response.json().catch(() => ({}));
@@ -34,9 +55,50 @@ window.refreshCivitaiGrants = async () => {
   } catch {
     CIVITAI_SETTINGS.grants = [];
     CIVITAI_SETTINGS.loaded = false;
+  } finally {
+    CIVITAI_SETTINGS.loading = false;
   }
-  if (typeof route === "function") route();
+  paintCivitaiGrants();
 };
+
+/* The three places a grant is visible, filled in place.
+ *
+ * Every target is addressed by the connection it belongs to, so a row that is no longer on
+ * screen is simply not found and nothing is written for it. Nothing outside these nodes is
+ * touched — which is the whole point, and is what makes this safe to call at any time. */
+function paintCivitaiGrants() {
+  for (const host of document.querySelectorAll("[data-civitai-grant-note]")) {
+    const grant = window.civitaiGrantFor(host.dataset.civitaiGrantNote);
+    host.textContent = !grant
+      ? ""
+      : grant.tokenSource === "api_key"
+        ? "Connected with an API key, which carries whatever your Civitai account allows. CineBraid cannot check it in advance — Civitai decides at the moment of generating."
+        : grant.generationAuthorized
+          ? "CineBraid may generate on this account. Each generation is still priced and confirmed before anything is spent."
+          : "Connected for identity only — CineBraid cannot generate on this account yet.";
+  }
+  for (const host of document.querySelectorAll("[data-civitai-grant-action]")) {
+    const id = host.dataset.civitaiGrantAction;
+    const grant = window.civitaiGrantFor(id);
+    /* An API key carries the account holder's own permissions and has no scope CineBraid
+       can widen, so there is nothing to offer. An already-authorized connection has
+       nothing to grant either. */
+    host.innerHTML = grant && grant.tokenSource !== "api_key" && !grant.generationAuthorized
+      ? `<button class="add-btn" onclick="allowCivitaiGeneration('${attr(id)}')">Allow generation</button>`
+      : "";
+  }
+  const picker = document.getElementById("cfg-civitai-connection");
+  if (picker) {
+    /* THE PERSON'S OWN UNSAVED CHOICE OUTRANKS THE SAVED ONE. A background read that
+       reset a picker somebody had just changed would be the same defect as the render
+       loop, one control smaller. */
+    const chosen = picker.value || picker.dataset.configured || "";
+    const markup = window.civitaiConnectionOptions(chosen);
+    if (picker.innerHTML !== markup) picker.innerHTML = markup;
+    if (chosen && [...picker.options].some((option) => option.value === chosen)) picker.value = chosen;
+  }
+}
+window.paintCivitaiGrants = paintCivitaiGrants;
 
 /* The account picker on the Generation panel, built from the grants list rather than from
    the accounts projection — so it is drawn by the same source that decides whether an

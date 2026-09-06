@@ -26,6 +26,7 @@
  */
 const assert = require("assert");
 const fs = require("fs");
+const vm = require("vm");
 const path = require("path");
 const { render, buildFixture } = require("./render-harness");
 
@@ -528,7 +529,83 @@ async function main() {
   );
   assert(!views.includes(">Disabled</span>"), "the unattributed \"Disabled\" text must be gone");
 
-  console.log("settings consistency and persistence assertions passed");
+  /* -------------------------------------------------------------------------
+     A BACKGROUND READ MUST NOT REBUILD THE PANEL IT REPORTS INTO.
+
+     Settings schedules refreshCivitaiGrants() every time the Accounts or Generation panel
+     is drawn. That function used to end in `route()`, which made the pair a loop: render →
+     fetch → route() → render → fetch. Measured against the running build it ran about 26
+     times a second, and because every iteration replaces the settings subtree the panel
+     was unusable — an input was detached from the document before a keystroke could land,
+     focus fell back to <body>, and a click on a tab was released over a node that no
+     longer existed.
+
+     This asserts the repaired shape BEHAVIOURALLY rather than by grepping for `route(`:
+     the module is executed against a minimal DOM, and what is checked is that a refresh
+     paints its own containers, leaves everything else alone, and asks nobody to redraw.
+     A future edit that reintroduced the loop under a different name would still fail. */
+  {
+    const civitaiSettings = fs.readFileSync(path.join(ROOT, "public", "civitai-settings.js"), "utf8");
+    const CONNECTION = "conn-0123456789abcdef0123456789abcdef";
+
+    function element(dataset = {}) {
+      return { dataset, textContent: "", innerHTML: "", value: "", options: [] };
+    }
+    const note = element({ civitaiGrantNote: CONNECTION });
+    const action = element({ civitaiGrantAction: CONNECTION });
+    /* A picker the person has already changed and NOT saved. The configured value is the
+       other account; the unsaved choice must outrank it. */
+    const picker = element({ configured: "conn-ffffffffffffffffffffffffffffffff" });
+    picker.value = CONNECTION;
+    picker.options = [{ value: CONNECTION }];
+
+    let routeCalls = 0;
+    let elementsCreated = 0;
+    const context = {
+      console,
+      /* If the module ever calls this again, the count is the failure. */
+      route: () => { routeCalls++; },
+      esc: (value) => String(value ?? ""),
+      attr: (value) => String(value ?? ""),
+      fetch: async () => ({
+        ok: true,
+        json: async () => ({ grants: [{ connectionId: CONNECTION, displayName: "fixture", tokenSource: "oauth", generationAuthorized: false }] }),
+      }),
+      document: {
+        querySelectorAll: (selector) => {
+          elementsCreated++;
+          if (selector === "[data-civitai-grant-note]") return [note];
+          if (selector === "[data-civitai-grant-action]") return [action];
+          return [];
+        },
+        getElementById: (id) => (id === "cfg-civitai-connection" ? picker : null),
+      },
+    };
+    context.window = context;
+    vm.createContext(context);
+    vm.runInContext(civitaiSettings, context, { filename: "civitai-settings.js" });
+
+    await context.refreshCivitaiGrants();
+
+    assert.strictEqual(routeCalls, 0,
+      "a Civitai grants refresh must never ask the router to redraw — that is the render loop that made Settings uneditable");
+    assert(elementsCreated > 0, "the refresh must actually have looked for its containers");
+    assert(/identity only/i.test(note.textContent),
+      "the grant line must be painted into its own container from the server's answer");
+    assert(/Allow generation/.test(action.innerHTML),
+      "the contextual spend authorization must be offered on a connection that lacks it");
+    assert.strictEqual(picker.value, CONNECTION,
+      "a repaint must preserve an unsaved account choice rather than resetting it to the configured one");
+
+    /* The other half of the contract: the panel renders EMPTY containers, so nothing on
+       screen depends on an async answer having already arrived. */
+    assert(/data-civitai-grant-note=/.test(views) && /data-civitai-grant-action=/.test(views),
+      "the Accounts row must render containers for the grant rather than requiring the answer at render time");
+    assert(!/civitaiGrantFor\(/.test(views),
+      "views.js must not read the grants cache while rendering; the painter owns those nodes");
+  }
+
+  console.log("settings consistency and persistence assertions passed, including that a Civitai grants refresh paints its own containers and never re-renders Settings");
 }
 
 main().catch((error) => {
