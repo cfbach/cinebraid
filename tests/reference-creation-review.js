@@ -283,12 +283,19 @@ async function testCandidateReviewIsTheFirstAction() {
      capability is stated rather than inherited from the harness default, because
      the whole point of R15 is that the surface tells the truth about THIS
      configuration. */
-  const openReview = (visionReady, file = `${REX}_FAL_CANDIDATE_1.png`) => vm.runInContext(
-    `(() => { AGENT_STATUS = { capabilities: { vision: ${JSON.stringify({
-        ready: visionReady,
-        message: visionReady ? "" : "No vision model is configured.",
-        action: visionReady ? "" : "Open Settings to configure Vision.",
-      })} } };
+  const openReview = (vision, file = `${REX}_FAL_CANDIDATE_1.png`) => vm.runInContext(
+    `(() => { AGENT_STATUS = { capabilities: { vision: ${JSON.stringify(
+      vision === true
+        ? { ready: true, provider: "custom", model: "qwen3.8-27b-fp8", message: "", action: "" }
+        : vision === false
+          /* The real Rex configuration: a provider resolved, no vision model named.
+             The server still reports its reachability failure, and this is exactly the
+             record that used to leak into the panel. */
+          ? { ready: false, provider: "ollama", model: "",
+              message: "Ollama is not reachable at http://127.0.0.1:59999.",
+              action: "Start Ollama, then retry. Expected model: not configured." }
+          : vision
+    )} } };
       openEntityCandidateReview('characters','${REX}','${file}','state-default');
       const el = document.getElementById('modal');
       const out = el ? el.innerHTML : ''; AGENT_STATUS = null; return out; })()`,
@@ -320,6 +327,35 @@ async function testCandidateReviewIsTheFirstAction() {
     "R15 and offers the deep link to the Assistant settings that own Vision");
   ok(!modal.includes("Review with Braidy"),
     "R15 no Braidy review action is offered that could not run");
+
+  /* T2 — A DORMANT PROVIDER REPORTS NO FAULT. Vision was never set up here, so the
+     reachability failure the server records for a provider nobody was going to ask is
+     not a diagnostic the filmmaker needs; it is noise contradicting the heading above
+     it. What survives is the disabled truth, the way back, and the reassurance. */
+  ok(!modal.includes("Ollama is not reachable"),
+    "T2 an off capability does not report its provider's reachability");
+  ok(!modal.includes("Start Ollama") && !modal.includes("Expected model"),
+    "T2 nor a retry instruction or a model expectation for a model nobody named");
+  ok(modal.includes("No image is sent for reading."),
+    "T2 it states what being off actually means, in the Assistant panel's own words");
+  ok(modal.includes("Your own review and approval are unaffected."),
+    "T2 and that the human decision is untouched by it");
+
+  /* And the other half: a vision model that IS named and did not answer keeps every
+     word of its diagnostic, and stops calling itself off. */
+  const visionBroken = openReview({
+    ready: false, provider: "custom", model: "qwen3.8-27b-fp8",
+    message: "OpenAI-compatible server is not reachable at http://127.0.0.1:8000/v1.",
+    action: "Start the server, then retry.",
+  });
+  ok(visionBroken.includes("OpenAI-compatible server is not reachable at http://127.0.0.1:8000/v1."),
+    "T2 a configured vision model that did not answer keeps its provider diagnostic");
+  ok(visionBroken.includes("Start the server, then retry."),
+    "T2 including the action that would fix it");
+  ok(!visionBroken.includes("Vision is off"),
+    "T2 and a named, unreachable model is not described as switched off");
+  ok(visionBroken.includes("Configure Vision"),
+    "T2 the way into Vision settings is offered in both unavailable states");
 
   const visionOn = openReview(true);
   ok(visionOn.includes("Review with Braidy"),
@@ -414,6 +450,19 @@ async function testGenerationDecisionIsComposed() {
     "R8 Via and Mode are slots the block can state");
   ok(/\(via \?/.test(viewSource) && /\(mode \?/.test(viewSource),
     "R11 and they render only when the route declares them, so a future route has a slot without a router being built");
+
+  /* T1 — the request block describes a request. It said "3 candidates returned" above
+     an unpressed paid button; the count is unchanged and the tense is not. */
+  const entityDialog = generation.slice(generation.indexOf("window.openFalEntityGenerationModal"));
+  ok(/label: n === 1 \? "candidate" : "candidates"/.test(entityDialog),
+    "T1 the reference dialog states the candidates it will request, not ones it has");
+  /* Comments are stripped, because the note explaining the correction quotes the
+     sentence it removed. */
+  const entityCode = entityDialog.replace(/\/\*[\s\S]*?\*\//g, "");
+  ok(!/candidates returned/.test(entityCode.slice(0, entityCode.indexOf("START GENERATION"))),
+    "T1 and no longer claims a completed generation before one has been submitted");
+  ok(/Every returned file is an unapproved \$\{typeLabel\} candidate/.test(entityDialog),
+    "T1 while the sentence that says what will come back is untouched");
 
   ok(/force: reference \? \["resolution"\] : undefined/.test(generation),
     "R9 output size is promoted into Simple for reference generation");

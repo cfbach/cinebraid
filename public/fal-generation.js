@@ -725,7 +725,14 @@ window.openFalEntityGenerationModal = (list, entityId, buildId = "", stateId = "
     standingDetail: `CineBraid's configured image path for ${typeLabel} references. It is the route this operation uses by default, not a ranking against other models.`,
   });
   const drawEntityView = (mode) => renderFalFixedImageView("fal-entity-generation-view", entityIds, entityCurrent, (n) => ({
-    rows: [{ value: n, label: n === 1 ? "candidate returned" : "candidates returned" }],
+    /* T1 — NOTHING HAS RETURNED YET. This block describes the request a filmmaker is
+       about to submit, and it read "3 candidates returned" above an unpressed paid
+       button: a completed generation stated in the past tense before one had been
+       asked for. The count and every semantic around it are unchanged; only the tense
+       is, because the sentence underneath already says what the returned files will
+       be. Scoped to this dialog — the shot surfaces carry the same wording and are
+       not this pass's to change. */
+    rows: [{ value: n, label: n === 1 ? "candidate" : "candidates" }],
     stopEarly: `Every returned file is an unapproved ${typeLabel} candidate. Nothing becomes canon until you approve one.`,
   }), mode, entityRoute);
   window._generationViewRefresh = (mode) => refreshFalFixedImageView(mode);

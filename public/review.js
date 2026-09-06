@@ -708,11 +708,46 @@ function entityReviewGenerationProvenance(entity, fileName) {
    to the Assistant settings section that owns Vision. It is never phrased as though
    an optional AI check were available and merely declined. */
 function entityReviewBraidyAvailability(busy, review) {
-  const capability = typeof capabilityState === "function" ? capabilityState("vision") : { ready: false, message: "", action: "" };
+  const capability = typeof capabilityState === "function"
+    ? capabilityState("vision")
+    : { ready: false, message: "", action: "" };
   if (capability.ready === true) {
     return `<section class="entity-review-braidy is-available"><div><span>BRAIDY VISUAL REVIEW</span><b>${review ? "Braidy has reviewed this candidate" : "Optional — ask Braidy to look at this candidate"}</b><small>Braidy reports what it observes against this continuity state. It is advisory: it cannot approve a reference or assign authority, and you can approve without it.</small></div><button class="ghost-btn" ${busy ? "disabled" : ""} onclick="runEntityCandidateVisionReview()">${busy ? `<span class="spin">◌</span> REVIEWING…` : review ? "Review with Braidy again" : "Review with Braidy"}</button></section>`;
   }
-  return `<section class="entity-review-braidy is-unavailable"><div><span>BRAIDY VISUAL REVIEW</span><b>Braidy visual review unavailable — Vision is off.</b><small>${esc([capability.message, capability.action].filter(Boolean).join(" ") || "No vision model is configured, so Braidy cannot look at this image.")} Your own review and approval are unaffected.</small></div><button class="ghost-btn" onclick="openVisionSettingsFromReview()">Configure Vision</button></section>`;
+  /* T2 — A CAPABILITY NOBODY TURNED ON HAS NOT FAILED, SO IT REPORTS NO FAILURE.
+   *
+   * This printed the capability's `message` and `action` under every unavailable
+   * state, and in the real Rex configuration that meant a filmmaker who had simply
+   * not set Vision up read "Ollama is not reachable at http://127.0.0.1:59999. Start
+   * Ollama, then retry. Expected model: not configured." — a reachability fault about
+   * a provider that was never going to be asked, for a model that does not exist,
+   * under a heading that had already said Vision was off. Two of those three
+   * sentences were noise and the third contradicted the heading.
+   *
+   * OFF IS THE ASSISTANT PANEL'S OWN DEFINITION, not a second one invented here.
+   * public/views.js reads Off when the vision provider is none/never AND when no
+   * vision model is named, on the stated grounds that "a blank model is not an active
+   * provider... in both cases no image is read". Both are deliberate configuration
+   * rather than a fault, so both suppress the diagnostic.
+   *
+   * A CONFIGURED VISION MODEL THAT DID NOT ANSWER IS A FAULT, and keeps every word
+   * of its diagnostic — that is the case where the provider and model are exactly
+   * what the filmmaker needs to see. The heading stops claiming "off" there, because
+   * a model that is named and unreachable is not switched off.
+   *
+   * Nothing about vision runtime or configuration is decided here. This reads the
+   * capability record the server already sends and chooses which of its own words to
+   * show. */
+  const provider = String(capability.provider || "").trim();
+  const model = String(capability.model || "").trim();
+  const off = provider === "none" || provider === "never" || !model;
+  const headline = off
+    ? "Braidy visual review unavailable — Vision is off."
+    : "Braidy visual review unavailable.";
+  const detail = off
+    ? "No image is sent for reading. Your own review and approval are unaffected."
+    : `${[capability.message, capability.action].filter(Boolean).join(" ")} Your own review and approval are unaffected.`.trim();
+  return `<section class="entity-review-braidy is-unavailable" data-vision-state="${attr(off ? "off" : "unavailable")}"><div><span>BRAIDY VISUAL REVIEW</span><b>${esc(headline)}</b><small>${esc(detail)}</small></div><button class="ghost-btn" onclick="openVisionSettingsFromReview()">Configure Vision</button></section>`;
 }
 function entityReviewModalMarkup(list, entity, media, state, review, busy = false, error = "") {
   const factors = ENTITY_REVIEW_FACTOR_LABELS[list] || ENTITY_REVIEW_FACTOR_LABELS.props;
