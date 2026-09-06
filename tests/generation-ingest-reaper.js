@@ -1034,6 +1034,121 @@ function freePort() {
   });
 }
 
+/* WAIT FOR THE STATE THIS SUITE IS ACTUALLY ASSERTING, NOT FOR A PROXY OF IT.
+ *
+ * THE RACE THIS REPLACES. bootRecoveryChecks() used to poll until a file appeared in the
+ * shot's takes folder and then immediately read generation-jobs.json expecting COMPLETED.
+ * Those are two different durable writes, in this order:
+ *
+ *   1  ingest() writes the take file inside its commitProject() turn      <- the file
+ *   2  refresh() returns the mutated job to the poller
+ *   3  the poller commits the ledger: status COMPLETED, ingestedAt        <- the state
+ *
+ * So the file is a PROXY that fires one commit turn early, and under load — the suite runs
+ * fifteenth in a twenty-five-suite chain — the assertion read IN_QUEUE roughly one run in
+ * four. The product was never wrong: recovery reached COMPLETED every time, just not always
+ * before a read that had not waited for it.
+ *
+ * The fix is to wait for the authoritative row and nothing else. Not a longer sleep, which
+ * would only make the same wrong assumption less likely to be caught, and not a weaker
+ * assertion — COMPLETED is still exactly what is required.
+ *
+ * BOUNDED AND LOUD. The deadline is the same 20 seconds the file wait used, and a timeout
+ * reports the last ledger it actually saw, what is on disk, and the server's own output, so
+ * a real recovery failure is diagnosable rather than a bare "timed out".
+ *
+ * A MID-WRITE READ IS NOT A FAILED READ. generation-job-store.js writes temp-then-rename,
+ * so a reader sees the old file or the new one — but a parse error is still treated as
+ * "not ready yet" rather than as an error, because the only thing that matters here is
+ * whether the durable state has arrived. */
+async function waitForDeliveredJob(ledgerFile, jobId, { timeoutMs = 20000, describe = () => "" } = {}) {
+  const deadline = Date.now() + timeoutMs;
+  let lastSeen = "(the ledger was never readable)";
+  for (;;) {
+    let ledger = null;
+    try { ledger = JSON.parse(fs.readFileSync(ledgerFile, "utf8")); } catch { ledger = null; }
+    if (Array.isArray(ledger)) {
+      lastSeen = JSON.stringify(ledger.map((row) => ({ id: row?.id, status: row?.status, ingestedAt: row?.ingestedAt || "" })));
+      const row = ledger.find((item) => item && item.id === jobId);
+      if (row && row.status === "COMPLETED" && row.ingestedAt) return { ledger, row };
+    }
+    if (Date.now() > deadline)
+      throw new Error(
+        `The server never recorded ${jobId} as delivered within ${timeoutMs}ms.\n`
+        + `  last ledger seen: ${lastSeen}\n`
+        + `${describe()}`,
+      );
+    await new Promise((resolve) => setTimeout(resolve, 80));
+  }
+}
+
+/* THE SYNCHRONISATION CHANGE, PROVED DETERMINISTICALLY.
+ *
+ * No server, no provider, no timing luck: this stages the two-phase write by hand — the
+ * take file first, the ledger promoted to COMPLETED a measured interval later — and asserts
+ * three things:
+ *
+ *   the OLD readiness rule is already satisfied while the ledger still says IN_QUEUE,
+ *   which is the defect stated as a measurement rather than as a story;
+ *   the NEW wait does not return until the ledger has actually been promoted;
+ *   a promotion that never comes fails loudly, with the last state it saw.
+ *
+ * If someone reverts the wait to watching the file, the first two assertions disagree with
+ * each other and this fails without needing the race to occur. */
+async function readinessContractChecks() {
+  const dir = fs.mkdtempSync(path.join(fs.realpathSync.native(os.tmpdir()), "cinebraid-readiness-"));
+  const takes = path.join(dir, "shots", "SH-1", "takes");
+  fs.mkdirSync(takes, { recursive: true });
+  const ledgerFile = path.join(dir, "generation-jobs.json");
+  const row = (status, ingestedAt) => [{ id: "job-boot", status, ...(ingestedAt ? { ingestedAt } : {}) }];
+
+  try {
+    /* The state the server is in between commit turn 1 and commit turn 3. */
+    fs.writeFileSync(path.join(takes, "SH-1_FRAME_A_FAL_1.png"), "bytes");
+    fs.writeFileSync(ledgerFile, JSON.stringify(row("IN_QUEUE"), null, 2));
+
+    const oldRuleSatisfied = fs.readdirSync(takes).length > 0;
+    const ledgerNow = JSON.parse(fs.readFileSync(ledgerFile, "utf8"))[0].status;
+    assert.strictEqual(oldRuleSatisfied, true, "the retired readiness rule fires as soon as the file exists");
+    assert.strictEqual(ledgerNow, "IN_QUEUE",
+      "and it fires while the ledger still says IN_QUEUE — that gap is the defect, measured rather than argued");
+
+    /* Promote after a measured interval, exactly as the poller's later commit does. */
+    const PROMOTE_AFTER = 400;
+    const started = Date.now();
+    const timer = setTimeout(() => {
+      fs.writeFileSync(ledgerFile, JSON.stringify(row("COMPLETED", "2026-09-06T00:00:00.000Z"), null, 2));
+    }, PROMOTE_AFTER);
+    let waited;
+    try {
+      const { row: delivered } = await waitForDeliveredJob(ledgerFile, "job-boot", { timeoutMs: 8000 });
+      waited = Date.now() - started;
+      assert.strictEqual(delivered.status, "COMPLETED");
+      assert(delivered.ingestedAt, "and it waits for ingestedAt, not merely for the status word");
+    } finally {
+      clearTimeout(timer);
+    }
+    assert(waited >= PROMOTE_AFTER,
+      `the wait must not return before the ledger is promoted; returned after ${waited}ms, promotion at ${PROMOTE_AFTER}ms`);
+
+    /* A promotion that never arrives is a loud, diagnosable failure. */
+    fs.writeFileSync(ledgerFile, JSON.stringify(row("IN_QUEUE"), null, 2));
+    let refused = "";
+    try {
+      await waitForDeliveredJob(ledgerFile, "job-boot", { timeoutMs: 300, describe: () => "  fixture: promotion withheld" });
+    } catch (error) {
+      refused = String(error.message);
+    }
+    assert(/never recorded job-boot as delivered/.test(refused), "a stalled recovery must fail, not hang");
+    assert(/"status":"IN_QUEUE"/.test(refused), "and must report the last durable state it actually saw");
+    assert(/promotion withheld/.test(refused), "including the caller's own diagnostic context");
+
+    note(`boot-recovery readiness waits on the durable ledger row, not on the take file: the retired rule was already satisfied while the ledger read IN_QUEUE, the new wait returned only after the promotion at ${PROMOTE_AFTER}ms, and a withheld promotion fails loudly with the last state seen`);
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+}
+
 async function bootRecoveryChecks() {
   const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "cinebraid-reaper-boot-"));
   const projectsRoot = path.join(tmp, "projects");
@@ -1096,18 +1211,24 @@ async function bootRecoveryChecks() {
       if (Date.now() > deadline) throw new Error(`Server did not start:\n${output}`);
       await new Promise((resolve) => setTimeout(resolve, 60));
     }
-    /* NOTHING BELOW ASKS THE SERVER TO COLLECT. The wait watches the filesystem, so the
-       only thing that could produce the file is the server's own sweep. */
-    const collected = Date.now() + 20000;
-    for (;;) {
-      const takes = fs.readdirSync(path.join(dir, "shots", "SH-1", "takes"));
-      if (takes.length) break;
-      if (Date.now() > collected) throw new Error(`The server never collected the finished render:\n${output}`);
-      await new Promise((resolve) => setTimeout(resolve, 80));
-    }
+    /* NOTHING BELOW ASKS THE SERVER TO COLLECT. The wait watches durable state, so the
+       only thing that could produce it is the server's own sweep.
+
+       IT WAITS ON THE LEDGER ROW, NOT ON THE TAKE FILE. Those are two different commit
+       turns and the file is the earlier one — see waitForDeliveredJob() for the ordering
+       and for what watching the file used to cost. */
+    const takesDir = path.join(dir, "shots", "SH-1", "takes");
+    const onDisk = () => (fs.existsSync(takesDir) ? fs.readdirSync(takesDir) : []);
+    const { ledger } = await waitForDeliveredJob(path.join(dir, "generation-jobs.json"), "job-boot", {
+      timeoutMs: 20000,
+      describe: () => `  takes on disk: ${JSON.stringify(onDisk())}\n${output}`,
+    });
 
     assert.deepStrictEqual(calls.submissions, [], `a booting server must not submit: ${JSON.stringify(calls.submissions)}`);
-    const ledger = JSON.parse(fs.readFileSync(path.join(dir, "generation-jobs.json"), "utf8"));
+    /* MATERIALIZATION IS ITS OWN CLAIM. It is still part of the contract — the sweep must
+       have written the bytes — but it is asserted here rather than used as evidence that
+       the later ledger commit had happened. */
+    assert(onDisk().length, "the sweep materialized the returned bytes");
     assert.strictEqual(ledger.length, 1, "no job was created");
     assert.strictEqual(ledger[0].status, "COMPLETED", "the finished render is recorded as finished");
     assert(ledger[0].ingestedAt, "and delivered, with no browser involved");
@@ -1157,6 +1278,7 @@ async function main() {
   await staleRunChecks();
   await reconciledRunSurfaceChecks();
   browserClaimChecks();
+  await readinessContractChecks();
   await bootRecoveryChecks();
   console.log("Generation ingest reaper suite passed:\n" + notes.map((line) => `  - ${line}`).join("\n"));
 }
