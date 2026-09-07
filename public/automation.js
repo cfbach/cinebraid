@@ -1053,7 +1053,8 @@ window.reviewBlockingAttempts = async (shotId, frameId = "", autoUse = false) =>
   if (!shot) return toast("Shot is unavailable");
   const rows = v664BlockingRowsForReview(shot, frameId);
   if (!rows.length) return toast("Add at least one blocking attempt first");
-  if (!capabilityState("vision").ready) return toast(capabilityState("vision").message || "Vision review is unavailable");
+  /* C2 GLOBAL: authority source only — behaviour unchanged. */
+  if (!visionCanReview(capabilityState("vision"))) return toast(visionUnavailableReason(capabilityState("vision")));
   const creation = ensureShotCreation(shot);
   creation.blockingReviewBusy = v664BlockingReviewKey(frameId);
   keepGuidedPanelOpen(shot, "blocking");
@@ -1088,7 +1089,7 @@ window.maybeAutoReviewBlockingAttempts = (shotId, frameId = "") => {
   const creation = ensureShotCreation(shot);
   if (!creation.autoReviewBlocking) return;
   const summary = blockingAttemptReviewSummary(shot, frameId);
-  if (!summary.rows.length || !summary.stale || creation.blockingReviewBusy || !capabilityState("vision").ready) return;
+  if (!summary.rows.length || !summary.stale || creation.blockingReviewBusy || !visionCanReview(capabilityState("vision"))) return;
   const signature = summary.rows.map(({ asset }) => asset.id).sort().join("|");
   const key = `${shotId}:${frameId || "opening"}:${signature}`;
   if (V664_AUTO_BLOCKING_REVIEW_PENDING.has(key)) return;
@@ -1332,7 +1333,8 @@ function v626BlockingPreflight(shot) {
   const errors = [], warnings = [];
   if (!falGenerationReady()) errors.push("FAL GPT Image 2 generation is not enabled.");
   if (!capabilityState("text").ready) errors.push(capabilityState("text").message || "The text assistant is unavailable.");
-  if (!capabilityState("vision").ready) errors.push(capabilityState("vision").message || "The vision assistant is unavailable.");
+  /* C2 GLOBAL: authority source only — behaviour unchanged. */
+  if (!visionCanReview(capabilityState("vision"))) errors.push(visionUnavailableReason(capabilityState("vision")));
   if (!String(blockingFrameBrief(shot) || "").trim()) errors.push("Describe the shot or opening frame before automating blocking.");
   if (!activeBlockingRow(shot)) warnings.push("No active guide exists yet; the run will create a fresh grayscale blocking set.");
   return { errors: [...new Set(errors)], warnings: [...new Set(warnings)] };
@@ -1486,7 +1488,8 @@ function v626ShotPreflight(shot, frameIds) {
   const errors = [], warnings = [];
   if (!falGenerationReady()) errors.push("FAL GPT Image 2 generation is not enabled.");
   if (!capabilityState("text").ready) errors.push(capabilityState("text").message || "The text assistant is unavailable.");
-  if (!capabilityState("vision").ready) errors.push(capabilityState("vision").message || "The vision assistant is unavailable.");
+  /* C2 GLOBAL: authority source only — behaviour unchanged. */
+  if (!visionCanReview(capabilityState("vision"))) errors.push(visionUnavailableReason(capabilityState("vision")));
   const frames = v626ShotFramesRead(shot), selected = frameIds.map((id) => frames.find((frame) => frame.id === id)).filter(Boolean);
   if (!frames.length) errors.push(`${shot?.id || "This shot"} has no frames yet. Open it and add an opening frame before automating it.`);
   if (!selected.length) errors.push("Choose at least one frame.");

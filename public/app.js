@@ -5928,14 +5928,38 @@ function visionUnavailableReason(capability) {
   return [row.message, row.action].map((line) => String(line || "").trim()).filter(Boolean).join(" ")
     || "Braidy cannot read images with the current configuration.";
 }
+/* The rest of the canonical set, so no consumer has to spell a standing
+   comparison out for itself and accidentally spell a different one. */
+function visionIsChecking(capability) {
+  return capabilityStanding(capability) === "checking";
+}
+function visionIsUnavailable(capability) {
+  return capabilityStanding(capability) === "configured-unavailable";
+}
 window.visionCanReview = visionCanReview;
 window.visionUnavailableReason = visionUnavailableReason;
+window.visionIsChecking = visionIsChecking;
+window.visionIsUnavailable = visionIsUnavailable;
+/* C2 GLOBAL — THE TRANSITIVE PATH, WHICH IS WHERE THE LAST BYPASS LIVED.
+ *
+ * Every button that asks "should I be disabled?" comes through here, and it asked
+ * `state.ready` — the legacy boolean — for every capability including vision. So a
+ * record carrying `standing: "ready"` and `ready: false` left all three reference
+ * batch-review buttons disabled while the authoritative standing said Ready. No
+ * call site read `.ready`; they all read it through this one line.
+ *
+ * The vision branch now delegates to the canonical authority and every other
+ * capability keeps exactly the semantics it had — Braidy text, verifier,
+ * continuity and the rest are not part of this migration and are untouched. */
 function aiDisabledAttrs(name, extraRequirement = "") {
-  const state = capabilityState(name),
-    reason = [state.message, state.action, extraRequirement]
-      .filter(Boolean)
-      .join(" ");
-  return `${state.ready ? "" : " disabled"}${state.ready ? "" : ` title="${attr(reason)}"`}${helpAttr(reason)}`;
+  const state = capabilityState(name);
+  const isVision = name === "vision";
+  const usable = isVision ? visionCanReview(state) : state.ready === true;
+  const reason = [
+    isVision && !usable ? visionUnavailableReason(state) : [state.message, state.action].filter(Boolean).join(" "),
+    extraRequirement,
+  ].filter(Boolean).join(" ");
+  return `${usable ? "" : " disabled"}${usable ? "" : ` title="${attr(reason)}"`}${helpAttr(reason)}`;
 }
 window.refreshAgentStatus = async (render = false) => {
   try {

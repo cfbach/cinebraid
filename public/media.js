@@ -469,8 +469,10 @@ window.analyzeProjectMedia = async (assetId, linkId) => {
   const asset = mediaAssetById(assetId),
     link = asset?.links?.find((x) => x.id === linkId);
   if (!asset || !link || !mediaIsImage(asset)) return;
-  if (!capabilityState("vision").ready) {
-    toast([capabilityState("vision").message, capabilityState("vision").action].filter(Boolean).join(" "));
+  /* C2 GLOBAL: authority source only - behaviour unchanged. */
+  if (!visionCanReview(capabilityState("vision"))) {
+    /* C2 GLOBAL: authority source only - behaviour unchanged. */
+    toast(visionUnavailableReason(capabilityState("vision")));
     return;
   }
   link.analysisBusy = true;

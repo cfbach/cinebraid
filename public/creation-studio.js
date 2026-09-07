@@ -3774,13 +3774,14 @@ function guidedFrameSequenceReviewState(s, inputs = guidedFrameSequenceInputs(s)
 }
 function guidedFrameSequenceReviewMarkup(s, inputs, review) {
   if (inputs.length < 2) return "";
-  const vision = typeof capabilityState === "function" ? capabilityState("vision") : { ready: false, message: "Vision assistant unavailable" };
+  /* C2 GLOBAL: authority source only - behaviour unchanged. */
+  const vision = typeof capabilityState === "function" ? capabilityState("vision") : { standing: "checking" };
   /* O5: these are the APPROVED Frame A / Frame B anchors, which is precisely the
      "where did that Frame A go, and is it really approved" question the Inspector
      exists for. The clean preview is still one click further in. */
   const preview = `<div class="frame-sequence-thumbs" style="${attr(shotWellStyle(s))}">${inputs.map(({frame,approved}) => `<button type="button" onclick="inspectMediaFile('${attr(encodeURIComponent(approved.url))}','${attr(approved.assetId || "")}','${attr(encodeURIComponent(`Frame ${frame.label} · ${approved.name}`))}','image')"><img src="${attr(approved.url)}" alt="Frame ${esc(frame.label)}"><span>Frame ${esc(frame.label)}</span></button>`).join("")}</div>`;
   if (review?.status === "working") return `<section class="frame-sequence-review state-working"><header><div><span>PAIR CONTINUITY REVIEW</span><b>Reviewing the approved anchors together…</b><small>The vision assistant is checking camera, environment, background lights, character, and prop continuity.</small></div><i class="spin">◌</i></header>${preview}</section>`;
-  if (!review) return `<section class="frame-sequence-review state-pending"><header><div><span>PAIR CONTINUITY CHECK REQUIRED</span><b>Review these approved anchors together before motion</b><small>Individual approval is not enough for first/last-frame or multi-frame motion. CineBraid checks camera, environment, background lights, character, and prop continuity.</small></div><button class="approve-btn" onclick="reviewGuidedFrameSequence('${attr(s.id)}')" ${vision.ready ? "" : "disabled"}>REVIEW FRAME SEQUENCE</button></header>${preview}${!vision.ready ? `<p class="prompt-check warn">${esc(vision.message || "Connect a vision assistant to review this frame sequence.")}</p>` : ""}</section>`;
+  if (!review) return `<section class="frame-sequence-review state-pending"><header><div><span>PAIR CONTINUITY CHECK REQUIRED</span><b>Review these approved anchors together before motion</b><small>Individual approval is not enough for first/last-frame or multi-frame motion. CineBraid checks camera, environment, background lights, character, and prop continuity.</small></div><button class="approve-btn" onclick="reviewGuidedFrameSequence('${attr(s.id)}')" ${visionCanReview(vision) ? "" : "disabled"}>REVIEW FRAME SEQUENCE</button></header>${preview}${!visionCanReview(vision) ? `<p class="prompt-check warn">${esc(visionUnavailableReason(vision) || "Connect a vision assistant to review this frame sequence.")}</p>` : ""}</section>`;
   const categories = Object.entries(review.categories || {}).map(([key,row]) => `<li class="${Number(row.score||0) >= 80 ? "pass" : "flag"}"><span>${esc(key.replace(/([A-Z])/g," $1"))}</span><b>${Math.round(Number(row.score||0))}</b><small>${esc(row.note || "")}</small></li>`).join("");
   const issues = (review.blockingIssues || []).map((item) => `<li>${esc(item)}</li>`).join("");
   const failedActions = review.pass ? "" : `<div class="frame-sequence-fix-actions"><button class="approve-btn large" onclick="openFrameSequenceCorrection('${attr(s.id)}')">FIX CONTINUITY</button><button class="ghost-btn" onclick="prepareFrameSequenceCorrectionUpload('${attr(s.id)}')">UPLOAD CORRECTED FRAME</button><button class="ghost-btn" onclick="chooseFrameSequenceCorrectionCandidate('${attr(s.id)}')">CHOOSE ANOTHER CANDIDATE</button></div>`;
@@ -3789,8 +3790,9 @@ function guidedFrameSequenceReviewMarkup(s, inputs, review) {
 window.reviewGuidedFrameSequence = async (shotId) => {
   const s = shotById(shotId);
   if (!s) return toast("Shot is unavailable");
-  const vision = typeof capabilityState === "function" ? capabilityState("vision") : { ready: false };
-  if (!vision.ready) return toast(vision.message || "Vision assistant is unavailable");
+  /* C2 GLOBAL: authority source only - behaviour unchanged. */
+  const vision = typeof capabilityState === "function" ? capabilityState("vision") : { standing: "checking" };
+  if (!visionCanReview(vision)) return toast(visionUnavailableReason(vision));
   const inputs = guidedFrameSequenceInputs(s);
   if (inputs.length < 2) return toast("Approve at least two frames first");
   const c = ensureShotCreation(s);
@@ -3872,11 +3874,12 @@ function guidedFrameWorkflowPanel(s, takes, openDefault = true, sectionSuffix = 
      The per-frame "Review sequence first" chip in guidedFrameCard runs the SAME handler
      and was fixed with it, in this same patch — leaving the identical defect one panel
      away is how a corrected surface gets re-raised by the next audit. */
-  const motionReadinessCapability = typeof capabilityState === "function" ? capabilityState("vision") : { ready: false, message: "Vision assistance is unavailable." };
+  /* C2 GLOBAL: authority source only - behaviour unchanged. */
+  const motionReadinessCapability = typeof capabilityState === "function" ? capabilityState("vision") : { standing: "checking" };
   const motionReadinessReason = [motionReadinessCapability.message, motionReadinessCapability.action].filter(Boolean).join(" ") || "Vision assistance is unavailable.";
   const motionReadinessReasonId = `motion-readiness-unavailable-${s.id}`;
-  const motionReadinessNote = motionReadinessCapability.ready ? "" : `<p class="prompt-check warn" id="${attr(motionReadinessReasonId)}">${esc(motionReadinessReason)}</p>`;
-  const motionReadinessDescribedBy = motionReadinessCapability.ready ? "" : ` aria-describedby="${attr(motionReadinessReasonId)}"`;
+  const motionReadinessNote = visionCanReview(motionReadinessCapability) ? "" : `<p class="prompt-check warn" id="${attr(motionReadinessReasonId)}">${esc(motionReadinessReason)}</p>`;
+  const motionReadinessDescribedBy = visionCanReview(motionReadinessCapability) ? "" : ` aria-describedby="${attr(motionReadinessReasonId)}"`;
   let motionCta = "";
   /* A DELIVERED SHOT IS NOT WAITING FOR MOTION. This handoff fired off frame approval
      alone, so a still shot the filmmaker had already marked final went on offering
@@ -6062,8 +6065,9 @@ window.guidedFrameApprovalChanged = (id, target, previousName, nextName) => {
     c.frameSequenceCorrection.lastApprovedFile = nextName;
     c.frameSequenceCorrection.updatedAt = new Date().toISOString();
     setTimeout(() => {
-      const vision = typeof capabilityState === "function" ? capabilityState("vision") : { ready: false };
-      if (vision.ready && guidedFrameSequenceInputs(s).length >= 2) reviewGuidedFrameSequence(id);
+      /* C2 GLOBAL: authority source only - behaviour unchanged. */
+      const vision = typeof capabilityState === "function" ? capabilityState("vision") : { standing: "checking" };
+      if (visionCanReview(vision) && guidedFrameSequenceInputs(s).length >= 2) reviewGuidedFrameSequence(id);
     }, 220);
   }
 };
@@ -6274,7 +6278,8 @@ window.visionReviewFrame = async (id, frameId) => {
   if (index < 0) return;
   const files = guidedFrameCandidateRows(s, frames[index], takesFor(id), index).map((take) => take.name);
   if (files.length < 2) return toast("Upload at least two candidates first");
-  if (!capabilityState("vision").ready) return toast(capabilityState("vision").message);
+  /* C2 GLOBAL: authority source only - behaviour unchanged. */
+  if (!visionCanReview(capabilityState("vision"))) return toast(visionUnavailableReason(capabilityState("vision")));
   openModal(`<h3>Reviewing Frame ${esc(frames[index].label)} candidates</h3><div class="modal-sub"><span class="spin">◌</span> THE VISION ASSISTANT IS COMPARING ${files.length} IMAGES</div><div class="hint">This is a recommendation only. You approve the final frame.</div>`);
   try {
     const response = await fetch("/api/llm/review", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ kind: "shot", id, frameId, fileNames: files }) });

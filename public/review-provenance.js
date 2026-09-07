@@ -1357,7 +1357,7 @@ window.downloadCandidateCorrection = (shotId, buildId) => {
 
 window.runCandidateStructuredVisionReview = async (shotId, frameId, name) => {
   const capability = capabilityState("vision");
-  if (!capability.ready) return toast(`${capability.message} ${capability.action}`.trim());
+  if (!visionCanReview(capability)) return toast(visionUnavailableReason(capability));
   const s = shotById(shotId), row = candidateRecord(s, name, true), build = candidateSourceBuild(row);
   openModal(`<h3>Reviewing ${esc(name)}</h3><div class="modal-sub"><span class="spin">◌</span> COMPARING CANDIDATE, GUIDE, SHOT REQUIREMENTS, AND NUMBERED REFERENCES</div>`);
   const activityId = typeof v641StartManualActivity === "function" ? v641StartManualActivity("VISION AI · FRAME REVIEW", `Review ${name}`, "Comparing the candidate with its guide, shot requirements, and numbered production references.") : "";

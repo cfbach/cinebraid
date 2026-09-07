@@ -586,7 +586,8 @@ window.confirmApproveTake = async () => {
   );
   if (!video && (target === "shot" || target.startsWith("frame:")) && typeof guidedFrameSequenceInputs === "function" && typeof reviewGuidedFrameSequence === "function") {
     const inputs = guidedFrameSequenceInputs(s);
-    const visionReady = typeof capabilityState === "function" && capabilityState("vision")?.ready;
+    /* C2 GLOBAL: authority source only - behaviour unchanged. */
+    const visionReady = typeof visionCanReview === "function" && visionCanReview(capabilityState("vision"));
     if (inputs.length >= 2 && visionReady) setTimeout(() => reviewGuidedFrameSequence(id), 350);
   }
 };
@@ -1196,8 +1197,9 @@ window.confirmEntityApproval = async (continueToNext = false) => {
      not at the next poll. */
   if (typeof v670ReconcileAfterApproval === "function") v670ReconcileAfterApproval();
   if (targetState && !targetState.isDefault && targetState.approvedFile && String(targetState.notes || "").trim()) {
-    const capability = typeof capabilityState === "function" ? capabilityState("vision") : { ready: false };
-    if (capability.ready) setTimeout(() => validateContinuityStateAgainstParent(list, id, targetState.id), 220);
+    /* C2 GLOBAL: authority source only - behaviour unchanged. */
+    const capability = typeof capabilityState === "function" ? capabilityState("vision") : { standing: "checking" };
+    if (visionCanReview(capability)) setTimeout(() => validateContinuityStateAgainstParent(list, id, targetState.id), 220);
   }
   if (approvedIsCoverageSheet && typeof openCoverageSheetExtractor === "function") {
     rememberWorkspaceSection?.(entityCoverageSectionKey?.(list, id, originalApprovalRow?.coverageSheetType === "expressions" ? "expressions" : "angles"), true);

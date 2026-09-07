@@ -973,6 +973,109 @@ async function testStandingDominatesLegacyReadiness() {
     "C2 migration: and Review with Braidy is not enabled on an unresolved capability");
 }
 
+/* ---- C2 — one browser Vision authority, globally ------------------------- */
+function testGlobalBrowserVisionAuthority() {
+  const app = code(source("app.js"));
+  /* THE TRANSITIVE BYPASS. Every button that asks "should I be disabled?" comes
+     through aiDisabledAttrs, and it asked the legacy boolean for every capability
+     including vision — so `standing:"ready"` with `ready:false` left the reference
+     batch-review buttons disabled while the authority said Ready. No call site read
+     `.ready`; they all read it through one line. */
+  ok(/const usable = isVision \? visionCanReview\(state\) : state\.ready === true;/.test(app),
+    "C2 global: aiDisabledAttrs delegates the vision branch to the canonical authority");
+  ok(/const isVision = name === "vision";/.test(app),
+    "C2 global: and leaves every other capability's semantics exactly as they were");
+
+  /* THE CANONICAL SET, each defined only as a standing comparison. */
+  for (const [fn, standing] of [["visionCanReview", "ready"], ["visionIsOff", "off"],
+                                ["visionIsChecking", "checking"], ["visionIsUnavailable", "configured-unavailable"]]) {
+    /* Newlines normalized: the repository checks out CRLF and the point of this
+       assertion is the body, not the line endings. */
+    const body = `function ${fn}(capability) {
+  return capabilityStanding(capability) === "${standing}";
+}`;
+    ok(app.split(String.fromCharCode(13)).join("").includes(body),
+      `C2 global: ${fn} is exactly 'standing is ${standing}', with no fallback`);
+  }
+
+  /* THE WHOLE-BROWSER SWEEP, as an executable guard. Every production browser file
+     is scanned for a vision capability's readiness being read to establish
+     semantics — directly, or through a variable holding a vision record. Other
+     capabilities keep their own `.ready`: continuity has its own standing and
+     Braidy text is outside this migration, so the pattern names the vision
+     identifiers rather than the property. */
+  const VISION_READINESS = /\b(?:capabilityState\("vision"\)|vision|visionCapability|braidyVision|motionReadinessCapability)\s*\??\.\s*ready\b/;
+  const browserFiles = fs.readdirSync(PUBLIC).filter((name) => name.endsWith(".js"));
+  ok(browserFiles.length > 20, "C2 global: the sweep sees the production browser bundle");
+  const offenders = browserFiles.filter((name) => VISION_READINESS.test(code(source(name))));
+  ok(offenders.length === 0,
+    `C2 global: no production browser file reads a vision capability's readiness (${offenders.join(", ") || "none"})`);
+  /* And the one legitimate remaining `.ready` is the non-vision branch of the
+     shared wrapper, which this asserts is still there rather than deleted. */
+  ok(/: state\.ready === true;/.test(app),
+    "C2 global: non-vision capabilities still use their own readiness through the same wrapper");
+}
+
+/* The contradiction matrix, driven through every layer that can disable a control. */
+async function testStandingBeatsLegacyEverywhere() {
+  const rendered = await render("#/production", buildFixture());
+  const read = (record) => vm.runInContext(`(() => {
+    AGENT_STATUS = { capabilities: { vision: ${JSON.stringify(record)} } };
+    const capability = capabilityState("vision");
+    const attrs = aiDisabledAttrs("vision");
+    const panel = entityReviewBraidyAvailability(false, null);
+    const entity = { id: "PR-X", name: "X", candidateFiles: [], continuityStates: [] };
+    P.props = [entity];
+    const batch = typeof entityBatchReviewPanelMarkup === "function"
+      ? entityBatchReviewPanelMarkup("props", entity, [{ name: "a.png", url: "/a.png" }], [{ name: "a.png", url: "/a.png" }]) : "";
+    return {
+      standing: capabilityStanding(capability),
+      canReview: visionCanReview(capability),
+      isOff: visionIsOff(capability),
+      isChecking: visionIsChecking(capability),
+      isUnavailable: visionIsUnavailable(capability),
+      attrsDisabled: / disabled/.test(attrs),
+      panelAvailable: /is-available/.test(panel),
+      batchButtonsDisabled: /<button[^>]* disabled/.test(batch),
+      batchButtons: (batch.match(/<button/g) || []).length,
+    };
+  })()`, rendered.context);
+
+  const base = { provider: "openai", model: "gpt-5.2", message: "m", action: "a" };
+  const cases = [
+    ["standing ready + legacy ready:false", { ...base, standing: "ready", ready: false }, "ready", true],
+    ["standing configured-unavailable + legacy ready:true", { ...base, standing: "configured-unavailable", ready: true }, "configured-unavailable", false],
+    ["standing off + legacy ready:true", { ...base, standing: "off", ready: true }, "off", false],
+    ["standing checking + legacy ready:true", { ...base, standing: "checking", ready: true }, "checking", false],
+    ["no standing + legacy ready:true", { ...base, ready: true }, "checking", false],
+    ["no standing + legacy ready:false", { ...base, ready: false }, "checking", false],
+  ];
+  for (const [label, record, expected, usable] of cases) {
+    const seen = read(record);
+    ok(seen.standing === expected, `C2 global: ${label} -> ${expected}`);
+    ok(seen.canReview === usable, `C2 global: ${label} -> canReview ${usable}`);
+    ok(seen.isOff === (expected === "off") && seen.isChecking === (expected === "checking")
+      && seen.isUnavailable === (expected === "configured-unavailable"),
+      `C2 global: ${label} -> the whole predicate set agrees`);
+    /* THE TRANSITIVE LAYER: every control gated through the shared wrapper. */
+    ok(seen.attrsDisabled === !usable,
+      `C2 global: ${label} -> aiDisabledAttrs("vision") ${usable ? "enables" : "disables"} accordingly`);
+    ok(seen.panelAvailable === usable,
+      `C2 global: ${label} -> Candidate Review renders the matching panel`);
+  }
+
+  /* ASTRA'S EXACT REPRODUCTION: the reference batch panel with standing ready and a
+     falsy legacy flag. Every Review with Braidy control must be enabled. */
+  const reproduction = read({ ...base, standing: "ready", ready: false });
+  ok(reproduction.batchButtons > 0,
+    "C2 global: the reference batch panel renders its review controls");
+  ok(reproduction.batchButtonsDisabled === false,
+    "C2 global: standing ready with legacy ready:false leaves no batch review control disabled");
+  const inverse = read({ ...base, standing: "configured-unavailable", ready: true });
+  ok(inverse.batchButtonsDisabled === true,
+    "C2 global: and a configured-unavailable standing disables them even with a truthy legacy flag");
+}
+
 /* ---- C3 — the handoff must repaint, not just rewrite stored state --------- */
 function testReviewCtaRepaintsTheCandidateArea() {
   const automation = code(source("automation.js"));
@@ -1137,6 +1240,8 @@ async function main() {
   await testSettingsCardMatchesTheServerStanding(visionScenarios);
   testNoVisionConsumerReadsLegacyReadiness();
   await testStandingDominatesLegacyReadiness();
+  testGlobalBrowserVisionAuthority();
+  await testStandingBeatsLegacyEverywhere();
   testReviewCtaRepaintsTheCandidateArea();
   testSettledGateLeavesNoPendingHeader();
   await testContinuationExcludesApprovedDescendants();

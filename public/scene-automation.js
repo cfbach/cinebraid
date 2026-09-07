@@ -104,7 +104,8 @@ function v640ScenePreflight(sceneId, shotIds, options = {}) {
   const needsGeneration = !reviewOnly && (shotIds || []).length > 0;
   if ((needsGeneration || correctionLoop) && !falGenerationReady()) errors.push("FAL GPT Image 2 generation is not enabled.");
   if ((needsGeneration || correctionLoop) && !capabilityState("text").ready) errors.push(capabilityState("text").message || "The text assistant is unavailable.");
-  if (!capabilityState("vision").ready) errors.push(capabilityState("vision").message || "The vision assistant is unavailable.");
+  /* C2 GLOBAL: authority source only - behaviour unchanged. */
+  if (!visionCanReview(capabilityState("vision"))) errors.push(visionUnavailableReason(capabilityState("vision")));
   if (!reviewOnly && !(shotIds || []).length) errors.push("Choose at least one unfinished shot, or switch the scope to Review current scene only.");
   if (reviewOnly && v640SceneShots(sceneId).filter((shot) => v640SceneApprovedStill(shot)).length < 2) errors.push("Approve at least two scene stills before running review-only automation.");
   for (const id of shotIds || []) {

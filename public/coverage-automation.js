@@ -942,7 +942,8 @@
       expressions.length ? `<optgroup label="Expressions">${expressions.map((slot) => `<option value="expression:${attr(slot.id)}">${esc(slot.label)}${slotSelectedFile(slot) ? ` · currently ${esc(slotSelectedFile(slot))}` : ""}</option>`).join("")}</optgroup>` : "",
     ].join("");
     const manualMode = typeof manualFirstWorkflow === "function" && manualFirstWorkflow();
-    const visionReady = typeof capabilityState === "function" && !!capabilityState("vision")?.ready;
+    /* C2 GLOBAL: authority source only — behaviour unchanged. */
+    const visionReady = typeof visionCanReview === "function" && visionCanReview(capabilityState("vision"));
     const guidance = manualMode
       ? `<div class="prompt-check"><b>Map by human judgment</b><span>The selected file can become the authority for this exact state or view immediately. An optional AI check can be run first when vision assistance is available.</span></div>`
       : `<div class="prompt-check"><b>Choose authority deliberately</b><span>AI checking can compare this image against current authority, but only your assignment makes it authoritative.</span></div>`;
