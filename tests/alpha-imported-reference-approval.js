@@ -389,6 +389,33 @@ async function testReadinessBinding() {
   ok(pendingSave.modal.includes(CANDIDATE), "B-4: the candidate stays on screen and recoverable");
   ok(/APPROVAL TARGET/.test(pendingSave.targetSummary), "B-4: beside the target it was imported for");
 
+  /* B-6 — CHANGING THE TARGET WITHDRAWS IT TOO. A readiness prepared for one
+     continuity state may not approve another. */
+  const retargeted = await openedApproval();
+  ok(await settleApprovalReadiness(retargeted.rendered), "B-6: prepares for the opening target");
+  const targetRefusal = vm.runInContext(
+    'entityApprovalReadinessRefusal(ENTITY_APPROVAL_READINESS, { list: "props", id: "PR-TOOL",'
+    + ' stateId: "state-other", name: ' + JSON.stringify(CANDIDATE) + ', mode: "primary-authority" })',
+    retargeted.rendered.context);
+  ok(targetRefusal && targetRefusal.code === "target-changed", "B-6: a different state is a different question");
+
+  /* B-7 — AND SO DOES THE PROJECT MOVING UNDER IT: another project open, this
+     project reopened, or this project's stored document advancing. */
+  const moved = await openedApproval();
+  ok(await settleApprovalReadiness(moved.rendered), "B-7: prepares while the project is still");
+  const want = { list: "props", id: "PR-TOOL", stateId: "state-default", name: CANDIDATE, mode: "primary-authority" };
+  const refusalFor = (mutation) => vm.runInContext(
+    `(() => { ${mutation} return entityApprovalReadinessRefusal(ENTITY_APPROVAL_READINESS, ${JSON.stringify(want)}); })()`,
+    moved.rendered.context);
+  eq(refusalFor('ACTIVE_PROJECT_SLUG = "elsewhere";').code, "project-changed",
+    "B-7: another project open invalidates readiness");
+  vm.runInContext(`ACTIVE_PROJECT_SLUG = ${JSON.stringify(SLUG)};`, moved.rendered.context);
+  eq(refusalFor("PROJECT_OPEN_EPOCH += 1;").code, "project-reopened",
+    "B-7: reopening this project invalidates readiness");
+  vm.runInContext("PROJECT_OPEN_EPOCH -= 1;", moved.rendered.context);
+  eq(refusalFor("PROJECT_SAVE_GENERATION += 1;").code, "project-advanced",
+    "B-7: the stored document advancing invalidates readiness");
+
   /* B-5 — A CANDIDATE WHOSE DECLARED STRUCTURE IS NOT DURABLE IS NOT APPROVABLE,
      even though the draft in this tab declares it. */
   const draftOnly = await openedApproval();
@@ -440,6 +467,31 @@ async function testOneDurableApproval() {
   eq(durable.canon, 1, "D-5: reopening finds one current authority");
   eq(durable.value, CANDIDATE, "D-5: the same candidate");
   eq(durable.assetId, harnessAssetId(`props/${CANDIDATE}`), "D-5: with the same durable identity");
+
+  /* D-8 — AND THE WINDOW IS FREE AGAIN. A committed approval releases the
+     submission, so ordinary saving and project switching resume, and the durable
+     result is what a switch leaves behind. */
+  eq(vm.runInContext("!!approvalSubmissionPending()", rendered.context), false,
+    "D-8: no submission is held once the approval is durable");
+  await vm.runInContext("switchProject('other')", rendered.context);
+  await drain(40);
+  eq(harness.count(/\/api\/projects\/switch/), 1, "D-8: a project switch is no longer refused");
+  eq((harness.stored.productionAuthority || { receipts: [] }).receipts.length, 1,
+    "D-8: and the durable receipt is untouched by leaving the project");
+
+  /* D-9 — AN ALREADY INDEXED CANDIDATE TAKES THE SAME PATH. Its identity is used
+     rather than replaced, and nothing relocates it either. */
+  const indexedScan = importedScan();
+  indexedScan.props[0].assetId = harnessAssetId(`props/${CANDIDATE}`);
+  const indexed = await openedApproval({ scan: indexedScan });
+  ok(await settleApprovalReadiness(indexed.rendered), "D-9: an already indexed candidate prepares");
+  eq(vm.runInContext("ENTITY_APPROVAL_READINESS.assetId", indexed.rendered.context),
+    harnessAssetId(`props/${CANDIDATE}`), "D-9: keeping the identity it already had");
+  await indexed.rendered.gesture.act(() => indexed.rendered.context.confirmEntityApproval(false));
+  await drain();
+  eq(surfaces(indexed.rendered).canonAsset, harnessAssetId(`props/${CANDIDATE}`),
+    "D-9: and approving carries that same identity");
+  eq(indexed.harness.count(/\/api\/media\/rename/), 0, "D-9: through the same path, which renames nothing");
 
   /* D-6 — A DESTINATION THAT WOULD HAVE COLLIDED IS SIMPLY IRRELEVANT NOW. The
      file that occupies the old generated production name is never touched, and
@@ -640,16 +692,56 @@ async function testNegativeControlsStillFailClosed() {
   await drain(40);
   eq(surfaces(undeclaredRun.rendered).canon, 0, "N-3: an undeclared candidate approves nothing");
 
-  /* N-4 — THE RECEIPT VALIDATOR IS UNTOUCHED: an edge whose receipt names other
-     bytes is still refused, which is the fail-closed behaviour the old rename
-     sequence used to trip. */
+  /* N-4 — THE RECEIPT VALIDATOR IS UNTOUCHED, PROVEN BY MAKING IT REFUSE.
+
+     Two fail-closed behaviours this slice must not have loosened, both exercised
+     against the shipped kernel rather than asserted from source:
+
+       * a receipt whose durable identity does not match the live edge is not a
+         current approval — the exact state the old rename sequence produced;
+       * repairCanonValue() still refuses to move a receipt whose ORIGINAL
+         identity was empty, which is why an approval taken before identity was
+         prepared could never be repaired afterwards.
+
+     Both remain true. The difference is that nothing now asks the second one to
+     rescue the first, because this approval no longer moves its file. */
   const kernel = require("../public/shared-authority-kernel.js");
-  const project = importedFixture();
-  const seam = require("../authority-write-seam.js");
-  ok(typeof kernel.approveEntityStateCanon === "function", "N-4: the kernel command is unchanged");
-  ok(typeof seam.evaluateProjectWrite === "function" || typeof seam.authorityWritePolicy === "function"
-    || Object.keys(seam).length > 0, "N-4: the authority write seam is present and unchanged");
-  ok(project.props[0].candidateFiles.length >= 1, "N-4: fixtures still describe an imported candidate");
+  const target = { kind: "entity-state", list: "props", entityId: "PR-TOOL", stateId: "state-default" };
+  const approved = await openedApproval();
+  ok(await settleApprovalReadiness(approved.rendered), "N-4: prepared");
+  await approved.rendered.gesture.act(() => approved.rendered.context.confirmEntityApproval(false));
+  await drain();
+  const stored = approved.harness.stored;
+  ok(kernel.hasCurrentHumanAuthority(stored, target), "N-4: the durable approval reads as current");
+
+  const tampered = JSON.parse(JSON.stringify(stored));
+  tampered.props[0].continuityStates[0].approvedAssetId = "asset-" + "0".repeat(32);
+  tampered.props[0].approvedAssetId = "asset-" + "0".repeat(32);
+  ok(!kernel.hasCurrentHumanAuthority(tampered, target),
+    "N-4: an edge whose identity no longer matches its receipt is not a current approval");
+
+  const renamedBytes = JSON.parse(JSON.stringify(stored));
+  renamedBytes.props[0].continuityStates[0].approvedFile = "SOMETHING-ELSE.png";
+  renamedBytes.props[0].approvedFile = "SOMETHING-ELSE.png";
+  ok(!kernel.hasCurrentHumanAuthority(renamedBytes, target),
+    "N-4: and neither is an edge whose value no longer matches it");
+
+  /* The repair that used to follow the rename, asked to move a receipt that
+     never carried an identity. It refuses, exactly as it did before. */
+  const emptyIdentity = JSON.parse(JSON.stringify(stored));
+  for (const receipt of emptyIdentity.productionAuthority.receipts) receipt.assetId = "";
+  emptyIdentity.props[0].continuityStates[0].approvedAssetId = "";
+  emptyIdentity.props[0].approvedAssetId = "";
+  let repairRefused = false;
+  try {
+    approved.rendered.context.repairCanonValue(emptyIdentity, {
+      ...target, from: CANDIDATE, to: "RENAMED.png", assetId: harnessAssetId(`props/${CANDIDATE}`),
+    });
+  } catch (error) {
+    repairRefused = true;
+  }
+  ok(repairRefused || emptyIdentity.productionAuthority.receipts.every((r) => r.value !== "RENAMED.png"),
+    "N-4: a receipt with no original identity is still never repaired onto new bytes");
 }
 
 async function main() {
