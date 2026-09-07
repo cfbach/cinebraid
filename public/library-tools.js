@@ -141,7 +141,7 @@ function intakeModal(list, id, files) {
    * already reads the element with `?.value || ""`, so the absent field is the
    * same "not recorded" answer the single option was standing for. */
   const provenanceModels = P.meta.models || [];
-  openModal(`<h3>Upload candidates — ${files.length} file(s)</h3><div class="modal-sub">${targetState ? `TARGET · ${esc(targetState.name || "CONTINUITY STATE")} · ` : ""}ORIGINAL FILENAMES ARE RETAINED IN METADATA · PRODUCTION NAMES ARE ASSIGNED ONLY ON APPROVAL</div>
+  openModal(`<h3>Upload candidates — ${files.length} file(s)</h3><div class="modal-sub">${targetState ? `TARGET · ${esc(targetState.name || "CONTINUITY STATE")} · ` : ""}ORIGINAL FILENAMES ARE RETAINED IN METADATA · FILES KEEP THE NAME THEY ARE IMPORTED UNDER</div>
     <div class="approval-preview"><b>${esc(it.name || it.id)}</b><span>${esc(files.map((f) => f.name).join(", ")).slice(0, 180)}</span></div>
     <div class="form-field"><label>What are these files?</label><select id="in-structure" class="status-select" onchange="syncIntakeStructure()"><option value="">— choose —</option><option value="single-reference">Single reference image</option><option value="sheet">Coverage / multi-view sheet</option></select><small class="hint" id="in-structure-note">CineBraid cannot tell one reference from a multi-view sheet by looking at the file, and it will not guess. Only a single reference can become this asset&rsquo;s identity; a sheet is a source you extract views from.</small></div>
     ${provenanceModels.length ? `<div class="form-field"><label>Made with (optional provenance)</label><select id="in-model" class="status-select"><option value="">— not recorded —</option>${provenanceModels.map((m) => `<option value="${m.id}">${esc(m.name)}</option>`).join("")}</select></div>` : ""}
@@ -233,7 +233,29 @@ window.doIntake = async () => {
     it.workflowStatus = "IN PROGRESS";
     it.status = "IN PROGRESS";
   }
+  /* AN IMPORT IS NOT AN IMPORT UNTIL STORAGE HAS IT.
+
+     What an approval is ABOUT lives in these rows: which file, what the filmmaker
+     said it is, and which continuity state it was brought in for. All three were
+     written to `P` and armed with dirty(), and dirty() only arms — so an import
+     whose metadata save was refused still opened an approval modal, and the
+     approval that followed named a candidate, a structure and a target that
+     storage had never seen.
+
+     So the write is settled here, deliberately, before anything downstream calls
+     this import ready. Awaiting the flush is not the proof: queueProjectSave
+     reports every refusal it can recover from by RESOLVING, so the flush is
+     awaited FIRST and the verdict is asked SECOND, which is the discipline
+     projectSaveSettled() was written for.
+
+     A REFUSED IMPORT IS RETAINED, NOT DISCARDED. The rows stay in P and the files
+     stay on disk; what is withheld is the claim that they are ready to approve.
+     The approval modal asks the same question again through the durable baseline,
+     so it opens showing the image and its target and simply does not enable
+     confirmation. */
   dirty();
+  await flushPendingProjectSave();
+  const settled = typeof projectSaveSettled === "function" ? projectSaveSettled() : { settled: true };
   SCAN = await (await fetch("/api/scan")).json();
   window._pendingEntityStateUpload = null;
   /* SLICE 3: the candidate grid these files land in moved into `reference`.
@@ -241,6 +263,9 @@ window.doIntake = async () => {
      would leave a stale id in storage that every later read has to translate. */
   if (targetStateId) window.selectBoundedTask?.("entity-task", `${list}:${id}`, "reference");
   else route();
+  if (!settled.settled) {
+    return toast(`${saved.length} candidate file(s) are on disk but this import is not saved yet, so they cannot be approved. ${settled.reason}`);
+  }
   toast(saved.length + ` candidate file(s) uploaded${targetStateName ? ` for ${targetStateName}` : ""}`);
 };
 
@@ -593,18 +618,15 @@ window.confirmApproveTake = async () => {
 };
 
 window.setWinner = (id, name) => approveTake(id, name);
-function entityCanonicalSuggestion(list, id, name, stateId = "") {
-  const x = P[list].find((e) => e.id === id),
-    st = stateId ? entityStateById(x, stateId) : null,
-    dot = name.lastIndexOf("."),
-    ext = dot >= 0 ? name.slice(dot).toLowerCase() : "";
-  const suffix = st && !st.isDefault ? `_${String(st.name || "state").replace(/[^A-Z0-9_-]/gi, "_").toUpperCase()}` : "";
-  const stem = `${x.id}_PRIMARY${suffix}`.replace(/[^A-Z0-9_-]/gi, "_").toUpperCase();
-  const used = entityMedia(list, x).filter((m) =>
-    m.name.toUpperCase().startsWith(stem + "_V"),
-  ).length;
-  return `${stem}_V${String(used + 1).padStart(3, "0")}${ext}`;
-}
+/* `entityCanonicalSuggestion()` STOOD HERE, and it is gone rather than left
+   unused. It generated the production filename an entity primary-reference
+   approval renamed its candidate to, and Alpha does not rename: the approved
+   image keeps the name it was imported under. Leaving the generator behind would
+   leave the product looking as though it still assigns production names on
+   approval when it does not — see the note in confirmEntityApproval() for why the
+   rename went, and for the fact that production naming is a separate, deferred
+   concern rather than an abandoned one. The shot-side twin, canonicalSuggestion(),
+   is untouched: shot approvals still rename and this slice does not touch them. */
 /* CONTINUATION IS A LINEAGE QUESTION, NOT A LIST POSITION.
 
    Dogfood #2 A6 / forensic F5. This used to rotate cyclically through the whole
@@ -696,6 +718,388 @@ function revealEntityContinuityState(stateId) {
    caller already knows: the card renders USE AS SHEET SOURCE and sets
    `continuation = "extract"` (public/entities.js), and that intent now travels
    the last hop instead of being dropped here. */
+/* ==========================================================================
+   ALPHA — A PREPARED MEDIA IDENTITY, BOUND TO THE IMAGE ON SCREEN.
+
+   THE DEFECT. `/api/scan` composes its answer and only then schedules the pass
+   that gives a file its durable identity, so a candidate imported seconds ago is
+   routinely listed with no `assetId` at all. The approval modal read that listing
+   and handed the kernel an empty identity, and every later reader that has to
+   prove "these are the same bytes" had nothing to prove it with. Waiting for
+   another scan is timing, not a contract, and timing is what failed.
+
+   WHAT REPLACES IT. Before the confirm button is enabled, CineBraid asks the
+   server a positive question about ONE file — the exact one displayed — and gets
+   a typed answer back: ready, pending, or unavailable. Ready carries the stable
+   assetId the ledger already holds, or the one a bounded stat-only pass just
+   established for it. Nothing is hashed, nothing else in the project is touched,
+   and a candidate that was already indexed keeps the identity it already had.
+
+   WHAT READINESS IS BOUND TO, because a readiness that outlives what it described
+   is worse than none: the project and the open it belongs to, the exact candidate
+   filename, the exact continuity state, the durable declaration that says this
+   file is a single reference, the durable ownership claim that says this entity
+   owns it, this window's save generation, and the identity the live scan reports
+   for that filename. Any of those moving withdraws the button.
+
+   IT GRANTS NOTHING. This decides what may be OFFERED. The kernel remains the
+   only thing that can approve anything and still refuses independently. */
+let ENTITY_APPROVAL_READINESS = null;
+let ENTITY_APPROVAL_PREPARE_TOKEN = 0;
+let ENTITY_APPROVAL_PREPARING = false;
+
+/* The facts that identify what the modal is currently asking about. */
+function entityApprovalWant() {
+  const current = window._entityApproval || {};
+  return {
+    list: String(current.list || ""),
+    id: String(current.id || ""),
+    stateId: String(document.getElementById("entity-approve-target")?.value || current.stateId || "state-default"),
+    name: String(document.getElementById("entity-approve-file")?.value || current.name || ""),
+    mode: current.mode === "sheet-source" ? "sheet-source" : "primary-authority",
+  };
+}
+
+/* IS THE THING BEING APPROVED DURABLE YET.
+
+   An approval is a statement about a candidate, a declared structure and a
+   target state. If any of those three is still only in this tab, the approval
+   would name something storage has never seen — which is exactly what happened
+   when an import's metadata save failed and the modal opened anyway. So the
+   question is asked of the DURABLE BASELINE, not of the draft in front of us. */
+function durableApprovalContext(want) {
+  const baseline = typeof durableProjectBaseline === "function" ? durableProjectBaseline() : null;
+  if (!baseline) {
+    return { ok: false, reason: "no-baseline", message: "This window has not confirmed what is stored for this project yet." };
+  }
+  const entity = (Array.isArray(baseline[want.list]) ? baseline[want.list] : []).find((row) => row && row.id === want.id);
+  if (!entity) {
+    return { ok: false, reason: "entity-not-durable", message: "This reference has not been saved yet, so nothing can be approved for it." };
+  }
+  /* `state-default` is legal with no stored states at all — the kernel treats the
+     entity itself as that target — so its absence is not a refusal. Any other
+     state must actually exist in the stored document. */
+  if (want.stateId !== "state-default" && !entityStateById(entity, want.stateId)) {
+    return { ok: false, reason: "state-not-durable", message: "This continuity state has not been saved yet, so it cannot be an approval target." };
+  }
+  const structure = typeof referenceArtifactStructureOf === "function"
+    ? String(referenceArtifactStructureOf(entity, want.name) || "") : "";
+  const mayHold = typeof artifactMayHoldPrimaryAuthority === "function" && artifactMayHoldPrimaryAuthority(structure) === true;
+  if (!mayHold) {
+    return {
+      ok: false,
+      reason: "structure-not-durable",
+      message: structure === "sheet"
+        ? "This file is recorded as a coverage sheet, so it cannot become this reference's identity."
+        : "What this file is has not been saved yet, so it cannot become this reference's identity.",
+    };
+  }
+  const owned = typeof buildEntityOwnerIndex === "function" && typeof entityOwnsMedia === "function"
+    ? entityOwnsMedia(buildEntityOwnerIndex(baseline, want.list), want.id, want.name) : false;
+  if (!owned) {
+    return { ok: false, reason: "ownership-not-durable", message: "This file is not durably recorded as belonging to this reference." };
+  }
+  return { ok: true, reason: "", message: "" };
+}
+
+/* Synchronous, and it must stay that way: the trusted click asks this and then
+   commits Canon with no yield in between, which is what makes the answer still
+   true at the moment it is acted on. Returns the reason it is NOT ready, or null. */
+function entityApprovalReadinessRefusal(readiness, want) {
+  if (!readiness) return { code: "not-prepared", message: "Preparing this image for approval…" };
+  if (readiness.status !== "ready") {
+    return { code: readiness.status, message: readiness.message || "This image is not ready to approve yet." };
+  }
+  if (readiness.slug !== ACTIVE_PROJECT_SLUG) {
+    return { code: "project-changed", message: "The open project changed, so this image has to be prepared again." };
+  }
+  if (readiness.epoch !== PROJECT_OPEN_EPOCH) {
+    return { code: "project-reopened", message: "This project was reopened, so this image has to be prepared again." };
+  }
+  if (readiness.list !== want.list || readiness.entityId !== want.id) {
+    return { code: "entity-changed", message: "The reference changed, so this image has to be prepared again." };
+  }
+  if (readiness.stateId !== want.stateId) {
+    return { code: "target-changed", message: "The approval target changed, so this image has to be prepared again." };
+  }
+  if (readiness.fileName !== want.name) {
+    return { code: "candidate-changed", message: "The selected candidate changed, so this image has to be prepared again." };
+  }
+  if (readiness.saveGeneration !== PROJECT_SAVE_GENERATION) {
+    return { code: "project-advanced", message: "This project was saved again, so this image has to be prepared again." };
+  }
+  const settled = typeof projectSaveSettled === "function" ? projectSaveSettled() : { settled: true };
+  if (!settled.settled) {
+    return { code: settled.code || "not-settled", message: settled.reason || "This project has changes that are not saved yet." };
+  }
+  const durable = durableApprovalContext(want);
+  if (!durable.ok) return { code: durable.reason, message: durable.message };
+  /* THE PREPARED IDENTITY, RE-ASKED OF THE LIVE LISTING. A background pass can
+     retire a row, and a replaced file acquires a different one — either way the
+     identity that was prepared is no longer the identity of what is on screen. */
+  const entity = P[want.list]?.find((row) => row && row.id === want.id);
+  const live = entity ? entityMedia(want.list, entity).find((row) => row.name === want.name) : null;
+  if (!live) {
+    return { code: "candidate-missing", message: "That candidate is no longer available on this reference." };
+  }
+  if (String(live.assetId || "") !== readiness.assetId) {
+    return { code: "identity-stale", message: "This file's stored identity changed, so it has to be prepared again." };
+  }
+  return null;
+}
+
+/* THE EXACT QUESTION A READINESS RECORD IS THE ANSWER TO.
+
+   Preparation re-runs the whole modal sync when it finishes, and the sync asks
+   for preparation — so without this, an answer of "pending" or "unavailable"
+   would ask the same question again forever. Holding the question alongside the
+   answer means a settled answer is re-asked only when the question changes:
+   another candidate, another state, another project, another accepted save. The
+   filmmaker can also ask again deliberately, which is what the recheck below is
+   for, and that is the only thing that re-asks an unchanged question. */
+function entityApprovalReadinessKey(want) {
+  return [ACTIVE_PROJECT_SLUG, PROJECT_OPEN_EPOCH, PROJECT_SAVE_GENERATION, want.list, want.id, want.stateId, want.name].join("|");
+}
+window.recheckEntityApprovalIdentity = () => {
+  ENTITY_APPROVAL_READINESS = null;
+  renderEntityApprovalReadiness();
+  prepareEntityApprovalIdentity();
+};
+
+/* THE PREPARING/UNAVAILABLE LINE, AND THE BUTTON THAT FOLLOWS IT.
+
+   Subtractive only. Everything that decides whether an approval is OFFERABLE at
+   all — an eligible candidate, a valid continuation — has already run and set
+   these buttons; this can withdraw them and never restore them, so a readiness
+   answer can never re-enable a control eligibility withdrew. When readiness
+   arrives, the whole sync runs again from the top instead. */
+function renderEntityApprovalReadiness() {
+  const want = entityApprovalWant();
+  if (want.mode === "sheet-source") return;
+  const refusal = entityApprovalReadinessRefusal(ENTITY_APPROVAL_READINESS, want);
+  const ready = !refusal;
+  const preparing = ENTITY_APPROVAL_PREPARING || !ENTITY_APPROVAL_READINESS || ENTITY_APPROVAL_READINESS.status === "pending";
+  const line = document.getElementById("entity-approval-readiness");
+  if (line) {
+    line.dataset.state = ready ? "ready" : preparing ? "preparing" : "unavailable";
+    const sentence = ready
+      ? `Ready to approve · ${want.name}`
+      : preparing ? "Preparing this image for approval…" : refusal.message;
+    /* A settled "not ready" is re-asked only when the filmmaker asks, so the way
+       to ask is on screen beside the reason rather than hidden in a reload. */
+    line.innerHTML = esc(sentence) + (ready || preparing
+      ? ""
+      : ` <button type="button" class="ghost-btn entity-approval-recheck" onclick="recheckEntityApprovalIdentity()">TRY AGAIN</button>`);
+  }
+  const confirmButton = document.getElementById("entity-approve-confirm");
+  const continueButton = document.getElementById("entity-approve-continue");
+  if (confirmButton && !ready) confirmButton.disabled = true;
+  if (continueButton && !ready) continueButton.disabled = true;
+}
+
+/* One request, about one file, and only when the answer we hold is not already
+   the answer to the question being asked. */
+window.prepareEntityApprovalIdentity = async () => {
+  const want = entityApprovalWant();
+  if (want.mode === "sheet-source" || !want.list || !want.id || !want.name) return null;
+  const key = entityApprovalReadinessKey(want);
+  if (ENTITY_APPROVAL_READINESS && ENTITY_APPROVAL_READINESS.key === key) return ENTITY_APPROVAL_READINESS;
+  const token = ++ENTITY_APPROVAL_PREPARE_TOKEN;
+  ENTITY_APPROVAL_PREPARING = true;
+  ENTITY_APPROVAL_READINESS = null;
+  renderEntityApprovalReadiness();
+  const slug = ACTIVE_PROJECT_SLUG;
+  const epoch = PROJECT_OPEN_EPOCH;
+  const saveGeneration = PROJECT_SAVE_GENERATION;
+  let prepared = null;
+  try {
+    const response = await fetch("/api/media/prepare-identity", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ projectSlug: slug, dir: ENTITY_MEDIA[want.list], name: want.name }),
+    });
+    prepared = await response.json().catch(() => ({}));
+    if (!response.ok) prepared = { status: "unavailable", reason: String(prepared?.error || "request-failed") };
+  } catch (error) {
+    prepared = { status: "pending", reason: String(error?.message || error) };
+  }
+  /* A later question has been asked; this answer is about something else. */
+  if (token !== ENTITY_APPROVAL_PREPARE_TOKEN) return null;
+  ENTITY_APPROVAL_PREPARING = false;
+  ENTITY_APPROVAL_READINESS = {
+    status: prepared?.status === "ready" && prepared?.assetId ? "ready" : prepared?.status === "pending" ? "pending" : "unavailable",
+    reason: String(prepared?.reason || ""),
+    message: entityApprovalPreparationMessage(prepared),
+    assetId: String(prepared?.assetId || ""),
+    contentHash: String(prepared?.contentHash || ""),
+    size: Number(prepared?.size || 0),
+    mtimeMs: Number(prepared?.mtimeMs || 0),
+    slug, epoch, saveGeneration, key,
+    list: want.list, entityId: want.id, stateId: want.stateId, fileName: want.name,
+  };
+  /* AND THE LISTING IS RE-READ, BECAUSE PREPARING CHANGED WHAT IT SAYS.
+
+     `/api/scan` composes its answer before the identity pass runs, so the SCAN
+     this window is holding is exactly the one that reported no identity for a
+     freshly imported file. Preparation has just established that identity; not
+     re-reading would leave the modal comparing a prepared id against a listing
+     that predates it and concluding, correctly but uselessly, that the two
+     disagree. Re-read once, only for a READY answer, and only for this file's
+     sake — after which "the scan disagrees" means what it should: something
+     changed these bytes or retired their row. */
+  if (ENTITY_APPROVAL_READINESS.status === "ready") {
+    try {
+      const refreshed = await (await fetch("/api/scan")).json();
+      if (token !== ENTITY_APPROVAL_PREPARE_TOKEN) return null;
+      SCAN = refreshed;
+    } catch {
+      /* A listing that could not be re-read leaves readiness to fail its own
+         agreement check, which is the fail-closed direction. */
+    }
+  }
+  /* Re-run the whole offer from the top, so an approval that is now ready gets
+     its button back through the same rules that withdrew it. */
+  syncEntityApprovalModal();
+  return ENTITY_APPROVAL_READINESS;
+};
+
+/* The reason, in the filmmaker's terms rather than the ledger's. */
+function entityApprovalPreparationMessage(prepared) {
+  const reason = String(prepared?.reason || "");
+  if (prepared?.status === "ready") return "";
+  if (reason === "file-missing") return "CineBraid cannot find this file where it was imported, so it cannot be approved.";
+  if (reason === "not-indexable") return "CineBraid cannot record a durable identity for this file, so it cannot be approved.";
+  if (reason === "ledger-unreadable" || reason === "ledger-newer-than-build") {
+    return "CineBraid cannot read this project's media record, so it cannot confirm which image this is.";
+  }
+  if (reason === "no-contained-project" || reason === "no-project-directory" || reason === "path-outside-project") {
+    return "CineBraid cannot locate this file inside the open project.";
+  }
+  if (prepared?.status === "pending") return "Preparing this image for approval…";
+  return "CineBraid could not prepare this image for approval.";
+}
+
+/* ==========================================================================
+   ALPHA — THE PENDING APPROVAL SURFACE.
+
+   One trusted decision, one submission, and the filmmaker looking at the exact
+   image and target it was about until its outcome is known. Nothing here takes a
+   decision: retry replays the receipt that was already created inside the click,
+   and every path that cannot prove what happened asks storage first. */
+function pendingApprovalAuthorityTarget(record) {
+  return { kind: "entity-state", list: record.meta.list, entityId: record.meta.entityId, stateId: record.meta.stateId };
+}
+
+window.showPendingApprovalSurface = () => {
+  const record = typeof approvalSubmissionPending === "function" ? approvalSubmissionPending() : null;
+  if (!record) return;
+  const meta = record.meta || {};
+  const outcome = record.outcome || "saving";
+  const preview = meta.url
+    ? `<figure><div id="entity-approval-preview"><img src="${attr(meta.url)}" alt="The image this approval was taken on"></div><figcaption>${esc(meta.fileName || "")}</figcaption></figure>`
+    : "";
+  const target = `<div class="entity-approval-target-summary"><span>APPROVAL TARGET</span><b>${esc(meta.entityName || meta.entityId || "")} · ${esc(meta.stateName || "Default")}</b><small>${esc(meta.fileName || "")}</small></div>`;
+  const headline = {
+    saving: "Saving approval…",
+    unknown: "Checking whether approval was saved…",
+    changed: "This project changed while the approval was being saved",
+    refused: "Your approval has not been saved",
+    uncommitted: "Your approval has not been saved",
+  }[outcome] || "Saving approval…";
+  const explanation = {
+    saving: "CineBraid is writing this approval. It is not approved until storage accepts it.",
+    unknown: "CineBraid is asking storage what it actually holds for this reference. Nothing else is written until that is known.",
+    changed: record.reason || "Nothing was written. Review the current state of this reference and approve again if it is still what you want.",
+    refused: record.reason || "Nothing was written, and this reference is unchanged.",
+    uncommitted: record.reason || "Nothing was written, and this reference is unchanged.",
+  }[outcome] || "";
+  /* THE ACTIONS FOLLOW WHAT IS KNOWN, AND A REFUSAL IS NOT OFFERED A RETRY.
+     A fail-closed authority or validation refusal means this exact payload is
+     invalid; resending it cannot help, so the only honest action is to look at
+     what the project actually holds now and decide again. */
+  const actions = outcome === "saving" || outcome === "unknown"
+    ? `<button class="cancel" onclick="resolvePendingApprovalOutcome()">CHECK AGAIN</button>`
+    : outcome === "uncommitted"
+      ? `<button class="cancel" onclick="leavePendingApprovalUnapproved()">LEAVE UNAPPROVED</button><button class="approve-btn large" onclick="retryPendingApproval()">RETRY SAVING APPROVAL</button>`
+      : `<button class="approve-btn large" onclick="reviewCurrentApprovalState()">REVIEW CURRENT STATE</button>`;
+  /* THE NOTE SAYS WHAT THE BUTTON BESIDE IT ACTUALLY DOES. Both actions reopen
+     the project as it is stored; only one of them is called "leave unapproved". */
+  const note = outcome === "uncommitted" || outcome === "changed" || outcome === "refused"
+    ? `<p class="hint">${outcome === "uncommitted" ? "Leaving this unapproved" : "Reviewing the current state"} reopens this project as it is stored. This candidate, what it is, and the state it was for were all saved before you approved it, so the image stays exactly where it is and you can review it again.</p>`
+    : "";
+  openModal(`<div class="entity-approval-modal entity-approval-pending" data-approval-outcome="${attr(outcome)}"><h3>${esc(headline)}</h3><div class="modal-sub">THIS REFERENCE IS APPROVED ONLY WHEN STORAGE HAS ACCEPTED IT</div><div class="entity-approval-modal-layout">${preview}<div class="entity-approval-fields">${target}<p>${esc(explanation)}</p>${note}</div></div><div class="modal-actions entity-approval-actions">${actions}</div></div>`);
+};
+
+/* ASK STORAGE WHAT IT ACTUALLY HOLDS, before retrying, before abandoning, and
+   before any second submission is allowed. */
+window.resolvePendingApprovalOutcome = async () => {
+  const record = typeof approvalSubmissionPending === "function" ? approvalSubmissionPending() : null;
+  if (!record) return;
+  record.outcome = "unknown";
+  showPendingApprovalSurface();
+  let stored;
+  try {
+    stored = await readStoredProjectDocument(record.slug);
+  } catch (error) {
+    record.outcome = "unknown";
+    record.reason = error.message || "CineBraid could not read the stored project.";
+    return showPendingApprovalSurface();
+  }
+  const receipt = typeof currentHumanAuthority === "function"
+    ? currentHumanAuthority(stored.project, pendingApprovalAuthorityTarget(record)) : null;
+  const meta = record.meta || {};
+  if (receipt && String(receipt.value || "") === meta.fileName && String(receipt.assetId || "") === String(meta.assetId || "")) {
+    /* THE EXACT DECISION IS ALREADY DURABLE. A lost response is not a lost
+       approval, and a second receipt for the same decision is the one thing a
+       retry must never produce. */
+    return completePendingApproval(record, stored);
+  }
+  if (receipt) {
+    /* Committed once, and something else is current now. Historic stays historic. */
+    record.outcome = "changed";
+    record.reason = `${String(receipt.value || "Another image")} is currently approved for this state, so this approval was not applied.`;
+    return showPendingApprovalSurface();
+  }
+  if (stored.revision && record.baselineRevision && stored.revision !== record.baselineRevision) {
+    record.outcome = "changed";
+    record.reason = "The stored project moved on while this approval was in flight, so it was not applied.";
+    return showPendingApprovalSurface();
+  }
+  record.outcome = "uncommitted";
+  record.reason = "Storage does not hold this approval, and the project is otherwise unchanged.";
+  showPendingApprovalSurface();
+};
+
+/* THE SAME DECISION ARRIVING AGAIN, NOT A NEW ONE. It replays the captured
+   successor and its receipt; the Canon command is not called a second time. */
+window.retryPendingApproval = async () => {
+  const record = typeof approvalSubmissionPending === "function" ? approvalSubmissionPending() : null;
+  if (!record) return;
+  if (record.outcome !== "uncommitted") return resolvePendingApprovalOutcome();
+  record.outcome = "saving";
+  showPendingApprovalSurface();
+  const resolved = await dispatchApprovalSubmission(record);
+  if (resolved.outcome === "committed") return completePendingApproval(record, null);
+  if (resolved.outcome === "unknown") return resolvePendingApprovalOutcome();
+  showPendingApprovalSurface();
+};
+
+/* The two ways a filmmaker walks away from a decision storage did not take. Both
+   reopen the project as it is stored: the uncommitted receipt only ever existed
+   in this tab, and the candidate, its declared structure and its intended target
+   were all saved before the approval was offered, so the image stays exactly
+   where it is and can be reviewed again. An approval that IS durable is never
+   revoked here — a committed record has already left this surface. */
+function abandonPendingApproval(message) {
+  const record = typeof approvalSubmissionPending === "function" ? approvalSubmissionPending() : null;
+  if (!record || record.outcome === "committed") return;
+  endApprovalSubmission(record.id);
+  toast(message);
+  location.reload();
+}
+window.leavePendingApprovalUnapproved = () => abandonPendingApproval("Left unapproved — the image is still here for later");
+window.reviewCurrentApprovalState = () => abandonPendingApproval("Reopening this project so you can review its current state");
+
 const ENTITY_APPROVAL_MODES = ["primary-authority", "sheet-source"];
 window.approveEntityFile = (list, id, name, stateId = "", mode = "primary-authority") => {
   const x = P[list].find((e) => e.id === id),
@@ -812,9 +1216,13 @@ window.approveEntityFile = (list, id, name, stateId = "", mode = "primary-author
      the selection stops being eligible under this modal's own feet. */
   /* One real act gets one primary button. APPROVE ONLY only earns its qualifier
      where there is something else it could have been. */
+  /* BOTH CONFIRM CONTROLS OPEN DISABLED, and only a prepared identity for the
+     candidate and target actually on screen re-enables them. A button that is
+     live before CineBraid can say which bytes it would approve is the whole
+     defect this slice removes, so the safe state is the initial one. */
   const approvalActions = singleState
-    ? `<button class="cancel" onclick="closeModal()">Cancel</button><button id="entity-approve-confirm" class="approve-btn large" onclick="confirmEntityApproval(false)">APPROVE</button>`
-    : `<button class="cancel" onclick="closeModal()">Cancel</button><button id="entity-approve-confirm" class="${canContinue ? "ghost-btn" : "approve-btn large"}" onclick="confirmEntityApproval(false)">${canContinue ? "APPROVE ONLY" : "APPROVE"}</button><button id="entity-approve-continue" class="approve-btn large" onclick="confirmEntityApproval(true)" ${canContinue ? "" : "hidden"}>APPROVE & EDIT NEXT STATE</button>`;
+    ? `<button class="cancel" onclick="closeModal()">Cancel</button><button id="entity-approve-confirm" class="approve-btn large" disabled onclick="confirmEntityApproval(false)">APPROVE</button>`
+    : `<button class="cancel" onclick="closeModal()">Cancel</button><button id="entity-approve-confirm" class="${canContinue ? "ghost-btn" : "approve-btn large"}" disabled onclick="confirmEntityApproval(false)">${canContinue ? "APPROVE ONLY" : "APPROVE"}</button><button id="entity-approve-continue" class="approve-btn large" disabled onclick="confirmEntityApproval(true)" ${canContinue ? "" : "hidden"}>APPROVE & EDIT NEXT STATE</button>`;
   /* THE SHEET-SOURCE MODAL SAYS WHAT IT DOES.
      It used to borrow the approval modal wholesale: "Approve reference", "ASSIGN
      ONE CANDIDATE TO ONE CONTINUITY STATE", "Approve for continuity state" and a
@@ -832,9 +1240,14 @@ window.approveEntityFile = (list, id, name, stateId = "", mode = "primary-author
      file on the reference, so switching it re-opened the exact hole the entry
      check had just closed: an undeclared row presented as approvable, refused a
      click later by the kernel. One list, one predicate, both ends. */
-  const primaryMarkup = `<div class="entity-approval-modal" data-approval-mode="primary-authority"><h3>Approve reference — ${esc(x.name || id)}</h3><div class="modal-sub">ASSIGN ONE CANDIDATE TO ONE CONTINUITY STATE</div><div class="entity-approval-modal-layout"><figure><div id="entity-approval-preview">${isVideo(selected.name) ? `<video muted controls src="${attr(selected.url)}"></video>` : `<img src="${attr(selected.url)}" alt="Candidate to approve">`}</div><figcaption id="entity-approval-file-caption">${esc(selected.name)}</figcaption></figure><div class="entity-approval-fields"><div class="form-field"><label>Candidate file</label><select id="entity-approve-file" onchange="syncEntityApprovalModal()">${eligiblePool.map((item) => `<option value="${attr(item.name)}" ${item.name === selected.name ? "selected" : ""}>${esc(item.name)}</option>`).join("")}</select></div>${stateField}<div class="entity-approval-target-summary" id="entity-approval-target-summary"></div><input type="hidden" id="entity-approve-name" value="${attr(entityCanonicalSuggestion(list, id, selected.name, requestedState?.id || "state-default"))}"><p class="hint">The selected state will show this image in the live Project Bible. Other states and candidates are unchanged.</p>${continuationField}</div></div><div class="modal-actions entity-approval-actions"><button class="changes-btn" onclick="closeModal();requestEntityChanges('${list}','${id}')">Request changes</button><div>${approvalActions}</div></div></div>`;
+  const primaryMarkup = `<div class="entity-approval-modal" data-approval-mode="primary-authority"><h3>Approve reference — ${esc(x.name || id)}</h3><div class="modal-sub">ASSIGN ONE CANDIDATE TO ONE CONTINUITY STATE</div><div class="entity-approval-modal-layout"><figure><div id="entity-approval-preview">${isVideo(selected.name) ? `<video muted controls src="${attr(selected.url)}"></video>` : `<img src="${attr(selected.url)}" alt="Candidate to approve">`}</div><figcaption id="entity-approval-file-caption">${esc(selected.name)}</figcaption></figure><div class="entity-approval-fields"><div class="form-field"><label>Candidate file</label><select id="entity-approve-file" onchange="syncEntityApprovalModal()">${eligiblePool.map((item) => `<option value="${attr(item.name)}" ${item.name === selected.name ? "selected" : ""}>${esc(item.name)}</option>`).join("")}</select></div>${stateField}<div class="entity-approval-target-summary" id="entity-approval-target-summary"></div><div class="entity-approval-readiness" id="entity-approval-readiness" data-state="preparing" role="status" aria-live="polite">Preparing this image for approval&hellip;</div><p class="hint">The selected state will show this image in the live Project Bible. This image keeps the filename it was imported under, and other states and candidates are unchanged.</p>${continuationField}</div></div><div class="modal-actions entity-approval-actions"><button class="changes-btn" onclick="closeModal();requestEntityChanges('${list}','${id}')">Request changes</button><div>${approvalActions}</div></div></div>`;
 
   openModal(sheetSource ? sheetSourceMarkup : primaryMarkup);
+  /* A modal that has just opened holds no prepared identity, whatever the last
+     one held. Clearing before the first sync is what stops a previous
+     candidate's readiness enabling this candidate's button for one frame. */
+  ENTITY_APPROVAL_READINESS = null;
+  ENTITY_APPROVAL_PREPARING = !sheetSource;
   syncEntityApprovalModal();
 };
 window.syncEntityApprovalModal = () => {
@@ -903,13 +1316,6 @@ window.syncEntityApprovalModal = () => {
   if (caption) caption.textContent = fileName;
   const summary = document.getElementById("entity-approval-target-summary");
   if (summary) summary.innerHTML = `<span>APPROVAL TARGET</span><b>${esc(state?.name || "Default")}</b><small>${esc(state?.appliesTo || (state?.isDefault ? "Primary project-wide state" : "No scene/shot range assigned"))}</small>`;
-  /* The carried name follows the candidate and the state, and it carries one real
-     rule with it: a candidate ALREADY approved somewhere on this reference keeps the
-     name it has, because renaming it would move bytes another approved state points
-     at. That rule lives here rather than in a field nobody should be reading. */
-  const nameInput = document.getElementById("entity-approve-name");
-  const alreadyApproved = entityApprovalBadges(x, fileName).length > 0;
-  if (nameInput) nameInput.value = alreadyApproved ? fileName : entityCanonicalSuggestion(current.list, current.id, fileName, stateId);
   const nextSelect = document.getElementById("entity-approve-next");
   if (nextSelect) {
     const previous = targetChanged ? "" : nextSelect.value;
@@ -969,6 +1375,11 @@ window.syncEntityApprovalModal = () => {
     }
   }
   syncEntityApprovalContinuation();
+  /* LAST WORD, AND ONLY EVER A WITHDRAWAL. Everything above decided what this
+     modal may OFFER; this decides whether CineBraid can yet say which bytes it
+     would approve, and asks for that answer if it cannot. */
+  renderEntityApprovalReadiness();
+  prepareEntityApprovalIdentity();
 };
 window.syncEntityApprovalContinuation = () => {
   const current = window._entityApproval || {};
@@ -1009,9 +1420,66 @@ window.syncEntityApprovalContinuation = () => {
       : "Every remaining continuity state on this reference already has an image. Approving completes the chain."
     : "Approve this reference and remain on the asset page.";
 };
+/* EVERYTHING A COMPLETED APPROVAL DOES ONCE IT IS REAL.
+
+   It used to run straight after dirty(), which only ARMS a write — so the
+   ceremony, the automation reconciliation, the continuation and the navigation
+   all fired for approvals storage had refused. They are gathered here so there is
+   exactly one place that says "this happened", and exactly one caller allowed to
+   reach it: a submission whose durable acceptance has been proven. A sheet source
+   reaches it directly, because it writes no Canon and its ordinary save is
+   unchanged by this slice. */
+async function finishEntityApprovalCeremony(meta) {
+  closeModal();
+  await route();
+  /* This approval may be exactly what an automation run is parked on. See
+     v670ReconcileAfterApproval — the gate leaves every activity surface now,
+     not at the next poll. */
+  if (typeof v670ReconcileAfterApproval === "function") v670ReconcileAfterApproval();
+  const entity = P[meta.list]?.find((row) => row && row.id === meta.entityId);
+  const targetState = entity ? entityStateById(entity, meta.stateId) : null;
+  if (!meta.sheetSource && targetState && !targetState.isDefault && targetState.approvedFile && String(targetState.notes || "").trim()) {
+    /* C2 GLOBAL: authority source only - behaviour unchanged. */
+    const capability = typeof capabilityState === "function" ? capabilityState("vision") : { standing: "checking" };
+    if (visionCanReview(capability)) setTimeout(() => validateContinuityStateAgainstParent(meta.list, meta.entityId, targetState.id), 220);
+  }
+  if (meta.sheetSource && typeof openCoverageSheetExtractor === "function") {
+    rememberWorkspaceSection?.(entityCoverageSectionKey?.(meta.list, meta.entityId, meta.coverageSheetType === "expressions" ? "expressions" : "angles"), true);
+    setTimeout(() => openCoverageSheetExtractor(meta.list, meta.entityId, meta.fileName), 50);
+  } else if (meta.nextStateId) revealEntityContinuityState(meta.nextStateId);
+  /* THE COMPLETION NAMES THE AUTHORITY THAT WAS WRITTEN, AND A SHEET SOURCE
+     WROTE NONE. Both lines used to say APPROVED regardless — the stamp
+     unconditionally, and the toast in its own words — so accepting extraction
+     material was reported as an approval for a continuity state that had not
+     changed. */
+  stampCeremony(meta.sheetSource ? "SHEET SOURCE SELECTED" : `APPROVED · ${meta.stateName || "DEFAULT"}`);
+  toast(meta.sheetSource
+    ? `${meta.fileName} is ready as a reference sheet — extract its individual views next`
+    : meta.nextStateName
+      ? `Approved ${meta.fileName} for ${meta.stateName || "Default"} — editing ${meta.nextStateName}`
+      : `Approved ${meta.fileName} for ${meta.stateName || "Default"}`);
+}
+
+/* The one door out of the pending surface that ends in an approval. `stored` is
+   present only when the outcome was discovered by reading storage rather than by
+   the response to the write — a lost response is still a durable approval, and
+   this is where the window catches up with it. */
+async function completePendingApproval(record, stored = null) {
+  if (stored && typeof adoptDurableApprovalOutcome === "function") adoptDurableApprovalOutcome(record, stored);
+  endApprovalSubmission(record.id);
+  await finishEntityApprovalCeremony(record.meta);
+}
+
 window.confirmEntityApproval = async (continueToNext = false) => {
   const { list, id } = window._entityApproval || {};
   if (!list) return;
+  /* ONE TRUSTED DECISION AT A TIME. A second click — a double click, or a second
+     approval started while the first is still unresolved — must not produce a
+     second receipt for a decision whose outcome nobody knows yet. */
+  if (typeof approvalSubmissionPending === "function" && approvalSubmissionPending()) {
+    showPendingApprovalSurface();
+    return toast("An approval is still being saved. Resolve it before approving again.");
+  }
   const x = P[list].find((e) => e.id === id),
     name = document.getElementById("entity-approve-file")?.value || window._entityApproval.name || "",
     targetStateId = document.getElementById("entity-approve-target")?.value || "state-default",
@@ -1021,10 +1489,7 @@ window.confirmEntityApproval = async (continueToNext = false) => {
        state and every ancestor of it, so an id that survived a stale render
        cannot open an editor the lineage rule forbids. */
     nextStateId = requestedNextStateId && isValidContinuation(entityStateListRead(x, true), targetStateId, requestedNextStateId) ? requestedNextStateId : "",
-    nextState = nextStateId ? entityStateById(x, nextStateId) : null,
-    /* Carried, not asked -- the shot-side twin at confirmApproveTake() carries the
-       argument, and the shape is identical here. */
-    to = document.getElementById("entity-approve-name")?.value.trim();
+    nextState = nextStateId ? entityStateById(x, nextStateId) : null;
   const originalApprovalRow = entityCandidateRow(x, name, false);
   /* THE MODE CHOOSES THE WORKFLOW. THE STRUCTURE ONLY SAYS WHETHER IT IS ALLOWED.
      This used to read the artifact's class and pick a workflow from it, so a row
@@ -1057,66 +1522,81 @@ window.confirmEntityApproval = async (continueToNext = false) => {
       ? "That state cannot follow this one — it is what this state derives from. Choose a state further down the chain."
       : "Choose the continuity state to edit next");
   }
+  const entityAuthorityStateId = targetState?.id || targetStateId || "state-default";
+  /* THE PREPARED IDENTITY, RE-ASKED SYNCHRONOUSLY, INSIDE THE CLICK.
+
+     The whole point of preparing before the button is enabled is that this check
+     costs nothing here: it is a comparison, it yields to nothing, and it is the
+     last statement before Canon. If it refuses, the modal says why and asks for a
+     prepared identity again — it never falls back to approving with whatever the
+     scan happened to know, which is the defect this slice removes. */
+  let preparedAssetId = "";
+  if (!approvedIsCoverageSheet) {
+    const want = { list, id, stateId: entityAuthorityStateId, name, mode: "primary-authority" };
+    const refusal = entityApprovalReadinessRefusal(ENTITY_APPROVAL_READINESS, want);
+    if (refusal) {
+      ENTITY_APPROVAL_READINESS = null;
+      renderEntityApprovalReadiness();
+      prepareEntityApprovalIdentity();
+      return toast(refusal.message);
+    }
+    preparedAssetId = ENTITY_APPROVAL_READINESS.assetId;
+  }
+  /* Withdrawn before anything is written, so a second click on the same gesture
+     finds no live control. The refusal path below restores them. */
+  const confirmButton = document.getElementById("entity-approve-confirm");
+  const continueButton = document.getElementById("entity-approve-continue");
+  if (confirmButton) confirmButton.disabled = true;
+  if (continueButton) continueButton.disabled = true;
   /* CANON FIRST, INSIDE THE CLICK, ON THE BYTES THE CREATOR IS LOOKING AT.
      The shot-side twin carries the full argument; the shape is identical here.
      The same command still applies the ownership veto, so a file whose owner is
      unresolved or contested cannot be made canon from this screen. A refusal
-     writes nothing and says why. */
-  const displayedAssetId = (entityMedia(list, x).find((item) => item.name === name) || {}).assetId || "";
-  const entityAuthorityStateId = targetState?.id || targetStateId || "state-default";
-  /* USE AS SHEET SOURCE IS NOT AN IDENTITY DECISION, AND NOW THE CODE AGREES
-     WITH THE COPY.
-     `approvedIsCoverageSheet` was computed eleven lines above and spent on a
-     toast and a navigation branch, while this call ran unconditionally — so
-     accepting a turnaround as an extraction source wrote the entity's primary
-     pointer to a six-panel image and, a few lines below, filed the row as
-     `decision: "approved-sheet-source"`. Both statements were recorded; only one
-     of them was true.
-     Accepting a sheet source records the decision on the row and opens the
-     extractor. It moves NO primary pointer, so an entity that already has a real
-     identity reference keeps it. The kernel refuses this target as well — see
-     enforceTargetPolicy — and that refusal is the guarantee; this branch is what
-     stops the filmmaker meeting an error message for an action the product
-     deliberately offers. */
+     writes nothing and says why.
+
+     USE AS SHEET SOURCE IS NOT AN IDENTITY DECISION. Accepting a sheet source
+     records the decision on the row and opens the extractor. It moves NO primary
+     pointer, so an entity that already has a real identity reference keeps it.
+     The kernel refuses this target as well — see enforceTargetPolicy — and that
+     refusal is the guarantee; this branch is what stops the filmmaker meeting an
+     error message for an action the product deliberately offers. */
   if (!approvedIsCoverageSheet) {
     try {
       approveEntityStateCanon(P, {
-        list, entityId: id, stateId: entityAuthorityStateId, value: name, assetId: displayedAssetId,
+        list, entityId: id, stateId: entityAuthorityStateId, value: name, assetId: preparedAssetId,
         at: new Date().toISOString(), via: "entity-approval-modal",
       });
     } catch (error) {
+      syncEntityApprovalModal();
       return toast(error.message || "That file cannot be approved for this reference");
     }
   }
-  let finalName = name, renamedAssetId = "";
-  if (to && name && to !== name) {
-    const r = await fetch("/api/media/rename", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ projectSlug: ACTIVE_PROJECT_SLUG, dir: ENTITY_MEDIA[list], from: name, to }),
-    });
-    const d = await r.json();
-    if (r.ok) {
-      finalName = d.name;
-      renamedAssetId = d.assetId || "";
-      /* P4-SEM-C2. This used to be four hand-written patches — states,
-         entity.approvedFile, the candidate row, generatedCandidates[] — and the
-         list was incomplete: coverageSlots[] and expressionSlots[] were never
-         repaired, so renaming a file a coverage slot already held left that slot
-         pointing at a filename that no longer existed. Enumerating the edges is
-         what makes that class of miss impossible. */
-      repairApprovalIdentity(x, { from: name, to: finalName, assetId: renamedAssetId, states: entityStateListRead(x, true) });
-      /* And the receipt follows the bytes, for the reason given at the shot-side
-         twin: otherwise the next read revokes a decision a person really made. */
-      /* Scoped to the entity state this click approved. See the shot-side twin. */
-      repairCanonValue(P, {
-        kind: "entity-state", list, entityId: id, stateId: entityAuthorityStateId,
-        from: name, to: finalName, assetId: renamedAssetId || displayedAssetId,
-      });
-      SCAN = await (await fetch("/api/scan")).json();
-    } else toast("Rename failed; approved with original filename");
-  }
-  const approvedAssetId = (entityMedia(list, x).find((item) => item.name === finalName) || {}).assetId || renamedAssetId || displayedAssetId;
+  /* NO RENAME. THE APPROVED IMAGE KEEPS THE NAME IT WAS IMPORTED UNDER.
+
+     This is where the primary-reference approval used to POST /api/media/rename,
+     move the file to a generated production name, repair every pointer that named
+     it and then repair the receipt to follow the bytes. The move happened before
+     the authority write was accepted, so a refused save left the file renamed with
+     no durable approval behind it — and where the receipt had been written with
+     no identity, repairCanonValue correctly refused to follow, leaving the pointer
+     naming the new file and the receipt naming the old one. The authority seam
+     then refused the pair, which is the correct fail-closed answer to a document
+     the browser had already made inconsistent.
+
+     Alpha removes the operation rather than sequencing it more carefully: a
+     production filename is an ADDRESS, not an identity and not the decision, and
+     nothing in the product needs it to change at the moment of approval. There is
+     no background rename, no post-approval housekeeping pass and no staged
+     relocation standing in for it — the bytes stay exactly where the filmmaker
+     put them. Production naming can be reconsidered after Alpha as its own
+     idempotent concern, decoupled from this decision.
+
+     repairCanonValue, repairApprovalIdentity, the receipt validators and the
+     media identity schema are untouched. They are simply no longer asked to
+     repair a receipt after this approval moved its file, because it does not. */
+  const finalName = name;
+  const approvedAssetId = preparedAssetId
+    || (entityMedia(list, x).find((item) => item.name === finalName) || {}).assetId || "";
   /* ...and neither is anything downstream of it. Accepting a sheet source moved
      no primary, so the child states' validations are still answers about the
      same parent image, and there is no new identity for an angle slot to be
@@ -1189,33 +1669,35 @@ window.confirmEntityApproval = async (continueToNext = false) => {
     x.reviewStatus = "";
     x.approvedAt = new Date().toISOString();
   }
-  dirty();
-  closeModal();
-  await route();
-  /* This approval may be exactly what an automation run is parked on. See
-     v670ReconcileAfterApproval — the gate leaves every activity surface now,
-     not at the next poll. */
-  if (typeof v670ReconcileAfterApproval === "function") v670ReconcileAfterApproval();
-  if (targetState && !targetState.isDefault && targetState.approvedFile && String(targetState.notes || "").trim()) {
-    /* C2 GLOBAL: authority source only - behaviour unchanged. */
-    const capability = typeof capabilityState === "function" ? capabilityState("vision") : { standing: "checking" };
-    if (visionCanReview(capability)) setTimeout(() => validateContinuityStateAgainstParent(list, id, targetState.id), 220);
+  const meta = {
+    list,
+    entityId: id,
+    entityName: x.name || id,
+    stateId: entityAuthorityStateId,
+    stateName: targetState?.name || "Default",
+    fileName: finalName,
+    assetId: approvedAssetId,
+    url: (entityMedia(list, x).find((item) => item.name === finalName) || {}).url || "",
+    nextStateId: nextState?.id || "",
+    nextStateName: nextState?.name || "",
+    sheetSource: approvedIsCoverageSheet,
+    coverageSheetType: originalApprovalRow?.coverageSheetType || "",
+  };
+  /* SHEET SOURCE IS UNCHANGED BY THIS SLICE. It writes no Canon, so it has no
+     durable authority outcome to wait for and saves exactly as it always has. */
+  if (approvedIsCoverageSheet) {
+    dirty();
+    return finishEntityApprovalCeremony(meta);
   }
-  if (approvedIsCoverageSheet && typeof openCoverageSheetExtractor === "function") {
-    rememberWorkspaceSection?.(entityCoverageSectionKey?.(list, id, originalApprovalRow?.coverageSheetType === "expressions" ? "expressions" : "angles"), true);
-    setTimeout(() => openCoverageSheetExtractor(list, id, finalName), 50);
-  } else if (nextState) revealEntityContinuityState(nextState.id);
-  /* THE COMPLETION NAMES THE AUTHORITY THAT WAS WRITTEN, AND A SHEET SOURCE
-     WROTE NONE. Both lines used to say APPROVED regardless — the stamp
-     unconditionally, and the toast in its own words — so accepting extraction
-     material was reported as an approval for a continuity state that had not
-     changed. */
-  stampCeremony(approvedIsCoverageSheet ? "SHEET SOURCE SELECTED" : `APPROVED · ${targetState?.name || "DEFAULT"}`);
-  toast(approvedIsCoverageSheet
-    ? `${finalName} is ready as a reference sheet — extract its individual views next`
-    : nextState
-      ? `Approved ${finalName} for ${targetState?.name || "Default"} — editing ${nextState.name || "next state"}`
-      : `Approved ${finalName} for ${targetState?.name || "Default"}`);
+  /* APPROVED IN THIS TAB IS NOT APPROVED. The decision is now a submission, and
+     the filmmaker keeps looking at the image and the exact target it was for
+     until storage has either accepted it or said why it did not. */
+  const submission = beginApprovalSubmission(meta);
+  showPendingApprovalSurface();
+  const resolved = await dispatchApprovalSubmission(submission);
+  if (resolved.outcome === "committed") return completePendingApproval(submission, null);
+  if (resolved.outcome === "unknown") return resolvePendingApprovalOutcome();
+  showPendingApprovalSurface();
 };
 window.approveEntity = (list, id) => {
   const x = P[list].find((e) => e.id === id),

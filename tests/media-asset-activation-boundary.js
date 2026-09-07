@@ -141,8 +141,8 @@ assert.deepStrictEqual(activationCallers, ["open", "rename", "scan", "switch"],
 /* The whole surface server.js is allowed to use, listed rather than counted, so a
    fifth entry point has to be argued for in a diff. */
 const serviceCalls = [...new Set([...serverNoComments.matchAll(/MediaAssetService\.(\w+)\(/g)].map((m) => m[1]))].sort();
-assert.deepStrictEqual(serviceCalls, ["activateProject", "anchorBeforeRename", "identityIndex"],
-  "server.js uses exactly three service entry points: schedule a pass, anchor one file before renaming it, and read the identity projection");
+assert.deepStrictEqual(serviceCalls, ["activateProject", "anchorBeforeRename", "identityIndex", "prepareAssetIdentity"],
+  "server.js uses exactly four service entry points: schedule a pass, anchor one file before renaming it, read the identity projection, and prepare one named file for approval");
 /* identityIndex joined the list in P4-SEM-C2, deliberately and with the argument
    the boundary exists to force. It is the only way a durable assetId reaches the
    browser, which C2 needs because an approval cannot record the identity of what
@@ -154,6 +154,27 @@ assert.strictEqual((serverNoComments.match(/MediaAssetService\.identityIndex\(/g
   "and the identity projection is read from exactly one place — the media listing helper");
 assert.strictEqual((serverNoComments.match(/MediaAssetService\.anchorBeforeRename\(/g) || []).length, 1,
   "and the anchor is called from exactly one place — the media rename route");
+
+/* prepareAssetIdentity joined the list in the Alpha imported-reference approval
+   slice, and it is here for the argument the boundary exists to force.
+
+   THE QUESTION IT ANSWERS THAT NOTHING ELSE COULD. An approval must know which
+   durable identity it is approving BEFORE the human decision, and every existing
+   answer was the wrong shape for it. `identityIndex` is a projection built for
+   /api/scan, which composes its response before the identity pass runs — that
+   timing is the defect. `anchorBeforeRename` answers "can this move be proven"
+   and answers `anchored:false` for a row it cannot find, because blocking a
+   rename on a busy sidecar is the wrong trade; approval needs the opposite
+   disposition, where "not yet" is a state the interface shows. `verifyNow` reads
+   bytes to prove a digest, and a digest is not an identifier.
+
+   WHAT IT DOES NOT WIDEN. It is inside this module, so the ledger still has one
+   owner and one answer to "who changed it, and when". It reads no media bytes:
+   the pass it may schedule is the ordinary indexing pass with verification off.
+   It writes nothing to project.json, moves no file, and grants no authority — the
+   kernel still decides what may be approved and still refuses independently. */
+assert.strictEqual((serverNoComments.match(/MediaAssetService.prepareAssetIdentity\(/g) || []).length, 1,
+  "and approval preparation is called from exactly one place — the media prepare-identity route");
 
 /* ---- 2. the schema and store layers stay free of discovery and hashing ---- */
 const foundationSource = ["media-assets", "media-asset-store"]

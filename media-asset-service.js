@@ -532,6 +532,140 @@ async function anchorBeforeRename(options = {}) {
   }
 }
 
+/* ALPHA IMPORTED-REFERENCE APPROVAL — POSITIVE PREPARATION OF ONE SELECTED FILE.
+ *
+ * The defect this exists to close: a reference could be approved BEFORE the file
+ * it names had a durable identity. `/api/scan` builds its response and only then
+ * schedules an activation pass, so a freshly imported candidate is routinely
+ * listed with no `assetId` at all. The approval then wrote a receipt carrying an
+ * empty identity, and everything downstream that has to prove "these are the same
+ * bytes" had nothing to prove it with.
+ *
+ * WHY IT IS NOT anchorBeforeRename(). That function answers a different question —
+ * "can this move be proven" — and answers it with `anchored:false` whenever it
+ * cannot, because blocking a rename on a busy sidecar would be the wrong trade.
+ * A missing row is one of its no-answers. Approval needs the opposite disposition:
+ * a POSITIVE, typed verdict about one named file, where "not yet" is a state the
+ * interface shows rather than a silent fallback to filename-only approval.
+ *
+ * WHY IT IS NOT verifyNow(). A digest proves BYTES. It is not an identifier, it is
+ * not what a receipt records, and two imports of the same image legitimately share
+ * one. What an approval needs is the ledger's own `assetId` for the exact path the
+ * filmmaker is looking at.
+ *
+ * THE BYTE-READ POLICY IS UNCHANGED, and that is the point of `verify: false`
+ * below. The pass this schedules is the ordinary indexing pass — stat only for a
+ * new arrival — so preparing one candidate can never hash or hydrate a corpus.
+ * An existing row is used exactly as it stands: a candidate that was already
+ * indexed keeps the identity it already had, and nothing is re-minted.
+ *
+ * THREE STATES, and each says what the surface should do:
+ *   ready        a stable assetId names this exact path. Approval may proceed.
+ *   pending      identity has not settled yet and asking again may resolve it.
+ *   unavailable  it will not resolve by waiting; the reason names what to do.
+ *
+ * It never throws. */
+const PREPARE_UNAVAILABLE = (reason, extra = {}) => ({ status: "unavailable", reason, assetId: "", ...extra });
+const PREPARE_PENDING = (reason, extra = {}) => ({ status: "pending", reason, assetId: "", ...extra });
+
+function ledgerRowForPath(projectDir, relativePath) {
+  const loaded = readLedger(projectDir);
+  const row = (loaded.ledger.assets || []).find(
+    (asset) => asset && asset.storage && asset.storage.path === relativePath && asset.storage.missing !== true,
+  );
+  return { loaded, row: row || null };
+}
+
+async function prepareAssetIdentity(options = {}) {
+  const slug = String(options.slug || "").trim();
+  const projectDir = resolveProjectDir(options.projectsRoot, slug);
+  if (!projectDir) return PREPARE_UNAVAILABLE("no-contained-project");
+  if (!fs.existsSync(projectDir)) return PREPARE_UNAVAILABLE("no-project-directory");
+
+  const relativePath = String(options.path || "").replace(/\\/g, "/").replace(/^\/+/, "");
+  if (!relativePath) return PREPARE_UNAVAILABLE("no-path");
+  /* Containment again, on the file this time. The route already proves the slug is
+     one segment below the projects root; this proves the path is inside THAT
+     project, so a caller cannot prepare identity for a file it could not read. */
+  const absolute = path.resolve(projectDir, relativePath);
+  const contained = path.relative(path.resolve(projectDir), absolute);
+  if (!contained || path.isAbsolute(contained) || contained.split(/[\\/]/).includes("..")) {
+    return PREPARE_UNAVAILABLE("path-outside-project");
+  }
+
+  /* THE EXACT SELECTED FILE, OBSERVED. Not the project, not a directory — one
+     stat, on the one file the filmmaker is looking at. Its size and mtime travel
+     back so the surface can tell a prepared identity from a replaced one. */
+  let stat;
+  try {
+    stat = fs.statSync(absolute);
+  } catch {
+    return PREPARE_UNAVAILABLE("file-missing", { path: relativePath });
+  }
+  if (!stat.isFile()) return PREPARE_UNAVAILABLE("file-missing", { path: relativePath });
+  const observed = { path: relativePath, size: stat.size, mtimeMs: Math.round(stat.mtimeMs) };
+
+  const state = stateFor(projectDir, slug);
+  try {
+    /* A pass in flight is already writing this ledger; reading under it would race
+       the row this function exists to find. Same discipline as anchorBeforeRename. */
+    while (state.running) await state.running;
+
+    let found = ledgerRowForPath(projectDir, relativePath);
+    if (found.loaded.readOnly) return PREPARE_UNAVAILABLE("ledger-newer-than-build", observed);
+    /* AN EXISTING ROW IS THE ANSWER. An already indexed candidate keeps the
+       identity it already has — no reindex, no remint, no new identity policy. */
+    if (found.row && found.row.assetId) {
+      return {
+        status: "ready",
+        reason: "already-indexed",
+        assetId: String(found.row.assetId),
+        contentHash: String(found.row.contentHash || ""),
+        ...observed,
+      };
+    }
+
+    /* Not indexed yet — which is the ordinary state of a file uploaded seconds
+       ago. One bounded pass, verification off, so this costs a directory walk and
+       a stat per file and reads no media bytes at all. */
+    const record = await activateProject({
+      projectsRoot: options.projectsRoot,
+      slug,
+      reason: "explicit",
+      throttleMs: 0,
+      verify: false,
+      activeSlug: options.activeSlug,
+    });
+    if (record && record.status === "failed") {
+      return PREPARE_UNAVAILABLE(record.error?.code === "LEDGER_UNREADABLE" ? "ledger-unreadable" : "index-failed", observed);
+    }
+    if (record && record.status !== "complete") {
+      /* skipped/aborted — a missing project document, a switch mid-pass. Asking
+         again is the right next move, so this is pending rather than unavailable. */
+      return PREPARE_PENDING(String(record.reasonDetail || record.status || "not-indexed"), observed);
+    }
+
+    found = ledgerRowForPath(projectDir, relativePath);
+    if (found.row && found.row.assetId) {
+      return {
+        status: "ready",
+        reason: "indexed",
+        assetId: String(found.row.assetId),
+        contentHash: String(found.row.contentHash || ""),
+        ...observed,
+      };
+    }
+    /* A completed pass that did not produce a row means this path is not one the
+       indexer covers. Waiting cannot change that. */
+    return PREPARE_UNAVAILABLE("not-indexable", observed);
+  } catch (error) {
+    return PREPARE_UNAVAILABLE(error instanceof LedgerUnreadableError ? "ledger-unreadable" : "failed", {
+      ...observed,
+      error: String(error?.message || error),
+    });
+  }
+}
+
 /* P4-SEM-C2 — the one way durable identity leaves this module.
  *
  * A read-only projection: project-relative path -> assetId, for every row that
@@ -724,6 +858,7 @@ module.exports = {
   chooseVerificationTargets,
   countUnverified,
   identityIndex,
+  prepareAssetIdentity,
   readAssets,
   resetActivationState,
   resolvePhysicalProjectDir,

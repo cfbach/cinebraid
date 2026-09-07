@@ -404,6 +404,37 @@ function emptyFixture() {
   return project;
 }
 
+/* WAIT FOR THE ENTITY APPROVAL MODAL TO HOLD A PREPARED IDENTITY.
+
+   The Alpha imported-reference slice made confirmation conditional on a durable
+   identity for the exact candidate on screen, and establishing one is a request.
+   So a suite standing in for a filmmaker has to do what a filmmaker does — let
+   the modal finish preparing before clicking APPROVE — and this is that wait,
+   drained turn by turn against a CONDITION rather than slept for. A modal with no
+   readiness line (sheet source, or none open) is already settled.
+
+   It reports rather than throws: a suite proving that preparation never completes
+   needs the negative answer as much as another needs the positive one. */
+async function settleApprovalReadiness(rendered, turns = 80) {
+  for (let turn = 0; turn < turns; turn++) {
+    await new Promise((resolve) => setImmediate(resolve));
+    const ready = vm.runInContext(
+      "(() => { const line = document.getElementById('entity-approval-readiness');"
+      + " return line ? line.dataset.state === 'ready' : true; })()",
+      rendered.context);
+    if (ready) return true;
+  }
+  return false;
+}
+
+/* A stable `asset-<32 hex>` for one project-relative path. The product's ids are
+   random; what matters to a suite is that the same path always answers the same
+   id and two different paths never answer the same one. */
+function harnessAssetId(relativePath) {
+  const digest = require("crypto").createHash("sha256").update(String(relativePath)).digest("hex");
+  return `asset-${digest.slice(0, 32)}`;
+}
+
 function scanFor(project) {
   return {
     anchors: (project.characters || []).filter((x) => x.approvedFile).map((x) => ({ name: x.approvedFile, url: `/assets/anchors/${x.approvedFile}` })),
@@ -686,6 +717,37 @@ async function render(hash, project, options = {}) {
         etag: HARNESS_PROJECT_REVISION,
       });
     if (url === "/api/scan") return response(scan);
+    /* THE APPROVAL PREPARATION ROUTE, SERVED THE WAY THE SERVER SERVES IT.
+
+       A harness that does not answer a shipped route is describing a server that
+       does not exist, and every approval suite would then be proving what the
+       product does when its own preparation seam is missing. So this stands in
+       for MediaAssetService.prepareAssetIdentity: the scan IS this harness's
+       ledger, so a row that already carries an identity keeps it, a row that does
+       not gets a stable one derived from its path — exactly as a stat-only
+       indexing pass mints one — and the served scan is updated so the next
+       /api/scan reports it, which is what the real index-then-re-read does. A
+       file the scan does not list has nothing to prepare.
+
+       Deterministic rather than random so a suite can assert the exact id, and
+       distinct per PATH so two files with identical bytes never collapse into one
+       identity. A suite that wants pending, unavailable or a lost preparation
+       overrides `options.fetch` and answers for itself. */
+    if (url === "/api/media/prepare-identity") {
+      const body = JSON.parse(options.body || "{}");
+      const dir = String(body.dir || "");
+      const name = String(body.name || "");
+      const rows = dir.startsWith("shots/")
+        ? (scan.shots?.[dir.split("/")[1]] || {})[dir.split("/")[2]] || []
+        : scan[dir] || [];
+      const row = rows.find((item) => item && item.name === name);
+      if (!row) return response({ ok: true, status: "unavailable", reason: "file-missing", assetId: "" });
+      if (!row.assetId) row.assetId = harnessAssetId(`${dir}/${name}`);
+      return response({
+        ok: true, status: "ready", reason: "indexed", assetId: row.assetId,
+        path: `${dir}/${name}`, size: 1024, mtimeMs: 1700000000000,
+      });
+    }
     if (url === "/api/prompt/profiles")
       /* Annotated exactly as the route annotates it, so a rendered page sees the same
          dispatchability the running server serves rather than a bare catalogue. */
@@ -1005,11 +1067,22 @@ async function main() {
   const entityApprovalModalHtml = stateRender.context.document.getElementById("modal").innerHTML;
   assert(entityApprovalModalHtml.includes("entity-approval-continuation"), "entity approval must expose a continuation selector");
   assert(entityApprovalModalHtml.includes("APPROVE & EDIT NEXT STATE"), "entity approval must expose the approve-and-edit action");
+  /* PREPARE FIRST, THEN CHOOSE, THEN CONFIRM — the order a filmmaker works in.
+     The Alpha imported-reference slice made confirmation wait for a prepared
+     durable identity for the exact candidate on screen, and preparation re-runs
+     the modal sync when it lands, which rebuilds the continuation selector. So
+     the selections are made after preparation has settled rather than before it,
+     or the sync would discard them. The generated production filename this used
+     to set is gone with the rename it existed for. */
   stateRender.context.document.getElementById("entity-approve-file").value = "PR-TOOL-CANDIDATE-A.png";
   stateRender.context.document.getElementById("entity-approve-target").value = "state-default";
-  stateRender.context.document.getElementById("entity-approve-name").value = "PR-TOOL-CANDIDATE-A.png";
+  stateRender.context.syncEntityApprovalModal();
+  assert(await settleApprovalReadiness(stateRender), "entity approval must reach a prepared identity before it can be confirmed");
   stateRender.context.document.getElementById("entity-approve-next").value = "state-damaged";
   await stateRender.gesture.act(() => stateRender.context.confirmEntityApproval(true));
+  /* The approval is durable only once storage accepts it, and the harness's save
+     stub answers on a later turn, so the assertions below wait for that. */
+  for (let turn = 0; turn < 200; turn++) await new Promise((resolve) => setImmediate(resolve));
   const approvalContinuation = vm.runInContext(`(() => { const x=P.props.find((item)=>item.id==='PR-TOOL'); const next=x.continuityStates.find((state)=>state.id==='state-damaged'); return { approved:x.approvedFile, parent:next.parentStateId, mode:next.generationMode }; })()`, stateRender.context);
   assert.strictEqual(approvalContinuation.approved, "PR-TOOL-CANDIDATE-A.png", "approve-and-continue must approve the selected candidate");
   assert.strictEqual(approvalContinuation.parent, "state-default", "approve-and-continue must set the selected next state's parent to the approved state");
@@ -1298,7 +1371,7 @@ function withCanon(project, entries) {
   return project;
 }
 
-module.exports = { render, buildFixture, rawFixture, withFixtureCanon, emptyFixture, withCanon, HARNESS_PROJECT_REVISION };
+module.exports = { render, buildFixture, rawFixture, withFixtureCanon, emptyFixture, withCanon, harnessAssetId, settleApprovalReadiness, HARNESS_PROJECT_REVISION };
 if (require.main === module) main().catch((error) => {
   console.error(error.stack || error.message || error);
   process.exitCode = 1;

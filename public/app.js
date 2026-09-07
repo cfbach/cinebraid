@@ -2777,6 +2777,9 @@ function projectConflict(data) {
   setSaveState("error", "Not saved — project changed");
   const message = data?.error
     || "This project changed while this view was open. Reload to continue from the current project.";
+  /* An approval submission in flight owns this outcome and says it in the words of
+     the approval the filmmaker just took. The state above is latched either way. */
+  if (approvalSubmissionOwnsRefusalUi()) return;
   if (typeof toast === "function") toast(message);
   if (typeof openModal === "function")
     openModal(
@@ -2832,6 +2835,7 @@ function projectSaveRefusal(data) {
   const issues = (data?.issues || [])
     .map((row) => (typeof row === "string" ? row : row?.message || row?.error || ""))
     .filter(Boolean);
+  if (approvalSubmissionOwnsRefusalUi()) return;
   if (typeof toast === "function") toast(message);
   if (typeof openModal === "function") openModal(
     "<h3>" + (validation ? "This project did not pass validation, so it was not saved" : "The server refused this save") + "</h3>"
@@ -2861,6 +2865,7 @@ function saveRevisionUnavailable(data) {
   setSaveState("error", "Not saved — this window cannot identify the project revision");
   const message = data?.error
     || "CineBraid could not identify which stored version of this project this window is showing, so it did not write over the stored project.";
+  if (approvalSubmissionOwnsRefusalUi()) return;
   if (typeof toast === "function") toast(message);
   if (typeof openModal === "function") openModal(
     "<h3>This window cannot save safely</h3>"
@@ -2877,6 +2882,7 @@ function authoritySaveRefusal(data, job) {
   setSaveState("error", "Not saved — approval change refused");
   const targets = (data?.targets || []).map((row) => row.targetKey).filter(Boolean);
   const message = data?.error || "This edit would change production authority outside its explicit protocol.";
+  if (approvalSubmissionOwnsRefusalUi()) return;
   if (typeof toast === "function") toast(message);
   if (typeof openModal === "function") openModal(
     "<h3>Production authority was not changed</h3><div class=\"modal-sub\">THE EDIT BATCH IS STILL IN THIS TAB</div><p>" + esc(message) + "</p>"
@@ -2902,6 +2908,23 @@ window.rebaseAuthoritySave = async () => {
 };
 function queueProjectSave(job) {
   if (!job) return SAVE_CHAIN;
+  /* THE LOCAL SUBMISSION GUARD, AND IT IS DELIBERATELY NOT A WRITER BARRIER.
+
+     SAVE_CHAIN.catch(...).then(...) recovers from a failed link and carries on,
+     which is right for ordinary editing and wrong for exactly one moment: while a
+     trusted approval is on the wire with an unknown outcome, the next queued
+     snapshot carries that same unresolved authority state and would either race
+     the decision or replace it. dirty() bookkeeping is untouched — the edit stays
+     in P, SAVE_REVISION still records it, and the window still reads as unsaved —
+     so nothing is lost; it is simply not dispatched yet.
+
+     It is scoped to ONE record and released the moment that record resolves. It
+     is not a server-side barrier, it knows nothing about other windows, and it
+     changes no write class. The one job it lets through is the exact captured
+     submission, which is what makes a retry the same decision arriving again
+     rather than a second one. */
+  const submission = PENDING_APPROVAL_SUBMISSION;
+  if (submission && submission.job && job !== submission.job) return SAVE_CHAIN;
   const run = SAVE_CHAIN.catch(() => {}).then(async () => {
     if (PROJECT_CONFLICT || SAVE_BLOCKED) return; // this view is known stale or blocked; stop writing
     /* THE LAST GATE BEFORE ANY PROJECT WRITE LEAVES THIS WINDOW, and the reason it
@@ -3117,6 +3140,220 @@ function projectSaveSettled() {
   return { settled: true, code: "", reason: "" };
 }
 if (typeof window !== "undefined") window.projectSaveSettled = projectSaveSettled;
+/* ==========================================================================
+   ALPHA — ONE TRUSTED APPROVAL, ONE SUBMISSION, ONE OUTCOME.
+
+   THE UNTRUTH THIS REMOVES. The approval path used to call dirty() and then
+   announce the approval: stamp the ceremony, route, reconcile automation and
+   move the filmmaker on. dirty() only ARMS a write. Every refusal the save chain
+   knows how to recover from resolves rather than throws — a conflict, a
+   validation refusal, an authority refusal, a paused or quarantined window — so
+   the product could and did report an approval that storage had never accepted.
+   Reopening then showed the reference unapproved, which is the correct durable
+   answer to a question the interface had already answered wrongly.
+
+   WHAT THIS IS. A submission record for ONE human decision, held in memory for
+   this tab only. It is created inside the trusted click, it carries the exact
+   document that decision produced, and it is the only thing that may be put on
+   the wire until its outcome is known. Retry re-sends THIS record. It never
+   re-runs the Canon command, because a retry is the same decision arriving
+   again, not a new one.
+
+   WHAT IT IS DELIBERATELY NOT. It is not a journal — nothing is written to disk
+   to remember an uncommitted click, and after a browser restart the durable
+   authority projection is the only answer. It is not a transaction coordinator,
+   a writer barrier or a second authority: every byte it writes goes through the
+   existing Canon transition seam, and the server validators are untouched. */
+let PENDING_APPROVAL_SUBMISSION = null;
+
+function approvalSubmissionPending() { return PENDING_APPROVAL_SUBMISSION; }
+
+/* The durably accepted document this window last saw. A caller deciding whether
+   something is SAFE to approve has to ask about the stored project rather than
+   about the draft in front of it, and this is the only copy of that answer the
+   window holds. A read; it hands back the live object, so callers read it and do
+   not write it. */
+function durableProjectBaseline() { return SAVED_PROJECT_BASELINE; }
+
+/* Created synchronously inside the trusted click, after the kernel command and
+   the ordinary bookkeeping have been applied to P and before any await. It does
+   what dirty() does to the counters and the save state, then captures the exact
+   successor that carries this approval. Capturing here rather than at dispatch is
+   what makes a retry replay the same document instead of whatever P has become. */
+function beginApprovalSubmission(meta = {}) {
+  clearTimeout(saveTimer);
+  saveTimer = null;
+  clearTimeout(SAVE_STATE_TIMER);
+  SAVE_REVISION += 1;
+  setSaveState("saving", "Saving approval…");
+  const record = {
+    id: "approval-" + Date.now().toString(36) + "-" + Math.random().toString(36).slice(2, 8),
+    meta: { ...meta },
+    slug: ACTIVE_PROJECT_SLUG,
+    epoch: PROJECT_OPEN_EPOCH,
+    baselineRevision: PROJECT_REVISION,
+    phase: "captured",
+    outcome: "saving",
+    reason: "",
+    attempts: 0,
+    transportError: "",
+    acceptedRevision: "",
+    job: null,
+  };
+  record.job = captureProjectSave();
+  PENDING_APPROVAL_SUBMISSION = record;
+  return record;
+}
+
+/* The window is done with this decision — it committed, or the filmmaker
+   explicitly left it unapproved. Clearing it is what lets ordinary saving and
+   project switching resume. */
+function endApprovalSubmission(id) {
+  if (PENDING_APPROVAL_SUBMISSION && PENDING_APPROVAL_SUBMISSION.id === id) PENDING_APPROVAL_SUBMISSION = null;
+  return PENDING_APPROVAL_SUBMISSION;
+}
+
+/* While a submission is on the wire this record owns the refusal surface, so the
+   generic conflict/refusal modals stay silent and the approval surface says what
+   happened to THIS approval. They still latch their state — every counter, flag
+   and save state below is unchanged — because the classification underneath
+   reads exactly those flags. */
+function approvalSubmissionOwnsRefusalUi() {
+  return !!(PENDING_APPROVAL_SUBMISSION && PENDING_APPROVAL_SUBMISSION.phase === "in-flight");
+}
+
+/* Reads the flags the save chain just set. Synchronous on purpose: it is the
+   statement of what is true at the moment the request finished, and an await
+   here would let it describe a different moment. */
+function classifyApprovalSubmission(record) {
+  record.phase = "resolved";
+  if (record.slug !== ACTIVE_PROJECT_SLUG || record.epoch !== PROJECT_OPEN_EPOCH) {
+    record.outcome = "unknown";
+    record.reason = "The project this approval was taken in is no longer the one this window has open.";
+    return record;
+  }
+  /* COMMITTED IS PROVEN BY THE ACCEPTED REVISION, NOT BY THE ABSENCE OF AN ERROR.
+     SAVED_REVISION only advances when storage answered ok for that exact job. */
+  if (
+    record.job
+    && SAVED_REVISION >= record.job.revision
+    && !PROJECT_CONFLICT && !AUTHORITY_SAVE_REFUSED && !SAVE_BLOCKED && !PROJECT_QUARANTINE
+  ) {
+    record.outcome = "committed";
+    record.reason = "";
+    record.acceptedRevision = PROJECT_REVISION;
+    return record;
+  }
+  if (PROJECT_CONFLICT) {
+    record.outcome = "changed";
+    record.reason = "This project changed in storage while the approval was being saved.";
+    return record;
+  }
+  if (AUTHORITY_SAVE_REFUSED) {
+    record.outcome = "refused";
+    record.reason = "CineBraid checked this approval before writing it and refused it, so nothing was written.";
+    return record;
+  }
+  if (SAVE_BLOCKED) {
+    record.outcome = "refused";
+    record.reason = "This project did not pass validation, so nothing was written.";
+    return record;
+  }
+  /* Recovery mode is not a transient failure and a retry cannot resolve it, so it
+     is reported as a refusal rather than as something to send again. */
+  if (PROJECT_QUARANTINE) {
+    record.outcome = "refused";
+    record.reason = "This project is in Recovery mode, so CineBraid is not writing to it.";
+    return record;
+  }
+  /* A thrown request, a lost response, a 5xx. The decision may or may not have
+     been stored, and the only honest next move is to go and look. */
+  record.outcome = "unknown";
+  record.reason = record.transportError
+    ? "CineBraid could not tell whether this approval reached storage."
+    : "CineBraid did not get a definite answer about this approval.";
+  return record;
+}
+
+/* Put THIS record on the wire, once, and report what happened to it. The only
+   job the guard in queueProjectSave lets through while a submission is
+   unresolved is this exact captured one, so a retry cannot become a second
+   decision and an unrelated autosave cannot carry the unresolved authority. */
+async function dispatchApprovalSubmission(record) {
+  if (!record) return null;
+  if (!record.job) {
+    record.phase = "resolved";
+    record.outcome = "uncommitted";
+    record.reason = "This window could not identify the project this approval belongs to, so nothing was sent.";
+    return record;
+  }
+  record.attempts += 1;
+  record.transportError = "";
+  record.phase = "in-flight";
+  try {
+    await queueProjectSave(record.job);
+  } catch (error) {
+    record.transportError = String(error?.message || error) || "request failed";
+  }
+  return classifyApprovalSubmission(record);
+}
+
+/* A DECISION THIS WINDOW FOUND IN STORAGE, ADOPTED WITHOUT REPLACING THE WINDOW.
+
+   The one case this exists for: the write was accepted and its response was lost,
+   so storage holds the approval and this window still believes nothing was saved.
+   Outcome resolution proves the receipt is durable by reading it, and then this
+   puts the window back in step with the record — exactly the bookkeeping an
+   accepted save does, and exactly the bookkeeping rebaseAuthoritySave() does when
+   it re-reads a baseline.
+
+   IT IS NOT A REPLACEMENT. P is left alone apart from the durable authority
+   ledger, so unrelated edits made in this tab survive; SAVED_REVISION advances
+   only as far as the submission that was accepted, so those edits stay honestly
+   unsaved and save normally on the next write. */
+function adoptDurableApprovalOutcome(record, stored) {
+  if (!record || !P || record.slug !== ACTIVE_PROJECT_SLUG || record.epoch !== PROJECT_OPEN_EPOCH) return false;
+  if (stored && stored.project) {
+    if (Object.prototype.hasOwnProperty.call(stored.project, "productionAuthority"))
+      P.productionAuthority = structuredClone(stored.project.productionAuthority);
+    else delete P.productionAuthority;
+    SAVED_PROJECT_BASELINE = structuredClone(stored.project);
+    if (stored.revision) PROJECT_REVISION = stored.revision;
+  }
+  PROJECT_CONFLICT = false;
+  AUTHORITY_SAVE_REFUSED = false;
+  SAVE_BLOCKED = false;
+  PROJECT_SAVE_GENERATION += 1;
+  if (record.job) SAVED_REVISION = Math.max(SAVED_REVISION, record.job.revision);
+  const outstanding = SAVE_REVISION > SAVED_REVISION;
+  setSaveState(outstanding ? "dirty" : "saved", outstanding ? "Unsaved changes" : "Saved");
+  return true;
+}
+
+/* The stored document, read and NOT installed. Outcome resolution has to ask
+   storage what it actually holds, and installing what comes back would replace a
+   window whose own edits may still be unsaved. */
+async function readStoredProjectDocument(slug) {
+  const target = String(slug || ACTIVE_PROJECT_SLUG || "");
+  if (!target) throw new Error("No project is open.");
+  const response = await fetch("/api/projects/" + encodeURIComponent(target) + "/project", { cache: "no-store" });
+  const stored = await response.json().catch(() => ({}));
+  if (!response.ok) throw new Error(stored.error || "Could not read the stored project.");
+  return {
+    project: stored,
+    revision: response.headers?.get?.("x-cinebraid-project-revision") || response.headers?.get?.("etag") || "",
+  };
+}
+if (typeof window !== "undefined") {
+  window.approvalSubmissionPending = approvalSubmissionPending;
+  window.durableProjectBaseline = durableProjectBaseline;
+  window.beginApprovalSubmission = beginApprovalSubmission;
+  window.endApprovalSubmission = endApprovalSubmission;
+  window.dispatchApprovalSubmission = dispatchApprovalSubmission;
+  window.readStoredProjectDocument = readStoredProjectDocument;
+  window.adoptDurableApprovalOutcome = adoptDurableApprovalOutcome;
+}
+
 
 /* ==========================================================================
    B1 (RACE) — A SAVE VERDICT IS A SNAPSHOT, NOT A PERMIT TO REPLACE LATER.
@@ -3814,6 +4051,25 @@ window.switchProject = async (slug) => {
      out loud. */
   if (typeof manualReplacementBusy === "function" && manualReplacementBusy()) {
     return toast(manualReplacementBusyMessage());
+  }
+  /* AN APPROVAL WHOSE OUTCOME IS GENUINELY UNKNOWN IS NOT SOMETHING TO WALK AWAY
+     FROM QUIETLY.
+
+     switchProject() awaits flushPendingProjectSave() and then continues whatever
+     that flush reported, because the flush resolves on every refusal it can
+     recover from. So a filmmaker whose approval had just been refused could switch
+     project, lose the pending context and the image with it, and meet a reference
+     that was never approved with nothing on screen explaining why.
+
+     The pending record is one trusted human decision. It is either resolved — in
+     which case it is already gone from here — or the filmmaker is looking at its
+     surface and can retry it, or explicitly leave it unapproved and keep the image
+     for later. Only then does the switch proceed. This refuses nothing that is
+     already durable: a committed approval clears the record at its commit point. */
+  const pendingApproval = approvalSubmissionPending();
+  if (pendingApproval) {
+    if (typeof showPendingApprovalSurface === "function") showPendingApprovalSurface();
+    return toast("This approval has not been settled yet. Resolve it before switching project.");
   }
   const previousSlug = ACTIVE_PROJECT_SLUG;
   clearProjectSwitcherError();
@@ -4997,11 +5253,13 @@ function selectedEntityStateForShot(s, entity) {
 function entityApprovedFileForState(entity, stateId = "") {
   return stateApprovedFile(entity, entityStateById(entity, stateId));
 }
-function entityApprovalBadges(entity, file) {
-  return entityStateListRead(entity, true)
-    .filter((st) => (st.approvedFile || "") === file)
-    .map((st) => (st.isDefault ? "DEFAULT" : st.name || "STATE"));
-}
+/* `entityApprovalBadges()` STOOD HERE. It listed the continuity states already
+   pointing at a given file, and it had exactly one caller: the entity approval
+   modal, which used it to decide that a candidate already approved somewhere
+   must KEEP ITS NAME rather than be renamed to a new production name. That rule
+   existed only to stop the approval rename moving bytes another approved state
+   pointed at. Alpha removed the rename from that approval, so the rule has
+   nothing left to protect and the helper has nothing left to answer. */
 function referenceRecordsForShot(s) {
   const resolved = resolveShotEntities(P, s);
   return [

@@ -35,7 +35,7 @@ const path = require("path");
 const vm = require("vm");
 
 const ROOT = path.join(__dirname, "..");
-const { render, buildFixture, withCanon } = require("./render-harness");
+const { render, buildFixture, withCanon, settleApprovalReadiness } = require("./render-harness");
 
 const read = (name) => fs.readFileSync(path.join(ROOT, name), "utf8");
 let checks = 0;
@@ -815,6 +815,11 @@ async function testSingleStateApprovalIsOneAct() {
     document.getElementById('entity-approve-file').value = 'CHAR-UX-LOOSE.png';
     document.getElementById('entity-approve-name').value = 'CHAR-UX-LOOSE.png';
   })()`, one.context);
+  /* The Alpha imported-reference slice made confirmation wait for a prepared
+     durable identity for the exact candidate on screen, so a suite standing in
+     for a filmmaker waits for it too. Preparation is a request; this drains the
+     loop until the modal holds one, never for a duration. */
+  await settleApprovalReadiness(one);
   await one.gesture.act(() => one.context.confirmEntityApproval(false));
   await new Promise((resolve) => setTimeout(resolve, 80));
   const truth = vm.runInContext(

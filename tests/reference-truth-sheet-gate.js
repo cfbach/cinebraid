@@ -27,7 +27,7 @@ const vm = require("vm");
 const ROOT = path.join(__dirname, "..");
 const Coverage = require(path.join(ROOT, "public/shared-coverage.js"));
 const Rate = require(path.join(ROOT, "public/shared-generation-rate.js"));
-const { render, buildFixture, withCanon } = require("./render-harness");
+const { render, buildFixture, withCanon, settleApprovalReadiness } = require("./render-harness");
 const { installTestManualActionSource } = require("./authority-test-gesture.js");
 
 const AT = "2026-08-27T00:00:00.000Z";
@@ -493,6 +493,11 @@ async function testSheetSourceSpeaksForItself() {
     "SHEET-4: and no candidate chooser, because the sheet is the one that was named");
 
   /* UI-S3 — confirming it writes no primary authority. */
+  /* The Alpha imported-reference slice made confirmation wait for a prepared
+     durable identity for the exact candidate on screen, so a suite standing in
+     for a filmmaker waits for it too. Preparation is a request; this drains the
+     loop until the modal holds one, never for a duration. */
+  await settleApprovalReadiness(rendered);
   await rendered.gesture.act(() => rendered.context.confirmEntityApproval(false));
   await new Promise((resolve) => setTimeout(resolve, 60));
   const after = vm.runInContext(
@@ -588,6 +593,11 @@ async function testStaleSelectionIsRevalidated() {
   eq(p1After.confirmDisabled, true, "STALE-P1: and the approval control is withdrawn");
 
   /* STALE-P4 — the writer refuses independently of the visual state. */
+  /* The Alpha imported-reference slice made confirmation wait for a prepared
+     durable identity for the exact candidate on screen, so a suite standing in
+     for a filmmaker waits for it too. Preparation is a request; this drains the
+     loop until the modal holds one, never for a duration. */
+  await settleApprovalReadiness(p1);
   await p1.gesture.act(() => p1.context.confirmEntityApproval(false));
   await new Promise((resolve) => setTimeout(resolve, 40));
   const p1Confirm = v3State(p1);
@@ -613,7 +623,16 @@ async function testStaleSelectionIsRevalidated() {
   p3.context.syncEntityApprovalModal();
   const p3After = v3State(p3);
   eq(p3After.selection, "CHAR-IREN-GEN-B.png", "STALE-P3: it moves to the candidate that is still eligible");
-  eq(p3After.confirmDisabled, false, "STALE-P3: and approval remains available for that one");
+  /* THE ALPHA IMPORTED-REFERENCE SLICE CHANGED WHAT "AVAILABLE" COSTS, NOT WHAT
+     IT MEANS. Confirmation now additionally waits for a prepared durable identity
+     for the exact candidate on screen, and preparation is a request — so the
+     button is correctly withdrawn for the moment after the selection moves, and
+     comes back when CineBraid can say which bytes it would approve. The claim
+     here is unchanged: the candidate that is still eligible remains approvable.
+     What changed is that the suite has to let the preparation it just triggered
+     settle before reading the button, instead of reading it one line later. */
+  await settleApprovalReadiness(p3);
+  eq(v3State(p3).confirmDisabled, false, "STALE-P3: and approval remains available for that one");
   ok(p3After.toasts.some((line) => /no longer recorded as a single reference/.test(line)),
     "STALE-P3: and the move is stated rather than silent");
 }
@@ -622,6 +641,11 @@ async function testOperationModeIsSticky() {
   /* MODE-P1 — the ordinary path still works. */
   const m1 = await v3Page([V3_SINGLE]);
   m1.context.approveEntityFile("characters", "CHAR-IREN", "CHAR-IREN-GEN.png", "state-default", "primary-authority");
+  /* The Alpha imported-reference slice made confirmation wait for a prepared
+     durable identity for the exact candidate on screen, so a suite standing in
+     for a filmmaker waits for it too. Preparation is a request; this drains the
+     loop until the modal holds one, never for a duration. */
+  await settleApprovalReadiness(m1);
   await m1.gesture.act(() => m1.context.confirmEntityApproval(false));
   await new Promise((resolve) => setTimeout(resolve, 60));
   const m1After = v3State(m1);
@@ -634,6 +658,11 @@ async function testOperationModeIsSticky() {
   const m2 = await v3Page([V3_SINGLE]);
   m2.context.approveEntityFile("characters", "CHAR-IREN", "CHAR-IREN-GEN.png", "state-default", "primary-authority");
   v3Restructure(m2, "CHAR-IREN-GEN.png", { coverageJobType: "sheet", coverageSheetType: "angles" });
+  /* The Alpha imported-reference slice made confirmation wait for a prepared
+     durable identity for the exact candidate on screen, so a suite standing in
+     for a filmmaker waits for it too. Preparation is a request; this drains the
+     loop until the modal holds one, never for a duration. */
+  await settleApprovalReadiness(m2);
   await m2.gesture.act(() => m2.context.confirmEntityApproval(false));
   await new Promise((resolve) => setTimeout(resolve, 60));
   const m2After = v3State(m2);
@@ -646,6 +675,11 @@ async function testOperationModeIsSticky() {
   const m3 = await v3Page([V3_SINGLE]);
   m3.context.approveEntityFile("characters", "CHAR-IREN", "CHAR-IREN-GEN.png", "state-default", "primary-authority");
   v3Restructure(m3, "CHAR-IREN-GEN.png", {});
+  /* The Alpha imported-reference slice made confirmation wait for a prepared
+     durable identity for the exact candidate on screen, so a suite standing in
+     for a filmmaker waits for it too. Preparation is a request; this drains the
+     loop until the modal holds one, never for a duration. */
+  await settleApprovalReadiness(m3);
   await m3.gesture.act(() => m3.context.confirmEntityApproval(false));
   await new Promise((resolve) => setTimeout(resolve, 60));
   eq(v3State(m3).canon, 0, "MODE-P3: an undeclared row under primary intent writes no authority");
@@ -653,6 +687,11 @@ async function testOperationModeIsSticky() {
   /* MODE-S1 / COPY-S1 — the sheet-source operation, and what it says afterwards. */
   const s1 = await v3Page([V3_SHEET]);
   s1.context.requestHumanEntityCandidateApproval("characters", "CHAR-IREN", "CHAR-IREN-SHEET.png", "state-default", "extract");
+  /* The Alpha imported-reference slice made confirmation wait for a prepared
+     durable identity for the exact candidate on screen, so a suite standing in
+     for a filmmaker waits for it too. Preparation is a request; this drains the
+     loop until the modal holds one, never for a duration. */
+  await settleApprovalReadiness(s1);
   await s1.gesture.act(() => s1.context.confirmEntityApproval(false));
   await new Promise((resolve) => setTimeout(resolve, 60));
   const s1After = v3State(s1);
@@ -669,6 +708,11 @@ async function testOperationModeIsSticky() {
   const s2 = await v3Page([V3_SHEET]);
   s2.context.requestHumanEntityCandidateApproval("characters", "CHAR-IREN", "CHAR-IREN-SHEET.png", "state-default", "extract");
   v3Restructure(s2, "CHAR-IREN-SHEET.png", { coverageJobType: "single-reference" });
+  /* The Alpha imported-reference slice made confirmation wait for a prepared
+     durable identity for the exact candidate on screen, so a suite standing in
+     for a filmmaker waits for it too. Preparation is a request; this drains the
+     loop until the modal holds one, never for a duration. */
+  await settleApprovalReadiness(s2);
   await s2.gesture.act(() => s2.context.confirmEntityApproval(false));
   await new Promise((resolve) => setTimeout(resolve, 60));
   const s2After = v3State(s2);
@@ -680,6 +724,11 @@ async function testOperationModeIsSticky() {
   const s3 = await v3Page([V3_SHEET]);
   s3.context.requestHumanEntityCandidateApproval("characters", "CHAR-IREN", "CHAR-IREN-SHEET.png", "state-default", "extract");
   v3Restructure(s3, "CHAR-IREN-SHEET.png", {});
+  /* The Alpha imported-reference slice made confirmation wait for a prepared
+     durable identity for the exact candidate on screen, so a suite standing in
+     for a filmmaker waits for it too. Preparation is a request; this drains the
+     loop until the modal holds one, never for a duration. */
+  await settleApprovalReadiness(s3);
   await s3.gesture.act(() => s3.context.confirmEntityApproval(false));
   await new Promise((resolve) => setTimeout(resolve, 60));
   const s3After = v3State(s3);
@@ -1000,6 +1049,11 @@ async function testSheetSourceIsNotIdentityApproval() {
     + "document.getElementById('entity-approve-target').value='state-default';"
     + "document.getElementById('entity-approve-name').value='CHAR-IREN-SHEET.png';"
     + "document.getElementById('entity-approve-next').value='';", rendered.context);
+  /* The Alpha imported-reference slice made confirmation wait for a prepared
+     durable identity for the exact candidate on screen, so a suite standing in
+     for a filmmaker waits for it too. Preparation is a request; this drains the
+     loop until the modal holds one, never for a duration. */
+  await settleApprovalReadiness(rendered);
   await rendered.gesture.act(() => rendered.context.confirmEntityApproval(false));
   await new Promise((resolve) => setTimeout(resolve, 80));
 
@@ -1263,6 +1317,11 @@ async function testSheetSourceLeavesPrimaryUntouched() {
     document.getElementById('entity-approve-target').value='state-default';
     document.getElementById('entity-approve-name').value='CHAR-IREN-SHEET.png';
     document.getElementById('entity-approve-next').value='';`, rendered.context);
+  /* The Alpha imported-reference slice made confirmation wait for a prepared
+     durable identity for the exact candidate on screen, so a suite standing in
+     for a filmmaker waits for it too. Preparation is a request; this drains the
+     loop until the modal holds one, never for a duration. */
+  await settleApprovalReadiness(rendered);
   await rendered.gesture.act(() => rendered.context.confirmEntityApproval(false));
   await new Promise((resolve) => setTimeout(resolve, 80));
 

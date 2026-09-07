@@ -340,6 +340,8 @@ async function main() {
     "account-secret-handling.js",
     "action-truth-first-press-negative-controls.js",
     "action-truth-first-press.js",
+    "alpha-imported-reference-approval-negative-controls.js",
+    "alpha-imported-reference-approval.js",
     "alpha-production-loop-negative-controls.js",
     "alpha-production-loop-real-browser.py",
     "alpha-production-loop.js",

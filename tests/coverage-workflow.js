@@ -3,7 +3,7 @@ const fs = require("fs");
 const path = require("path");
 const vm = require("vm");
 const { terminalHtml } = require("./terminal-view");
-const { render, buildFixture, withCanon } = require("./render-harness");
+const { render, buildFixture, withCanon, settleApprovalReadiness } = require("./render-harness");
 
 const delay = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 
@@ -129,6 +129,11 @@ async function testSheetApprovalDoesNotSeedAngleAndRemainsExtractable() {
   rendered.context.document.getElementById("entity-approve-target").value = "state-default";
   rendered.context.document.getElementById("entity-approve-name").value = "CHAR-IREN-SHEET.png";
   rendered.context.document.getElementById("entity-approve-next").value = "";
+  /* The Alpha imported-reference slice made confirmation wait for a prepared
+     durable identity for the exact candidate on screen, so a suite standing in
+     for a filmmaker waits for it too. Preparation is a request; this drains the
+     loop until the modal holds one, never for a duration. */
+  await settleApprovalReadiness(rendered);
   await rendered.gesture.act(() => rendered.context.confirmEntityApproval(false));
   await delay(80);
   const state = vm.runInContext(`(() => { const e=P.characters.find((item)=>item.id==='CHAR-IREN'); const assigned=(ensureCoverageSlots('characters',e)||[]).filter((slot)=>slot.approvedFile); const row=(e.candidateFiles||[]).find((item)=>(item.stored||item.name)==='CHAR-IREN-SHEET.png')||{}; return {approved:e.approvedFile, decision:row.decision, assigned:assigned.map((slot)=>({id:slot.id,file:slot.approvedFile}))}; })()`, rendered.context);
@@ -216,6 +221,11 @@ async function testPrimaryReferenceNeverSilentlyBecomesThreeQuarter() {
   rendered.context.document.getElementById("entity-approve-target").value = "state-default";
   rendered.context.document.getElementById("entity-approve-name").value = "CHAR-IREN-PRIMARY.png";
   rendered.context.document.getElementById("entity-approve-next").value = "";
+  /* The Alpha imported-reference slice made confirmation wait for a prepared
+     durable identity for the exact candidate on screen, so a suite standing in
+     for a filmmaker waits for it too. Preparation is a request; this drains the
+     loop until the modal holds one, never for a duration. */
+  await settleApprovalReadiness(rendered);
   await rendered.gesture.act(() => rendered.context.confirmEntityApproval(false));
   await delay(60);
   const state = vm.runInContext(`(() => { const e=P.characters.find((item)=>item.id==='CHAR-IREN'); return { approved:e.approvedFile, assigned:(ensureCoverageSlots('characters',e)||[]).filter((slot)=>slot.approvedFile).map((slot)=>slot.id), angle:e.primaryAngleAssignment }; })()`, rendered.context);

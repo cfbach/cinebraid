@@ -2410,13 +2410,62 @@ app.post(
     }
   },
 );
+/* The media directories CineBraid itself owns, named once. Both the rename route
+   and the approval preparation route below have to agree about what a contained
+   media directory IS, and two copies of that answer is how they drift. */
+function containedMediaDir(dir) {
+  const value = String(dir || "");
+  if (["anchors", "plates", "props", "vehicles", "audio", "media"].includes(value)) return value;
+  return /^shots\/[\w.\-]+\/(takes|locked|blocking)$/.test(value) ? value : null;
+}
+/* ALPHA IMPORTED-REFERENCE APPROVAL — PREPARE ONE SELECTED FILE FOR APPROVAL.
+ *
+ * The one question this answers: does the exact file the filmmaker is looking at
+ * have a stable durable identity RIGHT NOW. It is asked before the approval modal
+ * enables its confirm button, and its answer is what that button is bound to.
+ *
+ * WHY IT IS A ROUTE RATHER THAN A SCAN. `/api/scan` composes its response and only
+ * then schedules an identity pass, so a candidate uploaded a moment ago is listed
+ * with no assetId — and an approval taken in that window wrote a receipt that
+ * proved nothing about which bytes were approved. Waiting for a scan to come round
+ * again is timing, not a contract. This asks positively about ONE file and answers
+ * ready / pending / unavailable.
+ *
+ * WHAT IT IS NOT. It grants nothing. A prepared identity is a fact about a file,
+ * exactly as the scan projection is; the kernel remains the only thing that can
+ * approve anything, and it still refuses independently. Nothing here writes
+ * project.json, moves a file, or reads a media byte — the pass it may schedule is
+ * the ordinary stat-only indexing pass with verification off.
+ *
+ * NO PATH IS ACCEPTED. The directory comes from the same allowlist the rename
+ * route uses and the filename is reduced to its basename, so the reach this grants
+ * is exactly the reach GET /assets/<path> already grants for the owned project. */
+app.post("/api/media/prepare-identity", async (req, res) => {
+  const safeDir = containedMediaDir(req.body?.dir);
+  if (!safeDir) return res.status(400).json({ error: "bad dir" });
+  const name = path.basename(String(req.body?.name || ""));
+  if (!name) return res.status(400).json({ error: "name required" });
+  let owned;
+  try {
+    owned = ownedProjectDir(req);
+  } catch (error) {
+    return res.status(mediaOwnerStatus(error)).json({ error: error.message });
+  }
+  const slug = path.basename(owned);
+  const prepared = await MediaAssetService.prepareAssetIdentity({
+    projectsRoot: projectsRoot(),
+    slug,
+    path: `${safeDir}/${name}`,
+    activeSlug,
+  });
+  /* Every typed verdict is a 200. "Not ready yet" is an answer this route was
+     asked for, not a failure of the request, and a surface that has to render the
+     reason cannot do it from an HTTP status. */
+  res.json({ ok: true, slug, dir: safeDir, name, ...prepared });
+});
 app.post("/api/media/rename", async (req, res) => {
   const { dir, from, to } = req.body || {};
-  const safeDir = ["anchors", "plates", "props", "vehicles", "audio", "media"].includes(dir)
-    ? dir
-    : /^shots\/[\w.\-]+\/(takes|locked|blocking)$/.test(dir)
-      ? dir
-      : null;
+  const safeDir = containedMediaDir(dir);
   if (!safeDir) return res.status(400).json({ error: "bad dir" });
   let owned;
   try {

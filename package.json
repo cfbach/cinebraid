@@ -63,6 +63,8 @@
     "check:founder-p0-negative": "node tests/founder-smoke-p0-trust-negative-controls.js",
     "check:founder-p0-browser": "node tests/run-python-check.js tests/founder-smoke-overlay-real-browser.py",
     "check:package": "node tests/release-package-smoke.js",
+    "check:alpha-reference-approval": "node tests/alpha-imported-reference-approval.js",
+    "check:alpha-reference-approval-negative": "node tests/alpha-imported-reference-approval-negative-controls.js",
     "check:reference-authority": "node tests/reference-authority-deep-dive.js",
     "check:reference-contract": "node tests/reference-review-contract.js",
     "check:candidate-review": "node tests/candidate-review-semantics.js",
