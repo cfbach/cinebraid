@@ -1554,7 +1554,25 @@ function v627EntityPreflight(list, entity, stateIds) {
    * Ollama exists. Whichever provider the filmmaker actually chose is the one whose
    * readiness is read and whose words are shown. */
   const braidyText = capabilityState("text");
-  if (!braidyText.ready) errors.push(`Braidy's text assistant is unavailable. ${[braidyText.message, braidyText.action].filter(Boolean).join(" ")}`.trim());
+  if (!braidyText.ready) {
+    /* C3 — THE REFUSAL NAMES THE MODEL IT WAS GOING TO USE.
+     *
+     * The capability record has carried `model` all along; only some providers put it
+     * into their own words. Ollama's branch ends "Expected model: qwen3:8b."; the
+     * custom branch says "cannot reach the custom AI server (ECONNREFUSED)" and stops,
+     * so a filmmaker with two servers configured could not tell from the refusal which
+     * Braidy had failed to answer.
+     *
+     * The model is appended here rather than in any provider's branch, so this stays
+     * the provider-neutral gate it is — and only when the provider has not already
+     * said it, which is what keeps Ollama's diagnostic exactly as it was and stops the
+     * custom "model is not served by" message repeating itself. Read, never composed:
+     * if the record names no model, none is claimed. */
+    const said = [braidyText.message, braidyText.action].filter(Boolean).join(" ");
+    const braidyModel = String(braidyText.model || "").trim();
+    const alreadyNamed = !!braidyModel && said.includes(braidyModel);
+    errors.push(`Braidy's text assistant is unavailable. ${said}${braidyModel && !alreadyNamed ? ` Selected model: ${braidyModel}.` : ""}`.trim());
+  }
   const braidyVision = capabilityState("vision");
   /* OFF AND BROKEN ARE DIFFERENT WARNINGS, and only one of them is the filmmaker's
      to act on. Vision deliberately not set up needs no provider diagnostic — telling

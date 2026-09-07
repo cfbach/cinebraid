@@ -63,6 +63,18 @@ const CAPS = {
     text: { ready: true, provider: "custom", model: "qwen3.8-27b-fp8", message: "Text assistance is ready with qwen3.8-27b-fp8.", action: "" },
     vision: { ready: false, provider: "ollama", model: "llava:13b", message: "Ollama is not reachable at http://127.0.0.1:11434.", action: "Start Ollama, then retry. Expected model: llava:13b." },
   },
+  /* C3, reproduced: Braidy is the OpenAI-compatible server and it is not answering.
+     The record carries the model; the provider's own words do not mention it. */
+  customChosenAndDown: {
+    text: { ready: false, provider: "custom", model: "qwen3.8-27b-fp8", message: "Text assistance cannot reach the custom AI server (ECONNREFUSED).", action: "Start the custom AI server, or correct its address and key in Settings, then retry." },
+    vision: { ready: false, provider: "none", model: "", message: "Vision assistance is disabled in AI Assistant settings.", action: "Choose an AI provider in Settings." },
+  },
+  /* The custom server answers but does not serve the configured model — its own
+     message already names it, so nothing may repeat it. */
+  customModelNotServed: {
+    text: { ready: false, provider: "custom", model: "qwen3.8-27b-fp8", message: 'Text assistance model "qwen3.8-27b-fp8" is not served by the custom AI server.', action: "Use one of the served model names: llama3.1:70b." },
+    vision: { ready: false, provider: "none", model: "", message: "Vision assistance is disabled in AI Assistant settings.", action: "Choose an AI provider in Settings." },
+  },
   /* Everything on. */
   allReady: {
     text: { ready: true, provider: "custom", model: "qwen3.8-27b-fp8", message: "Text assistance is ready with qwen3.8-27b-fp8.", action: "" },
@@ -192,6 +204,43 @@ async function testOllamaChosenStillRefusesTruthfully() {
   ok(out.markup.includes("Cannot start yet"), "3. the plan says it cannot start");
 }
 
+/* ---- 3b (C3). An unreachable SELECTED provider names both provider and model - */
+async function testUnreachableSelectedProviderNamesProviderAndModel() {
+  const out = await preflightUnder(CAPS.customChosenAndDown);
+  const said = joined(out.errors);
+  ok(out.errors.length > 0, "3b. an unreachable OpenAI-compatible Braidy still blocks the run");
+  ok(said.includes("custom AI server"),
+    "3b. the refusal names the provider that did not answer", said);
+  ok(said.includes("(ECONNREFUSED)"),
+    "3b. and keeps the provider's own diagnostic verbatim");
+  ok(said.includes("qwen3.8-27b-fp8"),
+    "3b. C3 — and names the selected model, which the capability record carried all along", said);
+  ok(said.includes("Selected model: qwen3.8-27b-fp8."),
+    "3b. stated as the model this run would have used");
+  ok(!/Ollama/i.test(said),
+    "3b. without naming a provider nobody selected");
+
+  /* The model is READ, never composed: a record that names no model claims none. */
+  const noModel = await preflightUnder({
+    text: { ready: false, provider: "custom", model: "", message: "Text assistance cannot reach the custom AI server.", action: "Correct its address in Settings." },
+    vision: CAPS.customChosenAndDown.vision,
+  });
+  ok(!joined(noModel.errors).includes("Selected model"),
+    "3b. and where the record names no model, none is invented", joined(noModel.errors));
+
+  /* Said once. A provider whose own words already name the model must not repeat it. */
+  const served = await preflightUnder(CAPS.customModelNotServed);
+  const servedSaid = joined(served.errors);
+  ok(servedSaid.includes('"qwen3.8-27b-fp8" is not served'),
+    "3b. a provider that already names the model keeps its own sentence", servedSaid);
+  ok(!servedSaid.includes("Selected model:"),
+    "3b. and the model is not stated twice");
+  const ollama = await preflightUnder(CAPS.ollamaChosenAndDown);
+  ok(!joined(ollama.errors).includes("Selected model:"),
+    "3b. Ollama's diagnostic, which already ends with the expected model, is unchanged",
+    joined(ollama.errors));
+}
+
 /* ---- 4. No AI configured → truthful refusal ------------------------------- */
 async function testDisabledAssistantRefusesTruthfully() {
   const out = await preflightUnder(CAPS.disabled);
@@ -283,6 +332,7 @@ async function main() {
     testOpenAiCompatibleBraidyIsAllowed,
     testTextResolvesThroughTheAcceptedPath,
     testOllamaChosenStillRefusesTruthfully,
+    testUnreachableSelectedProviderNamesProviderAndModel,
     testDisabledAssistantRefusesTruthfully,
     testVisionOffIsNotATextFailure,
     testGateNamesNoProvider,
