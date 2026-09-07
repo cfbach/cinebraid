@@ -8329,40 +8329,44 @@ function agentIndexMeta(P = null) {
     return { ready: false, stale: true, error: e.message };
   }
 }
-/* C2 — OFF AND BROKEN ARE DIFFERENT STATES, AND ONLY CONFIGURATION CAN TELL THEM APART.
+/* C2 — ONE AUTHORITY FOR CAPABILITY STANDING, AND THIS IS NOT IT.
  *
- * The first cut labelled the review refusal `capability-off` whenever the error was
- * PERMANENT — and `assistantErrorIsPermanent` is permanent for "no openai api key"
- * and "not configured" too. So an OpenAI vision provider with a model selected and
- * a missing key was reported as "Visual review skipped — Vision is off", which is a
- * calm sentence about a deliberate choice, printed over a configuration fault the
- * filmmaker needs to fix. Un-retryable is not the same as switched off.
+ * Two repairs failed here for the same structural reason, not for two reasons.
+ * Both had this predicate RE-DERIVE whether vision was usable — first from
+ * whether the error could be retried, then from whether a model field was
+ * populated — while `capabilityCheck` was already the authority on exactly that.
+ * Two readers of one question disagree eventually; the only question is which
+ * configuration finds the seam. OpenAI-with-a-key-and-no-model found the first,
+ * `openaiVisionModel` found the second, and a third would have found a third.
  *
- * Off is a fact about CONFIGURATION, so it is read from configuration, exactly the
- * way the browser's `visionIsOff` reads it from the capability record: provider
- * none/never, or no vision model named — "because a blank model is not an active
- * provider... in both cases no image is read". Everything else that cannot answer
- * is a configured capability that is not working, keeps its own diagnostic, and is
- * never described as Off.
+ * So this no longer answers "is vision usable" at all. It answers the only
+ * question that is genuinely its own: WAS VISION EXPLICITLY SWITCHED OFF — a fact
+ * about the provider SELECTION, decidable from the selection alone, with no model
+ * field, credential, endpoint or runtime consulted.
  *
- * No provider logic is broadened here. It asks `resolvedVisionProvider` and the same
- * `agents.models.vision || ollamaVisionModel` pair `assistantCapabilities` asks, and
- * decides nothing about vision itself. */
+ * Everything a real provider can be — ready with an explicit model, ready via the
+ * provider's default, missing a credential, unreachable, serving no such model —
+ * belongs to the capability reader and is none of this function's business. None
+ * of them may be rewritten as Off.
+ *
+ * `resolvedVisionProvider` already collapses `same` onto the text provider, so a
+ * vision setting that inherits a disabled assistant arrives here as the disabled
+ * provider it resolves to and needs no case of its own. */
+const DISABLED_ASSISTANT_PROVIDERS = new Set(["none", "never"]);
+/* THE SINGLE DEFINITION OF "EXPLICITLY DISABLED", owned by the capability layer
+   and consumed by both readers — `capabilityCheck` for the standing it reports,
+   and `visionCapabilityIsOff` for the automation label. Because it is one
+   predicate, the capability record and the automation layer cannot disagree about
+   which providers are switched off: whenever the reader calls a capability
+   disabled, Off is true, and whenever the reader reports a configured provider —
+   ready or failing — Off is false. `never` is the browser's long-standing second
+   sentinel (public/app.js `visionIsOff`); naming it here is what stopped the
+   server from reporting it as an unconfigured provider. */
+function assistantProviderIsDisabled(provider) {
+  return DISABLED_ASSISTANT_PROVIDERS.has(String(provider || "").trim());
+}
 function visionCapabilityIsOff(cfg = readConfig()) {
-  const provider = String(resolvedVisionProvider(cfg) || "").trim();
-  if (provider === "none" || provider === "never") return true;
-  /* C2/2 — "IS A MODEL SELECTED" MUST BE ASKED OF THE MODEL THAT WOULD ACTUALLY BE
-     USED. The first repair asked `agents.models.vision || ollamaVisionModel`, which
-     are the GENERIC and OLLAMA fields. An OpenAI vision provider carrying
-     `openaiVisionModel: "gpt-5.2"` has neither of them set, so a fully selected
-     model read as no model at all and a missing-API-key fault was reported as
-     "Vision is off" — the same misclassification as before, arrived at through a
-     different wrong field.
-     `effectiveVisionModel` is the resolution `capabilityCheck` performs, so this
-     asks the question of the same value /api/agents/status answers it with. No
-     provider is named here and no second switch exists: when a new provider is
-     added to `providerCapabilityModel`, this follows it for free. */
-  return !String(effectiveVisionModel(cfg) || "").trim();
+  return assistantProviderIsDisabled(resolvedVisionProvider(cfg));
 }
 function resolvedVisionProvider(cfg) {
   const selected = cfg.assistant?.visionProvider || "same";
@@ -8395,26 +8399,9 @@ function providerCapabilityModel(provider, cfg, kind) {
       : cfg.anthropicModel || "";
   return "";
 }
-/* THE EFFECTIVE MODEL FOR A CAPABILITY, IN ONE PLACE.
-   This composition — the provider's own field, falling back to the generic/Ollama
-   one — was written inline inside capabilityCheck and nowhere else, so any other
-   reader that needed the same answer had to restate half of it. Naming it is what
-   makes reuse possible without a second provider switch. */
-function effectiveCapabilityModel(provider, cfg, kind, fallbackModel) {
-  return providerCapabilityModel(provider, cfg, kind) || fallbackModel || "";
-}
-/* The generic vision fallback, likewise stated once rather than at each caller. */
-function configuredVisionFallbackModel(cfg) {
-  return cfg.agents?.models?.vision || cfg.ollamaVisionModel || "";
-}
-/* WHAT VISION IS ACTUALLY SET TO, resolved exactly as /api/agents/status resolves
-   it: same provider resolution, same effective-model resolution, same fallback. */
-function effectiveVisionModel(cfg) {
-  return effectiveCapabilityModel(resolvedVisionProvider(cfg), cfg, "vision", configuredVisionFallbackModel(cfg));
-}
 function capabilityCheck(label, provider, ollamaModel, inventories, cfg, kind = "text") {
-  const model = effectiveCapabilityModel(provider, cfg, kind, ollamaModel);
-  if (provider === "none")
+  const model = providerCapabilityModel(provider, cfg, kind) || ollamaModel;
+  if (assistantProviderIsDisabled(provider))
     return {
       ready: false,
       label,
@@ -8548,7 +8535,7 @@ async function agentReadiness(type, cfg = readConfig(), inventories = null) {
     cfg.agents?.models?.verifier ||
     cfg.agents?.models?.coordinator ||
     cfg.ollamaModel;
-  const visionModel = configuredVisionFallbackModel(cfg);
+  const visionModel = cfg.agents?.models?.vision || cfg.ollamaVisionModel;
   const embeddingModel =
     cfg.agents?.models?.embedding || cfg.ollamaEmbedModel;
   const coderModel = cfg.agents?.models?.coder || "";
@@ -8647,7 +8634,7 @@ function assistantCapabilities(cfg = readConfig(), inventories = null) {
     cfg.agents?.models?.verifier ||
     cfg.agents?.models?.coordinator ||
     cfg.ollamaModel;
-  const visionModel = configuredVisionFallbackModel(cfg);
+  const visionModel = cfg.agents?.models?.vision || cfg.ollamaVisionModel;
   const embeddingModel = cfg.agents?.models?.embedding || cfg.ollamaEmbedModel;
   const coderModel = cfg.agents?.models?.coder || plannerModel;
   return {

@@ -558,102 +558,95 @@ function testVisionOffIsReadFromConfiguration() {
      and "no openai api key" is permanent — so a configured OpenAI vision provider
      with a missing key was reported as switched off. */
   ok(!/reviewUnavailableReason: error\.assistantPermanent \? "capability-off"/.test(server),
-    "C2: off-ness is no longer inferred from whether the error was retryable");
-  ok(/const off = visionCapabilityIsOff\(\);/.test(server)
-    && /reviewUnavailableReason: off \? "capability-off" : "review-failed"/.test(server),
-    "C2: it is read from the vision configuration instead");
+    "C2: off-ness is not inferred from whether the error was retryable");
   ok(/reviewRetryable: !error\.assistantPermanent/.test(server),
-    "C2: and retryability is reported separately, because it answers a different question");
+    "C2: retryability is reported separately, because it answers a different question");
 
-  /* THE SECOND REPRODUCTION, and the one this section exists for. The first repair
-     asked `agents.models.vision || ollamaVisionModel` — the GENERIC and OLLAMA
-     fields. An OpenAI vision provider carrying `openaiVisionModel: "gpt-5.2"` has
-     neither set, so a fully selected model read as no model and the same
-     misclassification returned through a different wrong field.
+  /* THE STRUCTURAL DEFECT BEHIND BOTH REPRODUCTIONS, and what this section now
+     guards. Twice this predicate RE-DERIVED whether vision was usable — from error
+     permanence, then from whether a model field was populated — while
+     `capabilityCheck` was already the authority on exactly that. Two readers of one
+     question disagree eventually; only the configuration that finds the seam
+     changes. So the predicate no longer answers "is vision usable" at all. */
+  ok(/function visionCapabilityIsOff\(cfg = readConfig\(\)\) \{\s*return assistantProviderIsDisabled\(resolvedVisionProvider\(cfg\)\);\s*\}/.test(server),
+    "C2: Off is decided from the resolved provider selection and nothing else");
 
-     There must be ONE effective provider/model resolution, so the predicate is
-     required to reuse the capability reader's, not to grow a second switch. */
-  ok(/return !String\(effectiveVisionModel\(cfg\) \|\| ""\)\.trim\(\);/.test(server),
-    "C2: the model question is asked of the model that would actually be used");
-  ok(/function effectiveVisionModel\(cfg\) \{\s*return effectiveCapabilityModel\(resolvedVisionProvider\(cfg\), cfg, "vision", configuredVisionFallbackModel\(cfg\)\);/.test(server),
-    "C2: through the same resolution /api/agents/status resolves vision with");
-  ok(/const model = effectiveCapabilityModel\(provider, cfg, kind, ollamaModel\);/.test(server),
-    "C2: which is capabilityCheck's own resolution, named rather than duplicated");
-  /* NO SECOND PROVIDER SWITCH. `providerCapabilityModel` stays the only place that
-     knows which field a given provider keeps its model in, so a provider added
-     there is picked up here for free. */
-  const namesVisionModelField = (server.match(/cfg\.(?:openai|custom|anthropic)VisionModel/g) || []).length;
-  ok(namesVisionModelField === 3,
-    "C2: only providerCapabilityModel names a provider's vision-model field, once per provider");
-  ok(!/visionCapabilityIsOff[\s\S]{0,600}?ollamaVisionModel/.test(server),
-    "C2: and the off test inspects no provider-specific field of its own");
+  /* NO CAPABILITY STANDING IS RECONSTRUCTED HERE. The body is one expression, and
+     these checks say what it may not contain rather than trusting that it does not. */
+  const body = server.slice(server.indexOf("function visionCapabilityIsOff"));
+  const offBody = body.slice(0, body.indexOf("}") + 1);
+  for (const forbidden of ["openaiVisionModel", "ollamaVisionModel", "customVisionModel", "anthropicVisionModel", "agents", "Key", "BaseUrl", "inventor", "model"]) {
+    ok(!offBody.includes(forbidden),
+      `C2: the Off predicate consults no ${forbidden.toLowerCase().includes("model") ? "model field" : forbidden} of its own`);
+  }
+  /* And no effective-model helper was created for it, which is how the previous
+     attempt smuggled the same reconstruction back in under a better name. */
+  ok(!/function effectiveVisionModel\(/.test(server) && !/function effectiveCapabilityModel\(/.test(server),
+    "C2: no effective-model helper exists solely to classify Off");
+  ok(/providerCapabilityModel\(provider, cfg, kind\) \|\| ollamaModel/.test(server),
+    "C2: the capability reader's own model resolution is left exactly as it was");
 
-  /* The shipped functions, run over the exact configurations Astra reproduced. */
+  /* ONE DEFINITION OF "EXPLICITLY DISABLED", consumed by both readers — which is
+     what makes the meta-invariant below structural rather than coincidental. */
+  ok(/const DISABLED_ASSISTANT_PROVIDERS = new Set\(\["none", "never"\]\);/.test(server),
+    "C2: the disable sentinels are declared once");
+  ok(/function assistantProviderIsDisabled\(provider\)/.test(server),
+    "C2: behind one predicate");
+  ok(/if \(assistantProviderIsDisabled\(provider\)\)/.test(server),
+    "C2: which the capability reader itself uses for the standing it reports");
+
+  /* The shipped functions, over every configuration this reframe pinned. */
   const sandbox = vm.createContext({
     readConfig: () => ({}),
     cleanModelName: (m) => String(m || "").trim(),
     exactModelReady: (models, m) => (models || []).includes(String(m || "").trim()),
   });
-  vm.runInContext([
+  const raw = serverSource();
+  const sentinels = raw.slice(raw.indexOf("const DISABLED_ASSISTANT_PROVIDERS"), raw.indexOf("/* THE SINGLE DEFINITION"));
+  vm.runInContext(sentinels + "\n" + [
+    "assistantProviderIsDisabled",
     "resolvedVisionProvider",
     "providerCapabilityModel",
-    "effectiveCapabilityModel",
-    "configuredVisionFallbackModel",
-    "effectiveVisionModel",
     "providerConfigured",
     "capabilityCheck",
     "visionCapabilityIsOff",
   ].map(extractServerFunction).join("\n"), sandbox);
 
-  const ollamaDown = { ollama: { ok: false, models: [], base: "http://127.0.0.1:11434" }, custom: {} };
-  const ollamaUp = { ollama: { ok: true, models: ["llava:13b"], base: "http://127.0.0.1:11434" }, custom: {} };
+  const down = { ollama: { ok: false, models: [], base: "http://127.0.0.1:11434" }, custom: {} };
+  const up = { ollama: { ok: true, models: ["llava:13b"], base: "http://127.0.0.1:11434" }, custom: {} };
   const cases = [
-    ["OpenAI with gpt-5.2, a missing key and a blank Ollama model",
-      { assistant: { provider: "openai", visionProvider: "openai" }, openaiVisionModel: "gpt-5.2", agents: { models: { vision: "" } }, ollamaVisionModel: "" },
-      ollamaDown, false],
-    ["OpenAI with no vision model at all",
-      { assistant: { provider: "openai", visionProvider: "openai" }, openaiKey: "sk-x", agents: { models: { vision: "" } }, ollamaVisionModel: "" },
-      ollamaDown, true],
-    ["Ollama with a selected model and an unavailable runtime",
-      { assistant: { provider: "ollama", visionProvider: "ollama" }, ollamaVisionModel: "llava:13b", agents: { models: {} } },
-      ollamaDown, false],
-    ["custom with a selected vision model and an unreachable endpoint",
-      { assistant: { provider: "custom", visionProvider: "custom" }, customBaseUrl: "http://127.0.0.1:9/v1", customVisionModel: "qwen-vl", agents: { models: {} } },
-      ollamaDown, false],
-    ["provider none",
-      { assistant: { provider: "openai", visionProvider: "none" }, openaiVisionModel: "gpt-5.2", agents: { models: {} } },
-      ollamaDown, true],
-    ["fully configured and valid vision",
-      { assistant: { provider: "openai", visionProvider: "openai" }, openaiKey: "sk-x", openaiVisionModel: "gpt-5.2", agents: { models: {} } },
-      ollamaDown, false],
-    ["vision inheriting a none text provider",
-      { assistant: { provider: "none", visionProvider: "same" }, agents: { models: { vision: "gpt-4o" } } },
-      ollamaDown, true],
-    ["Ollama with a selected model, a live runtime and the model installed",
-      { assistant: { provider: "ollama", visionProvider: "ollama" }, ollamaVisionModel: "llava:13b", agents: { models: {} } },
-      ollamaUp, false],
-    ["anthropic with a selected vision model and a missing key",
-      { assistant: { provider: "anthropic", visionProvider: "anthropic" }, anthropicVisionModel: "claude-vision", agents: { models: {} } },
-      ollamaDown, false],
+    ["provider none", { assistant: { provider: "openai", visionProvider: "none" }, openaiVisionModel: "gpt-5.2" }, down, true],
+    ["provider never", { assistant: { provider: "openai", visionProvider: "never" }, openaiVisionModel: "gpt-5.2" }, down, true],
+    ["same resolving through a disabled text provider", { assistant: { provider: "none", visionProvider: "same" }, agents: { models: { vision: "gpt-4o" } } }, down, true],
+    ["OpenAI with a key and no explicit model, served from the provider default", { assistant: { provider: "openai", visionProvider: "openai" }, openaiKey: "sk-x", agents: { models: { vision: "" } }, ollamaVisionModel: "" }, down, false],
+    ["OpenAI with a selected model and a missing key", { assistant: { provider: "openai", visionProvider: "openai" }, openaiVisionModel: "gpt-5.2", agents: { models: { vision: "" } }, ollamaVisionModel: "" }, down, false],
+    ["custom with a selected model and an unreachable endpoint", { assistant: { provider: "custom", visionProvider: "custom" }, customBaseUrl: "http://127.0.0.1:9/v1", customVisionModel: "qwen-vl" }, down, false],
+    ["custom with a default model and an unreachable endpoint", { assistant: { provider: "custom", visionProvider: "custom" }, customBaseUrl: "http://127.0.0.1:9/v1", customModel: "m" }, down, false],
+    ["Ollama with a selected model and a runtime that is down", { assistant: { provider: "ollama", visionProvider: "ollama" }, ollamaVisionModel: "llava:13b" }, down, false],
+    ["valid configured vision on ollama", { assistant: { provider: "ollama", visionProvider: "ollama" }, ollamaVisionModel: "llava:13b" }, up, false],
+    ["valid configured vision on openai", { assistant: { provider: "openai", visionProvider: "openai" }, openaiKey: "sk-x", openaiVisionModel: "gpt-5.2" }, down, false],
+    ["OpenAI with no model of any kind and no key", { assistant: { provider: "openai", visionProvider: "openai" } }, down, false],
+    ["anthropic with a selected model and a missing key", { assistant: { provider: "anthropic", visionProvider: "anthropic" }, anthropicVisionModel: "claude-vision" }, down, false],
   ];
   for (const [label, cfg, inventories, expectedOff] of cases) {
     const off = sandbox.visionCapabilityIsOff(cfg);
     ok(off === expectedOff,
-      "C2: " + label + " -> " + (expectedOff ? "Off" : "configured, and not called Off"));
-    /* THE DEFECT, STATED AS AN INVARIANT. The capability reader also serves a
-       configured provider that names no model from the provider default and calls
-       it ready, so "off iff the reader says disabled" would be too strong. What
-       must never happen is the C2 defect itself: a provider the reader is
-       reporting a CONFIGURATION FAULT for being described as switched off. */
+      "C2: " + label + " -> " + (expectedOff ? "Off" : "owned by the capability reader, never relabelled Off"));
+    /* THE META-INVARIANT. If the authoritative reader says ready, or reports a
+       configured-provider failure, the automation layer may not call it Off. Both
+       now consult one disable predicate, so this cannot drift: Off is true exactly
+       where the reader itself reports the capability disabled. */
     const capability = sandbox.capabilityCheck(
       "Vision assistance",
       sandbox.resolvedVisionProvider(cfg),
-      sandbox.configuredVisionFallbackModel(cfg),
+      (cfg.agents && cfg.agents.models && cfg.agents.models.vision) || cfg.ollamaVisionModel,
       inventories, cfg, "vision",
     );
-    const readerReportsProviderFault = /is not configured|is not reachable|is not installed/.test(capability.message);
-    ok(!(off && readerReportsProviderFault),
-      "C2: " + label + " -> a configuration fault is never reported as Off");
+    const readerDisabled = /is disabled in AI Assistant settings/.test(capability.message);
+    ok(off === readerDisabled,
+      "C2: " + label + " -> Off agrees with the capability reader's own standing");
+    ok(!((capability.ready || !readerDisabled) && off),
+      "C2: " + label + " -> a ready or configured-but-failing capability is never Off");
   }
 }
 
