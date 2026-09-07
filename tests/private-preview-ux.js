@@ -89,12 +89,12 @@ async function main() {
 
   const visionOff = {
     capabilities: {
-      text: { ready: true, label: 'Text assistance', message: '', action: '' },
-      verifier: { ready: true, label: 'Prompt verification', message: '', action: '' },
-      vision: { ready: false, label: 'Vision assistance', message: 'Vision assistance is disabled in AI Assistant settings.', action: 'Open Settings to enable it.' },
-      continuity: { ready: true, label: 'Continuity observation', message: '', action: '' },
-      embedding: { ready: true, label: 'Local semantic search', message: '', action: '' },
-      technical: { ready: true, label: 'Technical analysis', message: '', action: '' },
+      text: { ready: true, standing: "ready", label: 'Text assistance', message: '', action: '' },
+      verifier: { ready: true, standing: "ready", label: 'Prompt verification', message: '', action: '' },
+      vision: { ready: false, standing: "off", label: 'Vision assistance', message: 'Vision assistance is disabled in AI Assistant settings.', action: 'Open Settings to enable it.' },
+      continuity: { ready: true, standing: "ready", label: 'Continuity observation', message: '', action: '' },
+      embedding: { ready: true, standing: "ready", label: 'Local semantic search', message: '', action: '' },
+      technical: { ready: true, standing: "ready", label: 'Technical analysis', message: '', action: '' },
     },
   };
   const framesNoVision = await render('#/shot/L1-01', project, { scan, storage: framesStorage, agentStatus: visionOff });

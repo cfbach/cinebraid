@@ -8399,7 +8399,33 @@ function providerCapabilityModel(provider, cfg, kind) {
       : cfg.anthropicModel || "";
   return "";
 }
+/* C2 — THE ONE NORMALIZED STANDING, DERIVED WHERE THE RECORD IS BUILT.
+ *
+ * Three states, and they are not interchangeable:
+ *
+ *   off                     the capability was explicitly switched off
+ *   ready                   a real provider answered
+ *   configured-unavailable  a real provider is selected and something about its
+ *                           credentials, address, runtime or model is wrong
+ *
+ * Every consumer — this server's automation label, the browser's Candidate
+ * Review panel, the reference-automation skip, the Settings card — reads this
+ * field instead of re-deriving standing from provider, model, key or endpoint.
+ * That is the whole correction: the previous repairs each fixed one re-derivation
+ * while leaving the others, and the browser's copy could still contradict this
+ * record for the same configuration.
+ *
+ * It is derived from the record rather than alongside it, so a branch added to
+ * capabilityCheck cannot forget to classify itself. */
+function capabilityStanding(provider, record) {
+  if (assistantProviderIsDisabled(provider)) return "off";
+  return record && record.ready ? "ready" : "configured-unavailable";
+}
 function capabilityCheck(label, provider, ollamaModel, inventories, cfg, kind = "text") {
+  const record = resolveCapabilityRecord(label, provider, ollamaModel, inventories, cfg, kind);
+  return { ...record, standing: capabilityStanding(provider, record) };
+}
+function resolveCapabilityRecord(label, provider, ollamaModel, inventories, cfg, kind = "text") {
   const model = providerCapabilityModel(provider, cfg, kind) || ollamaModel;
   if (assistantProviderIsDisabled(provider))
     return {

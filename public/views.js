@@ -295,6 +295,40 @@ const ROUTES = {
       ["openai", "OpenAI API", "OpenAI, over the internet"],
       ["custom", "OpenAI-compatible server", "vLLM, LM Studio, llama.cpp, or any /v1 server"],
     ];
+    /* ASK WHERE IT RUNS BEFORE ASKING WHICH PROTOCOL IT SPEAKS.
+     *
+     * The four runtimes above were offered as one flat row, so the first decision a
+     * filmmaker faced was "OpenAI API or OpenAI-compatible server?" — a distinction
+     * about wire protocols and hosting that they have no way to answer and that does
+     * not correspond to anything they are trying to do. The question they can answer
+     * is whether this should run on their own machine or on somebody's servers.
+     *
+     * So the choice is two steps: where it runs, then which runtime. Local and Cloud
+     * group the SAME four ids; nothing about what is stored changes, `provider` still
+     * holds "ollama" | "custom" | "openai" | "anthropic" | "none", and every save,
+     * load and migration path is untouched. This is presentation over the existing
+     * values, which is what keeps it a bounded simplification rather than a schema
+     * change. */
+    const ASSISTANT_TIERS = [
+      ["local", "Local", "Runs on this machine. Nothing is sent anywhere.", ["ollama", "custom"]],
+      ["cloud", "Cloud", "Runs on a provider's servers, over the internet.", ["openai", "anthropic"]],
+    ];
+    /* The same four ids, named for what a filmmaker recognises rather than for the
+       protocol they speak. Grouping them under Local / Cloud is what makes
+       "OpenAI" and "OpenAI-compatible" stop looking like two versions of one
+       thing: they are now in different groups, which is what they actually are. */
+    const VISION_RUNTIME_LABELS = {
+      ollama: "Ollama",
+      custom: "OpenAI-compatible server",
+      openai: "OpenAI",
+      anthropic: "Claude",
+    };
+    const tierOf = (id) => (ASSISTANT_TIERS.find(([, , , ids]) => ids.includes(id)) || [""])[0];
+    const tierRuntimes = (tier) => (ASSISTANT_TIERS.find(([id]) => id === tier) || [, , , []])[3];
+    /* Choosing a tier lands on that tier's first runtime unless the current one is
+       already inside it, so a filmmaker moving Cloud -> Local is not left on a
+       provider that belongs to neither. */
+    const tierEntryProvider = (tier, current) => (tierRuntimes(tier).includes(current) ? current : tierRuntimes(tier)[0]);
     /* A2 — "No AI" is not a fifth runtime, it is Braidy switched off, so it is
        not a peer tile. The id is untouched and `setAssistantProvider('none')` is
        still exactly what turns it off. */
@@ -348,24 +382,49 @@ const ROUTES = {
     const visionChoice = c.assistant?.visionProvider || "same";
     const visionProvider = visionChoice === "same" ? provider : visionChoice;
     const visionModel = { ollama: c.ollamaVisionModel, anthropic: c.anthropicModel || "claude-sonnet-4-6", openai: c.openaiVisionModel || c.openaiModel, custom: c.customVisionModel }[visionProvider] || "";
-    const visionOff = visionProvider === "none" || visionProvider === "never";
-    const visionConfigured = !visionOff && !!visionModel;
-    /* A1 — A BLANK MODEL IS NOT AN ACTIVE PROVIDER. The status line reads Off in
-       both the disabled and the nothing-named case, because in both cases no
-       image is read; which of the two it is belongs in the detail line under it,
-       not in the word a filmmaker scans for. */
-    const visionStatus = visionConfigured ? "On" : "Off";
+    /* C2 — THE STATUS WORD COMES FROM THE AUTHORITATIVE STANDING.
+     *
+     * A1 had this card read "Off" for a blank model as well as for a disabled
+     * provider, on the reasoning that no image is read either way. That reasoning
+     * was wrong about one case and it made this panel a fourth place that decided
+     * what Off means: an OpenAI provider with a key and no explicit model is
+     * served from the provider default and the server reports it READY, while this
+     * card called it Off — the same contradiction, on the screen a filmmaker opens
+     * specifically to find out.
+     *
+     * Standing is read from the capability record now, exactly as the Braidy card
+     * above already reads `textReady`, and the record is refreshed on every save,
+     * so an edit is reflected as soon as it is saved. "Needs a model" is its own
+     * word, because a selected provider with nothing named is not switched off —
+     * it is incomplete, and that is what the detail line has always said.
+     *
+     * `visionModel` below is still read from the config: it decides WHICH BOX to
+     * render and what to prefill, which is form work, not standing. */
+    const visionCapability = typeof capabilityState === "function" ? capabilityState("vision") : null;
+    const visionStanding = typeof capabilityStanding === "function" ? capabilityStanding(visionCapability) : "checking";
+    const visionOff = visionStanding === "off";
+    const visionConfigured = visionStanding === "ready";
+    const visionState = visionOff ? "off"
+      : visionStanding === "checking" ? "checking"
+      : visionConfigured ? "on"
+      : !visionModel ? "incomplete"
+      : "unreachable";
+    const visionStatus = { off: "Off", checking: "Checking…", on: "On", incomplete: "Needs a model", unreachable: "Not reachable" }[visionState];
     /* WHERE THE MISSING VISION MODEL WOULD BE TYPED. This panel only ever holds
        the SELECTED ASSISTANT's model fields, so when vision resolves to a
        different provider there is no box on this screen that feeds it. */
     const visionFieldIsHere = visionProvider === provider;
     const visionDetail = visionOff
       ? "No image is sent for reading."
-      : visionConfigured
-        ? `${providerLabel(visionProvider)} · ${visionModel}`
-        : visionFieldIsHere
-          ? `${providerLabel(visionProvider)} is selected but no vision model is named, so image reading cannot run.`
-          : `${providerLabel(visionProvider)} has no vision model saved. Its fields appear when ${providerLabel(visionProvider)} is Braidy's provider; until then image reading cannot run.`;
+      : visionState === "checking"
+        ? "Asking the server which vision provider answers."
+        : visionConfigured
+          ? `${providerLabel(visionProvider)} · ${visionModel || "provider default model"}`
+          : visionState === "unreachable"
+            ? String(visionCapability?.message || "").trim() || `CineBraid could not reach ${providerLabel(visionProvider)}.`
+            : visionFieldIsHere
+              ? `${providerLabel(visionProvider)} is selected but no vision model is named, so image reading cannot run.`
+              : `${providerLabel(visionProvider)} has no vision model saved. Its fields appear when ${providerLabel(visionProvider)} is Braidy's provider; until then image reading cannot run.`;
 
     /* Continuity observation resolves separately from general vision because it
        is the one consumer that sends exactly one image per request, against a
@@ -403,8 +462,19 @@ const ROUTES = {
     const braidyAdvancedFields = provider === "custom"
       ? `${field("Sampling temperature", `<input id="cfg-custom-temperature" type="number" min="0" max="2" step="0.1" value="${attr(c.customTemperature === "" || c.customTemperature === undefined ? "" : Number(c.customTemperature))}" placeholder="server default"><span class="hint">Leave blank to send nothing. Low values such as 0.2 keep structured answers repeatable.</span>`)}${field("Top-K sampling", `<input id="cfg-custom-top-k" type="number" min="1" max="1000" step="1" value="${attr(c.customTopK === "" || c.customTopK === undefined ? "" : Number(c.customTopK))}" placeholder="server default"><span class="hint">Leave blank unless your server accepts top_k. Not every OpenAI-compatible server does.</span>`)}${field("Model thinking", `<select id="cfg-custom-thinking"><option value="auto" ${(c.customThinking || "auto") === "auto" ? "selected" : ""}>Server default</option><option value="disabled" ${c.customThinking === "disabled" ? "selected" : ""}>Ask the server to skip thinking</option></select><span class="hint">Reasoning servers can spend the whole token budget thinking and return an empty answer. Only choose the second option if your server understands it.</span>`)}`
       : "";
-    const braidyProviderChoice = `<div class="policy-options assistant-options" role="radiogroup" aria-label="Braidy's provider">${ASSISTANT_PROVIDERS.map(([v,l,note]) => `<button class="policy-option ${provider === v ? "on" : ""}" role="radio" aria-checked="${provider === v ? "true" : "false"}" onclick="setAssistantProvider('${v}')"><b>${esc(l)}</b><span>${esc(note)}</span></button>`).join("")}</div>`;
-    const braidyConfigure = `${provider === "none" ? `<p class="hint capability-off-hint">Braidy is off. Choose a provider to turn it on.</p>` : ""}${braidyProviderChoice}${braidyConnectionFields ? `<div class="two-col">${braidyConnectionFields}</div>` : ""}${braidyAdvancedFields ? disclosure("capability-advanced", "assistant-advanced:braidy", "Advanced", "Tuning this server accepts. Blank means CineBraid sends nothing.", `<div class="two-col">${braidyAdvancedFields}</div>`) : ""}${provider === "none" ? "" : `<div class="capability-off-switch"><button class="ghost-btn" onclick="setAssistantProvider('none')">Turn Braidy off</button><small>Prompt building stays rules-based and every manual workflow still runs.</small></div>`}`;
+    const braidyTier = provider === "none" ? "off" : tierOf(provider);
+    const braidyTierChoice = `<div class="policy-options assistant-options assistant-tier-options" role="radiogroup" aria-label="Where Braidy runs">
+      <button class="policy-option ${braidyTier === "off" ? "on" : ""}" role="radio" aria-checked="${braidyTier === "off" ? "true" : "false"}" onclick="setAssistantProvider('none')"><b>Off</b><span>Prompt building stays rules-based and every manual workflow still runs.</span></button>
+      ${ASSISTANT_TIERS.map(([id, label, note]) => `<button class="policy-option ${braidyTier === id ? "on" : ""}" role="radio" aria-checked="${braidyTier === id ? "true" : "false"}" onclick="setAssistantProvider('${attr(tierEntryProvider(id, provider))}')"><b>${esc(label)}</b><span>${esc(note)}</span></button>`).join("")}
+    </div>`;
+    const braidyRuntimeChoice = braidyTier === "off" || !braidyTier ? "" : `<div class="assistant-runtime-step"><span class="assistant-step-label">Which ${braidyTier === "local" ? "local runtime" : "service"}</span><div class="policy-options assistant-options" role="radiogroup" aria-label="Braidy's runtime">${tierRuntimes(braidyTier).map((v) => { const row = ASSISTANT_PROVIDERS.find(([id]) => id === v) || [v, v, ""]; return `<button class="policy-option ${provider === v ? "on" : ""}" role="radio" aria-checked="${provider === v ? "true" : "false"}" onclick="setAssistantProvider('${v}')"><b>${esc(row[1])}</b><span>${esc(row[2])}</span></button>`; }).join("")}</div></div>`;
+    const braidyProviderChoice = `<div class="assistant-choice"><span class="assistant-step-label">Where Braidy runs</span>${braidyTierChoice}</div>${braidyRuntimeChoice}`;
+    /* The standalone "Braidy is off" hint and the "Turn Braidy off" button are both
+       gone: Off is now the first tile of the Where-it-runs choice, carrying the same
+       sentence, and it is selected when Braidy is off. Two controls for one act, and
+       a hint restating a state the control already shows, are exactly what the
+       two-step shape removes. Turning Braidy off is the same single call it was. */
+    const braidyConfigure = `${braidyProviderChoice}${braidyConnectionFields ? `<div class="two-col">${braidyConnectionFields}</div>` : ""}${braidyAdvancedFields ? disclosure("capability-advanced", "assistant-advanced:braidy", "Advanced", "Tuning this server accepts. Blank means CineBraid sends nothing.", `<div class="two-col">${braidyAdvancedFields}</div>`) : ""}`;
 
     /* A4 — VISION CONFIGURES ITSELF, and the model box it owns is the one this
        panel can actually save. `assistantConfigPatch()` reads a provider's
@@ -418,9 +488,9 @@ const ROUTES = {
         : provider === "custom"
           ? field("Vision model", `<input id="cfg-custom-vision" value="${attr(c.customVisionModel || "")}"><span class="hint">Served by the same base URL as Braidy. Leave blank if this server answers text only.</span>`)
           : "";
-    const visionConfigure = `<div class="two-col">${field("Vision assistant", `<select id="assistant-vision-provider"><option value="same" ${visionChoice === "same" ? "selected" : ""}>Same as Braidy${provider === "none" ? "" : ` (${esc(providerLabel(provider))})`}</option><option value="ollama" ${visionChoice === "ollama" ? "selected" : ""}>Ollama vision</option><option value="anthropic" ${visionChoice === "anthropic" ? "selected" : ""}>Claude vision</option><option value="openai" ${visionChoice === "openai" ? "selected" : ""}>OpenAI vision</option><option value="custom" ${visionChoice === "custom" ? "selected" : ""}>OpenAI-compatible vision</option><option value="none" ${visionChoice === "none" ? "selected" : ""}>Disabled</option></select>`)}${visionModelField}</div>${visionFieldIsHere || visionOff ? "" : `<p class="hint capability-off-hint">${esc(visionDetail)}</p>`}`;
+    const visionConfigure = `<div class="two-col">${field("Who reads images", `<select id="assistant-vision-provider"><option value="same" ${visionChoice === "same" ? "selected" : ""}>Same as Braidy${provider === "none" ? "" : ` (${esc(providerLabel(provider))})`}</option><option value="none" ${visionChoice === "none" ? "selected" : ""}>Off — no image is read</option>${ASSISTANT_TIERS.map(([, tierLabel, , ids]) => `<optgroup label="${attr(tierLabel)}">${ids.map((id) => `<option value="${attr(id)}" ${visionChoice === id ? "selected" : ""}>${esc(VISION_RUNTIME_LABELS[id] || id)}</option>`).join("")}</optgroup>`).join("")}</select>`)}${visionModelField}</div>${visionFieldIsHere || visionOff ? "" : `<p class="hint capability-off-hint">${esc(visionDetail)}</p>`}`;
 
-    const continuityConfigure = `<p class="hint">Checks declared references frame by frame. Configured on its own because it sends exactly one image per request — Vision's settings do not apply to it, and it does not need Braidy to be an OpenAI-compatible server.</p><div class="two-col">${field("Continuity provider", `<select id="cfg-continuity-provider"><option value="" ${continuityConfig.visionProvider ? "" : "selected"}>Not configured — continuity checks stay off</option><option value="custom" ${continuityConfig.visionProvider === "custom" ? "selected" : ""}>OpenAI-compatible server</option><option value="openai" ${continuityConfig.visionProvider === "openai" ? "selected" : ""}>OpenAI API</option></select>`)}${field("Continuity endpoint", `<input id="cfg-continuity-base" value="${attr(continuityConfig.baseUrl || "")}" placeholder="${attr(continuityInherited || "http://127.0.0.1:8000/v1")}"><span class="hint">The OpenAI-compatible base URL, including <code>/v1</code>.${continuityInherited ? ` Leave blank to use ${esc(continuityInherited)}.` : " Leave blank to use the chosen provider's own address."}</span>`)}${field("Continuity model", `<input id="cfg-continuity-model" value="${attr(continuityConfig.visionModel || "")}" placeholder="the model this server serves"><span class="hint">Leave blank to use the provider's configured vision model.</span>`)}</div>`;
+    const continuityConfigure = `<p class="hint">Checks declared references frame by frame. Configured on its own because it sends exactly one image per request — Vision's settings do not apply to it, and it does not need Braidy to be an OpenAI-compatible server.</p><div class="two-col">${field("Who checks continuity", `<select id="cfg-continuity-provider"><option value="" ${continuityConfig.visionProvider ? "" : "selected"}>Off — continuity checks do not run</option><optgroup label="Local"><option value="custom" ${continuityConfig.visionProvider === "custom" ? "selected" : ""}>${esc(VISION_RUNTIME_LABELS.custom)}</option></optgroup><optgroup label="Cloud"><option value="openai" ${continuityConfig.visionProvider === "openai" ? "selected" : ""}>${esc(VISION_RUNTIME_LABELS.openai)}</option></optgroup></select>`)}${field("Continuity endpoint", `<input id="cfg-continuity-base" value="${attr(continuityConfig.baseUrl || "")}" placeholder="${attr(continuityInherited || "http://127.0.0.1:8000/v1")}"><span class="hint">The OpenAI-compatible base URL, including <code>/v1</code>.${continuityInherited ? ` Leave blank to use ${esc(continuityInherited)}.` : " Leave blank to use the chosen provider's own address."}</span>`)}${field("Continuity model", `<input id="cfg-continuity-model" value="${attr(continuityConfig.visionModel || "")}" placeholder="the model this server serves"><span class="hint">Leave blank to use the provider's configured vision model.</span>`)}</div>`;
 
     /* A5 — TEST BELONGS TO BRAIDY. It sits inside Braidy's own card, under
        Braidy's own identity line, so what it checks cannot be mistaken for
@@ -430,7 +500,7 @@ const ROUTES = {
        capability it belongs to is a matter of position rather than of reading a
        label — and the three cards fit one screen instead of two. */
     const braidyCard = `<article class="capability-card" data-capability="braidy" data-state="${attr(braidyState)}"><header><span class="capability-name">Braidy</span><span class="capability-status-row"><b class="capability-status">${esc(braidyStatus)}</b><button class="ghost-btn capability-test" ${provider === "none" ? "disabled" : ""} onclick="testAssistantConnection()" aria-label="${attr(provider === "none" ? "Test Braidy" : `Test Braidy's connection to ${providerLabel(provider)}`)}">Test</button></span></header><div class="capability-identity">${provider === "none" ? `<b>No provider selected</b>` : `<b>${esc(providerTextModel || "No model named yet")}</b><small>${esc(providerLabel(provider))}</small>${braidyEndpoint ? `<code>${esc(braidyEndpoint)}</code>` : ""}`}</div>${braidyDetail ? `<p class="capability-detail">${esc(braidyDetail)}</p>` : ""}<p id="assistant-test-note" class="capability-detail capability-test-note" role="status"></p>${disclosure("capability-configure", "assistant-configure:braidy", "Configure", "Provider, connection and tuning", braidyConfigure)}</article>`;
-    const visionCard = `<article class="capability-card" data-capability="vision" data-state="${attr(visionConfigured ? "on" : "off")}"><header><span class="capability-name">Vision</span><b class="capability-status">${esc(visionStatus)}</b></header><p class="capability-detail">${esc(visionDetail)}</p>${disclosure("capability-configure", "assistant-configure:vision", "Configure", "Which provider reads images, and with which model", visionConfigure)}</article>`;
+    const visionCard = `<article class="capability-card" data-capability="vision" data-state="${attr(visionState)}"><header><span class="capability-name">Vision</span><b class="capability-status">${esc(visionStatus)}</b></header><p class="capability-detail">${esc(visionDetail)}</p>${disclosure("capability-configure", "assistant-configure:vision", "Configure", "Which provider reads images, and with which model", visionConfigure)}</article>`;
     const continuityCard = `<article class="capability-card" data-capability="continuity" data-state="${attr(continuityOn ? "on" : "off")}"><header><span class="capability-name">Continuity analysis</span><b class="capability-status">${esc(continuityOn ? "On" : "Off")}</b></header><p class="capability-detail">${esc(continuityDetail)}</p>${disclosure("capability-configure", "assistant-configure:continuity", "Configure", "Its own endpoint and model", continuityConfigure)}</article>`;
 
     const assistantPanel = `<section class="settings-block assistant-settings"><div class="settings-title-row"><div><h3>Assistant</h3><p class="hint">What Braidy runs on, what it can see, and what checks continuity. Each capability states where it stands; the settings behind it open one step deeper.</p></div></div><div class="capability-cards">${braidyCard}${visionCard}${continuityCard}</div><div class="settings-actions"><button class="add-btn" onclick="saveConfig('assistant')">Save assistant settings</button>${panelState("manual", "Choosing a provider takes effect at once; the fields inside Configure are saved here.")}</div></section>`;

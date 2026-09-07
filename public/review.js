@@ -740,16 +740,26 @@ function entityReviewBraidyAvailability(busy, review) {
    * show. */
   /* The rule this panel established now lives beside capabilityState(), because the
      reference-automation plan asks the same question and two copies would drift. */
-  const off = typeof visionIsOff === "function"
-    ? visionIsOff(capability)
-    : (String(capability.provider || "").trim() === "none" || !String(capability.model || "").trim());
+  /* C2 — THE INLINE FALLBACK IS GONE. `visionIsOff` is the shipped predicate, and
+     the `||` behind it was a verbatim copy of the model-inference this correction
+     removes — a third semantic authority that would have outlived the other two.
+     Standing is read, never reconstructed, and the panel chooses its own words
+     from it: three real states, and a fourth for "not answered yet", which must
+     not be dressed up as any of them. */
+  const standing = typeof capabilityStanding === "function" ? capabilityStanding(capability) : "checking";
+  const off = standing === "off";
+  const checking = standing === "checking";
   const headline = off
     ? "Braidy visual review unavailable — Vision is off."
-    : "Braidy visual review unavailable.";
+    : checking
+      ? "Checking whether Braidy can read images…"
+      : "Braidy visual review unavailable.";
   const detail = off
     ? "No image is sent for reading. Your own review and approval are unaffected."
-    : `${[capability.message, capability.action].filter(Boolean).join(" ")} Your own review and approval are unaffected.`.trim();
-  return `<section class="entity-review-braidy is-unavailable" data-vision-state="${attr(off ? "off" : "unavailable")}"><div><span>BRAIDY VISUAL REVIEW</span><b>${esc(headline)}</b><small>${esc(detail)}</small></div><button class="ghost-btn" onclick="openVisionSettingsFromReview()">Configure Vision</button></section>`;
+    : checking
+      ? "Asking the server which vision provider answers. Your own review and approval are unaffected."
+      : `${[capability.message, capability.action].filter(Boolean).join(" ")} Your own review and approval are unaffected.`.trim();
+  return `<section class="entity-review-braidy is-unavailable" data-vision-state="${attr(standing)}"><div><span>BRAIDY VISUAL REVIEW</span><b>${esc(headline)}</b><small>${esc(detail)}</small></div>${checking ? "" : `<button class="ghost-btn" onclick="openVisionSettingsFromReview()">Configure Vision</button>`}</section>`;
 }
 function entityReviewModalMarkup(list, entity, media, state, review, busy = false, error = "") {
   const factors = ENTITY_REVIEW_FACTOR_LABELS[list] || ENTITY_REVIEW_FACTOR_LABELS.props;

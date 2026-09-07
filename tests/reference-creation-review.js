@@ -286,12 +286,12 @@ async function testCandidateReviewIsTheFirstAction() {
   const openReview = (vision, file = `${REX}_FAL_CANDIDATE_1.png`) => vm.runInContext(
     `(() => { AGENT_STATUS = { capabilities: { vision: ${JSON.stringify(
       vision === true
-        ? { ready: true, provider: "custom", model: "qwen3.8-27b-fp8", message: "", action: "" }
+        ? { ready: true, standing: "ready", provider: "custom", model: "qwen3.8-27b-fp8", message: "", action: "" }
         : vision === false
           /* The real Rex configuration: a provider resolved, no vision model named.
              The server still reports its reachability failure, and this is exactly the
              record that used to leak into the panel. */
-          ? { ready: false, provider: "ollama", model: "",
+          ? { ready: false, standing: "configured-unavailable", provider: "ollama", model: "",
               message: "Ollama is not reachable at http://127.0.0.1:59999.",
               action: "Start Ollama, then retry. Expected model: not configured." }
           : vision
@@ -318,33 +318,52 @@ async function testCandidateReviewIsTheFirstAction() {
   ok(modal.includes("View full size"),
     "R14 the generic viewer is kept, as an explicit secondary action");
 
-  /* R15 — the real Rex configuration had Vision off, and the dogfood asked how to
-     get Braidy to review these. The honest answer is stated, with the one control
-     that changes it. */
-  ok(modal.includes("Braidy visual review unavailable — Vision is off."),
-    "R15 with Vision off the review says so plainly");
+  /* R15 — the review states the honest answer for THIS configuration, with the one
+     control that changes it.
+
+     C2 SINGLE AUTHORITY RECLASSIFIED THE CONFIGURATION THIS FIXTURE HOLDS. Rex's
+     vision resolved to Ollama with no model named — a provider that was SELECTED
+     and could not answer. The product used to call that "off" because the model
+     field was blank, and R15/T2 therefore asserted that its diagnostic must be
+     suppressed. Under one authority that is a configured failure, and suppressing
+     the diagnostic hides the only information that would let a filmmaker fix it.
+
+     Both halves are still pinned, against the configurations that actually are
+     each one. */
+  ok(modal.includes("Braidy visual review unavailable."),
+    "R15 a selected vision provider that cannot answer says the review is unavailable");
+  ok(!modal.includes("Vision is off"),
+    "R15 and never claims the filmmaker switched it off");
+  ok(modal.includes("Ollama is not reachable"),
+    "R15 it keeps the provider diagnostic, which is what a person needs to fix it");
+  ok(modal.includes("Your own review and approval are unaffected."),
+    "R15 and that the human decision is untouched by it");
   ok(modal.includes("Configure Vision") && modal.includes("openVisionSettingsFromReview"),
     "R15 and offers the deep link to the Assistant settings that own Vision");
   ok(!modal.includes("Review with Braidy"),
     "R15 no Braidy review action is offered that could not run");
 
-  /* T2 — A DORMANT PROVIDER REPORTS NO FAULT. Vision was never set up here, so the
-     reachability failure the server records for a provider nobody was going to ask is
-     not a diagnostic the filmmaker needs; it is noise contradicting the heading above
-     it. What survives is the disabled truth, the way back, and the reassurance. */
-  ok(!modal.includes("Ollama is not reachable"),
-    "T2 an off capability does not report its provider's reachability");
-  ok(!modal.includes("Start Ollama") && !modal.includes("Expected model"),
+  /* T2 — A CAPABILITY NOBODY TURNED ON REPORTS NO FAULT. This is the half R15
+     originally protected, now asserted against a genuinely disabled capability
+     rather than against a misclassified one. */
+  const offModal = openReview({ ready: false, standing: "off", provider: "none", model: "",
+    message: "Vision assistance is disabled in AI Assistant settings.",
+    action: "Choose an AI provider in Settings." });
+  ok(offModal.includes("Braidy visual review unavailable — Vision is off."),
+    "T2 with Vision explicitly disabled the review says so plainly");
+  ok(!offModal.includes("Ollama is not reachable"),
+    "T2 an off capability does not report any provider's reachability");
+  ok(!offModal.includes("Start Ollama") && !offModal.includes("Expected model"),
     "T2 nor a retry instruction or a model expectation for a model nobody named");
-  ok(modal.includes("No image is sent for reading."),
+  ok(offModal.includes("No image is sent for reading."),
     "T2 it states what being off actually means, in the Assistant panel's own words");
-  ok(modal.includes("Your own review and approval are unaffected."),
+  ok(offModal.includes("Your own review and approval are unaffected."),
     "T2 and that the human decision is untouched by it");
 
   /* And the other half: a vision model that IS named and did not answer keeps every
      word of its diagnostic, and stops calling itself off. */
   const visionBroken = openReview({
-    ready: false, provider: "custom", model: "qwen3.8-27b-fp8",
+    ready: false, standing: "configured-unavailable", provider: "custom", model: "qwen3.8-27b-fp8",
     message: "OpenAI-compatible server is not reachable at http://127.0.0.1:8000/v1.",
     action: "Start the server, then retry.",
   });

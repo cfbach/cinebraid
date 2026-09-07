@@ -181,6 +181,12 @@ window.setAssistantProvider = async (v) => {
   });
   if (r.ok) {
     CONFIG.assistant = { ...(CONFIG.assistant || {}), provider: v };
+    /* Capability standing is derived from this configuration, so it is stale the
+       moment the provider changes — and the Settings card now READS that standing
+       rather than re-deriving one of its own, so without this the card would show
+       the previous provider's verdict under the newly chosen one. The same single
+       request saveSettings() already makes, on the same kind of explicit action. */
+    if (typeof refreshAgentStatus === "function") await refreshAgentStatus(false);
     toast("AI assistant updated");
     route();
   } else toast("Could not update assistant");

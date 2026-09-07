@@ -39,46 +39,46 @@ const CAPS = {
   /* The dogfood: Braidy on an OpenAI-compatible server, Ollama stopped, Vision
      pointed at Ollama with no model named. */
   openAiCompatible: {
-    text: { ready: true, provider: "custom", model: "qwen3.8-27b-fp8", message: "Text assistance is ready with qwen3.8-27b-fp8.", action: "" },
-    vision: { ready: false, provider: "ollama", model: "", message: "Ollama is not reachable at http://127.0.0.1:18434.", action: "Start Ollama, then retry. Expected model: not configured." },
+    text: { ready: true, standing: "ready", provider: "custom", model: "qwen3.8-27b-fp8", message: "Text assistance is ready with qwen3.8-27b-fp8.", action: "" },
+    vision: { ready: false, standing: "configured-unavailable", provider: "ollama", model: "", message: "Ollama is not reachable at http://127.0.0.1:18434.", action: "Start Ollama, then retry. Expected model: not configured." },
   },
   /* Vision explicitly disabled, Braidy still an OpenAI-compatible server. */
   visionDisabled: {
-    text: { ready: true, provider: "custom", model: "qwen3.8-27b-fp8", message: "Text assistance is ready with qwen3.8-27b-fp8.", action: "" },
-    vision: { ready: false, provider: "none", model: "", message: "Vision assistance is disabled in AI Assistant settings.", action: "Choose an AI provider in Settings." },
+    text: { ready: true, standing: "ready", provider: "custom", model: "qwen3.8-27b-fp8", message: "Text assistance is ready with qwen3.8-27b-fp8.", action: "" },
+    vision: { ready: false, standing: "off", provider: "none", model: "", message: "Vision assistance is disabled in AI Assistant settings.", action: "Choose an AI provider in Settings." },
   },
   /* The filmmaker really did choose Ollama for Braidy, and it is not running. */
   ollamaChosenAndDown: {
-    text: { ready: false, provider: "ollama", model: "qwen3:8b", message: "Ollama is not reachable at http://127.0.0.1:11434.", action: "Start Ollama, then retry. Expected model: qwen3:8b." },
-    vision: { ready: false, provider: "ollama", model: "", message: "Ollama is not reachable at http://127.0.0.1:11434.", action: "Start Ollama, then retry. Expected model: not configured." },
+    text: { ready: false, standing: "configured-unavailable", provider: "ollama", model: "qwen3:8b", message: "Ollama is not reachable at http://127.0.0.1:11434.", action: "Start Ollama, then retry. Expected model: qwen3:8b." },
+    vision: { ready: false, standing: "configured-unavailable", provider: "ollama", model: "", message: "Ollama is not reachable at http://127.0.0.1:11434.", action: "Start Ollama, then retry. Expected model: not configured." },
   },
   /* No AI at all. */
   disabled: {
-    text: { ready: false, provider: "none", model: "", message: "Text assistance is disabled in AI Assistant settings.", action: "Choose an AI provider in Settings." },
-    vision: { ready: false, provider: "none", model: "", message: "Vision assistance is disabled in AI Assistant settings.", action: "Choose an AI provider in Settings." },
+    text: { ready: false, standing: "off", provider: "none", model: "", message: "Text assistance is disabled in AI Assistant settings.", action: "Choose an AI provider in Settings." },
+    vision: { ready: false, standing: "off", provider: "none", model: "", message: "Vision assistance is disabled in AI Assistant settings.", action: "Choose an AI provider in Settings." },
   },
   /* A vision model IS named and its provider did not answer — a fault, not a
      preference, and the address is the useful part. */
   visionNamedButDown: {
-    text: { ready: true, provider: "custom", model: "qwen3.8-27b-fp8", message: "Text assistance is ready with qwen3.8-27b-fp8.", action: "" },
-    vision: { ready: false, provider: "ollama", model: "llava:13b", message: "Ollama is not reachable at http://127.0.0.1:11434.", action: "Start Ollama, then retry. Expected model: llava:13b." },
+    text: { ready: true, standing: "ready", provider: "custom", model: "qwen3.8-27b-fp8", message: "Text assistance is ready with qwen3.8-27b-fp8.", action: "" },
+    vision: { ready: false, standing: "configured-unavailable", provider: "ollama", model: "llava:13b", message: "Ollama is not reachable at http://127.0.0.1:11434.", action: "Start Ollama, then retry. Expected model: llava:13b." },
   },
   /* C3, reproduced: Braidy is the OpenAI-compatible server and it is not answering.
      The record carries the model; the provider's own words do not mention it. */
   customChosenAndDown: {
-    text: { ready: false, provider: "custom", model: "qwen3.8-27b-fp8", message: "Text assistance cannot reach the custom AI server (ECONNREFUSED).", action: "Start the custom AI server, or correct its address and key in Settings, then retry." },
-    vision: { ready: false, provider: "none", model: "", message: "Vision assistance is disabled in AI Assistant settings.", action: "Choose an AI provider in Settings." },
+    text: { ready: false, standing: "configured-unavailable", provider: "custom", model: "qwen3.8-27b-fp8", message: "Text assistance cannot reach the custom AI server (ECONNREFUSED).", action: "Start the custom AI server, or correct its address and key in Settings, then retry." },
+    vision: { ready: false, standing: "off", provider: "none", model: "", message: "Vision assistance is disabled in AI Assistant settings.", action: "Choose an AI provider in Settings." },
   },
   /* The custom server answers but does not serve the configured model — its own
      message already names it, so nothing may repeat it. */
   customModelNotServed: {
-    text: { ready: false, provider: "custom", model: "qwen3.8-27b-fp8", message: 'Text assistance model "qwen3.8-27b-fp8" is not served by the custom AI server.', action: "Use one of the served model names: llama3.1:70b." },
-    vision: { ready: false, provider: "none", model: "", message: "Vision assistance is disabled in AI Assistant settings.", action: "Choose an AI provider in Settings." },
+    text: { ready: false, standing: "configured-unavailable", provider: "custom", model: "qwen3.8-27b-fp8", message: 'Text assistance model "qwen3.8-27b-fp8" is not served by the custom AI server.', action: "Use one of the served model names: llama3.1:70b." },
+    vision: { ready: false, standing: "off", provider: "none", model: "", message: "Vision assistance is disabled in AI Assistant settings.", action: "Choose an AI provider in Settings." },
   },
   /* Everything on. */
   allReady: {
-    text: { ready: true, provider: "custom", model: "qwen3.8-27b-fp8", message: "Text assistance is ready with qwen3.8-27b-fp8.", action: "" },
-    vision: { ready: true, provider: "custom", model: "qwen3.8-27b-fp8", message: "Vision assistance is ready with qwen3.8-27b-fp8.", action: "" },
+    text: { ready: true, standing: "ready", provider: "custom", model: "qwen3.8-27b-fp8", message: "Text assistance is ready with qwen3.8-27b-fp8.", action: "" },
+    vision: { ready: true, standing: "ready", provider: "custom", model: "qwen3.8-27b-fp8", message: "Vision assistance is ready with qwen3.8-27b-fp8.", action: "" },
   },
 };
 
@@ -132,10 +132,19 @@ async function testOpenAiCompatibleBraidyIsAllowed() {
     "1. the plan does not say it cannot start");
   ok(out.markup.includes("Automation preflight passed."),
     "1. it reports the preflight as passed");
-  ok(joined(out.warnings).includes("Vision is off"),
-    "1. Vision being off is carried as a warning instead", joined(out.warnings));
+  /* C2 SINGLE AUTHORITY changed what this configuration IS, and the assertion
+     follows the truth rather than the other way round. Vision here is pointed at
+     Ollama with no model named and Ollama absent — a SELECTED provider that cannot
+     answer, which the capability reader calls configured-unavailable. It was being
+     called "off" only because the old predicate read a blank model as no provider.
+     The run still degrades identically; the warning now names the fault instead of
+     telling a filmmaker they switched something off that they did not. */
+  ok(joined(out.warnings).includes("Vision is unavailable"),
+    "1. a selected vision provider that cannot answer is carried as a warning instead", joined(out.warnings));
+  ok(!joined(out.warnings).includes("Vision is off"),
+    "1. and is never described as switched off");
   ok(joined(out.warnings).includes("without an AI check"),
-    "1. and the consequence is stated: candidates come back for human review");
+    "1. the consequence is stated: candidates come back for human review");
 }
 
 /* ---- 2. automation text work resolves through the accepted assistant path ---- */
@@ -222,7 +231,7 @@ async function testUnreachableSelectedProviderNamesProviderAndModel() {
 
   /* The model is READ, never composed: a record that names no model claims none. */
   const noModel = await preflightUnder({
-    text: { ready: false, provider: "custom", model: "", message: "Text assistance cannot reach the custom AI server.", action: "Correct its address in Settings." },
+    text: { ready: false, standing: "configured-unavailable", provider: "custom", model: "", message: "Text assistance cannot reach the custom AI server.", action: "Correct its address in Settings." },
     vision: CAPS.customChosenAndDown.vision,
   });
   ok(!joined(noModel.errors).includes("Selected model"),
@@ -255,19 +264,39 @@ async function testDisabledAssistantRefusesTruthfully() {
 
 /* ---- 5. Vision off is never reported as a text-provider failure ----------- */
 async function testVisionOffIsNotATextFailure() {
+  /* C2 SINGLE AUTHORITY SPLIT THIS LOOP, because it was running two genuinely
+     different configurations through one expectation. Only one of them is a
+     capability nobody turned on. */
   for (const [name, caps] of [["vision pointed at a stopped Ollama", CAPS.openAiCompatible],
                               ["vision explicitly disabled", CAPS.visionDisabled]]) {
     const out = await preflightUnder(caps);
     ok(out.errors.length === 0, `5. ${name}: the run is not blocked`);
     ok(!joined(out.warnings).includes("Braidy's text assistant"),
       `5. ${name}: it is not described as a Braidy text failure`);
-    ok(!joined(out.warnings).includes("Ollama is not reachable"),
-      `5. ${name}: a capability nobody turned on reports no provider failure`, joined(out.warnings));
-    ok(!joined(out.warnings).includes("Start Ollama"),
-      `5. ${name}: and no instruction to start a provider the run does not need`);
-    ok(joined(out.warnings).includes("Vision is off"),
-      `5. ${name}: the warning says which capability is off`);
   }
+
+  /* EXPLICITLY DISABLED: nothing was turned on, so no provider diagnostic and no
+     instruction to start anything. This is the half the accepted slice protected
+     and it is unchanged. */
+  const disabled = await preflightUnder(CAPS.visionDisabled);
+  ok(!joined(disabled.warnings).includes("Ollama is not reachable"),
+    "5. vision explicitly disabled: a capability nobody turned on reports no provider failure", joined(disabled.warnings));
+  ok(!joined(disabled.warnings).includes("Start Ollama"),
+    "5. vision explicitly disabled: and no instruction to start a provider the run does not need");
+  ok(joined(disabled.warnings).includes("Vision is off"),
+    "5. vision explicitly disabled: the warning says which capability is off");
+
+  /* SELECTED BUT UNANSWERING: vision is pointed at Ollama, which is stopped. That
+     is a configured provider failing, not a switched-off capability — the previous
+     predicate only called it "off" because the model field was blank. It now keeps
+     its diagnostic, which is the thing a filmmaker needs in order to fix it. */
+  const stopped = await preflightUnder(CAPS.openAiCompatible);
+  ok(joined(stopped.warnings).includes("Vision is unavailable"),
+    "5. vision pointed at a stopped Ollama: reported as unavailable, never as off", joined(stopped.warnings));
+  ok(!joined(stopped.warnings).includes("Vision is off"),
+    "5. vision pointed at a stopped Ollama: a selected provider is never called switched off");
+  ok(joined(stopped.warnings).includes("Ollama is not reachable"),
+    "5. vision pointed at a stopped Ollama: and the provider that did not answer is named");
 
   /* The other half: a NAMED vision model that did not answer is a fault, and keeps
      its diagnostic — still as a warning, because the run degrades rather than fails. */
@@ -303,8 +332,12 @@ async function testGateNamesNoProvider() {
   const app = source("app.js");
   ok(/function visionIsOff\(capability\)/.test(app),
     "6. 'is vision off' has one definition, next to the capability reader");
-  ok(source("review.js").includes("visionIsOff(capability)"),
-    "6. Candidate Review asks it");
+  /* C2 SINGLE AUTHORITY: Candidate Review needs three states, not two — off,
+     configured-unavailable and the not-yet-answered case — so it reads the
+     standing directly rather than the boolean built on top of it. Same authority,
+     one layer up. */
+  ok(source("review.js").includes("capabilityStanding(capability)"),
+    "6. Candidate Review asks the same authority");
   ok(gate.includes("visionIsOff(braidyVision)"),
     "6. and the automation gate asks the same one");
 }

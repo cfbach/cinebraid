@@ -554,100 +554,207 @@ function extractServerFunction(name) {
 }
 function testVisionOffIsReadFromConfiguration() {
   const server = code(serverSource());
-  /* THE FIRST REPRODUCTION: `capability-off` was derived from `assistantPermanent`,
-     and "no openai api key" is permanent — so a configured OpenAI vision provider
-     with a missing key was reported as switched off. */
+  /* REPRODUCTION 1: `capability-off` came from `assistantPermanent`, and "no openai
+     api key" is permanent — a configured provider with a missing key read as Off. */
   ok(!/reviewUnavailableReason: error\.assistantPermanent \? "capability-off"/.test(server),
     "C2: off-ness is not inferred from whether the error was retryable");
   ok(/reviewRetryable: !error\.assistantPermanent/.test(server),
     "C2: retryability is reported separately, because it answers a different question");
-
-  /* THE STRUCTURAL DEFECT BEHIND BOTH REPRODUCTIONS, and what this section now
-     guards. Twice this predicate RE-DERIVED whether vision was usable — from error
-     permanence, then from whether a model field was populated — while
-     `capabilityCheck` was already the authority on exactly that. Two readers of one
-     question disagree eventually; only the configuration that finds the seam
-     changes. So the predicate no longer answers "is vision usable" at all. */
+  /* REPRODUCTION 2: the server predicate then asked whether a model field was
+     populated — the generic and Ollama ones — so `openaiVisionModel` read as none. */
   ok(/function visionCapabilityIsOff\(cfg = readConfig\(\)\) \{\s*return assistantProviderIsDisabled\(resolvedVisionProvider\(cfg\)\);\s*\}/.test(server),
-    "C2: Off is decided from the resolved provider selection and nothing else");
+    "C2: the server decides Off from the resolved provider selection and nothing else");
 
-  /* NO CAPABILITY STANDING IS RECONSTRUCTED HERE. The body is one expression, and
-     these checks say what it may not contain rather than trusting that it does not. */
-  const body = server.slice(server.indexOf("function visionCapabilityIsOff"));
-  const offBody = body.slice(0, body.indexOf("}") + 1);
-  for (const forbidden of ["openaiVisionModel", "ollamaVisionModel", "customVisionModel", "anthropicVisionModel", "agents", "Key", "BaseUrl", "inventor", "model"]) {
-    ok(!offBody.includes(forbidden),
-      `C2: the Off predicate consults no ${forbidden.toLowerCase().includes("model") ? "model field" : forbidden} of its own`);
+  /* REPRODUCTION 3, AND THE ROOT CAUSE OF ALL THREE: the browser classified Vision
+     a second time, and could contradict the authoritative record for the same
+     configuration. There is now ONE normalized standing, derived where the record
+     is built, and every consumer reads it. */
+  ok(/function capabilityStanding\(provider, record\) \{/.test(server)
+    && /if \(assistantProviderIsDisabled\(provider\)\) return "off";/.test(server)
+    && /return record && record\.ready \? "ready" : "configured-unavailable";/.test(server),
+    "C2: the server derives one normalized standing — off | ready | configured-unavailable");
+  ok(/return \{ \.\.\.record, standing: capabilityStanding\(provider, record\) \};/.test(server),
+    "C2: and stamps it on every capability record, so a new branch cannot forget to classify itself");
+
+  /* NO SECOND SEMANTIC AUTHORITY IN THE BROWSER. */
+  const app = code(source("app.js"));
+  ok(/function visionIsOff\(capability\) \{\s*return capabilityStanding\(capability\) === "off";\s*\}/.test(app),
+    "C2: the browser's Off test is the standing, and only the standing");
+  const offBody = app.slice(app.indexOf("function visionIsOff(capability)"));
+  const offOnly = offBody.slice(0, offBody.indexOf("}") + 1);
+  for (const token of ["provider", "model", "none", "never", "Key", "ollama", "openai", "custom", "anthropic"]) {
+    ok(!offOnly.includes(token),
+      `C2: the browser Off test names no ${token}`);
   }
-  /* And no effective-model helper was created for it, which is how the previous
-     attempt smuggled the same reconstruction back in under a better name. */
-  ok(!/function effectiveVisionModel\(/.test(server) && !/function effectiveCapabilityModel\(/.test(server),
-    "C2: no effective-model helper exists solely to classify Off");
-  ok(/providerCapabilityModel\(provider, cfg, kind\) \|\| ollamaModel/.test(server),
-    "C2: the capability reader's own model resolution is left exactly as it was");
+  const review = code(source("review.js"));
+  ok(!/String\(capability\.provider \|\| ""\)\.trim\(\) === "none" \|\| !String\(capability\.model \|\| ""\)\.trim\(\)/.test(review),
+    "C2: Candidate Review's inline copy of the model inference is gone");
+  ok(/const standing = typeof capabilityStanding === "function" \? capabilityStanding\(capability\) : "checking";/.test(review),
+    "C2: it reads the standing instead");
+  const views = code(source("views.js"));
+  ok(/const visionStanding = typeof capabilityStanding === "function" \? capabilityStanding\(visionCapability\) : "checking";/.test(views),
+    "C2: and so does the Settings capability card");
+  ok(!/const visionOff = visionProvider === "none" \|\| visionProvider === "never";/.test(views)
+    && !/const visionConfigured = !visionOff && !!visionModel;/.test(views),
+    "C2: which no longer decides On/Off from a blank model field");
 
-  /* ONE DEFINITION OF "EXPLICITLY DISABLED", consumed by both readers — which is
-     what makes the meta-invariant below structural rather than coincidental. */
-  ok(/const DISABLED_ASSISTANT_PROVIDERS = new Set\(\["none", "never"\]\);/.test(server),
-    "C2: the disable sentinels are declared once");
-  ok(/function assistantProviderIsDisabled\(provider\)/.test(server),
-    "C2: behind one predicate");
-  ok(/if \(assistantProviderIsDisabled\(provider\)\)/.test(server),
-    "C2: which the capability reader itself uses for the standing it reports");
+  /* THE META-INVARIANT, as an executable guard. Any browser file that decides what
+     "Vision off" MEANS must do it through the standing. This scans executable code
+     with commentary stripped, so a comment quoting the old rule cannot trip it and
+     a real reintroduction cannot hide behind one. */
+  for (const file of ["app.js", "review.js", "views.js", "automation.js"]) {
+    const executable = code(source(file));
+    const reintroduced = /vision[A-Za-z]*Off\s*=\s*[^;]*(?:provider|model|Key|BaseUrl)/i.test(executable)
+      || /(?:visionIsOff|VisionOff)[^\n]{0,80}\|\|[^\n]{0,120}\.model/i.test(executable);
+    ok(!reintroduced,
+      `C2: ${file} does not reintroduce provider/model/key inference for the meaning of Vision off`);
+  }
 
-  /* The shipped functions, over every configuration this reframe pinned. */
+  /* ---- the end-to-end matrix: server standing and browser reading, per scenario -- */
   const sandbox = vm.createContext({
     readConfig: () => ({}),
     cleanModelName: (m) => String(m || "").trim(),
     exactModelReady: (models, m) => (models || []).includes(String(m || "").trim()),
   });
   const raw = serverSource();
-  const sentinels = raw.slice(raw.indexOf("const DISABLED_ASSISTANT_PROVIDERS"), raw.indexOf("/* THE SINGLE DEFINITION"));
-  vm.runInContext(sentinels + "\n" + [
-    "assistantProviderIsDisabled",
-    "resolvedVisionProvider",
-    "providerCapabilityModel",
-    "providerConfigured",
-    "capabilityCheck",
+  vm.runInContext(raw.slice(raw.indexOf("const DISABLED_ASSISTANT_PROVIDERS"), raw.indexOf("/* THE SINGLE DEFINITION")) + "\n" + [
+    "assistantProviderIsDisabled", "resolvedVisionProvider", "providerCapabilityModel",
+    "providerConfigured", "capabilityStanding", "capabilityCheck", "resolveCapabilityRecord",
     "visionCapabilityIsOff",
   ].map(extractServerFunction).join("\n"), sandbox);
 
   const down = { ollama: { ok: false, models: [], base: "http://127.0.0.1:11434" }, custom: {} };
   const up = { ollama: { ok: true, models: ["llava:13b"], base: "http://127.0.0.1:11434" }, custom: {} };
-  const cases = [
-    ["provider none", { assistant: { provider: "openai", visionProvider: "none" }, openaiVisionModel: "gpt-5.2" }, down, true],
-    ["provider never", { assistant: { provider: "openai", visionProvider: "never" }, openaiVisionModel: "gpt-5.2" }, down, true],
-    ["same resolving through a disabled text provider", { assistant: { provider: "none", visionProvider: "same" }, agents: { models: { vision: "gpt-4o" } } }, down, true],
-    ["OpenAI with a key and no explicit model, served from the provider default", { assistant: { provider: "openai", visionProvider: "openai" }, openaiKey: "sk-x", agents: { models: { vision: "" } }, ollamaVisionModel: "" }, down, false],
-    ["OpenAI with a selected model and a missing key", { assistant: { provider: "openai", visionProvider: "openai" }, openaiVisionModel: "gpt-5.2", agents: { models: { vision: "" } }, ollamaVisionModel: "" }, down, false],
-    ["custom with a selected model and an unreachable endpoint", { assistant: { provider: "custom", visionProvider: "custom" }, customBaseUrl: "http://127.0.0.1:9/v1", customVisionModel: "qwen-vl" }, down, false],
-    ["custom with a default model and an unreachable endpoint", { assistant: { provider: "custom", visionProvider: "custom" }, customBaseUrl: "http://127.0.0.1:9/v1", customModel: "m" }, down, false],
-    ["Ollama with a selected model and a runtime that is down", { assistant: { provider: "ollama", visionProvider: "ollama" }, ollamaVisionModel: "llava:13b" }, down, false],
-    ["valid configured vision on ollama", { assistant: { provider: "ollama", visionProvider: "ollama" }, ollamaVisionModel: "llava:13b" }, up, false],
-    ["valid configured vision on openai", { assistant: { provider: "openai", visionProvider: "openai" }, openaiKey: "sk-x", openaiVisionModel: "gpt-5.2" }, down, false],
-    ["OpenAI with no model of any kind and no key", { assistant: { provider: "openai", visionProvider: "openai" } }, down, false],
-    ["anthropic with a selected model and a missing key", { assistant: { provider: "anthropic", visionProvider: "anthropic" }, anthropicVisionModel: "claude-vision" }, down, false],
-  ];
-  for (const [label, cfg, inventories, expectedOff] of cases) {
-    const off = sandbox.visionCapabilityIsOff(cfg);
-    ok(off === expectedOff,
-      "C2: " + label + " -> " + (expectedOff ? "Off" : "owned by the capability reader, never relabelled Off"));
-    /* THE META-INVARIANT. If the authoritative reader says ready, or reports a
-       configured-provider failure, the automation layer may not call it Off. Both
-       now consult one disable predicate, so this cannot drift: Off is true exactly
-       where the reader itself reports the capability disabled. */
-    const capability = sandbox.capabilityCheck(
+  return [
+    ["provider none", { assistant: { provider: "openai", visionProvider: "none" }, openaiVisionModel: "gpt-5.2" }, down, "off"],
+    ["provider never", { assistant: { provider: "openai", visionProvider: "never" }, openaiVisionModel: "gpt-5.2" }, down, "off"],
+    ["same resolving to a disabled text provider", { assistant: { provider: "none", visionProvider: "same" }, agents: { models: { vision: "gpt-4o" } } }, down, "off"],
+    ["OpenAI with a key and no explicit model, served from the provider default", { assistant: { provider: "openai", visionProvider: "openai" }, openaiKey: "sk-x" }, down, "ready"],
+    ["OpenAI with no key", { assistant: { provider: "openai", visionProvider: "openai" } }, down, "configured-unavailable"],
+    ["OpenAI with a selected model and no key", { assistant: { provider: "openai", visionProvider: "openai" }, openaiVisionModel: "gpt-5.2" }, down, "configured-unavailable"],
+    ["custom with an unreachable endpoint", { assistant: { provider: "custom", visionProvider: "custom" }, customBaseUrl: "http://127.0.0.1:9/v1", customVisionModel: "qwen-vl" }, down, "configured-unavailable"],
+    ["Ollama with a selected model and a runtime that is down", { assistant: { provider: "ollama", visionProvider: "ollama" }, ollamaVisionModel: "llava:13b" }, down, "configured-unavailable"],
+    ["valid configured vision", { assistant: { provider: "ollama", visionProvider: "ollama" }, ollamaVisionModel: "llava:13b" }, up, "ready"],
+  ].map(([label, cfg, inventories, expected]) => {
+    const record = sandbox.capabilityCheck(
       "Vision assistance",
       sandbox.resolvedVisionProvider(cfg),
       (cfg.agents && cfg.agents.models && cfg.agents.models.vision) || cfg.ollamaVisionModel,
       inventories, cfg, "vision",
     );
-    const readerDisabled = /is disabled in AI Assistant settings/.test(capability.message);
-    ok(off === readerDisabled,
-      "C2: " + label + " -> Off agrees with the capability reader's own standing");
-    ok(!((capability.ready || !readerDisabled) && off),
-      "C2: " + label + " -> a ready or configured-but-failing capability is never Off");
+    ok(record.standing === expected,
+      `C2 server: ${label} -> ${expected}`);
+    /* The server's own automation label must agree with the standing it published:
+       Off exactly where the record says off, never for a configured provider. */
+    ok(sandbox.visionCapabilityIsOff(cfg) === (expected === "off"),
+      `C2 server: ${label} -> the automation label agrees with the published standing`);
+    return { label, record, expected };
+  });
+}
+
+/* Every consumer, driven against the record the server actually publishes. */
+async function testBrowserReadsTheServerStanding(scenarios) {
+  const rendered = await render("#/production", buildFixture());
+  for (const { label, record, expected } of scenarios) {
+    const seen = vm.runInContext(`(() => {
+      AGENT_STATUS = { enabled: true, runs: [], agents: [], index: {}, capabilities: { vision: ${JSON.stringify(record)} } };
+      const capability = capabilityState("vision");
+      const panel = entityReviewBraidyAvailability(false, null);
+      return {
+        standing: capabilityStanding(capability),
+        off: visionIsOff(capability),
+        skipsReview: v672VisionOffForReview(),
+        panelState: (panel.match(/data-vision-state="([a-z-]+)"/) || [])[1] || (/is-available/.test(panel) ? "ready" : ""),
+      };
+    })()`, rendered.context);
+    ok(seen.standing === expected,
+      `C2 browser: ${label} -> reads ${expected} from the record, not from config fields`);
+    ok(seen.off === (expected === "off"),
+      `C2 browser: ${label} -> calls it Off only when the server does`);
+    /* THE CONSEQUENCE THAT MATTERS: whether a review is skipped follows the same
+       standing, so a ready capability is never skipped and a configured-unavailable
+       one is never silently called Off. */
+    ok(seen.skipsReview === (expected === "off"),
+      `C2 browser: ${label} -> the reference-automation skip follows the same standing`);
+    ok(seen.panelState === expected,
+      `C2 browser: ${label} -> Candidate Review renders the same standing`);
   }
+
+  /* SCENARIO 10 — the loading boundary. Before the status arrives there is no
+     record, and the honest answer is "checking". The old shape returned a record
+     with no provider and no model, which the Off test read as switched off: the
+     product announced "Vision is off" about a capability it had not yet asked
+     about, and the automation would have skipped review on that basis. */
+  const loading = vm.runInContext(`(() => {
+    AGENT_STATUS = { enabled: false, runs: [], agents: [], index: {} };
+    const capability = capabilityState("vision");
+    const panel = entityReviewBraidyAvailability(false, null);
+    return {
+      standing: capabilityStanding(capability),
+      off: visionIsOff(capability),
+      skipsReview: v672VisionOffForReview(),
+      panelState: (panel.match(/data-vision-state="([a-z-]+)"/) || [])[1] || "",
+      panelSaysOff: /Vision is off/.test(panel),
+      panelSaysChecking: /Checking whether Braidy can read images/.test(panel),
+    };
+  })()`, rendered.context);
+  ok(loading.standing === "checking",
+    "C2 browser: status not loaded yet -> checking, which is not one of the three real standings");
+  ok(loading.off === false && loading.panelSaysOff === false,
+    "C2 browser: status not loaded yet -> nothing claims Vision is off");
+  ok(loading.skipsReview === false,
+    "C2 browser: status not loaded yet -> no review is skipped on an unanswered question");
+  ok(loading.panelState === "checking" && loading.panelSaysChecking === true,
+    "C2 browser: status not loaded yet -> Candidate Review shows a neutral checking state");
+
+  /* A record from a server that sends no standing is not evidence of Off either. */
+  const legacy = vm.runInContext(`(() => {
+    AGENT_STATUS = { capabilities: { vision: { ready: false, provider: "openai", model: "", message: "x", action: "y" } } };
+    const capability = capabilityState("vision");
+    return { standing: capabilityStanding(capability), off: visionIsOff(capability) };
+  })()`, rendered.context);
+  ok(legacy.standing === "checking" && legacy.off === false,
+    "C2 browser: a record carrying no standing is treated as unanswered, never as Off");
+}
+
+/* ---- C2 — the assistant settings ask where it runs before which protocol ---- */
+function testAssistantSettingsAreTaskFirst() {
+  const views = code(source("views.js"));
+  ok(/const ASSISTANT_TIERS = \[/.test(views)
+    && /\["local", "Local"/.test(views) && /\["cloud", "Cloud"/.test(views),
+    "C2 settings: the runtimes are grouped by where they run");
+  ok(/Where Braidy runs/.test(views),
+    "C2 settings: and the first question asked is where, not which protocol");
+  ok(/const braidyRuntimeChoice = braidyTier === "off" \|\| !braidyTier \? "" :/.test(views),
+    "C2 settings: the runtime step appears only once a tier is chosen");
+  ok(/<optgroup label="\$\{attr\(tierLabel\)\}">/.test(views),
+    "C2 settings: visual review offers its runtimes under the same groups");
+  ok(/<optgroup label="Local">/.test(views) && /<optgroup label="Cloud">/.test(views),
+    "C2 settings: and so does continuity analysis");
+  /* THE CONFUSION THIS REMOVES: OpenAI and OpenAI-compatible are no longer peers in
+     one flat list — they sit in different groups, which is what they actually are. */
+  ok(/ollama: "Ollama"/.test(views) && /custom: "OpenAI-compatible server"/.test(views)
+    && /openai: "OpenAI"/.test(views) && /anthropic: "Claude"/.test(views),
+    "C2 settings: each runtime is named for what it is, inside its own tier");
+
+  /* NOTHING ABOUT STORAGE CHANGED, which is what keeps this a presentation
+     simplification rather than a schema migration. The same five ids are written by
+     the same single writer, and the tiers only group them. */
+  const settings = code(source("settings.js"));
+  ok(/body: JSON\.stringify\(\{ assistant: \{ provider: v \} \}\)/.test(settings),
+    "C2 settings: the provider is still stored exactly as it was");
+  ok(/patch\.assistant = \{ provider: CONFIG\.assistant\?\.provider \|\| "ollama", visionProvider: v\("#assistant-vision-provider", "same"\) \}/.test(settings),
+    "C2 settings: and the vision selection still saves through its own untouched path");
+  ok(/const tierEntryProvider = \(tier, current\) => \(tierRuntimes\(tier\)\.includes\(current\) \? current : tierRuntimes\(tier\)\[0\]\);/.test(views),
+    "C2 settings: choosing a tier lands on a runtime that belongs to it");
+  /* The card reads the authoritative standing, so a provider change must refresh it
+     or the card would show the previous provider's verdict under the new one. */
+  ok(/if \(typeof refreshAgentStatus === "function"\) await refreshAgentStatus\(false\);/.test(settings),
+    "C2 settings: a provider change refreshes the capability record the card reads");
+  /* ONE ACT, ONE CONTROL. Off is a tile in the where-it-runs choice now, so the
+     separate off button and the hint restating the same state are gone. */
+  ok(!/capability-off-switch/.test(views) && !/Braidy is off\. Choose a provider to turn it on\./.test(views),
+    "C2 settings: turning Braidy off is one control, not three");
 }
 
 /* ---- C3 — the handoff must repaint, not just rewrite stored state --------- */
@@ -807,7 +914,9 @@ async function main() {
   await testNotesSeparateDisplayFromStorage();
   testNotesPresentationNeverRewritesStorage();
   testPrimaryCreationSubordinatesAfterApproval();
-  testVisionOffIsReadFromConfiguration();
+  const visionScenarios = testVisionOffIsReadFromConfiguration();
+  await testBrowserReadsTheServerStanding(visionScenarios);
+  testAssistantSettingsAreTaskFirst();
   testReviewCtaRepaintsTheCandidateArea();
   testSettledGateLeavesNoPendingHeader();
   await testContinuationExcludesApprovedDescendants();

@@ -5861,32 +5861,48 @@ function projectHealthIssues(feed = projectShotReadiness()) {
   }
   return issues;
 }
+/* THE LOADING BOUNDARY. Before /api/agents/status answers there is no capability
+   record, and the honest standing is "we have not been told yet" — not "off".
+   The previous shape returned a record with no provider and no model, which the
+   Off test below read as a blank model and therefore as switched off: the product
+   announced "Vision is off" about a capability it had not yet asked about. */
 function capabilityState(name) {
-  return AGENT_STATUS?.capabilities?.[name] || {
+  const record = AGENT_STATUS?.capabilities?.[name];
+  if (!record) return {
     ready: false,
+    standing: "checking",
     message: `${name} capability is still being checked.`,
     action: "Open Settings to configure AI assistance.",
   };
+  /* A record from a server that does not send `standing` is not evidence of Off
+     either, so it reads "checking" rather than being reconstructed here. */
+  return record.standing ? record : { ...record, standing: "checking" };
 }
-/* IS VISION OFF, OR DID IT FAIL? ONE ANSWER, ASKED BY EVERY SURFACE THAT CARES.
+/* The three standings a consumer may act on, plus the fourth that means "not yet
+   answered". Read, never derived. */
+function capabilityStanding(capability) {
+  const standing = String(capability?.standing || "").trim();
+  return ["off", "ready", "configured-unavailable"].includes(standing) ? standing : "checking";
+}
+window.capabilityStanding = capabilityStanding;
+/* IS VISION OFF? ONE ANSWER, AND IT IS NOT COMPUTED HERE.
  *
- * Reference Creation & Candidate Review V1 established the rule in Candidate Review
- * and public/views.js states it for the Assistant panel: Vision reads Off when its
- * provider is none/never AND when no vision model is named, "because a blank model is
- * not an active provider... in both cases no image is read". Both are configuration
- * rather than fault, and a capability nobody turned on has not failed — so neither
- * should produce a provider's reachability diagnostic.
+ * This used to read `provider === "none" || !model` — a second semantic authority
+ * for a question the server's capability resolver already answers. It could and
+ * did contradict that resolver: an OpenAI vision provider with a key and no
+ * explicit model is served from the provider default and reported READY by the
+ * server, while this function called it Off and the reference automation skipped
+ * a review that would have run. Before the status arrived it called everything
+ * Off, because every field was blank.
  *
- * It lives here because two surfaces now ask it — the candidate review panel and the
- * reference-automation plan — and two copies of a predicate is how they come to
- * disagree about whether a filmmaker has a problem. It reads the same capability
- * record every other reader reads and decides nothing about vision itself. */
+ * Off is now exactly one thing: the standing the authoritative record carries. No
+ * provider is named here, no model, key, endpoint or runtime is inspected, and a
+ * capability that has not been resolved yet is not Off — it is unknown, and
+ * `capabilityStanding` says so. */
 function visionIsOff(capability) {
-  const row = capability && typeof capability === "object" ? capability : {};
-  const provider = String(row.provider || "").trim();
-  if (provider === "none" || provider === "never") return true;
-  return !String(row.model || "").trim();
+  return capabilityStanding(capability) === "off";
 }
+window.visionIsOff = visionIsOff;
 function aiDisabledAttrs(name, extraRequirement = "") {
   const state = capabilityState(name),
     reason = [state.message, state.action, extraRequirement]

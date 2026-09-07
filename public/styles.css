@@ -1850,6 +1850,11 @@ body:not([data-help="minimal"]) [data-tip]:focus-visible::before{content:"";posi
 .automation-pass-champion>b{font:800 8px var(--mono);letter-spacing:.08em;color:var(--muted)}
 .automation-pass-champion span{display:grid;gap:1px}.automation-pass-champion span em{font:800 8px var(--mono);font-style:normal;color:var(--muted)}
 .automation-pass-champion span b{font-size:11px}.automation-pass-champion span small{font-size:9px;color:var(--muted)}
+/* C2 — the assistant choice reads as two questions, not one flat row. */
+.assistant-choice{display:grid;gap:6px}
+.assistant-step-label{font:800 8px var(--mono);letter-spacing:.09em;color:var(--faint);text-transform:uppercase}
+.assistant-runtime-step{display:grid;gap:6px;margin-top:11px;padding-top:11px;border-top:1px solid var(--line)}
+.assistant-tier-options .policy-option b{font-size:13px}
 /* ---- Reference Workflow Coherence V2 ---- */
 /* W1 — the active-run surface. Indeterminate motion only; there is deliberately
    no percentage track, because the run cannot honestly compute one. */
