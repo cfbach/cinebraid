@@ -461,19 +461,31 @@ function assetPromptStudio(list, x) {
   const runIsLive = !!run
     && ((typeof v670MachineActiveRun === "function" && v670MachineActiveRun(run))
       || (typeof v670WaitingForHumanRun === "function" && v670WaitingForHumanRun(run)));
-  /* `manualOpen` and `latest` are deliberately NOT in this default. Both are true
-     for any reference that has ever had a prompt prepared, which is every reference
-     that reached an approved primary — so including them reopened the card for
-     exactly the references H3 is about. A prepared prompt is history; live work is
-     an in-flight request, an error to act on, or a run still going. */
-  const bodyOpen = replaceOnly ? workspaceSectionOpen(bodyOpenKey, busy || operation?.status === "error" || runIsLive) : true;
+  /* `manualOpen` and `latest` are deliberately NOT live work. Both are true for any
+     reference that has ever had a prompt prepared, which is every reference that
+     reached an approved primary — so counting them reopened the card for exactly
+     the references this disclosure exists for. A prepared prompt is history; live
+     work is an in-flight request, an error to act on, or a run still going. */
+  const liveWork = !!busy || operation?.status === "error" || runIsLive;
+  /* C12 — LIVE WORK OUTRANKS A REMEMBERED PREFERENCE, because the preference was
+     expressed about a different situation.
+     `workspaceSectionOpen(key, fallback)` returns the REMEMBERED value whenever one
+     exists and only falls back when none does — so passing live work as the fallback
+     did nothing at all for the filmmaker who had ever collapsed this card. Their
+     stored `0` then hid a running replacement run's status surface, its stage line
+     and its review handoff, all of which are rendered inside this content: the run
+     was working and the page showed nothing.
+     So live work forces it open, and the remembered preference governs everything
+     else — including the moment the work settles, when the stored value is still
+     there and takes over again untouched. */
+  const bodyOpen = replaceOnly ? (liveWork || workspaceSectionOpen(bodyOpenKey, false)) : true;
   const head = `<header class="reference-create-head">
       <div><h3>${approved ? `${owner} primary reference` : `Create ${owner} primary reference`}</h3>
       <p>${approved ? `${owner} ${stateName} appearance is established. This is where you replace it or add another primary candidate.` : `This establishes ${owner} ${stateName} appearance for the production. You approve the final reference.`}</p></div>
       ${approved ? `<a class="reference-download" href="${attr(approved.url)}" download>Download approved reference ↓</a>` : ""}
     </header>`;
   const bodyStart = replaceOnly
-    ? `${head}<details class="reference-create-replace" ${bodyOpen ? "open" : ""} ontoggle="rememberWorkspaceSection('${attr(bodyOpenKey)}',this.open)"><summary>Replace or create another primary reference</summary><div class="reference-create-replace-body">`
+    ? `${head}<details class="reference-create-replace" data-live-work="${liveWork ? "1" : "0"}"${liveWork ? ` data-disclosure-forced="open"` : ""} ${bodyOpen ? "open" : ""} ontoggle="if(!this.hasAttribute('data-disclosure-forced'))rememberWorkspaceSection('${attr(bodyOpenKey)}',this.open)"><summary>Replace or create another primary reference</summary><div class="reference-create-replace-body">`
     : head;
   const bodyEnd = replaceOnly ? `</div></details>` : "";
   return `<section class="reference-create-section asset-creation-card${replaceOnly ? " is-replacement" : ""}" data-ui-state-key="${attr(sectionKey)}" data-create-target="${attr(`${list}:${x.id}`)}">

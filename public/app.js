@@ -4321,11 +4321,24 @@ function captureRouteViewState(targetRouteKey = currentRouteKey()) {
     };
   } catch { return null; }
 }
+/* C12 — A RENDER THAT FORCES A DISCLOSURE OPEN OUTRANKS THE SNAPSHOT.
+ *
+ * This restorer exists so a re-render does not collapse whatever the filmmaker had
+ * open, and that is right almost everywhere. But it restores UNCONDITIONALLY, which
+ * means a section whose markup says `open` because there is live work inside it was
+ * being closed again a moment later — the replacement-primary card rendered with a
+ * running Braidy run's status surface in it, and the snapshot shut it.
+ *
+ * `data-disclosure-forced="open"` is how a renderer says "this is not a preference
+ * question right now". Nothing else changes: every disclosure without the marker is
+ * restored exactly as before, and the marker is absent again as soon as the work
+ * settles, so the remembered preference resumes on the very next render. */
 function applyRouteDisclosureState(state) {
   if (!state?.disclosureState) return new Map();
   const entries = routeDetailsEntries($("#main"));
   const map = new Map(entries.map((entry) => [entry.key, entry.element]));
   entries.forEach(({ key, element }) => {
+    if (element.getAttribute?.("data-disclosure-forced") === "open") { element.open = true; return; }
     if (Object.prototype.hasOwnProperty.call(state.disclosureState, key))
       element.open = !!state.disclosureState[key];
   });

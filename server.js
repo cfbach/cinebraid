@@ -7756,10 +7756,16 @@ Return a score, explicit model pass/fail, all hard checks, the stateMatch decisi
   } catch (error) {
     /* W17 — the refusal carries WHY, so the executor can tell a capability that is
        off from a reviewer that broke. Both are "no review"; only one is a fault. */
+    /* Both facts are reported, because they answer different questions:
+       `capability-off` is about how vision is SET UP, `assistantPermanent` is about
+       whether retrying could ever help. A configured-but-broken provider is
+       permanent AND not off, which is precisely the case that was being mislabelled. */
+    const off = visionCapabilityIsOff();
     res.status(error.status || 500).json({
       error: error.message || "entity candidate review failed",
       reviewAttempts: Number(error.assistantAttempts || 0),
-      reviewUnavailableReason: error.assistantPermanent ? "capability-off" : "review-failed",
+      reviewRetryable: !error.assistantPermanent,
+      reviewUnavailableReason: off ? "capability-off" : "review-failed",
     });
   }
 });
@@ -8322,6 +8328,30 @@ function agentIndexMeta(P = null) {
   } catch (e) {
     return { ready: false, stale: true, error: e.message };
   }
+}
+/* C2 — OFF AND BROKEN ARE DIFFERENT STATES, AND ONLY CONFIGURATION CAN TELL THEM APART.
+ *
+ * The first cut labelled the review refusal `capability-off` whenever the error was
+ * PERMANENT — and `assistantErrorIsPermanent` is permanent for "no openai api key"
+ * and "not configured" too. So an OpenAI vision provider with a model selected and
+ * a missing key was reported as "Visual review skipped — Vision is off", which is a
+ * calm sentence about a deliberate choice, printed over a configuration fault the
+ * filmmaker needs to fix. Un-retryable is not the same as switched off.
+ *
+ * Off is a fact about CONFIGURATION, so it is read from configuration, exactly the
+ * way the browser's `visionIsOff` reads it from the capability record: provider
+ * none/never, or no vision model named — "because a blank model is not an active
+ * provider... in both cases no image is read". Everything else that cannot answer
+ * is a configured capability that is not working, keeps its own diagnostic, and is
+ * never described as Off.
+ *
+ * No provider logic is broadened here. It asks `resolvedVisionProvider` and the same
+ * `agents.models.vision || ollamaVisionModel` pair `assistantCapabilities` asks, and
+ * decides nothing about vision itself. */
+function visionCapabilityIsOff(cfg = readConfig()) {
+  const provider = String(resolvedVisionProvider(cfg) || "").trim();
+  if (provider === "none" || provider === "never") return true;
+  return !String(cfg.agents?.models?.vision || cfg.ollamaVisionModel || "").trim();
 }
 function resolvedVisionProvider(cfg) {
   const selected = cfg.assistant?.visionProvider || "same";

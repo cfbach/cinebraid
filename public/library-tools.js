@@ -614,12 +614,37 @@ function entityCanonicalSuggestion(list, id, name, stateId = "") {
 
    public/shared-state-lineage.js owns the rule; these two functions are its call
    sites and hold no opinion of their own. */
-function entityApprovalContinuationStates(entity, currentStateId) {
+/* C7 — A STATE THAT IS ALREADY CANON IS NOT REMAINING WORK.
+ *
+ * `continuationCandidates` answers a LINEAGE question — which states descend from
+ * this one — and deliberately knows nothing about receipts; its own note says
+ * `hasImage` is "not is approved". Offering its raw output as continuation targets
+ * therefore kept approved descendants in the list, so a chain whose remaining
+ * states were all approved still rendered a continuation selector and a second
+ * APPROVE & EDIT NEXT STATE, while `continuationOutcome` was simultaneously
+ * reporting `complete`. The selector and the outcome disagreed.
+ *
+ * Approval is a RECEIPT question, so it is asked of `entityStateTruth`, the
+ * projection every other authority reader on this surface uses — never of
+ * `approvedFile`, which is a pointer a state can hold with nothing behind it. Only
+ * `canon` is excluded: a historic pointer and a state with no image are both still
+ * work someone has to finish, and both remain offerable.
+ *
+ * The lineage rule itself is untouched. Ancestors are still absent by construction,
+ * cycles are still impossible, and nothing here can add a target the lineage module
+ * did not already allow — this only removes ones that are finished. Where the truth
+ * projection cannot be computed, nothing is removed, because withdrawing a valid
+ * continuation on a missing reader is the worse failure. */
+function entityApprovalContinuationStates(entity, currentStateId, list = "") {
   const states = entityStateListRead(entity, true);
   const byId = new Map(states.map((state) => [state.id, state]));
-  return continuationCandidates(states, currentStateId)
+  const rows = continuationCandidates(states, currentStateId)
     .map((candidate) => byId.get(candidate.id))
     .filter(Boolean);
+  const collection = String(list || "") || (typeof entityListOf === "function" ? entityListOf(entity) : "");
+  const truth = collection && typeof entityStateTruth === "function" ? entityStateTruth(collection, entity) : null;
+  if (!truth || truth.available === false) return rows;
+  return rows.filter((state) => truth.of(state).standing !== "canon");
 }
 function entityApprovalContinuationOutcome(entity, currentStateId) {
   return continuationOutcome(entityStateListRead(entity, true), currentStateId);
@@ -770,7 +795,7 @@ window.approveEntityFile = (list, id, name, stateId = "", mode = "primary-author
    * readout or a selector — W8 keeps that selector, and a two-state reference
    * must never be told it has one state — but the continuation field and the
    * second action now appear only where a valid target exists. */
-  const continuationTargets = entityApprovalContinuationStates(x, targetState.id);
+  const continuationTargets = entityApprovalContinuationStates(x, targetState.id, list);
   const canContinue = continuationTargets.length > 0;
   const stateField = singleState
     ? `<div class="form-field entity-approval-single-state" data-single-state="1"><label>Approve for continuity state</label><input id="entity-approve-target" type="hidden" value="${attr(targetState.id)}"><div class="entity-approval-single-state-readout"><b>${esc(targetState.name || "Default")}</b><small>${esc(targetState.appliesTo || (targetState.isDefault === false ? "No scene/shot range assigned" : "This reference has one continuity state."))}</small></div></div>`
@@ -889,7 +914,7 @@ window.syncEntityApprovalModal = () => {
     const previous = targetChanged ? "" : nextSelect.value;
     /* Ancestors are absent from this list by construction, so the ring that
        offered an already-approved parent after the final descendant cannot form. */
-    const nextStates = entityApprovalContinuationStates(x, stateId);
+    const nextStates = entityApprovalContinuationStates(x, stateId, current.list);
     /* PT1 / DF-04 — FILE ASSIGNMENT IS NOT APPROVAL, AND THIS LINE USED TO SAY IT WAS.
 
        The wording was `item.approvedFile ? " · currently approved" : " · needs

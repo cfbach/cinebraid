@@ -65,7 +65,10 @@ function testRefusalCountsWhatItDid() {
     "W2: a permanently unavailable capability is reported as unavailable, not as three failures");
   ok(/error\.assistantPermanent = !!permanent/.test(server),
     "W17: the refusal carries whether it was configuration rather than a fault");
-  ok(/reviewUnavailableReason: error\.assistantPermanent \? "capability-off" : "review-failed"/.test(server),
+  /* C2 corrected WHERE this distinction comes from — configuration rather than
+     error permanence — but the invariant W17 protects is unchanged: the endpoint
+     still tells the executor which of the two it is looking at. */
+  ok(/reviewUnavailableReason: off \? "capability-off" : "review-failed"/.test(server),
     "W17: and the review endpoint passes that distinction to the executor");
   /* Both request helpers must record the real count, or the honest message has
      only half the callers it needs. */
@@ -227,7 +230,10 @@ function testManualControlsHaveOneDisclosure() {
 /* ---- W9 — continuation derived from truth ------------------------------ */
 async function testContinuationOnlyAppearsWhenValid() {
   const tools = code(source("library-tools.js"));
-  ok(/const continuationTargets = entityApprovalContinuationStates\(x, targetState\.id\);/.test(tools),
+  /* C7 added the collection argument so the receipt projection can be consulted;
+     the invariant is unchanged — the continuation comes from project truth rather
+     than from how many states happen to exist. */
+  ok(/const continuationTargets = entityApprovalContinuationStates\(x, targetState\.id, list\);/.test(tools),
     "W9: the continuation is derived from the project's own lineage, not from a state count");
   ok(/const continuationField = singleState\n?\s*\? ""/.test(tools) || /continuationField = singleState/.test(tools),
     "W9: a single-state reference still shows no continuation");
@@ -443,7 +449,9 @@ function testDerivedStateLeadsWithCreation() {
     "H1: named for what it holds, so nothing is hidden by accident");
   /* NOTHING IS DELETED. The same validation markup and the same applies-to /
      requirement writers are still rendered, just inside the disclosure. */
-  ok(/<div>\$\{continuityStateValidationMarkup\(list, it, st, media, false\)\}\$\{stateScopeFields\}<\/div>/.test(entities),
+  /* C10 added state deletion to the same disclosure; validation and the scope
+     fields are still there, in the same place, which is what this checks. */
+  ok(/<div>\$\{continuityStateValidationMarkup\(list, it, st, media, false\)\}\$\{stateScopeFields\}/.test(entities),
     "H1: parent-to-state validation and the scope fields are still present, one rank down");
   ok(/setContinuityState\('\$\{list\}','\$\{it\.id\}',\$\{selectedIndex\},'appliesTo'/.test(entities)
     && /'referenceRequirement',this\.value/.test(entities),
@@ -514,10 +522,201 @@ function testPrimaryCreationSubordinatesAfterApproval() {
     "H3: an active or waiting run still opens it, because its status lives inside");
   /* AND IT MUST NOT open itself for history. `!!run` and `latest` are true forever
      once a reference has been worked on, which is every reference H3 is about. */
-  ok(/workspaceSectionOpen\(bodyOpenKey, busy \|\| operation\?\.status === "error" \|\| runIsLive\)/.test(studio),
+  /* C12 changed how live work reaches this decision — it now OUTRANKS the
+     remembered preference rather than acting as its fallback. What H3 protects is
+     unchanged: history does not hold the card open. */
+  ok(/workspaceSectionOpen\(bodyOpenKey, false\)/.test(studio)
+    && !/\|\| !!latest \|\| /.test(studio.slice(studio.indexOf("const liveWork"), studio.indexOf("const head ="))),
     "H3: a finished run or a stale prepared prompt does not hold it open");
   ok(/Download approved reference/.test(source("creation-studio.js")),
     "H3: reaching the approved image is not a replacement operation and stays outside");
+}
+
+/* ==========================================================================
+   ASTRA CLOSURE CORRECTIONS — C2, C3, C5, C7, C10, C12.
+
+   Six defects Astra reproduced against d25b4ce. Each check below is written from
+   the reproduction rather than from the repair, so a regression that reintroduces
+   the defect fails here even if the code around it is rewritten.
+   ========================================================================== */
+
+/* ---- C2 — Vision Off is a configuration fact, not an error classification -- */
+function extractServerFunction(name) {
+  const src = serverSource();
+  const start = src.indexOf("function " + name + "(");
+  assert.ok(start >= 0, "server.js defines " + name);
+  let depth = 0;
+  for (let i = src.indexOf("{", start); i < src.length; i += 1) {
+    if (src[i] === "{") depth += 1;
+    else if (src[i] === "}") { depth -= 1; if (!depth) return src.slice(start, i + 1); }
+  }
+  throw new Error("unbalanced " + name);
+}
+function testVisionOffIsReadFromConfiguration() {
+  const server = code(serverSource());
+  /* THE REPRODUCTION: `capability-off` was derived from `assistantPermanent`, and
+     "no openai api key" is permanent — so a configured OpenAI vision provider with
+     a missing key was reported as switched off. */
+  ok(!/reviewUnavailableReason: error\.assistantPermanent \? "capability-off"/.test(server),
+    "C2: off-ness is no longer inferred from whether the error was retryable");
+  ok(/const off = visionCapabilityIsOff\(\);/.test(server)
+    && /reviewUnavailableReason: off \? "capability-off" : "review-failed"/.test(server),
+    "C2: it is read from the vision configuration instead");
+  ok(/reviewRetryable: !error\.assistantPermanent/.test(server),
+    "C2: and retryability is reported separately, because it answers a different question");
+
+  /* The shipped predicate, run over the exact configurations Astra listed. */
+  const sandbox = vm.createContext({ readConfig: () => ({}) });
+  vm.runInContext(extractServerFunction("resolvedVisionProvider") + "\n" + extractServerFunction("visionCapabilityIsOff"), sandbox);
+  const cases = [
+    ["provider none", { assistant: { provider: "openai", visionProvider: "none" }, agents: { models: { vision: "gpt-4o" } } }, true],
+    ["no vision model configured", { assistant: { provider: "openai", visionProvider: "openai" }, agents: { models: { vision: "" } } }, true],
+    ["vision inheriting a none text provider", { assistant: { provider: "none", visionProvider: "same" }, agents: { models: { vision: "gpt-4o" } } }, true],
+    ["openai vision with a model and no api key", { assistant: { provider: "openai", visionProvider: "openai" }, agents: { models: { vision: "gpt-4o" } } }, false],
+    ["custom vision pointed at an unreachable endpoint", { assistant: { provider: "custom", visionProvider: "custom" }, customBaseUrl: "http://127.0.0.1:9/v1", customModel: "m", agents: { models: { vision: "qwen-vl" } } }, false],
+    ["fully configured vision", { assistant: { provider: "openai", visionProvider: "openai" }, openaiKey: "sk-x", agents: { models: { vision: "gpt-4o" } } }, false],
+  ];
+  for (const [label, cfg, expected] of cases) {
+    ok(sandbox.visionCapabilityIsOff(cfg) === expected,
+      "C2: " + label + " -> " + (expected ? "Off" : "configured, and not called Off"));
+  }
+}
+
+/* ---- C3 — the handoff must repaint, not just rewrite stored state --------- */
+function testReviewCtaRepaintsTheCandidateArea() {
+  const automation = code(source("automation.js"));
+  const entities = code(source("entities.js"));
+  /* THE REPRODUCTION: it wrote localStorage and scrolled. localStorage is read at
+     render time, so from Coverage Views the returned candidates stayed hidden. */
+  ok(!/localStorage\.setItem\(entityCandidateFilterKey\(list, entityId\), "primary-state"\)/.test(automation),
+    "C3: the handoff no longer writes the filter behind the renderer's back");
+  ok(/await setEntityCandidateFilter\(list, entityId, wanted\);/.test(automation),
+    "C3: it goes through the canonical filter change, and waits for the repaint");
+  ok(/return route\(\);/.test(entities),
+    "C3: which returns its render so a caller can wait for it");
+  /* The filter is derived from the file being handed over, not assumed. */
+  ok(/entityCandidateWorkflowType\(entity, fileName\)/.test(automation),
+    "C3: the filter needed to expose the returned file is read from that file");
+  ok(/!entityCandidateMatchesFilter\(entity, fileName, current\)/.test(automation),
+    "C3: and a filter that already shows it is left alone");
+  /* Order and identity stay the candidate area's own — one gallery, not two. */
+  ok(/revealReturnedEntityCandidates\(list, entityId, "", fileName\)/.test(automation),
+    "C3: the reveal is still the accepted one, so no second gallery is created");
+}
+
+/* ---- C5 — a settled gate leaves no pending-review header ------------------ */
+function testSettledGateLeavesNoPendingHeader() {
+  const automation = code(source("automation.js"));
+  ok(/function v672RunGateSettled\(run\)/.test(automation),
+    "C5: the panel can ask whether the gate it is wrapping has been answered");
+  ok(/const gateSettled = run \? v672RunGateSettled\(run\) : false;/.test(automation),
+    "C5: and asks it before choosing header copy");
+  /* THE REPRODUCTION: `run.status` is still the literal `awaiting-review` the run
+     parked with, and the header read it directly. */
+  ok(/gateSettled \? "APPROVAL RECORDED" : v626StatusLabel\(run\)/.test(automation),
+    "C5: so a settled run no longer prints HUMAN REVIEW REQUIRED");
+  ok(/const outcome = run\?\.summary && !gateSettled/.test(automation),
+    "C5: and no longer repeats 'paused before approval' after the approval");
+  /* THE RECORD IS NOT REWRITTEN — this is interpretation, not mutation. */
+  ok(!/run\.status = "completed"/.test(automation) && !/run\.summary = ""/.test(automation),
+    "C5: the stored run keeps the history it holds");
+  ok(/v672GateAlreadySettled\(run, step\)/.test(automation),
+    "C5: header and gate share one reading of whether the decision is still pending");
+}
+
+/* ---- C7 — approved descendants are not remaining work --------------------- */
+async function testContinuationExcludesApprovedDescendants() {
+  const build = (unfoldedApproved) => {
+    const project = buildFixture();
+    project.props = [{
+      id: "PROP-C7", name: "Chair", candidateFiles: [], coverageSlots: [], approvedFile: "A.png",
+      continuityStates: [
+        { id: "state-default", name: "Default", isDefault: true, approvedFile: "A.png", approvedAssetId: "as-a" },
+        { id: "state-unfolded", name: "Unfolded", isDefault: false, parentStateId: "state-default", approvedFile: unfoldedApproved ? "B.png" : "", approvedAssetId: unfoldedApproved ? "as-b" : "" },
+        { id: "state-wet", name: "Wet", isDefault: false, parentStateId: "state-default", approvedFile: "", approvedAssetId: "" },
+      ],
+    }];
+    const rows = [{ kind: "entity-state", list: "props", entityId: "PROP-C7", stateId: "state-default", value: "A.png", assetId: "as-a" }];
+    if (unfoldedApproved) rows.push({ kind: "entity-state", list: "props", entityId: "PROP-C7", stateId: "state-unfolded", value: "B.png", assetId: "as-b" });
+    withCanon(project, rows);
+    return project;
+  };
+  const ask = async (project, dropWet) => {
+    const rendered = await render("#/production", project, {
+      scan: { anchors: [], plates: [], vehicles: [], audio: [], media: [], shots: {}, props: [{ name: "A.png", url: "/a.png" }, { name: "B.png", url: "/b.png" }] },
+    });
+    const drop = dropWet ? 'e.continuityStates = e.continuityStates.filter((s) => s.id !== "state-wet");' : "";
+    return vm.runInContext("(() => {"
+      + ' const e = P.props.find((x) => x.id === "PROP-C7");'
+      + drop
+      + " return {"
+      + '  offered: entityApprovalContinuationStates(e, "state-default", "props").map((s) => s.name),'
+      + '  unfoldedStanding: entityStateTruth("props", e).of(e.continuityStates.find((s) => s.id === "state-unfolded")).standing,'
+      + " }; })()", rendered.context);
+  };
+
+  const oneUnapproved = await ask(build(false), true);
+  ok(oneUnapproved.offered.join(",") === "Unfolded",
+    "C7: one unapproved descendant is offered as the continuation");
+
+  const alreadyApproved = await ask(build(true), true);
+  ok(alreadyApproved.unfoldedStanding === "canon" && alreadyApproved.offered.length === 0,
+    "C7: a descendant already approved for Canon is not offered at all");
+
+  const mixed = await ask(build(true), false);
+  ok(mixed.offered.join(",") === "Wet",
+    "C7: with several descendants, only the unapproved one is offered");
+
+  const allOpen = await ask(build(false), false);
+  ok(allOpen.offered.slice().sort().join(",") === "Unfolded,Wet",
+    "C7: and every genuinely unfinished descendant still is");
+
+  const tools = code(source("library-tools.js"));
+  ok(/truth\.of\(state\)\.standing !== "canon"/.test(tools),
+    "C7: approval is asked of the receipt projection, never of the approvedFile pointer");
+  ok(/if \(!truth \|\| truth\.available === false\) return rows;/.test(tools),
+    "C7: and nothing is withdrawn when that projection cannot be computed");
+}
+
+/* ---- C10 — destructive state administration is subordinate ---------------- */
+function testStateDeletionIsFiledUnderAdmin() {
+  const entities = code(source("entities.js"));
+  ok(!/continuity-state-head-actions[\s\S]{0,1600}?removeContinuityState/.test(entities),
+    "C10: deleting a state is no longer a bare glyph in the state header");
+  ok(/const stateDeleteMarkup = st && !st\.isDefault/.test(entities),
+    "C10: it is built as its own labelled control");
+  ok(/\$\{stateScopeFields\}\$\{stateDeleteMarkup\}<\/div><\/details>/.test(entities),
+    "C10: and rendered inside the state details / validation disclosure");
+  /* SAME HANDLER, SAME SEMANTICS — only its rank moved. */
+  const calls = (entities.match(/removeContinuityState\(/g) || []).length;
+  ok(calls === 1, "C10: there is exactly one call site, and it is the shipped handler");
+  ok(/window\.removeContinuityState = \(list, id, i\)/.test(entities)
+    && /planStateDeletion\(x\.continuityStates, state\.id/.test(entities),
+    "C10: the deletion planner and its authority withdrawal are untouched");
+}
+
+/* ---- C12 — live work outranks a remembered collapsed preference ----------- */
+function testLiveWorkForcesTheReplacementDisclosureOpen() {
+  const studio = code(source("creation-studio.js"));
+  const app = code(source("app.js"));
+  /* THE REPRODUCTION: `workspaceSectionOpen(key, fallback)` returns the REMEMBERED
+     value whenever one exists, so passing live work as the fallback did nothing for
+     a filmmaker who had ever collapsed the card — and a running run's status
+     surface was rendered inside closed content. */
+  ok(/const bodyOpen = replaceOnly \? \(liveWork \|\| workspaceSectionOpen\(bodyOpenKey, false\)\) : true;/.test(studio),
+    "C12: live work opens the section regardless of the remembered preference");
+  ok(/data-disclosure-forced="open"/.test(studio),
+    "C12: and the render marks it as forced rather than preferred");
+  /* The second half of the same defect: a snapshot restorer ran after the render
+     and closed it again. */
+  ok(/data-disclosure-forced"\) === "open"\) \{ element\.open = true; return; \}/.test(app),
+    "C12: so the route disclosure restorer cannot close it a moment later");
+  /* AND FORCING MUST NOT REWRITE THE PREFERENCE, or one run silently converts a
+     filmmaker's collapsed card into an expanded one for good. */
+  ok(/hasAttribute\('data-disclosure-forced'\)\)rememberWorkspaceSection/.test(studio),
+    "C12: a forced-open section does not record itself as the filmmaker's choice");
+  ok(/const liveWork = !!busy \|\| operation\?\.status === "error" \|\| runIsLive;/.test(studio),
+    "C12: live work is an in-flight request, an error to act on, or a run still going");
 }
 
 async function main() {
@@ -540,6 +739,12 @@ async function main() {
   await testNotesSeparateDisplayFromStorage();
   testNotesPresentationNeverRewritesStorage();
   testPrimaryCreationSubordinatesAfterApproval();
+  testVisionOffIsReadFromConfiguration();
+  testReviewCtaRepaintsTheCandidateArea();
+  testSettledGateLeavesNoPendingHeader();
+  await testContinuationExcludesApprovedDescendants();
+  testStateDeletionIsFiledUnderAdmin();
+  testLiveWorkForcesTheReplacementDisclosureOpen();
 
   console.log(`Reference workflow coherence V2: ${notes.length} checks passed.`);
   for (const note of notes) console.log(`  - ${note}`);

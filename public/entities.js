@@ -268,10 +268,14 @@ function entityCandidateFilter(list, id) {
 function entityCandidateMatchesFilter(entity, fileName, filter) {
   return !filter || filter === "all" || entityCandidateWorkflowType(entity, fileName) === filter;
 }
+/* C3 — the repaint is RETURNED, so a caller that must act on the new DOM can wait
+   for it. `route()` is async; discarding its promise meant an awaiting caller
+   resumed against the old render. Chip clicks ignore the return value exactly as
+   before, so nothing about the filter's own behaviour changes. */
 window.setEntityCandidateFilter = (list, id, value) => {
   try { localStorage.setItem(entityCandidateFilterKey(list, id), value); } catch {}
   if (typeof boundedWriteState === "function") boundedWriteState("page:candidates", `${list}:${id}:active:${value}`, 0);
-  route();
+  return route();
 };
 function entityCandidateTargetStateId(entity, fileName) {
   const row = entityCandidateRow(entity, fileName, false) || {};
@@ -1046,10 +1050,18 @@ function continuityStatesPanel(list, it, media = [], demand = null) {
   const stateTaskMarkup = st && !st.isDefault
     ? `${stateLineagePrompt}${stateLeadMarkup}${stateLeadMarkup ? "" : stateDeltaField}`
     : `${continuityStateValidationMarkup(list, it, st, media)}${stateScopeFields}${stateDeltaField}`;
-  const stateAdminMarkup = st && !st.isDefault
-    ? `<details class="continuity-state-admin"><summary>State details, requirements and validation</summary><div>${continuityStateValidationMarkup(list, it, st, media, false)}${stateScopeFields}</div></details>`
+  /* C10 — DELETING A STATE IS ADMINISTRATION, AND DESTRUCTIVE ADMINISTRATION AT THAT.
+     It sat in the state header as a bare `×`, at the same rank as the creation task
+     and one mis-click from the filmmaker's actual work. Same handler, same planner,
+     same authority withdrawal, same refusal key — only its rank and its label
+     change, and it now says what it deletes instead of being a glyph. */
+  const stateDeleteMarkup = st && !st.isDefault
+    ? `<div class="continuity-state-destructive"><div><b>Delete ${esc(st.name || "this state")}</b><small>Removes this continuity state from the reference. Media on disk is not deleted.</small></div><button class="danger-btn" onclick="removeContinuityState('${list}','${it.id}',${selectedIndex})">Delete state</button></div>`
     : "";
-  const editor = st ? `<article class="continuity-state-card continuity-state-card-focused ${st.isDefault ? "is-default" : ""}" data-continuity-state-id="${attr(st.id)}"><div class="continuity-state-head"><span>${selectedIndex + 1}</span><input value="${attr(st.name || "")}" placeholder="Clean suit / Damaged sleeve / Night lighting" onchange="setContinuityState('${list}','${it.id}',${selectedIndex},'name',this.value)" ${st.isDefault ? 'data-default="1"' : ''}><div class="continuity-state-head-actions">${st.isDefault ? `<button class="chip" onclick="approveEntityFile('${list}','${it.id}','${attr(st.approvedFile || '')}','${attr(st.id)}')">CHOOSE AUTHORITY</button>` : `<button class="chip" onclick="openContinuityStateVariant('${attr(list)}','${attr(it.id)}','${attr(st.id)}')">${selectedIsCanon ? "EDIT / REGENERATE" : selectedParentIsCanon ? `GENERATE FROM ${esc(parentInfo.label.toUpperCase())}` : "OPEN STATE WORKFLOW"}</button><button class="ghost-btn" onclick="openStateReferenceUpload('${attr(list)}','${attr(it.id)}','${attr(st.id)}')">UPLOAD STATE REFERENCE</button><button class="chip" onclick="approveEntityFile('${attr(list)}','${attr(it.id)}','','${attr(st.id)}')">CHOOSE CANDIDATE</button><button class="icon-danger" onclick="removeContinuityState('${list}','${it.id}',${selectedIndex})">×</button>`}</div></div>${typeof actionRefusalMarkup === "function" ? actionRefusalMarkup(`continuity-state:${list}:${it.id}:${st.id}`) : ""}${selectedApprovedHero}${stateTaskMarkup}${stateAdminMarkup}${typeof assetStatePromptStudio === "function" ? assetStatePromptStudio(list, it, st) : ""}${continuityStateCandidateTray(list,it,st,media)}</article>` : '<div class="canon-notes">No continuity states yet.</div>';
+  const stateAdminMarkup = st && !st.isDefault
+    ? `<details class="continuity-state-admin"><summary>State details, requirements and validation</summary><div>${continuityStateValidationMarkup(list, it, st, media, false)}${stateScopeFields}${stateDeleteMarkup}</div></details>`
+    : "";
+  const editor = st ? `<article class="continuity-state-card continuity-state-card-focused ${st.isDefault ? "is-default" : ""}" data-continuity-state-id="${attr(st.id)}"><div class="continuity-state-head"><span>${selectedIndex + 1}</span><input value="${attr(st.name || "")}" placeholder="Clean suit / Damaged sleeve / Night lighting" onchange="setContinuityState('${list}','${it.id}',${selectedIndex},'name',this.value)" ${st.isDefault ? 'data-default="1"' : ''}><div class="continuity-state-head-actions">${st.isDefault ? `<button class="chip" onclick="approveEntityFile('${list}','${it.id}','${attr(st.approvedFile || '')}','${attr(st.id)}')">CHOOSE AUTHORITY</button>` : `<button class="chip" onclick="openContinuityStateVariant('${attr(list)}','${attr(it.id)}','${attr(st.id)}')">${selectedIsCanon ? "EDIT / REGENERATE" : selectedParentIsCanon ? `GENERATE FROM ${esc(parentInfo.label.toUpperCase())}` : "OPEN STATE WORKFLOW"}</button><button class="ghost-btn" onclick="openStateReferenceUpload('${attr(list)}','${attr(it.id)}','${attr(st.id)}')">UPLOAD STATE REFERENCE</button><button class="chip" onclick="approveEntityFile('${attr(list)}','${attr(it.id)}','','${attr(st.id)}')">CHOOSE CANDIDATE</button>`}</div></div>${typeof actionRefusalMarkup === "function" ? actionRefusalMarkup(`continuity-state:${list}:${it.id}:${st.id}`) : ""}${selectedApprovedHero}${stateTaskMarkup}${stateAdminMarkup}${typeof assetStatePromptStudio === "function" ? assetStatePromptStudio(list, it, st) : ""}${continuityStateCandidateTray(list,it,st,media)}</article>` : '<div class="canon-notes">No continuity states yet.</div>';
   /* R21 — A CONTINUITY STATE IS A STORY VARIANT, NOT A CONFIGURATION RECORD.
    *
    * Glasses on, wet, bloodied, helmet off, thirty years older. That is what this

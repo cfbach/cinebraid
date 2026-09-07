@@ -896,6 +896,25 @@ function v626RunActions(run, type, targetId, scope, startMarkup) {
   if (["running", "cancelled", "interrupted"].includes(run.status)) return `<button class="approve-btn" onclick="resumeAutomationRun('${run.id}')">RESUME RUN</button><button class="ghost-btn" onclick="startFreshAutomationRun('${run.id}','${type}','${attr(targetId)}')">START FRESH</button><button class="ghost-btn" onclick="archiveAutomationRun('${run.id}')">ARCHIVE</button>`;
   return `<button class="ghost-btn" onclick="archiveAutomationRun('${run.id}')">ARCHIVE REPORT</button>${startMarkup}`;
 }
+/* C5 — ONE READING OF "IS THIS DECISION STILL PENDING", FOR THE WHOLE PANEL.
+ *
+ * `v627HumanReviewMarkup` already withdrew the gate once its question was answered,
+ * but the panel AROUND it went on reading `run.status` directly — and the status is
+ * still the literal `awaiting-review` the run was parked with. So the header printed
+ * HUMAN REVIEW REQUIRED, the stage line asked for a review, and `run.summary` said
+ * "CineBraid paused before approval", all stacked on top of a gate that had just
+ * finished saying the approval was recorded. Two answers to one question, on one
+ * card.
+ *
+ * The RECORD IS NOT REWRITTEN. `run.status`, `run.stage` and `run.summary` keep the
+ * history they hold; this is the render deciding how to READ that history now that
+ * the receipt exists — which is the same thing the gate below already does, through
+ * the same predicate, so the two cannot drift apart again. */
+function v672RunGateSettled(run) {
+  const step = typeof v627AwaitingReviewStep === "function" ? v627AwaitingReviewStep(run) : null;
+  return !!step && v672GateAlreadySettled(run, step);
+}
+window.v672RunGateSettled = v672RunGateSettled;
 function v626AutomationPanel(run, title, description, type, targetId, scope, startMarkup, extra = "") {
   /* A1 — THE TASK PAGE IS THE TASK.
      This block used to be a process console: an orchestration kicker, a status line
@@ -913,12 +932,18 @@ function v626AutomationPanel(run, title, description, type, targetId, scope, sta
      ACTIVE IN ANOTHER WINDOW — and it is the first thing a filmmaker reads to know
      where this run stands. The first pass of A1 removed it along with the console
      around it, which took the answer with the furniture. */
-  const status = `<div class="automation-run-status"><b>${esc(v626StatusLabel(run))}</b><span>${esc(run?.stage || "Ready to plan an automation run")}</span></div>`;
+  const gateSettled = run ? v672RunGateSettled(run) : false;
+  const status = `<div class="automation-run-status${gateSettled ? " is-settled" : ""}"><b>${esc(gateSettled ? "APPROVAL RECORDED" : v626StatusLabel(run))}</b><span>${esc(gateSettled ? "This run is finished; its decision is recorded." : (run?.stage || "Ready to plan an automation run"))}</span></div>`;
   /* THE OUTCOME SENTENCE, KEPT AS A SENTENCE. `run.summary` is the one piece of the
      retired full-width block that told a filmmaker what actually happened, so it
      survives as a concise line beside the state rather than as a tone-filled panel.
      Rendered only when there is one: an empty outcome must not reserve a block. */
-  const outcome = run?.summary
+  /* `run.summary` for a parked run is the sentence "CineBraid paused before
+     approval. Review the returned candidates and choose which result becomes
+     canon." — a live instruction. It is withheld once that instruction has been
+     followed, rather than edited, because it is still the truthful record of what
+     the run did at the time it stopped. */
+  const outcome = run?.summary && !gateSettled
     ? `<p class="automation-run-outcome">${esc(run.summary)}</p>`
     : "";
   /* W1 — while a run is actually working or waiting, the prominent surface leads
@@ -2018,14 +2043,40 @@ function v626Pick(reviewData, run = null) {
  * All this adds is the run's vocabulary — type/targetId rather than list/entityId
  * — and the exact file the gate is handing over, so the candidate the run is
  * talking about is the candidate that gets focus. */
-window.revealReturnedCandidates = (runType, targetId, stateId = "", fileName = "") => {
+window.revealReturnedCandidates = async (runType, targetId, stateId = "", fileName = "") => {
   if (String(runType || "") !== "entity-chain") return;
   const [list, entityId] = String(targetId || "").split(":");
   if (!list || !entityId) return;
-  /* Order and identity are the candidate area's own; this only makes the group the
-     run returned the one in view. The filter is set the same way the coverage
-     handoff sets it, so the file being revealed is inside the shown filter. */
-  if (stateId && typeof entityCandidateFilterKey === "function") { try { localStorage.setItem(entityCandidateFilterKey(list, entityId), "primary-state"); } catch {} }
+  /* C3 — WRITING THE FILTER IS NOT SHOWING THE CANDIDATES.
+   *
+   * The first cut wrote localStorage and then scrolled. localStorage is read at
+   * RENDER time, and nothing re-rendered — so from Coverage Views the page scrolled
+   * to a candidate section still filtered to coverage, with the three returned
+   * Primary/State candidates as hidden after the click as before it. The stored
+   * state and the screen disagreed, and the screen is what the filmmaker has.
+   *
+   * `setEntityCandidateFilter` is the canonical filter change — the same function
+   * the filter chips call. It writes the value, resets that filter's pagination so
+   * the returned group is on the first page rather than wherever the previous
+   * filter was scrolled to, and re-renders. Awaiting it means the reveal below runs
+   * against the repainted DOM instead of the stale one.
+   *
+   * AND THE FILTER IS DERIVED FROM THE FILE, not assumed. Hard-coding
+   * "primary-state" is only right when the returned candidate happens to be one;
+   * asking `entityCandidateWorkflowType` for the file actually being handed over is
+   * right in every case. An already-matching filter is left alone, so a reveal
+   * never moves a filmmaker off a view that was already showing the candidate. */
+  const entity = P?.[list]?.find((item) => item.id === entityId) || null;
+  const wanted = entity && fileName && typeof entityCandidateWorkflowType === "function"
+    ? entityCandidateWorkflowType(entity, fileName)
+    : "";
+  const current = typeof entityCandidateFilter === "function" ? entityCandidateFilter(list, entityId) : "all";
+  const hidden = wanted && typeof entityCandidateMatchesFilter === "function"
+    ? !entityCandidateMatchesFilter(entity, fileName, current)
+    : false;
+  if (hidden && typeof setEntityCandidateFilter === "function") {
+    await setEntityCandidateFilter(list, entityId, wanted);
+  }
   if (typeof revealReturnedEntityCandidates === "function") revealReturnedEntityCandidates(list, entityId, "", fileName);
 };
 /* W2 / W15 / W17 — THE ONE SENTENCE A SKIPPED VISUAL REVIEW IS DESCRIBED BY.

@@ -1929,6 +1929,14 @@ body:not([data-help="minimal"]) [data-tip]:focus-visible::before{content:"";posi
 .continuity-state-admin>summary{padding:9px 12px;cursor:pointer;font:600 10px var(--mono);letter-spacing:.07em;text-transform:uppercase;color:var(--muted)}
 .continuity-state-admin[open]>summary{border-bottom:1px solid var(--line);color:var(--ink)}
 .continuity-state-admin>div{padding:12px;display:grid;gap:12px}
+/* C10 — destructive administration, filed with the rest of it and labelled. */
+.continuity-state-destructive{display:flex;gap:12px;align-items:center;justify-content:space-between;flex-wrap:wrap;padding:11px 12px;border:1px solid color-mix(in srgb,var(--danger,#c4553f) 40%,var(--line));border-radius:9px;background:color-mix(in srgb,var(--danger,#c4553f) 5%,transparent)}
+.continuity-state-destructive>div{display:grid;gap:2px;min-width:0}
+.continuity-state-destructive b{font-size:12px}
+.continuity-state-destructive small{font-size:10px;color:var(--muted);line-height:1.5}
+.continuity-state-destructive>button{flex:0 0 auto;width:auto}
+/* C5 — a finished run's status reads as history, not as a pending demand. */
+.automation-run-status.is-settled b{color:var(--muted)}
 /* The delta is an input to the task now, so it is sized like one. */
 .state-source-delta{width:100%;min-height:76px;field-sizing:content;line-height:1.55}
 /* H3 — replacing an approved primary is a deliberate act, not the default one. */
