@@ -721,15 +721,23 @@ async function testBrowserReadsTheServerStanding(scenarios) {
 function testAssistantSettingsAreTaskFirst() {
   const views = code(source("views.js"));
   ok(/const ASSISTANT_TIERS = \[/.test(views)
-    && /\["local", "Local"/.test(views) && /\["cloud", "Cloud"/.test(views),
-    "C2 settings: the runtimes are grouped by where they run");
+    && /\["local", "Local \/ self-hosted"/.test(views) && /\["cloud", "Cloud"/.test(views),
+    "C2 settings: the runtimes are grouped by whose hardware answers");
+  /* The tier is named for who controls the machine, not for whether anything
+     travels. The real production setup — CineBraid on Windows, self-hosted Qwen on
+     a DGX Spark — sends every request over the network and is still this tier, so
+     a claim that nothing is sent would be false on the very setup it describes. */
+  ok(/Runs on hardware you control — this computer, your LAN, or a private remote machine\./.test(views),
+    "C2 settings: and self-hosted is described truthfully, including LAN and private remote machines");
+  ok(!/Nothing is sent anywhere/.test(views),
+    "C2 settings: with no claim that a self-hosted runtime sends nothing");
   ok(/Where Braidy runs/.test(views),
     "C2 settings: and the first question asked is where, not which protocol");
   ok(/const braidyRuntimeChoice = braidyTier === "off" \|\| !braidyTier \? "" :/.test(views),
     "C2 settings: the runtime step appears only once a tier is chosen");
   ok(/<optgroup label="\$\{attr\(tierLabel\)\}">/.test(views),
     "C2 settings: visual review offers its runtimes under the same groups");
-  ok(/<optgroup label="Local">/.test(views) && /<optgroup label="Cloud">/.test(views),
+  ok(/<optgroup label="Local \/ self-hosted">/.test(views) && /<optgroup label="Cloud">/.test(views),
     "C2 settings: and so does continuity analysis");
   /* THE CONFUSION THIS REMOVES: OpenAI and OpenAI-compatible are no longer peers in
      one flat list — they sit in different groups, which is what they actually are. */
