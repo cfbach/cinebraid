@@ -568,6 +568,7 @@ async function main() {
     "reference-truth-sheet-gate.js",
     "reference-ux-convergence-negative-controls.js",
     "reference-ux-convergence.js",
+    "reference-workflow-coherence.js",
     "reference-workflow-repair.js",
     "reference-workspace-ux.js",
     "references-alpha-real-browser.py",

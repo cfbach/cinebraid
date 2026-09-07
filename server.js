@@ -8351,7 +8351,18 @@ function agentIndexMeta(P = null) {
 function visionCapabilityIsOff(cfg = readConfig()) {
   const provider = String(resolvedVisionProvider(cfg) || "").trim();
   if (provider === "none" || provider === "never") return true;
-  return !String(cfg.agents?.models?.vision || cfg.ollamaVisionModel || "").trim();
+  /* C2/2 — "IS A MODEL SELECTED" MUST BE ASKED OF THE MODEL THAT WOULD ACTUALLY BE
+     USED. The first repair asked `agents.models.vision || ollamaVisionModel`, which
+     are the GENERIC and OLLAMA fields. An OpenAI vision provider carrying
+     `openaiVisionModel: "gpt-5.2"` has neither of them set, so a fully selected
+     model read as no model at all and a missing-API-key fault was reported as
+     "Vision is off" — the same misclassification as before, arrived at through a
+     different wrong field.
+     `effectiveVisionModel` is the resolution `capabilityCheck` performs, so this
+     asks the question of the same value /api/agents/status answers it with. No
+     provider is named here and no second switch exists: when a new provider is
+     added to `providerCapabilityModel`, this follows it for free. */
+  return !String(effectiveVisionModel(cfg) || "").trim();
 }
 function resolvedVisionProvider(cfg) {
   const selected = cfg.assistant?.visionProvider || "same";
@@ -8384,8 +8395,25 @@ function providerCapabilityModel(provider, cfg, kind) {
       : cfg.anthropicModel || "";
   return "";
 }
+/* THE EFFECTIVE MODEL FOR A CAPABILITY, IN ONE PLACE.
+   This composition — the provider's own field, falling back to the generic/Ollama
+   one — was written inline inside capabilityCheck and nowhere else, so any other
+   reader that needed the same answer had to restate half of it. Naming it is what
+   makes reuse possible without a second provider switch. */
+function effectiveCapabilityModel(provider, cfg, kind, fallbackModel) {
+  return providerCapabilityModel(provider, cfg, kind) || fallbackModel || "";
+}
+/* The generic vision fallback, likewise stated once rather than at each caller. */
+function configuredVisionFallbackModel(cfg) {
+  return cfg.agents?.models?.vision || cfg.ollamaVisionModel || "";
+}
+/* WHAT VISION IS ACTUALLY SET TO, resolved exactly as /api/agents/status resolves
+   it: same provider resolution, same effective-model resolution, same fallback. */
+function effectiveVisionModel(cfg) {
+  return effectiveCapabilityModel(resolvedVisionProvider(cfg), cfg, "vision", configuredVisionFallbackModel(cfg));
+}
 function capabilityCheck(label, provider, ollamaModel, inventories, cfg, kind = "text") {
-  const model = providerCapabilityModel(provider, cfg, kind) || ollamaModel;
+  const model = effectiveCapabilityModel(provider, cfg, kind, ollamaModel);
   if (provider === "none")
     return {
       ready: false,
@@ -8520,7 +8548,7 @@ async function agentReadiness(type, cfg = readConfig(), inventories = null) {
     cfg.agents?.models?.verifier ||
     cfg.agents?.models?.coordinator ||
     cfg.ollamaModel;
-  const visionModel = cfg.agents?.models?.vision || cfg.ollamaVisionModel;
+  const visionModel = configuredVisionFallbackModel(cfg);
   const embeddingModel =
     cfg.agents?.models?.embedding || cfg.ollamaEmbedModel;
   const coderModel = cfg.agents?.models?.coder || "";
@@ -8619,7 +8647,7 @@ function assistantCapabilities(cfg = readConfig(), inventories = null) {
     cfg.agents?.models?.verifier ||
     cfg.agents?.models?.coordinator ||
     cfg.ollamaModel;
-  const visionModel = cfg.agents?.models?.vision || cfg.ollamaVisionModel;
+  const visionModel = configuredVisionFallbackModel(cfg);
   const embeddingModel = cfg.agents?.models?.embedding || cfg.ollamaEmbedModel;
   const coderModel = cfg.agents?.models?.coder || plannerModel;
   return {

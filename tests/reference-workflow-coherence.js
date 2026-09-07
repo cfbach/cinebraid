@@ -554,9 +554,9 @@ function extractServerFunction(name) {
 }
 function testVisionOffIsReadFromConfiguration() {
   const server = code(serverSource());
-  /* THE REPRODUCTION: `capability-off` was derived from `assistantPermanent`, and
-     "no openai api key" is permanent — so a configured OpenAI vision provider with
-     a missing key was reported as switched off. */
+  /* THE FIRST REPRODUCTION: `capability-off` was derived from `assistantPermanent`,
+     and "no openai api key" is permanent — so a configured OpenAI vision provider
+     with a missing key was reported as switched off. */
   ok(!/reviewUnavailableReason: error\.assistantPermanent \? "capability-off"/.test(server),
     "C2: off-ness is no longer inferred from whether the error was retryable");
   ok(/const off = visionCapabilityIsOff\(\);/.test(server)
@@ -565,20 +565,95 @@ function testVisionOffIsReadFromConfiguration() {
   ok(/reviewRetryable: !error\.assistantPermanent/.test(server),
     "C2: and retryability is reported separately, because it answers a different question");
 
-  /* The shipped predicate, run over the exact configurations Astra listed. */
-  const sandbox = vm.createContext({ readConfig: () => ({}) });
-  vm.runInContext(extractServerFunction("resolvedVisionProvider") + "\n" + extractServerFunction("visionCapabilityIsOff"), sandbox);
+  /* THE SECOND REPRODUCTION, and the one this section exists for. The first repair
+     asked `agents.models.vision || ollamaVisionModel` — the GENERIC and OLLAMA
+     fields. An OpenAI vision provider carrying `openaiVisionModel: "gpt-5.2"` has
+     neither set, so a fully selected model read as no model and the same
+     misclassification returned through a different wrong field.
+
+     There must be ONE effective provider/model resolution, so the predicate is
+     required to reuse the capability reader's, not to grow a second switch. */
+  ok(/return !String\(effectiveVisionModel\(cfg\) \|\| ""\)\.trim\(\);/.test(server),
+    "C2: the model question is asked of the model that would actually be used");
+  ok(/function effectiveVisionModel\(cfg\) \{\s*return effectiveCapabilityModel\(resolvedVisionProvider\(cfg\), cfg, "vision", configuredVisionFallbackModel\(cfg\)\);/.test(server),
+    "C2: through the same resolution /api/agents/status resolves vision with");
+  ok(/const model = effectiveCapabilityModel\(provider, cfg, kind, ollamaModel\);/.test(server),
+    "C2: which is capabilityCheck's own resolution, named rather than duplicated");
+  /* NO SECOND PROVIDER SWITCH. `providerCapabilityModel` stays the only place that
+     knows which field a given provider keeps its model in, so a provider added
+     there is picked up here for free. */
+  const namesVisionModelField = (server.match(/cfg\.(?:openai|custom|anthropic)VisionModel/g) || []).length;
+  ok(namesVisionModelField === 3,
+    "C2: only providerCapabilityModel names a provider's vision-model field, once per provider");
+  ok(!/visionCapabilityIsOff[\s\S]{0,600}?ollamaVisionModel/.test(server),
+    "C2: and the off test inspects no provider-specific field of its own");
+
+  /* The shipped functions, run over the exact configurations Astra reproduced. */
+  const sandbox = vm.createContext({
+    readConfig: () => ({}),
+    cleanModelName: (m) => String(m || "").trim(),
+    exactModelReady: (models, m) => (models || []).includes(String(m || "").trim()),
+  });
+  vm.runInContext([
+    "resolvedVisionProvider",
+    "providerCapabilityModel",
+    "effectiveCapabilityModel",
+    "configuredVisionFallbackModel",
+    "effectiveVisionModel",
+    "providerConfigured",
+    "capabilityCheck",
+    "visionCapabilityIsOff",
+  ].map(extractServerFunction).join("\n"), sandbox);
+
+  const ollamaDown = { ollama: { ok: false, models: [], base: "http://127.0.0.1:11434" }, custom: {} };
+  const ollamaUp = { ollama: { ok: true, models: ["llava:13b"], base: "http://127.0.0.1:11434" }, custom: {} };
   const cases = [
-    ["provider none", { assistant: { provider: "openai", visionProvider: "none" }, agents: { models: { vision: "gpt-4o" } } }, true],
-    ["no vision model configured", { assistant: { provider: "openai", visionProvider: "openai" }, agents: { models: { vision: "" } } }, true],
-    ["vision inheriting a none text provider", { assistant: { provider: "none", visionProvider: "same" }, agents: { models: { vision: "gpt-4o" } } }, true],
-    ["openai vision with a model and no api key", { assistant: { provider: "openai", visionProvider: "openai" }, agents: { models: { vision: "gpt-4o" } } }, false],
-    ["custom vision pointed at an unreachable endpoint", { assistant: { provider: "custom", visionProvider: "custom" }, customBaseUrl: "http://127.0.0.1:9/v1", customModel: "m", agents: { models: { vision: "qwen-vl" } } }, false],
-    ["fully configured vision", { assistant: { provider: "openai", visionProvider: "openai" }, openaiKey: "sk-x", agents: { models: { vision: "gpt-4o" } } }, false],
+    ["OpenAI with gpt-5.2, a missing key and a blank Ollama model",
+      { assistant: { provider: "openai", visionProvider: "openai" }, openaiVisionModel: "gpt-5.2", agents: { models: { vision: "" } }, ollamaVisionModel: "" },
+      ollamaDown, false],
+    ["OpenAI with no vision model at all",
+      { assistant: { provider: "openai", visionProvider: "openai" }, openaiKey: "sk-x", agents: { models: { vision: "" } }, ollamaVisionModel: "" },
+      ollamaDown, true],
+    ["Ollama with a selected model and an unavailable runtime",
+      { assistant: { provider: "ollama", visionProvider: "ollama" }, ollamaVisionModel: "llava:13b", agents: { models: {} } },
+      ollamaDown, false],
+    ["custom with a selected vision model and an unreachable endpoint",
+      { assistant: { provider: "custom", visionProvider: "custom" }, customBaseUrl: "http://127.0.0.1:9/v1", customVisionModel: "qwen-vl", agents: { models: {} } },
+      ollamaDown, false],
+    ["provider none",
+      { assistant: { provider: "openai", visionProvider: "none" }, openaiVisionModel: "gpt-5.2", agents: { models: {} } },
+      ollamaDown, true],
+    ["fully configured and valid vision",
+      { assistant: { provider: "openai", visionProvider: "openai" }, openaiKey: "sk-x", openaiVisionModel: "gpt-5.2", agents: { models: {} } },
+      ollamaDown, false],
+    ["vision inheriting a none text provider",
+      { assistant: { provider: "none", visionProvider: "same" }, agents: { models: { vision: "gpt-4o" } } },
+      ollamaDown, true],
+    ["Ollama with a selected model, a live runtime and the model installed",
+      { assistant: { provider: "ollama", visionProvider: "ollama" }, ollamaVisionModel: "llava:13b", agents: { models: {} } },
+      ollamaUp, false],
+    ["anthropic with a selected vision model and a missing key",
+      { assistant: { provider: "anthropic", visionProvider: "anthropic" }, anthropicVisionModel: "claude-vision", agents: { models: {} } },
+      ollamaDown, false],
   ];
-  for (const [label, cfg, expected] of cases) {
-    ok(sandbox.visionCapabilityIsOff(cfg) === expected,
-      "C2: " + label + " -> " + (expected ? "Off" : "configured, and not called Off"));
+  for (const [label, cfg, inventories, expectedOff] of cases) {
+    const off = sandbox.visionCapabilityIsOff(cfg);
+    ok(off === expectedOff,
+      "C2: " + label + " -> " + (expectedOff ? "Off" : "configured, and not called Off"));
+    /* THE DEFECT, STATED AS AN INVARIANT. The capability reader also serves a
+       configured provider that names no model from the provider default and calls
+       it ready, so "off iff the reader says disabled" would be too strong. What
+       must never happen is the C2 defect itself: a provider the reader is
+       reporting a CONFIGURATION FAULT for being described as switched off. */
+    const capability = sandbox.capabilityCheck(
+      "Vision assistance",
+      sandbox.resolvedVisionProvider(cfg),
+      sandbox.configuredVisionFallbackModel(cfg),
+      inventories, cfg, "vision",
+    );
+    const readerReportsProviderFault = /is not configured|is not reachable|is not installed/.test(capability.message);
+    ok(!(off && readerReportsProviderFault),
+      "C2: " + label + " -> a configuration fault is never reported as Off");
   }
 }
 
