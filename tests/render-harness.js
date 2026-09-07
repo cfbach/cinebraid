@@ -584,8 +584,14 @@ async function render(hash, project, options = {}) {
   const location = { hash, href: `http://127.0.0.1/${hash}` };
   const config = readConfig();
   const scan = options.scan || scanFor(project);
+  /* A READY capability, in the shape /api/agents/status actually sends. `standing`
+     is what every browser consumer reads now — the legacy `ready` boolean is kept
+     because the record still carries it, but a fixture that omitted the standing
+     would be describing a record the server does not produce, and would be read as
+     "not resolved yet" rather than as ready. */
   const readyCapability = (label) => ({
     ready: true,
+    standing: "ready",
     label,
     provider: "ollama",
     model: "fixture-model",

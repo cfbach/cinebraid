@@ -536,7 +536,8 @@ function entityCandidateCard(list, entity, media, index, mediaJson, rejected = f
       : "APPROVE…";
   const targetStateId = row.targetStateId || "state-default";
   const batchStatus = typeof entityCandidateBatchStatusMarkup === "function" ? entityCandidateBatchStatusMarkup(list, entity.id, media.name) : "";
-  const visionReady = typeof capabilityState === "function" && !!capabilityState("vision")?.ready;
+  /* C2 MIGRATION: enablement follows the standing, not the legacy readiness flag. */
+  const visionReady = typeof visionCanReview === "function" && visionCanReview(capabilityState("vision"));
   const storedReview = targetReview || (typeof entityLatestCandidateReviewRaw === "function" ? entityLatestCandidateReviewRaw(entity, media.name) : null);
   /* R13/R15 — REVIEW IS THE FIRST THING A CANDIDATE OFFERS, AND IT ALWAYS EXISTS.
      This control used to be the AI check, so it appeared only when a vision reviewer
@@ -807,7 +808,15 @@ function continuityStateValidationMarkup(list, entity, state, media = [], includ
   const targetMedia = media.find((item) => item.name === targetStanding.file) || null;
   const parentMedia = media.find((item) => item.name === parentStanding.file) || null;
   const validation = continuityStateValidationCurrent(entity, state);
-  const capability = typeof capabilityState === "function" ? capabilityState("vision") : { ready: false, message: "Vision assistant unavailable" };
+  /* C2 MIGRATION — beyond the literal scope list, and reported as such. This is a
+     reference-workflow Vision consumer that was still gating on the legacy flag, so
+     a record carrying `ready: true` and no standing would have enabled a validation
+     call against a capability this browser had not resolved. Same defect class as
+     Candidate Review's; leaving one known instance behind would not be the closure
+     this sweep is for. Only the predicate changes — the control, its confirmation
+     and its authority semantics are untouched. */
+  const capability = typeof capabilityState === "function" ? capabilityState("vision") : { standing: "checking" };
+  const capabilityCanReview = typeof visionCanReview === "function" && visionCanReview(capability);
   const ready = !!(targetIsCanon && parentIsCanon && targetMedia && parentMedia && String(state.notes || "").trim());
   /* What is missing, in the creator’s words, so the disabled button is not a
      dead end. Historic media is named — it is real work, one click from canon. */
@@ -822,7 +831,7 @@ function continuityStateValidationMarkup(list, entity, state, media = [], includ
             : "Approve both the parent and this state as canon, then describe the exact visual delta.";
   const thumbs = targetMedia && parentMedia ? `<div class="state-validation-thumbs"><button type="button" onclick="openMediaTheatre('${attr(encodeURIComponent(parentMedia.url))}','${attr(encodeURIComponent(`${parentInfo.label} ${parentIsCanon ? "canon" : "historic"} parent image · ${parentStanding.file}`))}','image')"><img src="${attr(parentMedia.url)}" alt="${parentIsCanon ? `Approved parent image for ${attr(parentInfo.label)}` : `Historic parent image for ${attr(parentInfo.label)}, not approved`}"><span>${esc(parentInfo.label)} · parent</span></button><i>→</i><button type="button" onclick="openMediaTheatre('${attr(encodeURIComponent(targetMedia.url))}','${attr(encodeURIComponent(`${state.name || "State"} ${targetIsCanon ? "canon" : "historic"} image · ${targetStanding.file}`))}','image')"><img src="${attr(targetMedia.url)}" alt="${targetIsCanon ? `Approved image for ${attr(state.name || "this state")}` : `Historic image for ${attr(state.name || "this state")}, not approved`}"><span>${esc(state.name || "State")} · target</span></button></div>` : "";
   if (validation?.status === "working") return `<section class="state-parent-validation state-working"><header><div><span>PARENT-TO-STATE VALIDATION</span><b>Checking ${esc(state.name || "state")} against ${esc(parentInfo.label)}</b><small>The vision assistant is separating the intended delta from identity, geometry, material and lighting drift.</small></div><i class="spin">◌</i></header>${thumbs}</section>`;
-  if (!validation) return `<section class="state-parent-validation state-pending"><header><div><span>PARENT-TO-STATE VALIDATION</span><b>${ready ? "Validate the approved state against its parent" : "Approve both sides before validating"}</b><small>${ready ? "The parent is canon. The state description is the allowed delta. Everything else stays locked." : "Validation compares one approved image against another, so both have to be canon before it can say anything."}</small></div><button class="approve-btn" onclick="validateContinuityStateAgainstParent('${attr(list)}','${attr(entity.id)}','${attr(state.id)}')" ${ready && capability.ready ? "" : "disabled"}>VALIDATE AGAINST PARENT</button></header>${thumbs}${!ready ? `<p class="prompt-check warn">${blockedReason || "Approve both the parent and target state, then describe the exact visual delta."}</p>` : !capability.ready ? `<p class="prompt-check warn">${esc(capability.message || "Connect a vision assistant to validate this state.")}</p>` : ""}</section>`;
+  if (!validation) return `<section class="state-parent-validation state-pending"><header><div><span>PARENT-TO-STATE VALIDATION</span><b>${ready ? "Validate the approved state against its parent" : "Approve both sides before validating"}</b><small>${ready ? "The parent is canon. The state description is the allowed delta. Everything else stays locked." : "Validation compares one approved image against another, so both have to be canon before it can say anything."}</small></div><button class="approve-btn" onclick="validateContinuityStateAgainstParent('${attr(list)}','${attr(entity.id)}','${attr(state.id)}')" ${ready && capabilityCanReview ? "" : "disabled"}>VALIDATE AGAINST PARENT</button></header>${thumbs}${!ready ? `<p class="prompt-check warn">${blockedReason || "Approve both the parent and target state, then describe the exact visual delta."}</p>` : !capabilityCanReview ? `<p class="prompt-check warn">${esc(typeof visionUnavailableReason === "function" ? visionUnavailableReason(capability) : "Connect a vision assistant to validate this state.")}</p>` : ""}</section>`;
   const review = validation.review || {};
   const pass = validation.accepted === true || review.pass === true;
   const hardLabels = { sameUnderlyingEntity: "Same underlying asset", onlyRequestedDelta: "Only requested delta changed", sameEmbeddedContent: "Embedded content preserved", sameSpatialGeometry: "Same physical geometry", requestedViewCorrect: "Requested view remains correct" };
@@ -851,7 +860,7 @@ window.validateContinuityStateAgainstParent = async (list, id, stateId) => {
   }
   if (!String(state.notes || "").trim()) return toast("Describe the allowed state delta first");
   const capability = capabilityState("vision");
-  if (!capability.ready) return toast(capability.message || "Vision assistant is unavailable");
+  if (typeof visionCanReview !== "function" || !visionCanReview(capability)) return toast(visionUnavailableReason(capability));
   state.parentValidation = { status: "working", targetFile: targetStanding.file, parentFile: parentStanding.file, stateDelta: String(state.notes || "").trim(), reviewedAt: new Date().toISOString() };
   dirty(); route();
   try {
@@ -3101,7 +3110,8 @@ function entityPage(list, id, extra) {
   const filterCounts=Object.fromEntries(ENTITY_CANDIDATE_FILTERS.map((filter)=>[filter.id,filter.id === "all" ? activeCandidates.length : activeCandidates.filter((item)=>entityCandidateMatchesFilter(it,item.name,filter.id)).length]));
   const filterMarkup=`<nav class="entity-candidate-filters" aria-label="Candidate workflow filters">${ENTITY_CANDIDATE_FILTERS.map((filter)=>`<button type="button" class="${candidateFilter===filter.id?"selected":""}" onclick="setEntityCandidateFilter('${list}','${id}','${filter.id}')"><span>${esc(filter.label)}</span><b>${filterCounts[filter.id] || 0}</b></button>`).join("")}</nav>`;
   const batchPanelRaw=typeof entityBatchReviewPanelMarkup === "function" ? entityBatchReviewPanelMarkup(list,it,filteredCandidates,candidatePage.rows) : "";
-  const visionReady=typeof capabilityState === "function" ? !!capabilityState("vision")?.ready : false;
+  /* C2 MIGRATION: the batch AI check appears on a resolved-ready capability only. */
+  const visionReady=typeof visionCanReview === "function" ? visionCanReview(capabilityState("vision")) : false;
   const batchPanel=batchPanelRaw && visionReady
     ? (manualFirstWorkflow()
       ? `<details class="manual-optional-batch-review"><summary>Optional batch AI check</summary><p>Review several visible files as supporting evidence. Human approval remains available without it.</p>${batchPanelRaw}</details>`

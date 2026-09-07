@@ -5903,6 +5903,33 @@ function visionIsOff(capability) {
   return capabilityStanding(capability) === "off";
 }
 window.visionIsOff = visionIsOff;
+/* C2 MIGRATION — THE ONLY TWO QUESTIONS A VISION CONSUMER MAY ASK.
+ *
+ * `visionIsOff` above answers "was it switched off". This answers "may an image be
+ * sent", and every reference-side consumer asks it instead of reading a field.
+ *
+ * IT IS NOT `capability.ready`. The record still carries that legacy boolean for
+ * other readers, and a record that carries `ready: true` and no `standing` is NOT
+ * evidence that vision works — it is a record this browser has not been able to
+ * normalize, which is `checking`. Consumers that read `.ready` were treating an
+ * unresolved record as a resolved one and enabling Review with Braidy on it. The
+ * standing is the authority in both directions: it overrides a truthy legacy
+ * field and a falsy one alike. */
+function visionCanReview(capability) {
+  return capabilityStanding(capability) === "ready";
+}
+/* WHY IT CANNOT RUN, IN THE RECORD'S OWN WORDS WHERE IT HAS THEM. A capability
+   that is merely unresolved has no diagnostic to give and must not borrow one. */
+function visionUnavailableReason(capability) {
+  const standing = capabilityStanding(capability);
+  if (standing === "off") return "Vision is off, so no image is sent for reading.";
+  if (standing === "checking") return "CineBraid is still checking whether Braidy can read images.";
+  const row = capability && typeof capability === "object" ? capability : {};
+  return [row.message, row.action].map((line) => String(line || "").trim()).filter(Boolean).join(" ")
+    || "Braidy cannot read images with the current configuration.";
+}
+window.visionCanReview = visionCanReview;
+window.visionUnavailableReason = visionUnavailableReason;
 function aiDisabledAttrs(name, extraRequirement = "") {
   const state = capabilityState(name),
     reason = [state.message, state.action, extraRequirement]

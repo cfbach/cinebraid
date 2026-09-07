@@ -1687,11 +1687,18 @@ function v627EntityPreflight(list, entity, stateIds) {
      someone to start Ollama for a capability they turned off is the noise this
      dogfood reported. A vision model that IS named and did not answer keeps its
      diagnostic, because that is a fault and the address is the useful part. */
-  if (!braidyVision.ready) {
+  /* C2 MIGRATION: the run plan warns from the standing. `!braidyVision.ready` would
+     have stayed silent about a record carrying a truthy legacy flag and no standing —
+     the one case where the filmmaker most needs to be told nothing is resolved yet. */
+  if (typeof visionCanReview !== "function" || !visionCanReview(braidyVision)) {
     const visionOff = typeof visionIsOff === "function" ? visionIsOff(braidyVision) : false;
     warnings.push(visionOff
       ? "Vision is off, so returned candidates come back for your review without an AI check. Nothing else about the run changes."
-      : `Vision is unavailable, so returned candidates come back for your review without an AI check. ${[braidyVision.message, braidyVision.action].filter(Boolean).join(" ")}`.trim());
+      /* The reason comes from the shared reader, so an unresolved capability says it
+         is still being checked rather than borrowing a provider diagnostic it does
+         not have — the record's message and action are still what a configured
+         failure reports, because that is where the reader gets them. */
+      : `Vision is unavailable, so returned candidates come back for your review without an AI check. ${typeof visionUnavailableReason === "function" ? visionUnavailableReason(braidyVision) : [braidyVision.message, braidyVision.action].filter(Boolean).join(" ")}`.trim());
   }
   if (!selected.size) errors.push("Choose at least one continuity state.");
   const media = new Set(entityMedia(list, entity).map((item) => item.name));

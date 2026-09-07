@@ -1,8 +1,8 @@
 /* ---------- vision review (adaptive batches; triage, not verdict) ---------- */
 window.visionReview = async (kind, list, id) => {
   const capability = capabilityState("vision");
-  if (!capability.ready) {
-    toast(`${capability.message} ${capability.action}`.trim());
+  if (!visionCanReview(capability)) {
+    toast(visionUnavailableReason(capability));
     return;
   }
   openModal(
@@ -258,7 +258,7 @@ window.reviewEntityCandidatesBatch = async (list, id, scope = "visible", force =
   const entity = P[list]?.find((item) => item.id === id);
   if (!entity) return toast("Candidate inbox is unavailable");
   const capability = capabilityState("vision");
-  if (!capability.ready) return toast(`${capability.message} ${capability.action}`.trim());
+  if (!visionCanReview(capability)) return toast(visionUnavailableReason(capability));
   const key = entityBatchReviewKey(list, id);
   if (ENTITY_BATCH_REVIEW_RUNTIME.get(key)?.run?.status === "running") return toast("A candidate batch review is already running");
   const media = entityMedia(list, entity);
@@ -711,7 +711,11 @@ function entityReviewBraidyAvailability(busy, review) {
   const capability = typeof capabilityState === "function"
     ? capabilityState("vision")
     : { ready: false, message: "", action: "" };
-  if (capability.ready === true) {
+  /* C2 MIGRATION: this read `capability.ready === true` and returned the available
+     panel before any standing was consulted — so a record carrying `ready: true`
+     and no standing enabled Review with Braidy on a capability this browser had
+     not resolved. Availability is the standing, and only the standing. */
+  if (visionCanReview(capability)) {
     return `<section class="entity-review-braidy is-available"><div><span>BRAIDY VISUAL REVIEW</span><b>${review ? "Braidy has reviewed this candidate" : "Optional — ask Braidy to look at this candidate"}</b><small>Braidy reports what it observes against this continuity state. It is advisory: it cannot approve a reference or assign authority, and you can approve without it.</small></div><button class="ghost-btn" ${busy ? "disabled" : ""} onclick="runEntityCandidateVisionReview()">${busy ? `<span class="spin">◌</span> REVIEWING…` : review ? "Review with Braidy again" : "Review with Braidy"}</button></section>`;
   }
   /* T2 — A CAPABILITY NOBODY TURNED ON HAS NOT FAILED, SO IT REPORTS NO FAILURE.
@@ -912,7 +916,7 @@ window.runEntityCandidateVisionReview = async () => {
   const state = entity ? entityStateById(entity, current.stateId || "state-default") : null;
   if (!entity || !media || !state) return toast("Review target is unavailable");
   const capability = capabilityState("vision");
-  if (!capability.ready) return toast(`${capability.message} ${capability.action}`.trim());
+  if (!visionCanReview(capability)) return toast(visionUnavailableReason(capability));
   openModal(entityReviewModalMarkup(current.list, entity, media, state, null, true));
   const activityId = typeof v641StartManualActivity === "function" ? v641StartManualActivity("VISION AI · REFERENCE REVIEW", `Review ${current.fileName}`, `Comparing the candidate against ${state.name || "the selected continuity state"}.`) : "";
   try {

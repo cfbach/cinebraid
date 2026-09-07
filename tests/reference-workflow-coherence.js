@@ -873,6 +873,106 @@ async function testSettingsCardMatchesTheServerStanding(scenarios) {
     "C2 settings: a capability record that has not arrived reads Checking, not Off and not Needs a model");
 }
 
+/* ---- C2 — standing dominates the legacy readiness flag, everywhere --------- */
+function testNoVisionConsumerReadsLegacyReadiness() {
+  /* THE REPRODUCTION: Candidate Review returned its available panel from
+     `capability.ready === true` before any standing was read, so a record carrying
+     a truthy legacy flag and no standing enabled Review with Braidy on a capability
+     this browser had not resolved. */
+  const review = code(source("review.js"));
+  ok(!/capability\.ready === true/.test(review),
+    "C2 migration: Candidate Review no longer decides availability from the legacy flag");
+  ok(/if \(visionCanReview\(capability\)\) \{/.test(review),
+    "C2 migration: it asks the standing-derived predicate instead");
+  const app = code(source("app.js"));
+  ok(/function visionCanReview\(capability\) \{\s*return capabilityStanding\(capability\) === "ready";\s*\}/.test(app),
+    "C2 migration: which is exactly 'the standing is ready', with no fallback");
+  ok(/function visionUnavailableReason\(capability\)/.test(app),
+    "C2 migration: and an unresolved capability has words of its own rather than borrowing a diagnostic");
+
+  /* THE MIGRATION, AS A SWEEP. Every reference-side Vision consumer, checked for a
+     legacy-field bypass in its executable code. The list is the inventory: if a new
+     consumer appears it has to be added here, which is the point. */
+  const consumers = [
+    ["review.js", "Candidate Review availability, copy and the three review actions", null],
+    ["entities.js", "candidate card enablement, batch panel, parent-to-state validation", null],
+    ["views.js", "Settings vision status", null],
+    /* automation.js holds BOTH reference automation and the shot/scene/blocking
+       automations, and this pass is scoped to the reference one. The slice is the
+       reference preflight through the skip decision; the shot and blocking
+       preflights below it keep their own readiness reads, deliberately. */
+    ["automation.js", "reference automation vision availability and skip",
+      ["function v627EntityPreflight", "window.revealReturnedCandidates"]],
+  ];
+  for (const [file, role, bounds] of consumers) {
+    const whole = code(source(file));
+    const executable = bounds
+      ? whole.slice(whole.indexOf(bounds[0]), whole.indexOf(bounds[1]))
+      : whole;
+    /* `.ready` may still appear for OTHER capabilities — Braidy text, continuity —
+       which this pass deliberately does not touch. What may not appear is a vision
+       capability's readiness being read to establish semantic availability. */
+    const bypass = /capabilityState\("vision"\)\s*\??\.\s*ready/.test(executable)
+      || /(?:braidyVision|visionCapability)\s*\??\.\s*ready/.test(executable)
+      || /capability\.ready(?![A-Za-z])/.test(executable);
+    ok(!bypass, `C2 migration: ${file} establishes vision availability from standing only (${role})`);
+  }
+  const entities = code(source("entities.js"));
+  ok(/visionCanReview\(capabilityState\("vision"\)\)/.test(entities),
+    "C2 migration: candidate-card and batch enablement follow the standing");
+  ok(/const capabilityCanReview = typeof visionCanReview === "function" && visionCanReview\(capability\);/.test(entities),
+    "C2 migration: and so does parent-to-state validation");
+  const automation = code(source("automation.js"));
+  ok(/if \(typeof visionCanReview !== "function" \|\| !visionCanReview\(braidyVision\)\) \{/.test(automation),
+    "C2 migration: the run plan warns from the standing rather than from the legacy flag");
+}
+
+/* Standing must win over a conflicting legacy field in BOTH directions. */
+async function testStandingDominatesLegacyReadiness() {
+  const rendered = await render("#/production", buildFixture());
+  const read = (record) => vm.runInContext(`(() => {
+    AGENT_STATUS = { capabilities: { vision: ${JSON.stringify(record)} } };
+    const capability = capabilityState("vision");
+    const panel = entityReviewBraidyAvailability(false, null);
+    return {
+      standing: capabilityStanding(capability),
+      canReview: visionCanReview(capability),
+      panelAvailable: /is-available/.test(panel),
+      panelState: (panel.match(/data-vision-state="([a-z-]+)"/) || [])[1] || (/is-available/.test(panel) ? "ready" : ""),
+      offersReviewAction: /runEntityCandidateVisionReview/.test(panel),
+    };
+  })()`, rendered.context);
+
+  const base = { provider: "openai", model: "gpt-5.2", message: "m", action: "a" };
+  const cases = [
+    ["legacy ready:true with no standing", { ...base, ready: true }, "checking", false],
+    ["legacy ready:false with no standing", { ...base, ready: false }, "checking", false],
+    ["standing ready over legacy ready:false", { ...base, ready: false, standing: "ready" }, "ready", true],
+    ["standing configured-unavailable over legacy ready:true", { ...base, ready: true, standing: "configured-unavailable" }, "configured-unavailable", false],
+    ["standing off over legacy ready:true", { ...base, ready: true, standing: "off" }, "off", false],
+    ["standing checking over legacy ready:true", { ...base, ready: true, standing: "checking" }, "checking", false],
+  ];
+  for (const [label, record, expected, canReview] of cases) {
+    const seen = read(record);
+    ok(seen.standing === expected,
+      `C2 migration: ${label} -> ${expected}`);
+    ok(seen.canReview === canReview,
+      `C2 migration: ${label} -> review ${canReview ? "may be offered" : "is not enabled"}`);
+    ok(seen.panelAvailable === canReview,
+      `C2 migration: ${label} -> Candidate Review renders the matching panel`);
+    ok(seen.offersReviewAction === canReview,
+      `C2 migration: ${label} -> and offers a Braidy review action only when the standing allows one`);
+  }
+
+  /* Astra's exact reproduction, stated alone: ready:true and no standing must be a
+     neutral checking state with the review action withheld, not an available one. */
+  const reproduction = read({ ...base, ready: true });
+  ok(reproduction.panelState === "checking" && reproduction.panelAvailable === false,
+    "C2 migration: ready:true with no standing shows the neutral checking state");
+  ok(reproduction.offersReviewAction === false,
+    "C2 migration: and Review with Braidy is not enabled on an unresolved capability");
+}
+
 /* ---- C3 — the handoff must repaint, not just rewrite stored state --------- */
 function testReviewCtaRepaintsTheCandidateArea() {
   const automation = code(source("automation.js"));
@@ -1035,6 +1135,8 @@ async function main() {
   testAssistantSettingsAreTaskFirst();
   testSettingsDoesNotDeriveVisionStanding();
   await testSettingsCardMatchesTheServerStanding(visionScenarios);
+  testNoVisionConsumerReadsLegacyReadiness();
+  await testStandingDominatesLegacyReadiness();
   testReviewCtaRepaintsTheCandidateArea();
   testSettledGateLeavesNoPendingHeader();
   await testContinuationExcludesApprovedDescendants();
