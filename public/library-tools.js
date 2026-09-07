@@ -746,7 +746,10 @@ function revealEntityContinuityState(stateId) {
    only thing that can approve anything and still refuses independently. */
 let ENTITY_APPROVAL_READINESS = null;
 let ENTITY_APPROVAL_PREPARE_TOKEN = 0;
-let ENTITY_APPROVAL_PREPARING = false;
+/* The question currently being asked of the server, by key — not a boolean. A
+   selection can change while a request is in flight, and "a request is out" is
+   not the same statement as "a request is out about THIS". */
+let ENTITY_APPROVAL_PREPARING = "";
 
 /* The facts that identify what the modal is currently asking about. */
 function entityApprovalWant() {
@@ -862,8 +865,8 @@ function entityApprovalReadinessKey(want) {
 }
 window.recheckEntityApprovalIdentity = () => {
   ENTITY_APPROVAL_READINESS = null;
+  ENTITY_APPROVAL_PREPARING = "";
   renderEntityApprovalReadiness();
-  prepareEntityApprovalIdentity();
 };
 
 /* THE PREPARING/UNAVAILABLE LINE, AND THE BUTTON THAT FOLLOWS IT.
@@ -874,12 +877,17 @@ window.recheckEntityApprovalIdentity = () => {
    answer can never re-enable a control eligibility withdrew. When readiness
    arrives, the whole sync runs again from the top instead. */
 function renderEntityApprovalReadiness() {
+  const line = document.getElementById("entity-approval-readiness");
+  const confirmButton = document.getElementById("entity-approve-confirm");
+  const continueButton = document.getElementById("entity-approve-continue");
+  /* Asked on every ordinary edit now, so it answers in one lookup when there is
+     no approval modal on screen rather than computing a verdict for nobody. */
+  if (!line && !confirmButton && !continueButton) return;
   const want = entityApprovalWant();
   if (want.mode === "sheet-source") return;
   const refusal = entityApprovalReadinessRefusal(ENTITY_APPROVAL_READINESS, want);
   const ready = !refusal;
   const preparing = ENTITY_APPROVAL_PREPARING || !ENTITY_APPROVAL_READINESS || ENTITY_APPROVAL_READINESS.status === "pending";
-  const line = document.getElementById("entity-approval-readiness");
   if (line) {
     line.dataset.state = ready ? "ready" : preparing ? "preparing" : "unavailable";
     const sentence = ready
@@ -891,10 +899,15 @@ function renderEntityApprovalReadiness() {
       ? ""
       : ` <button type="button" class="ghost-btn entity-approval-recheck" onclick="recheckEntityApprovalIdentity()">TRY AGAIN</button>`);
   }
-  const confirmButton = document.getElementById("entity-approve-confirm");
-  const continueButton = document.getElementById("entity-approve-continue");
   if (confirmButton && !ready) confirmButton.disabled = true;
   if (continueButton && !ready) continueButton.disabled = true;
+  /* AND IT ASKS FOR WHAT IT DOES NOT HAVE. Rendering and preparing were separate
+     acts, so a readiness invalidated by something other than a selection change —
+     an ordinary save landing under the open modal, which advances this window's
+     save generation — left the modal saying "prepare this again" with nothing
+     preparing it. The question is asked wherever the answer is found missing;
+     the key below is what stops that becoming a loop. */
+  if (!ready) prepareEntityApprovalIdentity();
 }
 
 /* One request, about one file, and only when the answer we hold is not already
@@ -904,8 +917,10 @@ window.prepareEntityApprovalIdentity = async () => {
   if (want.mode === "sheet-source" || !want.list || !want.id || !want.name) return null;
   const key = entityApprovalReadinessKey(want);
   if (ENTITY_APPROVAL_READINESS && ENTITY_APPROVAL_READINESS.key === key) return ENTITY_APPROVAL_READINESS;
+  /* A request is already out about this exact question. */
+  if (ENTITY_APPROVAL_PREPARING === key) return null;
   const token = ++ENTITY_APPROVAL_PREPARE_TOKEN;
-  ENTITY_APPROVAL_PREPARING = true;
+  ENTITY_APPROVAL_PREPARING = key;
   ENTITY_APPROVAL_READINESS = null;
   renderEntityApprovalReadiness();
   const slug = ACTIVE_PROJECT_SLUG;
@@ -923,9 +938,10 @@ window.prepareEntityApprovalIdentity = async () => {
   } catch (error) {
     prepared = { status: "pending", reason: String(error?.message || error) };
   }
-  /* A later question has been asked; this answer is about something else. */
+  /* A later question has been asked; this answer is about something else, and
+     the newer request owns the flag. */
   if (token !== ENTITY_APPROVAL_PREPARE_TOKEN) return null;
-  ENTITY_APPROVAL_PREPARING = false;
+  ENTITY_APPROVAL_PREPARING = "";
   ENTITY_APPROVAL_READINESS = {
     status: prepared?.status === "ready" && prepared?.assetId ? "ready" : prepared?.status === "pending" ? "pending" : "unavailable",
     reason: String(prepared?.reason || ""),
@@ -1027,7 +1043,11 @@ window.showPendingApprovalSurface = () => {
   const note = outcome === "uncommitted" || outcome === "changed" || outcome === "refused"
     ? `<p class="hint">${outcome === "uncommitted" ? "Leaving this unapproved" : "Reviewing the current state"} reopens this project as it is stored. This candidate, what it is, and the state it was for were all saved before you approved it, so the image stays exactly where it is and you can review it again.</p>`
     : "";
-  openModal(`<div class="entity-approval-modal entity-approval-pending" data-approval-outcome="${attr(outcome)}"><h3>${esc(headline)}</h3><div class="modal-sub">THIS REFERENCE IS APPROVED ONLY WHEN STORAGE HAS ACCEPTED IT</div><div class="entity-approval-modal-layout">${preview}<div class="entity-approval-fields">${target}<p>${esc(explanation)}</p>${note}</div></div><div class="modal-actions entity-approval-actions">${actions}</div></div>`);
+  /* HELD, NOT MERELY SHOWN. This dialog is the only place the decision behind it
+     can be resolved, so Escape, the backdrop and every generic close are refused
+     until one of its own actions releases it — see the modal lock in app.js. */
+  openModal(`<div class="entity-approval-modal entity-approval-pending" data-approval-outcome="${attr(outcome)}"><h3>${esc(headline)}</h3><div class="modal-sub">THIS REFERENCE IS APPROVED ONLY WHEN STORAGE HAS ACCEPTED IT</div><div class="entity-approval-modal-layout">${preview}<div class="entity-approval-fields">${target}<p>${esc(explanation)}</p>${note}</div></div><div class="modal-actions entity-approval-actions">${actions}</div></div>`,
+    { lock: APPROVAL_RECOVERY_LOCK, lockMessage: approvalRecoveryMessage() });
 };
 
 /* ASK STORAGE WHAT IT ACTUALLY HOLDS, before retrying, before abandoning, and
@@ -1247,7 +1267,7 @@ window.approveEntityFile = (list, id, name, stateId = "", mode = "primary-author
      one held. Clearing before the first sync is what stops a previous
      candidate's readiness enabling this candidate's button for one frame. */
   ENTITY_APPROVAL_READINESS = null;
-  ENTITY_APPROVAL_PREPARING = !sheetSource;
+  ENTITY_APPROVAL_PREPARING = "";
   syncEntityApprovalModal();
 };
 window.syncEntityApprovalModal = () => {
@@ -1379,7 +1399,6 @@ window.syncEntityApprovalModal = () => {
      modal may OFFER; this decides whether CineBraid can yet say which bytes it
      would approve, and asks for that answer if it cannot. */
   renderEntityApprovalReadiness();
-  prepareEntityApprovalIdentity();
 };
 window.syncEntityApprovalContinuation = () => {
   const current = window._entityApproval || {};
@@ -1536,8 +1555,8 @@ window.confirmEntityApproval = async (continueToNext = false) => {
     const refusal = entityApprovalReadinessRefusal(ENTITY_APPROVAL_READINESS, want);
     if (refusal) {
       ENTITY_APPROVAL_READINESS = null;
+      ENTITY_APPROVAL_PREPARING = "";
       renderEntityApprovalReadiness();
-      prepareEntityApprovalIdentity();
       return toast(refusal.message);
     }
     preparedAssetId = ENTITY_APPROVAL_READINESS.assetId;

@@ -2638,9 +2638,28 @@ let INTERACTION_FENCE_TOLD = 0;
 
 function interactionFenceActive() { return !!INTERACTION_FENCE; }
 function interactionFenceMessage() {
-  return INTERACTION_FENCE
-    ? `CineBraid is ${INTERACTION_FENCE.label}. This window accepts changes again as soon as that finishes.`
-    : "";
+  if (!INTERACTION_FENCE) return "";
+  return INTERACTION_FENCE.message
+    || `CineBraid is ${INTERACTION_FENCE.label}. This window accepts changes again as soon as that finishes.`;
+}
+/* A FENCE WHOSE OWN RESOLUTION CONTROLS ARE BEHIND IT IS A TRAP, NOT A FENCE.
+
+   The project replacement fence has nothing for the filmmaker to do — it waits,
+   and then it is gone — so it fences everything. Approval recovery is the
+   opposite: it exists precisely so a person can decide something, and the
+   controls for that decision are in the dialog. So a fence may name one region
+   that stays live, and only events inside it pass.
+
+   Containment is asked of the DOM rather than inferred from a selector match on
+   the target, because the target of a real click is usually a descendant — the
+   text inside a button, not the button. */
+function interactionFenceAllows(event) {
+  const within = INTERACTION_FENCE && INTERACTION_FENCE.allowWithin;
+  if (!within) return false;
+  const host = typeof document !== "undefined" && document.querySelector ? document.querySelector(within) : null;
+  if (!host || !event || !event.target) return false;
+  if (typeof host.contains === "function") return host.contains(event.target) === true;
+  return false;
 }
 /* The single handler. It refuses the interaction outright — the event never
    reaches a handler, so nothing is accepted and then discarded. */
@@ -2649,6 +2668,8 @@ function interactionFenceHandler(event) {
   /* Page script, the transaction's own work and every programmatic dispatch are
      not people, and must pass. */
   if (!event || event.isTrusted !== true) return;
+  /* And so does everything inside the one region this fence keeps live. */
+  if (interactionFenceAllows(event)) return;
   if (typeof event.preventDefault === "function") event.preventDefault();
   if (typeof event.stopImmediatePropagation === "function") event.stopImmediatePropagation();
   else if (typeof event.stopPropagation === "function") event.stopPropagation();
@@ -2660,8 +2681,27 @@ function interactionFenceHandler(event) {
     if (typeof toast === "function") toast(interactionFenceMessage());
   }
 }
-function beginInteractionFence(label) {
-  INTERACTION_FENCE = { label: String(label || "opening another project") };
+/* `regions` is which parts of the shell go inert, and it defaults to the whole of
+   `#app` so the existing replacement caller is unchanged. A fence that has to
+   leave a dialog usable names the shell's own regions instead, because `#modal`
+   lives inside `#app` and an inert `#app` would take the dialog with it. */
+const DEFAULT_FENCE_REGIONS = ["app"];
+function fenceRegionElements(ids) {
+  if (typeof document === "undefined" || !document.getElementById) return [];
+  return ids.map((id) => document.getElementById(id)).filter(Boolean);
+}
+function beginInteractionFence(label, options = {}) {
+  const regions = Array.isArray(options.regions) && options.regions.length
+    ? options.regions.map(String) : DEFAULT_FENCE_REGIONS;
+  INTERACTION_FENCE = {
+    label: String(label || "opening another project"),
+    message: String(options.message || ""),
+    allowWithin: String(options.allowWithin || ""),
+    /* Who put this fence up. Two different transactions must not be able to take
+       each other's fence down, even though today they cannot overlap. */
+    owner: String(options.owner || ""),
+    regions,
+  };
   INTERACTION_FENCE_TOLD = 0;
   const target = typeof document !== "undefined" ? document : null;
   if (target && typeof target.addEventListener === "function") {
@@ -2669,10 +2709,9 @@ function beginInteractionFence(label) {
       target.addEventListener(name, interactionFenceHandler, true);
     }
   }
-  const shell = typeof document !== "undefined" && document.getElementById ? document.getElementById("app") : null;
-  if (shell) {
-    shell.inert = true;
-    if (typeof shell.setAttribute === "function") shell.setAttribute("aria-busy", "true");
+  for (const element of fenceRegionElements(regions)) {
+    element.inert = true;
+    if (typeof element.setAttribute === "function") element.setAttribute("aria-busy", "true");
   }
   if (typeof document !== "undefined" && document.body && document.body.dataset) {
     document.body.dataset.projectTransition = "1";
@@ -2686,10 +2725,9 @@ function endInteractionFence() {
       target.removeEventListener(name, interactionFenceHandler, true);
     }
   }
-  const shell = typeof document !== "undefined" && document.getElementById ? document.getElementById("app") : null;
-  if (shell) {
-    shell.inert = false;
-    if (typeof shell.removeAttribute === "function") shell.removeAttribute("aria-busy");
+  for (const element of fenceRegionElements(INTERACTION_FENCE?.regions || DEFAULT_FENCE_REGIONS)) {
+    element.inert = false;
+    if (typeof element.removeAttribute === "function") element.removeAttribute("aria-busy");
   }
   if (typeof document !== "undefined" && document.body && document.body.dataset) {
     delete document.body.dataset.projectTransition;
@@ -2730,6 +2768,13 @@ function dirty() {
   clearTimeout(SAVE_STATE_TIMER);
   SAVE_REVISION += 1;
   setSaveState("dirty", "Unsaved changes");
+  /* AN ORDINARY EDIT UN-SETTLES THE PROJECT, AND THE APPROVAL MODAL SAYS SO.
+     confirmEntityApproval() already re-asks projectSaveSettled() synchronously
+     inside the click, so an approval can never be taken while unsaved work
+     exists — but until this line the BUTTON went on looking live, and a control
+     that refuses when pressed should have said so before it was pressed. This
+     costs nothing when no approval modal is open. */
+  if (typeof renderEntityApprovalReadiness === "function") renderEntityApprovalReadiness();
   if (AUTHORITY_SAVE_REFUSED) return;
   /* Saving is paused, so the resting "saving in a moment" the dirty state speaks
      would be untrue. The edit is kept; it is simply not on its way anywhere. */
@@ -3049,6 +3094,14 @@ function queueProjectSave(job) {
           1600,
         );
       }
+      /* THE OTHER END OF THE SAME EVENT. dirty() tells the approval modal that
+         ordinary work is outstanding; this tells it that work reached storage.
+         An accepted write advances PROJECT_SAVE_GENERATION, which is one of the
+         facts a prepared identity is bound to — so without this the modal would
+         sit saying "prepare this again" with nothing preparing it, and the
+         filmmaker would have to press TRY AGAIN after an autosave they never
+         asked about. Free when no approval modal is open. */
+      if (typeof renderEntityApprovalReadiness === "function") renderEntityApprovalReadiness();
     }
   });
   SAVE_CHAIN = run;
@@ -3168,6 +3221,68 @@ let PENDING_APPROVAL_SUBMISSION = null;
 
 function approvalSubmissionPending() { return PENDING_APPROVAL_SUBMISSION; }
 
+/* ==========================================================================
+   WHILE THIS APPROVAL OWNS THE SAVE PATH, THE WORKSPACE IS NOT EDITABLE.
+
+   WHY THIS EXISTS AT ALL. The submission guard already refuses to DISPATCH an
+   ordinary snapshot while an approval outcome is unresolved, and that is the
+   right rule — but a refusal to persist is not a refusal to accept. The dialog
+   was dismissible, so a filmmaker could close it, keep working, and lose that
+   work to the recovery action they eventually took. Two honest halves that
+   together told a lie: the workspace looked like it was taking changes, and the
+   save path had already decided it would not keep them.
+
+   SO THE TWO HALVES ARE MADE TO AGREE. What cannot be saved cannot be entered.
+   The dialog holds its own lock, the shell's two regions go inert, trusted input
+   outside the dialog is refused where it arrives, and navigation is put back —
+   until the filmmaker resolves the decision with one of its own actions.
+
+   IT IS NOT A GLOBAL LOCK, and it is not a writer barrier. It is scoped to ONE
+   submission, in ONE window, it touches no other project, no other tab and no
+   server state, and it ends the moment that submission resolves — by committing,
+   by being retried into a commit, or by being explicitly abandoned. Ordinary
+   editing before the trusted click is untouched; so is every other dialog. */
+const APPROVAL_RECOVERY_LOCK = "approval-recovery";
+const APPROVAL_RECOVERY_MESSAGE =
+  "This approval has not been settled yet. Choose what to do with it before editing anything else.";
+/* `#rail` and `#workspace` rather than `#app`: the dialog lives inside `#app`,
+   and an inert `#app` would take the recovery controls with it. */
+const APPROVAL_RECOVERY_REGIONS = ["rail", "workspace"];
+function approvalRecoveryMessage() { return APPROVAL_RECOVERY_MESSAGE; }
+function beginApprovalRecoveryFence() {
+  beginInteractionFence("waiting for this approval to be settled", {
+    owner: APPROVAL_RECOVERY_LOCK,
+    message: APPROVAL_RECOVERY_MESSAGE,
+    allowWithin: "#modal",
+    regions: APPROVAL_RECOVERY_REGIONS,
+  });
+}
+function endApprovalRecoveryFence() {
+  releaseModalLock(APPROVAL_RECOVERY_LOCK);
+  /* Only this fence. A fence belonging to another transaction is not this
+     decision's to lift, however impossible the overlap is meant to be. */
+  if (INTERACTION_FENCE && INTERACTION_FENCE.owner === APPROVAL_RECOVERY_LOCK) endInteractionFence();
+}
+/* True when a navigation must not happen, having already put the hash back and
+   put the decision back in front of the filmmaker. Shaped exactly like the
+   manual-replacement refusal, at the same seam in route(), for the same reason:
+   a screen that pretends to accept edits it will drop is the defect. */
+function approvalRecoveryNavigationRefused(hash) {
+  const record = PENDING_APPROVAL_SUBMISSION;
+  if (!record) return false;
+  const wanted = String(record.hash || "");
+  if (!wanted || String(hash || "") === wanted) return false;
+  if (typeof location !== "undefined" && location.hash !== wanted) location.hash = wanted;
+  if (typeof showPendingApprovalSurface === "function") showPendingApprovalSurface();
+  if (typeof toast === "function") toast(APPROVAL_RECOVERY_MESSAGE);
+  return true;
+}
+if (typeof window !== "undefined") {
+  window.approvalRecoveryMessage = approvalRecoveryMessage;
+  window.approvalRecoveryNavigationRefused = approvalRecoveryNavigationRefused;
+  window.APPROVAL_RECOVERY_LOCK = APPROVAL_RECOVERY_LOCK;
+}
+
 /* The durably accepted document this window last saw. A caller deciding whether
    something is SAFE to approve has to ask about the stored project rather than
    about the draft in front of it, and this is the only copy of that answer the
@@ -3198,10 +3313,15 @@ function beginApprovalSubmission(meta = {}) {
     attempts: 0,
     transportError: "",
     acceptedRevision: "",
+    /* Where recovery lives. Navigation is put back here rather than to whatever
+       the window last rendered, so the decision and the surface it belongs to
+       stay together. */
+    hash: typeof location !== "undefined" ? String(location.hash || "") : "",
     job: null,
   };
   record.job = captureProjectSave();
   PENDING_APPROVAL_SUBMISSION = record;
+  beginApprovalRecoveryFence();
   return record;
 }
 
@@ -3209,7 +3329,12 @@ function beginApprovalSubmission(meta = {}) {
    explicitly left it unapproved. Clearing it is what lets ordinary saving and
    project switching resume. */
 function endApprovalSubmission(id) {
-  if (PENDING_APPROVAL_SUBMISSION && PENDING_APPROVAL_SUBMISSION.id === id) PENDING_APPROVAL_SUBMISSION = null;
+  if (PENDING_APPROVAL_SUBMISSION && PENDING_APPROVAL_SUBMISSION.id === id) {
+    PENDING_APPROVAL_SUBMISSION = null;
+    /* The fence is a property of the pending decision, so it ends with it and
+       nowhere else. There is no path that clears one without the other. */
+    endApprovalRecoveryFence();
+  }
   return PENDING_APPROVAL_SUBMISSION;
 }
 
@@ -4215,13 +4340,62 @@ let MODAL_RETURN_FOCUS = null;
 let MODAL_KEY_HANDLER = null;
 let MODAL_SCROLL_Y = 0;
 let MODAL_ANCHOR_TOP = null;
+/* ==========================================================================
+   A DIALOG THAT MAY NOT BE DISMISSED, AND THE ONE THING THAT MAY DISMISS IT.
+
+   THE DEFECT. Approval recovery is the one dialog in CineBraid whose whole job
+   is to hold a decision open until the filmmaker makes it — and it was dismissed
+   by Escape, by a backdrop click, and by any `closeModal()` anywhere, exactly
+   like the ordinary dialogs it does not resemble. The save fence behind it
+   correctly refused to persist anything afterwards, so the workspace stayed
+   editable while nothing it accepted could be saved, and the recovery action the
+   filmmaker eventually took reloaded the stored project and took that work with
+   it. The dialog was dismissible; the state behind it was not.
+
+   THE LOCK. One owner at a time, named. While it is held:
+     * `closeModal()` with no release token is refused — which is Escape, the
+       backdrop handler, and every inline Cancel, through the one function all
+       three already go through;
+     * `openModal()` for anything else is refused, so an unrelated dialog cannot
+       take the surface away from a decision that is still open;
+     * the owner may re-render its own dialog as often as it likes.
+
+   It is a property of ONE dialog, not of the product. Nothing else takes it, and
+   it is released the moment the decision behind it resolves. */
+let MODAL_LOCK = null;
+let MODAL_LOCK_TOLD = 0;
+function modalLockOwner() { return MODAL_LOCK ? MODAL_LOCK.owner : ""; }
+function releaseModalLock(owner) {
+  if (MODAL_LOCK && MODAL_LOCK.owner === String(owner || "")) MODAL_LOCK = null;
+  return !MODAL_LOCK;
+}
+/* Says why, once every second and a half rather than on every keystroke of an
+   Escape somebody is leaning on. */
+function modalLockRefusal() {
+  if (!MODAL_LOCK) return false;
+  const now = Date.now();
+  if (now - MODAL_LOCK_TOLD > 1500) {
+    MODAL_LOCK_TOLD = now;
+    if (typeof toast === "function" && MODAL_LOCK.message) toast(MODAL_LOCK.message);
+  }
+  return true;
+}
+if (typeof window !== "undefined") {
+  window.modalLockOwner = modalLockOwner;
+  window.releaseModalLock = releaseModalLock;
+}
 function modalFocusable(root) {
   return [...(root?.querySelectorAll?.('button:not([disabled]), a[href], input:not([disabled]), textarea:not([disabled]), select:not([disabled]), [tabindex]:not([tabindex="-1"])') || [])]
     .filter((el) => !el.hidden && el.offsetParent !== null);
 }
-function openModal(inner) {
+function openModal(inner, options = {}) {
   const m = $("#modal");
   if (!m) return;
+  /* A held dialog may only be replaced by its own owner. Anything else is a
+     different question arriving while this one is still open. */
+  const claim = String(options.lock || "");
+  if (MODAL_LOCK && MODAL_LOCK.owner !== claim) return modalLockRefusal();
+  if (claim) MODAL_LOCK = { owner: claim, message: String(options.lockMessage || MODAL_LOCK?.message || "") };
   /* A pointer click on a thumbnail does not always leave the trigger focused, so
      fall back to the element that dispatched the event still being handled. That
      is what lets Escape hand focus back to the thumbnail that was enlarged. */
@@ -4320,7 +4494,13 @@ window.openMediaTheatre = (encodedUrl, encodedTitle = "Preview", kind = "", retu
   openModal(`<div class="media-theatre-modal" aria-label="Enlarged view of ${attr(title)}"><header><div><span>MEDIA PREVIEW</span><h3>${esc(title)}</h3><p>Large in-app inspection without leaving the shot workspace. Press Escape or Close to return.</p></div><button class="cancel" onclick="closeModal()" aria-label="Close the enlarged view of ${attr(title)}">Close</button></header><div class="media-theatre-stage">${media}</div><footer><span>${mediaKind === "video" ? "Use the player controls to review motion and audio." : mediaKind === "audio" ? "Use the player controls to review the audio." : "The complete source image, fitted to the workspace without cropping."}</span><div class="media-theatre-footer-actions">${back}<a class="ghost-btn" href="${attr(url)}" target="_blank" rel="noopener">Open original</a></div></footer></div>`);
 };
 
-window.closeModal = () => {
+window.closeModal = (options = {}) => {
+  /* THE ONE DOOR, SO THERE IS ONE PLACE TO REFUSE. Escape (public/review.js), the
+     backdrop handler installed in openModal, and every inline Cancel all arrive
+     here with no release token, which is what makes a single check cover all
+     three without teaching any of them about approval recovery. */
+  if (MODAL_LOCK && String(options && options.release || "") !== MODAL_LOCK.owner) return modalLockRefusal();
+  MODAL_LOCK = null;
   if (AGENT_RESULT_MODAL_TIMER) {
     clearTimeout(AGENT_RESULT_MODAL_TIMER);
     AGENT_RESULT_MODAL_TIMER = null;
@@ -4678,6 +4858,14 @@ async function route(recoveryAttempt = false) {
      cleared in a finally, so ordinary editing is never behind it. */
   if (typeof manualReplacementNavigationRefused === "function"
     && manualReplacementNavigationRefused(location.hash)) return;
+  /* AND THE SAME REFUSAL FOR AN APPROVAL THAT IS STILL BEING SETTLED. The shell
+     is inert while recovery owns the save path, so a click cannot get here — but
+     the address bar and the back button can, and a window that navigated away
+     from an unresolved decision would be editable again with nothing to save
+     into. The hash is put back and the decision put back in front of the
+     filmmaker, rather than the navigation being silently ignored. */
+  if (typeof approvalRecoveryNavigationRefused === "function"
+    && approvalRecoveryNavigationRefused(location.hash)) return;
   const requestToken = ++ROUTE_REQUEST_TOKEN;
   if (document.body?.dataset) delete document.body.dataset.renderReady;
   try {

@@ -661,6 +661,203 @@ async function testTransientFailureRetriesTheSameDecision() {
 }
 
 /* ==========================================================================
+   §6  WHILE THIS APPROVAL OWNS THE SAVE PATH, THE WORKSPACE IS NOT EDITABLE.
+
+   THE DEFECT THE FIRST CANDIDATE LEFT BEHIND. The submission guard refused to
+   DISPATCH an ordinary snapshot while an approval outcome was unresolved, which
+   is right — but a refusal to persist is not a refusal to accept. The recovery
+   dialog was dismissible by Escape, by the backdrop, and by any closeModal(), so
+   a filmmaker could close it, carry on working, and then lose that work to the
+   recovery action they eventually took. Two honest halves that together told a
+   lie: the workspace looked like it was taking changes, and the save path had
+   already decided it would not keep them.
+
+   What is asserted here is that the two halves now agree, and that the fence is
+   a property of ONE submission rather than of the product. */
+async function testRecoveryOwnsTheSavePath() {
+  const scenarios = [
+    {
+      name: "persistence failure",
+      wire: () => wire({ onTransition: (attempt) => (attempt === 1 ? "throw" : null) }),
+      outcome: "uncommitted",
+      resolveWith: "retryPendingApproval()",
+      keeps: ["RETRY SAVING APPROVAL", "LEAVE UNAPPROVED"],
+    },
+    {
+      name: "authority refusal",
+      wire: () => wire({
+        onTransition: () => ({
+          status: 422,
+          body: { ok: false, code: "AUTHORITY_EDGE_RECEIPT_MISMATCH", error: "The edge and its receipt disagree." },
+        }),
+      }),
+      outcome: "refused",
+      resolveWith: "reviewCurrentApprovalState()",
+      keeps: ["REVIEW CURRENT STATE"],
+    },
+  ];
+
+  for (const scenario of scenarios) {
+    const harness = scenario.wire();
+    const { rendered } = await openedApproval({ wire: harness });
+    ok(await settleApprovalReadiness(rendered), `R-0 (${scenario.name}): prepared`);
+    await rendered.gesture.act(() => rendered.context.confirmEntityApproval(false));
+    await drain();
+    const held = surfaces(rendered);
+    eq(held.pendingOutcome, scenario.outcome, `R-0 (${scenario.name}): the outcome is classified`);
+    for (const action of scenario.keeps) {
+      ok(held.modal.includes(action), `R-0 (${scenario.name}): ${action} is offered`);
+    }
+
+    /* R-1 — ESCAPE DOES NOT DISMISS IT. Escape reaches closeModal() through the
+       one shared keydown handler, so this is that handler's own act, not a
+       simulation of it. */
+    const escaped = vm.runInContext(`(() => {
+      closeModal();
+      const modal = document.getElementById("modal");
+      return { hidden: modal.classList.contains("hidden"), html: modal.innerHTML.slice(0, 200) };
+    })()`, rendered.context);
+    eq(escaped.hidden, false, `R-1 (${scenario.name}): a generic close does not hide recovery`);
+    ok(/entity-approval-pending/.test(escaped.html), `R-1 (${scenario.name}): and the decision is still on screen`);
+
+    /* R-2 — NOR CAN ANOTHER DIALOG TAKE THE SURFACE. The backdrop handler and
+       every inline Cancel go through the same closeModal(); an unrelated
+       openModal() is refused for the same reason. */
+    const displaced = vm.runInContext(`(() => {
+      openModal("<h3>Something else entirely</h3>");
+      const modal = document.getElementById("modal");
+      return { html: modal.innerHTML, hidden: modal.classList.contains("hidden") };
+    })()`, rendered.context);
+    ok(/entity-approval-pending/.test(displaced.html),
+      `R-2 (${scenario.name}): an unrelated dialog cannot replace an unresolved decision`);
+    ok(!/Something else entirely/.test(displaced.html), `R-2 (${scenario.name}): it is refused, not layered`);
+    eq(displaced.hidden, false, `R-2 (${scenario.name}): and recovery stays visible`);
+
+    /* R-3 — THE WORKSPACE IS FENCED, AND THE DIALOG IS NOT. */
+    const fence = vm.runInContext(`(() => ({
+      active: interactionFenceActive(),
+      message: interactionFenceMessage(),
+      railInert: document.getElementById("rail") ? document.getElementById("rail").inert === true : null,
+      workspaceInert: document.getElementById("workspace") ? document.getElementById("workspace").inert === true : null,
+      modalInert: document.getElementById("modal") ? document.getElementById("modal").inert === true : null,
+      appInert: document.getElementById("app") ? document.getElementById("app").inert === true : null,
+    }))()`, rendered.context);
+    eq(fence.active, true, `R-3 (${scenario.name}): recovery fences human input`);
+    eq(fence.railInert, true, `R-3 (${scenario.name}): the rail is inert`);
+    eq(fence.workspaceInert, true, `R-3 (${scenario.name}): the workspace is inert`);
+    eq(fence.modalInert, false, `R-3 (${scenario.name}): the dialog is not — its own controls must work`);
+    eq(fence.appInert, false, `R-3 (${scenario.name}): and CineBraid is not globally locked`);
+    ok(/not been settled/.test(fence.message), `R-3 (${scenario.name}): the fence says why`);
+
+    /* R-4 — SHOTS CANNOT BE REACHED. The address bar and the back button get
+       past an inert shell, so navigation is refused where every view change
+       passes through, and the hash is put back. */
+    const navigated = await vm.runInContext(`(async () => {
+      location.hash = "#/shot/L1-01";
+      await route();
+      return { hash: location.hash, modal: document.getElementById("modal").innerHTML.slice(0, 200) };
+    })()`, rendered.context);
+    eq(navigated.hash, "#/prop/PR-TOOL", `R-4 (${scenario.name}): navigating away is put back`);
+    ok(/entity-approval-pending/.test(navigated.modal), `R-4 (${scenario.name}): with the decision still in front`);
+
+    /* R-5 — AND NO ORDINARY WORK CAN REACH STORAGE MEANWHILE. */
+    const wireLength = harness.requests.length;
+    vm.runInContext("P.meta.title = 'Typed behind the fence'; dirty();", rendered.context);
+    await drain(40);
+    eq(harness.requests.length, wireLength, `R-5 (${scenario.name}): nothing is dispatched while recovery is open`);
+    eq(harness.count(/\/api\/projects\/switch/), 0, `R-5 (${scenario.name}): and project switching stays blocked`);
+
+    /* R-6 — THE FILMMAKER'S OWN ACTION RESOLVES IT, AND ONLY THAT. */
+    await vm.runInContext(scenario.resolveWith, rendered.context);
+    await drain();
+    const released = surfaces(rendered);
+    eq(released.pending, false, `R-6 (${scenario.name}): the decision is resolved`);
+    const after = vm.runInContext(`(() => ({
+      fence: interactionFenceActive(),
+      railInert: document.getElementById("rail").inert === true,
+      workspaceInert: document.getElementById("workspace").inert === true,
+      lock: modalLockOwner(),
+    }))()`, rendered.context);
+    eq(after.fence, false, `R-6 (${scenario.name}): the fence is released`);
+    eq(after.railInert, false, `R-6 (${scenario.name}): the rail is editable again`);
+    eq(after.workspaceInert, false, `R-6 (${scenario.name}): so is the workspace`);
+    eq(after.lock, "", `R-6 (${scenario.name}): and the dialog is dismissible again`);
+
+    /* R-7 — ORDINARY EDITING WORKS AFTERWARDS. Retry committed, so its window
+       saves; abandonment reloads, so this one asserts the reload happened and
+       the window was released rather than left half-fenced. */
+    if (scenario.outcome === "uncommitted") {
+      const before = harness.requests.length;
+      /* dirty() arms a debounced write; the product's own flush is what sends it
+         now, and it is the same call switchProject() makes. Drained against a
+         condition rather than slept for. */
+      await vm.runInContext("(async () => { P.meta.title = 'Edited after recovery'; dirty(); await flushPendingProjectSave(); })()", rendered.context);
+      await drain(80);
+      ok(harness.requests.length > before, `R-7 (${scenario.name}): ordinary saving resumes`);
+      eq(vm.runInContext("P.meta.title", rendered.context), "Edited after recovery",
+        `R-7 (${scenario.name}): and the edit is the one that was made`);
+      eq(vm.runInContext("!!approvalSubmissionPending()", rendered.context), false,
+        `R-7 (${scenario.name}): with no decision still held`);
+      /* And a plain dialog closes normally again. */
+      const plain = vm.runInContext(`(() => { openModal("<h3>Ordinary dialog</h3>"); closeModal();
+        return document.getElementById("modal").classList.contains("hidden"); })()`, rendered.context);
+      eq(plain, true, `R-7 (${scenario.name}): and ordinary dialogs dismiss normally again`);
+    } else {
+      eq(released.reloads, 1, `R-7 (${scenario.name}): the project is reopened as it is stored`);
+    }
+  }
+}
+
+/* ==========================================================================
+   §7  NO ORDINARY UNSAVED WORK EXISTS WHEN THE DECISION BEGINS.
+
+   The other half of the invariant, and the half that is not new: preparation
+   binds readiness to a settled project, and confirmEntityApproval() re-asks that
+   synchronously inside the click. What §6 adds is that no new work can be
+   entered afterwards; what this proves is that none was outstanding before.
+   Together they are the reason the recovery reload cannot cost the filmmaker
+   anything they had legitimately entered. */
+async function testNoUnsavedWorkWhenTheDecisionBegins() {
+  const harness = wire({});
+  const { rendered } = await openedApproval({ wire: harness });
+  ok(await settleApprovalReadiness(rendered), "S-0: prepared against a settled project");
+
+  /* S-1 — an ordinary edit made while the modal is open withdraws the control,
+     before it is pressed rather than after. */
+  vm.runInContext("P.meta.title = 'Typed while the modal was open'; dirty();", rendered.context);
+  const unsettled = surfaces(rendered);
+  eq(unsettled.confirmDisabled, true, "S-1: unsaved work withdraws confirmation");
+  ok(/not been saved|have not reached storage/i.test(unsettled.readinessText),
+    "S-1: and says the project is not saved rather than blaming the image");
+
+  /* S-2 — and the writer refuses it too, so a replayed or scripted click cannot
+     take a decision while ordinary work is outstanding. */
+  await rendered.gesture.act(() => rendered.context.confirmEntityApproval(false));
+  await drain(40);
+  const refused = surfaces(rendered);
+  eq(refused.canon, 0, "S-2: no Canon is written while unsaved work exists");
+  eq(refused.receipts, 0, "S-2: and no receipt is minted");
+  eq(refused.pending, false, "S-2: and no submission is opened");
+
+  /* S-3 — once that work is durable the approval proceeds, and the work is in
+     the document the approval is taken against. So a later recovery reload
+     restores a project that already contains it. dirty() arms a debounced write;
+     the product's own flush is what sends it now. */
+  await vm.runInContext("flushPendingProjectSave()", rendered.context);
+  await drain(120);
+  eq(vm.runInContext("projectSaveSettled().settled", rendered.context), true, "S-3: the edit reaches storage");
+  eq(harness.stored.meta.title, "Typed while the modal was open", "S-3: and storage holds it");
+  ok(await settleApprovalReadiness(rendered), "S-3: readiness is re-established against the newer revision");
+  await rendered.gesture.act(() => rendered.context.confirmEntityApproval(false));
+  await drain();
+  const approved = surfaces(rendered);
+  eq(approved.canon, 1, "S-3: the approval is taken");
+  eq(harness.stored.meta.title, "Typed while the modal was open",
+    "S-3: and the durable document that carries it still carries the earlier work");
+  eq(harness.count(/\/api\/media\/rename/), 0, "S-3: with no rename, as before");
+}
+
+/* ==========================================================================
    NEGATIVE CONTROLS — the protections this slice must not have loosened.
    ========================================================================== */
 async function testNegativeControlsStillFailClosed() {
@@ -752,13 +949,16 @@ async function main() {
   await testFailureLeavesEverythingRecoverable();
   await testLostResponseResolvesToSuccess();
   await testTransientFailureRetriesTheSameDecision();
+  await testRecoveryOwnsTheSavePath();
+  await testNoUnsavedWorkWhenTheDecisionBegins();
   await testNegativeControlsStillFailClosed();
   console.log(
     `Alpha imported-reference approval suite passed ${checks} checks: entity primary-reference approval performs no rename, `
     + "prepares one stable durable identity for the exact selected file before the trusted click, binds confirmation to what is "
     + "on screen, produces one receipt and one accepted transition per human decision, announces approval only after storage "
     + "accepts it, and leaves prior Canon, the media and the candidate recoverable through every refusal, lost response, "
-    + "retry, autosave and project switch. Provider calls made: 0.",
+    + "retry, autosave and project switch — and that while one is unresolved the recovery decision cannot be escaped, "
+    + "navigated away from, or replaced, while no ordinary unsaved work existed when it began. Provider calls made: 0.",
   );
 }
 

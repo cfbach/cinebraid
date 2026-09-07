@@ -21,6 +21,11 @@
  * NC-4  Rename the approved candidate to a production name inside the approval.
  *       This is the destructive half: the bytes moved before authority accepted.
  * NC-5  Dispatch queued snapshots while an approval outcome is unresolved.
+ * NC-6  Let the recovery dialog be dismissed again -- the reproduced Alpha
+ *       blocker: closed with Escape, the workspace behind it stays editable, and
+ *       the recovery action later reloads over that work.
+ * NC-7  Leave the workspace live behind a held recovery dialog.
+ * NC-8  Let navigation walk out of an unresolved decision.
  *
  * NO PROVIDER CALL IS MADE. NOTHING OUTSIDE THIS PROCESS IS WRITTEN.
  */
@@ -328,17 +333,120 @@ async function nc5_autosaveWhileUnresolved() {
   });
 }
 
+/* ===========================================================================
+   NC-6 — LET THE RECOVERY DIALOG BE DISMISSED AGAIN.
+
+   The reproduced Alpha blocker. Escape, the backdrop and every inline Cancel all
+   reach closeModal(); with its lock check removed the dialog hides, the
+   workspace behind it is editable, and the recovery action the filmmaker
+   eventually takes reloads the stored project over that work.
+   =========================================================================== */
+const NC6_ANCHOR = 'if (MODAL_LOCK && String(options && options.release || "") !== MODAL_LOCK.owner) return modalLockRefusal();';
+const NC6_BREAK = "if (false) return false;";
+
+async function nc6_recoveryDialogDismissible() {
+  anchorIn("public/app.js", NC6_ANCHOR, "NC-6");
+  const harness = wire({ refuse: true });
+  const { rendered } = await openApproval({ wire: harness, mutateSource: replacing("app.js", NC6_ANCHOR, NC6_BREAK) });
+  await settleApprovalReadiness(rendered);
+  await rendered.gesture.act(() => rendered.context.confirmEntityApproval(false));
+  await drain();
+  const dismissed = vm.runInContext(`(() => { closeModal();
+    return { hidden: document.getElementById("modal").classList.contains("hidden"),
+      pending: !!approvalSubmissionPending() }; })()`, rendered.context);
+
+  checks += 1;
+  assert.strictEqual(dismissed.hidden, true,
+    "NC-6 did not reproduce: the dialog stayed up, so the control is not exercising the defect");
+  checks += 1;
+  assert.strictEqual(dismissed.pending, true,
+    "NC-6 did not reproduce: the decision was resolved rather than merely hidden");
+
+  await mustFail("NC-6", "a generic close does not hide recovery", async () => {
+    assert.strictEqual(dismissed.hidden, false, "a generic close does not hide recovery");
+  });
+}
+
+/* ===========================================================================
+   NC-7 — LEAVE THE WORKSPACE LIVE BEHIND THE RECOVERY DIALOG.
+
+   The other half of the same untruth: even with the dialog held, a shell that
+   still accepts input is a shell accepting work the save path has already
+   decided it will not keep.
+   =========================================================================== */
+const NC7_ANCHOR = "  beginApprovalRecoveryFence();\n  return record;";
+const NC7_BREAK = "  return record;";
+
+async function nc7_workspaceLiveBehindRecovery() {
+  anchorIn("public/app.js", NC7_ANCHOR, "NC-7");
+  const harness = wire({ refuse: true });
+  const { rendered } = await openApproval({ wire: harness, mutateSource: replacing("app.js", NC7_ANCHOR, NC7_BREAK) });
+  await settleApprovalReadiness(rendered);
+  await rendered.gesture.act(() => rendered.context.confirmEntityApproval(false));
+  await drain();
+  const open = vm.runInContext(`(() => ({
+    fence: interactionFenceActive(),
+    railInert: document.getElementById("rail") ? document.getElementById("rail").inert === true : null,
+  }))()`, rendered.context);
+
+  checks += 1;
+  assert.strictEqual(open.fence, false,
+    "NC-7 did not reproduce: the fence was still armed, so the control is not exercising the defect");
+
+  await mustFail("NC-7", "recovery fences human input", async () => {
+    assert.strictEqual(open.fence, true, "recovery fences human input");
+  });
+}
+
+/* ===========================================================================
+   NC-8 — LET NAVIGATION LEAVE AN UNRESOLVED DECISION.
+
+   An inert shell stops a click, not the address bar or the back button. Without
+   the refusal at route(), a hash change walks out of recovery into a workspace
+   that is editable again with nothing to save into.
+   =========================================================================== */
+const NC8_ANCHOR = '  if (typeof approvalRecoveryNavigationRefused === "function"\n    && approvalRecoveryNavigationRefused(location.hash)) return;';
+const NC8_BREAK = "  if (false) return;";
+
+async function nc8_navigationLeavesRecovery() {
+  anchorIn("public/app.js", NC8_ANCHOR, "NC-8");
+  const harness = wire({ refuse: true });
+  const { rendered } = await openApproval({ wire: harness, mutateSource: replacing("app.js", NC8_ANCHOR, NC8_BREAK) });
+  await settleApprovalReadiness(rendered);
+  await rendered.gesture.act(() => rendered.context.confirmEntityApproval(false));
+  await drain();
+  const moved = await vm.runInContext(`(async () => {
+    location.hash = "#/shot/L1-01";
+    await route();
+    return { hash: location.hash, pending: !!approvalSubmissionPending() };
+  })()`, rendered.context);
+
+  checks += 1;
+  assert.strictEqual(moved.hash, "#/shot/L1-01",
+    "NC-8 did not reproduce: navigation was still put back, so the control is not exercising the defect");
+  checks += 1;
+  assert.strictEqual(moved.pending, true, "NC-8 did not reproduce: the decision was resolved rather than left behind");
+
+  await mustFail("NC-8", "navigating away is put back", async () => {
+    assert.strictEqual(moved.hash, "#/prop/PR-TOOL", "navigating away is put back");
+  });
+}
+
 async function main() {
   await nc1_approveWithScanIdentity();
   await nc2_confirmLiveBeforePreparation();
   await nc3_announceBeforeDurable();
   await nc4_renameInsideApproval();
   await nc5_autosaveWhileUnresolved();
+  await nc6_recoveryDialogDismissible();
+  await nc7_workspaceLiveBehindRecovery();
+  await nc8_navigationLeavesRecovery();
   console.log(
-    `Alpha imported-reference approval negative controls passed ${checks} checks: each of the five mechanisms behind the `
-    + "reproduced failure — approving on the scan's absent identity, a confirm control live before preparation, announcing on "
+    `Alpha imported-reference approval negative controls passed ${checks} checks: each of the eight mechanisms behind the `
+    + "two reproduced failures — approving on the scan's absent identity, a confirm control live before preparation, announcing on "
     + "dirty() rather than on durable acceptance, renaming the candidate inside the approval, and dispatching queued snapshots "
-    + "while the outcome is unresolved — was reintroduced in memory, observed, and shown to turn its guarding claim red. "
+    + "while the outcome is unresolved, a dismissible recovery dialog, a live workspace behind it and navigation out of it "
+    + "— was reintroduced in memory, observed, and shown to turn its guarding claim red. "
     + "Provider calls made: 0.",
   );
 }
