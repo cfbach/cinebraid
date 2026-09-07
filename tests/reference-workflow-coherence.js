@@ -765,6 +765,114 @@ function testAssistantSettingsAreTaskFirst() {
     "C2 settings: turning Braidy off is one control, not three");
 }
 
+/* ---- C2 — Settings reports the standing; it does not decide one ----------- */
+function testSettingsDoesNotDeriveVisionStanding() {
+  const views = code(source("views.js"));
+  /* THE REPRODUCTION: the card read the standing and then overrode a
+     configured-unavailable verdict with `!visionModel -> "Needs a model"`. On
+     Cloud/OpenAI with no key and no explicit model that replaced an OpenAI
+     configuration failure with a complaint about a model OpenAI does not require. */
+  ok(!/!visionModel \? "incomplete"/.test(views),
+    "C2 settings: a blank model no longer overrides the authoritative diagnosis");
+  /* Scoped to the VISION card. Braidy's own text card still has an `incomplete`
+     state of its own, and this correction is Vision-only — reaching into the text
+     card would be exactly the broader redesign this pass is not. */
+  const visionCardSlice = views.slice(views.indexOf("const visionCapability = typeof capabilityState"), views.indexOf("const continuityConfig"));
+  ok(!/Needs a model/.test(visionCardSlice),
+    "C2 settings: and 'Needs a model' is not a standing the vision card can invent");
+  ok(/incomplete: "Needs a model"/.test(views) && /const braidyState = provider === "none" \? "off"/.test(views),
+    "C2 settings: Braidy's own text card is left exactly as it was");
+  ok(/const visionState = \{ off: "off", checking: "checking", ready: "ready", "configured-unavailable": "unavailable" \}\[visionStanding\];/.test(views),
+    "C2 settings: the state is a total function of the standing, with no other input");
+  ok(/const visionStatus = \{ off: "Off", checking: "Checking…", ready: "Ready", unavailable: "Unavailable" \}\[visionState\];/.test(views),
+    "C2 settings: and the word shown is a lookup on that state");
+  ok(/const visionDiagnostic = \[visionCapability\?\.message, visionCapability\?\.action\]/.test(views),
+    "C2 settings: an unavailable capability shows the record's own diagnostic and action");
+
+  /* THE META-GUARD. The standing derivation is sliced out and read on its own: no
+     model, key, endpoint or provider-specific field may appear inside it. The
+     fields stay on the form — configuration UI is not classification — so the
+     guard is scoped to the derivation rather than to the file. */
+  const start = views.indexOf("const visionCapability = typeof capabilityState");
+  const end = views.indexOf("const visionDiagnostic");
+  ok(start > 0 && end > start, "C2 settings: the vision standing derivation is present");
+  const derivation = views.slice(start, end);
+  for (const token of ["visionModel", "openaiVisionModel", "ollamaVisionModel", "customVisionModel",
+                       "Key", "BaseUrl", "ollamaUrl", "c.openai", "c.custom", "c.anthropic", "inventor"]) {
+    ok(!derivation.includes(token),
+      `C2 settings: the standing derivation does not consult ${token}`);
+  }
+  /* And the form still shows and saves those fields, which is the half that must
+     NOT change: this correction removes an authority, not a control. */
+  ok(/const visionModelField = provider === "ollama"/.test(views)
+    && /id="cfg-openai-vision"/.test(views) && /id="cfg-custom-vision"/.test(views) && /id="cfg-vmodel"/.test(views),
+    "C2 settings: the model fields are still rendered and still editable");
+}
+
+/* The card, rendered for each authoritative record, asserted against that record. */
+async function testSettingsCardMatchesTheServerStanding(scenarios) {
+  const rendered = await render("#/production", buildFixture());
+  const read = async (record, assistant) => vm.runInContext(`(async () => {
+    AGENT_STATUS = { capabilities: { vision: ${record === null ? "undefined" : JSON.stringify(record)} } };
+    CONFIG = { ...(typeof CONFIG === "object" && CONFIG ? CONFIG : {}), assistant: ${JSON.stringify(assistant)} };
+    boundedWriteFocusedTask?.("settings-task", "settings", "assistant");
+    location.hash = "#/settings";
+    const html = await ROUTES.settings();
+    const i = html.indexOf('data-capability="vision"');
+    const card = html.slice(i, html.indexOf("</article>", i));
+    return {
+      state: (card.match(/data-state="([a-z-]+)"/) || [])[1],
+      status: (card.match(/capability-status">([^<]*)</) || [])[1],
+      detail: (card.match(/capability-detail">([^<]*)</) || [])[1],
+    };
+  })()`, rendered.context);
+
+  const WORD = { off: ["off", "Off"], ready: ["ready", "Ready"], "configured-unavailable": ["unavailable", "Unavailable"] };
+  for (const { label, record, expected } of scenarios) {
+    const seen = await read(record, { provider: record.provider || "openai", visionProvider: record.provider || "openai" });
+    ok(seen.state === WORD[expected][0] && seen.status === WORD[expected][1],
+      `C2 settings: ${label} -> the card shows ${WORD[expected][1]}, matching the server standing`);
+    ok(seen.status !== "Needs a model",
+      `C2 settings: ${label} -> and never substitutes a complaint about the model`);
+    /* A configured failure must carry the authoritative words, not a rewrite. */
+    if (expected === "configured-unavailable") {
+      const said = String(record.message || "").trim();
+      ok(said && seen.detail.includes(said),
+        `C2 settings: ${label} -> the provider's own diagnostic is preserved`);
+    }
+  }
+
+  /* Astra's exact reproduction, stated on its own: Cloud/OpenAI, no key, no
+     explicit model. The card used to say "Needs a model" over an OpenAI
+     configuration failure — telling a filmmaker to name a model when what they
+     actually had to supply was a key. */
+  const reproduction = await read({
+    ready: false, standing: "configured-unavailable", provider: "openai", model: "",
+    message: "Vision assistance provider openai is not configured.",
+    action: "Add an OpenAI API key in Settings.",
+  }, { provider: "openai", visionProvider: "openai" });
+  ok(reproduction.status === "Unavailable",
+    "C2 settings: OpenAI with no key and no explicit model reads Unavailable");
+  ok(reproduction.detail.includes("provider openai is not configured")
+    && reproduction.detail.includes("Add an OpenAI API key"),
+    "C2 settings: and states the OpenAI configuration problem, with its action");
+  ok(!/model/i.test(reproduction.detail),
+    "C2 settings: never mentioning a model the provider does not require");
+
+  /* Ready with no explicit model is a neutral fact, not a fault. */
+  const providerDefault = await read({
+    ready: true, standing: "ready", provider: "openai", model: "",
+    message: "Vision assistance is configured through openai.", action: "",
+  }, { provider: "openai", visionProvider: "openai" });
+  ok(providerDefault.status === "Ready" && /provider default/i.test(providerDefault.detail),
+    "C2 settings: a ready provider serving its own default says so, rather than reporting a missing model");
+
+  /* And the loading boundary reaches this card too. */
+  const checking = await read(null, { provider: "openai", visionProvider: "openai" });
+  ok(checking.state === "checking" && checking.status === "Checking…",
+    "C2 settings: a capability record that has not arrived reads Checking, not Off and not Needs a model");
+}
+
 /* ---- C3 — the handoff must repaint, not just rewrite stored state --------- */
 function testReviewCtaRepaintsTheCandidateArea() {
   const automation = code(source("automation.js"));
@@ -925,6 +1033,8 @@ async function main() {
   const visionScenarios = testVisionOffIsReadFromConfiguration();
   await testBrowserReadsTheServerStanding(visionScenarios);
   testAssistantSettingsAreTaskFirst();
+  testSettingsDoesNotDeriveVisionStanding();
+  await testSettingsCardMatchesTheServerStanding(visionScenarios);
   testReviewCtaRepaintsTheCandidateArea();
   testSettledGateLeavesNoPendingHeader();
   await testContinuationExcludesApprovedDescendants();

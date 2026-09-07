@@ -405,31 +405,46 @@ const ROUTES = {
      *
      * `visionModel` below is still read from the config: it decides WHICH BOX to
      * render and what to prefill, which is form work, not standing. */
+    /* C2 CONSUMER — THIS CARD REPORTS THE STANDING; IT DOES NOT DECIDE ONE.
+     *
+     * The previous shape read the standing and then, when it was
+     * configured-unavailable, overrode the diagnosis with `!visionModel ->
+     * "Needs a model"`. That was the second authority coming back one last time,
+     * and it was wrong on the exact configuration it fired for: Visual review on
+     * Cloud/OpenAI with no key and no explicit model is an OPENAI CONFIGURATION
+     * FAILURE, which the server reports in full — and the card replaced it with a
+     * complaint about a model the provider does not require, because OpenAI serves
+     * a provider default. A filmmaker was told to name a model when what they
+     * actually had to do was supply a key.
+     *
+     * `visionState` is now a total function of the standing and of nothing else.
+     * The four standings map one-to-one, so there is no branch left in which a
+     * config field can change the verdict.
+     *
+     * The model, the provider and the endpoint are still SHOWN and still EDITED
+     * here — configuration UI is not capability classification, and the fields
+     * below are untouched. They simply no longer decide anything. */
     const visionCapability = typeof capabilityState === "function" ? capabilityState("vision") : null;
     const visionStanding = typeof capabilityStanding === "function" ? capabilityStanding(visionCapability) : "checking";
     const visionOff = visionStanding === "off";
     const visionConfigured = visionStanding === "ready";
-    const visionState = visionOff ? "off"
-      : visionStanding === "checking" ? "checking"
-      : visionConfigured ? "on"
-      : !visionModel ? "incomplete"
-      : "unreachable";
-    const visionStatus = { off: "Off", checking: "Checking…", on: "On", incomplete: "Needs a model", unreachable: "Not reachable" }[visionState];
-    /* WHERE THE MISSING VISION MODEL WOULD BE TYPED. This panel only ever holds
-       the SELECTED ASSISTANT's model fields, so when vision resolves to a
-       different provider there is no box on this screen that feeds it. */
-    const visionFieldIsHere = visionProvider === provider;
+    const visionState = { off: "off", checking: "checking", ready: "ready", "configured-unavailable": "unavailable" }[visionStanding];
+    const visionStatus = { off: "Off", checking: "Checking…", ready: "Ready", unavailable: "Unavailable" }[visionState];
+    /* The authoritative diagnostic, quoted rather than replaced. Where the record
+       carries no words of its own the provider is still named, because "unavailable"
+       with no subject is not actionable — but nothing here diagnoses. */
+    const visionDiagnostic = [visionCapability?.message, visionCapability?.action]
+      .map((line) => String(line || "").trim()).filter(Boolean).join(" ")
+      || `${providerLabel(visionProvider)} is selected but did not answer.`;
+    /* On ready, an explicit model is a fact worth showing and its absence is a
+       neutral fact, not a fault: the provider is serving its own default. */
     const visionDetail = visionOff
       ? "No image is sent for reading."
       : visionState === "checking"
         ? "Asking the server which vision provider answers."
         : visionConfigured
-          ? `${providerLabel(visionProvider)} · ${visionModel || "provider default model"}`
-          : visionState === "unreachable"
-            ? String(visionCapability?.message || "").trim() || `CineBraid could not reach ${providerLabel(visionProvider)}.`
-            : visionFieldIsHere
-              ? `${providerLabel(visionProvider)} is selected but no vision model is named, so image reading cannot run.`
-              : `${providerLabel(visionProvider)} has no vision model saved. Its fields appear when ${providerLabel(visionProvider)} is Braidy's provider; until then image reading cannot run.`;
+          ? `${providerLabel(visionProvider)} · ${visionModel || "provider default"}`
+          : visionDiagnostic;
 
     /* Continuity observation resolves separately from general vision because it
        is the one consumer that sends exactly one image per request, against a
@@ -493,7 +508,7 @@ const ROUTES = {
         : provider === "custom"
           ? field("Vision model", `<input id="cfg-custom-vision" value="${attr(c.customVisionModel || "")}"><span class="hint">Served by the same base URL as Braidy. Leave blank if this server answers text only.</span>`)
           : "";
-    const visionConfigure = `<div class="two-col">${field("Who reads images", `<select id="assistant-vision-provider"><option value="same" ${visionChoice === "same" ? "selected" : ""}>Same as Braidy${provider === "none" ? "" : ` (${esc(providerLabel(provider))})`}</option><option value="none" ${visionChoice === "none" ? "selected" : ""}>Off — no image is read</option>${ASSISTANT_TIERS.map(([, tierLabel, , ids]) => `<optgroup label="${attr(tierLabel)}">${ids.map((id) => `<option value="${attr(id)}" ${visionChoice === id ? "selected" : ""}>${esc(VISION_RUNTIME_LABELS[id] || id)}</option>`).join("")}</optgroup>`).join("")}</select>`)}${visionModelField}</div>${visionFieldIsHere || visionOff ? "" : `<p class="hint capability-off-hint">${esc(visionDetail)}</p>`}`;
+    const visionConfigure = `<div class="two-col">${field("Who reads images", `<select id="assistant-vision-provider"><option value="same" ${visionChoice === "same" ? "selected" : ""}>Same as Braidy${provider === "none" ? "" : ` (${esc(providerLabel(provider))})`}</option><option value="none" ${visionChoice === "none" ? "selected" : ""}>Off — no image is read</option>${ASSISTANT_TIERS.map(([, tierLabel, , ids]) => `<optgroup label="${attr(tierLabel)}">${ids.map((id) => `<option value="${attr(id)}" ${visionChoice === id ? "selected" : ""}>${esc(VISION_RUNTIME_LABELS[id] || id)}</option>`).join("")}</optgroup>`).join("")}</select>`)}${visionModelField}</div>${visionProvider === provider || visionOff ? "" : `<p class="hint capability-off-hint">${esc(providerLabel(visionProvider))}'s own fields appear when ${esc(providerLabel(visionProvider))} is Braidy's provider.</p>`}`;
 
     const continuityConfigure = `<p class="hint">Checks declared references frame by frame. Configured on its own because it sends exactly one image per request — Vision's settings do not apply to it, and it does not need Braidy to be an OpenAI-compatible server.</p><div class="two-col">${field("Who checks continuity", `<select id="cfg-continuity-provider"><option value="" ${continuityConfig.visionProvider ? "" : "selected"}>Off — continuity checks do not run</option><optgroup label="Local / self-hosted"><option value="custom" ${continuityConfig.visionProvider === "custom" ? "selected" : ""}>${esc(VISION_RUNTIME_LABELS.custom)}</option></optgroup><optgroup label="Cloud"><option value="openai" ${continuityConfig.visionProvider === "openai" ? "selected" : ""}>${esc(VISION_RUNTIME_LABELS.openai)}</option></optgroup></select>`)}${field("Continuity endpoint", `<input id="cfg-continuity-base" value="${attr(continuityConfig.baseUrl || "")}" placeholder="${attr(continuityInherited || "http://127.0.0.1:8000/v1")}"><span class="hint">The OpenAI-compatible base URL, including <code>/v1</code>.${continuityInherited ? ` Leave blank to use ${esc(continuityInherited)}.` : " Leave blank to use the chosen provider's own address."}</span>`)}${field("Continuity model", `<input id="cfg-continuity-model" value="${attr(continuityConfig.visionModel || "")}" placeholder="the model this server serves"><span class="hint">Leave blank to use the provider's configured vision model.</span>`)}</div>`;
 
