@@ -222,11 +222,15 @@ function entityReviewConfiguredVisionModel() {
 
   /* ======================================================================
      NC-F — an AI pass performing the human approval. */
+  /* WCV2/W6 moved the modal markup into a `markup` const so a candidate change can
+     update the mounted dialog in place instead of re-opening it. The control is
+     unchanged in meaning: it still injects an approval side-effect at the moment
+     the review is opened, and CASE 7 must still catch it. Only the anchor moved. */
   const F_ANCHOR = `  const review = entityCandidateReviewIsCurrent(rawReview) ? rawReview : null;
-  openModal(entityReviewModalMarkup(list, entity, media, state, review));`;
+  const markup = entityReviewModalMarkup(list, entity, media, state, review);`;
   const F_BROKEN = `  const review = entityCandidateReviewIsCurrent(rawReview) ? rawReview : null;
   if (review?.pass) { state.approvedFile = fileName; if (row) row.decision = "approved-reference"; }
-  openModal(entityReviewModalMarkup(list, entity, media, state, review));`;
+  const markup = entityReviewModalMarkup(list, entity, media, state, review);`;
   const brokenApproval = () => mutateScript("review.js", F_ANCHOR, F_BROKEN, "NC-F an AI pass approves");
   await control({
     id: "NC-F",

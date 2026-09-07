@@ -658,10 +658,35 @@ function continuityStateDerivationMarkup(list, entity, state) {
     return `<option value="${attr(id)}">${esc(row?.name || id)} — ${esc(note)}</option>`;
   }).join("");
   const selectId = `derivation-source-${attr(list)}-${attr(entity.id)}-${attr(state.id)}`;
-  const body = options
+  /* W11 — THE NO-GUESS RULE, AT FILMMAKER SCALE.
+   *
+   * The invariant is untouched and is the whole point: CineBraid still records
+   * nothing until a person says so, and this still offers rather than picks.
+   * What changes is the size of the interaction.
+   *
+   * The dogfood's question was "I have an approved folded chair, how do I make it
+   * unfolded" and the answer on screen was a dropdown reading "Choose the state
+   * this one comes from…" over one option, beside a button captioned RECORD
+   * SOURCE STATE — a schema editor for a question with one plausible answer.
+   *
+   * "Plausible" is doing real work here and is deliberately narrow: an APPROVED
+   * source, judged by the same `entityStateTruth` projection every other authority
+   * reader uses. One approved source gets a named confirmation the filmmaker can
+   * accept in one press. Two or more, or none approved, and the full selector is
+   * exactly what it was — because then there IS a choice, and choosing is theirs.
+   *
+   * Change source keeps the selector reachable from the one-source shape, so the
+   * simplification never becomes a trap. */
+  const approvedSources = ids.filter((id) => truth.of(byId.get(id)).standing === "canon");
+  const selector = options
     ? `<label>Derives from<select id="${selectId}"><option value="">Choose the state this one comes from…</option>${options}</select></label><button class="add-btn" onclick="recordContinuityStateDerivation('${attr(list)}','${attr(entity.id)}','${attr(state.id)}',document.getElementById('${selectId}').value)">RECORD SOURCE STATE</button>`
     : `<p>There is no other state this one could derive from yet.</p>`;
-  return `<section class="state-derivation-missing" data-derivation-unrecorded="${attr(state.id)}"><header><div><span>SOURCE STATE NOT RECORDED</span><b>${esc(state.name || "This state")} does not record what it derives from</b><small>CineBraid will not guess. Generation and parent-to-state validation stay blocked until you say which approved state this one comes from. Recording it approves nothing.</small></div></header>${body}</section>`;
+  if (approvedSources.length === 1) {
+    const only = byId.get(approvedSources[0]);
+    const name = only?.name || approvedSources[0];
+    return `<section class="state-derivation-missing is-single-source" data-derivation-unrecorded="${attr(state.id)}" data-derivation-suggestion="${attr(approvedSources[0])}"><header><div><span>SOURCE STATE NOT RECORDED</span><b>${esc(state.name || "This state")} changes from: ${esc(name)}</b><small>${esc(name)} is the only approved state this one could come from. CineBraid will not record it for you — confirm it and generation can use the approved ${esc(name)} image as the starting point. Confirming approves nothing.</small></div></header><div class="state-derivation-confirm"><button class="add-btn" onclick="recordContinuityStateDerivation('${attr(list)}','${attr(entity.id)}','${attr(state.id)}','${attr(approvedSources[0])}')">Use ${esc(name)} as source</button><details class="state-derivation-change"><summary>Change source</summary><div>${selector}</div></details></div></section>`;
+  }
+  return `<section class="state-derivation-missing" data-derivation-unrecorded="${attr(state.id)}"><header><div><span>SOURCE STATE NOT RECORDED</span><b>${esc(state.name || "This state")} does not record what it derives from</b><small>CineBraid will not guess. Generation and parent-to-state validation stay blocked until you say which approved state this one comes from. Recording it approves nothing.</small></div></header>${selector}</section>`;
 }
 window.recordContinuityStateDerivation = (list, entityId, stateId, sourceStateId) => {
   const entity = P[list]?.find((item) => item.id === entityId);
@@ -684,12 +709,88 @@ window.recordContinuityStateDerivation = (list, entityId, stateId, sourceStateId
   const source = states.find((row) => row.id === sourceStateId);
   toast(`Recorded: this state derives from ${source?.name || sourceStateId}. Nothing was approved.`);
 };
-function continuityStateValidationMarkup(list, entity, state, media = []) {
+/* W10 / W12 / W13 — THE STATE TASK, STATED BEFORE THE STATE TOOLS.
+ *
+ * The dogfood's "Unfolded for game night" page presented, simultaneously and at
+ * equal weight: continuity-state tabs, a source-state warning, a raw source
+ * selector, Record source state, applies-to, requirement, the delta textarea,
+ * optional assisted creation, generated-state candidates, advanced state tools,
+ * continuity tracking and the supporting reference pack. The filmmaker's actual
+ * question — "I have an approved folded chair, how do I make it unfolded?" — was
+ * answerable by that page and not ANSWERED by it.
+ *
+ * This is the answer, placed above the tools: what is being made, what it is made
+ * FROM with the approved parent image visibly on screen, what changes, and the
+ * two ways to start. Everything that was on the page is still on the page and is
+ * still edited by the same writers; this leads, and the tools follow.
+ *
+ * IT RENDERS ONLY ON PRODUCTION TRUTH IT CAN SEE. No recorded lineage means the
+ * W11 confirmation is the task instead, and this stays absent rather than
+ * implying a source. A recorded parent that is NOT approved says so plainly,
+ * because "Create from Default" over an unapproved Default would be the exact
+ * promise W12 forbids: an offer to derive from an image the run cannot use.
+ *
+ * THE ACTIONS ARE THE ACCEPTED ONES. Create with Braidy is the state automation
+ * modal, Guide it myself opens the shipped state-generation panel, Upload is the
+ * shipped state upload. No second creation model is invented here. */
+function continuityStateSourceLeadMarkup(list, entity, state, media = [], index = -1) {
+  if (!state || state.isDefault) return "";
+  if (!String(state.parentStateId || "")) return "";
+  if (typeof entityStateParentSummary !== "function" || typeof entityStateTruth !== "function") return "";
+  const parentInfo = entityStateParentSummary(entity, state);
+  const parent = parentInfo.parent;
+  if (!parent) return "";
+  const truth = entityStateTruth(list, entity);
+  if (!truth || truth.available === false) return "";
+  const parentStanding = truth.of(parent);
+  const parentIsCanon = parentStanding.standing === "canon";
+  const parentMedia = (media || []).find((item) => item.name === parentStanding.file) || null;
+  const delta = String(state.notes || "").trim();
+  const parentName = parent.name || "the parent state";
+  /* H1 — WHAT CHANGES IS AN INPUT TO THE TASK, SO IT IS EDITED WHERE THE TASK IS.
+     The delta used to be a read-only paragraph here and a textarea further down the
+     card, which is the same duplication the gate and the candidate area had. One
+     control, in the composition the filmmaker is actually working through, writing
+     through the SAME setContinuityState the old field wrote through. */
+  const deltaField = index >= 0
+    ? `<textarea class="state-source-delta" placeholder="What changes from ${attr(parentName)}? Also name anything that must remain unchanged." onchange="setContinuityState('${attr(list)}','${attr(entity.id)}',${Number(index)},'notes',this.value)">${esc(state.notes || "")}</textarea>`
+    : `<p>${delta ? esc(delta) : "No change has been written yet. Describe the change below before generating."}</p>`;
+  const thumb = parentMedia && parentIsCanon
+    ? `<figure class="state-source-thumb"><img src="${attr(parentMedia.url)}" alt="${attr(`Approved ${parentName} reference`)}"><figcaption>${esc(parentStanding.file)}</figcaption></figure>`
+    : `<div class="state-source-thumb is-empty"><span>${parentIsCanon ? "No image on file" : "Not approved yet"}</span></div>`;
+  const actions = parentIsCanon && parentMedia
+    ? `<button class="approve-btn" onclick="openEntityStateAutomationModal('${attr(list)}','${attr(entity.id)}','${attr(state.id)}')"${typeof aiDisabledAttrs === "function" ? aiDisabledAttrs("text") : ""}>Create from ${esc(parentName)} with Braidy</button><button class="ghost-btn" onclick="revealStateManualCreation('${attr(list)}','${attr(entity.id)}','${attr(state.id)}')">Guide it myself</button><button class="ghost-btn" onclick="openStateReferenceUpload('${attr(list)}','${attr(entity.id)}','${attr(state.id)}')">Upload existing</button>`
+    : `<button class="ghost-btn" onclick="openStateReferenceUpload('${attr(list)}','${attr(entity.id)}','${attr(state.id)}')">Upload existing</button>`;
+  const derivationNote = parentIsCanon && parentMedia
+    ? `<small class="state-source-note">Generation starts from this approved image and applies only the change below.</small>`
+    : `<small class="state-source-note">${esc(parentName)} has no approved reference yet, so nothing can be derived from it. Approve ${esc(parentName)} first, or upload this state's reference directly.</small>`;
+  return `<section class="state-source-lead ${parentIsCanon && parentMedia ? "is-ready" : "is-blocked"}" data-state-source-lead="${attr(state.id)}">
+    <header><div><span>NEXT PRODUCTION TASK</span><b>Create ${esc(state.name || "this state")}</b>${state.appliesTo ? `<small>${esc(state.appliesTo)}</small>` : ""}</div></header>
+    <div class="state-source-body">
+      <div class="state-source-from"><span>DERIVED FROM</span><b>${esc(parentName)}</b>${thumb}</div>
+      <div class="state-source-change"><span>WHAT CHANGES</span>${deltaField}${derivationNote}</div>
+    </div>
+    <footer class="state-source-actions">${actions}</footer>
+  </section>`;
+}
+/* Opens the shipped state-generation panel and puts it in view. It is the one
+   surface the lead's "Guide it myself" hands off to, and it deliberately does not
+   duplicate any of that panel's controls. */
+window.revealStateManualCreation = (list, entityId, stateId) => {
+  const host = document.querySelector(`details.entity-state-generation[data-entity-state-generation="${(window.CSS && CSS.escape) ? CSS.escape(stateId) : stateId}"]`);
+  if (!host) return;
+  host.open = true;
+  host.scrollIntoView({ behavior: "smooth", block: "start" });
+};
+function continuityStateValidationMarkup(list, entity, state, media = [], includeDerivation = true) {
   if (!state || state.isDefault) return "";
   /* Before anything else the card can say about validation: with no recorded
-     source there is nothing to validate against, and the chooser is the action. */
+     source there is nothing to validate against, and the chooser is the action.
+     H1 — the focused state card now renders that chooser ITSELF, prominently, and
+     passes includeDerivation=false so the same prompt is not also buried inside the
+     subordinate disclosure. Every other caller keeps the bundled behaviour. */
   const unrecorded = continuityStateDerivationMarkup(list, entity, state);
-  if (unrecorded) return unrecorded;
+  if (unrecorded) return includeDerivation ? unrecorded : "";
   const parentInfo = entityStateParentSummary(entity, state);
   /* VALIDATION ASSERTS APPROVAL ON BOTH SIDES, so readiness is canon on both
      sides. `!!(targetMedia && parentMedia)` made two historic pointers look
@@ -912,7 +1013,43 @@ function continuityStatesPanel(list, it, media = [], demand = null) {
     const status = standing === "canon" ? (state.isDefault ? "Main canon image" : "Canon") : standing === "historic" ? "Historic · not approved" : effectiveRequirementLabel(state, demand, { isDefault: state.isDefault, family: "state" });
     return `<button type="button" class="tone-${tone} ${state.id===selectedId?"selected":""}" onclick="selectBoundedItem('continuity-state','${attr(list+":"+it.id)}','${attr(state.id)}')"><i></i><span><b>${esc(state.name || `State ${index+1}`)}</b><small>${status}</small></span></button>`;
   }).join("")}</nav>`;
-  const editor = st ? `<article class="continuity-state-card continuity-state-card-focused ${st.isDefault ? "is-default" : ""}" data-continuity-state-id="${attr(st.id)}"><div class="continuity-state-head"><span>${selectedIndex + 1}</span><input value="${attr(st.name || "")}" placeholder="Clean suit / Damaged sleeve / Night lighting" onchange="setContinuityState('${list}','${it.id}',${selectedIndex},'name',this.value)" ${st.isDefault ? 'data-default="1"' : ''}><div class="continuity-state-head-actions">${st.isDefault ? `<button class="chip" onclick="approveEntityFile('${list}','${it.id}','${attr(st.approvedFile || '')}','${attr(st.id)}')">CHOOSE AUTHORITY</button>` : `<button class="chip" onclick="openContinuityStateVariant('${attr(list)}','${attr(it.id)}','${attr(st.id)}')">${selectedIsCanon ? "EDIT / REGENERATE" : selectedParentIsCanon ? `GENERATE FROM ${esc(parentInfo.label.toUpperCase())}` : "OPEN STATE WORKFLOW"}</button><button class="ghost-btn" onclick="openStateReferenceUpload('${attr(list)}','${attr(it.id)}','${attr(st.id)}')">UPLOAD STATE REFERENCE</button><button class="chip" onclick="approveEntityFile('${attr(list)}','${attr(it.id)}','','${attr(st.id)}')">CHOOSE CANDIDATE</button><button class="icon-danger" onclick="removeContinuityState('${list}','${it.id}',${selectedIndex})">×</button>`}</div></div>${typeof actionRefusalMarkup === "function" ? actionRefusalMarkup(`continuity-state:${list}:${it.id}:${st.id}`) : ""}${selectedApprovedHero}${continuityStateValidationMarkup(list,it,st,media)}<div class="continuity-state-scope"><label>Applies to scenes / shots<input value="${attr(st.appliesTo || "")}" placeholder="Scenes 1–2 or L2-01, L2-02" onchange="setContinuityState('${list}','${it.id}',${selectedIndex},'appliesTo',this.value)"></label>${st.isDefault ? `<label>Reference requirement<input value="Required — the main approved image" disabled></label>` : `<label>Reference requirement${referenceRequirementSelect(referenceRequirement(st), `setContinuityState('${list}','${it.id}',${selectedIndex},'referenceRequirement',this.value);dirty();route()`)}</label>`}<div class="state-approved-readout"><span>${selectedIsCanon ? "Canon image" : selectedApprovedFile ? "Historic image · not approved" : "Canon image"}</span><b>${esc(selectedApprovedFile || "None selected")}</b><small>${selectedIsCanon ? "Approved by you as this state’s production truth." : selectedApprovedFile ? "Previously selected. Approve it to make it canon." : "Use Upload State Reference or Choose Candidate above."}</small></div></div><label class="continuity-state-delta"><span>${st.isDefault ? "Base-state notes" : "State change / delta"}</span><textarea placeholder="${st.isDefault ? "Primary appearance and any details that must always remain true." : "What changes from the parent state? Also name anything that must remain unchanged."}" onchange="setContinuityState('${list}','${it.id}',${selectedIndex},'notes',this.value)">${esc(st.notes || "")}</textarea></label>${typeof assetStatePromptStudio === "function" ? assetStatePromptStudio(list, it, st) : ""}${continuityStateCandidateTray(list,it,st,media)}</article>` : '<div class="canon-notes">No continuity states yet.</div>';
+  /* H1 — THE CREATION TASK IS THE SCREEN; STATE MANAGEMENT IS BENEATH IT.
+   *
+   * The accepted derivation flow was right and stayed, but the screen under it
+   * still opened with "Parent-to-state validation / Approve both sides before
+   * validating" — an instruction about comparing two approved images, addressed to
+   * a filmmaker who has approved one and is trying to make the second. Beside it
+   * sat Applies to scenes / shots and Reference requirement: real fields, and none
+   * of them the next thing to do.
+   *
+   * So the derived-state card now reads Source → What changes → Create → returned
+   * candidates, and everything that manages the state rather than creates it moves
+   * under one disclosure. NOTHING IS REMOVED AND NO SEMANTICS CHANGE: the same
+   * validation markup, the same applies-to and requirement writers, the same canon
+   * readout, all still on the page and still writing what they wrote. Only their
+   * rank changed.
+   *
+   * THE DEFAULT STATE IS UNTOUCHED. It has no parent to derive from and no
+   * validation pair, its fields are its whole content, and it is outside what this
+   * review asked to move — so it keeps exactly the flat composition it shipped with. */
+  const stateScopeFields = st ? `<div class="continuity-state-scope"><label>Applies to scenes / shots<input value="${attr(st.appliesTo || "")}" placeholder="Scenes 1–2 or L2-01, L2-02" onchange="setContinuityState('${list}','${it.id}',${selectedIndex},'appliesTo',this.value)"></label>${st.isDefault ? `<label>Reference requirement<input value="Required — the main approved image" disabled></label>` : `<label>Reference requirement${referenceRequirementSelect(referenceRequirement(st), `setContinuityState('${list}','${it.id}',${selectedIndex},'referenceRequirement',this.value);dirty();route()`)}</label>`}<div class="state-approved-readout"><span>${selectedIsCanon ? "Canon image" : selectedApprovedFile ? "Historic image · not approved" : "Canon image"}</span><b>${esc(selectedApprovedFile || "None selected")}</b><small>${selectedIsCanon ? "Approved by you as this state’s production truth." : selectedApprovedFile ? "Previously selected. Approve it to make it canon." : "Use Upload State Reference or Choose Candidate above."}</small></div></div>` : "";
+  const stateDeltaField = st ? `<label class="continuity-state-delta"><span>${st.isDefault ? "Base-state notes" : "State change / delta"}</span><textarea placeholder="${st.isDefault ? "Primary appearance and any details that must always remain true." : "What changes from the parent state? Also name anything that must remain unchanged."}" onchange="setContinuityState('${list}','${it.id}',${selectedIndex},'notes',this.value)">${esc(st.notes || "")}</textarea></label>` : "";
+  /* The lineage question stays at full rank when it is unanswered: recording the
+     source IS the filmmaker's next task, and it is what unlocks the creation task
+     below it. Only validation — which needs two approved images to mean anything —
+     moves down. */
+  const stateLineagePrompt = st && !st.isDefault ? continuityStateDerivationMarkup(list, it, st) : "";
+  /* EXACTLY ONE DELTA EDITOR, WHEREVER THE TASK CURRENTLY IS. The lead owns it once
+     a source is recorded; until then there is no lead, and the delta still has to be
+     writable — the run preflight refuses a derived state without one. */
+  const stateLeadMarkup = st && !st.isDefault ? continuityStateSourceLeadMarkup(list, it, st, media, selectedIndex) : "";
+  const stateTaskMarkup = st && !st.isDefault
+    ? `${stateLineagePrompt}${stateLeadMarkup}${stateLeadMarkup ? "" : stateDeltaField}`
+    : `${continuityStateValidationMarkup(list, it, st, media)}${stateScopeFields}${stateDeltaField}`;
+  const stateAdminMarkup = st && !st.isDefault
+    ? `<details class="continuity-state-admin"><summary>State details, requirements and validation</summary><div>${continuityStateValidationMarkup(list, it, st, media, false)}${stateScopeFields}</div></details>`
+    : "";
+  const editor = st ? `<article class="continuity-state-card continuity-state-card-focused ${st.isDefault ? "is-default" : ""}" data-continuity-state-id="${attr(st.id)}"><div class="continuity-state-head"><span>${selectedIndex + 1}</span><input value="${attr(st.name || "")}" placeholder="Clean suit / Damaged sleeve / Night lighting" onchange="setContinuityState('${list}','${it.id}',${selectedIndex},'name',this.value)" ${st.isDefault ? 'data-default="1"' : ''}><div class="continuity-state-head-actions">${st.isDefault ? `<button class="chip" onclick="approveEntityFile('${list}','${it.id}','${attr(st.approvedFile || '')}','${attr(st.id)}')">CHOOSE AUTHORITY</button>` : `<button class="chip" onclick="openContinuityStateVariant('${attr(list)}','${attr(it.id)}','${attr(st.id)}')">${selectedIsCanon ? "EDIT / REGENERATE" : selectedParentIsCanon ? `GENERATE FROM ${esc(parentInfo.label.toUpperCase())}` : "OPEN STATE WORKFLOW"}</button><button class="ghost-btn" onclick="openStateReferenceUpload('${attr(list)}','${attr(it.id)}','${attr(st.id)}')">UPLOAD STATE REFERENCE</button><button class="chip" onclick="approveEntityFile('${attr(list)}','${attr(it.id)}','','${attr(st.id)}')">CHOOSE CANDIDATE</button><button class="icon-danger" onclick="removeContinuityState('${list}','${it.id}',${selectedIndex})">×</button>`}</div></div>${typeof actionRefusalMarkup === "function" ? actionRefusalMarkup(`continuity-state:${list}:${it.id}:${st.id}`) : ""}${selectedApprovedHero}${stateTaskMarkup}${stateAdminMarkup}${typeof assetStatePromptStudio === "function" ? assetStatePromptStudio(list, it, st) : ""}${continuityStateCandidateTray(list,it,st,media)}</article>` : '<div class="canon-notes">No continuity states yet.</div>';
   /* R21 — A CONTINUITY STATE IS A STORY VARIANT, NOT A CONFIGURATION RECORD.
    *
    * Glasses on, wet, bloodied, helmet off, thirty years older. That is what this
@@ -1888,6 +2025,37 @@ function entityDependencyType(list) {
 
    This is CONTEXT, not requirement. Nothing here lets a shot count change what
    coverageRequirement() answers. */
+/* W14 / W5 — THE NEXT REQUIRED REFERENCE, NAMED WHERE THE LAST ONE WAS APPROVED.
+ *
+ * Approving Folding Chair · Default left the page correct and silent about what
+ * came next. The chair's second continuity state — required, unapproved, and the
+ * whole reason the prop has states — was reachable only by walking Production
+ * needs → Coverage → Continuity states → the state card → Open state workflow.
+ * Five moves to discover a requirement the project already knows.
+ *
+ * IT REPORTS, IT DOES NOT DECIDE. The requirement comes from
+ * `referenceRequirement`, the standing from `entityStateTruth` — the same two
+ * readers the coverage board and the approval modal use — so this cannot claim a
+ * state is needed that the rest of the product considers optional, or unapproved
+ * when a receipt exists. It appears only once the primary itself is canon,
+ * because before that the primary IS the next required reference and the hero
+ * above already says so. */
+function entityNextRequiredStateMarkup(list, entity) {
+  if (typeof entityStateListRead !== "function" || typeof entityStateTruth !== "function") return "";
+  const states = entityStateListRead(entity, true);
+  if (states.length < 2) return "";
+  const truth = entityStateTruth(list, entity);
+  if (!truth || truth.available === false) return "";
+  const primary = states.find((state) => state.isDefault);
+  if (!primary || truth.of(primary).standing !== "canon") return "";
+  const missing = states.filter((state) => !state.isDefault
+    && referenceRequirement(state) === "required"
+    && truth.of(state).standing !== "canon");
+  if (!missing.length) return "";
+  const next = missing[0];
+  const more = missing.length - 1;
+  return `<div class="reference-next-required" data-next-required-state="${attr(next.id)}"><span>NEXT REQUIRED REFERENCE</span><b>${esc(next.name || next.id)}</b>${next.appliesTo ? `<small>${esc(next.appliesTo)}</small>` : ""}<button class="approve-btn" onclick="revealEntityContinuityState('${attr(next.id)}')">Create ${esc(next.name || "this state")} →</button>${more > 0 ? `<small class="reference-next-required-more">and ${more} more required state${more === 1 ? "" : "s"} after it</small>` : ""}</div>`;
+}
 function entityProductionUse(list, entity) {
   const shots = Array.isArray(P.shots) ? P.shots : [];
   const wanted = String((entity && entity.id) || "");
@@ -2037,7 +2205,7 @@ function referencePrimaryHeroMarkup(list, entity, media, mediaByName, activeCand
   if (firstTask) return `<section class="reference-primary-hero is-missing" data-primary-standing="${attr(it.standing)}" data-first-task="primary"><div class="reference-primary-visual"><div class="reference-primary-empty">No primary image</div></div><div class="reference-primary-copy"><span>${band}</span><h2>${esc(entity.name || entity.id)}</h2>${roleLine ? `<small class="reference-primary-role">${esc(roleLine)}</small>` : ""}${firstTaskMarkup}${afterPrimary ? `<small class="reference-primary-after">${afterPrimary}</small>` : ""}</div></section>`;
   return `<section class="reference-primary-hero ${it.isCanon ? "is-canon" : it.file ? "is-historic" : "is-missing"}" data-primary-standing="${attr(it.standing)}"><div class="reference-primary-visual">${heroMedia
     ? `<button type="button" class="reference-primary-preview" onclick="inspectMediaFile('${attr(encodeURIComponent(heroMedia.url))}','${attr(heroMedia.assetId || "")}','${attr(encodeURIComponent(`${entity.name || entity.id} primary reference · ${it.file}`))}','${isVideo(heroMedia.name) ? "video" : "image"}')" aria-label="${it.isCanon ? "Inspect the approved primary reference" : "Inspect the selected but unapproved primary reference"}">${isVideo(heroMedia.name) ? `<video muted src="${attr(heroMedia.url)}"></video>` : `<img src="${attr(heroMedia.url)}" alt="">`}<span>INSPECT</span></button>`
-    : `<div class="reference-primary-empty">No primary image</div>`}</div><div class="reference-primary-copy"><span>${band}</span><h2>${esc(entity.name || entity.id)}</h2>${roleLine ? `<small class="reference-primary-role">${esc(roleLine)}</small>` : ""}<p>${line}</p>${usage ? `<small class="reference-primary-usage">${usage}</small>` : ""}<div class="reference-primary-actions"><button class="${next.primary ? "approve-btn recommended" : "ghost-btn"}" onclick="${next.run}"><span>${esc(next.label)}</span><small>${next.hint}</small></button></div>${remainingLine ? `<small class="reference-primary-remaining">${remainingLine}</small>` : ""}</div></section>`;
+    : `<div class="reference-primary-empty">No primary image</div>`}</div><div class="reference-primary-copy"><span>${band}</span><h2>${esc(entity.name || entity.id)}</h2>${roleLine ? `<small class="reference-primary-role">${esc(roleLine)}</small>` : ""}<p>${line}</p>${usage ? `<small class="reference-primary-usage">${usage}</small>` : ""}<div class="reference-primary-actions"><button class="${next.primary ? "approve-btn recommended" : "ghost-btn"}" onclick="${next.run}"><span>${esc(next.label)}</span><small>${next.hint}</small></button></div>${remainingLine ? `<small class="reference-primary-remaining">${remainingLine}</small>` : ""}${entityNextRequiredStateMarkup(list, entity)}</div></section>`;
 }
 
 function referenceCreationHub(list, entity) {
@@ -2745,6 +2913,66 @@ function entityCoverageStatesMarkup(list, entity, mediaByName, media) {
   const pack = list === "audio" || typeof entityPlanningMediaPanel !== "function" ? "" : `<details class="entity-details-advanced entity-reference-pack"><summary>Supporting reference pack</summary><div>${entityPlanningMediaPanel(list, entity)}</div></details>`;
   return `<section class="entity-subworkspace">${entityDemandMarkup(list, entity, production || undefined, obligations || undefined)}<section class="entity-coverage-detail" data-coverage-detail="1" data-coverage-detail-open="${detailOpen ? "1" : "0"}">${toggle}${board}</section>${pack}</section>`;
 }
+/* W18 — RAW IMPORT IDENTIFIERS ARE PROVENANCE, NOT PRODUCTION NOTES.
+ *
+ * Folding Chair's notes begin "Sections 7, 9, 14, N347, N353, N354, N409, N410,
+ * N422, N433, N441, N442, N458, N459." — the source sections and locked-decision
+ * ids the Project Builder import carried across. That is genuinely useful and it
+ * is genuinely NOT what a filmmaker is reading the notes field for; it sat at the
+ * top of every rendering of those notes, pushing the actual production sentence
+ * below the fold.
+ *
+ * These two readers SEPARATE it for display and nothing else. The stored value is
+ * never rewritten and the editable field below is still the whole string, because
+ * silently rewriting authored production content to improve a layout is exactly
+ * the thing W18 forbids. If the pattern does not match, everything stays notes —
+ * this only ever moves text it can positively identify as identifiers.
+ *
+ * The pattern is deliberately narrow: a LEADING run of "Section(s) N" and/or
+ * bare decision ids (N347), ending at the first sentence that is not one. */
+const V672_PROVENANCE_PREFIX = /^\s*((?:sections?\s*)?(?:n?\d+[a-z]?)(?:\s*,\s*(?:sections?\s*)?(?:n?\d+[a-z]?))*\s*\.)\s*/i;
+function entityNotesProvenance(notes) {
+  const match = String(notes || "").match(V672_PROVENANCE_PREFIX);
+  return match ? match[1].trim() : "";
+}
+function entityReadableNotes(notes) {
+  const text = String(notes || "");
+  return text.replace(V672_PROVENANCE_PREFIX, "").trim();
+}
+window.entityReadableNotes = entityReadableNotes;
+window.entityNotesProvenance = entityNotesProvenance;
+/* The concise canonical constraint, read through the SHARED resolver rather than
+   through a second field-precedence chain of this surface's own. `entityVisualDescription`
+   already answers "what is this entity's authored design description" for the prompt
+   compiler, coverage automation and Creation Studio, and its precedence exists precisely
+   so no stored text becomes unreachable — a fourth opinion here is how the panel and the
+   prompt come to describe different chairs. */
+/* WHICH stored field the design authority actually resolved to. The order mirrors
+   `entityVisualDescription`'s own precedence rather than restating a judgement:
+   whichever field it would have returned is the field named. */
+const V672_AUTHORITY_FIELD_LABELS = {
+  creationDescription: "the canon description",
+  visualDescription: "the imported design description",
+  block: "the locked identity block",
+  description: "the canon description",
+  notes: "the production notes",
+};
+function entityDesignAuthoritySource(entity, list = "") {
+  const resolved = entityDesignAuthorityText(entity, list);
+  if (!resolved) return "";
+  const character = String(list) === "characters";
+  const order = character
+    ? ["creationDescription", "visualDescription", "block", "description", "notes"]
+    : ["creationDescription", "visualDescription", "description", "notes", "block"];
+  for (const key of order) {
+    if (String(entity?.[key] || "").trim() === resolved) return V672_AUTHORITY_FIELD_LABELS[key] || "";
+  }
+  return "";
+}
+function entityDesignAuthorityText(entity, list = "") {
+  if (typeof entityVisualDescription === "function") return String(entityVisualDescription(entity, list) || "").trim();
+  return String(entity?.block || entity?.visualDescription || entity?.description || "").trim();
+}
 function entityDetailsHistoryMarkup(list, entity, extra) {
   const dangerZone = `<details class="entity-danger-zone"><summary>Advanced reference actions</summary><div><p class="hint">Deleting a reference removes it from this project. Media files remain on disk.</p><button class="danger-btn" onclick="delEntity('${list}','${entity.id}');location.hash='#/library/${list}'">Delete reference</button></div></details>`;
   /* R23 — DETAILS WAS SEVEN UNRELATED JOBS SHARING ONE SCROLL.
@@ -2783,9 +3011,41 @@ function entityDetailsHistoryMarkup(list, entity, extra) {
       return `<details class="entity-details-advanced entity-voice-section"><summary>Voice${word ? ` · ${esc(word)}` : ""}</summary><div>${voicePanel(entity)}</div></details>`;
     })()
     : "";
+  /* Read-only on purpose. This is source-derived truth, and the surface that
+     edits it is the canon description field in Production notes below — one
+     writer, stated once, rather than the same paragraph offered twice. */
+  const entityAuthorityBlockMarkup = (row) => {
+    const authority = entityDesignAuthorityText(row, list);
+    if (!authority) return "";
+    /* NAME THE FIELD THIS TEXT CAME FROM. The first version of this line said
+       "edit it in the canon description below", which is true only when the
+       resolver landed on `description` — for the imported Folding Chair it landed
+       on `visualDescription`, so the note pointed at an EMPTY box while the text it
+       was describing sat in another field entirely. `entityVisualDescription` has a
+       precedence, so which field won is a knowable fact and is reported rather than
+       assumed. */
+    const from = entityDesignAuthoritySource(row, list);
+    return `<section class="entity-authority-block"><header><span>IDENTITY / DESIGN AUTHORITY</span><b>What every candidate of this reference must remain</b></header><p>${esc(authority)}</p><small>Generation and review both read this.${from ? ` It is held in ${esc(from)}.` : ""}</small></section>`;
+  };
+  const entityProvenanceBlockMarkup = (kind, row) => {
+    const provenance = entityNotesProvenance(row?.notes);
+    const reconciliation = [row?.canonicalId, row?.reconciliationId, row?.importId, row?.sourceId].filter(Boolean);
+    if (!provenance && !reconciliation.length) return "";
+    return `<details class="entity-details-provenance"><summary>Source &amp; provenance${provenance ? ` <span>Imported</span>` : ""}</summary><div>${provenance ? `<div class="entity-provenance-row"><span>SOURCE SECTIONS &amp; DECISIONS</span><p>${esc(provenance)}</p><small>Carried in from the controlling source at import. It is kept in the notes field above exactly as written; this is the same text, given its own place to be read.</small></div>` : ""}${reconciliation.length ? `<div class="entity-provenance-row"><span>IDENTIFIERS</span><p>${reconciliation.map(esc).join(" · ")}</p></div>` : ""}</div></details>`;
+  };
   const advancedSection = `<details class="entity-details-advanced"><summary>Advanced reference metadata</summary><div>${list === "audio" ? "" : entityReconciliationMarkup(list,entity)}${entitySavedPromptsMarkup(list,entity)}</div></details>`;
   const views=[
-    {id:"details",label:"Details",render:()=>`<details open class="fold compact-entity-section"><summary>Identity & production notes</summary>${extra(entity)}</details>${voiceSection}${advancedSection}`},
+    /* W18 — FOUR QUESTIONS, IN THE ORDER A FILMMAKER ASKS THEM.
+     *
+     *   1 What is authoritative about this reference?   design authority, read-only
+     *   2 What production notes matter to me?           the editable fields
+     *   3 Where did that come from?                     provenance, subordinate
+     *   4 What else can I change?                       advanced, collapsed
+     *
+     * The editable fields are exactly the ones `extra()` already rendered and are
+     * written by exactly the same handlers; they are placed under a heading that
+     * says they are yours to edit, beneath a block that says what is not. */
+    {id:"details",label:"Details",render:()=>`${entityAuthorityBlockMarkup(entity)}<details open class="fold compact-entity-section entity-details-notes"><summary>Production notes <span>Editable</span></summary>${extra(entity)}</details>${entityProvenanceBlockMarkup(list,entity)}${voiceSection}${advancedSection}`},
     {id:"history",label:"History",render:()=>entityGenerationRecordsMarkup(list,entity)},
   ];
   const context=`${list}:${entity.id}`, ids=views.map((view)=>view.id), selectedId=boundedSelected("entity-detail-view",context,ids,"details"), selected=views.find((view)=>view.id===selectedId)||views[0];

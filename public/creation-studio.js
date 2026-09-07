@@ -412,6 +412,22 @@ function assetPromptStudio(list, x) {
      request in flight, or an error to act on — and otherwise stays closed behind a
      one-line control, which is what keeps the idle section compact. */
   const manualOpen = workspaceSectionOpen(manualKey, busy || !!latest || operation?.status === "error");
+  /* W7 — ONE DISCLOSURE, ONE LABEL, ONE PIECE OF STATE.
+   *
+   * This card carried two controls over the same content: a button reading
+   * "Guide it myself" / "Hide manual controls", and a <details> whose <summary>
+   * read "Describe, prepare, and generate manually". Two affordances for one
+   * panel, and the dogfood found the label inverted — a COLLAPSED section
+   * offering "Hide manual controls" — because the button's text was rendered from
+   * the remembered value while the button's click flipped `details.open` in the
+   * DOM without re-rendering. The two writers of one state disagreed, exactly as
+   * two writers of one state do.
+   *
+   * The <details> is gone. The button is the only control, `hidden` is the only
+   * representation of open/closed, and `workspaceSectionOpen` remains the only
+   * remembered state — so the label is now derived from the same fact the panel
+   * is derived from and cannot contradict it. */
+  const manualPanelId = `reference-manual-${String(list).replace(/[^a-z0-9]+/gi, "-")}-${String(x.id).replace(/[^a-z0-9]+/gi, "-")}`;
   const run = typeof v626LatestRun === "function" ? v626LatestRun("entity-chain", `${list}:${x.id}`, "default-only") : null;
   const label =
     list === "characters"
@@ -421,12 +437,47 @@ function assetPromptStudio(list, x) {
         : list === "vehicles"
           ? "vehicle reference"
           : "prop reference";
-  return `<section class="reference-create-section asset-creation-card" data-ui-state-key="${attr(sectionKey)}" data-create-target="${attr(`${list}:${x.id}`)}">
-    <header class="reference-create-head">
+  /* H3 — ONCE THERE IS AN APPROVED PRIMARY, MAKING ONE IS NOT THE TASK ANY MORE.
+   *
+   * "Create with Braidy / Guide it myself" is the whole point of this card while the
+   * reference has no approved primary, and it stays exactly as it was in that state.
+   * After approval it is competing at full weight with the next required reference,
+   * which IS the next task — so it becomes a disclosure the filmmaker opens when
+   * they want to replace or add another primary, which is a deliberate act rather
+   * than the default one.
+   *
+   * The card's contents are unchanged in both shapes; the download link stays at the
+   * top where it belongs, because reaching the approved image is not a replacement
+   * operation. Nothing about approval, generation or authority moves. */
+  const replaceOnly = !!approved;
+  const bodyOpenKey = `${sectionKey}:replace`;
+  /* It opens itself only for work that is genuinely live. `!!run` was too broad:
+     every reference that has EVER had a Braidy run carries one forever, so a
+     finished run held this card open permanently and H3 changed nothing. An active
+     or waiting run does still open it, because its status and its review handoff
+     live inside — hiding those would trade this defect for a worse one. Asked
+     through the shipped predicates so this cannot disagree with the run's own
+     surfaces about whether anything is happening. */
+  const runIsLive = !!run
+    && ((typeof v670MachineActiveRun === "function" && v670MachineActiveRun(run))
+      || (typeof v670WaitingForHumanRun === "function" && v670WaitingForHumanRun(run)));
+  /* `manualOpen` and `latest` are deliberately NOT in this default. Both are true
+     for any reference that has ever had a prompt prepared, which is every reference
+     that reached an approved primary — so including them reopened the card for
+     exactly the references H3 is about. A prepared prompt is history; live work is
+     an in-flight request, an error to act on, or a run still going. */
+  const bodyOpen = replaceOnly ? workspaceSectionOpen(bodyOpenKey, busy || operation?.status === "error" || runIsLive) : true;
+  const head = `<header class="reference-create-head">
       <div><h3>${approved ? `${owner} primary reference` : `Create ${owner} primary reference`}</h3>
-      <p>This establishes ${owner} ${stateName} appearance for the production. You approve the final reference.</p></div>
+      <p>${approved ? `${owner} ${stateName} appearance is established. This is where you replace it or add another primary candidate.` : `This establishes ${owner} ${stateName} appearance for the production. You approve the final reference.`}</p></div>
       ${approved ? `<a class="reference-download" href="${attr(approved.url)}" download>Download approved reference ↓</a>` : ""}
-    </header>
+    </header>`;
+  const bodyStart = replaceOnly
+    ? `${head}<details class="reference-create-replace" ${bodyOpen ? "open" : ""} ontoggle="rememberWorkspaceSection('${attr(bodyOpenKey)}',this.open)"><summary>Replace or create another primary reference</summary><div class="reference-create-replace-body">`
+    : head;
+  const bodyEnd = replaceOnly ? `</div></details>` : "";
+  return `<section class="reference-create-section asset-creation-card${replaceOnly ? " is-replacement" : ""}" data-ui-state-key="${attr(sectionKey)}" data-create-target="${attr(`${list}:${x.id}`)}">
+    ${bodyStart}
     <div class="reference-create-paths">
       <article class="reference-create-path path-braidy">
         <b>Create with Braidy</b>
@@ -436,11 +487,10 @@ function assetPromptStudio(list, x) {
       <article class="reference-create-path path-manual">
         <b>Guide it myself</b>
         <small>Write the ${esc(label)} description, prepare the prompt yourself, then choose the generation route and settings.</small>
-        <button class="ghost-btn" onclick="toggleReferenceManualPath('${list}','${x.id}')" aria-expanded="${manualOpen ? "true" : "false"}">${manualOpen ? "Hide manual controls" : "Guide it myself"}</button>
+        <button class="ghost-btn reference-manual-toggle" id="${attr(manualPanelId)}-toggle" aria-controls="${attr(manualPanelId)}" onclick="toggleReferenceManualPath('${list}','${x.id}')" aria-expanded="${manualOpen ? "true" : "false"}">${manualOpen ? "Hide manual controls" : "Show manual controls"}</button>
       </article>
     </div>
-    <details class="reference-create-manual" ${manualOpen ? "open" : ""} ontoggle="rememberWorkspaceSection('${attr(manualKey)}',this.open)">
-      <summary>Describe, prepare, and generate manually</summary>
+    <div class="reference-create-manual" id="${attr(manualPanelId)}" data-manual-key="${attr(manualKey)}" role="region" aria-labelledby="${attr(manualPanelId)}-toggle" ${manualOpen ? "" : "hidden"}>
       <div class="reference-create-manual-body">
         <div class="creation-grid asset-prompt-grid">
           ${field(
@@ -466,24 +516,45 @@ function assetPromptStudio(list, x) {
         ${progress}
         ${latest ? assetPromptResult(list, x, latest) : `<div class="creation-empty-result">No prompt prepared yet. The rules-based compiler works without Braidy.</div>`}
       </div>
-    </details>
+    </div>
     ${run && typeof assetAutomationPanel === "function" ? assetAutomationPanel(list, x) : ""}
+    ${bodyEnd}
   </section>`;
 }
-/* The manual path's control opens the disclosure rather than writing the remembered
-   value itself. `ontoggle` above stays the single writer of that state, so the button
-   and the summary cannot disagree about what is open. */
+/* W7 — THE TOGGLE, AND THE TWO THINGS IT DELIBERATELY DOES NOT DO.
+ *
+ * IT DOES NOT SCROLL. The old control called `scrollIntoView` on every open, so
+ * opening the manual path moved the page under the filmmaker's cursor — the
+ * "unexpected scroll jump" the dogfood reported. The panel opens directly beneath
+ * the button that opened it and is already in view; moving the viewport to
+ * announce that is noise, and it stole the reading position.
+ *
+ * IT DOES NOT RE-RENDER. It writes the panel, the label and the remembered value
+ * together in one pass, so the label can never describe a different state than
+ * the panel is in — and the prompt textareas keep any unsaved text, which a
+ * route() would have discarded.
+ *
+ * Focus is handled rather than dropped: collapsing a panel that CONTAINS focus
+ * would otherwise leave the document focused on a hidden element, so focus comes
+ * back to the control the filmmaker just pressed. */
 window.toggleReferenceManualPath = (list, id) => {
-  const rows = document.querySelectorAll("section.reference-create-section");
   const target = `${list}:${id}`;
-  for (const row of rows) {
-    if (row.getAttribute("data-create-target") !== target) continue;
-    const host = row.querySelector("details.reference-create-manual");
-    if (!host) return;
-    host.open = !host.open;
-    if (host.open) host.scrollIntoView({ behavior: "smooth", block: "nearest" });
-    return;
+  const row = [...document.querySelectorAll("section.reference-create-section")]
+    .find((item) => item.getAttribute("data-create-target") === target);
+  if (!row) return;
+  const panel = row.querySelector(".reference-create-manual");
+  const button = row.querySelector(".reference-manual-toggle");
+  if (!panel || !button) return;
+  const open = panel.hasAttribute("hidden");
+  if (open) panel.removeAttribute("hidden");
+  else {
+    if (panel.contains(document.activeElement)) button.focus();
+    panel.setAttribute("hidden", "");
   }
+  button.setAttribute("aria-expanded", open ? "true" : "false");
+  button.textContent = open ? "Hide manual controls" : "Show manual controls";
+  const key = panel.getAttribute("data-manual-key") || "";
+  if (key && typeof rememberWorkspaceSection === "function") rememberWorkspaceSection(key, open);
 };
 /* The possessive the copy needs, built once rather than in five template holes. */
 function creationOwnerName(x) {

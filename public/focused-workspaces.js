@@ -316,12 +316,51 @@
     const summary = window.summariseCoverage ? window.summariseCoverage(slots) : { required: 0, approvedRequired: 0 };
     return { required: summary.required, approved: summary.approvedRequired };
   }
-  function entityInspector(entity, list) {
+  /* W18 — THE INSPECTOR SAYS WHAT IS AUTHORITATIVE, NOT WHATEVER FIELD IS LONGEST.
+   *
+   * The chain was `driftNotes || block || notes`, and for Folding Chair it landed
+   * on `notes` — which opens "Sections 7, 9, 14, N347, N353, N354, N409, N410,
+   * N422, N433, N441, N442, N458, N459." So the panel headed "Identity / design
+   * authority" led with fourteen import identifiers, and the actual canonical
+   * constraint — the battered dull gray metal chair with the HALL PROPERTY
+   * sticker — was nowhere on that panel at all.
+   *
+   * The design authority is the design description: `visualDescription` for a
+   * prop, location or vehicle, and a character's locked identity `block`. Notes
+   * are production notes and belong under that heading in the main pane, where
+   * they are editable and where their provenance is separated out. They are kept
+   * as the last resort only so a record holding nothing else still says
+   * something, and the provenance prefix is trimmed off the front when it does.
+   *
+   * NOTHING IS REWRITTEN. This is a read, and the stored fields are untouched. */
+  function inspectorAuthorityLine(entity, list = "") {
+    const authority = window.entityVisualDescription
+      ? String(window.entityVisualDescription(entity, list) || "").trim()
+      : String(entity?.block || entity?.visualDescription || entity?.description || "").trim();
+    if (authority) return authority;
+    const fallback = window.entityReadableNotes ? window.entityReadableNotes(entity?.notes) : String(entity?.notes || "");
+    return String(entity?.driftNotes || "").trim() || fallback || "No design description recorded.";
+  }
+  function entityInspector(entity, list, main = null) {
     const aside = document.createElement("aside");
     aside.className = "focused-inspector";
     const { required, approved } = inspectorCoverage(entity);
     const candidates = Array.isArray(entity?.candidateFiles) ? entity.candidateFiles.filter((row) => row.decision !== "rejected" && !decisionIsSlotSelection(row.decision)).length : 0;
-    aside.innerHTML = `<header><span>Reference details</span><b>${escapeText(entity?.id || "Reference")}</b><p>${escapeText(entity?.name || "")}</p></header><div class="focused-inspector-facts"><article><span>Design status</span><b>${escapeText(window.entityWorkflowState?.(entity)?.label || entity?.workflowStatus || entity?.status || "Draft")}</b></article><article><span>Coverage</span><b>${approved}/${required}</b></article><article><span>Candidates</span><b>${candidates}</b></article><article><span>States</span><b>${Array.isArray(entity?.continuityStates) ? entity.continuityStates.length : 0}</b></article></div><section><b>Identity / design authority</b><p>${escapeText(entity?.driftNotes || entity?.block || entity?.notes || "No authority note recorded.")}</p></section><section><b>Working on this reference</b><p>One stage at a time. Use the tabs above to move between the primary reference, what this production needs, and the details and history.</p></section>`;
+    /* W18 — TWO SURFACES, NOT TWO COPIES.
+     *
+     * The rail carries the design constraint so it stays readable while the
+     * filmmaker works in the primary-reference and coverage stages, where nothing
+     * else states it. The Details stage states it in full, as the record — and on
+     * that stage the rail would be the same paragraph twice, side by side, which
+     * is the duplication W18 names.
+     *
+     * The condition asked is the duplication itself rather than a proxy for it:
+     * if the main pane has already rendered the authority block, the rail does not
+     * repeat it. That cannot fall out of step with which stage renders what. */
+    const authoritySection = main && main.querySelector(".entity-authority-block")
+      ? ""
+      : `<section><b>Identity / design authority</b><p>${escapeText(inspectorAuthorityLine(entity, list))}</p></section>`;
+    aside.innerHTML = `<header><span>Reference details</span><b>${escapeText(entity?.id || "Reference")}</b><p>${escapeText(entity?.name || "")}</p></header><div class="focused-inspector-facts"><article><span>Design status</span><b>${escapeText(window.entityWorkflowState?.(entity)?.label || entity?.workflowStatus || entity?.status || "Draft")}</b></article><article><span>Coverage</span><b>${approved}/${required}</b></article><article><span>Candidates</span><b>${candidates}</b></article><article><span>States</span><b>${Array.isArray(entity?.continuityStates) ? entity.continuityStates.length : 0}</b></article></div>${authoritySection}<section><b>Working on this reference</b><p>One stage at a time. Use the tabs above to move between the primary reference, what this production needs, and the details and history.</p></section>`;
     return aside;
   }
   function enhanceEntity(root, view, id) {
@@ -338,7 +377,7 @@
     original.forEach((node) => center.appendChild(node));
     shell.appendChild(buildEntityNavigator(list, id));
     shell.appendChild(center);
-    shell.appendChild(entityInspector(entity, list));
+    shell.appendChild(entityInspector(entity, list, center));
     root.appendChild(shell);
     const boundedPage = center.querySelector(".bounded-entity-page");
     if (boundedPage) {

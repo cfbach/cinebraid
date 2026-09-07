@@ -5884,6 +5884,35 @@ function assistantErrorIsPermanent(error) {
     "not configured",
   ].some((token) => message.includes(token));
 }
+/* W2/W17 — THE REFUSAL COUNTS WHAT IT ACTUALLY DID.
+ *
+ * Both request helpers broke out of the loop on a PERMANENT error — a capability
+ * that is switched off cannot be retried into working — and then threw
+ * "failed after 3 attempts" regardless. The Last Seat dogfood recorded that
+ * sentence three times, once per candidate, for a Vision provider the filmmaker
+ * had deliberately set to none:
+ *
+ *   "Entity candidate reviewer failed after 3 attempts: Vision assistance is disabled."
+ *
+ * No retry had happened. The loop was right; only its account of itself was wrong,
+ * and that wrong account is what every surface downstream rendered as a failure
+ * with a retry count. A capability nobody turned on has not failed three times.
+ *
+ * `permanent` is carried out of the loop rather than re-derived, so this says
+ * "was not attempted again" only where the loop genuinely chose not to. Where a
+ * configured provider really did fail repeatedly, the count is the real one and
+ * the wording is unchanged in substance. */
+function assistantAttemptFailure(label, lastError, attemptsMade, permanent) {
+  const suffix = lastError?.message ? `: ${lastError.message}` : "";
+  const error = new Error(permanent
+    ? `${label} is unavailable${suffix}`
+    : `${label} failed after ${attemptsMade || 1} attempt${attemptsMade === 1 ? "" : "s"}${suffix}`);
+  error.assistantAttempts = attemptsMade || 0;
+  /* The one fact a caller needs to tell "switched off" from "broke": a permanent
+     refusal is configuration, and configuration is not an incident. */
+  error.assistantPermanent = !!permanent;
+  return error;
+}
 function assistantRetryInstruction(attempt, label = "Assistant") {
   if (!attempt) return "";
   return `
@@ -5897,7 +5926,7 @@ async function requestAssistantResult(task, system, user, options = {}) {
   const provider = options.provider || aiProviderOverride();
   const model = options.model;
   const parse = typeof options.parse === "function" ? options.parse : (raw) => raw;
-  let lastError = null;
+  let lastError = null, attemptsMade = 0, permanent = false;
   for (let attempt = 0; attempt < 3; attempt++) {
     try {
       const raw = await llm(
@@ -5913,11 +5942,11 @@ async function requestAssistantResult(task, system, user, options = {}) {
       return { value: parse(raw), attempts: attempt + 1, recovered: attempt > 0 };
     } catch (error) {
       lastError = error;
-      if (assistantErrorIsPermanent(error)) break;
+      attemptsMade = attempt + 1;
+      if (assistantErrorIsPermanent(error)) { permanent = true; break; }
     }
   }
-  const suffix = lastError?.message ? `: ${lastError.message}` : "";
-  throw new Error(`${label} failed after 3 attempts${suffix}`);
+  throw assistantAttemptFailure(label, lastError, attemptsMade, permanent);
 }
 async function requestStrictAssistantJson(system, payload, options = {}) {
   return requestAssistantResult("prompt", system, JSON.stringify(payload), {
@@ -5937,7 +5966,7 @@ async function requestVisionResult(system, user, images, options = {}) {
   const provider = target.provider;
   const model = target.model;
   const parse = typeof options.parse === "function" ? options.parse : (raw) => raw;
-  let lastError = null;
+  let lastError = null, attemptsMade = 0, permanent = false;
   for (let attempt = 0; attempt < 3; attempt++) {
     try {
       const retryUser = attempt
@@ -5951,11 +5980,11 @@ The previous vision response failed, was empty, was truncated, or could not be p
       return { value: parse(raw), attempts: attempt + 1, recovered: attempt > 0, provider, model };
     } catch (error) {
       lastError = error;
-      if (assistantErrorIsPermanent(error)) break;
+      attemptsMade = attempt + 1;
+      if (assistantErrorIsPermanent(error)) { permanent = true; break; }
     }
   }
-  const suffix = lastError?.message ? `: ${lastError.message}` : "";
-  throw new Error(`${label} failed after 3 attempts${suffix}`);
+  throw assistantAttemptFailure(label, lastError, attemptsMade, permanent);
 }
 function clampNumber(value, fallback, min, max) {
   const n = Number(value);
@@ -7725,7 +7754,13 @@ Return a score, explicit model pass/fail, all hard checks, the stateMatch decisi
       assistantAttempts: assistant.attempts,
     });
   } catch (error) {
-    res.status(error.status || 500).json({ error: error.message || "entity candidate review failed" });
+    /* W17 — the refusal carries WHY, so the executor can tell a capability that is
+       off from a reviewer that broke. Both are "no review"; only one is a fault. */
+    res.status(error.status || 500).json({
+      error: error.message || "entity candidate review failed",
+      reviewAttempts: Number(error.assistantAttempts || 0),
+      reviewUnavailableReason: error.assistantPermanent ? "capability-off" : "review-failed",
+    });
   }
 });
 

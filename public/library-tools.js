@@ -749,17 +749,46 @@ window.approveEntityFile = (list, id, name, stateId = "", mode = "primary-author
    * Request changes stays available in both shapes. */
   const singleState = states.length <= 1;
   const targetState = requestedState || states[0] || { id: "state-default", name: "Default" };
+  /* W9 — THE CONTINUATION IS OFFERED WHEN ONE EXISTS, AND ONLY THEN.
+   *
+   * The dogfood approved Folding Chair · Default with a second state, "Unfolded
+   * for game night", sitting unapproved in the same prop — and the modal still
+   * rendered "Continue to another version after approval" containing nothing but
+   * "Approve only — stay on this asset", beside a permanently disabled
+   * APPROVE & EDIT NEXT STATE. Two controls describing a choice that did not
+   * exist.
+   *
+   * The reason is real production truth and is NOT a bug in this modal:
+   * `continuationCandidates` walks DESCENDANTS, and Unfolded records no
+   * `parentStateId`, so it is not a descendant of Default and there was genuinely
+   * nothing to continue into. The modal's fault was rendering the furniture of a
+   * choice anyway. Record the lineage (W11) and the same code offers
+   * "Edit Unfolded for game night" without another line changing here.
+   *
+   * So the shape is driven by the continuation list rather than by the state
+   * count. `states.length <= 1` still decides whether the STATE TARGET is a
+   * readout or a selector — W8 keeps that selector, and a two-state reference
+   * must never be told it has one state — but the continuation field and the
+   * second action now appear only where a valid target exists. */
+  const continuationTargets = entityApprovalContinuationStates(x, targetState.id);
+  const canContinue = continuationTargets.length > 0;
   const stateField = singleState
     ? `<div class="form-field entity-approval-single-state" data-single-state="1"><label>Approve for continuity state</label><input id="entity-approve-target" type="hidden" value="${attr(targetState.id)}"><div class="entity-approval-single-state-readout"><b>${esc(targetState.name || "Default")}</b><small>${esc(targetState.appliesTo || (targetState.isDefault === false ? "No scene/shot range assigned" : "This reference has one continuity state."))}</small></div></div>`
     : `<div class="form-field"><label>Approve for continuity state</label><select id="entity-approve-target" onchange="syncEntityApprovalModal()">${states.map((st) => `<option value="${attr(st.id)}" ${String(requestedState?.id || "state-default") === String(st.id) ? "selected" : ""}>${esc(st.name || "Default")}${st.appliesTo ? ` · ${esc(st.appliesTo)}` : ""}</option>`).join("")}</select></div>`;
+  /* Present but withdrawn, rather than absent: the target selector above can move
+     to a state that DOES have somewhere to continue to, and syncEntityApprovalModal
+     re-asks on every change. Hiding is what makes that reversible; omitting the
+     element would strand the modal in whichever shape it opened in. */
   const continuationField = singleState
     ? ""
-    : `<div class="form-field entity-approval-continuation"><label>Continue to another version after approval</label><select id="entity-approve-next" onchange="syncEntityApprovalContinuation()"></select><small id="entity-approve-next-note">Approve only, or continue directly into another continuity-state editor.</small></div>`;
+    : `<div class="form-field entity-approval-continuation" id="entity-approve-continuation-field" ${canContinue ? "" : "hidden"}><label>Continue to another version after approval</label><select id="entity-approve-next" onchange="syncEntityApprovalContinuation()"></select><small id="entity-approve-next-note">Approve only, or continue directly into another continuity-state editor.</small></div>`;
   /* The confirm control carries an id so the refresh below can withdraw it when
      the selection stops being eligible under this modal's own feet. */
+  /* One real act gets one primary button. APPROVE ONLY only earns its qualifier
+     where there is something else it could have been. */
   const approvalActions = singleState
     ? `<button class="cancel" onclick="closeModal()">Cancel</button><button id="entity-approve-confirm" class="approve-btn large" onclick="confirmEntityApproval(false)">APPROVE</button>`
-    : `<button class="cancel" onclick="closeModal()">Cancel</button><button id="entity-approve-confirm" class="ghost-btn" onclick="confirmEntityApproval(false)">APPROVE ONLY</button><button id="entity-approve-continue" class="approve-btn large" onclick="confirmEntityApproval(true)">APPROVE & EDIT NEXT STATE</button>`;
+    : `<button class="cancel" onclick="closeModal()">Cancel</button><button id="entity-approve-confirm" class="${canContinue ? "ghost-btn" : "approve-btn large"}" onclick="confirmEntityApproval(false)">${canContinue ? "APPROVE ONLY" : "APPROVE"}</button><button id="entity-approve-continue" class="approve-btn large" onclick="confirmEntityApproval(true)" ${canContinue ? "" : "hidden"}>APPROVE & EDIT NEXT STATE</button>`;
   /* THE SHEET-SOURCE MODAL SAYS WHAT IT DOES.
      It used to borrow the approval modal wholesale: "Approve reference", "ASSIGN
      ONE CANDIDATE TO ONE CONTINUITY STATE", "Approve for continuity state" and a
@@ -898,6 +927,20 @@ window.syncEntityApprovalModal = () => {
     nextSelect.innerHTML = `<option value="">Approve only — stay on this asset</option>${nextStates.map((item) => `<option value="${attr(item.id)}">Edit ${esc(item.name || "next state")}${continuationStanding(item)}</option>`).join("")}`;
     const validPrevious = nextStates.some((item) => item.id === previous);
     nextSelect.value = validPrevious ? previous : entitySuggestedContinuationState(x, stateId);
+    /* W9 — the shape follows the newly selected target. A state with nowhere to
+       continue to withdraws the field and the second action and promotes APPROVE
+       to the single primary act; a state that has somewhere restores all three.
+       Both directions, because the target selector moves both ways. */
+    const canContinueNow = nextStates.length > 0;
+    const field = document.getElementById("entity-approve-continuation-field");
+    const confirmButton = document.getElementById("entity-approve-confirm");
+    const continueAction = document.getElementById("entity-approve-continue");
+    if (field) field.hidden = !canContinueNow;
+    if (continueAction) continueAction.hidden = !canContinueNow;
+    if (confirmButton) {
+      confirmButton.textContent = canContinueNow ? "APPROVE ONLY" : "APPROVE";
+      confirmButton.className = canContinueNow ? "ghost-btn" : "approve-btn large";
+    }
   }
   syncEntityApprovalContinuation();
 };

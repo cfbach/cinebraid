@@ -872,10 +872,24 @@ window.openEntityCandidateReview = (list, id, fileName, stateId = "", continueAc
   if (!entity || !media) return toast("Candidate image is unavailable");
   const row = entityCandidateRow(entity, fileName, false);
   const state = entityStateById(entity, stateId || row?.targetStateId || "state-default") || entityStateListRead(entity, true)[0];
+  /* W6 — is this the same review moving to another candidate, or a new review?
+     Asked BEFORE the marker is overwritten, because the answer is the previous
+     marker. Same reference and same state means the shell stays mounted and only
+     its contents change; anything else is a genuinely new dialog. */
+  const previous = window._entityCandidateReview || null;
+  const sameReview = !!previous
+    && previous.list === list
+    && previous.id === id
+    && String(previous.stateId || "") === String(state.id || "")
+    && previous.fileName !== fileName;
   window._entityCandidateReview = { list, id, fileName, stateId: state.id, continueAction };
   const rawReview = entityCandidateReviewForState(entity, fileName, state.id);
   const review = entityCandidateReviewIsCurrent(rawReview) ? rawReview : null;
-  openModal(entityReviewModalMarkup(list, entity, media, state, review));
+  const markup = entityReviewModalMarkup(list, entity, media, state, review);
+  /* updateOpenModal refuses when no dialog is open, so the fallback is not a
+     guess — it is the only remaining case. */
+  if (sameReview && typeof updateOpenModal === "function" && updateOpenModal(markup)) return;
+  openModal(markup);
 };
 window.changeEntityCandidateReviewState = (stateId) => {
   const current = window._entityCandidateReview || {};

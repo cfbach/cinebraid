@@ -505,7 +505,7 @@ function falEntityGenerationInline(list, entityId, stateId = "") {
    It reveals rather than navigates: the candidate section is already on this page, so
    opening its disclosure and scrolling to it preserves candidate identity and order
    and keeps every existing decision control where it was. */
-window.revealReturnedEntityCandidates = (list, entityId, jobId = "") => {
+window.revealReturnedEntityCandidates = (list, entityId, jobId = "", explicitFile = "") => {
   const go = () => {
     const section = document.querySelector("details.entity-candidate-section");
     if (!section) return false;
@@ -513,7 +513,10 @@ window.revealReturnedEntityCandidates = (list, entityId, jobId = "") => {
     /* Prefer the exact files this job returned; fall back to the section itself when
        the grid is paginated past them, which is a real state and not an error. */
     const job = (FAL_GENERATION_JOBS || []).find((item) => item.id === jobId) || null;
-    const first = (job?.outputs || []).map((output) => String(output?.name || "")).filter(Boolean)[0] || "";
+    /* W4 — a Braidy gate knows the exact candidate it is handing over and has no
+       FAL job id to look it up by, so it names the file directly. Everything else
+       about the handoff is unchanged, which is the point: one mechanism. */
+    const first = String(explicitFile || "") || (job?.outputs || []).map((output) => String(output?.name || "")).filter(Boolean)[0] || "";
     const card = first
       ? section.querySelector(`.entity-candidate-card[data-candidate-file="${(window.CSS && CSS.escape) ? CSS.escape(first) : first}"]`)
       : null;

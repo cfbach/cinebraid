@@ -316,7 +316,11 @@ async function testRuntimeDegradesRatherThanRequiringVision() {
     "runtime: an unavailable reviewer is recorded, not treated as a failure");
   ok(/reviewUnavailable: true/.test(automation),
     "runtime: and marked so no pass is scored from it");
-  ok(/if \(reviewUnavailable\) await v627PauseForHumanReview\(/.test(automation),
+  /* WCV2/W2 widened the condition to `reviewUnavailable || reviewSkipped` — a
+     review that was SKIPPED because Vision is off parks on the same gate, for the
+     same reason, and buys no retry either. The invariant this line protects is
+     unchanged and now covers one more way of reaching it; only the anchor moved. */
+  ok(/if \(reviewUnavailable(?: \|\| reviewSkipped)?\) await v627PauseForHumanReview\(/.test(automation),
     "runtime: the run parks on the human gate instead of continuing or retrying");
   ok(/hardGateFailures: \["review-unavailable"\]/.test(automation),
     "runtime: the missing review is a declared gate failure, never a silent pass");

@@ -4003,6 +4003,44 @@ function openModal(inner) {
     target?.focus?.();
   }, 0);
 }
+/* W6 — CHANGING WHAT YOU ARE LOOKING AT IS NOT OPENING A NEW DIALOG.
+ *
+ * Candidate Review's prev/next and its thumbnail strip both route through
+ * `openEntityCandidateReview`, which calls `openModal`, which replaces
+ * `#modal`'s innerHTML. That builds a NEW `.modal-box`, and `.modal-box` carries
+ * `animation: modal-in` — so stepping candidate 1 → 2 → 3 replayed the dialog
+ * entrance three times. The dogfood recording reads as the review closing and
+ * reopening rather than as a comparison, which is the opposite of what a
+ * filmmaker is doing at that moment.
+ *
+ * This swaps the CONTENTS of the existing box and leaves the box itself mounted,
+ * so no entrance animation restarts, the backdrop never re-enters, and the
+ * scroll position inside the dialog survives. It also leaves MODAL_RETURN_FOCUS
+ * and MODAL_SCROLL_Y exactly as the original open recorded them — re-opening was
+ * overwriting the return target with the strip tile that had just been clicked,
+ * so Escape after three steps returned focus into the dialog's own filmstrip
+ * instead of the card the review was opened from.
+ *
+ * It refuses when no dialog is open, and the caller falls back to openModal —
+ * this is an update path, never a second way to open a dialog. */
+function updateOpenModal(inner) {
+  const m = $("#modal");
+  if (!m || m.classList.contains("hidden")) return false;
+  const box = m.querySelector(".modal-box");
+  if (!box) return false;
+  const scroller = box.querySelector("[data-modal-scroll]");
+  const keptScroll = scroller ? scroller.scrollTop : 0;
+  let content = String(inner || "");
+  if (/<h3\b/i.test(content)) content = content.replace(/<h3\b(?![^>]*\bid=)/i, '<h3 id="cinebraid-modal-title"');
+  else content = `<h3 id="cinebraid-modal-title" class="sr-only">Dialog</h3>${content}`;
+  box.innerHTML = content;
+  bindIntrinsicAspect(m);
+  if (typeof CustomEvent === "function") window.dispatchEvent(new CustomEvent("cinebraid:modal-opened"));
+  const nextScroller = box.querySelector("[data-modal-scroll]");
+  if (nextScroller && keptScroll) nextScroller.scrollTop = keptScroll;
+  return true;
+}
+window.updateOpenModal = updateOpenModal;
 /* O5 added the fourth argument and nothing else. `returnTo` is a production-media
    projection key: when the theatre was opened FROM the Universal Media Inspector, the
    way back is rendered so that looking at the picture larger does not cost the
@@ -5596,6 +5634,34 @@ const field = (label, inner) => {
 };
 const ta = (obj, key, list, id) =>
   `<textarea onchange="setVal('${list}','${id}','${key}',this.value)">${esc(obj[key] || "")}</textarea>`;
+/* H2 — A NOTE WHOSE FIRST SENTENCE IS FOURTEEN IMPORT IDENTIFIERS.
+ *
+ * Folding Chair's stored note opens "Sections 7, 9, 14, N347, N353, N354, N409,
+ * N410, N422, N433, N441, N442, N458, N459." and only then says what the chair is.
+ * A plain textarea therefore leads with the identifiers every time it is read.
+ *
+ * WHAT THIS DOES NOT DO IS AS IMPORTANT AS WHAT IT DOES. It does not rewrite the
+ * stored string, it does not split it into two fields, and it does not offer an
+ * editor that writes back less than it was given — any of which would quietly
+ * destroy imported source truth the first time someone typed in the box.
+ *
+ * So the normal view is a READ-ONLY rendering of the readable remainder, the
+ * identifiers are named as imported provenance beneath it, and editing is an
+ * explicit act that opens the ACTUAL stored value, whole, with the prefix visible
+ * and a line saying so. The field being edited is the field the label names.
+ *
+ * With no recognisable prefix nothing changes: it is the plain textarea it was. */
+const notesField = (obj, key, list, id) => {
+  const raw = String(obj?.[key] || "");
+  const provenance = typeof entityNotesProvenance === "function" ? entityNotesProvenance(raw) : "";
+  if (!provenance) return ta(obj, key, list, id);
+  const readable = typeof entityReadableNotes === "function" ? entityReadableNotes(raw) : raw;
+  return `<div class="notes-split" data-notes-split="1">
+    <p class="notes-readable">${readable ? esc(readable) : "This note records source references only."}</p>
+    <p class="notes-provenance"><span>IMPORTED SOURCE REFERENCES</span>${esc(provenance)}</p>
+    <details class="notes-raw"><summary>Edit raw imported note</summary><div><small>This edits the whole stored note, including the source references above. They are part of the same field — CineBraid has not split them.</small>${ta(obj, key, list, id)}</div></details>
+  </div>`;
+};
 const inp = (obj, key, list, id) =>
   `<input value="${attr(obj[key] || "")}" onchange="setVal('${list}','${id}','${key}',this.value)">`;
 window.setVal = (list, id, key, v) => {

@@ -122,17 +122,17 @@ const ROUTES = {
   },
   location(id) {
     return entityPage("locations", id, (l) =>
-      `${field("Canon description", ta(l, "description", "locations", l.id))}${field("Notes", ta(l, "notes", "locations", l.id))}${field("Blocking label (optional)", inp(l, "blockingNote", "locations", l.id, "e.g. narrow industrial galley interior"))}`,
+      `${field("Canon description", ta(l, "description", "locations", l.id))}${field("Notes", notesField(l, "notes", "locations", l.id))}${field("Blocking label (optional)", inp(l, "blockingNote", "locations", l.id, "e.g. narrow industrial galley interior"))}`,
     );
   },
   prop(id) {
     return entityPage("props", id, (p) =>
-      `${field("Canon description", ta(p, "description", "props", p.id))}${field("Notes", ta(p, "notes", "props", p.id))}${field("Blocking label (optional)", inp(p, "blockingNote", "props", p.id, "e.g. a small radio labelled PROP-RADIO"))}`,
+      `${field("Canon description", ta(p, "description", "props", p.id))}${field("Notes", notesField(p, "notes", "props", p.id))}${field("Blocking label (optional)", inp(p, "blockingNote", "props", p.id, "e.g. a small radio labelled PROP-RADIO"))}`,
     );
   },
   vehicle(id) {
     return entityPage("vehicles", id, (v) =>
-      `${field("Canon description", ta(v, "description", "vehicles", v.id))}${field("Notes", ta(v, "notes", "vehicles", v.id))}${field("Blocking label (optional)", inp(v, "blockingNote", "vehicles", v.id, "e.g. a parked utility truck labelled VEH-TRUCK"))}`,
+      `${field("Canon description", ta(v, "description", "vehicles", v.id))}${field("Notes", notesField(v, "notes", "vehicles", v.id))}${field("Blocking label (optional)", inp(v, "blockingNote", "vehicles", v.id, "e.g. a parked utility truck labelled VEH-TRUCK"))}`,
     );
   },
   characters() {

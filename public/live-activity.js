@@ -274,6 +274,11 @@ function v670WaitingForHumanRun(run) {
      `awaiting-review` on the next ledger read; this makes the current render
      agree without waiting for it. */
   if (run?.status === "interrupted" && typeof runHasRevokedAuthority === "function" && typeof P !== "undefined" && P && runHasRevokedAuthority(run, P)) return true;
+  /* W17 — the other direction of the same fact. An interrupted run whose gate is
+     still open is waiting for a person, so it is counted where a person can act on
+     it rather than disappearing from both the waiting and the attention tallies.
+     `v670AttentionRun` withdraws the same run from attention for this reason. */
+  if (run?.status === "interrupted" && v670RunGateOutstanding(run)) return true;
   /* Orchestration stopped and only a person can restart it. The run record still
      says "running"; the truthful sentence is "waiting for you". */
   return run?.status === "running" && v670RunLeaseLapsed(run);
@@ -338,8 +343,45 @@ function v670RunRecovering(run) {
    is being asked to act on is not a claim on the director - and neither hides anything
    permanently, because both go back to needing attention the moment their reason for
    not needing it ends. */
+/* W17 — RED IS FOR AN UNEXPECTED FAILURE, NOT FOR A DECISION THAT IS WAITING.
+ *
+ * The Last Seat dogfood ran with Vision deliberately off. Generation succeeded,
+ * three candidates came back, the run parked exactly where it was designed to
+ * park — and the product reported `1 need attention` in red, on the header, the
+ * Activity Terminal and the reference page, because the run record said
+ * `interrupted` and this predicate read nothing else.
+ *
+ * An interrupted run WITH AN OUTSTANDING HUMAN GATE is not an incident: the
+ * machine stopped because it reached a decision only a person can make, and it is
+ * still there. `v670RunGateOutstanding` is the shipped answer to "is that gate
+ * still open" — the same one `v670WaitingForHumanRun` asks — so this does not
+ * introduce a second opinion about the gate, only stops classifying a waiting run
+ * as a broken one.
+ *
+ * Narrow on purpose. A run that failed with no gate open is still attention, and
+ * a gate that has been satisfied stops suppressing the classification, so a run
+ * that genuinely died is never quietly downgraded. */
+/* Did this run stop at a gate it was DESIGNED to stop at? A step left in
+   `needs-review` is v627PauseForHumanReview's own mark, written only where the
+   machine deliberately handed the decision to a person. It is not "is the gate
+   still open" — that is v670RunGateOutstanding, and it is asked separately below
+   for a separate purpose. */
+function v670RunParkedAtGate(run) {
+  return Object.values(run?.steps || {}).some((step) => step?.status === "needs-review");
+}
 function v670AttentionRun(run) {
-  return ["failed", "interrupted", "cancelled"].includes(run?.status) && !v670RunnerWentAway(run) && !v670RunRecovering(run);
+  if (!["failed", "interrupted", "cancelled"].includes(run?.status)) return false;
+  if (v670RunnerWentAway(run) || v670RunRecovering(run)) return false;
+  /* A run that reached a human gate stopped BY DESIGN, and neither answer to
+     "has that gate been answered yet" makes it a fault:
+       still open  → it is waiting for a person (counted there instead)
+       answered    → its work is finished and its decision is recorded
+     Both were being reported as `1 need attention` in red, which is how a
+     deliberately Vision-off run that generated three good candidates and parked
+     exactly as intended came to look like a broken one. A run that died WITHOUT
+     ever reaching a gate has no such mark and is still attention, which is the
+     case this classification exists for. */
+  return !(run?.status === "interrupted" && v670RunParkedAtGate(run));
 }
 /* Unfinished, so the poller keeps asking - deliberately NOT the active predicate.
    A run parked at a human gate still needs refreshing, because the approval may
@@ -544,6 +586,70 @@ function v670RunHeadline(run) {
    It carries ONE control, and that control only opens the drawer. No approval, no
    retry, no resume, no paid submission - those live in v626RunActions, which
    v626AutomationPanel still renders, untouched, right where it always did. */
+/* W1 — WHAT A MULTI-MINUTE PRODUCTION OPERATION LOOKS LIKE WHILE IT RUNS.
+ *
+ * The Last Seat dogfood pressed "Start Braidy run" and then had to hunt for
+ * evidence that anything had happened: a `1 active` pill in the header and a
+ * collapsed Activity Terminal. Starting a run that will spend minutes and money
+ * should not require expanding a console to confirm it started.
+ *
+ * WHAT THIS MAY CLAIM, AND WHAT IT MAY NOT.
+ *
+ * Every stage below is a stage CineBraid genuinely reaches, read from the step
+ * the run itself says is current — never a script of stages the run might reach.
+ * `step N of M` is rendered only where the run RECORDS an attempt and a maximum;
+ * where it does not, the line is simply absent rather than invented.
+ *
+ * There is deliberately no percentage. A provider that returns when it returns
+ * cannot honestly be turned into a number, and a fabricated bar is exactly the
+ * kind of confident lie this application does not tell. Indeterminate motion says
+ * "working" without claiming to know how much is left, which is the truth. */
+const V672_STAGE_WORDS = {
+  prompt: "Preparing prompt",
+  generation: "Generating candidates",
+  review: "Visual review",
+  "entity-review": "Visual review",
+  "frame-review": "Visual review",
+  "scene-review": "Visual review",
+};
+function v672RunStageWord(run, step) {
+  if (v670WaitingForHumanRun(run)) return "Waiting for you";
+  const kind = String(step?.kind || "");
+  /* "Refining with Braidy" is a real and separately visible stage, but only the
+     step itself can say whether the assistant was asked — a rules-compiled prompt
+     never reaches Braidy, and claiming it did would misdescribe the run. */
+  if (kind === "prompt" && (step?.activity?.mode === "assistant" || /improv|refin/i.test(String(step?.activity?.state || step?.label || "")))) return "Refining with Braidy";
+  return V672_STAGE_WORDS[kind] || String(run?.stage || "Working");
+}
+/* Only where the run recorded both numbers. `attempt`/`maxAttempts` are written by
+   v626BeginStep from the run's own authorized pass count, so this reports the
+   run's bound rather than a guess about one. */
+function v672RunStepCounter(step) {
+  const at = Number(step?.attempt || 0), max = Number(step?.maxAttempts || 0);
+  return at > 0 && max > 0 && max >= at ? `Pass ${at} of ${max}` : "";
+}
+window.v672ActiveRunSurfaceMarkup = (run) => {
+  if (!run) return "";
+  const active = v670MachineActiveRun(run);
+  const waiting = v670WaitingForHumanRun(run);
+  if (!active && !waiting) return "";
+  const { step } = v641DisplayedRunAndStep(run);
+  const stage = v672RunStageWord(run, step);
+  const counter = active ? v672RunStepCounter(step) : "";
+  const detail = String(step?.activity?.detail || run?.stage || "").trim();
+  const tone = waiting ? "waiting" : "active";
+  return `<section class="automation-active-surface tone-${attr(tone)}" data-active-run="${attr(run.id)}" data-run-stage="${attr(stage)}" role="status" aria-live="polite">
+    <div class="automation-active-mark" aria-hidden="true">${active ? '<span class="spin">◌</span>' : "!"}</div>
+    <div class="automation-active-body">
+      <span class="automation-active-kicker">${active ? "BRAIDY RUN IN PROGRESS" : "WAITING FOR YOU"}</span>
+      <b>${esc(stage)}</b>
+      ${counter ? `<em class="automation-active-counter">${esc(counter)}</em>` : ""}
+      ${detail ? `<small>${esc(detail)}</small>` : ""}
+      ${active ? `<div class="automation-active-track" aria-hidden="true"><i></i></div><small class="automation-active-leave">Safe to leave this page — the run keeps going and its progress is saved.</small>` : ""}
+    </div>
+    <button type="button" class="chip automation-active-open" onclick="window.CineBraidCreatorSurfaces.expandTerminal('${attr(run.id)}')">View activity →</button>
+  </section>`;
+};
 window.v670CompactRunStatusMarkup = (run) => {
   if (!run) return "";
   const tone = v670RunTone(run);
