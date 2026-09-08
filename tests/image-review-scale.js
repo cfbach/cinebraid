@@ -104,6 +104,28 @@ function resolveLength(value, depth = 0) {
   const px = text.match(/^([0-9.]+)px$/);
   return px ? parseFloat(px[1]) : null;
 }
+/* Is this width one that keeps a judgement image big enough to judge?
+ *
+ * Two ways to be. A length this suite can resolve to pixels is compared against the
+ * tier minimum, as it always was. A FULL-BLEED `100%` is accepted on its own terms,
+ * because it is a scale guarantee rather than a missing one: a well that fills its
+ * column cannot render narrower than the fixed well it replaced, in a column already
+ * far wider than the minimum. That is what the accepted Production lead hero
+ * declares — `.production-work .production-inbox-list>:first-child
+ * .production-inbox-item>div` — and the reader above finds it because it is the last
+ * and most specific rule ending in the base selector, not because it replaced it.
+ *
+ * ONLY at 100%. Any smaller percentage is a fraction of a container this suite cannot
+ * measure, so it is not a guarantee and does not qualify; neither does a missing,
+ * intrinsic or otherwise unresolvable width. The table in the negative control below
+ * runs through this same function, so widening it once cannot quietly widen it twice. */
+function widthVerdict(declared, minimum) {
+  if (/^100%$/.test(resolveVarFallback(declared))) return { ok: true, note: 'full-bleed (100%)' };
+  const resolved = resolveLength(declared);
+  if (resolved === null) return { ok: false, note: `declares no resolvable width, got "${declared}"` };
+  if (resolved < minimum) return { ok: false, note: `renders ${resolved}px wide (${declared}), below the ${minimum}px an image the user is asked to judge needs` };
+  return { ok: true, note: `${resolved}px wide` };
+}
 function ratio(value) {
   const parts = resolveVarFallback(value).split('/').map((x) => parseFloat(x));
   if (parts.length !== 2 || !parts[0] || !parts[1]) return null;
@@ -243,18 +265,37 @@ async function main() {
 
   /* ---------- 2. each tier is big enough for the decision it asks for ---------- */
   for (const surface of JUDGEMENT_SURFACES.filter((s) => s.widthFrom)) {
-    const declared = declaration(surface.widthFrom, 'width');
-    const resolved = resolveLength(declared);
-    assert(
-      resolved !== null,
-      `${surface.name}: ${surface.widthFrom} must declare a resolvable width, got "${declared}"`,
-    );
-    assert(
-      resolved >= OVERVIEW_MIN_WIDTH,
-      `${surface.name}: an image the user is asked to judge must render at least ${OVERVIEW_MIN_WIDTH}px wide, got ${resolved}px (${declared})`,
-    );
-    results.push(`${surface.name}: ${resolved}px wide`);
+    const verdict = widthVerdict(declaration(surface.widthFrom, 'width'), OVERVIEW_MIN_WIDTH);
+    assert(verdict.ok, `${surface.name}: ${surface.widthFrom} ${verdict.note}`);
+    results.push(`${surface.name}: ${verdict.note}`);
   }
+
+  /* Negative control for the rule directly above. Accepting one new shape of width is
+     how a size rule stops being one, so every value below goes through the SAME
+     widthVerdict() the assertion uses — the table cannot drift away from the rule it
+     guards. Full bleed passes; malformed, intrinsic, undersized and absent all fail. */
+  const WIDTH_CONTROL = [
+    ['100%',               true,  'the accepted full-bleed lead hero'],
+    ['128px',              true,  'a fixed well above the tier minimum'],
+    ['var(--img-overview-w)', true, 'the shipped custom property'],
+    ['99%',                false, 'a percentage that is not full bleed'],
+    ['100 %',              false, 'a malformed percentage'],
+    ['100',                false, 'a bare number is not a length'],
+    ['calc(100% - 12px)',  false, 'a percentage expression this suite cannot resolve'],
+    ['auto',               false, 'auto declares nothing about scale'],
+    ['fit-content',        false, 'an intrinsic keyword, measurable only in a browser'],
+    ['48px',               false, 'a fixed well below the tier minimum'],
+    ['',                   false, 'an empty declaration'],
+    [null,                 false, 'no width declaration found at all'],
+  ];
+  for (const [value, expected, why] of WIDTH_CONTROL) {
+    assert.strictEqual(
+      widthVerdict(value, OVERVIEW_MIN_WIDTH).ok,
+      expected,
+      `width control: ${JSON.stringify(value)} (${why}) must ${expected ? 'pass' : 'fail'} and did not`,
+    );
+  }
+  results.push(`width rule negative control: ${WIDTH_CONTROL.length} values — full bleed accepted, malformed/intrinsic/undersized/absent rejected`);
 
   for (const [label, selector, minimum] of BOARD_DENSITIES) {
     const floor = trackFloor(declaration(selector, 'grid-template-columns'));

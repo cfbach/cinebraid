@@ -5696,7 +5696,12 @@ body[data-focused-workspace="1"] .guided-frame-body,
 .results-card:hover{border-color:var(--line-2);transform:translateY(-2px);box-shadow:var(--shadow-panel)}
 .results-card:focus-visible{outline:2px solid var(--acc);outline-offset:2px}
 .results-card-media{position:relative;display:block;aspect-ratio:16/10;overflow:hidden;background:var(--media-well);border-bottom:1px solid var(--line)}
-.results-card-media img,.results-card-media video{display:block;width:100%;height:100%;object-fit:cover}
+/* `contain`, not `cover`. Generated Media is where a filmmaker looks at what came
+   back, and a portrait reference in a 16/10 well lost its head and feet to a crop
+   that only ever helped the grid look tidy. The well keeps its size, its ratio and
+   its background; the image is now shown whole inside it, letterboxed or
+   pillarboxed by `--media-well` exactly as every other judgement surface does it. */
+.results-card-media img,.results-card-media video{display:block;width:100%;height:100%;object-fit:contain}
 .results-card-audio,.results-card-empty{display:grid;place-items:center;width:100%;height:100%;font:700 10px var(--mono);letter-spacing:.12em;color:var(--muted)}
 /* The status chip. Small, on the media, and readable on any still because it carries
    its own scrim rather than relying on what is behind it. */
