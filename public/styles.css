@@ -5063,6 +5063,12 @@ body[data-focused-workspace="1"] .guided-frame-body,
    consumer mounts, bounded by the dock's own max-height. public/workspace-shell.js
    measures that one number and publishes it. */
 #workspace{padding-bottom:var(--cb-dock-reserve,0px)}
+/* ...and the scroll container stops short of the band the dock covers, so nothing the
+   browser scrolls TO can come to rest behind it. public/workspace-shell.js publishes
+   the measured height on documentElement for this rule; the fallback is 0, so a
+   document with no dock scrolls exactly as it did. This changes where a scroll stops,
+   never where anything is laid out. */
+html{scroll-padding-bottom:var(--cb-dock-reserve,0px)}
 
 /* The Main region: the shipped center workspace, plus the rail slot beside it.
    minmax(0,1fr) is the center's min-width:0 guard — a plain `1fr` would let a wide

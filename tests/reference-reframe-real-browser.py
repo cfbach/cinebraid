@@ -283,11 +283,14 @@ try:
             f"2. and the reference itself, got {candidates['names']!r}"
 
         # The other two stages must offer no second home for the same decision.
-        for label in ("Production needs", "Details & history"):
+        # The stage IDS are the contract, not the words on the buttons: `coverage` kept its
+        # id when Surface Polish renamed its label, and a conditional keyed on the old
+        # label silently waited for the wrong stage once the word changed.
+        for label, stage_id in (("Production needs", "coverage"), ("Details & history", "details")):
             page.locator(".bounded-entity-taskbar .focused-task-button", has_text=label).click()
             page.wait_for_function(
                 """(want) => { const n = document.querySelector('.bounded-entity-page'); return n && n.dataset.selectedTask === want; }""",
-                arg="coverage" if label.startswith("What") else "details", timeout=10000)
+                arg=stage_id, timeout=10000)
             assert page.locator("#main .entity-candidate-section").count() == 0, \
                 f"2. `{label}` must not offer a second home for candidate approval"
         findings.append("2. the candidate grid renders on the reference, names the character it belongs to, "

@@ -557,7 +557,12 @@ try:
         assert entity_body.get("outputCount") == 3, \
             f"J: carrying the three candidates the preflight showed, got {entity_body.get('outputCount')!r}"
         assert entity_body.get("continuityStateId") == ENTITY_STATE, "J: targeted at the state it was pressed for"
-        assert "resolution" not in entity_body, "J: and not the expert size Simple never asked about"
+        # SHOWN IN SIMPLE MEANS SENT. `reference: true` travels with the request as well
+        # as with the view, so the plan the submission re-derives is the promoted one and
+        # restrictPayloadToPlan() keeps the size. Asserting its ABSENCE here would be
+        # asserting the "shown but not sent" failure the payload gate exists to prevent.
+        assert "resolution" in entity_body, \
+            "J: the size promoted into Simple must actually be sent, not shown and stripped"
         for key in EXPERT_KEYS:
             assert key not in entity_body, f"J: {key} must never reach a paid entity-state request"
         findings.append(f"J: the entity-state shortcut opened the real preflight, dispatched nothing on its own, and its "

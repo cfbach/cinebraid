@@ -256,8 +256,30 @@
   function measure() {
     const host = variableHost();
     if (!host || !host.style) return;
-    host.style.setProperty(RESERVE_VARIABLE, `${paintedSlotHeight("dock")}px`);
+    const dockHeight = paintedSlotHeight("dock");
+    host.style.setProperty(RESERVE_VARIABLE, `${dockHeight}px`);
     host.style.setProperty(BAR_VARIABLE, `${paintedSlotHeight("bar")}px`);
+    /* THE SCROLL CONTAINER HAS TO KNOW TOO, and it is not #app.
+     *
+     * `--cb-dock-reserve` on #app buys back the space the fixed dock covers at the END
+     * of the document, through #workspace's padding. That is the whole guarantee while
+     * a filmmaker is scrolling by hand, and it is not the whole guarantee once anything
+     * SCROLLS TO a control: `scrollIntoView`, an in-page anchor and the workspace's own
+     * reveal all stop as soon as the target is inside the viewport, and the bottom 41px
+     * of that viewport is behind the Activity Terminal. The control is then "in view"
+     * by every measure the browser has and still half-covered on screen — which is the
+     * primary reference action ending 1.73px under the Terminal at 1280x800.
+     *
+     * scroll-padding-bottom is exactly the property for this: it tells the scroll
+     * container which part of itself is obscured, so every scroll the browser performs
+     * stops short of it. It belongs on the scrolling element, which is documentElement
+     * and does not inherit #app's custom properties, so the measured height is published
+     * there as well. Nothing MOVES: this changes where scrolling stops, not where
+     * anything is laid out, so no surface shifts at rest. */
+    const scroller = document.documentElement;
+    if (scroller && scroller !== host && scroller.style) {
+      scroller.style.setProperty(RESERVE_VARIABLE, `${dockHeight}px`);
+    }
     measureRail(host);
   }
 

@@ -303,7 +303,14 @@ try:
             seeded = page.evaluate("""async () => {
                 const entity = P.characters[0];
                 const file = entity.approvedFile;
-                entity.candidateFiles = [{ stored: file, decision: 'unreviewed' }];
+                /* WHAT KIND OF IMAGE THIS IS, SAID RATHER THAN GUESSED. The authority
+                   kernel refuses to make an artifact an identity reference while its
+                   structure is `undeclared` - a multi-view sheet and a single reference
+                   persist identical fields, so "no evidence" is not evidence of
+                   eligibility. `coverageJobType` is the shipped single-view declaration
+                   a real import writes; it is ordinary candidate metadata and NOT an
+                   authority receipt, so the approval below is still the filmmaker's. */
+                entity.candidateFiles = [{ stored: file, decision: 'unreviewed', coverageJobType: 'imported-reference' }];
                 entity.candidateReviewBatches = [{
                     id: 'browser-batch-1',
                     results: [{
@@ -492,7 +499,18 @@ try:
         page.wait_for_timeout(700)
         primary = page.locator("button.shot-primary-action").first
         primary_call = primary.get_attribute("onclick") or ""
-        assert "openShotReadinessAction('SAMPLE-01','nothing-outstanding')" in primary_call,             f"B1: complete-shot NEXT ACTION must delegate to the declared router, got {primary_call!r}"
+        # THE DELEGATION IS THE CONTRACT; THE KEY IS THE AUTHORITY'S ANSWER. B1 exists to
+        # prove the primary action routes through openShotReadinessAction() rather than
+        # doing something of its own, and that a stage id is never passed as a panel key.
+        # Pinning one literal key made that claim depend on the fixture reaching one exact
+        # readiness state, so the key is read from the readiness derivation the button is
+        # supposed to be obeying and the two are required to agree.
+        declared_key = page.evaluate("""() => { const shot = P.shots.find((row) => row.id === 'SAMPLE-01');
+            const readiness = typeof shotReadinessFor === 'function' ? shotReadinessFor(shot) : null;
+            return (readiness && readiness.nextAction && readiness.nextAction.code) || ''; }""")
+        assert declared_key, "B1: the readiness authority must name a next action for the complete shot"
+        assert f"openShotReadinessAction('SAMPLE-01','{declared_key}')" in primary_call, \
+            f"B1: complete-shot NEXT ACTION must delegate to the declared router for {declared_key!r}, got {primary_call!r}"
         assert "openGuidedPanel('SAMPLE-01','deliver')" not in primary_call, \
             "B1: a stage id must not be passed as a panel key"
         primary.click()

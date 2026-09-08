@@ -64,7 +64,7 @@ try:
             if suffix == "/api/config" and request.method == "GET":
                 route.fulfill(status=200, content_type="application/json", body=json.dumps({"generation": {"fal": {"enabled": True, "apiKey": "mock", "keySource": "config", "frameOutputs": 1, "frameQuality": "low", "frameResolution": "1k"}}, "assistant": {"provider": "ollama"}})); return
             if suffix == "/api/agents/status":
-                cap = {"ready": True, "label": "Mock assistant", "provider": "ollama", "model": "mock", "message": "Ready", "action": ""}
+                cap = {"standing": "ready", "ready": True, "label": "Mock assistant", "provider": "ollama", "model": "mock", "message": "Ready", "action": ""}
                 route.fulfill(status=200, content_type="application/json", body=json.dumps({"enabled": True, "capabilities": {"text": cap, "vision": cap, "verifier": cap, "embedding": cap, "technical": cap}, "runs": [], "agents": [], "index": {}})); return
             if suffix == "/api/system/health":
                 route.fulfill(status=200, content_type="application/json", body=json.dumps({"assistant": {"provider": "ollama", "configured": True, "label": "Mock"}, "ollama": {"ok": True, "models": ["mock"], "plannerReady": True, "visionReady": True, "embeddingReady": True}, "ffmpeg": {"ok": True}})); return
@@ -99,18 +99,32 @@ try:
         def open_hash(value):
             page.evaluate("value => { location.hash=value; window.dispatchEvent(new HashChangeEvent('hashchange')); }", value)
             page.wait_for_timeout(450)
+        # R1 LIFTED CREATE REFERENCE OUT OF THE ASSISTED-TOOLS DISCLOSURE. It is a
+        # top-level <section class="reference-create-section asset-creation-card"> now,
+        # and its manual controls are a <div class="reference-create-manual"> shown and
+        # hidden by the shipped `hidden` attribute through toggleReferenceManualPath() --
+        # not a <details>, so it has no `.open`. The suite measures the SECTION, which is
+        # the element whose top must not move, and reads openness off the panel the
+        # product actually toggles.
+        def manual_open():
+            return page.evaluate(
+                """() => { const p = document.querySelector('.reference-create-manual');
+                    return !!p && !p.hasAttribute('hidden'); }""")
+
         def open_reference_builder():
             outer = page.locator("details.reference-assisted-tools")
-            # R1 lifted Create Reference out of the assisted-tools disclosure: it is a
-            # top-level <section class="reference-create-section asset-creation-card">
-            # now, and the disclosure inside it is the manual one.
-            inner = page.locator("details.reference-create-manual")
-            outer.evaluate("e=>e.open=true"); inner.evaluate("e=>e.open=true"); page.wait_for_timeout(80)
+            inner = page.locator("section.reference-create-section")
+            outer.evaluate("e=>e.open=true")
+            if not manual_open():
+                page.locator(".reference-manual-toggle").first.click()
+            page.wait_for_timeout(80)
             return outer, inner
+
         def assert_reference_stable(label, before_top):
-            outer = page.locator("details.reference-assisted-tools"); inner = page.locator("details.reference-create-manual")
+            outer = page.locator("details.reference-assisted-tools")
+            inner = page.locator("section.reference-create-section")
             assert outer.evaluate("e=>e.open") is True, f"{label}: optional assisted tools collapsed"
-            assert inner.evaluate("e=>e.open") is True, f"{label}: reference builder collapsed"
+            assert manual_open(), f"{label}: the manual reference controls collapsed"
             after_top = inner.evaluate("e=>e.getBoundingClientRect().top")
             assert abs(after_top - before_top) <= 18, f"{label}: reference builder shifted {after_top-before_top:.1f}px"
 
@@ -135,7 +149,7 @@ try:
         def stable_click(target, label):
             target.evaluate("e => e.scrollIntoView({block: 'center'})")
             page.wait_for_timeout(150)
-            before = page.locator("details.reference-create-manual").evaluate("e=>e.getBoundingClientRect().top")
+            before = page.locator("section.reference-create-section").evaluate("e=>e.getBoundingClientRect().top")
             target.click()
             return before
 
@@ -145,15 +159,15 @@ try:
         top = stable_click(inner.get_by_role("button", name=re.compile("Build Prompt", re.I)), "Build prompt")
         page.wait_for_timeout(450)
         assert_reference_stable("Build prompt", top)
-        top = stable_click(page.locator("details.reference-create-manual").get_by_role("button", name="Improve"), "Improve")
+        top = stable_click(page.locator("section.reference-create-section").get_by_role("button", name="Improve"), "Improve")
         page.wait_for_timeout(450)
         assert_reference_stable("Improve", top)
-        top = stable_click(page.locator("details.reference-create-manual").get_by_role("button", name="GENERATE"), "Generate")
+        top = stable_click(page.locator("section.reference-create-section").get_by_role("button", name="GENERATE"), "Generate")
         page.wait_for_selector("text=START GENERATION")
         page.get_by_role("button", name="START GENERATION").click(); page.wait_for_timeout(500)
-        outer = page.locator("details.reference-assisted-tools"); inner = page.locator("details.reference-create-manual")
+        outer = page.locator("details.reference-assisted-tools"); inner = page.locator("section.reference-create-section")
         assert outer.evaluate("e=>e.open") is True, "Generate: optional assisted tools collapsed"
-        assert inner.evaluate("e=>e.open") is True, "Generate: reference builder collapsed"
+        assert manual_open(), "Generate: the manual reference controls collapsed"
         box = inner.bounding_box()
         viewport = page.viewport_size
         assert box and box["y"] + box["height"] > 0 and box["y"] < viewport["height"], "Generate: reference builder left the visible viewport"

@@ -203,13 +203,28 @@ def assert_surface_polish(page, label):
           const reserve=getComputedStyle(document.getElementById('workspace')).paddingBottom;
           return Math.abs(parseFloat(reserve||'0') - dock.getBoundingClientRect().height) <= 1; }""",
         timeout=20000)
+    # REACHED THE WAY A FILMMAKER REACHES IT, then measured where it comes to rest.
+    # The page is ~1800px tall, so this control is mid-document and lands wherever the
+    # current scroll position puts it; measuring at scrollTop 0 scored an arbitrary
+    # offset. What has to be true is that bringing it into view leaves it clear of the
+    # Terminal, which is what html{scroll-padding-bottom:var(--cb-dock-reserve)} now
+    # guarantees for every scroll the browser performs. Before that property the scroll
+    # was a no-op — the control was already "in view" by every measure the browser had,
+    # and 1.73px of it was behind the dock.
+    page.evaluate("""() => { const a=document.querySelector('.reference-primary-actions button');
+      if (a) a.scrollIntoView({block:'end'}); }""")
+    page.wait_for_timeout(400)
     settled_floor=page.evaluate('''() => { const d=document.querySelector('#cb-shell-dock');
-      return d ? Math.round(d.getBoundingClientRect().top) : innerHeight; }''')
+      return d ? d.getBoundingClientRect().top : innerHeight; }''')
     hero=box('.reference-primary-hero .reference-primary-preview')
-    action=box('.reference-primary-actions button')
+    action=page.evaluate('''() => { const n=document.querySelector('.reference-primary-actions button');
+      if(!n) return null; const b=n.getBoundingClientRect(); return {b:b.bottom, h:b.height}; }''')
     if hero and action:
-        assert action['b'] <= settled_floor, \
-            f'{label}: the primary reference action ends at {action["b"]}, below the terminal at {settled_floor}'
+        clearance = settled_floor - action['b']
+        assert clearance >= 0, \
+            (f'{label}: the primary reference action ends at {action["b"]:.2f}, '
+             f'{abs(clearance):.2f}px behind the Activity Terminal at {settled_floor:.2f}')
+        assert action['h'] > 0, f'{label}: the primary reference action must still have height'
         fit=page.evaluate("() => { const i=document.querySelector('.reference-primary-preview img'); return i?getComputedStyle(i).objectFit:'contain'; }")
         assert fit=='contain', f'{label}: the primary reference image must stay contained, got {fit!r}'
 
