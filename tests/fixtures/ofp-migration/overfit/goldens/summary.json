@@ -156,8 +156,8 @@
         "warnings": 0,
         "errors": 0
       },
-      "candidateSha256": "e2c6e83a83d8d03011f94b1bec9e79e0928bacf7af45b411dd5c04374f5f4b56",
-      "candidateBytes": 74857
+      "candidateSha256": "55668ef1ea06a6bc70372f2cef90f343d2a7ef54c2e8001e9bb95902333bff12",
+      "candidateBytes": 74859
     },
     {
       "id": "overfit-02-anchorhub-18",
@@ -307,8 +307,8 @@
         "warnings": 0,
         "errors": 0
       },
-      "candidateSha256": "7a9fe7b2988ddf287170498ece9ac11bc442b848d950c89ee97dc20de14bf929",
-      "candidateBytes": 75536
+      "candidateSha256": "9b29a3e051b11b3a7256fce7e6d395c7d18b74393a6bf7cdb18687aff341c6b4",
+      "candidateBytes": 75538
     },
     {
       "id": "overfit-03-anchorhub-19",
@@ -458,8 +458,8 @@
         "warnings": 0,
         "errors": 0
       },
-      "candidateSha256": "e39bdb9565f9727538ff312abd2cadb06f1b34a65b04d3f25516e7fd0abc7712",
-      "candidateBytes": 71002
+      "candidateSha256": "dd18a17dd658456b29554c62e5918c6149e2d6ffd90caee9ddb35d267f6971b2",
+      "candidateBytes": 71004
     },
     {
       "id": "overfit-04-anchorhub-22",
@@ -667,8 +667,8 @@
         "warnings": 15,
         "errors": 1
       },
-      "candidateSha256": "015d3d99d77a2dd54af8a35b6d01d82ae70461304ba44c6ec540cf6c32c4623b",
-      "candidateBytes": 229703
+      "candidateSha256": "2e62d716875a36bc8894318aacf1b1f55d5a6b509fc5e301f8e978e6a0f06b70",
+      "candidateBytes": 229705
     },
     {
       "id": "overfit-05-anchorhub-30",
@@ -834,8 +834,8 @@
         "warnings": 6,
         "errors": 0
       },
-      "candidateSha256": "e8318c018989fa7d32d3e8557c2a3ba40cf4e367f5044c0a083e219c269f3b2f",
-      "candidateBytes": 260327
+      "candidateSha256": "e6465ec1d576df6a57bb7d207a1fe447f3f630a0d60a86bbbd12c7ca24ec9949",
+      "candidateBytes": 260329
     },
     {
       "id": "overfit-06-pre-v32",
@@ -1031,8 +1031,8 @@
         "warnings": 6,
         "errors": 0
       },
-      "candidateSha256": "e24d0f6bb4aee0d9552f557024ae325e58824848f916bb8ee9c595bcb60d7d84",
-      "candidateBytes": 160203
+      "candidateSha256": "3303198f18324370d2b40a8cb698b0961a795b4b7992f2347c1cf7c9049b5744",
+      "candidateBytes": 160205
     },
     {
       "id": "overfit-07-anchorhub-32",
@@ -1257,8 +1257,8 @@
         "warnings": 9,
         "errors": 0
       },
-      "candidateSha256": "092d4f30051d7a2724db7a5149343ac1f0a9a7739dd0b10815e46e5f44ef08ec",
-      "candidateBytes": 216890
+      "candidateSha256": "a071c7ae16145e046b6696fa54bdf6137ee67ce24a6b4aa98720935d464b23fc",
+      "candidateBytes": 216892
     },
     {
       "id": "overfit-08-pre-v33",
@@ -1483,8 +1483,8 @@
         "warnings": 9,
         "errors": 0
       },
-      "candidateSha256": "c4eada5d04c2b42806441a12aba491d3b84ce40ba55d8dacf992f6f593ae21f8",
-      "candidateBytes": 210296
+      "candidateSha256": "fc07c0379a0340d480aed8bd98a9da771428fe2dc6d6d880def099eae99f27a2",
+      "candidateBytes": 210298
     },
     {
       "id": "overfit-09-anchorhub-33",
@@ -1712,8 +1712,8 @@
         "warnings": 9,
         "errors": 0
       },
-      "candidateSha256": "c138662bf538c30b4dc3d057f7f8995d687dbf1f097837547ff69a03d2f6855b",
-      "candidateBytes": 217028
+      "candidateSha256": "63de4425190b34c8d7e8ecd0750d8b738b467761a4eef7f763e691b4a9591ef1",
+      "candidateBytes": 217030
     },
     {
       "id": "overfit-10-pre-v40",
@@ -1939,8 +1939,8 @@
         "warnings": 9,
         "errors": 0
       },
-      "candidateSha256": "c9188235871e7c38bf6924e9e507674239e911e3c1afa4521b54037a97ce474c",
-      "candidateBytes": 211788
+      "candidateSha256": "01f17302ea8206738cd90b5b57aa2f9d7032d7debbc4fd9276b63bb338f0a1b5",
+      "candidateBytes": 211790
     },
     {
       "id": "overfit-11-hub-v4-0",
@@ -2166,8 +2166,8 @@
         "warnings": 9,
         "errors": 0
       },
-      "candidateSha256": "0efb3cc9dce2152a37bb8b3b5f89c3fdcb4ed0d86cbf99ab0b73bfb58222133c",
-      "candidateBytes": 221187
+      "candidateSha256": "30cc005188fa7d4543fe169f29f5cdbdfd587f02cf9040d6c8ce9ea7f567e877",
+      "candidateBytes": 221189
     },
     {
       "id": "overfit-12-hub-v4-1",
@@ -2393,8 +2393,8 @@
         "warnings": 9,
         "errors": 0
       },
-      "candidateSha256": "4ace1cb60de86f4cfa126571df9e1fe653c071ff7c61704d91d049c63ac3df64",
-      "candidateBytes": 221852
+      "candidateSha256": "56eb50ad6333cab33054fba6b2c57e8958d4d1d37d7e70e70ecb8e77134f8530",
+      "candidateBytes": 221854
     },
     {
       "id": "overfit-13-hub-v4-2",
@@ -2627,8 +2627,8 @@
         "warnings": 15,
         "errors": 0
       },
-      "candidateSha256": "e3b1e9aea9e9c3179050eac019a1c96f88113452dffb128a822ee4b5e42dc0b1",
-      "candidateBytes": 233444
+      "candidateSha256": "3ccdbe4153198d55f7a06bf9a00e11b9629b4fcd6f7b8e2420f1cb811ab95885",
+      "candidateBytes": 233446
     },
     {
       "id": "overfit-14-hub-v4-3",
@@ -2857,8 +2857,8 @@
         "warnings": 11,
         "errors": 0
       },
-      "candidateSha256": "5ab4c85360377a4c40615930a96fa0d229f80676472c6c2b65e89e45f324718b",
-      "candidateBytes": 269461
+      "candidateSha256": "346ee720d05ae96cae7834b9dcb0ff15c5051a86dcc612cd78cd4d2f4c38326f",
+      "candidateBytes": 269463
     },
     {
       "id": "overfit-15-hub-v4-5",
@@ -3085,8 +3085,8 @@
         "warnings": 10,
         "errors": 0
       },
-      "candidateSha256": "80b0ba44aeebe7146b4d6a465d6335fd1dd124c946f1efbeb780d616b3b46503",
-      "candidateBytes": 224791
+      "candidateSha256": "9a8c73a0f47951a3153140db0f1924ffa8a66201c953c5bd05432db288dafb4f",
+      "candidateBytes": 224793
     },
     {
       "id": "overfit-16-hub-v4-6",
@@ -3310,8 +3310,8 @@
         "warnings": 9,
         "errors": 0
       },
-      "candidateSha256": "3e60daf8b9a3ff2866dd652b3b6c1216b8879341d335d09d12e08a6dc90ffeb2",
-      "candidateBytes": 225712
+      "candidateSha256": "762c19c409e419badbbda5a497c516ad108fdbb7f8f5df144c76e5c31e3488cf",
+      "candidateBytes": 225714
     },
     {
       "id": "overfit-17-hub-v4-7",
@@ -3538,8 +3538,8 @@
         "warnings": 10,
         "errors": 0
       },
-      "candidateSha256": "e29a125d0650757cd7207d564e9a155f4349bfb5ca33b4a86954c7205f09ccaa",
-      "candidateBytes": 223565
+      "candidateSha256": "cbaef0191511f31c334425b5ea3926186863542f7bfed9e995fc8034b3810dd3",
+      "candidateBytes": 223567
     },
     {
       "id": "overfit-18-cinebraid-581",
@@ -3749,8 +3749,8 @@
         "warnings": 9,
         "errors": 0
       },
-      "candidateSha256": "f6da81b055d493f6103797bf4485fd770fe46b540ed7061da90ce50f09488849",
-      "candidateBytes": 331814
+      "candidateSha256": "61f216ed85ae82587aecebffc45fb7cc970a2afff73f518f0f00f79ec6e85adf",
+      "candidateBytes": 331816
     }
   ]
 }
