@@ -14,7 +14,7 @@ Open `http://127.0.0.1:4477`, then choose **CineBraid Sample — The Blue Parcel
 
 The sample contains no real production material and needs no provider.
 
-The sample is intentionally **instructive rather than pristine**. Project Readiness begins with two deliberate items: the Blue parcel needs a canon description, and the third shot needs an explicit duration. These are teaching prompts, not missing package files.
+The sample is intentionally **instructive rather than pristine**. Production readiness begins with two deliberate items: the Blue parcel needs a canon description, and the third shot needs an explicit duration. These are teaching prompts, not missing package files.
 
 ## 2. Inspect approved references
 
@@ -51,11 +51,11 @@ This proves the core workflow without prompts, generation, or automation.
 
 ## 5. Clear a readiness item
 
-Open **Production → Project Readiness**, then open **Blue parcel has no canon text**.
+Open **Production → Production readiness**, then open **Blue parcel has no canon text**.
 
 1. Choose **Details & history → Details**.
 2. In **Canon description**, write a short locked description of the parcel: its blue box, pale straps, proportions, and which details must remain the same when it opens.
-3. Return to Production and open Project Readiness again.
+3. Return to Production and open Production readiness again.
 4. Confirm the shared entity warning has cleared for every shot at once.
 
 The remaining sample item points to **Parcel opened**. Add an explicit duration in the shot workspace when you want to practice clearing the second item.
@@ -73,7 +73,11 @@ Create a project and follow the same order:
 
 ## Optional assisted tools
 
-Prompt building, AI review, FAL generation, and bounded automation are collapsed in manual-first projects. Open them only when useful, or change **Settings → Project → Workspace emphasis** to Assisted production.
+Prompt building, AI review, generation, and bounded automation are collapsed in manual-first projects. Open them only when useful, or change **Settings → Project → Workspace emphasis** to Assisted production.
+
+**Braidy** is the assistant behind the assisted tools. It says where it stands before it offers to help, and it can run on your own hardware or against a cloud provider — see **Settings → Optional assisted services → Assistant**. With Braidy off, unconfigured or unreachable, everything above this section still works by hand.
+
+Generation can be dispatched to a **local ComfyUI** server on the same machine (no key, no provider cost), to **fal.ai**, or to **Civitai**. Each is configured separately and each is off until you turn it on.
 
 Changing emphasis changes presentation only. The underlying project, prompt compiler, reports, and exports remain the same.
 

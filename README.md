@@ -12,8 +12,8 @@ You can plan and finish a production entirely by hand, with no AI provider
 configured and no generation enabled. AI assistance and provider-backed
 generation are optional layers on top of that.
 
-**Status: in development.** The version is `6.7.0-dev.1` — a development
-identity, not a released or production-ready build. There is no support
+**Status: Public Alpha.** The version is `6.7.0-alpha.1` — an alpha identity,
+in development, and not a released or production-ready build. There is no support
 commitment and no supported-version matrix; work happens on `main`. Expect rough
 edges, and read [SECURITY.md](SECURITY.md) before reporting anything sensitive.
 
@@ -47,17 +47,40 @@ reports the answer rather than depending on it:
 If you never see that advisory, you never needed it. Install it from your own
 package manager if you want those utilities.
 
+### Braidy
+
+**Braidy** is CineBraid's assistant, with its own rail in the shell. It reports
+where it stands before it offers to do anything: a capability you have not turned
+on says so plainly rather than reporting a failure, and an unreachable Braidy
+names the model it was going to use.
+
+Setup asks **where a capability runs** before it asks which protocol to speak:
+
+- **Local / self-hosted** — a server on your own hardware: Ollama, or any
+  OpenAI-compatible server you run. Needs no key.
+- **Cloud** — the OpenAI or Anthropic APIs. Needs a key.
+
+Self-hosted is a statement about whose hardware answers the request, not about
+whether anything travels.
+
 ### API keys are optional
 
 No credential is needed to install, start, open a project, or take a shot from
 opening to approved. Provider keys are needed only when you turn on a
 provider-backed feature:
 
-- an **AI assistant** for planning and continuity help — a local Ollama server, an
-  OpenAI-compatible server you run, or the OpenAI or Anthropic APIs. "No AI" is a
-  supported setting, not a degraded one.
-- **in-app generation**, which is dispatched to fal.ai. Without a key, the
-  generation surfaces stay off and everything else works.
+- **Braidy**, for planning and continuity help. "No AI" is a supported setting,
+  not a degraded one, and a self-hosted assistant needs no key at all.
+- **in-app generation**, which CineBraid can dispatch three ways:
+  - **Local ComfyUI** — a ComfyUI server on the same machine as CineBraid. No key
+    and no provider cost; every ComfyUI route refuses a caller that is not on this
+    machine, and its host configuration cannot be edited from another device.
+  - **fal.ai** — a cloud provider. Key required.
+  - **Civitai** — a cloud provider. Key required; a request is priced and
+    explicitly authorised before anything is spent.
+
+  Without a configured backend the generation surfaces stay off and everything
+  else works.
 
 A missing or unreachable provider degrades that feature, not the product. Keys are
 stored server-side in `data/config.json` and masked when settings are read back,
@@ -128,7 +151,8 @@ Two consequences worth knowing:
 - **Human approval stays explicit.** Nothing is approved, locked or superseded on
   your behalf. A machine can propose; only a person decides.
 - **A missing or unreachable provider degrades the feature, not the product.**
-  If an assistant is not configured, the manual path is still there.
+  If Braidy is off, unconfigured or unreachable, the manual path is still there:
+  import, organise, assign continuity, review, approve and finish by hand.
 
 ## The sample project
 
@@ -202,7 +226,7 @@ separately; see [TRADEMARKS.md](TRADEMARKS.md) before using either in a fork.
 - `docs/GETTING_STARTED.md` — the short path from install to a finished shot.
 - `SETUP.md` — install, configuration and provider setup in detail.
 - `docs/PUBLICATION.md` — how a reviewed commit reaches the public repository.
-- `docs/releases/v6.7.0-dev.1/` — notes and install guidance for this identity.
+- `docs/releases/v6.7.0-alpha.1/` — notes and install guidance for this identity.
 
 For an isolated side-by-side QA install on the DGX Spark, see
 `docs/SPARK_QA_SETUP.md`.

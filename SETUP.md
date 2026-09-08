@@ -80,12 +80,14 @@ If no projects exist, CineBraid shows a first-run screen with **Create a project
 
 ## Optional providers
 
-All provider features are disabled in the sample configuration. Configure them only when needed:
+All provider features are disabled in the sample configuration. Configure them only when needed. They sit together under **Settings → Optional assisted services**:
 
-- text/vision assistance in **Settings → Optional assisted services → Assistant**;
-- FAL image generation in **Settings → Optional assisted services → Generation**.
+- **Assistant** — Braidy, for planning, continuity and prompt help. Setup asks where a capability runs before which protocol it speaks: **Local / self-hosted** (Ollama, or any OpenAI-compatible server you run) needs no key; **Cloud** (the OpenAI or Anthropic APIs) does. Vision and Continuity Analysis carry their own standing and their own endpoint configuration.
+- **Generation** — fal.ai image defaults. Key required.
+- **Integrations** — generation tools running on this machine, currently **local ComfyUI**. No key and no provider cost. Every ComfyUI route refuses a caller that is not on this machine, so its host configuration cannot be changed from another device.
+- **Accounts** — services you already have an account with, currently **Civitai**. Key required; a request is priced and explicitly authorised before anything is spent.
 
-Provider keys remain server-side. Paid requests require explicit confirmation and are not needed for manual production.
+Provider keys remain server-side. Paid requests require explicit confirmation and are not needed for manual production. Braidy being off, unconfigured or unreachable does not block manual work — import, review, approval, shot editing and deterministic prompt preparation all continue.
 
 ## Upgrade an existing installation
 

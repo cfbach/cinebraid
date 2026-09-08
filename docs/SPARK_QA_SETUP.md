@@ -72,7 +72,7 @@ mkdir -p "$HOME/cinebraid-qa/src" "$HOME/cinebraid-qa/artifacts"
 cd "$HOME/cinebraid-qa/src"
 
 # First time only.
-git clone https://github.com/cfbach/cinebraid-app.git .
+git clone https://github.com/cfbach/cinebraid.git .
 
 MERGED_SHA=<the merge commit on main>
 git fetch origin main

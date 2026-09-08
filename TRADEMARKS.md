@@ -12,16 +12,29 @@ the identity that tells a user which project they are looking at.
 
 ## What is covered
 
-"CineBraid", the CineBraid wordmark and the CineBraid logo are branding of
-Frombach Studios. In this repository that includes, and is not limited to:
+"CineBraid", the CineBraid wordmark, the CineBraid logo and the Braidy character
+are branding of Frombach Studios. In this repository that includes, and is not
+limited to:
 
 - `public/cinebraid-mark.svg` — the application mark, used as the browser icon.
 - `public/cinebraid-logo-xs.png` — the CineBraid logo used in the application shell.
+- `public/assets/assistant-character/braidy-idle-soft-v32.png`
+- `public/assets/assistant-character/braidy-listening-v32.png`
+- `public/assets/assistant-character/braidy-processing-v32.png`
+- `public/assets/assistant-character/braidy-acknowledge-v32.png`
+- `public/assets/assistant-character/braidy-needs-decision-v32.png`
+- `public/assets/assistant-character/braidy-front-v32.png` — the six Braidy
+  character-art exports the Assistant rail draws.
 
-These two files are shipped so that an unmodified CineBraid identifies itself
-correctly. They are **not** placed under Apache 2.0, and the licence in `LICENSE`
-should not be read as a grant to use them as your own branding. Every other
-tracked asset in this repository is covered by the repository licence.
+These eight files are shipped so that an unmodified CineBraid identifies itself
+correctly and so that Braidy is not broken art on a first run. They are **not**
+placed under Apache 2.0, and the licence in `LICENSE` should not be read as a
+grant to use them as your own branding. Every other tracked asset in this
+repository is covered by the repository licence, and nothing here restricts the
+source code: Apache 2.0 governs the application in full.
+
+Where the rest of this file says *the name or logo*, it means these brand assets
+together, the Braidy character art included.
 
 ## What you may do without asking
 
@@ -50,8 +63,9 @@ tracked asset in this repository is covered by the repository licence.
 Forks are welcome; Apache 2.0 grants you that. If you distribute a modified
 CineBraid to other people, please make it obvious that it is yours and not ours:
 give it its own name and your own mark, and remove or replace
-`public/cinebraid-mark.svg` and `public/cinebraid-logo-xs.png`. Keeping the
-copyright and licence notices required by Apache 2.0 section 4 is a separate
+`public/cinebraid-mark.svg`, `public/cinebraid-logo-xs.png` and the six
+`public/assets/assistant-character/braidy-*-v32.png` character exports. Keeping
+the copyright and licence notices required by Apache 2.0 section 4 is a separate
 obligation and still applies.
 
 A short, honest line — "*a fork of CineBraid, not affiliated with Frombach
