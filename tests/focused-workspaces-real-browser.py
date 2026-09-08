@@ -212,7 +212,7 @@ try:
             assert seen["inspector"], f"case 1: no reference inspector was built ({seen})"
             assert seen["flag"] == "1", f"case 1: the module never marked the route enhanced ({seen})"
             inspector = text_of(".focused-inspector")
-            assert "REFERENCE INSPECTOR" in inspector, f"case 1: the inspector is not the module's ({inspector!r})"
+            assert "reference details" in inspector.lower(), f"case 1: the inspector is not the module's ({inspector!r})"
 
         def check_current(expected_name):
             """CASE 2 — what is on screen is the CURRENT project, not a snapshot."""

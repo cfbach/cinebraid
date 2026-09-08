@@ -411,7 +411,7 @@ try:
             f"4. and must not call an undeclared shot's silence an intent, got {required_tile['note']!r}"
         assert state["routeDeclaredAttr"] == "0", "4. the summary states the undeclared reading for any reader"
         assert state["intentOpen"] is True, "4. the intent control is expanded, because it is the shot's next question"
-        assert any("Execution route not chosen" in note for note in state["undeclaredNote"]), \
+        assert any("No production route chosen yet" in note for note in state["undeclaredNote"]), \
             f"4. and says so in the filmmaker's words, got {state['undeclaredNote']}"
         assert state["selectedTask"] == "inputs", f"4. the shot opens on Inputs, got {state['selectedTask']!r}"
         assert state["inputsOpen"] is True, "4. with the source & references panel open"
@@ -488,7 +488,7 @@ try:
         assert legacy["reading"] == "absent", "6. and it must still read as undeclared"
         legacy_state = page.evaluate(SHOT_STATE)
         assert legacy_state["intentOpen"] is True, "6. its route control is the question it is being asked"
-        assert any("Execution route not chosen" in note for note in legacy_state["undeclaredNote"]), \
+        assert any("No production route chosen yet" in note for note in legacy_state["undeclaredNote"]), \
             "6. and says so plainly"
         findings.append("6. a legacy sample shot opened, and CineBraid guessed no route for it: the record still "
                         "carries no key and the surface says the execution route was not chosen")

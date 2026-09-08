@@ -38,7 +38,7 @@ data/ and the shipped sample are never touched; the route guard aborts the paid 
 anything off-loopback.
 """
 
-import json, os, pathlib, socket, subprocess, sys, tempfile, time
+import json, os, pathlib, re, socket, subprocess, sys, tempfile, time
 from datetime import datetime, timedelta, timezone
 
 ROOT = pathlib.Path(__file__).resolve().parents[1]
@@ -382,24 +382,33 @@ try:
         findings.append(f"2. current step reads the declared stage '{stage['label']}' "
                         f"({stage['availability']}, recommendedNext={stage['recommendedNext'] or 'none'})")
 
-        # ---- 3. Working / Waiting for you / Needs attention ----------------------------
-        assert view["sections"][:3] == ["attention", "waiting", "working"], \
-            f"3. the rail must order attention -> waiting -> working, got {view['sections']}"
-        working = view["sectionText"]["working"]
-        waiting = view["sectionText"]["waiting"]
-        attention = view["sectionText"]["attention"]
-        assert "Frame automation" in working, "4. the leased running run must appear as Working"
-        assert "Frame review" in waiting, "5. the run parked at a gate must appear as Waiting for you"
-        assert "Frame review" not in working, \
-            "5. a run awaiting review must NEVER appear as machine work - that is the defect O3 must not reintroduce"
-        assert "Abandoned by a closed tab" in waiting, \
-            "5. a run whose lease lapsed is waiting for the filmmaker, not running"
-        assert "Abandoned by a closed tab" not in working, "5. an abandoned run must not read as Working"
-        assert "Scene correction" in attention, "6. the failed run must appear as Needs attention"
-        assert "does not know whether the provider accepted" in attention, \
-            "6. the unresolved submission must say the outcome is unknown"
-        findings.append("3-6. Working holds only the leased run; the approval gate and the abandoned run are "
-                        "Waiting for you; the failure and the unresolved submission are Needs attention")
+        # ---- 3. The rail carries the handoff; the Terminal carries the activity --------
+        #
+        # A1 CONVERGED ACTIVITY OWNERSHIP. The rail used to bucket every run by tone -
+        # Working / Waiting for you / Needs attention - which is the same ledger the
+        # Activity Terminal keeps, rendered twice and free to disagree. It now carries
+        # only what a person has to act on: `handoff`, beside `counts`, `stage`, `next`
+        # and the `quiet` fallback. The per-state truth this section used to assert is
+        # asserted in full by section 7 below, against the Terminal that owns it.
+        RAIL_SECTIONS = {"counts", "handoff", "stage", "next", "quiet"}
+        assert view["sections"], "3. the rail must render at least one section"
+        unknown = [name for name in view["sections"] if name not in RAIL_SECTIONS]
+        assert not unknown, \
+            f"3. the rail must draw from the declared structural sections, got unknown {unknown} in {view['sections']}"
+        assert "handoff" in view["sections"], \
+            f"3. with a run parked at a human gate the rail must carry the handoff, got {view['sections']}"
+        handoff = view["sectionText"]["handoff"]
+        assert "Frame review" in handoff, \
+            "4. the run parked at a gate is the thing needing a person, so it is what the rail hands off"
+
+        # THE DEFECT O3 MUST NOT REINTRODUCE, asserted where the claim now lives. Nothing
+        # the rail says may present a run that is waiting on a person as machine work.
+        rail_text = " ".join(view["sectionText"].values())
+        for parked in ("Frame review", "Abandoned by a closed tab"):
+            assert not re.search(r"(?:Working|running now)[^.]*" + re.escape(parked), rail_text), \
+                f"5. {parked!r} is waiting on a person and must never be presented as machine work"
+        findings.append(f"3-5. the rail draws {view['sections']} from the declared structural set, hands off "
+                        "the run parked at a gate, and presents nothing waiting on a person as machine work")
 
         # ---- 7. the Terminal represents the same states technically --------------------
         rows = {row["key"]: row for row in view["rows"]}

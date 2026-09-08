@@ -238,7 +238,7 @@ try:
             """WAIT FOR THE REQUESTED THING, never for a fixed delay. Selecting a stage
             re-renders asynchronously, so this waits for the stage the click asked for."""
             page.locator(".bounded-entity-taskbar .focused-task-button",
-                         has_text="What this production needs").click()
+                         has_text="Production needs").click()
             page.wait_for_function(
                 """() => { const n = document.querySelector('.bounded-entity-page');
                            return n && n.dataset.selectedTask === 'coverage'; }""", timeout=25000)

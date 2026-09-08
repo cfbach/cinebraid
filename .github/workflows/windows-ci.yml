@@ -86,13 +86,26 @@ jobs:
   # it, which is why this exists; and it is separate so that a browser flake never
   # delays the fast deterministic answer.
   #
-  # Cost: roughly 4-6 minutes. Chromium is ~115 MB and is cached between runs on
-  # the pinned Playwright version, so a warm run pays only the suite time (~3 min
-  # for eleven suites on this hardware).
+  # Cost: Chromium is ~115 MB and is cached between runs on the pinned Playwright
+  # version, so a warm run pays only the suite time: 43 browser launches in roughly
+  # 8 minutes on a developer workstation, plus setup.
   #
-  # Three of the eleven suites are quarantined: they must still launch a browser and
+  # Three of those suites are quarantined: they must still launch a browser and
   # still fail for their recorded reason. See docs/qa/BROWSER_TESTS.md.
+  #
+  # RUNNING IT IS NOT THE SAME AS REQUIRING IT, and the difference is what let 24
+  # real-browser suites go red unnoticed. `npm run check:browser-gate` has been a
+  # step in this job all along; what it did not have is the marker below. Five
+  # accepted product changes updated their Node suites, left their Python twins on
+  # the old vocabulary, and merged - because this job's result was reported and not
+  # enforced. The step was never the gap.
+  #
+  # So this name is a branch-protection status check too, on the same terms as
+  # Windows validation above: keep it stable, and keep it in the repository's
+  # required checks. A green Node run is not evidence that the application still
+  # renders.
   browser-validation:
+    # This name is the branch-protection status check. Keep it stable.
     name: Browser validation
     runs-on: windows-latest
     timeout-minutes: 30

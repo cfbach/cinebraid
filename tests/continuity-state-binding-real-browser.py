@@ -694,9 +694,14 @@ try:
         expect_red("NC-BROWSER-A", "the page must notice a resolver that ignores frame overrides",
                    check_frame_override, WET, "Rain-soaked")
 
+        # RE-ANCHORED, SAME MECHANISM. The shot-level fallback used to be reached through
+        # a `pickBinding()` helper; resolveBoundStateDeclaration() reads the shot's
+        # entityStates directly now. The control is unchanged in what it breaks - the
+        # resolver stops finding the shot-level binding - so it still bites for the
+        # reason NC-BROWSER-B exists to prove the page notices.
         served["mutation"] = original.replace(
-            "  return pickBinding(bindingSet.entityStates, entityId);",
-            "  return \"\";", 1)
+            "  const fromShot = (bindingSet.entityStates || []).find((entry) => entry && entry.entityId === text(entityId));",
+            "  const fromShot = null;", 1)
         assert served["mutation"] != original, "NC-BROWSER-B anchor no longer exists in the shipped module"
         open_shot()
         await_state("Frame A", inherit="Follow the shot — Rain-soaked", timeout=6000)

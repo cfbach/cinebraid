@@ -16,7 +16,7 @@ report were about what a browser renders.
 What this establishes, in the order a director meets it:
 
   A  the reference workspace loads with no uncaught or console error
-  B  the real AUTOMATE DEFAULT button starts a bounded run
+  B  the real Start Braidy run button starts a bounded run
   C  pass 1 generates the configured candidates and reviews every one
   D  an all-failed pass 1 advances to pass 2 without anyone asking it to
   E  the pass progression is on screen: scores, why it failed, what changed
@@ -260,7 +260,7 @@ try:
             if "/api/agents/status" in url:
                 response = route.fetch()
                 payload = response.json()
-                ready = {"ready": True, "label": "ready", "provider": "stub", "model": "browser-qa",
+                ready = {"standing": "ready", "ready": True, "label": "ready", "provider": "stub", "model": "browser-qa",
                          "message": "Configured.", "action": ""}
                 payload["enabled"] = True
                 payload["capabilities"] = {**payload.get("capabilities", {}), "text": ready, "vision": ready,
@@ -279,7 +279,7 @@ try:
             """Open the entity workspace and STATE its preconditions instead of assuming
             them.
 
-            AUTOMATE DEFAULT went missing on a CI runner with no console error and no
+            the run control went missing on a CI runner with no console error and no
             page error, because nothing was wrong with the page: the button was in the
             DOM and simply not in the accessibility tree, so get_by_role matched nothing.
             Two things can hide it, and this helper now asserts both rather than sleeping
@@ -299,7 +299,7 @@ try:
                 re-render restores their default state - which on a slow runner can land
                 between the open and the query.
 
-            Same timeouts as the rest of this suite, and the AUTOMATE DEFAULT assertion
+            Same timeouts as the rest of this suite, and the run-control assertion
             in start_automation is untouched. What changes is that a slow render now
             fails where it happens, naming the precondition."""
             page.goto(f"{base}/#/character/{entity_id}", wait_until="domcontentloaded")
@@ -308,7 +308,7 @@ try:
             # AMENDED BY BATCH 2 SLICE 3: the task is `Primary reference` now, and it
             # owns the candidate grid as well as the creation hub. Matched exactly
             # rather than by substring, because `Reference` alone would also match
-            # `What this production needs`' description text on some renders.
+            # `Production needs`' description text on some renders.
             task = page.locator(".focused-task-button", has_text="Primary reference").first
             assert task.count() >= 1, \
                 f"the Reference task control is missing for {entity_id}; the workspace offers: " \
@@ -331,22 +331,22 @@ try:
             # default state, which on a slow runner can land between the open and the
             # query. So the open is re-applied until the control is genuinely reachable,
             # and a failure names THIS step instead of surfacing later as a missing
-            # button. The AUTOMATE DEFAULT assertion in start_automation is unchanged.
+            # button. The run-control assertion in start_automation is unchanged.
             reachable = ("() => { document.querySelectorAll('#main details').forEach(node => { node.open = true; });"
                          " return [...document.querySelectorAll('button')]"
-                         ".some(row => row.textContent.trim() === 'AUTOMATE DEFAULT' && row.offsetParent !== null); }")
+                         ".some(row => row.textContent.trim() === 'Start Braidy run' && row.offsetParent !== null); }")
             try:
                 page.wait_for_function(reachable, timeout=20000)
             except Exception as error:  # noqa: BLE001
-                in_dom = page.evaluate("() => document.body.innerHTML.includes('AUTOMATE DEFAULT')")
+                in_dom = page.evaluate("() => document.body.innerHTML.includes('Start Braidy run')")
                 where = "present in the DOM but unreachable" if in_dom else "absent from the DOM entirely"
                 raise AssertionError(
-                    f"the reference workspace never exposed AUTOMATE DEFAULT for {entity_id}: it is {where}, "
+                    f"the reference workspace never exposed Start Braidy run for {entity_id}: it is {where}, "
                     "so the panel is either hidden by task selection or still collapsed") from error
 
         def start_automation(entity_id):
-            button = page.get_by_role("button", name="AUTOMATE DEFAULT", exact=True)
-            assert button.count() >= 1, f"the AUTOMATE DEFAULT button is missing for {entity_id}"
+            button = page.get_by_role("button", name="Start Braidy run", exact=True)
+            assert button.count() >= 1, f"the Start Braidy run button is missing for {entity_id}"
             button.first.click()
             page.wait_for_selector(".automation-plan-modal", timeout=15000)
             assert "THREE PASSES MAXIMUM" in page.locator(".automation-plan-modal .modal-sub").inner_text().upper(), \
@@ -541,7 +541,7 @@ try:
         f"stubbed advisor failures: {console_errors}")
 
     print(
-        f"Durable reference automation real-browser audit passed: the workspace loaded clean, AUTOMATE DEFAULT ran a "
+        f"Durable reference automation real-browser audit passed: the workspace loaded clean, Start Braidy run ran a "
         f"bounded run, an all-failed pass 1 aggregated three candidates' reasons and advanced to a pass 2 whose "
         f"prompt carried every one of them, the progression panel showed the scores / reasons / prompt delta on "
         f"screen, a strong pass stopped the run at 2 of 3 passes without approving anything, a rejected candidate "

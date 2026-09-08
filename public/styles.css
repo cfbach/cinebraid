@@ -4763,17 +4763,29 @@ body[data-focused-workspace="1"] .guided-frame-body,
 #app[data-surf="light"] .brand-note{opacity:1;color:var(--muted)}
 
 /* The few controls that are filled with the accent or a status hue. On a light
-   surface the fill is the dark element and the label has to be the light one. */
-#app[data-surf="light"] .add-btn,
-#app[data-surf="light"] .topbar-add,
-#app[data-surf="light"] .approve-btn,
+   surface the fill is the dark element and the label has to be the light one.
+
+   ...WHILE THEY ARE FILLED, WHICH A DISABLED ONE IS NOT. Rule 6 above gives a
+   disabled approval control its own pair -- a 15% accent fill and an ink mixed
+   against it -- precisely so it "reads as unavailable without going illegible".
+   This group outranks it (an id beats a class) and replaced only the INK, so on a
+   light surface the disabled fill kept rule 6 and the label became #ffffff:
+   "Start Braidy run" measured white on rgb(220,233,234), 1.24:1 against the 4.5:1
+   a body-sized label needs. Night was never wrong because no rule here overrides
+   rule 6 there. Exempting the disabled state is the whole correction: rule 6 is
+   already right, and it simply has to be allowed to win the state it was written
+   for. Nothing about an ENABLED filled control changes -- same fill, same white
+   ink, same size, same position, same hover. */
+#app[data-surf="light"] .add-btn:not(:disabled):not([aria-disabled="true"]),
+#app[data-surf="light"] .topbar-add:not(:disabled):not([aria-disabled="true"]),
+#app[data-surf="light"] .approve-btn:not(:disabled):not([aria-disabled="true"]),
 #app[data-surf="light"] .coverage-extractor-steps .active b,
 #app[data-surf="light"] .frame-sequence-correction-overview article.is-auto>i,
-#app[data-surf="light"] .reference-manual-actions .recommended,
-#app[data-surf="light"] .reference-manual-actions .recommended span,
-#app[data-surf="light"] .reference-manual-actions .recommended small,
-#app[data-surf="light"] .reference-primary-actions .approve-btn span,
-#app[data-surf="light"] .reference-primary-actions .approve-btn small{color:#ffffff!important}
+#app[data-surf="light"] .reference-manual-actions .recommended:not(:disabled):not([aria-disabled="true"]),
+#app[data-surf="light"] .reference-manual-actions .recommended:not(:disabled):not([aria-disabled="true"]) span,
+#app[data-surf="light"] .reference-manual-actions .recommended:not(:disabled):not([aria-disabled="true"]) small,
+#app[data-surf="light"] .reference-primary-actions .approve-btn:not(:disabled):not([aria-disabled="true"]) span,
+#app[data-surf="light"] .reference-primary-actions .approve-btn:not(:disabled):not([aria-disabled="true"]) small{color:#ffffff!important}
 
 /* ...except the backlog rows, which are deliberately NOT filled here. The rule
    above assumes an accent fill and hands the label the light ink; an outlined

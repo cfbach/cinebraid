@@ -232,7 +232,7 @@ try:
             f"1. a reference must open on its primary reference, got {selected_task()!r}"
 
         labels = taskbar()
-        assert labels == ["Primary reference", "What this production needs", "Details & history"], \
+        assert labels == ["Primary reference", "Production needs", "Details & history"], \
             f"1. the reference workspace must offer exactly these three stages, got {labels!r}"
         assert not any("Choose & approve" in label or label == "Review" for label in labels), \
             "1. `Choose & approve` must no longer be a peer top-level production stage"
@@ -283,7 +283,7 @@ try:
             f"2. and the reference itself, got {candidates['names']!r}"
 
         # The other two stages must offer no second home for the same decision.
-        for label in ("What this production needs", "Details & history"):
+        for label in ("Production needs", "Details & history"):
             page.locator(".bounded-entity-taskbar .focused-task-button", has_text=label).click()
             page.wait_for_function(
                 """(want) => { const n = document.querySelector('.bounded-entity-page'); return n && n.dataset.selectedTask === want; }""",
@@ -294,7 +294,7 @@ try:
                         "carries its real cards, and exists on none of the other two stages")
 
         # ---- 3. what this production needs, with the boards behind a disclosure ---------
-        page.locator(".bounded-entity-taskbar .focused-task-button", has_text="What this production needs").click()
+        page.locator(".bounded-entity-taskbar .focused-task-button", has_text="Production needs").click()
         page.wait_for_selector("#main section.entity-demand", timeout=10000)
 
         demand = page.evaluate("""() => {
@@ -324,7 +324,7 @@ try:
         assert state["open"] is False, "3. the angle / expression / continuity-state boards must ship closed"
         assert state["tabsVisible"] is False, \
             "3. and must occupy no space on screen until the filmmaker opens them"
-        findings.append(f"3. `What this production needs` leads with {demand['required']} required / "
+        findings.append(f"3. `Production needs` leads with {demand['required']} required / "
                         f"{demand['recommended']} recommended / {demand['notNeeded']} not currently needed in "
                         "filmmaker language; every non-required group and the coverage-detail boards are "
                         "collapsed to zero height")
@@ -846,7 +846,7 @@ try:
             if state["id"] == "state-orphan":
                 state["parentStateId"] = "state-default"
         install(repaired)
-        page.locator(".bounded-entity-taskbar .focused-task-button", has_text="What this production needs").click()
+        page.locator(".bounded-entity-taskbar .focused-task-button", has_text="Production needs").click()
         page.wait_for_selector("#main section.entity-demand", timeout=10000)
         repaired_answer = generate_action("state-orphan")
         assert repaired_answer["present"], \
@@ -861,7 +861,7 @@ try:
         page.evaluate("""() => {
             localStorage.setItem(`cinebraid-bounded:${ACTIVE_PROJECT_SLUG}:selected:entity-coverage-view:characters:%s`, 'states');
         }""" % ENTITY)
-        page.locator(".bounded-entity-taskbar .focused-task-button", has_text="What this production needs").click()
+        page.locator(".bounded-entity-taskbar .focused-task-button", has_text="Production needs").click()
         opened = detail_open()
         assert opened["open"] is True, \
             "N2: an explicitly selected sub-view MUST open the coverage detail — section 3's `closed` is vacuous otherwise"

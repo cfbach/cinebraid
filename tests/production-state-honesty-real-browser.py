@@ -216,15 +216,28 @@ try:
               activeIds: idsIn('machine-active'),
               waitingIds: idsIn('waiting-human'),
               waitingSpinners: waitingRows.filter((row) => row.querySelector('.spin')).length,
-              waitingSaysSo: /waiting for you/i.test(waitingText),
-              waitingNamesResume: /resume run/i.test(waitingText),
+              /* The Terminal names the REASON a row is waiting rather than repeating the
+                 bucket: a gate reads AWAITING REVIEW, an abandoned run reads STOPPED.
+                 Both are the waiting vocabulary; neither is machine-active language. */
+              waitingStatuses: waitingRows.map((row) =>
+                ((row.querySelector('em') || {}).textContent || '').trim()),
+              waitingText: waitingText,
+              waitingNamesResume: /resume/i.test(waitingText),
             };
         }""")
         assert drawer["activeIds"] == ["state-live"], f"A/E the machine-active bucket held {drawer['activeIds']}"
         assert sorted(drawer["waitingIds"]) == ["state-orphan", "state-waiting"], \
             f"A/E the waiting-human bucket held {drawer['waitingIds']}"
         assert drawer["waitingSpinners"] == 0, "A/E nothing waiting on a person may spin"
-        assert drawer["waitingSaysSo"], "A/E a waiting row must say so in words"
+        # The invariant is that a waiting row reads as waiting, not that it repeats one
+        # fixed phrase. The shipped vocabulary is reason-specific, so this asserts against
+        # that vocabulary and refuses anything from the machine-active side of it.
+        WAITING_WORDS = ("AWAITING REVIEW", "STOPPED")
+        for status in drawer["waitingStatuses"]:
+            assert status in WAITING_WORDS, \
+                f"A/E a waiting row must state a waiting status, got {status!r} (expected one of {WAITING_WORDS})"
+        assert "RUNNING" not in drawer["waitingStatuses"], \
+            "A/E nothing waiting on a person may claim to be running"
         assert drawer["waitingNamesResume"], "E an abandoned run must name the action that restarts it"
         findings.append(f"A/E: the Terminal separates machine-active {drawer['activeIds']} from "
                         f"waiting-human {sorted(drawer['waitingIds'])} on the rows themselves")

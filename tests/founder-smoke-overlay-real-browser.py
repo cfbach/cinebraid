@@ -163,6 +163,7 @@ try:
             dock: z(dock),
             assistant: z(rail),
             strip: z(strip),
+            bar: z(document.getElementById('cb-shell-bar')),
             rail: z(document.getElementById('rail')),
             topOfDialogPoint: !!(point && modal.contains(point)),
             dialogFilter: getComputedStyle(modal.querySelector('.modal-box')).filter,
@@ -173,8 +174,18 @@ try:
         assert layers["dialog"] is not None, "the dialog must declare its own stacking level"
         assert layers["dialog"] > layers["dock"], (
             f"confirmation ({layers['dialog']}) must paint above the Activity Terminal ({layers['dock']})")
-        assert layers["dock"] > layers["rail"], (
-            f"the Activity Terminal ({layers['dock']}) must paint above the page ({layers['rail']})")
+        # A1 RETIRED THE ACTIVITY DRAWER AND THE TERMINAL TOOK ITS WORK, so the Terminal
+        # is page chrome now rather than an overlay, and it is ORDERED AGAINST the rest of
+        # the chrome inside the layout: #cb-shell-bar 38, #topbar 40, #cb-shell-rail 44,
+        # #cb-shell-dock 45, #rail 50. The dock sits BELOW the navigation on purpose and
+        # never reaches it — it is offset by --cb-nav-width and starts where the nav ends.
+        # What the ladder still has to hold is that the Terminal paints above the WORKSPACE
+        # it reports on, and that every overlay token clears all of it; both are asserted
+        # around this line. Requiring dock > #rail was the retired drawer's contract.
+        if layers["bar"] is not None:
+            assert layers["dock"] > layers["bar"], (
+                f"the Activity Terminal ({layers['dock']}) must paint above the workspace chrome "
+                f"it reports on ({layers['bar']})")
         if layers["assistant"]:
             assert layers["dock"] > layers["assistant"], (
                 f"the Activity Terminal ({layers['dock']}) must stay above the Assistant overlay "

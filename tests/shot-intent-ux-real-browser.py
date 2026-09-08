@@ -360,7 +360,7 @@ try:
         assert state["summary"] == "Not decided yet", f"1. and the summary line must still say so, got {state['summary']!r}"
         undeclared_note = page.locator('.shot-intent-control [data-shot-intent-undeclared="1"]')
         assert undeclared_note.count() == 1, "1. and must state that no execution route was chosen"
-        assert "Execution route not chosen" in undeclared_note.first.inner_text(), "1. in the filmmaker's own words, not an empty control"
+        assert "No production route chosen yet" in undeclared_note.first.inner_text(), "1. in the filmmaker's own words, not an empty control"
         assert state["options"] == [""] + ROUTES, f"1. the five routes plus the undeclared state, got {state['options']}"
         assert all(label and label not in ROUTES for label in state["labels"]), \
             f"1. every option must be labelled in filmmaker language, got {state['labels']}"

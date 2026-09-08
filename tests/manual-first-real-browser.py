@@ -132,7 +132,7 @@ try:
         page.wait_for_timeout(100)
         page.get_by_role("button", name="ASSIGN VIEW").click()
         page.wait_for_timeout(250)
-        page.locator(".focused-task-button", has_text="What this production needs").click()
+        page.locator(".focused-task-button", has_text="Production needs").click()
         page.wait_for_timeout(150)
         # SLICE 3 §E: the angle/expression/state boards no longer arrive uninvited.
         # The demand list leads and the boards sit behind a toggle whose open state is

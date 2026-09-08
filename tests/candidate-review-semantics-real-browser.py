@@ -152,8 +152,10 @@ try:
             if STATUS_ROUTE in url:
                 return route.fulfill(status=200, content_type="application/json", body=json.dumps({
                     "capabilities": {
-                        "vision": {"ready": True, "message": "", "action": ""},
-                        "assistant": {"ready": True, "message": "", "action": ""},
+                        # `standing` is what decides whether Vision may run; without it the
+                        # record normalizes to "checking" and the review action stays off.
+                        "vision": {"standing": "ready", "ready": True, "message": "", "action": ""},
+                        "assistant": {"standing": "ready", "ready": True, "message": "", "action": ""},
                     },
                 }))
             if REVIEW_ROUTE in url and route.request.method == "POST":

@@ -334,7 +334,7 @@ try:
         def coverage_strip():
             return page.evaluate("""() => {
                 const button = [...document.querySelectorAll('.bounded-entity-taskbar .focused-task-button')]
-                    .find((b) => /What this production needs/.test(b.textContent || ''));
+                    .find((b) => /Production needs/.test(b.textContent || ''));
                 if (!button) return null;
                 return {
                     tone: [...button.classList].find((c) => c.startsWith('tone-')) || '',
@@ -525,7 +525,7 @@ try:
         install()
 
         # ---- A. a dormant reference does not greet a filmmaker with a backlog ----------
-        open_reference(CHAR, "character", "What this production needs")
+        open_reference(CHAR, "character", "Production needs")
         assert not page_errors, f"the reference page raised uncaught errors: {page_errors}"
 
         panel = demand_panel()
@@ -586,7 +586,7 @@ try:
         click_in_cast(f'.guided-cast-assets button[onclick*="toggleShotCreationCharacter"][onclick*="{CHAR}"]',
                       "B. casting the character")
         page.wait_for_function("(id) => (P.shots[0].characters || []).includes(id)", arg=CHAR, timeout=10000)
-        open_reference(CHAR, "character", "What this production needs")
+        open_reference(CHAR, "character", "Production needs")
         cast = demand_panel()
         assert cast["production"] == "demanded", \
             f"B. once a shot casts the character it must read demanded, got {cast['production']!r}"
@@ -623,7 +623,7 @@ try:
         click_in_cast(f'.guided-cast-assets button[onclick*="toggleShotCreationCharacter"][onclick*="{CHAR}"]',
                       "C. un-casting the character")
         page.wait_for_function("(id) => !(P.shots[0].characters || []).includes(id)", arg=CHAR, timeout=10000)
-        open_reference(CHAR, "character", "What this production needs")
+        open_reference(CHAR, "character", "Production needs")
         released = demand_panel()
         after_bible = bible_state(CHAR)
         assert released["now"] == 0, \
@@ -691,7 +691,7 @@ try:
             "E. while the same plate stays selectable — clearing is a change of mind, not a deletion"
 
         # ...and the released location goes dormant on its OWN surface, immediately.
-        open_reference(LOC, "location", "What this production needs")
+        open_reference(LOC, "location", "Production needs")
         location_panel = demand_panel()
         assert location_panel["production"] == "dormant", \
             f"E. the released location must now read dormant, got {location_panel['production']!r}"
@@ -794,7 +794,7 @@ try:
         # primary was already Canon reported "8 required references still needed"
         # while Production said MARK SHOT FINAL.
         install(shot_overrides={"characters": [CHAR], "continuityStateSelections": {}})
-        open_reference(CHAR, "character", "What this production needs")
+        open_reference(CHAR, "character", "Production needs")
         satisfied = demand_panel()
         production_says = page.evaluate("""() => {
             const feed = projectShotReadiness();
@@ -985,7 +985,7 @@ try:
 
         # ---- N1. the backlog CAN appear, so section A's zero means something -------------
         install(shot_overrides={"characters": [CHAR]})
-        open_reference(CHAR, "character", "What this production needs")
+        open_reference(CHAR, "character", "Production needs")
         armed = demand_panel()
         assert armed["now"] > 0, \
             "N1: with a shot casting the character the backlog MUST appear — section A's zero is vacuous otherwise"

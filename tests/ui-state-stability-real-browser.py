@@ -101,11 +101,14 @@ try:
             page.wait_for_timeout(450)
         def open_reference_builder():
             outer = page.locator("details.reference-assisted-tools")
-            inner = page.locator("details.asset-creation-card")
+            # R1 lifted Create Reference out of the assisted-tools disclosure: it is a
+            # top-level <section class="reference-create-section asset-creation-card">
+            # now, and the disclosure inside it is the manual one.
+            inner = page.locator("details.reference-create-manual")
             outer.evaluate("e=>e.open=true"); inner.evaluate("e=>e.open=true"); page.wait_for_timeout(80)
             return outer, inner
         def assert_reference_stable(label, before_top):
-            outer = page.locator("details.reference-assisted-tools"); inner = page.locator("details.asset-creation-card")
+            outer = page.locator("details.reference-assisted-tools"); inner = page.locator("details.reference-create-manual")
             assert outer.evaluate("e=>e.open") is True, f"{label}: optional assisted tools collapsed"
             assert inner.evaluate("e=>e.open") is True, f"{label}: reference builder collapsed"
             after_top = inner.evaluate("e=>e.getBoundingClientRect().top")
@@ -132,7 +135,7 @@ try:
         def stable_click(target, label):
             target.evaluate("e => e.scrollIntoView({block: 'center'})")
             page.wait_for_timeout(150)
-            before = page.locator("details.asset-creation-card").evaluate("e=>e.getBoundingClientRect().top")
+            before = page.locator("details.reference-create-manual").evaluate("e=>e.getBoundingClientRect().top")
             target.click()
             return before
 
@@ -142,13 +145,13 @@ try:
         top = stable_click(inner.get_by_role("button", name=re.compile("Build Prompt", re.I)), "Build prompt")
         page.wait_for_timeout(450)
         assert_reference_stable("Build prompt", top)
-        top = stable_click(page.locator("details.asset-creation-card").get_by_role("button", name="Improve"), "Improve")
+        top = stable_click(page.locator("details.reference-create-manual").get_by_role("button", name="Improve"), "Improve")
         page.wait_for_timeout(450)
         assert_reference_stable("Improve", top)
-        top = stable_click(page.locator("details.asset-creation-card").get_by_role("button", name="GENERATE"), "Generate")
+        top = stable_click(page.locator("details.reference-create-manual").get_by_role("button", name="GENERATE"), "Generate")
         page.wait_for_selector("text=START GENERATION")
         page.get_by_role("button", name="START GENERATION").click(); page.wait_for_timeout(500)
-        outer = page.locator("details.reference-assisted-tools"); inner = page.locator("details.asset-creation-card")
+        outer = page.locator("details.reference-assisted-tools"); inner = page.locator("details.reference-create-manual")
         assert outer.evaluate("e=>e.open") is True, "Generate: optional assisted tools collapsed"
         assert inner.evaluate("e=>e.open") is True, "Generate: reference builder collapsed"
         box = inner.bounding_box()

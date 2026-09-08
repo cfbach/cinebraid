@@ -107,7 +107,11 @@ try:
                     route.fulfill(status=200, content_type="application/json", body=json.dumps({"ok": True}))
                     return
                 if suffix == "/api/agents/status":
-                    ready = {"ready": True, "label": "Vision assistance", "provider": "ollama", "model": "fixture-model", "message": "Ready", "action": ""}
+                    # `standing` is the authority every browser consumer reads; `ready` is
+                    # the legacy field the record still carries. A fixture that omits the
+                    # standing describes a record the server does not send, and is read as
+                    # "checking" rather than as ready.
+                    ready = {"standing": "ready", "ready": True, "label": "Vision assistance", "provider": "ollama", "model": "fixture-model", "message": "Ready", "action": ""}
                     route.fulfill(status=200, content_type="application/json", body=json.dumps({"enabled": True, "manualMode": False, "active": 0, "queued": 0, "maxConcurrent": 2, "capabilities": {"text": ready, "verifier": ready, "vision": ready, "embedding": ready, "technical": ready}, "agents": [], "runs": [], "index": {"ready": True, "stale": False}}))
                     return
                 if suffix == "/api/system/health":
@@ -163,7 +167,7 @@ try:
             page.wait_for_selector("#main")
 
         def open_coverage_detail():
-            """BATCH 2 SLICE 3. `What this production needs` leads with the demand
+            """BATCH 2 SLICE 3. `Production needs` leads with the demand
             list and keeps the angle / expression / continuity-state boards behind a
             toggle, so that the schema's full catalogue of conceivable coverage is not
             dumped on the filmmaker by default. A suite that drives those boards has to
@@ -190,7 +194,7 @@ try:
             assert page.locator(".entity-candidate-card").count() <= 12, "reference page rendered more than 12 candidates"
             # AMENDED BY BATCH 2 SLICE 3: the coverage workspace is stated as a
             # production demand now, and its detail boards sit behind a disclosure.
-            coverage = page.locator(".bounded-entity-taskbar button", has_text="What this production needs")
+            coverage = page.locator(".bounded-entity-taskbar button", has_text="Production needs")
             if coverage.count():
                 coverage.first.click()
                 page.wait_for_timeout(250)
@@ -199,7 +203,7 @@ try:
 
         checkpoint("base routes complete")
         audit_mode["enabled"] = True
-        ready_capability = {"ready": True, "label": "Ready", "provider": "ollama", "model": "fixture-model", "message": "Ready", "action": ""}
+        ready_capability = {"standing": "ready", "ready": True, "label": "Ready", "provider": "ollama", "model": "fixture-model", "message": "Ready", "action": ""}
         page.evaluate("""async payload => {
           localStorage.clear(); sessionStorage.clear();
           P = payload.project; SCAN = payload.scan; ACTIVE_PROJECT_SLUG = 'audit-fixture';
@@ -239,8 +243,8 @@ try:
         assert batch_state == {"status": "partial", "total": 5, "completed": 5, "failed": 1}, f"unexpected real-browser batch state: {batch_state}"
 
         checkpoint("batch review complete")
-        coverage_task = page.locator(".bounded-entity-taskbar button", has_text="What this production needs")
-        assert coverage_task.count(), "What this production needs workspace is missing"
+        coverage_task = page.locator(".bounded-entity-taskbar button", has_text="Production needs")
+        assert coverage_task.count(), "Production needs workspace is missing"
         coverage_task.first.click()
         page.wait_for_timeout(250)
         open_coverage_detail()
@@ -267,7 +271,7 @@ try:
         }""")
         page.evaluate("route()")
         page.wait_for_timeout(250)
-        coverage_task = page.locator(".bounded-entity-taskbar button", has_text="What this production needs")
+        coverage_task = page.locator(".bounded-entity-taskbar button", has_text="Production needs")
         coverage_task.first.click()
         page.wait_for_timeout(250)
         open_coverage_detail()

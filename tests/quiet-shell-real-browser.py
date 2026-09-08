@@ -427,11 +427,20 @@ try:
         findings.append("N2. an injected timeline node is seen by the section-6 check — it can fail")
 
         # ---- 7. the Terminal starts collapsed, expands, and the preference survives -----
-        assert activity["terminalMounted"], "the Activity Terminal must be mounted"
-        assert activity["dockPreference"] is None, \
-            f"this section requires a fresh dock preference, found {activity['dockPreference']!r}"
-        assert activity["terminalCollapsed"] == "1", \
-            f"7. with no stored preference the Activity Terminal must start COLLAPSED, got {activity['terminalCollapsed']!r}"
+        #
+        # MEASURED HERE, NOT INHERITED. This section used to assert against `activity`,
+        # the snapshot section 4 took roughly a hundred lines earlier, and then click the
+        # page as it stands now. Sections 4/5, 6 and N2 run in between — a completed run
+        # hands off to its result, a timeline node is injected and removed — so the
+        # assertion described a Terminal that no longer existed and the click went looking
+        # for an EXPAND button that was no longer there. The precondition and the action
+        # have to be readings of the same moment, so the reading is taken here.
+        current = page.evaluate(GEOMETRY)
+        assert current["terminalMounted"], "the Activity Terminal must be mounted"
+        assert current["dockPreference"] is None, \
+            f"this section requires a fresh dock preference, found {current['dockPreference']!r}"
+        assert current["terminalCollapsed"] == "1", \
+            f"7. with no stored preference the Activity Terminal must start COLLAPSED, got {current['terminalCollapsed']!r}"
 
         page.click('.cb-terminal button[aria-expanded="false"]')
         page.wait_for_selector('.cb-terminal[data-collapsed="0"]', timeout=10000)

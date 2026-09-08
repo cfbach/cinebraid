@@ -185,7 +185,15 @@ GEOMETRY = """
   const dockBox = dock && dock.getBoundingClientRect();
   const dockShown = dock && getComputedStyle(dock).display !== 'none';
   const railShown = rail && getComputedStyle(rail).display !== 'none';
+  /* SHOWN AND DOCKED ARE DIFFERENT QUESTIONS, and below the dock threshold the answers
+     differ. Where there is no room to give the rail a grid track it opens OVER the
+     workspace instead - `position:fixed`, gated on #workspace[data-rail-width] being
+     absent - so it is visible and takes no width from the centre. "The rail must not
+     squeeze the centre" is a claim about the DOCKED rail; asked of the overlay it
+     demands a 420px centre inside a 390px viewport, which nothing can satisfy. */
+  const railDocked = !!railShown && getComputedStyle(rail).position !== 'fixed';
   return {
+    railDocked: railDocked,
     innerWidth: window.innerWidth,
     innerHeight: window.innerHeight,
     scrollWidth: doc.scrollWidth,
@@ -470,9 +478,13 @@ try:
                 assert geo["dockLeft"] >= geo["navRight"], \
                     f"10. at {name} ({width}px) the dock starts at {geo['dockLeft']} but the navigation " \
                     f"ends at {geo['navRight']} — the dock is covering the navigation"
-            if geo["railShown"]:
+            if geo["railDocked"]:
                 assert geo["mainWidth"] >= 420, \
-                    f"7. at {name} ({width}px) the rail squeezed the centre to {geo['mainWidth']}px"
+                    f"7. at {name} ({width}px) the docked rail squeezed the centre to {geo['mainWidth']}px"
+            elif geo["railShown"]:
+                # The overlay owes the opposite promise: it must not take the centre with it.
+                assert geo["mainWidth"] >= min(width, 420) or geo["mainWidth"] >= width - 1, \
+                    f"7. at {name} ({width}px) the overlay rail reduced the centre to {geo['mainWidth']}px"
             width_notes.append(f"{name} {width}px: rail={'on' if geo['railShown'] else 'off'} "
                                f"dock={geo['dockHeight']}px centre={geo['mainWidth']}px")
         assert any("rail=on" in row for row in width_notes), \

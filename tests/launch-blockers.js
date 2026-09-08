@@ -255,6 +255,82 @@ for (const selector of ['.production-next', '.board-list-controls', '.shot-comma
 }
 note('light canvas: the five raised surfaces painted from dark literals now carry light-surface backgrounds');
 
+/* CB-01b — A DISABLED APPROVAL CONTROL KEEPS THE INK IT WAS GIVEN.
+ *
+ * THE DEFECT, AND IT WAS ONLY EVER CAUGHT IN A BROWSER. `.approve-btn:disabled`
+ * carries its own pair — a 15% accent fill and an ink mixed against it — written so
+ * that "a disabled approval control reads as unavailable without going illegible".
+ * The light-canvas white-label group below it is id-scoped, so it outranks that rule
+ * and used to replace only the INK: the disabled fill stayed and the label became
+ * #ffffff. On Light, "Start Braidy run" measured white on rgb(220,233,234) — 1.24:1,
+ * against the 4.5:1 this whole section exists to hold. Night was never wrong, because
+ * nothing overrides the disabled rule there.
+ *
+ * TWO ASSERTIONS, BECAUSE THE PAIR AND THE CASCADE ARE DIFFERENT FACTS. The first
+ * measures the pair the disabled rule actually declares, resolved from the same light
+ * tokens every other measurement here uses. The second pins the exemption that lets
+ * that pair reach the screen — a group that stops excluding the disabled state would
+ * measure fine token-for-token and still repaint the label white.
+ */
+function mixSrgb(spec, accent) {
+  /* Only the shape rule 6 uses: color-mix(in srgb, <a> <p>%, <b> [<p>%]). */
+  const body = String(spec).trim().match(/^color-mix\(\s*in\s+srgb\s*,(.+)\)$/i);
+  if (!body) return null;
+  const parts = body[1].split(',').map((part) => part.trim());
+  if (parts.length !== 2) return null;
+  const read = (part) => {
+    const share = part.match(/\s(\d+(?:\.\d+)?)%$/);
+    const colour = share ? part.slice(0, part.length - share[0].length).trim() : part;
+    const alias = colour.match(/^var\((--[\w-]+)\)$/);
+    const value = alias ? lightToken(alias[1], accent) : colour;
+    return { rgb: rgb(value), share: share ? Number(share[1]) / 100 : null };
+  };
+  const a = read(parts[0]);
+  const b = read(parts[1]);
+  if (!a.rgb || !b.rgb) return null;
+  const wa = a.share == null ? 1 - (b.share == null ? 0.5 : b.share) : a.share;
+  const wb = b.share == null ? 1 - wa : b.share;
+  const total = wa + wb || 1;
+  return [0, 1, 2].map((i) => Math.round((a.rgb[i] * wa + b.rgb[i] * wb) / total));
+}
+const disabledFillSpec = declaration('.approve-btn:disabled', 'background');
+const disabledInkSpec = declaration('.approve-btn:disabled', 'color');
+assert(disabledFillSpec && disabledInkSpec,
+  'the disabled approval control must still declare its own fill and ink; without them there is no pair to measure');
+for (const accent of ACCENTS) {
+  const fill = mixSrgb(disabledFillSpec.replace(/\s*!important\s*$/, ''), accent);
+  const ink = mixSrgb(disabledInkSpec.replace(/\s*!important\s*$/, ''), accent);
+  assert(fill && ink,
+    `the disabled approval pair must stay measurable from light tokens; got fill "${disabledFillSpec}" ink "${disabledInkSpec}"`);
+  const ratio = contrast(ink, fill);
+  assert(ratio >= 4.5,
+    `Light canvas / ${accent}: a disabled approval control is rgb(${ink}) on rgb(${fill}) — ${ratio.toFixed(2)}:1. `
+    + 'A disabled control still has to be readable at 4.5:1.');
+}
+/* The cascade half. Every button-level selector in the light white-label group must
+   exclude the disabled state, or it takes rule 6's ink away again. */
+const whiteLabelGroup = (() => {
+  /* Anchored on a member of the group rather than on its declaration: `#ffffff` is a
+     common enough label colour that the first one in the file belongs elsewhere. */
+  const at = baseCss.indexOf(`${LIGHT} .add-btn`);
+  assert(at > 0, 'the light-canvas white-label group must still name the filled controls');
+  const end = baseCss.indexOf('{', at);
+  assert(end > at, 'the white-label group must still be a selector list ending in a declaration block');
+  assert(/^\{color:#ffffff!important\}/.test(baseCss.slice(end)),
+    `the group anchored at ${LIGHT} .add-btn no longer declares the light label ink: ${baseCss.slice(end, end + 60)}`);
+  return baseCss.slice(at, end);
+})();
+const filledControls = whiteLabelGroup.split(',').map((line) => line.trim())
+  .filter((line) => /\.(approve-btn|add-btn|topbar-add|recommended)\b/.test(line));
+assert(filledControls.length >= 3,
+  `the white-label group must still name the filled controls, found ${filledControls.length}`);
+for (const selector of filledControls) {
+  assert(/:not\(:disabled\)/.test(selector) && /:not\(\[aria-disabled="true"\]\)/.test(selector),
+    `${selector} hands a filled control the light label ink without excluding the disabled state. `
+    + 'An id-scoped rule outranks .approve-btn:disabled, so this repaints a disabled control white on its own pale fill.');
+}
+note(`light canvas: the disabled approval pair measures ${ACCENTS.map((accent) => contrast(mixSrgb(disabledInkSpec.replace(/\s*!important\s*$/, ''), accent), mixSrgb(disabledFillSpec.replace(/\s*!important\s*$/, ''), accent)).toFixed(2)).join('/')}:1 across ${ACCENTS.length} accents, and all ${filledControls.length} filled-control selectors exclude the disabled state`);
+
 /* ================================================================================
    2. CB-02 — unsupported H3 aspect ratios
    ================================================================================ */

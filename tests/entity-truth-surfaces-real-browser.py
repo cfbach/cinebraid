@@ -120,7 +120,9 @@ SCAN = {
     "props": [{"name": PARENT_FILE, "url": SVG, "assetId": "asset-closed"},
               {"name": STATE_FILE, "url": SVG, "assetId": "asset-open"}],
 }
-CAPABILITY = {"ready": True, "label": "Mock assistant", "provider": "ollama", "model": "mock", "message": "Ready", "action": ""}
+# `standing` is the authoritative field. The legacy `ready` boolean is kept because
+# the record still carries it, but it is not what decides whether Vision may run.
+CAPABILITY = {"standing": "ready", "ready": True, "label": "Mock assistant", "provider": "ollama", "model": "mock", "message": "Ready", "action": ""}
 
 STORAGE = {
     "cinebraid-focused:%s:entity-task:props:%s" % (SLUG, PROP): "states",

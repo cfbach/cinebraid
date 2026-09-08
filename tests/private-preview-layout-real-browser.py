@@ -186,13 +186,30 @@ def assert_surface_polish(page, label):
         assert not shelf['overlap'], f'{label}: Inspect is sitting on top of the card caption and its counts again'
 
     # ---- Unit 10 --------------------------------------------------------------
+    #
+    # THE FLOOR IS READ HERE, ON THIS ROUTE. `floor` above was measured before Units 7-9
+    # navigated, and #workspace gives the dock its space back through --cb-dock-reserve,
+    # which public/workspace-shell.js re-measures per render. Comparing a control on this
+    # route against the terminal's position on an earlier one scored a settled layout
+    # against a stale one and reported a 2px overlap that neither layout had.
+    #
+    # The wait is the app's own completion signal - `body[data-render-ready="1"]`, set by
+    # route() when it has finished painting - followed by the reserve actually being
+    # written, so the reading is of a settled workspace rather than of a frame in flight.
     page.evaluate("() => { location.hash='#/character/CHAR-COURIER'; window.route && window.route(); }")
-    page.wait_for_timeout(600)
+    page.wait_for_selector('body[data-render-ready="1"]', timeout=20000)
+    page.wait_for_function(
+        """() => { const dock=document.querySelector('#cb-shell-dock'); if(!dock) return true;
+          const reserve=getComputedStyle(document.getElementById('workspace')).paddingBottom;
+          return Math.abs(parseFloat(reserve||'0') - dock.getBoundingClientRect().height) <= 1; }""",
+        timeout=20000)
+    settled_floor=page.evaluate('''() => { const d=document.querySelector('#cb-shell-dock');
+      return d ? Math.round(d.getBoundingClientRect().top) : innerHeight; }''')
     hero=box('.reference-primary-hero .reference-primary-preview')
     action=box('.reference-primary-actions button')
     if hero and action:
-        assert action['b'] <= floor, \
-            f'{label}: the primary reference action ends at {action["b"]}, below the terminal at {floor}'
+        assert action['b'] <= settled_floor, \
+            f'{label}: the primary reference action ends at {action["b"]}, below the terminal at {settled_floor}'
         fit=page.evaluate("() => { const i=document.querySelector('.reference-primary-preview img'); return i?getComputedStyle(i).objectFit:'contain'; }")
         assert fit=='contain', f'{label}: the primary reference image must stay contained, got {fit!r}'
 

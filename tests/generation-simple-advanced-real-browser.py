@@ -538,8 +538,13 @@ try:
         assert view_mode() == "simple", f"J: and open on Simple, got {view_mode()!r}"
         assert page.locator("#fal-entity-output-count").input_value() == "3", \
             "J: pre-set to the three candidates the button promises"
-        assert page.locator("#fal-entity-resolution").count() == 0, \
-            "J: with the expert control behind Advanced like everywhere else"
+        # R8 — SIZE IS PROMOTED INTO SIMPLE FOR THIS DIALOG, AND ONLY THIS ONE.
+        # The reference request carries `reference: true`, which is what promotes the
+        # size control into Simple here; the submission re-derives the control plan from
+        # the same flag, so a size shown in Simple is a size that is actually sent. The
+        # frame and blocking dialogs keep it behind Advanced, which section H covers.
+        assert page.locator("#fal-entity-resolution").count() == 1, \
+            "J: with size promoted into Simple, because a reference run is sized here and sent with it"
 
         # And the submission it does make is gated.
         page.locator("button.approve-btn.large", has_text="START GENERATION").first.click()
