@@ -6960,8 +6960,12 @@ body[data-focused-route="library"] .workspace-tab.on{
    was not already truncating. */
 .focused-entity-shell .clarity-taskbar .focused-task-button{padding:8px 10px!important}
 .focused-entity-shell .clarity-taskbar .focused-task-button small{font-size:10.5px;line-height:1.35}
-.entity-authority-thumb-button{width:calc(var(--img-angle-w) - 18px)}
-.entity-authority-thumb-button .entity-authority-thumb{width:calc(var(--img-angle-w) - 18px)}
+/* The reference-angle well is NOT part of that chrome reduction, and two unscoped
+   overrides here took it to 86px - under the 96px an angle has to be to be
+   judgeable, and under the width the image-review repair gave it. Pose and camera
+   angle have to be distinguishable at a glance; that is the whole job of this
+   control. Removed, so `--img-angle-w` governs again as it does for every other
+   overview well. tests/image-review-scale.js holds the floor. */
 
 /* Flattened supporting chrome: an empty candidate message, an in-use note and
    a facts panel are statements, not workspaces. */
