@@ -103,7 +103,7 @@ function withAuthorityEntity(project = baseProject(), value = "ENTITY.png") {
     name: "Character",
     prefix: "CHAR-01",
     approvedFile: "",
-    candidateFiles: [{ stored: value, decision: "unreviewed" }],
+    candidateFiles: [{ stored: value, decision: "unreviewed", coverageJobType: "single-reference" }],
     continuityStates: [{
       id: "state-default",
       name: "Default",

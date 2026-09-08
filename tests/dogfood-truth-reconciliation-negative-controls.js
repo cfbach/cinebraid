@@ -417,8 +417,8 @@ async function nc11() {
     defect: "the attention verdict ignores parent health, so a child under automatic recovery is a red NEEDS ATTENTION row",
     files: {
       "public/live-activity.js": [[
-        `  return ["failed", "interrupted", "cancelled"].includes(run?.status) && !v670RunnerWentAway(run) && !v670RunRecovering(run);`,
-        `  return ["failed", "interrupted", "cancelled"].includes(run?.status) && !v670RunnerWentAway(run);`,
+        `  if (v670RunnerWentAway(run) || v670RunRecovering(run)) return false;`,
+        `  if (v670RunnerWentAway(run)) return false;`,
       ]],
     },
     probe: async (suite) => {

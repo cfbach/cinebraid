@@ -879,8 +879,8 @@ function commitIsAwaitFreeSection() {
   assert(/if \(ticket\.saveGeneration !== PROJECT_SAVE_GENERATION\)/.test(appSource),
     "the refresh must require the successful-save generation it began in to be unchanged");
   const generationWrites = appSource.match(/PROJECT_SAVE_GENERATION\s*(\+=|=[^=])/g) || [];
-  assert.strictEqual(generationWrites.length, 4,
-    `the save generation must be written by its declaration, by an accepted write, by a rebase and by the one shared helper every external durable advance goes through — and it is written ${generationWrites.length} times`);
+  assert.strictEqual(generationWrites.length, 5,
+    `the save generation must be written by its declaration, by an accepted write, by a rebase, by the one shared helper every external durable advance goes through, and by the adoption of a durable approval outcome — and it is written ${generationWrites.length} times`);
   assert(!/PROJECT_SAVE_GENERATION\s*[<>]/.test(appSource), "and never ordered, only compared for equality");
   assert(!/ticket\.revision\s*[<>!=]==?\s*PROJECT_REVISION|PROJECT_REVISION\s*[<>]/.test(appSource),
     "and the opaque revision string must never be compared for order or used as the freshness token, because a refresh COMMIT legitimately moves it");

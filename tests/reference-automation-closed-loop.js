@@ -490,7 +490,7 @@ async function testRejectedCandidateReviewAccess() {
   assert(/data-candidate-file="MARA-P1-B.png"/.test(card));
 
   /* The two actions are different actions. */
-  assert(/openLBMedia\(/.test(card), "the image click must still open the image viewer");
+  assert(/inspectMediaFile\(/.test(card), "the image click must still open the image viewer");
   assert(/openEntityCandidateReview\('characters','MARA','MARA-P1-B.png'/.test(card), "a rejected candidate must offer its review");
   assert(/VIEW REVIEW · 48 FLAG/.test(card), "the review action must state what is behind it");
   assert(/RESTORE/.test(card), "restore remains available and is not the only way in");

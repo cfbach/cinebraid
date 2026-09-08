@@ -525,7 +525,7 @@ const C19 = () => mustFailAsync("C19 legacy projection renders a rival READY ver
       if (file !== "app.js") return contents;
       return mutateIn(
         String(contents).replace(/\r\n/g, "\n"),
-        '<b>${issues.length ? `${plural(issues.length, "setup item")} to resolve` : "No setup items found"}</b></div><span>${issues.length} ITEM${issues.length === 1 ? "" : "S"}</span>',
+        '<b>${issues.length ? `${plural(issues.length, "setup item")} to resolve` : "No setup items found"}</b></div><span>${plural(issues.length, "item")}</span>',
         '<b>${issues.length ? `${plural(issues.length, "item")} to resolve` : "Ready for production work"}</b></div><span>${issues.length ? "NEEDS ATTENTION" : "READY"}</span>',
         "C19",
       );

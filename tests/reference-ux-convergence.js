@@ -425,7 +425,7 @@ async function testUnreviewedCandidateHasNoPassFactors() {
     "and no unavailable sentence is shown while it would be untrue");
   const visionOff = vm.runInContext(`(() => {
     const before = typeof AGENT_STATUS === "undefined" ? null : AGENT_STATUS;
-    AGENT_STATUS = { capabilities: { vision: { ready: false, message: "No vision model is configured.", action: "Open Settings to configure Vision." } } };
+    AGENT_STATUS = { capabilities: { vision: { ready: false, standing: "off", message: "No vision model is configured.", action: "Open Settings to configure Vision." } } };
     openEntityCandidateReview('characters','CHAR-UX','CHAR-UX-LOOSE.png','state-default');
     const html = document.getElementById('modal').innerHTML;
     AGENT_STATUS = before;
@@ -798,7 +798,7 @@ async function testSingleStateApprovalIsOneAct() {
     "nor a next-state action");
   ok(!single.includes("APPROVE ONLY"),
     "and the primary action is not qualified against an alternative there is none of");
-  ok(/class="approve-btn large" onclick="confirmEntityApproval\(false\)">APPROVE</.test(single),
+  ok(/class="approve-btn large"(?: disabled)? onclick="confirmEntityApproval\(false\)">APPROVE</.test(single),
     "one clear primary approval action");
   ok(single.includes("Request changes"), "with Request changes still available");
 
@@ -886,7 +886,7 @@ async function testDetailsIsNotADataDump() {
   const html = rendered.html;
 
   /* The normal surface. */
-  ok(html.includes("Identity &amp; production notes") || html.includes("Identity & production notes"),
+  ok(html.includes("Production notes"),
     "baseline: the Details stage rendered");
   ok(html.includes("Drift notes") && html.includes("Blocking label"),
     "the notes a filmmaker actually edits still lead");

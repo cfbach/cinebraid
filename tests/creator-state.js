@@ -285,8 +285,12 @@ function checkClassificationIsDelegated(sources = SOURCES) {
   assert.strictEqual(unnamed.reason, "", "an unnamed attention status must carry no reason rather than a made-up one");
 
   /* (b) The attention vocabulary IS public/live-activity.js's list. */
-  const predicate = codeOnly(sources.activity).match(/function\s+v670AttentionRun\s*\(\s*run\s*\)\s*\{\s*return\s*\[([^\]]*)\]/);
-  assert.ok(predicate, "public/live-activity.js must declare v670AttentionRun as a single list membership test");
+  /* The predicate opens on its list and then decides; d25b4ce added a human-gate
+     clause after it, so this reads the list the function opens on rather than
+     requiring the whole body to be that one expression. Check (c) below still holds
+     the list to exactly one copy, which is what makes reading the first one safe. */
+  const predicate = codeOnly(sources.activity).match(/function\s+v670AttentionRun\s*\(\s*run\s*\)\s*\{[^[]*\[([^\]]*)\]/);
+  assert.ok(predicate, "public/live-activity.js must declare v670AttentionRun's attention-status list");
   const predicateList = predicate[1].split(",").map((row) => row.trim().replace(/^["']|["']$/g, "")).filter(Boolean);
   assert.deepStrictEqual([...api.CREATOR_ATTENTION_RUN_STATUSES], predicateList,
     "the projection's attention reason vocabulary has drifted from v670AttentionRun's own list");

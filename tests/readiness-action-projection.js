@@ -1088,7 +1088,7 @@ async function ux1_11_deliveredTaxonomy() {
     "the shipped board taxonomy is unchanged apart from the one decision label this slice owns");
   equal(seen.actionWord, "Mark shot final", "while the filmmaker ACTION keeps the name this slice gave it");
   ok(/shots? delivered/.test(seen.home), "the Production tile counts shots delivered");
-  ok(/NOT YET DELIVERED/.test(seen.home), "and the not-yet-delivered section keeps its heading");
+  ok(seen.home.includes("<span>Not yet delivered</span>"), "and the not-yet-delivered section keeps its heading");
   /* The exact strings the slice wrongly introduced, named one by one rather than
      matched by a pattern — "Mark shot final" is the ACTION and legitimately contains
      the word, so a loose regex would forbid the very thing the slice is allowed to

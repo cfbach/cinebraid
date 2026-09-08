@@ -699,11 +699,11 @@ async function reconciledRunSurfaceChecks() {
 
   assert.deepStrictEqual(Array.from(partition.active).map(String), [],
     "a reconciled run is not machine work — nothing is driving it");
-  assert.deepStrictEqual(Array.from(partition.waiting).map(String), ["run-abandoned"],
-    "a run whose lease lapsed still reads as waiting for the director");
+  assert.deepStrictEqual(Array.from(partition.waiting).map(String), ["run-abandoned", "run-stopped"],
+    "a run whose lease lapsed still reads as waiting for the director, and so does one whose gate cannot be identified");
   assert.deepStrictEqual(Array.from(partition.attention).map(String), ["run-stopped"],
     "and is NOT filed as a previous failure — nothing about it failed");
-  assert.deepStrictEqual(Array.from(partition.unsettled).map(String), ["run-abandoned"],
+  assert.deepStrictEqual(Array.from(partition.unsettled).map(String), ["run-abandoned", "run-stopped"],
     "so the poll gate stays open for it");
   const detail = vm.runInContext(`v670WaitingDetail(AUTOMATION_RUNS[0], null)`, view.context);
   assert(/Resume Run/.test(detail), `the drawer must offer the resume, got ${JSON.stringify(detail)}`);

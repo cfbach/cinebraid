@@ -152,11 +152,22 @@ async function checkApprovalWordingReadsAuthority() {
      or the repair is indistinguishable from deleting the phrase. */
   const canon = await pt1ContinuationOptions(true);
   eq(canon.truth.canon.length, 2, "PT1: the control fixture must genuinely hold two receipt-backed states");
-  const approvedOption = canon.select.match(/<option value="state-opened">([^<]*)<\/option>/);
-  ok(approvedOption && /currently approved/.test(approvedOption[1]),
-    `PT1: a human-approved state may truthfully be called currently approved: ${approvedOption && approvedOption[1]}`);
-  ok(!/historic, not approved/.test(approvedOption[1]),
-    "PT1: and must not also be called historic");
+  /* d25b4ce withholds an already-approved state from the continuation list by
+     construction — "the ring that offered an already-approved parent after the final
+     descendant cannot form" — so the vehicle this control used, an approved state
+     appearing as an option, can no longer exist. Putting one back to satisfy the test
+     would assert a behaviour the product deliberately removed.
+     The control keeps its job through the projection the wording is bound to. The same
+     state Case 1 proved is called "historic, not approved" WITHOUT a receipt is canon
+     WITH one, so the phrase still has a subject and the repair is still
+     distinguishable from having deleted it — and the state is withheld from the list
+     rather than mislabelled inside it. */
+  ok(canon.truth.canon.some((row) => row.stateId === "state-opened"),
+    "PT1: with a receipt behind it the same state is canon, so the phrase still has a subject");
+  ok(!/<option value="state-opened">/.test(canon.select),
+    "PT1: and an already-approved state is withheld from the continuation list, never labelled inside it");
+  ok(!/currently approved/.test(canon.select),
+    "PT1: so this dropdown claims no approval it does not own");
 
   /* CASE 3 — PT1-C1. THE PROJECTION CANNOT BE EVALUATED.
 

@@ -288,7 +288,22 @@ scenario("E-12", () => {
 });
 scenario("H-01", () => {
   const pkg = require("../package.json");
-  assert(/check:authority-browser/.test(pkg.scripts["check:ci"] || ""), "check:ci must execute the O8 real-Chromium suite");
+  /* THE GATE MUST RUN IN CI. Which job runs it is the part that had to move.
+     run-authority-browser-gate.js is documented as "a missing Python/Playwright/
+     Chromium runtime is a gate failure, never a skip" -- correct, and unchanged --
+     but windows-validation, the job that runs check:ci, never provisions that
+     runtime; only browser-validation does. Inside check:ci the gate was therefore
+     red on every hosted runner no matter what the product did, which is a gate
+     that reports nothing rather than one that protects something.
+     So this asks the WORKFLOW, which is what actually decides whether the suite
+     executes, instead of asking the script chain, which only decided where. */
+  assert(pkg.scripts["check:authority-browser"], "the O8 real-Chromium gate must still be a script");
+  const workflow = fs.readFileSync(path.join(ROOT, ".github", "workflows", "windows-ci.yml"), "utf8");
+  const browserJob = workflow.slice(workflow.indexOf("browser-validation:"));
+  assert(browserJob.includes("npm run check:authority-browser"),
+    "the browser-validation job must execute the O8 real-Chromium suite");
+  assert(!/check:authority-browser/.test(pkg.scripts["check:ci"] || ""),
+    "and check:ci must not, because the job that runs it has no browser to fail against");
 });
 
 

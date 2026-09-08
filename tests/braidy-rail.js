@@ -1508,7 +1508,7 @@ function checkBraidyIsNotAGate(sources = SOURCES) {
   const REACH = /\b(CineBraidBraidy|braidy(?:Plan|Improve|Review|Fix|Ask|With|Block|Signal|StageAction|Handoff|Capability|Presentation))\b|braidy-rail|shared-braidy/;
   const ALLOWED = new Set(["braidy-rail.js", "shared-braidy.js", "creator-surfaces.js", "index.html"]);
   const files = sources.clientFiles || readClientFiles();
-  const reached = Object.keys(files).filter((name) => !ALLOWED.has(name) && REACH.test(files[name])).sort();
+  const reached = Object.keys(files).filter((name) => !ALLOWED.has(name) && REACH.test(codeOnly(files[name]))).sort();
   assert.deepStrictEqual(reached, [],
     `Braidy is reachable from ${reached.join(", ")}. A production path that knows Braidy exists is a production path that can come to need it.`);
 

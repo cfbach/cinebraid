@@ -560,7 +560,7 @@ try:
                   {id:'state-default',name:'Default',isDefault:true,approvedFile:''},
                   {id:'state-alt',name:'Alternate',isDefault:false,approvedFile:''},
                 ], coverageSlots:[], expressionSlots:[],
-                candidateFiles:[{stored:'CHAR.png',assetId:'asset-char',decision:'unreviewed'}],
+                candidateFiles:[{stored:'CHAR.png',assetId:'asset-char',decision:'unreviewed',coverageJobType:'single-reference'}],
               });
               dirty();
             }""")

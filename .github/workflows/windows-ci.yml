@@ -133,3 +133,13 @@ jobs:
       # browser assertions - which is the failure this whole job exists to prevent.
       - name: Run the real-browser gate
         run: npm run check:browser-gate
+
+      # The O8 authority write seam's mandatory Chromium gate. It lives HERE and not
+      # in check:ci for one reason: tests/run-authority-browser-gate.js is documented
+      # as "a missing Python/Playwright/Chromium runtime is a gate failure, never a
+      # skip", and windows-validation never provisions that runtime -- only this job
+      # does. In check:ci it was therefore red on every hosted runner regardless of
+      # the product, which is a gate that reports nothing rather than a gate that
+      # protects something. Nothing about the gate itself was weakened to move it.
+      - name: Run the O8 authority write seam browser gate
+        run: npm run check:authority-browser

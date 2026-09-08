@@ -1285,10 +1285,17 @@ function checkSingleOwnership() {
 
   assert.ok(activity.includes("function v670RunRecovering(run) {"),
     "public/live-activity.js must own the recovery predicate");
-  assert.ok(/function v670AttentionRun\(run\) \{\s*\n?\s*return \["failed", "interrupted", "cancelled"\]/.test(activity),
-    "v670AttentionRun must stay a single list-membership test — tests/creator-state.js reads this shape");
-  assert.ok(activity.includes("&& !v670RunRecovering(run);"),
-    "the attention verdict must exclude a run a healthy parent is recovering");
+  /* d25b4ce gave this predicate a human-gate clause, so it is no longer one return
+     statement — and the shape was never the point. The three properties it encoded are
+     asserted directly instead, so the contract survives the next legitimate edit to the
+     function's structure. tests/creator-state.js reads the same list through the same
+     opening, and is updated with this. */
+  assert.ok(/function v670AttentionRun\(run\) \{[^[]*\["failed", "interrupted", "cancelled"\]/.test(activity),
+    "v670AttentionRun must open on the one canonical attention-status list");
+  assert.ok(/v670RunnerWentAway\(run\) \|\| v670RunRecovering\(run\)\) return false;/.test(activity),
+    "the attention verdict must exclude a run whose runner went away and one a healthy parent is recovering");
+  assert.ok(/v670RunParkedAtGate\(run\)/.test(activity),
+    "and a run that stopped at a human gate must not be counted as a fault");
 
   const fal = readLF("public/fal-generation.js");
   assert.ok(fal.includes("if (freshness && freshness.recorded && !freshness.current)"),
