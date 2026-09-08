@@ -308,6 +308,69 @@ async function main() {
     record("KR-6", "the Terminal and its row list are patched, never wholesale replaced",
       r.shellSurvived && r.rowsBoxSurvived, r);
 
+    /* ---- KR-7: an ordinary content change keeps the group AND its rows -----
+     *
+     * THE DEFECT THIS PINS. A group's DOM key used to be a hash of its failure
+     * SIGNATURE, and the signature reads the error text -- so rewriting a run's error,
+     * which is an ordinary status update, produced a key nobody recognised. The keyed
+     * reconciler then did as it was told: it removed a group that no longer existed and
+     * inserted a new one, rebuilding every member row inside it and taking the DISMISS
+     * the filmmaker was reaching for with it. Membership still comes from the signature;
+     * identity now comes from the lead run's own durable key, which a rewording cannot
+     * move.
+     *
+     * All four halves of the claim are measured here: the row survives, the group around
+     * it survives, its DISMISS survives and still names its own run, an UNRELATED group
+     * is not disturbed, and the new text really did land -- because a repaint that
+     * changed nothing would satisfy the first four for the wrong reason. */
+    r = await session.eval(`(() => {
+      const K = window.__kr;
+      const reworded = (id, error) => K.failed(id, { steps: { s: {
+        key: "s", kind: "generation", status: "failed", label: "Correct SCENE-01",
+        error, completedAt: "2026-08-26T10:05:00Z", updatedAt: "2026-08-26T10:05:00Z" } } });
+      const other = K.failed("m2", { targetId: "SCENE-77" });
+      K.set([reworded("m1", "Provider returned 502."), other]); K.paint();
+      const row = K.unit("run:m1");
+      const group = row && row.closest("details.cb-terminal-group");
+      K.stamp(row, "m1row"); K.stamp(group, "m1group");
+      K.stamp(K.dismissButton("m1"), "m1dismiss");
+      const otherRow = K.unit("run:m2");
+      K.stamp(otherRow && otherRow.closest("details.cb-terminal-group") || otherRow, "m2unit");
+      K.set([reworded("m1", "Provider returned 502. Retry scheduled."), other]); K.paint();
+      const keptDismiss = K.findStamp("m1dismiss");
+      const liveRow = K.unit("run:m1");
+      return {
+        rowKept: !!K.findStamp("m1row"),
+        groupKept: !!K.findStamp("m1group"),
+        dismissKept: !!keptDismiss,
+        dismissStillOwnRun: !!keptDismiss
+          && /dismissAutomationActivityRun\\('m1'\\)/.test(keptDismiss.getAttribute("onclick") || ""),
+        dismissStillLive: !!keptDismiss && keptDismiss.isConnected,
+        unrelatedKept: !!K.findStamp("m2unit"),
+        rewordLanded: !!liveRow && /Retry scheduled/.test(liveRow.textContent || ""),
+      };
+    })()`);
+    record("KR-7", "rewording a run's error keeps its row, its group and its DISMISS",
+      r.rowKept && r.groupKept && r.dismissKept && r.dismissStillOwnRun && r.dismissStillLive
+      && r.unrelatedKept && r.rewordLanded, r);
+
+    /* ---- KR-8: the unkeyed fallback is still reachable ----------------------
+     * The keyed path must keep DECLINING a container it cannot key, or the positional
+     * walk every other surface relies on would be unreachable and this repair would have
+     * quietly narrowed the reconciler instead of correcting it. */
+    r = await session.eval(`(() => {
+      const build = (html) => { const box = document.createElement("div"); box.innerHTML = html; return box; };
+      const keyed = '<article data-activity-key="k1"></article><article data-activity-key="k2"></article>';
+      const mixed = '<article data-activity-key="k1"></article><span></span>';
+      return {
+        declinesMixed: v670PatchKeyedChildren(build(mixed), build(mixed)) === false,
+        declinesEmpty: v670PatchKeyedChildren(build(""), build("")) === false,
+        acceptsKeyed: v670PatchKeyedChildren(build(keyed), build(keyed)) === true,
+      };
+    })()`);
+    record("KR-8", "a container it cannot key is still declined, so the positional walk stays reachable",
+      r.declinesMixed && r.declinesEmpty && r.acceptsKeyed, r);
+
     /* =====================================================================
        NC-KR1 — THE KEYED LAYER IS TURNED OFF, IN MEMORY.
        Without it the positional walk shifts every node down one on an insertion, and an

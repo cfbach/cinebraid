@@ -47,8 +47,19 @@ function interpreters() {
 
 const script = process.argv[2];
 if (!script) {
-  console.error("Usage: node tests/run-python-check.js <script.py>");
+  console.error("Usage: node tests/run-python-check.js <script.py> [NAME=value ...]");
   process.exit(2);
+}
+
+/* EXTRA `NAME=value` ARGUMENTS BECOME THE SUITE'S ENVIRONMENT.
+   An npm script cannot set an inline variable portably - `FOO=bar cmd` is a shell-ism
+   that Windows does not honour - and a file that carries two contracts needs to be told
+   which one to run. Passing it as an argument keeps that decision in package.json, where
+   the gate can read it, rather than in a wrapper nobody else can see. */
+const extraEnv = {};
+for (const entry of process.argv.slice(3)) {
+  const split = entry.indexOf("=");
+  if (split > 0) extraEnv[entry.slice(0, split)] = entry.slice(split + 1);
 }
 
 for (const [command, prefix] of interpreters()) {
@@ -56,7 +67,7 @@ for (const [command, prefix] of interpreters()) {
   if (probe.error || probe.status !== 0) continue;
   const run = spawnSync(command, [...prefix, path.resolve(script)], {
     cwd: ROOT,
-    env: { ...process.env, PYTHONDONTWRITEBYTECODE: "1" },
+    env: { ...process.env, PYTHONDONTWRITEBYTECODE: "1", ...extraEnv },
     encoding: "utf8",
     stdio: "inherit",
   });

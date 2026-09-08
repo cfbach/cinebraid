@@ -6,7 +6,7 @@ No paid requests are sent: prompt and FAL endpoints are intercepted.
 import copy, json, os, pathlib, re, shutil, socket, subprocess, sys, time, urllib.error, urllib.request
 
 ROOT = pathlib.Path(__file__).resolve().parents[1]
-from browser_runtime import require_browser, launch_chromium
+from browser_runtime import require_browser, launch_chromium, project_response, project_save
 LABEL = "UI state stability browser check"
 sync_playwright = require_browser(LABEL)
 
@@ -56,9 +56,14 @@ try:
             request = route.request
             suffix = request.url[len(base):] if request.url.startswith(base) else "/"
             if suffix == "/api/project" and request.method == "GET":
-                route.fulfill(status=200, headers={"content-type": "application/json", "x-cinebraid-project-slug": "ui-state-audit"}, body=json.dumps(project)); return
-            if suffix == "/api/project" and request.method in {"PUT", "POST"}:
-                route.fulfill(status=200, content_type="application/json", body=json.dumps({"ok": True})); return
+                body, headers = project_response(project, "ui-state-audit")
+                route.fulfill(status=200, headers=headers, body=body); return
+            # THE SAVE THE PAGE REALLY MAKES is slug-scoped and carries If-Match;
+            # /api/project is never written to. Answered through the shared seam stub.
+            if suffix in ("/api/projects/ui-state-audit/project",
+                          "/api/projects/ui-state-audit/canon-transition"):
+                status, body, headers = project_save(project, "ui-state-audit", request)
+                route.fulfill(status=status, headers=headers, body=body); return
             if suffix == "/api/scan" and request.method == "GET":
                 route.fulfill(status=200, content_type="application/json", body=json.dumps(scan)); return
             if suffix == "/api/config" and request.method == "GET":
@@ -115,6 +120,17 @@ try:
             outer = page.locator("details.reference-assisted-tools")
             inner = page.locator("section.reference-create-section")
             outer.evaluate("e=>e.open=true")
+            # AN ENTITY THAT ALREADY HAS AN APPROVED PRIMARY IS IN REPLACEMENT MODE.
+            # creation-studio.js wraps the section's whole body -- the two creation
+            # paths and the manual toggle with them -- in
+            # <details class="reference-create-replace">, which ships closed because
+            # replacing an approved reference is not the default intent. The toggle is
+            # then present and not visible, and clicking it times out. R1 lifted the
+            # section to the top level but did not retire this disclosure, so it is
+            # opened here rather than assumed away.
+            replace = page.locator("details.reference-create-replace")
+            if replace.count():
+                replace.first.evaluate("e=>e.open=true")
             if not manual_open():
                 page.locator(".reference-manual-toggle").first.click()
             page.wait_for_timeout(80)
@@ -156,12 +172,15 @@ try:
         open_hash("#/prop/PROP-PARCEL")
         outer, inner = open_reference_builder()
         inner.evaluate("e=>e.scrollIntoView({block:'start'})"); page.wait_for_timeout(80)
-        top = stable_click(inner.get_by_role("button", name=re.compile("Build Prompt", re.I)), "Build prompt")
+        # THE CREATE-REFERENCE CONTROLS WERE RENAMED, NOT REMOVED: the compile button
+        # reads "Prepare prompt" (or "Prepare prompt again" once one exists) and the
+        # assisted one is "Refine with Braidy". Same handlers, same order, same claim.
+        top = stable_click(inner.get_by_role("button", name=re.compile(r"Prepare prompt", re.I)), "Prepare prompt")
         page.wait_for_timeout(450)
         assert_reference_stable("Build prompt", top)
-        top = stable_click(page.locator("section.reference-create-section").get_by_role("button", name="Improve"), "Improve")
+        top = stable_click(page.locator("section.reference-create-section").get_by_role("button", name=re.compile(r"Refine with Braidy", re.I)), "Refine with Braidy")
         page.wait_for_timeout(450)
-        assert_reference_stable("Improve", top)
+        assert_reference_stable("Refine with Braidy", top)
         top = stable_click(page.locator("section.reference-create-section").get_by_role("button", name="GENERATE"), "Generate")
         page.wait_for_selector("text=START GENERATION")
         page.get_by_role("button", name="START GENERATION").click(); page.wait_for_timeout(500)

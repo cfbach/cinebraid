@@ -356,11 +356,40 @@ async function checkNoEmbeddedTimelines() {
 
   assert.ok(covered >= 6,
     `only ${covered} of ${PANEL_CALLS.length} automation surfaces could be exercised; the six named call sites must all be covered`);
-  /* Not vacuous: at least one panel really did render a run, so "no timeline" is a
-     statement about a panel that had something to show. */
+
+  /* NOT VACUOUS -- AND THE RUN HAS TO BE IN THE STATE THAT SHOWS THE COMPACT LINE.
+     A1's W1 rule: while a run is working or waiting, the prominent active surface
+     leads and the one-line compact status would only repeat it; the compact line is
+     for a run that is DONE. Every run above is `status: "running"`, so this guard was
+     asking a panel to render a line the product deliberately withholds from an active
+     run, and could never be satisfied. The panels are swept a second time with the
+     same runs completed, which is the state the compact status exists for -- so the
+     "no embedded timeline" claim above is now made about a panel with something to
+     show in BOTH run states. */
+  const SETTLED_RUNS = PANEL_RUNS.map((row) => ({
+    ...row, status: "completed", stage: "Complete", current: null,
+    summary: "The run finished.", completedAt: "2026-08-17T10:05:00Z",
+  }));
+  for (const [label, call] of PANEL_CALLS) {
+    const markup = vm.runInContext(`
+      (() => {
+        AUTOMATION_RUNS = ${JSON.stringify(SETTLED_RUNS)};
+        for (const row of AUTOMATION_RUNS) {
+          if (row.type === "entity-chain") row.targetId = "characters:" + ((P.characters[0] || {}).id || "KAI");
+          if (row.type === "scene-chain") row.targetId = ((P.scenes[0] || {}).id || "SC-01");
+        }
+        try { return String(${call} || ""); } catch (error) { return "THREW:" + error.message; }
+      })()
+    `, page.context);
+    if (markup.startsWith("THREW:")) continue;
+    assert.ok(!markup.includes("automation-live-activity") && !markup.includes("LIVE AUTOMATION ACTIVITY"),
+      `${label} embeds the timeline once its run is complete`);
+    if (markup.includes("automation-compact-status")) sawCompact += 1;
+  }
+
   assert.ok(sawCompact >= 1,
-    "no exercised panel rendered a compact run status, so the timeline check proved nothing");
-  note(`4. ${covered} automation surfaces render no embedded timeline (${sawCompact} of them showing a live run through the compact status)`);
+    "no exercised panel rendered a compact run status in either run state, so the timeline check proved nothing");
+  note(`4. ${covered} automation surfaces render no embedded timeline in either run state (${sawCompact} showing a settled run through the compact status)`);
 }
 
 /* ===========================================================================

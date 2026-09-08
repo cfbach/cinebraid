@@ -6,7 +6,7 @@ ROOT = pathlib.Path(__file__).resolve().parents[1]
 SCREENSHOT_DIR = pathlib.Path(os.environ["CINEBRAID_MANUAL_SCREENSHOT_DIR"]) if os.environ.get("CINEBRAID_MANUAL_SCREENSHOT_DIR") else None
 if SCREENSHOT_DIR:
     SCREENSHOT_DIR.mkdir(parents=True, exist_ok=True)
-from browser_runtime import require_browser, launch_chromium
+from browser_runtime import require_browser, launch_chromium, project_response, project_save
 LABEL = "Manual-first real browser audit"
 sync_playwright = require_browser(LABEL)
 
@@ -75,14 +75,15 @@ try:
             suffix = req0.url[len(base):] if req0.url.startswith(base) else "/"
             if suffix == "/api/project":
                 if req0.method == "GET":
-                    route.fulfill(status=200, headers={"content-type":"application/json","x-cinebraid-project-slug":"manual-audit"}, body=json.dumps(project)); return
-                if req0.method in {"PUT","POST"}:
-                    try:
-                        data = json.loads(req0.post_data or "{}")
-                        if isinstance(data, dict):
-                            project.clear(); project.update(data)
-                    except Exception: pass
-                    route.fulfill(status=200, content_type="application/json", body=json.dumps({"ok":True})); return
+                    body, headers = project_response(project, "manual-audit")
+                    route.fulfill(status=200, headers=headers, body=body); return
+            # THE SAVE THE PAGE REALLY MAKES. public/app.js writes to the slug-scoped
+            # route with If-Match, never to /api/project, so those are answered here
+            # through the shared seam stub rather than forwarded to a server that has
+            # never heard of this fixture.
+            if suffix in ("/api/projects/manual-audit/project", "/api/projects/manual-audit/canon-transition"):
+                status, body, headers = project_save(project, "manual-audit", req0)
+                route.fulfill(status=status, headers=headers, body=body); return
             if suffix == "/api/scan":
                 route.fulfill(status=200, content_type="application/json", body=json.dumps(scan)); return
             if suffix == "/api/agents/status":
@@ -197,9 +198,14 @@ try:
         page.wait_for_timeout(150)
         assert page.get_by_text("Import, choose, and approve images").count() == 1
         drop = page.locator(".guided-frame-dropzone").first
-        prompt = page.locator("details.frame-assisted-tools").first
-        assert drop.count() and prompt.count()
-        assert drop.evaluate("a => !!(a.compareDocumentPosition(document.querySelector('details.frame-assisted-tools')) & Node.DOCUMENT_POSITION_FOLLOWING)"), "manual candidate intake must precede prompt tools"
+        # A FRAME'S ASSISTED TOOLS ARE `details.frame-generation` NOW -- "GENERATE THIS
+        # FRAME · Prompt, where it runs, and what comes back". The claim is unchanged
+        # and so is the product: intake still leads, and under manual-first emphasis the
+        # generation fold still ships closed. Only the retired class name moved.
+        prompt = page.locator("details.frame-generation").first
+        assert drop.count() and prompt.count(), \
+            "the Frames workspace must offer manual intake and the optional generation fold"
+        assert drop.evaluate("a => !!(a.compareDocumentPosition(document.querySelector('details.frame-generation')) & Node.DOCUMENT_POSITION_FOLLOWING)"), "manual candidate intake must precede prompt tools"
         assert not prompt.evaluate("node => node.open"), "frame prompt tools must stay collapsed"
         automation = page.locator("details.shot-stage-automation")
         assert automation.count() and not automation.first.evaluate("node => node.open"), "automation must remain optional and collapsed"

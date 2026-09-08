@@ -376,6 +376,52 @@ try:
             return page.evaluate(
                 "id => (typeof AUTOMATION_RUNS !== 'undefined' ? AUTOMATION_RUNS : []).find(run => run.targetId === `characters:${id}`)", entity_id)
 
+        def progression_on_reports(entity_id, label):
+            """The progression is read WHERE THE PRODUCT MOUNTS IT.
+
+            This used to query `#main` on the reference workspace. Commit 28ee913
+            retired that surface's run report and stated pass progression "moves to
+            Reports"; Reports never picked it up, so the renderer existed and was
+            reachable from no screen at all. This pass completed the move, and this
+            helper is the browser half of it.
+
+            It reads through the shipped Reports route -- the same
+            /api/automation/runs/:id/report the view loads -- so this suite and its
+            Node twin now describe ONE surface. The twin asserts through
+            reportsDetailMarkup() for the same reason: calling the renderer by name
+            is exactly how an unmounted panel stayed green.
+            """
+            run = run_for(entity_id)
+            assert run and run.get("id"), f"{label}: no automation run was recorded for {entity_id}"
+            # ROUTED, NOT RELOADED. page.goto() restarts the app, and every section
+            # after this one reads the live run the workspace is holding -- the gate's
+            # candidate list among them. Moving through the shipped router keeps this a
+            # detour rather than a reset, which is also how the sibling suites change
+            # route mid-run.
+            page.evaluate("hash => { location.hash = hash; }", f"#/reports/{run['id']}")
+            page.evaluate("() => route()")
+            page.wait_for_selector(".reports-detail", timeout=20000)
+            panel = page.locator(".reports-pass-progression .automation-pass-progression")
+            assert panel.count() == 1, \
+                f"{label}: Reports does not mount the pass progression for run {run['id']}"
+            # The outer section ships open, and every pass keeps its own nested
+            # disclosures -- the prompt delta, the preserve/correct plan, the pass
+            # prompt. inner_text() returns nothing from a closed <details>, so they
+            # are opened here for the same reason the retired reading opened them on
+            # the workspace. Setting `open` is deterministic; it is not a sleep.
+            page.locator(".reports-pass-progression").first.evaluate(
+                "node => { node.open = true; node.querySelectorAll('details').forEach(row => { row.open = true; }); }")
+            text = panel.first.inner_text()
+            # PUT THE SUITE BACK WHERE IT WAS, through the same router. Every section
+            # after this one asserts against the reference workspace -- the human gate,
+            # the candidate grid, P itself -- and the disclosures are reopened because
+            # a re-render restores their default closed state.
+            page.evaluate("hash => { location.hash = hash; }", f"#/character/{entity_id}")
+            page.evaluate("() => route()")
+            page.wait_for_selector("#main .entity-candidate-section", timeout=20000)
+            page.evaluate("() => document.querySelectorAll('#main details').forEach(node => { node.open = true; })")
+            return text
+
         # ---- A. the reference workspace loads ---------------------------
         open_reference_workspace("MARA")
         assert not page_errors, f"A: the reference workspace raised uncaught errors: {page_errors}"
@@ -401,12 +447,8 @@ try:
         assert "PRESERVE" in pass_two_prompt and "CORRECT" in pass_two_prompt, \
             "D: the pass-2 prompt does not separate what to keep from what to fix"
 
-        # ---- E. the progression is on screen ----------------------------
-        page.evaluate("() => document.querySelectorAll('#main details').forEach(node => { node.open = true; })")
-        page.wait_for_timeout(400)
-        progression = page.locator(".automation-pass-progression")
-        assert progression.count() == 1, "E: the pass progression panel is not rendered"
-        progression_text = progression.first.inner_text()
+        # ---- E. the progression is on screen, in Reports -----------------
+        progression_text = progression_on_reports("MARA", "E")
         for fragment in ("PASS 1 OF 3", "PASS 2 OF 3", "MARA-P1-A.png", "62", "Preserve", "Correct",
                          "What changed from pass 1"):
             assert fragment in progression_text, f"E: the progression panel omits {fragment!r}"
@@ -422,7 +464,24 @@ try:
         assert approved == "", f"F: automation approved {approved!r} on its own; approval is a human decision"
         gate = page.locator(".automation-human-review")
         assert gate.count() == 1, "F: no human review gate is shown"
-        assert "MARA-P2-A.png" in gate.first.inner_text(), "F: the passing candidate is not offered for approval"
+        # THE GATE SUMMARISES AND HANDS OFF; IT DOES NOT RECITE FILENAMES.
+        #
+        # This assertion was unreachable while E failed, so it never saw the returned-
+        # results handoff the accepted reference-creation slice shipped: the gate states
+        # the count and the suggested score, and its primary control reveals the exact
+        # passing candidate in the grid below. The file is therefore in the control that
+        # offers it, not in the gate's prose -- so that is where the claim is read, plus
+        # the card it hands off to.
+        page.evaluate("() => document.querySelectorAll('#main details').forEach(node => { node.open = true; })")
+        gate_summary = gate.first.inner_text()
+        assert "3 candidates returned" in gate_summary and "86/100 suggested" in gate_summary, \
+            f"F: the gate does not state what came back or how it scored: {gate_summary[:200]!r}"
+        offered = gate.locator("button.automation-review-open")
+        assert offered.count() == 1, "F: the gate offers no way into the returned candidates"
+        assert "MARA-P2-A.png" in (offered.first.get_attribute("onclick") or ""), \
+            "F: the gate's review control does not hand off to the passing candidate"
+        assert page.locator('.entity-candidate-card[data-candidate-file="MARA-P2-A.png"]').count() == 1, \
+            "F: the passing candidate is not offered for approval in the grid the gate hands off to"
 
         # ---- G. a rejected candidate keeps a way into its review --------
         # AMENDED BY BATCH 2 SLICE 3: there is no `Review` peer stage any more. The
@@ -475,12 +534,11 @@ try:
         assert exhaustion, "I: exhaustion must be recorded as its own outcome"
         assert exhaustion["passes"] == 3 and exhaustion["candidates"] == 9
 
-        page.evaluate("() => document.querySelectorAll('#main details').forEach(node => { node.open = true; })")
-        page.wait_for_timeout(400)
-        panel = page.locator(".automation-pass-progression").first.inner_text()
+        panel = progression_on_reports("NELL", "I")
         assert "No candidate passed after 3 passes / 9 candidates" in panel, \
             f"I: exhaustion is not stated on screen: {panel[:300]!r}"
         assert "Identity & design" in panel, "I: the recurring reason is not stated"
+        page.evaluate("() => document.querySelectorAll('#main details').forEach(node => { node.open = true; })")
         gate_text = page.locator(".automation-human-review").first.inner_text()
         assert "IMPROVE PROMPT" not in gate_text, "I: an exhausted run must not offer another pass"
         assert "No further pass is authorized in this run" in gate_text, \

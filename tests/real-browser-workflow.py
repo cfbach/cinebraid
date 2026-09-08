@@ -7,7 +7,7 @@ SCREENSHOT_DIR = pathlib.Path(os.environ["CINEBRAID_SCREENSHOT_DIR"]) if os.envi
 if SCREENSHOT_DIR: SCREENSHOT_DIR.mkdir(parents=True, exist_ok=True)
 def checkpoint(label):
     print(f"[browser] {label}", flush=True)
-from browser_runtime import require_browser, launch_chromium
+from browser_runtime import require_browser, launch_chromium, project_response, project_save
 LABEL = "Real browser workflow"
 sync_playwright = require_browser(LABEL)
 
@@ -98,13 +98,19 @@ try:
             suffix = request.url[len(base):] if request.url.startswith(base) else "/"
             if audit_mode["enabled"]:
                 if suffix == "/api/project" and request.method == "GET":
-                    route.fulfill(status=200, headers={"content-type": "application/json", "x-cinebraid-project-slug": "audit-fixture"}, body=json.dumps(audit_project))
+                    body, headers = project_response(audit_project, "audit-fixture")
+                    route.fulfill(status=200, headers=headers, body=body)
                     return
                 if suffix == "/api/scan" and request.method == "GET":
                     route.fulfill(status=200, content_type="application/json", body=json.dumps(audit_scan))
                     return
-                if suffix == "/api/project" and request.method in {"PUT", "POST"}:
-                    route.fulfill(status=200, content_type="application/json", body=json.dumps({"ok": True}))
+                # THE SAVE THE PAGE REALLY MAKES is slug-scoped and carries If-Match;
+                # /api/project is never written to. Answered through the shared seam
+                # stub so an accepted write commits and publishes its new revision.
+                if suffix in ("/api/projects/audit-fixture/project",
+                              "/api/projects/audit-fixture/canon-transition"):
+                    status, body, headers = project_save(audit_project, "audit-fixture", request)
+                    route.fulfill(status=status, headers=headers, body=body)
                     return
                 if suffix == "/api/agents/status":
                     # `standing` is the authority every browser consumer reads; `ready` is
@@ -204,13 +210,23 @@ try:
         checkpoint("base routes complete")
         audit_mode["enabled"] = True
         ready_capability = {"standing": "ready", "ready": True, "label": "Ready", "provider": "ollama", "model": "fixture-model", "message": "Ready", "action": ""}
+        # OPENED THROUGH THE SHIPPED LIFECYCLE, NOT ASSIGNED OVER.
+        #
+        # This used to install the fixture by writing P, SCAN and ACTIVE_PROJECT_SLUG
+        # directly, which skips the one step that teaches the page WHICH DOCUMENT it is
+        # showing: runProjectReplacement() reads /api/project and commits the slug and
+        # revision the server published. Without that PROJECT_REVISION stays empty, and
+        # the first edit this suite makes is refused by the Authority Write Seam behind a
+        # modal that then intercepts every later click. The audit routes are already
+        # stubbed above, so the shipped open reads exactly this fixture -- and the seam
+        # is satisfied by the precondition it is entitled to, not bypassed.
         page.evaluate("""async payload => {
           localStorage.clear(); sessionStorage.clear();
-          P = payload.project; SCAN = payload.scan; ACTIVE_PROJECT_SLUG = 'audit-fixture';
           AGENT_STATUS = {enabled:true,manualMode:false,active:0,queued:0,maxConcurrent:2,capabilities:{text:payload.ready,verifier:payload.ready,vision:payload.ready,embedding:payload.ready,technical:payload.ready},agents:[],runs:[],index:{ready:true,stale:false}};
+          await runProjectReplacement();
           location.hash = '#/character/CHAR-AUDIT';
           await route();
-        }""", {"project": audit_project, "scan": audit_scan, "ready": ready_capability})
+        }""", {"ready": ready_capability})
         page.wait_for_timeout(250)
         page.wait_for_selector(".bounded-entity-page", timeout=5000)
         checkpoint("audit character loaded")
@@ -230,7 +246,17 @@ try:
         assert page.locator(".entity-batch-review-actions button", has_text="REVIEW ALL VISIBLE").count(), "Review All Visible is missing from optional AI tools"
         front_card = page.locator('.entity-candidate-card[data-candidate-file="CHAR-AUDIT-FRONT-A.png"]')
         assert front_card.get_by_text("ASSIGN TO FRONT", exact=True).count(), "manual-first coverage candidate did not expose direct human assignment"
-        assert front_card.get_by_text("OPTIONAL AI CHECK", exact=True).count(), "vision-capable candidate did not retain optional AI evidence"
+        # THE ROUTE, NOT THE LABEL. entities.js gives an APPROVED candidate the
+        # "OPTIONAL AI CHECK" chip; an unreviewed one -- which this is, its actions
+        # being REVIEW / ASSIGN TO FRONT / REJECT -- reaches the very same
+        # openEntityCandidateReview() through REVIEW. The claim is that a
+        # vision-capable candidate keeps a way into optional AI evidence, so it is
+        # read off the control that offers it rather than off the approved card's word.
+        review_route = front_card.locator("button.candidate-review-action, button.optional-ai-action")
+        assert review_route.count() >= 1, \
+            "vision-capable candidate did not retain optional AI evidence"
+        assert "openEntityCandidateReview" in (review_route.first.get_attribute("onclick") or ""), \
+            "the candidate's review control does not open the AI review surface"
         page.locator(".entity-batch-review-actions button", has_text="REVIEW ALL VISIBLE").click()
         page.wait_for_function("() => { const e=(P.characters||[]).find(x=>x.id==='CHAR-AUDIT'); return e?.candidateReviewBatches?.at(-1)?.status === 'partial'; }", timeout=15000)
         optional_batch = page.locator("details.manual-optional-batch-review")
@@ -288,7 +314,11 @@ try:
         page.locator("#import-reference-target").select_option("coverage:profile")
         page.get_by_text("MAP FOR OPTIONAL AI CHECK", exact=True).click()
         page.wait_for_selector(".entity-candidate-review-modal")
-        page.get_by_text("RUN AI REVIEW", exact=True).click()
+        # THE CONTROL IS BRAIDY'S NOW. `RUN AI REVIEW` was retired when the review
+        # surface started naming who is being asked and stating it above the empty
+        # result; tests/reference-ux-convergence.js already asserts the current words,
+        # so this reads the same control it does rather than a second vocabulary.
+        page.locator("button", has_text=re.compile(r"^Review with Braidy", re.I)).first.click()
         page.wait_for_function("() => P.characters.find(x=>x.id==='CHAR-AUDIT').coverageSlots.find(x=>x.id==='profile').selectedFile === 'CHAR-AUDIT-IMPORTED-PROFILE.png'", timeout=10000)
         # BATCH 1C: a coverage slot is a supporting reference, so committing one
         # records a SELECTION. The old expectation, "approved-coverage", asserted

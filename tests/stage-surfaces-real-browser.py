@@ -224,6 +224,14 @@ GEOMETRY = """
     topbarBox: box(topbar),
     railShown: shown(rail),
     railWidth: shown(rail) ? Math.round(rail.getBoundingClientRect().width) : 0,
+    /* THE DOCKED TRACK, which is not the same question as the element's width.
+       Below the dock threshold shared-workspace-shell.js's railWidthForRegion()
+       returns 0, #workspace loses data-rail-width and the rail opens OVER the
+       workspace at its full width instead. Measuring the box therefore reports a
+       340px rail at every narrow width, when what the responsive rule promises is
+       that the rail stops taking a TRACK. measureRail() publishes that one answer
+       here, and its absence is exactly "the rail yielded". */
+    railDockedWidth: Number((document.getElementById('workspace') || {}).dataset?.railWidth || 0),
     railBox: shown(rail) ? box(rail) : null,
     uiScale: getComputedStyle(app).getPropertyValue('--ui-scale').trim(),
     scrollY: Math.round(window.scrollY),
@@ -475,11 +483,25 @@ try:
             f"10. Continue left the workspace on {moved['selected']!r}"
         assert page.evaluate(TRUTH) == truth_before, "20. advancing a stage must change no production truth"
         # And the AVAILABLE primary reaches the shipped cross-panel handoff.
+        #
+        # THE STAGE IS CHOSEN FROM THE DECLARATION, NOT NAMED IN ADVANCE. This asked
+        # `motion` of SAMPLE-01, and SAMPLE-01 declares deliveryIntent "still" -- so
+        # deliveryRequiresMotion() is false, the shot is owed no motion unit, and
+        # motionState() correctly reports the stage BLOCKED. invoke() re-derives
+        # availability at click time and refused, exactly as section 9 requires it to.
+        # The claim here is that an AVAILABLE primary dispatches, so the stage is taken
+        # from what this shot actually declares available rather than from an assumption
+        # that a still-delivery shot is motion-ready.
         open_shot(APPROVED_SHOT)
-        select_stage("motion")
+        available = [row for row in page.evaluate(SURFACE)["declared"]
+                     if row["availability"] == "available"
+                     and page.evaluate("id => !!window.stagePrimaryPanel(id)", row["id"])]
+        assert available, "10. fixture check: this shot must have at least one available stage with a primary"
+        primary_stage = available[0]["id"]
+        select_stage(primary_stage)
         assert page.evaluate("() => window.CineBraidStageSurfaces.invoke('open-stage-work')") is True, \
-            "10. an available primary must dispatch"
-        page.wait_for_selector('[data-guided-panel="motion"]', timeout=20000)
+            f"10. an available primary must dispatch ({primary_stage})"
+        page.wait_for_selector(f'[data-guided-panel="{primary_stage}"]', timeout=20000)
         findings.append("10. Continue navigates through the shipped stage-selection path and the primary reaches "
                         "the shipped openGuidedPanel handoff; the shot's approvals, frames, clips and delivery "
                         "intent are byte-identical afterwards")
@@ -523,9 +545,9 @@ try:
                     reach.append(f"{theme}/{name} {width}px: {g['stagesVisible']}/{g['stageCount']} stages reachable")
                 assert g["currentInView"] is not False, \
                     f"16. {theme}/{name} {width}px: the current stage is scrolled out of the strip"
-                assert g["railWidth"] == expected_rail, \
-                    f"O3 regression: {theme}/{name} {width}px expected a {expected_rail}px rail, got {g['railWidth']}"
-                if g["railShown"]:
+                assert g["railDockedWidth"] == expected_rail, \
+                    f"O3 regression: {theme}/{name} {width}px expected a {expected_rail}px docked rail, got {g['railDockedWidth']}"
+                if g["railDockedWidth"]:
                     assert g["mainWidth"] >= CENTRE_FLOOR, \
                         f"O3 regression: {theme}/{name} {width}px left the centre at {g['mainWidth']}px"
                 assert not g["barOverlapsDock"], f"13. {theme}/{name} {width}px: the bar overlapped the Terminal"

@@ -397,6 +397,29 @@ async function testCompleteExhaustion() {
   assert(/PASS 1 OF 3/.test(markup) && /PASS 3 OF 3/.test(markup), "every pass must remain inspectable");
   assert(/What changed from pass 1/.test(markup), "the prompt delta must be readable");
   assert(/Preserve — already correct/.test(markup) && /Correct — recurring reasons first/.test(markup));
+
+  /* AND IT IS MOUNTED, not merely renderable.
+     Calling the renderer by name is exactly how this suite kept passing while the
+     panel was reachable from no screen in the product: 28ee913 retired the creative
+     surface's run report and said pass progression moves to Reports, and Reports
+     never picked it up. Asserting through reportsDetailMarkup() is what makes this
+     test able to see that again — the same report payload the Reports route builds
+     from /api/automation/runs/:id/report, whose `run` is the whole run. */
+  const mounted = vm.runInContext(
+    `reportsDetailMarkup({ run: v626Runs().find((row) => row.id === ${JSON.stringify(runId)}) })`,
+    world.context,
+  );
+  assert(/class="reports-detail-section reports-pass-progression"/.test(mounted),
+    "Reports must MOUNT the pass progression, not merely be able to render it");
+  assert(/PASS 1 OF 3/.test(mounted) && /PASS 3 OF 3/.test(mounted),
+    "the mounted progression must carry every pass");
+  assert(/No candidate passed after 3 passes \/ 9 candidates/.test(mounted),
+    "the mounted progression must carry the exhaustion state");
+
+  /* A run with no passes gains no empty section — the move must not add furniture
+     to every shot-chain report. */
+  const bare = vm.runInContext(`reportsDetailMarkup({ run: { id: "none", steps: {}, result: {} } })`, world.context);
+  assert(!/reports-pass-progression/.test(bare), "a run with no passes must not mount an empty progression section");
   return { world, runId };
 }
 

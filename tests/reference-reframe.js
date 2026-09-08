@@ -861,8 +861,16 @@ async function typedIdentitySection(options = {}) {
     "1b: the character the shot named must report its usage");
   assert.strictEqual(bothCharacters.unreferenced, 0,
     "1b: and a different character of the SAME type must report zero — the type is only half the identity");
-  assert.ok(pair.html.includes("No shot references this character yet"),
-    "1b: and the unreferenced character's own surface must say so");
+  /* AND THE RENDERED SURFACE AGREES, in the words the hero it actually renders uses.
+     Y-OTHER has no media, so referencePrimaryHeroMarkup() renders its empty-state
+     hero: a call to action that carries the usage fact only when there IS one --
+     "Used by 1 shot." -- and spends no sentence on zero, because the one sentence an
+     empty hero has is the request for an image. Asserting "No shot references this
+     character yet" was asserting the OTHER hero's wording, which this entity never
+     reaches; the claim worth protecting is that an unreferenced surface claims no
+     usage at all, which is also what the browser twin now reads. */
+  assert.ok(!/Used by \d+ shot/.test(pair.html),
+    "1b: and the unreferenced character's own surface must claim no usage");
 
   /* ---- 4 · several typed references, all colliding on one id -------------- */
   const many = await usageFor(collisionProject({
@@ -955,10 +963,15 @@ async function typedIdentitySection(options = {}) {
   const surfaceProject = collisionProject({ id: ID, shots: [{ characters: [ID] }] });
   const charSurface = await render(`#/character/${ID}`, surfaceProject, { scan: referenceScan(surfaceProject), ...options });
   const propSurface = await render(`#/prop/${ID}`, surfaceProject, { scan: referenceScan(surfaceProject), ...options });
-  assert.ok(charSurface.html.includes("Used by 1 shot in this production"),
+  /* These two carry no media, so they render the empty-state hero, whose usage fact
+     is "Used by 1 shot." inside the call to action and which says nothing at zero.
+     The fuller sentence is still asserted above, on the entity that has an image.
+     What both heroes owe, and what the collision defect broke, is that each surface
+     claims its OWN usage and never its same-id neighbour's. */
+  assert.ok(/Used by 1 shot/.test(charSurface.html),
     "the referenced character's surface must state its real usage");
-  assert.ok(propSurface.html.includes("No shot references this prop yet"),
-    "and the unreferenced prop of the same id must say so on its own surface");
+  assert.ok(!/Used by \d+ shot/.test(propSurface.html),
+    "and the unreferenced prop of the same id must claim no usage on its own surface");
   assert.ok(!propSurface.html.includes("Used by 1 shot"),
     "the prop must never claim a usage that belongs to the character it collides with");
 

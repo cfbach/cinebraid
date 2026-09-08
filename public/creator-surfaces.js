@@ -904,6 +904,27 @@
     }
     return `failure-group:${hash.toString(16)}`;
   }
+  /* THE GROUP'S DOM IDENTITY, AND WHY IT IS NOT THE SIGNATURE.
+   *
+   * The signature is the right answer to "which failures are the same failure", and it
+   * has to read the error text to give it. It is the wrong answer to "which DOM node is
+   * this group", because that makes the node's identity a function of mutable content:
+   * a run whose error text is rewritten -- "Missing source provenance." becoming
+   * "Missing source provenance. Retry scheduled." -- hashes to a different key, and the
+   * keyed reconciler then does exactly what it is told, removing a group nobody
+   * recognises and inserting a new one. Every member row is rebuilt with it, and the
+   * DISMISS the filmmaker was reaching for is a different node by the time the click
+   * lands. That is the defect v670PatchKeyedChildren() exists to prevent, arriving
+   * underneath it rather than through it.
+   *
+   * So membership keeps the signature and identity moves to the thing that does not
+   * change when a run's wording does: the lead run's own durable key. Hashed the same
+   * way, so the `failure-group:<hex>` shape every reader and disclosure-memory check
+   * already matches is unchanged, and two groups still hold two distinct keys because
+   * they still have two distinct leads. */
+  function groupDomKey(lead) {
+    return groupKey(`lead${String((lead && lead.key) || "")}`);
+  }
   /* Only attention rows group. A running row is one live thing and a completed row is
      one finished thing; neither floods, and collapsing them would hide progress. */
   const GROUPABLE = new Set(["needs-attention"]);
@@ -912,13 +933,16 @@
     const byKey = new Map();
     for (const fact of facts) {
       if (!GROUPABLE.has(fact.kind)) { order.push({ key: "", lead: fact, members: [fact] }); continue; }
-      const key = groupKey(groupSignature(fact));
-      if (!byKey.has(key)) {
-        const entry = { key, lead: fact, members: [fact] };
-        byKey.set(key, entry);
+      /* Two keys, deliberately: `signature` decides what belongs together and `key` is
+         what the DOM is reconciled on. They were one value, and that is what tied a
+         group's node identity to its members' wording. */
+      const signature = groupKey(groupSignature(fact));
+      if (!byKey.has(signature)) {
+        const entry = { key: groupDomKey(fact), signature, lead: fact, members: [fact] };
+        byKey.set(signature, entry);
         order.push(entry);
       } else {
-        byKey.get(key).members.push(fact);
+        byKey.get(signature).members.push(fact);
       }
     }
     return order;

@@ -435,6 +435,21 @@ try:
         # assertion described a Terminal that no longer existed and the click went looking
         # for an EXPAND button that was no longer there. The precondition and the action
         # have to be readings of the same moment, so the reading is taken here.
+        # AND THE FIRST-RUN STATE IS ESTABLISHED, NOT INHERITED EITHER.
+        #
+        # The claim below is about what a filmmaker sees with NO stored preference, and
+        # this suite cannot have one by the time it asks: sections 4/5 must expand the
+        # Terminal to reach `.cb-terminal-rows` and click OPEN RESULT, and expanding
+        # writes "0" to that very key. Reading the preference at the right moment fixed
+        # the staleness; the moment is still one the suite itself has dirtied. So the
+        # one key this section is about is cleared and the shell repainted, which is the
+        # same state a first run has. Nothing else is reset -- the rail's own explicit
+        # preference is deliberately left alone, because the reload below asserts it.
+        page.evaluate("""() => {
+          try { localStorage.removeItem('cinebraid-creator-terminal-collapsed'); } catch {}
+          window.CineBraidCreatorSurfaces.paint();
+        }""")
+        page.wait_for_selector('.cb-terminal[data-collapsed="1"]', timeout=10000)
         current = page.evaluate(GEOMETRY)
         assert current["terminalMounted"], "the Activity Terminal must be mounted"
         assert current["dockPreference"] is None, \
@@ -571,8 +586,21 @@ try:
               for (const rule of rules) {
                 if (!(rule.media && rule.conditionText)) continue;
                 const text = rule.cssText;
+                /* WHAT THIS FORBIDS IS A WIDTH BAND COMPETING WITH THE MEASUREMENT.
+                   railWidthForRegion() asks the region how wide it really is because a
+                   media query answers to the VIEWPORT and cannot see a scrollbar
+                   consuming layout width -- the 884.8px centre. A band that can overlap
+                   a width where the rail could dock is therefore a second opinion about
+                   the rail and is refused.
+                   A band entirely BELOW the rail's own floor is not a second opinion:
+                   the measurement has already returned 0 there, so nothing is being
+                   contradicted. A1 hides the toggle at max-width 720px, far under the
+                   900px centre floor the smallest rail needs on top of, and that is a
+                   decision about a control on a phone, not about the rail's track. */
+                const cap = /max-width:\\s*(\\d+)px/.exec(rule.conditionText || "");
+                const belowAnyRail = cap && Number(cap[1]) <= 900 && !/min-width/.test(rule.conditionText || "");
                 const decides = /#cb-shell-rail\\[data-occupied\\]\\s*\\{[^}]*display/.test(text)
-                  || /\\.creator-rail-toggle\\s*\\{[^}]*display/.test(text)
+                  || (!belowAnyRail && /\\.creator-rail-toggle\\s*\\{[^}]*display/.test(text))
                   || /--cb-shell-rail-width\\s*:/.test(text);
                 if (decides) out.push(rule.conditionText);
               }
@@ -613,12 +641,23 @@ try:
                  f"{'offered' if offered else 'hidden'} while the rail is {'shown' if shown else 'hidden'}")
             if shown:
                 exposures += 1
-                assert geo["mainWidth"] >= 900, \
-                    (f"9. at viewport {width}px (usable {geo['clientWidth']}px, scrollbar {geo['scrollbar']}px, "
-                     f"region {geo['regionWidth']}px) a {geo['railWidth']}px rail left the centre "
-                     f"{geo['mainWidth']}px, below the 900px floor")
-                assert str(geo["railWidth"]) == geo["railAttr"], \
-                    f"9. at {width}px the painted rail is {geo['railWidth']}px but the published answer is {geo['railAttr']!r}"
+                # SHOWN IS NOT DOCKED. Where the region cannot hold the centre floor plus
+                # a rail, measureRail() publishes nothing and the rail opens OVER the
+                # workspace at its own width instead. It is then visible, takes no track,
+                # and squeezes nothing -- so both the floor and the "painted width equals
+                # the published answer" contract are claims about the DOCKED rail. Asked
+                # of the overlay they compare a 340px overlay against an absent
+                # attribute, which is what an undocked rail is supposed to look like.
+                if geo["railAttr"]:
+                    assert geo["mainWidth"] >= 900, \
+                        (f"9. at viewport {width}px (usable {geo['clientWidth']}px, scrollbar {geo['scrollbar']}px, "
+                         f"region {geo['regionWidth']}px) a {geo['railWidth']}px docked rail left the centre "
+                         f"{geo['mainWidth']}px, below the 900px floor")
+                    assert str(geo["railWidth"]) == geo["railAttr"], \
+                        f"9. at {width}px the painted rail is {geo['railWidth']}px but the published answer is {geo['railAttr']!r}"
+                else:
+                    assert geo["mainWidth"] >= min(900, geo["regionWidth"]), \
+                        f"9. at {width}px an overlay rail took width from the centre ({geo['mainWidth']}px)"
             else:
                 assert geo["railWidth"] == 0, f"9. at {width}px a hidden rail still measured {geo['railWidth']}px"
                 assert geo["railAttr"] == "", f"9. at {width}px the rail is hidden but {geo['railAttr']!r} is still published"
@@ -724,6 +763,16 @@ try:
             assert route.startswith("#/"), f"10. {label} must still keep a workspace route, got {route!r}"
         findings.append("10. four unverifiable entity identities (extra colon, unknown collection, missing entity, "
                         "missing state) all fail closed in the running page while keeping their workspace route")
+
+        # THE LEDGER IS PUT BACK BEFORE THE NEXT CLAIM NEEDS IT.
+        # The identity probe above replaced AUTOMATION_RUNS with one fabricated row and
+        # then emptied it, which is correct for what it was testing and leaves the page
+        # with no runs at all. The hand-off below is about a real completed motion run,
+        # so the ledger is refilled the way the page fills it -- the rows this suite
+        # serves are still on the route, and refreshGlobalAutomationActivity() is the
+        # shipped reader -- rather than by assigning runs back in page script.
+        page.evaluate("() => refreshGlobalAutomationActivity(true)")
+        page.wait_for_function("() => (AUTOMATION_RUNS || []).some(r => r.id === 'quiet-shell-motion')", timeout=10000)
 
         # MOTION, clicked from the drawer, with the hash already on the shot.
         page.evaluate("(shot) => { localStorage.setItem(`cinebraid-focused:${ACTIVE_PROJECT_SLUG}:shot-task:${shot}`, 'inputs'); route(); }", SHOT)

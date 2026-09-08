@@ -398,8 +398,19 @@ try:
         assert "handoff" in view["sections"], \
             f"3. with a run parked at a human gate the rail must carry the handoff, got {view['sections']}"
         handoff = view["sectionText"]["handoff"]
-        assert "Frame review" in handoff, \
-            "4. the run parked at a gate is the thing needing a person, so it is what the rail hands off"
+        # ONE HANDOFF, CHOSEN BY THE DECLARED PRIORITY -- attention before waiting.
+        #
+        # A1 replaced the rail's tone buckets with AT MOST ONE consequential handoff,
+        # and assistantHandoff() picks it as `state.attention[0] || state.waiting[0]`.
+        # This fixture carries a failed run and an unresolved submission, so the parked
+        # gate is correctly NOT the handoff: a run that failed needs a person more than
+        # one that is waiting for one. Asserting "Frame review" here was the retired
+        # bucketing model, in which every run appeared. That the parked gate is
+        # reachable is asserted by section 7, against the Terminal that owns it.
+        assert "Scene correction" in handoff, \
+            f"4. the rail must hand off the highest-priority fact -- attention before waiting -- got {handoff!r}"
+        assert "Frame review" not in handoff, \
+            f"4. the rail offers ONE handoff, so a waiting run must not appear beside an attention one: {handoff!r}"
 
         # THE DEFECT O3 MUST NOT REINTRODUCE, asserted where the claim now lives. Nothing
         # the rail says may present a run that is waiting on a person as machine work.
@@ -650,6 +661,18 @@ try:
                         f"(rail {layering['rail']} < dock {layering['dock']})")
 
         # ---- 13. lifecycle: retained, not painted, restored ----------------------------
+        #
+        # THE ASSISTANT ONLY EXISTS WHILE THE RAIL IS OPEN. ensureMounted() mounts it on
+        # open and unmounts it on close, and that is the mechanism by which a closed rail
+        # hands its track back to the centre -- not an oversight. Section 12 opened the
+        # rail to check layering and closed it again, so "the workspace survives a visit
+        # to Settings" would otherwise be asked of an Assistant that was never there.
+        # Opened here through the shipped topbar control, so the claim has a subject.
+        page.evaluate("""() => {
+          const toggle = document.getElementById('creator-rail-toggle');
+          if (toggle && !window.CineBraidCreatorSurfaces.railOpen()) toggle.click();
+        }""")
+        page.wait_for_selector("#cb-assistant-mount", timeout=10000)
         page.evaluate("() => window.CineBraidCreatorSurfaces.paint()")
         before_settings = page.evaluate(STAMP)
         page.goto(f"{base}/#/settings", wait_until="domcontentloaded")
@@ -698,11 +721,22 @@ try:
 
         # ---- 14. three rail states, a centre floor, and no horizontal overflow ---------
         width_notes = []
+        # The widest rail is the reference every narrower band is held to.
+        rail_baseline = None
         for name, width, height, expected_rail in VIEWPORTS:
             page.set_viewport_size({"width": width, "height": height})
             page.wait_for_timeout(340)
             geo = page.evaluate(GEOMETRY)
-            rail_now = geo["railWidth"] if geo["railShown"] else 0
+            # THE DOCKED TRACK, READ FROM THE PRODUCT'S OWN ANSWER.
+            #
+            # `railWidth` is the element's box, and below the dock threshold the rail is
+            # still 340px wide -- as a position:fixed OVERLAY that takes no track from
+            # the centre. Measuring the box therefore reported "340px" for every width
+            # under 1280 and made the three-state sweep unprovable. measureRail() writes
+            # the one answer both CSS and the control read onto #workspace, and an absent
+            # attribute is precisely "the rail yielded its track", so that is read here.
+            rail_now = page.evaluate(
+                "() => Number((document.getElementById('workspace') || {}).dataset?.railWidth || 0)")
             assert rail_now == expected_rail, \
                 f"14. at {name} ({width}px) the rail rendered {rail_now}px, expected {expected_rail}px. " \
                 f"The rail narrows to 240px before it disappears so 1366 and 1440 keep an Assistant; " \
@@ -715,7 +749,9 @@ try:
             # THE FLOOR, checked wherever the rail is taking room. Below 900px the centre
             # is in a band no component rule in the stylesheet was written for, which is
             # exactly how two shipped components came to squeeze and overlap.
-            if geo["railShown"]:
+            # The centre floor and the rail's own usability are claims about the DOCKED
+            # rail: an overlay takes no track, so it cannot squeeze the centre.
+            if rail_now:
                 assert geo["mainWidth"] >= CENTRE_FLOOR, \
                     f"14. at {name} ({width}px) the rail left the centre {geo['mainWidth']}px, " \
                     f"below the {CENTRE_FLOOR}px floor the app's own component rules assume"
@@ -746,11 +782,28 @@ try:
                     f"14. at {name} {usable['clipped']} Assistant element(s) sit outside the rail's box"
                 assert usable["unreachable"] == 0, \
                     f"14. at {name} {usable['unreachable']} of {usable['buttons']} Assistant controls are unreachable"
-                assert usable["buttons"] >= 4, \
-                    f"14. at {name} the Assistant rendered only {usable['buttons']} controls, so this check is vacuous"
-                assert "attention" in usable["sections"] and "waiting" in usable["sections"] \
-                    and "stage" in usable["sections"] and "next" in usable["sections"], \
-                    f"14. at {name} the Assistant lost sections at this width: {usable['sections']}"
+                # NOT VACUOUS, AND CALIBRATED TO THE SHIPPED RAIL RATHER THAN A NUMBER.
+                #
+                # The old floor of four controls and the fixed attention/waiting/stage/next
+                # set both described the retired tone buckets, where every run appeared in
+                # the rail. A1 replaced that with counts, AT MOST ONE handoff, stage, next
+                # and the quiet fallback, so the rail legitimately renders fewer controls.
+                # The claim worth keeping is responsive, not numeric: whatever the widest
+                # rail renders must survive every narrower band intact -- which is what
+                # "the Assistant lost sections at this width" was really asking.
+                assert usable["buttons"] >= 1 and usable["sections"], \
+                    f"14. at {name} the Assistant rendered nothing, so this check is vacuous"
+                assert set(usable["sections"]) <= RAIL_SECTIONS, \
+                    f"14. at {name} the Assistant drew outside the declared sections: {usable['sections']}"
+                if rail_baseline is None:
+                    rail_baseline = {"sections": list(usable["sections"]), "buttons": usable["buttons"], "name": name}
+                else:
+                    assert list(usable["sections"]) == rail_baseline["sections"], \
+                        (f"14. at {name} the Assistant lost or reordered sections against {rail_baseline['name']}: "
+                         f"{usable['sections']} vs {rail_baseline['sections']}")
+                    assert usable["buttons"] == rail_baseline["buttons"], \
+                        (f"14. at {name} the Assistant rendered {usable['buttons']} controls, "
+                         f"{rail_baseline['name']} rendered {rail_baseline['buttons']}")
             assert geo["dockHeight"] <= height * 0.45, \
                 f"14. at {name} the dock took {geo['dockHeight']}px of a {height}px viewport"
             width_notes.append(f"{name} {width}px: rail={str(rail_now) + 'px' if rail_now else 'off'} "

@@ -485,12 +485,21 @@ try:
                 # The overlay owes the opposite promise: it must not take the centre with it.
                 assert geo["mainWidth"] >= min(width, 420) or geo["mainWidth"] >= width - 1, \
                     f"7. at {name} ({width}px) the overlay rail reduced the centre to {geo['mainWidth']}px"
-            width_notes.append(f"{name} {width}px: rail={'on' if geo['railShown'] else 'off'} "
+            # DOCKED / OVERLAY / OFF, because that is the axis the product varies.
+            # The responsive branch is not `display:none`: below the dock threshold
+            # shared-workspace-shell.js's railWidthForRegion() returns 0, #workspace
+            # loses data-rail-width, and the rail opens OVER the workspace instead.
+            # It is therefore still shown at every tested width, so a vacuity guard
+            # written on `railShown` can never see the branch it is guarding -- which
+            # is what it was reporting. `railDocked` is the real discriminator, and the
+            # body of this section already reads it.
+            mode = "docked" if geo["railDocked"] else "overlay" if geo["railShown"] else "off"
+            width_notes.append(f"{name} {width}px: rail={mode} "
                                f"dock={geo['dockHeight']}px centre={geo['mainWidth']}px")
-        assert any("rail=on" in row for row in width_notes), \
-            "7. the rail was never shown at any tested width, so its layout claims are vacuous"
-        assert any("rail=off" in row for row in width_notes), \
-            "7. the rail never yielded at any tested width, so the responsive branch is untested"
+        assert any("rail=docked" in row for row in width_notes), \
+            "7. the rail never docked at any tested width, so its layout claims are vacuous"
+        assert any("rail=docked" not in row for row in width_notes), \
+            "7. the rail never yielded its track at any tested width, so the responsive branch is untested"
         findings.append("7 & 10. no horizontal overflow at any tested width; dock never overlaps navigation — " + "; ".join(width_notes))
 
         # ---- NEGATIVE CONTROLS --------------------------------------------------------
@@ -672,15 +681,28 @@ try:
             dockOccupied: window.CineBraidShell.slotHasContent('dock'),
             railChildren: [...document.querySelectorAll('#cb-shell-rail > .cb-shell-slot-body > *')].map((n) => n.id),
             dockChildren: [...document.querySelectorAll('#cb-shell-dock > .cb-shell-slot-body > *')].map((n) => n.id),
+            railOpen: (() => { try { return localStorage.getItem('cinebraid-creator-rail-open') === '1'; } catch { return false; } })(),
         })""")
         assert final["fixtures"] == 0 and final["controls"] == 0, \
             f"teardown: test-only nodes survived: {final}"
-        assert final["railOccupied"] and final["dockOccupied"], \
-            "teardown: the shipped build mounts a consumer in each slot"
-        assert final["railChildren"] == ["cb-assistant-mount"] and final["dockChildren"] == ["cb-terminal-mount"], \
-            f"teardown: each slot must hold exactly its one shipped consumer, got {final['railChildren']} / {final['dockChildren']}"
-        findings.append("teardown. no test-only content or control styles remain; each slot holds exactly its one "
-                        "shipped consumer")
+        # THE ASSISTANT IS MOUNTED ONLY WHILE THE RAIL IS OPEN, and that is not an
+        # omission -- creator-surfaces.js's ensureMounted() says NOT mounting is the
+        # whole mechanism by which a closed rail gives its 340px track back to the
+        # centre. This suite occupied the rail with its own fixture, so clearing it
+        # returns the slot to whatever the shipped build would show: the Assistant
+        # when the rail is open, nothing at all when it is closed. The dock's consumer
+        # is unconditional and is still required.
+        assert final["dockOccupied"] and final["dockChildren"] == ["cb-terminal-mount"], \
+            f"teardown: the dock must hold exactly its one shipped consumer, got {final['dockChildren']}"
+        if final["railOpen"]:
+            assert final["railOccupied"] and final["railChildren"] == ["cb-assistant-mount"], \
+                f"teardown: an open rail must hold exactly the Assistant, got {final['railChildren']}"
+        else:
+            assert not final["railOccupied"] and final["railChildren"] == [], \
+                f"teardown: a closed rail must hold nothing, got {final['railChildren']}"
+        findings.append("teardown. no test-only content or control styles remain; the dock holds its one shipped "
+                        f"consumer and the {'open' if final['railOpen'] else 'closed'} rail holds "
+                        f"{'exactly the Assistant' if final['railOpen'] else 'nothing, giving its track back'}")
 
         assert not page_errors, f"the page raised uncaught errors: {page_errors}"
         browser.close()

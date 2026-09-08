@@ -34,6 +34,8 @@ This module fixes all three in one place so the nine suites stay short:
     really run?" a question with a mechanical answer rather than a hopeful one.
 """
 
+import hashlib
+import json
 import os
 import platform
 import shutil
@@ -171,6 +173,122 @@ def launch_chromium(pw, label="", headless=True, args=None, **extra):
 def browser_unavailable(label, error):
     """Turn a launch failure into the same skip/fail decision as a missing import."""
     _end(label, f"no usable Chromium was available ({error}).")
+
+
+# WHY A SAME-ORIGIN SERVER'S HEADERS NEED EXPOSING HERE.
+#
+# These suites build the page with page.set_content() plus a <base href>, so the
+# document's origin is opaque and every /api call is a cross-origin fetch. In
+# production CineBraid is same-origin and the client simply reads ETag off the
+# response; cross-origin, only the CORS-safelisted headers reach JS, so ETag and
+# X-CineBraid-Project-Revision are invisible no matter what the stub sends and
+# PROJECT_REVISION stays empty. Exposing them restores what a same-origin read
+# already has. It grants the page nothing the real server would not: the values
+# are identical, and the seam still checks them.
+PROJECT_HEADER_EXPOSURE = {
+    "access-control-allow-origin": "*",
+    "access-control-expose-headers": "ETag, X-CineBraid-Project-Revision, X-CineBraid-Project-Slug",
+}
+
+
+def project_revision(body):
+    """The revision the shipped server publishes for exactly these bytes.
+
+    server.js's projectRevisionFor() is a quoted sha256 of the stored file, used
+    as an ETag. Mirrored here so a stubbed project answers the way the real one
+    does, including after a fixture mutates it.
+    """
+    payload = body if isinstance(body, bytes) else str(body).encode("utf-8")
+    return '"%s"' % hashlib.sha256(payload).hexdigest()
+
+
+def project_response(document, slug):
+    """Body and headers for a stubbed GET /api/project.
+
+    THE DEFECT THIS EXISTS TO STOP. A stub that answers with the document and a
+    slug describes a response the server never sends. server.js publishes the
+    stored revision as BOTH `ETag` and `X-CineBraid-Project-Revision`, and
+    public/app.js reads one of them into PROJECT_REVISION; without it the view
+    cannot name the revision it is showing, so the Authority Write Seam
+    correctly refuses the first save and puts up a blocking modal. Every later
+    click in the suite is then intercepted by that modal, and the suite reports
+    a missing control instead of a fixture that never told the page what it was
+    looking at.
+
+    The seam is not weakened and the refusal is not suppressed: this supplies
+    the precondition the refusal exists to check, which is what the real server
+    supplies too.
+
+    Returns (body, headers) ready for Playwright's route.fulfill().
+    """
+    body = json.dumps(document)
+    revision = project_revision(body)
+    return body, dict(PROJECT_HEADER_EXPOSURE, **{
+        "content-type": "application/json",
+        "x-cinebraid-project-slug": slug,
+        "etag": revision,
+        "x-cinebraid-project-revision": revision,
+    })
+
+
+def project_save(document, slug, request):
+    """Answer a stubbed slug-scoped project save the way the shipped seam does.
+
+    Supplying a revision on the GET is only half of it. Once the page can name
+    the document it read, it really does write: public/app.js sends the edit to
+    `/api/projects/<slug>/project`, or to `/canon-transition` when the delta
+    carries Canon, with the revision echoed in `If-Match`. A stub that answers
+    only `/api/project` leaves those to be forwarded to a real server that has
+    never heard of this fixture's slug, so a save that should succeed comes back
+    as somebody else's 404.
+
+    So this mirrors the seam rather than bypassing it: no If-Match is 428, a
+    stale one is 409, and an exact one commits and publishes the NEW revision --
+    the same three answers persistProjectSuccessor() gives. Nothing is
+    hand-stamped and no refusal is suppressed; a fixture that writes badly still
+    gets refused, which is what keeps this a stub of the seam and not a hole in
+    it.
+
+    `document` is the suite's own mutable fixture and is updated in place on
+    success, so the next GET and the next If-Match describe what the page really
+    wrote and a second save is possible.
+
+    Returns (status, body, headers) for Playwright's route.fulfill().
+    """
+    def answer(status, payload, revision=""):
+        headers = dict(PROJECT_HEADER_EXPOSURE, **{"content-type": "application/json"})
+        if revision:
+            headers["etag"] = revision
+            headers["x-cinebraid-project-revision"] = revision
+        return status, json.dumps(payload), headers
+
+    current = project_revision(json.dumps(document))
+    if_match = str(request.headers.get("if-match") or "").strip()
+    if not if_match:
+        return answer(428, {
+            "error": "This save did not identify the project revision it read.",
+            "code": "PROJECT_REVISION_REQUIRED", "revision": current,
+        })
+    if if_match != current:
+        return answer(409, {
+            "error": "The project changed while this view was open.",
+            "code": "PROJECT_REVISION_CONFLICT", "revision": current,
+        })
+    try:
+        payload = json.loads(request.post_data or "{}")
+    except ValueError:
+        return answer(422, {"error": "The submitted project could not be read."})
+    transition = isinstance(payload, dict) and "successor" in payload and "transition" in payload
+    successor = payload["successor"] if transition else payload
+    if not isinstance(successor, dict):
+        return answer(422, {"error": "The submitted project was not a document."})
+    document.clear()
+    document.update(successor)
+    revision = project_revision(json.dumps(document))
+    body = {"ok": True, "slug": slug, "backup": None, "revision": revision}
+    if transition:
+        body["project"] = successor
+    return answer(200, body, revision)
 
 
 CANON_COMMAND_FOR_KIND = {

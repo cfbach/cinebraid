@@ -138,7 +138,13 @@ def build_fixture(projects_root):
             "approvedFile": "KAI_DEFAULT_V001.png", "approvedAt": iso(1),
             "continuityStates": [{"id": "state-default", "name": "Default", "isDefault": True,
                                   "approvedFile": "KAI_DEFAULT_V001.png", "approvedAt": iso(1)}],
-            "coverageSlots": [{"id": "front", "label": "Front", "approvedFile": "KAI_DEFAULT_V001.png", "status": "approved"}],
+            # A COVERAGE VIEW IS A SELECTION, NOT AN APPROVAL. Batch 1C removed the
+            # claim that a chosen view is production authority, and the app migrates a
+            # legacy `approvedFile`/`approved` slot to `selectedFile`/`selected` on load
+            # -- a write this suite's own no-mutation guard then read as browsing having
+            # changed an approval. Authored in the shape the app actually persists, so
+            # loading the fixture rewrites nothing.
+            "coverageSlots": [{"id": "front", "label": "Front", "selectedFile": "KAI_DEFAULT_V001.png", "status": "selected"}],
             "candidateFiles": [
                 {"stored": "KAI_DEFAULT_V001.png", "addedAt": iso(1), "decision": "approved-reference",
                  "humanApproved": True, "decidedAt": iso(1),
@@ -995,18 +1001,38 @@ try:
         controls.append("N8 stale metadata across a media switch -> caught (shipped path repaints, control does not)")
 
         # N9 create a second logical asset from a renamed path.
+        # A STALE LISTING TRAVELS WITH ITS STALE CLAIM. The entity pool is keyed by
+        # durable claim, so an anchor nobody claims is quarantined out of the projection
+        # before deduplication is ever reached -- and this control then "passed" against
+        # a projection that had never seen a duplicate, which the probe receipt caught.
+        # tests/production-media.js pushes the candidate row beside the anchor for
+        # exactly this reason; the browser twin does the same here, so both sides
+        # describe one rename rather than two different situations.
         n9 = page.evaluate("""() => {
           const before = window.CineBraidMediaInspector.projection();
           const anchors = SCAN.anchors;
           const original = anchors[0];
+          const entity = (P.characters || []).find((row) => (row.candidateFiles || [])
+            .some((file) => file.stored === original.name));
+          if (!entity) return { missingClaim: true };
+          /* RESTORED EXACTLY, not by pop(). This control now touches two collections,
+             and a positional undo only holds while nothing else reorders them --
+             which is how the first version of it left the entity's coverage pointer
+             cleared and tripped the suite's own no-mutation guard. */
+          const savedAnchors = anchors.slice();
+          const savedCandidates = entity.candidateFiles.slice();
           anchors.push({ name: 'KAI_RENAMED_OLD.png', url: '/assets/anchors/KAI_RENAMED_OLD.png', assetId: original.assetId });
+          entity.candidateFiles.push({ stored: 'KAI_RENAMED_OLD.png', addedAt: '2026-08-01T00:00:00.000Z', decision: 'unreviewed' });
           const after = window.CineBraidMediaInspector.projection();
-          anchors.pop();
+          anchors.length = 0; anchors.push(...savedAnchors);
+          entity.candidateFiles.length = 0; entity.candidateFiles.push(...savedCandidates);
           const restored = window.CineBraidMediaInspector.projection();
           return { beforeCount: before.records.length, afterCount: after.records.length,
                    collapsed: after.duplicatesCollapsed, restoredCount: restored.records.length,
-                   hadIdentity: !!original.assetId };
+                   hadIdentity: !!original.assetId, claimedBy: entity.id };
         }""")
+        assert not n9.get("missingClaim"), \
+            "probe receipt: N9 needs the scanned file to be claimed by an entity, and none claims it"
         assert n9["hadIdentity"], "probe receipt: N9 needs a scanned file carrying a ledger identity and found none"
         probe(page, "N9", n9["collapsed"], 0)
         assert n9["afterCount"] == n9["beforeCount"], \

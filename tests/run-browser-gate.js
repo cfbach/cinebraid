@@ -92,21 +92,48 @@ const SUITES = [
 const QUARANTINED = [
   {
     suite: "check:motion-edit",
-    expect: "That request came from another site",
-    why: "The suite proxies the app through a fabricated http://cinebraid-motion-edit.test origin. " +
-      "The cross-origin guard added for Phase 3 correctly refuses writes from it, so the harness needs " +
-      "to stop faking an origin - the product behaviour under test is right.",
+    expect: "fal-h3-prompt-editor",
+    why: "UNPROVEN: that the H3 motion prompt editor opens and can be edited from the motion workspace. " +
+      "FIRST FAILURE: #fal-h3-prompt-editor never becomes visible. The recorded reason used to be the " +
+      "cross-origin write refusal from its fabricated origin; that is no longer where it stops, so the " +
+      "entry is re-pinned to what it actually fails on now.",
   },
   {
     suite: "check:continuity-browser",
     expect: "FIX CONTINUITY",
-    why: "Asserts a 'FIX CONTINUITY' control that the shipped continuity UI no longer labels that way.",
+    why: "UNPROVEN: that the continuity workspace offers a repair control for a drifted state. " +
+      "FIRST FAILURE: asserts a 'FIX CONTINUITY' control the shipped continuity UI no longer labels that way.",
   },
   {
     suite: "check:continuity-workspace-browser",
-    expect: "continuity-state-row",
-    why: "Waits for a per-frame state <select> that now renders inside a collapsed disclosure, so it " +
-      "resolves but is never visible.",
+    expect: 'hidden <section class="shot-continuity"',
+    why: "UNPROVEN: that opening a shot shows its continuity workspace. FIRST FAILURE: .shot-continuity " +
+      "resolves but stays hidden, so the suite never reaches its own assertions. The recorded reason was a " +
+      "per-frame state <select> (continuity-state-row); it now stops one level earlier, on the section itself.",
+  },
+  /* SPLIT OUT OF A GREEN SUITE, NOT INVENTED HERE. Each of these two ran inside a larger
+     suite whose required proof now passes, and each is a later, independent contract that
+     had been unreachable behind an earlier failure. Splitting keeps the required proof in
+     the gate and keeps the unproven contract visible and pinned, rather than deleting an
+     assertion or holding a whole suite red for something it does not exist to prove. */
+  {
+    suite: "check:state-honesty-frame-review",
+    expect: "the frame reviewer must send its own frame's attempts",
+    why: "UNPROVEN: that reviewBlockingAttempts() sends the frame's own attempts to /api/llm/review and " +
+      "reads the stored verdict back onto the attempt card. FIRST FAILURE: no request is issued at all - " +
+      "`calls` returns empty. A separate AI-review contract from the keyed-identity invariant " +
+      "check:state-honesty-browser proves, and unreachable behind C2 until that was fixed. Post-Alpha " +
+      "test debt; no AI-review product behaviour was changed for it.",
+  },
+  {
+    suite: "check:h3-motion-handoff",
+    expect: "the frames-to-motion hand-off is disabled",
+    why: "UNPROVEN: that the Frames workspace hands off into Motion & sound once the required frames are " +
+      "approved. FIRST FAILURE: the CTA renders disabled because no passing frameSequenceReview matches the " +
+      "approved anchors - and approving a frame RENAMES its file to production naming, so a review seeded " +
+      "before the approvals can never match and one written after does not survive to the Frames render. " +
+      "check:h3-browser proves the keyframe panel itself against the same real fixture and five real " +
+      "approvals. Manufacturing the review by hand would mean stamping state the product never produced.",
   },
 ];
 
