@@ -360,6 +360,34 @@ function integrationControls() {
         "#cb-shell-bar{position:sticky;top:64px;",
         "C34") },
     "64px was the number O2 used against a topbar that is 72px. A literal here puts the top of the strip behind the topbar at every width above 980 and disagrees with the rail by 8px.");
+  /* THE GLYPH CONTROLS BUILD THEIR CHARACTERS FROM CODEPOINTS. A control that typed
+     the mangled byte would put an invisible control character into this suite's own
+     source, which is the condition checkStageActionGlyph exists to be sure about. */
+  const ARROW = String.fromCodePoint(0x2192);
+  const FOLD_MARKER = String.fromCodePoint(0x25b8);
+  const MANGLED_ESCAPE = String.fromCharCode(0x11) + "92";
+
+  control("C35 the travel suffix goes back to the mangled escape", "checkStageActionGlyph",
+    { styles: mutate(SOURCES.styles,
+        `.cb-stage-action[data-action-id="open-stage-work"]::after{content:" ${ARROW}";margin-left:2px}`,
+        `.cb-stage-action[data-action-id="open-stage-work"]::after{content:" ${MANGLED_ESCAPE}";margin-left:2px}`,
+        "C35") },
+    "This is the shipped defect exactly: a repeated, prominent navigation control ending in a control-character box and the digits 92, which a filmmaker reads as breakage or as an unexplained count.");
+
+  control("C36 a mangled escape lands in some other content", "checkStageActionGlyph",
+    { styles: mutate(SOURCES.styles,
+        `.fold>summary::before{content:"${FOLD_MARKER}"`,
+        `.fold>summary::before{content:"${MANGLED_ESCAPE}"`,
+        "C36") },
+    "The suffix was one instance of a class. A check that only knew about `open-stage-work` would let the identical substitution reach any other pseudo-element in the stylesheet unseen.");
+
+  control("C37 the suffix rule starts resizing the button", "checkStageActionGlyph",
+    { styles: mutate(SOURCES.styles,
+        `.cb-stage-action[data-action-id="open-stage-work"]::after{content:" ${ARROW}";margin-left:2px}`,
+        `.cb-stage-action[data-action-id="open-stage-work"]::after{content:" ${ARROW}";margin-left:2px;font-size:16px}`,
+        "C37") },
+    "A glyph repair may not change the control it decorates. Anything beyond the content and its gap is a dimension change smuggled in behind a typographical fix.");
+
 }
 
 /* ===========================================================================

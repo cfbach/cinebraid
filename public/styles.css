@@ -7108,8 +7108,16 @@ body[data-focused-route="library"]:has(.library-grid .library-card) #app[data-su
 
 /* Travel keeps its arrow. `open-stage-work` invokes open-panel and advances
    nothing, so the control that says "Open frames review" says it is a journey
-   too. Only that action: the strip's other actions are not all travel. */
-.cb-stage-action[data-action-id="open-stage-work"]::after{content:" 92";margin-left:2px}
+   too. Only that action: the strip's other actions are not all travel.
+
+   THE GLYPH IS LITERAL, AND THAT IS THE FIX. This shipped as a CSS hex escape
+   and reached a filmmaker as a control-character box followed by "92": the
+   escape's leading digits had been read as a legacy octal escape somewhere in
+   the path that wrote this file, collapsing it to U+0011 and leaving the rest
+   as text. Reproduced at 1920x1080 and 1280x800 in both appearances. A literal
+   U+2192 cannot be re-substituted that way, and it is what the rest of this
+   stylesheet already does for glyphs in `content` -- see the fold marker. */
+.cb-stage-action[data-action-id="open-stage-work"]::after{content:" →";margin-left:2px}
 
 /* Shot intent reads as a sentence, and the line that promises nothing is lost
    is the quietest thing in the control. */

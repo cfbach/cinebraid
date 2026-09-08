@@ -4328,7 +4328,32 @@ window.newProject = () =>
       /* A new project has no import behind it, so it gets no import landing — and a
          landing left over from the last one must not sit on top of it. */
       window.__cinebraidProjectEntryLanding = null;
-      location.hash = "#/create";
+      /* WHERE A CREATED PROJECT OPENS IS DECIDED BY THE INTENT THAT CREATED IT.
+
+         THE DEFECT. This sent every branch to #/create unconditionally. For the two
+         intents that still have work to do on that screen — the assistant review and
+         the CineBraid project file — that is the right destination and it is unchanged.
+         For "Start manually" there was nothing left to do there: the project had been
+         created, activated and loaded, and the filmmaker was returned to a screen
+         headed "Start a project" with empty title and format fields and a CREATE THIS
+         PROJECT button. A first successful action looked unfinished, and the honest
+         reading of that screen — that the name had not been taken — invited a second
+         project. Reproduced by independent review from first run and from the project
+         menu, at 1920x1080 and 1280x800.
+
+         THE MANUAL BRANCH NOW LANDS WHERE THE OTHER MANUAL SEAM ALREADY LANDS.
+         startManualProjectCommit() — the CREATE THIS PROJECT press on the create
+         screen — has always finished on #/production, for the reason written beside
+         it: a project with no shots is exactly what the Production empty state is for,
+         and ADD THE FIRST SHOT is the action it offers. Two ways of creating a project
+         by hand were ending in two different places; they end in the same one now, and
+         no new destination was invented to do it.
+
+         NOTHING ELSE ABOUT CREATION MOVES. The POST, the activation it performs, the
+         stored intent, the load and the toast are untouched, and #/create itself is
+         unchanged — this chooses between two existing surfaces, it does not alter
+         either. */
+      location.hash = intent === "scratch" ? "#/production" : "#/create";
       await load();
       toast("Project created");
     },
@@ -7055,13 +7080,30 @@ async function productionHomeView() {
   }).join("")}</div>` : `<div class="production-inbox-empty">No scenes have been added yet.</div>`}</section>`;
 }
 /* The records the add control can create, declared once so the chooser and the
-   contextual entry point below cannot come to disagree about what a key means. */
+   contextual entry point below cannot come to disagree about what a key means.
+
+   VEHICLE WAS THE ONE RECORD THE PRODUCT HAD AND THIS LIST DID NOT NAME.
+   References ships a Vehicles library with its own "Add reference" control on
+   the tab head and a second one in its empty state, and addEntity("vehicles")
+   has always created the record whole -- VEH prefix, coverage template, default
+   continuity state, entity route. Only this list was missing the row, so both of
+   that library's advertised controls opened "What are you adding?" with no
+   answer in it, on the one page whose whole subject was the answer. Reproduced
+   by independent review at 1920x1080 and 1280x800.
+
+   It sits after props and before audio because that is where vehicles sit in
+   every other list in the product -- the library tabs, the canon datalist, the
+   entity-kind labels -- and a chooser that ordered them differently would be a
+   second opinion about the same set. Nothing else changed: no entity type was
+   created, no schema moved, and the tab head's existing `tab.slice(0,-1)`
+   preference now simply resolves, so Vehicles recommends Vehicle. */
 const GLOBAL_ADD_CHOICES = [
   ["shot","Shot","Add a shot to an existing scene or create the first scene."],
   ["scene","Scene","Create a scene before adding its shots."],
   ["character","Character","Create an identity and reference pack."],
   ["location","Location","Create a reusable location plate and continuity states."],
   ["prop","Prop","Create an object reference and continuity states."],
+  ["vehicle","Vehicle","Create a vehicle reference and continuity states."],
   ["audio","Audio","Add dialogue, ambience, music, or timing material."],
   ["project","New project","Start from scratch or import structured material."],
 ];
@@ -7095,6 +7137,7 @@ window.runGlobalAdd = (key) => {
   if (key === "character") return addEntity("characters");
   if (key === "location") return addEntity("locations");
   if (key === "prop") return addEntity("props");
+  if (key === "vehicle") return addEntity("vehicles");
   if (key === "audio") return addEntity("audio");
   if (key === "project") { location.hash = "#/create"; return; }
 };

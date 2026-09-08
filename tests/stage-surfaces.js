@@ -723,6 +723,65 @@ function checkLifecycle(sources = SOURCES) {
    RUN
    =========================================================================== */
 
+/* ===========================================================================
+   9. THE STAGE ACTION'S SUFFIX IS A GLYPH A FILMMAKER CAN READ
+
+   THE DEFECT. The travel suffix on `open-stage-work` shipped as a CSS hex escape
+   and reached the screen as a control-character box followed by "92": the escape's
+   leading digits had been read as a legacy octal escape somewhere in the path that
+   wrote the stylesheet, collapsing it to U+0011 and leaving the rest as ordinary
+   text. Every repeated stage action carrying it -- "Open frames review", "Open
+   Inputs" -- looked broken, and the digits read as an unexplained count or
+   shortcut. Independent review confirmed it at 1920x1080 and 1280x800, in Night
+   and in Light.
+
+   Two things are asserted, and the second is the one that matters: the suffix is
+   the arrow it was always meant to be, and NO `content` anywhere in the stylesheet
+   holds a control character, so the same substitution cannot land somewhere else
+   and go unseen.
+
+   Codepoints are compared rather than matched, deliberately. A pattern written to
+   catch a control character has to contain one, and a suite source carrying an
+   invisible byte is the thing this check exists to be sure of.
+   =========================================================================== */
+
+const codepointsOf = (text) => [...String(text)].map((character) => character.codePointAt(0));
+const holdsControlCharacter = (text) => codepointsOf(text).some((point) => point < 0x20);
+const namedCodepoints = (text) => codepointsOf(text)
+  .map((point) => "U+" + point.toString(16).toUpperCase().padStart(4, "0")).join(" ");
+
+function checkStageActionGlyph(sources = SOURCES) {
+  const rule = (sources.styles.match(/\.cb-stage-action\[data-action-id="open-stage-work"\]::after\{[^}]*\}/) || [])[0];
+  assert.ok(rule, "public/styles.css must still give the travel action its suffix");
+
+  const content = (rule.match(/content:"([^"]*)"/) || [])[1];
+  assert.ok(content !== undefined, `the suffix must still be declared as content: ${rule}`);
+  assert.ok(!holdsControlCharacter(content),
+    `the stage action's suffix must be a glyph, not a control character: ${namedCodepoints(content)}`);
+  assert.deepStrictEqual(codepointsOf(content), [0x20, 0x2192],
+    `the suffix must be a space and a rightwards arrow, got ${namedCodepoints(content)}`);
+
+  /* AND THE CONTROL IS THE SAME SIZE IT WAS. A glyph repair has no business changing
+     the button, so the rule still sets the one spacing property it always set, and
+     nothing that could resize or re-type the control. */
+  const declarations = rule.slice(rule.indexOf("{") + 1, -1).split(";").filter(Boolean)
+    .map((entry) => entry.slice(0, entry.indexOf(":")).trim());
+  assert.deepStrictEqual(declarations.sort(), ["content", "margin-left"],
+    `the suffix rule must still declare only its content and its gap, got ${declarations.join(", ")}`);
+  assert.ok(/margin-left:2px/.test(rule), "and that gap is unchanged");
+
+  /* THE CLASS OF DEFECT, ACROSS THE WHOLE STYLESHEET. A control character inside a
+     `content` string is a mangled escape by definition -- nothing legitimately draws
+     one -- so this is checked everywhere rather than at the one rule that failed. */
+  const declared = [...sources.styles.matchAll(/content:\s*"([^"]*)"/g)];
+  const mangled = declared.filter((match) => holdsControlCharacter(match[1]))
+    .map((match) => match[0].replace(/[^\x20-\x7e]/g, "?"));
+  assert.deepStrictEqual(mangled, [],
+    `no rendered content may hold a control character; found: ${mangled.join(" | ")}`);
+
+  note(`Stage action suffix: content is ${namedCodepoints(content)} with margin-left:2px and nothing else, and 0 of ${declared.length} content declarations in public/styles.css hold a control character`);
+}
+
 const CHECKS = {
   checkSingleNavigator,
   checkDeclarationOwnership,
@@ -733,6 +792,7 @@ const CHECKS = {
   checkShellIntegration,
   checkRefusals,
   checkLifecycle,
+  checkStageActionGlyph,
 };
 
 function run(sources = SOURCES) {

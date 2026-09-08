@@ -1875,6 +1875,113 @@ async function sectionStructureAndTechnicalAreDisclosed() {
   note("U16-U18. structure and technical evidence are both closed on arrival, scenes and shots open one depth at a time, and the hash, counters, origin columns and continuity states are all still rendered");
 }
 
+/* =========================================================================
+   W. A PROJECT CREATED BY HAND OPENS IN ITSELF.
+
+   THE DEFECT. newProject() sent every branch to #/create. For the assisted and
+   CineBraid-file intents that is right and unchanged — the work continues on that
+   screen. For "Start manually" there was nothing left to do there: the project had
+   been created, activated and loaded, and the filmmaker was returned to a surface
+   headed "Start a project", showing empty title and format fields and a CREATE THIS
+   PROJECT button. The first successful action in the product looked unfinished, and
+   the honest reading of that screen — that the name had not been taken — invited a
+   second project. Independent review reproduced it from first run and from the
+   project menu, at 1920x1080 and 1280x800.
+
+   The manual branch now finishes where the OTHER manual seam already finished:
+   startManualProjectCommit(), the CREATE THIS PROJECT press on the create screen,
+   has always ended on #/production. Two ways of creating a project by hand ended in
+   two different places; this asserts they end in one, and that the place they end in
+   is the one whose empty state offers ADD THE FIRST SHOT.
+   ========================================================================= */
+async function sectionManualCreationLandsInTheProject() {
+  /* W1. THE DESTINATION IS DECIDED BY THE INTENT, and it is read off a real press of
+     the shipped modal rather than off the source. */
+  const landed = {};
+  for (const mode of ["scratch", "assisted", "cinebraid"]) {
+    const { context, captured } = await capturingNewProjectRender();
+    vm.runInContext("newProject()", context);
+    vm.runInContext(
+      'document.getElementById("ff-title").value = "First Alpha Project";'
+      + 'document.getElementById("ff-startMode").value = "' + mode + '";'
+      + "_formSubmit();",
+      context,
+    );
+    await new Promise((resolve) => setTimeout(resolve, 60));
+    landed[mode] = {
+      hash: vm.runInContext("String(location.hash)", context),
+      intent: vm.runInContext("localStorage.getItem('cinebraid-creation-start-path')", context),
+      body: captured.body,
+    };
+  }
+  assert.strictEqual(landed.scratch.hash, "#/production",
+    "W1. Start manually must land in the created project, got " + landed.scratch.hash);
+  assert.strictEqual(landed.assisted.hash, "#/create",
+    "W1. the assistant path still has work on the create screen and must stay there");
+  assert.strictEqual(landed.cinebraid.hash, "#/create",
+    "W1. and so does the CineBraid project-file path");
+
+  /* W2. CREATION SEMANTICS ARE UNTOUCHED — the same POST, the same fields and the same
+     stored intent on every branch. A landing correction that quietly changed what gets
+     created would be a different slice. */
+  for (const mode of ["scratch", "assisted", "cinebraid"]) {
+    assert.strictEqual(landed[mode].intent, mode, "W2. " + mode + " still records its own intent");
+    assert.deepStrictEqual(landed[mode].body, { title: "First Alpha Project", format: "", aspectRatio: "" },
+      "W2. " + mode + " still posts exactly the fields creation always posted");
+  }
+
+  /* W3. THE MODAL ACTIVATES, AND THE LANDING IS NOT ASKED TO. `activate` is absent from
+     the body, which is this endpoint's documented default-true; the opt-out belongs to
+     startManualProjectCommit(), whose fence decides the switch after the response. */
+  assert(!("activate" in landed.scratch.body),
+    "W3. the modal does not opt out of activation, so the created project is the active one");
+
+  /* W4. THE CORRECTION IS A CHOICE BETWEEN TWO EXISTING SURFACES, made at the one seam
+     that already knows which intent created the project. #/create is not rerouted. */
+  const shell = codeOnly(read("public/app.js"));
+  const press = shell.slice(shell.indexOf("window.newProject ="), shell.indexOf("let AGENT_RESULT_MODAL_TIMER"));
+  assert(press.includes('location.hash = intent === "scratch" ? "#/production" : "#/create";'),
+    "W4. the correction is made at the manual completion seam, on the intent already resolved there");
+  assert.strictEqual(press.split("location.hash").length - 1, 1,
+    "W4. and it is the only destination this function sets");
+
+  /* W5. BOTH MANUAL SEAMS AGREE. The create screen's own CREATE THIS PROJECT has always
+     ended on Production; that is what the modal now matches, so this is asserted against
+     that function rather than against a repeated literal. */
+  const studio = codeOnly(CREATION_STUDIO);
+  const commitAt = studio.indexOf("async function startManualProjectCommit(");
+  assert(commitAt >= 0, "W5. the create-screen manual commit is still the commit");
+  const commit = studio.slice(commitAt, studio.indexOf("function creationManualIdentityCard", commitAt));
+  assert(commit.includes('location.hash = "#/production";'),
+    "W5. and it still lands on Production, which is what the modal now matches");
+
+  /* W6. AND PRODUCTION IS THE RIGHT PLACE TO LAND: a project with no shots names the film
+     and offers the act that starts it. Rendered, not asserted about. */
+  const blank = buildFixture();
+  blank.meta.title = "First Alpha Project";
+  blank.shots = [];
+  blank.scenes = [];
+  const production = await render("#/production", blank);
+  const productionHtml = String(production.map.get("main").innerHTML || "");
+  /* The film is named by the shell, in the chrome the route paints through
+     updateChrome() -- textContent, which is why this is read rather than matched
+     against the view markup. */
+  const named = JSON.parse(vm.runInContext(
+    'JSON.stringify(["topbar-project", "project-title"].map((id) => String((document.getElementById(id) || {}).textContent || "")))',
+    production.context));
+  assert.deepStrictEqual(named, ["First Alpha Project", "First Alpha Project"],
+    "W6. the new project is named on the surface it lands on, got " + JSON.stringify(named));
+  assert(productionHtml.includes("ADD THE FIRST SHOT"),
+    "W6. and its empty state offers the act that starts the film");
+  const primary = JSON.parse(vm.runInContext("JSON.stringify(projectPrimaryProductionAction())", production.context));
+  assert.strictEqual(primary.kind, "add-first-shot",
+    "W6. and the one owner of that control agrees, so its words and its act cannot disagree");
+
+  note("W. manual creation lands on " + landed.scratch.hash + " while assisted and the CineBraid file keep "
+    + landed.assisted.hash + "; all three post the same body and record their own intent; the landing surface"
+    + " names the project and offers ADD THE FIRST SHOT from projectPrimaryProductionAction()");
+}
+
 async function main() {
   await sectionEntryIsIntentFirst();
   await sectionAssistedFraming();
@@ -1903,6 +2010,7 @@ async function main() {
   await sectionRepeatedFindingsAreGrouped();
   await sectionStructureAndTechnicalAreDisclosed();
   await sectionWordingIsPlain();
+  await sectionManualCreationLandsInTheProject();
   console.log(notes.join("\n"));
   console.log("Project entry & import landing suite passed: three intents, retained source material, typed format/aspect, deferred style, Ready/Needs review/Blocked, the planning-marker boundary, a landing whose next action is the single projectNextProductionAction(), and the founder-dogfood surface corrections — external assistant named, Braidy excluded from the conversion, copy-instructions primary, existing-project path scoped, manual start un-gated, an import preview that answers the decision before it shows the evidence, and a final wording pass that keeps the retired phrasings retired.");
 }

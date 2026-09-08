@@ -357,7 +357,11 @@ try:
         assert "What are you adding?" in global_modal, \
             "2. the shell's own Add must still offer the generic chooser"
         keys = page.evaluate("() => [...document.querySelectorAll('#modal .global-add-grid button')].map((b) => (b.querySelector('b')||{}).textContent)")
-        assert keys == ["Shot", "Scene", "Character", "Location", "Prop", "Audio", "New project"], \
+        # Vehicle joins the list it was always missing from: References ships a Vehicles
+        # library whose Add controls open this chooser, and addEntity("vehicles") has
+        # always created the record. The ORDER is pinned as well as the set -- vehicles
+        # sit after props everywhere else in the product.
+        assert keys == ["Shot", "Scene", "Character", "Location", "Prop", "Vehicle", "Audio", "New project"], \
             f"2. and must still offer every record it offered before, got {keys}"
         page.evaluate("() => closeModal()")
         findings.append(f"2. the shell's global Add still asks, and still offers all {len(keys)} records")

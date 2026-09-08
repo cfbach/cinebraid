@@ -196,7 +196,7 @@ const ROUTES = {
       ["naming", "Naming & organization", "Filenames and version rules"],
       ["project", "Project", "Title, prompts and exports"],
       ["assistant", "Assistant", "AI provider configuration"],
-      ["generation", "Generation", "Optional FAL image defaults"],
+      ["generation", "Generation", "Image, motion and provider defaults"],
       ["integrations", "Integrations", "Generation tools running on this machine"],
       ["accounts", "Accounts", "Connect the services you have an account with"],
       ["recovery", "Recovery & advanced", "Backups and diagnostics"],
@@ -524,7 +524,7 @@ const ROUTES = {
     const continuityCard = `<article class="capability-card" data-capability="continuity" data-state="${attr(continuityOn ? "on" : "off")}"><header><span class="capability-name">Continuity analysis</span><b class="capability-status">${esc(continuityOn ? "On" : "Off")}</b></header><p class="capability-detail">${esc(continuityDetail)}</p>${disclosure("capability-configure", "assistant-configure:continuity", "Configure", "Its own endpoint and model", continuityConfigure)}</article>`;
 
     const assistantPanel = `<section class="settings-block assistant-settings"><div class="settings-title-row"><div><h3>Assistant</h3><p class="hint">What Braidy runs on, what it can see, and what checks continuity. Each capability states where it stands; the settings behind it open one step deeper.</p></div></div><div class="capability-cards">${braidyCard}${visionCard}${continuityCard}</div><div class="settings-actions"><button class="add-btn" onclick="saveConfig('assistant')">Save assistant settings</button>${panelState("manual", "Choosing a provider takes effect at once; the fields inside Configure are saved here.")}</div></section>`;
-    const generationPanel = `<section class="settings-block fal-settings"><div class="settings-title-row"><div><h3>Generation</h3><p class="hint">Optional in-app FAL implementation. Manual external generation remains first-class.</p></div><button class="ghost-btn" onclick="testFalGenerationConnection()">Check setup</button></div><label class="checkline"><input id="cfg-fal-enabled" type="checkbox" ${fal.enabled ? "checked" : ""}> Enable FAL image and video generation</label><div class="two-col">
+    const generationPanel = `<section class="settings-block fal-settings"><div class="settings-title-row"><div><h3>Generation</h3><p class="hint">Optional in-app generation providers and their defaults — FAL images and motion, and Civitai. Manual external generation remains first-class.</p></div><button class="ghost-btn" onclick="testFalGenerationConnection()">Check setup</button></div><label class="checkline"><input id="cfg-fal-enabled" type="checkbox" ${fal.enabled ? "checked" : ""}> Enable FAL image and video generation</label><div class="two-col">
       ${field("FAL API key", `<input id="cfg-fal-key" type="password" autocomplete="off" value="${attr(fal.apiKey || "")}" placeholder="stored on this CineBraid server"><span class="hint">Key source: ${esc(fal.keySource || "none")}</span>`)}
       ${field("Text-to-image model", `<input id="cfg-fal-text-model" value="${attr(fal.textModel || "openai/gpt-image-2")}">`)}
       ${field("Edit model", `<input id="cfg-fal-edit-model" value="${attr(fal.editModel || "openai/gpt-image-2/edit")}">`)}

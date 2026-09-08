@@ -185,6 +185,56 @@ async function main() {
     );
   }
 
+
+  /* ---- THE GENERATION PANEL DESCRIBES WHAT IS ACTUALLY IN IT ----
+   *
+   * THE DEFECT. The navigation subtitle read "Optional FAL image defaults" and the
+   * panel intro "Optional in-app FAL implementation". Both were written when this
+   * configured FAL images and nothing else. The panel now also holds the MiniMax H3
+   * video endpoints, the motion resolution and per-second rate, and Civitai
+   * generation — so the only two sentences describing this panel excluded the task a
+   * motion or Civitai user had come to do, on the panel that does it.
+   *
+   * The controls are asserted FIRST and the words second, deliberately: this fails
+   * if the wording regresses, and it also fails if a provider or medium leaves the
+   * panel, which is the moment the description would need looking at again. */
+  {
+    const generation = panels.generation.html;
+    const scope = [
+      ["cfg-fal-text-model", "FAL image"],
+      ["cfg-fal-h3-text-model", "FAL motion"],
+      ["cfg-fal-motion-rate", "the motion rate"],
+      ["cfg-civitai-resource", "Civitai generation"],
+    ];
+    for (const [id, what] of scope)
+      assert(generation.includes(id), `generation: the panel still configures ${what} (${id})`);
+
+    const nav = generation.slice(generation.indexOf("settings-nav-shell"), generation.indexOf("settings-block"));
+    const subtitle = (nav.match(/<b>Generation<\/b><small>([^<]*)<\/small>/) || [])[1] || "";
+    assert(subtitle, "generation: the navigation tile must carry a subtitle");
+    const intro = (generation.match(/<h3>Generation<\/h3><p class="hint">([^<]*)<\/p>/) || [])[1] || "";
+    assert(intro, "generation: the panel must carry an introduction");
+
+    for (const [label, text] of [["tile subtitle", subtitle], ["panel intro", intro]]) {
+      assert(!/FAL image defaults|in-app FAL implementation/i.test(text),
+        `generation: the ${label} must not still describe this as FAL-image-only — "${text}"`);
+      assert(!/^\s*optional FAL\b/i.test(text),
+        `generation: the ${label} must not name FAL as the only provider — "${text}"`);
+      assert(/motion|video/i.test(text),
+        `generation: the ${label} must account for the motion settings this panel holds — "${text}"`);
+    }
+    assert(/civitai|provider/i.test(intro),
+      `generation: the panel intro must account for more than one provider — "${intro}"`);
+
+    /* AND NOTHING BUT THE WORDS MOVED. Settings keeps its subsections, in order, and
+       the panel keeps every control the defect report found in it. */
+    const tiles = [...generation.matchAll(/<b>([^<]+)<\/b><small>/g)].map((row) => row[1]);
+    assert.deepStrictEqual(tiles,
+      ["Appearance", "Files & storage", "Access & security", "Naming & organization", "Project",
+        "Assistant", "Generation", "Integrations", "Accounts", "Recovery & advanced"],
+      "generation: correcting the description must not reorganise Settings");
+  }
+
   /* An explicit-save panel declares its save model so the shared state line can use
      the right words; Project and Recovery never claim a save button they do not have. */
   for (const tab of EXPLICIT) {

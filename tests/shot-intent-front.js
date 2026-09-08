@@ -224,8 +224,13 @@ async function checkContextualAdd() {
     const html = String(document.getElementById("modal").innerHTML || "");
     return { chooser: html.includes("What are you adding?"), keys: [...html.matchAll(/runGlobalAdd\\('([a-z]+)'\\)/g)].map((row) => row[1]) };`);
   assert.strictEqual(generic.chooser, true, "A2: the global Add must still show the generic chooser");
-  assert.deepStrictEqual(generic.keys, ["shot", "scene", "character", "location", "prop", "audio", "project"],
-    "A2: and must still offer every record it offered before");
+  /* VEHICLE JOINS THE LIST IT WAS ALWAYS MISSING FROM. References ships a Vehicles
+     library whose Add controls open this chooser, and addEntity("vehicles") has
+     always created the record -- the chooser simply never named it. The order is
+     pinned as well as the set: vehicles sit after props everywhere else in the
+     product, so a chooser that listed them elsewhere would be a second opinion. */
+  assert.deepStrictEqual(generic.keys, ["shot", "scene", "character", "location", "prop", "vehicle", "audio", "project"],
+    "A2: and must still offer every record it offered before, plus Vehicle");
 
   /* A3 — the shell's own Add is still the generic one, and the References page, which
      genuinely has no single record in mind on its All and Canon tabs, keeps it too. */
@@ -236,13 +241,60 @@ async function checkContextualAdd() {
   assert(/openGlobalAdd\(/.test(String(library.map.get("main").innerHTML || "")),
     "A3: the References page keeps the chooser, because its Add is genuinely multi-entity");
 
+
+  /* A4 — VEHICLE REACHES THE SAME MACHINERY EVERY OTHER REFERENCE REACHES.
+   *
+   * THE DEFECT. References ships a Vehicles library, its tab head and its empty state
+   * both offer "Add reference", and both open this chooser -- which listed Shot, Scene,
+   * Character, Location, Prop, Audio and New project. A filmmaker who had navigated to
+   * exactly the right library could not perform the action that library advertised.
+   * addEntity("vehicles") had supported the record all along; only the chooser was
+   * silent about it. Reproduced by independent review at both viewports.
+   *
+   * The proof is the whole press, not the row: the option is selected, the shipped form
+   * opens, it is filled and submitted, and the record that appears is read out of the
+   * project. Nothing here is a new form, a new writer or a new type. */
+  const vehicle = run(board.context, `
+    closeModal();
+    const vehiclesBefore = (P.vehicles || []).length;
+    const before = { characters: P.characters.length, locations: P.locations.length, props: P.props.length, audio: (P.audio || []).length, shots: P.shots.length, scenes: P.scenes.length };
+    openGlobalAdd();
+    runGlobalAdd("vehicle");
+    const form = String(document.getElementById("modal").innerHTML || "");
+    document.getElementById("ff-name").value = "Rex";
+    document.getElementById("ff-description").value = "Long-nose hauler, oxidised red.";
+    _formSubmit();
+    const made = (P.vehicles || [])[(P.vehicles || []).length - 1] || null;
+    return {
+      form,
+      title: form.includes("New vehicle"),
+      count: (P.vehicles || []).length,
+      id: made ? made.id : "",
+      name: made ? made.name : "",
+      notes: made ? made.notes : "",
+      states: made ? (made.continuityStates || []).length : 0,
+      hash: String(location.hash),
+      before,
+      vehiclesBefore,
+      after: { characters: P.characters.length, locations: P.locations.length, props: P.props.length, audio: (P.audio || []).length, shots: P.shots.length, scenes: P.scenes.length },
+    };`);
+  assert.strictEqual(vehicle.title, true, "A4: choosing Vehicle must open the existing New vehicle form");
+  assert(/ff-name/.test(vehicle.form) && /ff-description/.test(vehicle.form),
+    "A4: the shipped entity form, with the fields addEntity() has always asked for");
+  assert.strictEqual(vehicle.count, vehicle.vehiclesBefore + 1, "A4: saving must create exactly one vehicle");
+  assert.strictEqual(vehicle.name, "Rex", "A4: named as typed");
+  assert.strictEqual(vehicle.notes, "Long-nose hauler, oxidised red.", "A4: and described as typed");
+  assert(/^VEH-/.test(vehicle.id), `A4: through the existing vehicle prefix, got ${vehicle.id}`);
+  assert.strictEqual(vehicle.states, 1, "A4: with the default continuity state addEntity() seeds for every reference");
+  assert.strictEqual(vehicle.hash, `#/vehicle/${vehicle.id}`, "A4: and it lands in the existing vehicle workspace");
+  assert.deepStrictEqual(vehicle.after, vehicle.before, "A4: and no other record was touched");
   /* An unrecognised key must land somewhere useful rather than nowhere. */
   const unknown = run(board.context, `
     closeModal();
     openContextualAdd("nonesuch");
     return { chooser: String(document.getElementById("modal").innerHTML || "").includes("What are you adding?") };`);
   assert.strictEqual(unknown.chooser, true, "A3: an unrecognised record type falls back to the chooser");
-  note("A. contextual add: Shots page Add opens New Shot directly; the shell, the References page and an unknown key all still get the seven-record chooser");
+  note("A. contextual add: Shots page Add opens New Shot directly; the shell, the References page and an unknown key all still get the eight-record chooser — Vehicle among them, and choosing it opens the shipped New vehicle form and creates " + vehicle.id + " through addEntity(), landing on " + vehicle.hash + " with no other record touched");
 }
 
 /* ===========================================================================
