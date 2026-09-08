@@ -275,13 +275,26 @@ async function main() {
   return ["768P", "2K"].includes(saved) ? saved : "2K";
 }`;
   const h3Patched = (replacement) => patchedSource("public/fal-generation.js", [[H3_ANCHOR, replacement]]);
+  /* THE PATCHED MODULE IS INSTALLED AS THE REALM IS BUILT, NOT RE-RUN INTO A LIVE ONE.
+     Re-running the whole file into a context that had already evaluated it redeclared
+     its top-level bindings — public/fal-generation.js owns `const
+     FAL_MODEL_DISPLAY_NAMES` — so the script died with a SyntaxError before
+     falH3ResolutionValue() could be reached, and every call returned the SHIPPED
+     function. The control then reported a harness fault wearing the shape of a
+     detection, which is precisely the failure the receipts above exist to prevent and
+     the one thing they could not see.
+     Each render() builds its own context and runs the client scripts into it once, so
+     options.mutateSource — the idiom the other browser-source controls in this
+     repository already use — puts the defect in legally. The anchor, uniqueness and
+     did-it-change receipts still come from patchedSource() through h3Patched(). */
   async function h3ResolutionUnder(config, replacement) {
-    const view = await render("#/shot/L1-01", buildFixture());
+    const view = await render("#/shot/L1-01", buildFixture(), {
+      mutateSource: (file, contents) => (file === "fal-generation.js" ? h3Patched(replacement) : contents),
+    });
     vm.runInContext(
       `CONFIG = { ...(typeof CONFIG === "object" ? CONFIG : {}), generation: { fal: ${JSON.stringify({ enabled: true, apiKey: "k", ...config })} } };`,
       view.context,
     );
-    vm.runInContext(h3Patched(replacement), view.context, { filename: "public/fal-generation.js" });
     return view.context.falH3ResolutionValue();
   }
   const HARD_2K = `function falH3ResolutionValue() {
