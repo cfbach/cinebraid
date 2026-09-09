@@ -413,18 +413,82 @@ try:
                 localStorage.setItem(`cinebraid-bounded:${ACTIVE_PROJECT_SLUG}:selected:entity-detail-view:characters:${id}`, 'history');
                 location.hash = '#/production';
             }""", ENTITY)
-        page.wait_for_function("() => location.hash === '#/production'", timeout=10000)
-        page.evaluate("() => route()")
+        # SYNCHRONISED ON THE APP'S OWN ANSWER, NOT ON A SHAPE APPEARING.
+        #
+        # `location.hash === '#/production'` proves nothing: the hash is assigned
+        # synchronously, so that wait returns before any rendering has begun. And
+        # `.bounded-entity-page[data-selected-task="details"]` is written by
+        # entities.js while route() is still running, so waiting for it can return
+        # mid-render -- an intermediate state, which is why widening its timeout made a
+        # run green without making the test correct.
+        #
+        # public/app.js already publishes the real answer. route() is async and is also
+        # bound to hashchange, so several renders can be in flight at once; it deletes
+        # `body[data-render-ready]` when a render starts, and markRouteRenderSettled()
+        # restores it after two animation frames ONLY if that render is still the newest
+        # one. So `renderReady === "1"` means: rendering has finished and nothing has
+        # superseded it. Combined with the shape the operation should have produced, that
+        # is the completion condition -- the old DOM cannot satisfy the shape half, and an
+        # unsettled render cannot satisfy the readiness half.
+        def wait_settled(condition, what):
+            try:
+                page.wait_for_function(
+                    "() => document.body.dataset.renderReady === '1' && (" + condition + ")",
+                    timeout=20000)
+            except Exception as error:  # noqa: BLE001 - a bare timeout says nothing useful
+                evidence = page.evaluate("""() => {
+                    const page_ = document.querySelector('.bounded-entity-page');
+                    return {
+                      hash: location.hash,
+                      renderReady: document.body.dataset.renderReady || null,
+                      entityPagePresent: !!page_,
+                      selectedTask: page_ ? (page_.dataset.selectedTask || null) : null,
+                      mainHead: ((document.getElementById('main') || {}).innerText || '').slice(0, 160),
+                    };
+                }""")
+                raise AssertionError(f"{what}: the route never settled - {evidence}") from error
+
+        wait_settled("location.hash === '#/production'", "the production route")
         page.evaluate("(id) => { location.hash = '#/character/' + id; }", ENTITY)
-        page.evaluate("() => route()")
-        # 20s, the bound this file already uses twice elsewhere. `selectedTask` is written
-        # by public/focused-workspaces.js, a POST-RENDER enhancer, and this waits for it
-        # immediately after two back-to-back route() calls. Ten seconds is enough when the
-        # suite runs alone and lost the race inside the full gate, where forty-odd browser
-        # launches share the machine. The condition is unchanged; only the patience is.
-        page.wait_for_function(
-            """() => { const n = document.querySelector('.bounded-entity-page'); return n && n.dataset.selectedTask === 'details'; }""",
-            timeout=20000)
+        wait_settled(
+            "(() => { const n = document.querySelector('.bounded-entity-page');"
+            " return !!n && n.dataset.selectedTask === 'details'; })()",
+            "the reference route opened fresh on its details task")
+
+        # ---- 6-NC. AWAITING route() IS NOT AWAITING THE RENDER -----------------------
+        #
+        # Measured, synchronously, with no scheduling in the assertion. A real render
+        # clears body[data-render-ready] on entry, and markRouteRenderSettled() restores
+        # it from inside requestAnimationFrame(requestAnimationFrame(...)) -- so it is
+        # still absent at the moment route()'s own promise resolves.
+        #
+        # That is the whole defect the retired wait had. It awaited route() and then
+        # polled for a rendered shape, and the shape is written during the window this
+        # measures: both can be satisfied while the render has not settled and while a
+        # newer render may still supersede this one. Widening its timeout could only
+        # change how long it waited before reading the same intermediate state. The wait
+        # this suite uses now requires the flag as well, so it cannot return there.
+        boundary = page.evaluate("""() => {
+            const before = document.body.dataset.renderReady || null;
+            location.hash = '#/production';
+            const pending = route();
+            const during = document.body.dataset.renderReady || null;
+            return pending.then(() => ({ before, during, after: document.body.dataset.renderReady || null }));
+        }""")
+        assert boundary["before"] == "1",             f"6-NC setup: the page must start settled, or this control measures nothing - got {boundary}"
+        assert boundary["during"] is None,             ("6-NC: a render must clear body[data-render-ready] on entry, or the flag is not a completion "
+             f"signal and this suite's wait proves nothing - got {boundary}")
+        assert boundary["after"] is None,             ("6-NC: the flag must still be absent when route() resolves - if it were already restored, awaiting "
+             f"route() would have been sufficient and the retired wait would not have raced - got {boundary}")
+        wait_settled("location.hash === '#/production'", "the production route after the boundary measurement")
+        page.evaluate("(id) => { location.hash = '#/character/' + id; }", ENTITY)
+        wait_settled(
+            "(() => { const n = document.querySelector('.bounded-entity-page');"
+            " return !!n && n.dataset.selectedTask === 'details'; })()",
+            "the reference route after the boundary measurement")
+        findings.append("6-NC: a render clears body[data-render-ready] on entry and has still not restored it when "
+                        "route() resolves, so awaiting route() and polling for a shape - the retired wait - could "
+                        "read a render still in flight whatever its timeout; the settled wait cannot")
         page.wait_for_selector("#main .entity-subworkspace", timeout=10000)
         provenance = page.evaluate("""() => {
             const node = [...document.querySelectorAll('#main details')]
