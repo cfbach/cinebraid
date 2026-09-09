@@ -5,13 +5,13 @@
  * prompt, and a contradiction that survives anyway stops the request before a
  * provider sees it.
  *
- * THE CASE, from the pass. Shot S01-01, "The Illustration Breathes":
+ * THE CASE, from the pass. Shot S01-01, "The Figure Resolves":
  *
- *     Frame A   the Chimbley Sweep MUST BE ABSENT
- *     during    the Sweep begins to resolve
- *     Frame B   the Sweep is visible and readable
+ *     Frame A   the Lantern Keeper MUST BE ABSENT
+ *     during    the Keeper begins to resolve
+ *     Frame B   the Keeper is visible and readable
  *
- * CineBraid compiled Frame A text containing a tiny Sweep figure, and GPT Image 2
+ * CineBraid compiled Frame A text containing a tiny Keeper figure, and GPT Image 2
  * did exactly what it was told on a paid render. The reviewer could not have
  * caught it: it would have been checking the candidate against a requirement that
  * was already corrupted.
@@ -45,9 +45,9 @@ const eq = (actual, expected, message) => {
    entity that is present throughout, and a location — so "the declaration
    suppressed everything" would fail as loudly as "the declaration did nothing".
 */
-const SWEEP = "CHAR-X-SWEEP";
-const WIDOW = "CHAR-X-WIDOW";
-const ROOFTOPS = "LOC-X-ROOFTOPS";
+const KEEPER = "CHAR-X-KEEPER";
+const CLERK = "CHAR-X-CLERK";
+const TERRACES = "LOC-X-TERRACES";
 
 function fixture(presenceByFrame = {}) {
   const frameWorkflows = {};
@@ -56,30 +56,30 @@ function fixture(presenceByFrame = {}) {
   }
   return {
     meta: { title: "Presence fixture", world: {}, aspectRatio: "16:9" },
-    scenes: [{ id: "SC-01", title: "Rooftops", whatHappens: "The Chimbley Sweep resolves out of the illustration while the Widow watches." }],
+    scenes: [{ id: "SC-01", title: "Terraces", whatHappens: "The Lantern Keeper resolves out of the illustration while the Clerk watches." }],
     characters: [
-      { id: SWEEP, name: "Chimbley Sweep", block: "Soot-dark coat, brush over the shoulder.", approvedFile: "SWEEP.png", continuityStates: [] },
-      { id: WIDOW, name: "Widow Ashgrove", block: "Black crepe, teacup in hand.", approvedFile: "WIDOW.png", continuityStates: [] },
+      { id: KEEPER, name: "Lantern Keeper", block: "Oilskin coat, lamp hooked at the belt.", approvedFile: "KEEPER.png", continuityStates: [] },
+      { id: CLERK, name: "Harbour Clerk", block: "Grey serge, ledger under one arm.", approvedFile: "CLERK.png", continuityStates: [] },
     ],
-    locations: [{ id: ROOFTOPS, name: "London Rooftops", block: "Slate pitches and chimney stacks.", approvedFile: "ROOFTOPS.png", continuityStates: [] }],
+    locations: [{ id: TERRACES, name: "Harbour Terraces", block: "Stone steps and iron railings.", approvedFile: "TERRACES.png", continuityStates: [] }],
     props: [], vehicles: [], audio: [],
     shots: [{
-      id: "S01-01", scene: "SC-01", title: "The Illustration Breathes",
-      desc: "A tiny figure of the Chimbley Sweep stands among the chimney stacks as the Widow looks on.",
-      positioning: "The Sweep is upper-left of frame; the Widow holds the lower-right third.",
-      characters: [SWEEP, WIDOW], codes: [ROOFTOPS], risks: [],
+      id: "S01-01", scene: "SC-01", title: "The Figure Resolves",
+      desc: "A small figure of the Lantern Keeper stands among the iron railings as the Clerk looks on.",
+      positioning: "The Keeper is upper-left of frame; the Clerk holds the lower-right third.",
+      characters: [KEEPER, CLERK], codes: [TERRACES], risks: [],
       keyframes: [
-        { id: "fr-a", label: "A", title: "Empty rooftops", description: "Slate and smoke, nobody yet.", required: true },
+        { id: "fr-a", label: "A", title: "Empty terraces", description: "Stone and haze, nobody yet.", required: true },
         { id: "fr-mid", label: "B", title: "The reveal begins", description: "A shape starts to resolve out of the ink.", required: true },
-        { id: "fr-b", label: "C", title: "The Sweep readable", description: "The Sweep is fully drawn.", required: true },
+        { id: "fr-b", label: "C", title: "The Keeper readable", description: "The Keeper is fully drawn.", required: true },
       ],
       clips: [],
-      creationBrief: { locationId: ROOFTOPS, frameWorkflows },
+      creationBrief: { locationId: TERRACES, frameWorkflows },
     }],
   };
 }
 
-const ABSENT_A = { "fr-a": { [SWEEP]: "absent" }, "fr-mid": { [SWEEP]: "enters" }, "fr-b": { [SWEEP]: "present" } };
+const ABSENT_A = { "fr-a": { [KEEPER]: "absent" }, "fr-mid": { [KEEPER]: "enters" }, "fr-b": { [KEEPER]: "present" } };
 
 /* ===========================================================================
    1. THE DECLARATION. Reading it, and what silence means. */
@@ -87,17 +87,17 @@ const ABSENT_A = { "fr-a": { [SWEEP]: "absent" }, "fr-mid": { [SWEEP]: "enters" 
 const project = fixture(ABSENT_A);
 const shot = project.shots[0];
 
-eq(Presence.resolveFramePresence(shot, "fr-a", SWEEP), "absent", "a frame's own declaration is read");
-eq(Presence.resolveFramePresence(shot, "fr-mid", SWEEP), "enters", "each frame answers for itself");
-eq(Presence.resolveFramePresence(shot, "fr-b", SWEEP), "present", "including the end of the progression");
-eq(Presence.resolveFramePresence(shot, "fr-a", WIDOW), "",
+eq(Presence.resolveFramePresence(shot, "fr-a", KEEPER), "absent", "a frame's own declaration is read");
+eq(Presence.resolveFramePresence(shot, "fr-mid", KEEPER), "enters", "each frame answers for itself");
+eq(Presence.resolveFramePresence(shot, "fr-b", KEEPER), "present", "including the end of the progression");
+eq(Presence.resolveFramePresence(shot, "fr-a", CLERK), "",
   "an entity the frame says nothing about inherits — absence means inherit, exactly as in the state binding, and must never be manufactured into 'present'");
-eq(Presence.resolveFramePresence(shot, "fr-none", SWEEP), "", "an unknown frame declares nothing");
-eq(Presence.resolveFramePresence(fixture(), "fr-a", SWEEP), "", "a shot with no declarations at all behaves exactly as before this batch");
+eq(Presence.resolveFramePresence(shot, "fr-none", KEEPER), "", "an unknown frame declares nothing");
+eq(Presence.resolveFramePresence(fixture(), "fr-a", KEEPER), "", "a shot with no declarations at all behaves exactly as before this batch");
 eq(Presence.normalizeFramePresence("ABSENT"), "absent", "the vocabulary is case-insensitive at the boundary");
 eq(Presence.normalizeFramePresence("maybe"), "", "and closed — an unknown word is not a declaration");
 
-eq(Presence.absentEntityIdsForFrame(shot, "fr-a"), [SWEEP], "only `absent` forbids presence");
+eq(Presence.absentEntityIdsForFrame(shot, "fr-a"), [KEEPER], "only `absent` forbids presence");
 eq(Presence.absentEntityIdsForFrame(shot, "fr-mid"), [],
   "`enters` does NOT — the entity is on screen for part of that frame's moment, so a positive fact about it is truthful");
 eq(Presence.absentEntityIdsForFrame(shot, "fr-b"), [], "and neither does `present`");
@@ -109,7 +109,7 @@ eq(bindings.frames.map((frame) => frame.frameId), ["fr-a", "fr-mid", "fr-b"],
 /* ===========================================================================
    2. COMPILATION. The whole point.
 
-   Frame A must compile with NO positive Sweep fact anywhere: not in the identity
+   Frame A must compile with NO positive Keeper fact anywhere: not in the identity
    canon, not in the subject descriptors, not in the visual grounding, not in the
    blocking entity list, and not by way of the shot description or scene beat that
    name him. */
@@ -120,121 +120,121 @@ function specFor(frameId, source = project) {
 }
 
 const a = specFor("fr-a");
-eq(a.spec.framePresence.absent.map((entry) => entry.id), [SWEEP], "the spec carries the declaration it was compiled under");
-eq(a.spec.identityCanon.filter((line) => /Chimbley Sweep/i.test(line)), [], "Frame A carries no Sweep identity canon");
-eq(a.spec.promptEntities.map((entry) => entry.id), [WIDOW],
-  "and no Sweep subject descriptor — while the Widow, who is not declared absent, is untouched");
-eq(a.spec.visualGrounding.filter((entry) => entry.entityId === SWEEP), [], "and no Sweep visual grounding");
-eq(a.spec.blockingEntities.filter((entry) => entry.id === SWEEP), [], "and no Sweep blocking descriptor");
-ok(a.spec.identityCanon.some((line) => /Widow/i.test(line)), "the rest of the shot compiles normally — this is a subtraction of one fact, not a blank frame");
+eq(a.spec.framePresence.absent.map((entry) => entry.id), [KEEPER], "the spec carries the declaration it was compiled under");
+eq(a.spec.identityCanon.filter((line) => /Lantern Keeper/i.test(line)), [], "Frame A carries no Keeper identity canon");
+eq(a.spec.promptEntities.map((entry) => entry.id), [CLERK],
+  "and no Keeper subject descriptor — while the Clerk, who is not declared absent, is untouched");
+eq(a.spec.visualGrounding.filter((entry) => entry.entityId === KEEPER), [], "and no Keeper visual grounding");
+eq(a.spec.blockingEntities.filter((entry) => entry.id === KEEPER), [], "and no Keeper blocking descriptor");
+ok(a.spec.identityCanon.some((line) => /Clerk/i.test(line)), "the rest of the shot compiles normally — this is a subtraction of one fact, not a blank frame");
 
 /* The narrative that names him. This is the sentence that produced the wrong
    render, and appending the frame directive after it did not repair it. */
-eq(a.context.shot.description, "", "the shot description is withheld from Frame A because it states the Sweep positively");
+eq(a.context.shot.description, "", "the shot description is withheld from Frame A because it states the Keeper positively");
 eq(a.context.scene.beat, "", "so is the scene beat, for the same reason");
 eq(a.context.shot.positioning, "", "and the staging line that places him upper-left");
 eq(a.spec.framePresence.withheldNarrative.map((entry) => entry.field).sort(),
   ["scene.whatHappens", "shot.desc", "shot.positioning"],
   "and each withholding is RECORDED — a creator whose description vanished from a prompt is owed the reason");
-ok(!/Chimbley Sweep/i.test(a.spec.initialState.subject || ""), "so the compiled subject cannot carry him either");
-ok(!/Chimbley Sweep/i.test(JSON.stringify(a.spec.actions || [])), "nor the action list");
+ok(!/Lantern Keeper/i.test(a.spec.initialState.subject || ""), "so the compiled subject cannot carry him either");
+ok(!/Lantern Keeper/i.test(JSON.stringify(a.spec.actions || [])), "nor the action list");
 
 /* The absence is STATED, not merely omitted. Generic "avoid unrequested
    characters" was already present before this batch and did not save S01-01,
-   because the Sweep was not unrequested — the prompt had asked for him. */
-ok(a.spec.mustAvoid.some((line) => /Chimbley Sweep must not appear/i.test(line)),
+   because the Keeper was not unrequested — the prompt had asked for him. */
+ok(a.spec.mustAvoid.some((line) => /Lantern Keeper must not appear/i.test(line)),
   "the model is told about the absence explicitly");
 ok(a.spec.mustAvoid.some((line) => /reflections, shadows, silhouettes and background figures/i.test(line)),
-  "including the forms a 'tiny figure' actually takes");
+  "including the forms a 'small figure' actually takes");
 
 /* The middle and end frames. */
 const mid = specFor("fr-mid");
 eq(mid.spec.framePresence.absent, [], "`enters` forbids nothing");
-ok(mid.spec.promptEntities.some((entry) => entry.id === SWEEP), "so the Sweep's descriptor is present in the middle frame");
+ok(mid.spec.promptEntities.some((entry) => entry.id === KEEPER), "so the Keeper's descriptor is present in the middle frame");
 ok(mid.context.shot.description.length > 0, "and the shot description is not withheld there");
 
 const b = specFor("fr-b");
-ok(b.spec.promptEntities.some((entry) => entry.id === SWEEP), "the end frame includes the Sweep");
-ok(b.spec.identityCanon.some((line) => /Chimbley Sweep/i.test(line)), "with his identity canon intact");
-eq(b.spec.mustAvoid.filter((line) => /Chimbley Sweep must not appear/i.test(line)), [], "and no absence requirement");
+ok(b.spec.promptEntities.some((entry) => entry.id === KEEPER), "the end frame includes the Keeper");
+ok(b.spec.identityCanon.some((line) => /Lantern Keeper/i.test(line)), "with his identity canon intact");
+eq(b.spec.mustAvoid.filter((line) => /Lantern Keeper must not appear/i.test(line)), [], "and no absence requirement");
 
 /* A shot with no declarations must be byte-identical to the old behaviour. */
 const undeclared = specFor("fr-a", fixture());
-ok(/Chimbley Sweep/i.test(undeclared.spec.identityCanon.join(" ")),
+ok(/Lantern Keeper/i.test(undeclared.spec.identityCanon.join(" ")),
   "a project that declares nothing compiles exactly as it did before this batch — the contract is opt-in");
 eq(PromptEngine.buildContext(fixture(), "S01-01", "").framePresence.absent, [],
   "and a caller that supplies no frameId at all is unaffected");
 
-/* REFERENCE ATTACHMENT AND FRAME PRESENCE ARE DIFFERENT FACTS. The Sweep's
+/* REFERENCE ATTACHMENT AND FRAME PRESENCE ARE DIFFERENT FACTS. The Keeper's
    reference stays attached for identity continuity; what he loses is the
    positive assertion. This is the property B15/H3 correction depends on. */
-ok(a.context.references.some((ref) => ref.id === SWEEP),
+ok(a.context.references.some((ref) => ref.id === KEEPER),
   "the absent character's reference is STILL ATTACHED — presence and attachment are separate facts, and stripping the reference would break identity continuity for the frames around it");
 
 /* ===========================================================================
    3. THE CONTRADICTION CHECK. What happens when the creator's own text
       disagrees with the creator's own declaration. */
 
-const absentSweep = [{ id: SWEEP, name: "Chimbley Sweep" }];
+const absentKeeper = [{ id: KEEPER, name: "Lantern Keeper" }];
 
-eq(Presence.framePresenceContradictions({ absentEntities: [], spec: { narrativePurpose: "The Chimbley Sweep waves." } }), [],
+eq(Presence.framePresenceContradictions({ absentEntities: [], spec: { narrativePurpose: "The Lantern Keeper waves." } }), [],
   "no declared absence means no scanning at all");
 
 const structural = Presence.framePresenceContradictions({
-  absentEntities: absentSweep,
-  spec: { identityCanon: ["Chimbley Sweep: soot-dark coat"] },
+  absentEntities: absentKeeper,
+  spec: { identityCanon: ["Lantern Keeper: oilskin coat"] },
 });
 eq(structural.length, 1, "a machine-generated positive list naming an absent entity is a contradiction");
 eq(structural[0].surface, "identity canon", "and the surface is named so the fix is obvious");
 
 const prose = Presence.framePresenceContradictions({
-  absentEntities: absentSweep,
-  spec: { narrativePurpose: "A tiny figure of the Chimbley Sweep stands at the stack." },
+  absentEntities: absentKeeper,
+  spec: { narrativePurpose: "A small figure of the Lantern Keeper stands at the railing." },
 });
 eq(prose.length, 1, "a positive prose clause is a contradiction");
-ok(/tiny figure/.test(prose[0].fragment), "and the exact clause is quoted — 'a contradiction was detected' is not actionable");
+ok(/small figure/.test(prose[0].fragment), "and the exact clause is quoted — 'a contradiction was detected' is not actionable");
 
 /* THE NEGATION ALLOWANCE, and why it has to exist. The S01-01 frame direction
-   the creator actually wrote was "no Chimbley Sweep visible". A check that
+   the creator actually wrote was "no Lantern Keeper visible". A check that
    flagged every mention would block the correctly-authored case and teach people
    to stop declaring absence at all. */
 for (const clause of [
-  "No Chimbley Sweep visible.",
-  "The Chimbley Sweep is not yet visible.",
-  "Empty rooftops, without the Chimbley Sweep.",
-  "The Chimbley Sweep is off-screen.",
-  "Before the Chimbley Sweep appears.",
+  "No Lantern Keeper visible.",
+  "The Lantern Keeper is not yet visible.",
+  "Empty terraces, without the Lantern Keeper.",
+  "The Lantern Keeper is off-screen.",
+  "Before the Lantern Keeper appears.",
 ]) {
-  eq(Presence.framePresenceContradictions({ absentEntities: absentSweep, spec: { narrativePurpose: clause } }), [],
+  eq(Presence.framePresenceContradictions({ absentEntities: absentKeeper, spec: { narrativePurpose: clause } }), [],
     `a clause that DENIES presence is not a contradiction: ${clause}`);
 }
 
 /* Clause-level, not paragraph-level: one negation elsewhere must not excuse a
    positive sentence. */
 const mixed = Presence.framePresenceContradictions({
-  absentEntities: absentSweep,
-  spec: { narrativePurpose: "The rooftops are empty of people. The Chimbley Sweep raises his brush." },
+  absentEntities: absentKeeper,
+  spec: { narrativePurpose: "The terraces are empty of people. The Lantern Keeper raises his lamp." },
 });
 eq(mixed.length, 1, "a negated clause does not excuse a positive one in the same passage");
 
 /* Substring safety: a different entity whose name merely contains the tokens. */
 eq(Presence.framePresenceContradictions({
-  absentEntities: [{ id: "CHAR-SWEEPER", name: "Sweeper" }],
-  spec: { narrativePurpose: "The sweepers guild banner hangs over the alley." },
-}), [], "matching is word-bounded — 'sweepers' is not 'Sweeper'");
+  absentEntities: [{ id: "CHAR-RUNNER", name: "Runner" }],
+  spec: { narrativePurpose: "The runners guild banner hangs over the alley." },
+}), [], "matching is word-bounded — 'runners' is not 'Runner'");
 
-/* THE SHORT FORM. The dogfood staging line said "The Sweep", not "The Chimbley
-   Sweep", and a full-name-only scan would have carried it straight into the
-   frame that excludes him. */
-eq(Presence.presenceNameParts("Chimbley Sweep"), ["Chimbley", "Sweep"], "capitalised name parts are the short forms people use");
+/* THE SHORT FORM. The dogfood staging line used the short form on its own, not
+   the full name, and a full-name-only scan would have carried it straight into
+   the frame that excludes him. */
+eq(Presence.presenceNameParts("Lantern Keeper"), ["Lantern", "Keeper"], "capitalised name parts are the short forms people use");
 eq(Presence.presenceNameParts("Flight case"), ["Flight"],
   "a lowercase part is an ordinary English word and is NOT derived — 'case' would fire on 'in case of rain'");
-eq(Presence.presenceNameParts("Sweeper"), ["Sweeper"], "a single-word name yields one part");
-eq(Presence.presenceTokensFor({ id: "CHAR-X", name: "Sweeper" }).includes("Sweeper"), true,
+eq(Presence.presenceNameParts("Runner"), ["Runner"], "a single-word name yields one part");
+eq(Presence.presenceTokensFor({ id: "CHAR-X", name: "Runner" }).includes("Runner"), true,
   "and a single-word name is matched by the name itself, so nothing is lost");
 eq(Presence.framePresenceContradictions({
-  absentEntities: absentSweep,
-  spec: { narrativePurpose: "The Sweep is upper-left of frame." },
+  absentEntities: absentKeeper,
+  spec: { narrativePurpose: "The Keeper is upper-left of frame." },
 }).length, 1, "so the short form is caught");
 eq(Presence.framePresenceContradictions({
   absentEntities: [{ id: "PROP-CASE", name: "Flight case" }],
@@ -244,9 +244,9 @@ eq(Presence.framePresenceContradictions({
 /* One finding per surface and fragment, not one per place the same sentence
    reached. */
 const deduped = Presence.framePresenceContradictions({
-  absentEntities: absentSweep,
-  spec: { narrativePurpose: "The Chimbley Sweep waves." },
-  prompt: "The Chimbley Sweep waves.",
+  absentEntities: absentKeeper,
+  spec: { narrativePurpose: "The Lantern Keeper waves." },
+  prompt: "The Lantern Keeper waves.",
 });
 eq(deduped.length, 1, "the same sentence reaching the spec and the final prompt is one problem, not two");
 
@@ -300,7 +300,7 @@ ok(/guidedFramePresencePanel/.test(studio), "with a control on the frame card it
    The route-level half of this — 409, zero provider contact, no durable job row
    — is in tests/fal-generation.js, where a real provider mock can count. */
 
-const CONTRADICTING = "A tiny figure of the Chimbley Sweep stands among the chimney stacks.";
+const CONTRADICTING = "A small figure of the Lantern Keeper stands among the iron railings.";
 
 /* The fixture builder above only writes well-formed values, and it must keep
    doing so. Malformed records are constructed here, deliberately, by hand. */
@@ -322,10 +322,10 @@ function gate(frameWorkflows, frameId = "fr-a", overrides = {}) {
   });
 }
 const MALFORMED_SHAPES = [
-  ["an object where a token belongs, which is the shape the research drove", { [SWEEP]: { state: "absent" } }],
-  ["a word outside the closed vocabulary", { [SWEEP]: "gone" }],
-  ["a boolean", { [SWEEP]: true }],
-  ["the whole map replaced by an array", [SWEEP]],
+  ["an object where a token belongs, which is the shape the research drove", { [KEEPER]: { state: "absent" } }],
+  ["a word outside the closed vocabulary", { [KEEPER]: "gone" }],
+  ["a boolean", { [KEEPER]: true }],
+  ["the whole map replaced by an array", [KEEPER]],
   ["the whole map replaced by a string", "absent"],
 ];
 
@@ -348,7 +348,7 @@ for (const [label, entityPresence] of MALFORMED_SHAPES) {
     `and refuse AS malformed, not as a contradiction and not as an absence: ${label}`);
   eq(refused.classification, "local-preflight", `refused locally, before anything leaves the machine: ${label}`);
   eq(refused.contradictions, [],
-    `no contradiction is manufactured — CineBraid could not read the declaration, so it may not claim to have found the Sweep in the picture: ${label}`);
+    `no contradiction is manufactured — CineBraid could not read the declaration, so it may not claim to have found the Keeper in the picture: ${label}`);
   ok(/cannot be read/i.test(refused.message),
     `the reason names the real problem — an unreadable declaration: ${label}`);
   ok(/No paid request was submitted/i.test(refused.message),
@@ -359,33 +359,33 @@ for (const [label, entityPresence] of MALFORMED_SHAPES) {
 
 /* The invalid value is REPORTED, so the person who has to fix the project is
    told which entity and which value rather than to go looking. */
-const named = gate({ "fr-a": { [Presence.RUNTIME_FRAME_PRESENCE_KEY]: { [SWEEP]: { state: "absent" } } } });
-eq((named.malformed || []).map((row) => row.entityId), [SWEEP], "the refusal names the entity whose declaration could not be read");
-ok(named.message.includes(SWEEP), "and names it in the sentence the creator sees");
+const named = gate({ "fr-a": { [Presence.RUNTIME_FRAME_PRESENCE_KEY]: { [KEEPER]: { state: "absent" } } } });
+eq((named.malformed || []).map((row) => row.entityId), [KEEPER], "the refusal names the entity whose declaration could not be read");
+ok(named.message.includes(KEEPER), "and names it in the sentence the creator sees");
 
 /* NOT OVER-BLOCKING, which is the other half of the correction. */
 eq(gate({}).ok, true, "a shot that declares nothing at all is still ungoverned and still dispatches, exactly as before the contract existed");
 eq(gate({}).reason, "shot-declares-no-presence", "and says so in the same words");
 eq(gate({ "fr-a": { [Presence.RUNTIME_FRAME_PRESENCE_KEY]: {} } }).ok, true,
   "an EMPTY presence map is not a malformed one — it declares nothing and must not fail closed");
-eq(gate({ "fr-a": { [Presence.RUNTIME_FRAME_PRESENCE_KEY]: { [SWEEP]: "" } } }).ok, true,
+eq(gate({ "fr-a": { [Presence.RUNTIME_FRAME_PRESENCE_KEY]: { [KEEPER]: "" } } }).ok, true,
   "and neither is a cleared value: '' is how a creator un-declares presence for one entity");
-eq(gate({ "fr-a": { [Presence.RUNTIME_FRAME_PRESENCE_KEY]: { [SWEEP]: "present" } } }).ok, true,
+eq(gate({ "fr-a": { [Presence.RUNTIME_FRAME_PRESENCE_KEY]: { [KEEPER]: "present" } } }).ok, true,
   "a well-formed declaration that forbids nothing still dispatches its contradicting-looking prompt, because nothing is contradicted");
 
 /* A frame that is CLEAN is judged on its own terms even when a sibling frame of
    the same shot is malformed. The correction makes the SHOT governed; it does
    not make every frame of it unusable. */
 const mixedFrames = {
-  "fr-a": { [Presence.RUNTIME_FRAME_PRESENCE_KEY]: { [SWEEP]: { state: "absent" } } },
-  "fr-b": { [Presence.RUNTIME_FRAME_PRESENCE_KEY]: { [SWEEP]: "present" } },
+  "fr-a": { [Presence.RUNTIME_FRAME_PRESENCE_KEY]: { [KEEPER]: { state: "absent" } } },
+  "fr-b": { [Presence.RUNTIME_FRAME_PRESENCE_KEY]: { [KEEPER]: "present" } },
 };
 eq(gate(mixedFrames, "fr-a").code, Presence.FRAME_PRESENCE_MALFORMED_CODE, "the malformed frame refuses");
 eq(gate(mixedFrames, "fr-b").ok, true, "and its well-formed sibling still dispatches — this is a per-frame contract and stays one");
 
 /* The paths Batch 1C already closed must still be closed, spelled here because
    the governance predicate now reaches them differently. */
-const soleMalformed = { "fr-a": { [Presence.RUNTIME_FRAME_PRESENCE_KEY]: { [SWEEP]: { state: "absent" } } } };
+const soleMalformed = { "fr-a": { [Presence.RUNTIME_FRAME_PRESENCE_KEY]: { [KEEPER]: { state: "absent" } } } };
 eq(gate(soleMalformed, "").code, Presence.FRAME_IDENTITY_REFUSAL_CODE,
   "a governed shot with no frame id refuses as unresolved — a malformed declaration makes the shot governed, so this hole closes with it");
 eq(gate(soleMalformed, "not-a-frame").code, Presence.FRAME_IDENTITY_REFUSAL_CODE,
@@ -393,7 +393,7 @@ eq(gate(soleMalformed, "not-a-frame").code, Presence.FRAME_IDENTITY_REFUSAL_CODE
 
 /* A well-formed absence still refuses for the RIGHT reason — the correction
    must not have turned every governed shot into a malformed one. */
-const wellFormed = gate({ "fr-a": { [Presence.RUNTIME_FRAME_PRESENCE_KEY]: { [SWEEP]: "absent" } } });
+const wellFormed = gate({ "fr-a": { [Presence.RUNTIME_FRAME_PRESENCE_KEY]: { [KEEPER]: "absent" } } });
 eq(wellFormed.code, Presence.FRAME_PRESENCE_REFUSAL_CODE, "a readable absence contradicted by the prompt is still a CONTRADICTION");
 eq(wellFormed.contradictions.length, 1, "with the offending fragment attached, as before");
 
