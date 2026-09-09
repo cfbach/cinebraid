@@ -43,6 +43,24 @@ const CONFIG_PATH = path.join(TEMP, "config.json");
 const PROJECTS_ROOT = path.join(TEMP, "projects");
 const A = "owner-alpha";
 const B = "owner-beta";
+/* A THIRD PROJECT, OWNED BY THE DETERMINISM SECTION ALONE.
+
+   Section 5 proves optimistic concurrency: the revision a client just read saves,
+   and that same revision refused a second time. Both halves are about ONE writer.
+   Run against A it had two, because the ingest sections above it hand work to the
+   server that finishes on the server's schedule, and a FAL ingest continuation
+   (saveOwnerProject -> writeProject -> the authority seam) can still be writing A
+   when section 5 starts. Measured on a GitHub Windows runner: four such writes in
+   the 600ms before the section began, the last 43ms before it, against a window
+   between the read and the first write of about 40ms. When one lands inside that
+   window the first save is correctly refused 409 PROJECT_REVISION_CONFLICT -- the
+   F-03 protection doing its job -- and the section fails for a reason that has
+   nothing to do with what it tests.
+
+   Nothing above writes this slug, so the only writer is the section itself. That
+   is ownership rather than timing: no wait, no retry, no tolerance for a second
+   writer, and the two assertions are unchanged. */
+const D = "owner-determinism";
 
 const PNG = Buffer.from(
   "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==",
@@ -215,9 +233,10 @@ async function readProjectWithRevision() {
 }
 
 async function setup() {
-  for (const slug of [A, B]) {
+  const TITLES = { [A]: "Project Alpha", [B]: "Project Beta", [D]: "Project Determinism" };
+  for (const slug of [A, B, D]) {
     fs.mkdirSync(path.dirname(fileFor(slug)), { recursive: true });
-    fs.writeFileSync(fileFor(slug), JSON.stringify(projectFixture(slug === A ? "Project Alpha" : "Project Beta"), null, 2));
+    fs.writeFileSync(fileFor(slug), JSON.stringify(projectFixture(TITLES[slug]), null, 2));
   }
   const mockPort = await getFreePort();
   mockBase = `http://127.0.0.1:${mockPort}`;
@@ -598,13 +617,15 @@ async function testMediaWriteOwnership() {
    =================================================================== */
 async function testDeterminism() {
   for (let round = 0; round < 3; round++) {
-    await switchTo(A);
+    /* D, not A: see the comment on the constant. Switching is still what makes the
+       read below authoritative for this project, exactly as before. */
+    await switchTo(D);
     const client = await readProjectWithRevision();
     const first = JSON.parse(JSON.stringify(client.body));
     first.meta.title = `Determinism round ${round}`;
-    const ok = await putJson(`/api/projects/${A}/project`, first, { "if-match": client.revision });
+    const ok = await putJson(`/api/projects/${D}/project`, first, { "if-match": client.revision });
     assert.strictEqual(ok.response.status, 200, `round ${round}: the current client must save`);
-    const staleAgain = await putJson(`/api/projects/${A}/project`, first, { "if-match": client.revision });
+    const staleAgain = await putJson(`/api/projects/${D}/project`, first, { "if-match": client.revision });
     assert.strictEqual(staleAgain.response.status, 409, `round ${round}: the now-stale revision must be refused`);
   }
 }
