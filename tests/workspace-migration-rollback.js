@@ -24,6 +24,7 @@
 
 const assert = require("assert");
 const crypto = require("crypto");
+const { execSync } = require("child_process");
 const fs = require("fs");
 const os = require("os");
 const path = require("path");
@@ -141,6 +142,16 @@ function samePath(left, right) {
   const normalise = (value) => (process.platform === "win32"
     ? path.resolve(String(value)).toLowerCase() : path.resolve(String(value)));
   return normalise(left) === normalise(right);
+}
+/* THE CANONICAL SPELLING OF A PATH THE LEDGER WOULD RECORD: realDirectory() of the
+   parent plus the leaf, which is exactly how createdPathLedger builds realPath. Where
+   TEMP sits under an account folder Windows also exposes by an 8.3 alias, a receipt
+   that is correct still spells the file differently from the fixture that made it, and
+   comparing the two as strings fails. This canonicalises the EXPECTED side only:
+   samePath stays exactly as strict as it was, and no assertion drops to a lexical
+   match. */
+function realExpected(target) {
+  return path.join(fs.realpathSync.native(path.dirname(target)), path.basename(target));
 }
 
 function shippedMigrationHelpers(source = SERVER_SOURCE) {
@@ -615,6 +626,77 @@ async function junctionOutsideDestination() {
   });
 }
 
+/* The 8.3 alias Windows keeps for a long name, or "" when the volume issues none.
+   `for %I in (path) do @echo %~sI` is the only way to read it without a native call. */
+function shortPathOf(target) {
+  try {
+    return String(execSync(`for %I in ("${target}") do @echo %~fsI`, { encoding: "utf8", windowsHide: true })).trim();
+  } catch {
+    return "";
+  }
+}
+
+/* TWO SPELLINGS, ONE LOCATION. GitHub's Windows runners hand a test a TEMP whose
+   account folder is spelled by its 8.3 alias, RUNNER~1, while its realpath carries the
+   long name, runneradmin. The containment predicate resolved the
+   destination root but compared the candidate lexically, so on that machine every
+   legitimate creation under TEMP read as an escape: F11-7 failed on the first public
+   run while passing on any machine whose TEMP is already long.
+
+   Both halves are asserted together, because the correction is only right if the
+   boundary did not move. The alias is admitted, AND a destination genuinely
+   redirected out of the workspace is still refused when it is reached through that
+   same alias — so this cannot pass by making the predicate permissive. */
+function shortNameAliasIsOneLocation() {
+  if (process.platform !== "win32") {
+    console.log("      (skipped: 8.3 aliases are a Windows filesystem feature)");
+    return;
+  }
+  const { createdPathLedger } = shippedMigrationHelpers();
+  /* Names long enough to earn an alias of their own; TEMP itself may already be short. */
+  const home = fs.mkdtempSync(path.join(TEMP, "alias-"));
+  const source = path.join(home, "source-workspace");
+  const dest = path.join(home, "destination-workspace");
+  fs.mkdirSync(source, { recursive: true });
+  fs.mkdirSync(dest, { recursive: true });
+
+  const shortDest = shortPathOf(dest);
+  if (!shortDest || shortDest.toLowerCase() === dest.toLowerCase()) {
+    console.log("      (skipped: this volume issues no 8.3 alias for the destination)");
+    return;
+  }
+  assert.strictEqual(fs.realpathSync.native(shortDest).toLowerCase(), fs.realpathSync.native(dest).toLowerCase(),
+    "the fixture only means anything if both spellings resolve to one directory");
+
+  const ledger = createdPathLedger({
+    realDestinationRoot: fs.realpathSync.native(dest),
+    realSourceRoot: fs.realpathSync.native(source),
+  });
+
+  /* 1. The alias is one of the destination's own spellings, not an escape. */
+  const slug = path.join(shortDest, "alpha");
+  fs.mkdirSync(slug);
+  ledger.directory(slug);
+  const receipt = ledger.receipts().find((entry) => entry.path === path.resolve(slug));
+  assert.ok(receipt, "the admitted directory must be receipted");
+  assert.strictEqual(receipt.escaped, false,
+    "a short-name spelling of the destination root is not a redirection");
+  assert.strictEqual(receipt.realPath.toLowerCase(), path.join(fs.realpathSync.native(dest), "alpha").toLowerCase(),
+    "and the receipt records the canonical location rather than the spelling it arrived in");
+
+  /* 2. The boundary is where it was: a real redirection through the same alias is
+        still refused, and the fixture proves the object really did land outside. */
+  const outside = path.join(home, "unrelated");
+  fs.mkdirSync(outside, { recursive: true });
+  fs.symlinkSync(outside, path.join(dest, "beta"), "junction");
+  const escaped = path.join(shortDest, "beta", "made-here");
+  fs.mkdirSync(escaped);
+  assert.throws(() => ledger.directory(escaped), /destination workspace/,
+    "a destination redirected outside the workspace is still refused when reached through the alias");
+  assert.strictEqual(fs.existsSync(path.join(outside, "made-here")), true,
+    "the refusal is about placement: the object really is outside, not merely missing");
+}
+
 /* The object was legitimately created and receipted, and then became a different
    object before cleanup ran. Deleting on the strength of the path alone would
    destroy a stranger's file; the receipt is what stops it. */
@@ -717,6 +799,9 @@ function ancestorSwapOwnedEscape(helpers = shippedMigrationHelpers(), publish = 
   assert.strictEqual(fs.existsSync(escapedFile), true,
     "the fixture must actually escape, or the rest of this proves nothing");
   const escapedIdentity = fs.lstatSync(escapedFile, { bigint: true });
+  /* Taken now, while the file still exists: step 5 removes it and the comparison there
+     needs the same canonical spelling this one does. */
+  const escapedFileReal = realExpected(escapedFile);
   assert.deepStrictEqual(fs.readdirSync(sink).filter((name) => name.endsWith(".tmp")), [],
     "and the publish still cleans its own temp, even where it landed");
 
@@ -726,7 +811,7 @@ function ancestorSwapOwnedEscape(helpers = shippedMigrationHelpers(), publish = 
   const receipt = ledger.receipts().find((row) => row.kind === "file");
   assert(receipt, "the proof that this attempt created it must be kept, not discarded");
   assert.strictEqual(receipt.escaped, true, JSON.stringify(receipt));
-  assert.strictEqual(samePath(receipt.realPath, escapedFile), true,
+  assert.strictEqual(samePath(receipt.realPath, escapedFileReal), true,
     "the receipt must name where the object PHYSICALLY is: " + receipt.realPath);
   assert.strictEqual(receipt.dev, String(escapedIdentity.dev), "captured by filesystem identity");
   assert.strictEqual(receipt.ino, String(escapedIdentity.ino));
@@ -737,7 +822,7 @@ function ancestorSwapOwnedEscape(helpers = shippedMigrationHelpers(), publish = 
   assert.strictEqual(fs.existsSync(escapedFile), false, "the escaped copy must be removed");
   assert.strictEqual(rollback.escaped.length, 1, JSON.stringify(rollback.escaped));
   assert.strictEqual(rollback.escaped[0].removed, true);
-  assert.strictEqual(samePath(rollback.escaped[0].realPath, escapedFile), true);
+  assert.strictEqual(samePath(rollback.escaped[0].realPath, escapedFileReal), true);
 
   /* 6 — and nothing else. The junction belongs to the other actor; the source
      material that predates this attempt is byte-identical; nothing was recursive. */
@@ -791,6 +876,7 @@ function escapedIdentitySubstitution(helpers = shippedMigrationHelpers(), publis
   fs.unlinkSync(escapedFile);
   fs.writeFileSync(escapedFile, "a different actor's file, at the same place");
   const strangerBytes = sha(escapedFile);
+  const escapedFileReal = realExpected(escapedFile);
 
   const rollback = ledger.unwind();
   assert.strictEqual(fs.existsSync(escapedFile), true, "the replacement is not ours to delete");
@@ -799,7 +885,8 @@ function escapedIdentitySubstitution(helpers = shippedMigrationHelpers(), publis
   assert.strictEqual(rollback.escaped[0].removed, false,
     "and the report says so rather than claiming a clean escape: " + JSON.stringify(rollback.escaped));
   assert.strictEqual(rollback.complete, false);
-  assert(rollback.leftover.some((row) => samePath(row, escapedFile)),
+  /* unwind() reports an escaped entry by its realPath, so the expectation is canonical too. */
+  assert(rollback.leftover.some((row) => samePath(row, escapedFileReal)),
     "the escaped path must be named as leftover: " + JSON.stringify(rollback.leftover));
   assert(rollback.errors.some((row) => /same filesystem object/.test(row.message)),
     "the reason must be the identity mismatch: " + JSON.stringify(rollback.errors));
@@ -932,7 +1019,9 @@ function safetyChecks() {
     assert(receipt, "and the proof that this attempt created it must be kept");
     assert.strictEqual(receipt.escaped, true, "marked escaped: " + JSON.stringify(receipt));
     assert(receipt.reason, "with a reason a person can read");
-    assert.strictEqual(samePath(receipt.realPath, realHome), true,
+    /* Canonicalised here rather than at each call site: every caller passes the path it
+       built the fixture from, and the receipt answers in realpath terms. */
+    assert.strictEqual(samePath(receipt.realPath, realExpected(realHome)), true,
       `and pointing at where the object PHYSICALLY is, which is the only path cleanup may use: ${receipt.realPath} vs ${realHome}`);
     return receipt;
   };
@@ -950,7 +1039,10 @@ function safetyChecks() {
   const redirected = path.join(dest, "looks-fine");
   fs.symlinkSync(sink, redirected, "junction");
   writeFileAt(path.join(sink, "planted.bin"), "source bytes");
-  assert.strictEqual(insideDirectoryOf(realDest, path.join(redirected, "planted.bin")), true,
+  /* A LEXICAL precondition, so both sides are the destination AS SPELLED. Against the
+     realpath root it compared two spellings of one directory and failed on a machine
+     whose TEMP carries an 8.3 alias — while saying "lexically" in its own message. */
+  assert.strictEqual(insideDirectoryOf(dest, path.join(redirected, "planted.bin")), true,
     "the fixture must be lexically inside the destination, or it proves nothing");
   escapes((led) => () => led.file(path.join(redirected, "planted.bin")), path.join(sink, "planted.bin"));
   assert.strictEqual(fs.existsSync(path.join(sink, "planted.bin")), true, "and nothing was deleted proving it");
@@ -1029,6 +1121,7 @@ function safetyChecks() {
   await scenario("RACE-1b the interleave, driven directly", async () => race1Interleaved());
   await scenario("F11-J1 destination junction into the source workspace", junctionIntoSource);
   await scenario("F11-J2 destination junction outside both roots", junctionOutsideDestination);
+  await scenario("F11-N1 short-name alias of the destination is one location", async () => shortNameAliasIsOneLocation());
   await scenario("F11-R1 object replaced between creation and cleanup", async () => replacementBeforeRollback());
   await scenario("F11-A1 ancestor swapped mid-write: owned escape, cleaned by identity", async () => {
     ancestorSwapOwnedEscape();
@@ -1042,8 +1135,8 @@ function safetyChecks() {
      smaller green suite. */
   assert.deepStrictEqual(passed.map((line) => line.split(" ")[0]),
     ["F11-1", "F11-2", "F11-3", "F11-4", "F11-5", "F11-6", "F11-7", "F11-8",
-      "RACE-1", "RACE-1b", "F11-J1", "F11-J2", "F11-R1", "F11-A1", "F11-A2", "F11-P1", "F11-S"]);
-  console.log(`\nF-11 workspace migration cleanup: ${passed.length}/17 scenarios passed; provider calls: 0.`);
+      "RACE-1", "RACE-1b", "F11-J1", "F11-J2", "F11-N1", "F11-R1", "F11-A1", "F11-A2", "F11-P1", "F11-S"]);
+  console.log(`\nF-11 workspace migration cleanup: ${passed.length}/18 scenarios passed; provider calls: 0.`);
   fs.rmSync(TEMP, { recursive: true, force: true });
 })().catch((error) => {
   console.error("\nF-11 FAILED\n", error);

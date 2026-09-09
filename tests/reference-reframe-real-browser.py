@@ -407,12 +407,21 @@ try:
         # carry an `open` from the coverage boards onto whatever now sits at that index.
         # That behaviour predates this slice and is not this slice's to change; what this
         # section is about is what a filmmaker OPENS INTO, which is a route change.
-        page.evaluate(
-            """(id) => {
-                localStorage.setItem(`cinebraid-focused:${ACTIVE_PROJECT_SLUG}:entity-task:characters:${id}`, 'details');
-                localStorage.setItem(`cinebraid-bounded:${ACTIVE_PROJECT_SLUG}:selected:entity-detail-view:characters:${id}`, 'history');
-                location.hash = '#/production';
-            }""", ENTITY)
+        # THE REMEMBERED TASK IS WRITTEN AFTER THE ROUTE HAS LEFT, NOT BEFORE.
+        #
+        # Section 5 clicked a continuity-state control. openContinuityStateVariant selects
+        # `coverage` synchronously AND schedules revealEntityContinuityState, which selects
+        # it again and routes — a legitimate continuation of the click, and the reason the
+        # editor is reachable at all. Section 5's waits are satisfied by the synchronous
+        # half, so writing a remembered task here raced that continuation: on a GitHub
+        # runner it landed at 1258ms, after this write at 1167ms, and the next route
+        # correctly opened on `coverage`. Locally it landed first and the write survived.
+        #
+        # Leaving the reference route and waiting for the app's own settled answer is what
+        # closes the window: nothing is still pending against this entity once production
+        # has rendered and settled. No sleep, no widened timeout, and renderReady stays the
+        # authority. The remembered task is written below, once the route is somewhere else.
+        page.evaluate("() => { location.hash = '#/production'; }")
         # SYNCHRONISED ON THE APP'S OWN ANSWER, NOT ON A SHAPE APPEARING.
         #
         # `location.hash === '#/production'` proves nothing: the hash is assigned
@@ -449,6 +458,12 @@ try:
                 raise AssertionError(f"{what}: the route never settled - {evidence}") from error
 
         wait_settled("location.hash === '#/production'", "the production route")
+        # Settled and elsewhere: the click's continuation has run and cannot overwrite this.
+        page.evaluate(
+            """(id) => {
+                localStorage.setItem(`cinebraid-focused:${ACTIVE_PROJECT_SLUG}:entity-task:characters:${id}`, 'details');
+                localStorage.setItem(`cinebraid-bounded:${ACTIVE_PROJECT_SLUG}:selected:entity-detail-view:characters:${id}`, 'history');
+            }""", ENTITY)
         page.evaluate("(id) => { location.hash = '#/character/' + id; }", ENTITY)
         wait_settled(
             "(() => { const n = document.querySelector('.bounded-entity-page');"

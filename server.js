@@ -306,12 +306,38 @@ function createdPathLedger({ realDestinationRoot, realSourceRoot }) {
       symbolic: stats.isSymbolicLink(), directory: stats.isDirectory(),
     };
   }
-  function contained(target, realParent) {
-    if (!insideRealDirectory(realDestinationRoot, target)) return "is not inside the destination workspace";
+  /* TWO SPELLINGS OF ONE DIRECTORY ARE NOT AN ESCAPE. realDestinationRoot is a realpath,
+     and the containment test used to compare the LEXICAL path against it, so the answer
+     depended on how the caller happened to spell the candidate. Where TEMP sits under an
+     account folder Windows also exposes by an 8.3 alias — RUNNER~1 standing in for a long
+     name of runneradmin — realDirectory() returns the long spelling while the candidate
+     keeps the short one, so every legitimate destination under it read as an escape:
+     insideRealDirectory only lower-cases and cannot see that the two name one directory.
+     GitHub's Windows runners are spelled exactly that way.
+
+     Two things fix that, and both are needed.
+
+     The lexical test is KEPT and a canonical one added beside it, so a path is out of
+     bounds only when it is out of bounds BOTH ways. An alias satisfies the canonical form
+     and passes; a path genuinely outside satisfies neither and is still refused.
+
+     And the PHYSICAL tests are asked first. They read realParent, which is already
+     canonical, so their answers do not move with the spelling — while the lexical half
+     above does. With the general test first, the same escape into the source workspace
+     reported "is not inside the destination workspace" under a short TEMP and
+     "physically resides inside the source workspace" under a long one: the refusal was
+     right either way, but the reason a person reads, and the receipt records, changed
+     with a detail of the machine. Ordering them this way makes the most specific and
+     most serious diagnosis — landing inside the SOURCE workspace — the one that wins,
+     on every machine. Nothing is relaxed: all three tests still run and any one of them
+     still refuses. */
+  function contained(target, realTarget, realParent) {
     if (sameRealPath(realParent, realSourceRoot) || insideRealDirectory(realSourceRoot, realParent))
       return "physically resides inside the source workspace";
     if (!insideRealDirectory(realDestinationRoot, realParent) && !sameRealPath(realParent, realDestinationRoot))
       return "physically resides outside the destination workspace";
+    if (!insideRealDirectory(realDestinationRoot, target) && !insideRealDirectory(realDestinationRoot, realTarget))
+      return "is not inside the destination workspace";
     return "";
   }
   /* ONLY EVER CALLED FROM THE SUCCESS BRANCH OF AN EXCLUSIVE CREATION. That is the
@@ -341,7 +367,7 @@ function createdPathLedger({ realDestinationRoot, realSourceRoot }) {
        else's reparse point, and following that at delete time would remove whatever
        sits at the far end today rather than the object this attempt made. */
     const realPath = path.join(realParent, path.basename(target));
-    const reason = contained(target, realParent);
+    const reason = contained(target, realPath, realParent);
     entries.push({
       kind, path: target, realPath, realParent,
       dev: identity.dev, ino: identity.ino, escaped: Boolean(reason), reason,
@@ -408,7 +434,10 @@ function createdPathLedger({ realDestinationRoot, realSourceRoot }) {
               const realParent = realDirectory(path.dirname(target));
               if (!sameRealPath(realParent, entry.realParent))
                 throw new Error("this path no longer resolves to the location it was created in");
-              const reason = contained(target, realParent);
+              /* Same identity space as admit(): realParent has just been proved equal
+                 to the parent this object was created in, so the leaf hung off it is
+                 the canonical spelling of the same location. */
+              const reason = contained(target, path.join(realParent, path.basename(target)), realParent);
               if (reason) throw new Error(`refused: it ${reason}`);
             }
             if (entry.kind === "file") fs.unlinkSync(target);

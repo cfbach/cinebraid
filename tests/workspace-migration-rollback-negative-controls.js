@@ -309,7 +309,12 @@ const CONTROLS = [
       const rollback = result.first.body.migration.rollback;
       assert.strictEqual(rollback.complete, false,
         "assuming ownership must not be able to pass as a clean cleanup");
-      assert(rollback.leftover.includes(path.join(result.dest, "alpha")),
+      /* The migration resolves its destination root before it builds anything, so the
+         leftover it reports is canonical. Where TEMP carries an 8.3 alias the fixture's
+         own spelling is the short one and a string match fails against a report that is
+         correct — so the expectation is canonicalised, not loosened. */
+      const claimed = path.resolve(path.join(fs.realpathSync.native(result.dest), "alpha")).toLowerCase();
+      assert(rollback.leftover.some((row) => path.resolve(String(row)).toLowerCase() === claimed),
         "the folder cleanup wrongly claimed is named: " + JSON.stringify(rollback.leftover));
       assert(rollback.errors.some((row) => row.code === "ENOTEMPTY"),
         "the guard that stops it is the non-recursive remove: " + JSON.stringify(rollback.errors));
@@ -329,12 +334,19 @@ const CONTROLS = [
    considered — and that removing the rule is what makes an unowned path admissible.
    ========================================================================== */
 
+/* Re-anchored when the first test gained its canonical half, so that a short-name
+   spelling of the destination stops reading as an escape. What the two controls below
+   do with this needle is unchanged: NC-F11-3b removes the rule entirely, NC-F11-4 puts
+   a lexical-only rule back. The second is the reason the canonical test was ADDED
+   beside the lexical one rather than replacing it — a rule that consults only the path
+   string is exactly what NC-F11-4 proves writes into the source workspace. */
 const CONTAINMENT_RULE =
-  '    if (!insideRealDirectory(realDestinationRoot, target)) return "is not inside the destination workspace";\n'
-  + '    if (sameRealPath(realParent, realSourceRoot) || insideRealDirectory(realSourceRoot, realParent))\n'
+  '    if (sameRealPath(realParent, realSourceRoot) || insideRealDirectory(realSourceRoot, realParent))\n'
   + '      return "physically resides inside the source workspace";\n'
   + '    if (!insideRealDirectory(realDestinationRoot, realParent) && !sameRealPath(realParent, realDestinationRoot))\n'
   + '      return "physically resides outside the destination workspace";\n'
+  + '    if (!insideRealDirectory(realDestinationRoot, target) && !insideRealDirectory(realDestinationRoot, realTarget))\n'
+  + '      return "is not inside the destination workspace";\n'
   + '    return "";';
 
 function containmentControl() {
