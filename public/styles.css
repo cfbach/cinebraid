@@ -3290,6 +3290,20 @@ input:focus,textarea:focus,select:focus{border-color:rgba(79,216,204,.34);box-sh
 @media(max-width:760px){
   #main{padding:22px 16px 80px}
   .view-title{font-size:34px}
+  /* THE MOBILE TOPBAR IS 12px SHORT OF ITS OWN CARD. Measured on a GitHub Windows
+     runner at 390px: header#topbar has 372px of usable width and its children need 384,
+     so 12px spilled out through overflow-x:visible and the rightmost 2.91px of it passed
+     the viewport -- documentElement.scrollWidth 393 against a clientWidth of 390. The row
+     cannot absorb it: .topbar-search is already at the 42px floor set on the next line,
+     and .topbar-actions carries min-width:auto. Its four items leave three gaps, and the
+     16px set in the theme block above overrides the 8px from the 620px rule, so this is
+     what the runner actually measured. 10px recovers 18px against a 12px deficit and
+     hides nothing.
+
+     NOT min-width:0 here. That is the tablet fix, bounded at 761px for a reason: carried
+     into this band it measured 54px of overflow at 390px, because the row then shrinks
+     while its children keep their size and spill out of it. */
+  .topbar-actions{gap:10px}
   .topbar-search{width:42px;min-width:42px}
   .reference-manual-actions{grid-template-columns:1fr}
   .imported-reference-preview{grid-template-columns:1fr}
