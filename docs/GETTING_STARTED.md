@@ -100,7 +100,7 @@ Open a shot, choose **Look & blocking**, and expand **Optional assisted blocking
 
 - **AI Review & Recommend** compares all current blocking attempts and recommends the strongest passing composition guide.
 - **Use recommended** installs that guide without generating another image.
-- **Automate Full Shot** reuses approved references and existing blocking, generates only what remains missing, reviews each required frame, and approves strong passes parent-first.
+- **Automate Full Shot** reuses approved references and existing blocking, generates only what remains missing, and reviews each required frame parent-first, recommending the strong passes. It does not approve them: a machine can propose, only a person decides, so the run pauses for your explicit approval on each frame.
 - Enable **Review scene after completion** in the planner to compare the assembled scene against the Project Bible and approved character, location, prop, and vehicle authorities.
 - Use **Scene continuity & automation** to open the scene workspace, where you can review current approved stills or automate unfinished shots and bounded continuity repairs.
 

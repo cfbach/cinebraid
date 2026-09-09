@@ -1,10 +1,18 @@
 # CineBraid 6.7.0-alpha.1 — verification report
 
-This version changes no application behaviour. It moves the release identity from
-`dev` to `alpha`, corrects what a public checkout of CineBraid says about itself,
-and extends the existing brand-asset carve-out to Braidy's character art. The
-evidence below is about two things: that the corrections are real, and that
-nothing else moved with them.
+**Scope: the identity change, not the alpha.** This report verifies one thing —
+the identity, documentation and versioning commit that moved the release identity
+from `6.7.0-dev.1` to `6.7.0-alpha.1`. That commit changes no application
+behaviour: it corrects what a public checkout of CineBraid says about itself and
+extends the existing brand-asset carve-out to Braidy's character art. The evidence
+below is about two things: that those corrections are real, and that nothing else
+moved with them.
+
+It is **not** a description of the complete `6.7.0-alpha.1` delta. The product work
+between `6.7.0-dev.1` and this identity is substantial, and
+`CINEBRAID_v6.7.0-alpha.1_RELEASE_NOTES.md` is what describes it. Every "no
+application behaviour changed" statement below is scoped to the identity commit
+this report verifies.
 
 ## Version identity
 
@@ -106,12 +114,16 @@ The fork guidance names all eight files to replace, and a single defined-term
 sentence makes the existing prohibitions cover the character art without
 restating them four times.
 
-## What did not change
+## What did not change in the identity commit
 
-No product code. No route, no persistence path, no authority rule, no provider or
-model configuration, no generation behaviour, no authentication. The tracked diff
-is documentation, package metadata, and the version stamps `npm run sync:version`
-derives from `package.json`.
+Scoped, as above, to the identity commit — not to the alpha as a whole.
+
+In that commit: no product code. No route, no persistence path, no authority rule,
+no provider or model configuration, no generation behaviour, no authentication. Its
+tracked diff is documentation, package metadata, and the version stamps
+`npm run sync:version` derives from `package.json`.
+
+For what did change across the alpha, read the release notes.
 
 ## Known limitations
 

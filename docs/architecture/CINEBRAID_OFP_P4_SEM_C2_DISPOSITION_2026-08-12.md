@@ -8,7 +8,7 @@
 | Application version | `6.7.0-private.1` |
 | OFP contract revision | `1.0-draft.1` — **unchanged** |
 | Predecessor | P4-SEM-C1, PR #61, `509044c` — MediaAsset identity activation |
-| Primary evidence | `docs/dogfood/CINEBRAID_DOGFOOD_PASS_1_CHIMBLEY_SWEEP_2026-08-12.md` §4.3, §7.1, §7.2, §7.3 |
+| Primary evidence | Dogfood pass 1, §4.3, §7.1, §7.2, §7.3 — an internal working report, removed from `HEAD` during public-repo curation and [pinned at `6c94a4a`](https://github.com/cfbach/cinebraid/blob/6c94a4ad6581233de0f03ad773a5852c82aafd66/docs/dogfood/CINEBRAID_DOGFOOD_PASS_1_CHIMBLEY_SWEEP_2026-08-12.md) |
 
 ---
 

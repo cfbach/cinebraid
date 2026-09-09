@@ -88,24 +88,32 @@ so they are never sent to the browser in plain text.
 
 ## Start
 
-From a source checkout:
+The Public Alpha is shared as source, so a clone is the install:
 
 ```bash
+git clone https://github.com/cfbach/cinebraid.git
+cd cinebraid
 npm ci
-```
-
-```bash
 npm start
 ```
 
-From a release folder, the startup scripts do the same thing:
+Then open the local CineBraid URL shown in the terminal — by default
+`http://127.0.0.1:4477`. Set `PORT` if 4477 is taken.
+
+From a release folder — one you built yourself with `npm run release:build`, since
+no archive has been published under this identity — the startup scripts stand in
+for those last two steps:
 
 - Windows: `start.bat`
 - macOS: `start.command`
 - Linux / DGX Spark: `./start.sh`
 
-Then open the local CineBraid URL shown in the terminal — by default
-`http://127.0.0.1:4477`. Set `PORT` if 4477 is taken.
+They are a convenience, not the documented setup. Each one starts the server, and
+installs dependencies first only if `node_modules` is absent — with
+`npm install --silent`, not the `npm ci` above. `npm ci` installs strictly from
+`package-lock.json` and fails if it and `package.json` disagree; `npm install` may
+resolve a different tree and write the lockfile back. For a reproducible install,
+run `npm ci` yourself before using a launcher.
 
 On startup CineBraid prints its URL, the address it bound to, its network posture,
 and where your projects live, so you can confirm all four at a glance.

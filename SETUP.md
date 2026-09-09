@@ -12,26 +12,32 @@ node --version
 
 ## Install and start
 
-1. Extract the release archive into a new folder.
-2. Open a terminal in that folder.
-3. Install dependencies **on the machine CineBraid will run on**:
+**The Public Alpha is shared as source.** No archive has been published under this
+identity, so there is nothing to download and no checksum to verify. Install from a
+clone, **on the machine CineBraid will run on**:
 
 ```bash
+git clone https://github.com/cfbach/cinebraid.git
+cd cinebraid
 npm ci
-```
-
-4. Start:
-
-```bash
 npm start
 ```
 
-5. Open `http://127.0.0.1:4477`.
+Then open `http://127.0.0.1:4477`.
 
-The release archives do **not** include `node_modules`. Dependencies are installed
-on the destination machine, which is what lets one runtime tarball serve x64 and
-arm64 alike — including the DGX Spark. `npm ci` installs strictly from
-`package-lock.json` and fails if it and `package.json` disagree.
+`npm ci` installs strictly from `package-lock.json` and fails if it and
+`package.json` disagree. It needs network access once; everything after that runs
+locally.
+
+### From an archive you built
+
+`npm run release:build` produces a Windows ZIP and a runtime tarball from a commit.
+To install one, extract it into a new folder, open a terminal there, and run the
+same `npm ci` and `npm start`.
+
+Those archives do **not** include `node_modules`. Dependencies are installed on the
+destination machine, which is what lets one runtime tarball serve x64 and arm64
+alike — including the DGX Spark.
 
 ## Running a second CineBraid on the same machine
 
@@ -93,7 +99,7 @@ Provider keys remain server-side. Paid requests require explicit confirmation an
 
 1. Stop CineBraid.
 2. Back up `projects/` and `data/`.
-3. Install the release archive into a new folder and run `npm ci` there.
+3. Install the newer version into a new folder — a fresh clone, or an archive you built — and run `npm ci` there.
 4. Restore your own `projects/` and `data/config.json` when using a new folder. Do not replace them with the release sample/config if preserving existing work.
 5. Start CineBraid and hard-refresh the browser once.
 

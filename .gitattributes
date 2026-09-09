@@ -34,4 +34,3 @@ tests/fixtures/ofp-migration/overfit/**  text eol=lf
 /.claude                                    export-ignore
 /CINEBRAID_v6.6.4.2_AUDIT_RESULTS.json      export-ignore
 /CineBraid_v6.6.4.2_New_Chat_Handoff.md     export-ignore
-/docs/release-audit-relocated               export-ignore

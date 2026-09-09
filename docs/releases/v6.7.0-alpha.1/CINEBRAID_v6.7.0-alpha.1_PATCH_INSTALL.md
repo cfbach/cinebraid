@@ -11,13 +11,8 @@ which is what Windows CI runs.
 
 ```bash
 git clone https://github.com/cfbach/cinebraid.git
-```
-
-```bash
+cd cinebraid
 npm ci
-```
-
-```bash
 npm start
 ```
 
