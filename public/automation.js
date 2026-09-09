@@ -1294,8 +1294,8 @@ window.shotAutomationPanel = (shot) => {
       ? "This shot is made in a way that requires no still frame. Full-shot automation will produce only the frames you select here, as optional work, and motion generation remains manual."
       : "This shot has not said how it is made, so no still frame is required yet. Choose an execution route first, or select the frames you want produced as optional work. Motion generation remains manual.")
     : stillObligation.owedFrameCount > 1
-    ? `Run the complete still pipeline: review or create the opening blocking guide, generate and review every selected required frame parent-first, approve strong passes, and optionally review the assembled scene against the Project Bible. Motion generation remains manual.`
-    : "Run the complete still pipeline: review or create blocking, generate and review the opening frame, approve a strong pass, and optionally review the assembled scene against the Project Bible. Motion generation remains manual.";
+    ? `Run the complete still pipeline: review or create the opening blocking guide, generate and review every selected required frame parent-first, recommend the strong passes and pause for your approval, and optionally review the assembled scene against the Project Bible. Motion generation remains manual.`
+    : "Run the complete still pipeline: review or create blocking, generate and review the opening frame, recommend a strong pass and pause for your approval, and optionally review the assembled scene against the Project Bible. Motion generation remains manual.";
   return v626AutomationPanel(run, "Full shot still automation", description, "shot-chain", shot.id, "stills", `<button class="approve-btn large" onclick="openShotAutomationModal('${shot.id}')">AUTOMATE FULL SHOT</button>`, run?.status === "completed" ? `<button class="automation-motion-handoff" onclick="openAutomationMotionHandoff('${shot.id}')">Open manual motion setup →</button>` : "");
 };
 window.blockingAutomationPanel = (shot) => {
