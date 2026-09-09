@@ -11,8 +11,16 @@ const creation = fs.readFileSync(path.join(root, "public/creation-studio.js"), "
 const sceneAutomation = fs.readFileSync(path.join(root, "public/scene-automation.js"), "utf8");
 const server = fs.readFileSync(path.join(root, "server.js"), "utf8");
 
+/* `standing` is the capability record's own authority, and every record
+   /api/agents/status sends carries one — server.js `capabilityCheck` stamps it on the
+   way out. A fixture that carries only the legacy `ready` boolean describes a record
+   the server does not produce: the browser reads it as "not resolved yet" rather than
+   as ready, `visionCanReview` refuses, and the blocking review below returns at its
+   vision guard without ever calling /api/llm/review. render-harness's
+   `readyCapability` carries the field for the same reason; this local helper shadows
+   it, so it has to say the same thing. */
 function readyAgents() {
-  const ready = (label) => ({ ready: true, label, provider: "test", model: "test-model", message: "", action: "" });
+  const ready = (label) => ({ ready: true, standing: "ready", label, provider: "test", model: "test-model", message: "", action: "" });
   return { enabled: true, manualMode: false, capabilities: { text: ready("Text"), vision: ready("Vision"), verifier: ready("Verifier"), embedding: ready("Embedding"), technical: ready("Technical") }, agents: [] };
 }
 

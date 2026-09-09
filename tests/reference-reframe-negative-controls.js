@@ -227,8 +227,8 @@ async function n4() {
     id: "N4",
     defect: "`Choose & approve` returns as a peer top-level production stage",
     run: () => patchedFile("public/entities.js", [[
-      `    {id:"coverage",label:"What this production needs",detail:"Required views, states and variants",render:()=>entityCoverageStatesMarkup(list,it,mediaByName,media)},`,
-      `    {id:"review",label:manualFirstWorkflow()?"Choose & approve":"Review",detail:"Candidates and approvals",render:()=>candidatesTask},\n    {id:"coverage",label:"What this production needs",detail:"Required views, states and variants",render:()=>entityCoverageStatesMarkup(list,it,mediaByName,media)},`,
+      `    {id:"coverage",label:"Production needs",detail:"Required views, states and variants",render:()=>entityCoverageStatesMarkup(list,it,mediaByName,media)},`,
+      `    {id:"review",label:manualFirstWorkflow()?"Choose & approve":"Review",detail:"Candidates and approvals",render:()=>candidatesTask},\n    {id:"coverage",label:"Production needs",detail:"Required views, states and variants",render:()=>entityCoverageStatesMarkup(list,it,mediaByName,media)},`,
     ]], async () => {
       const peers = detectors.peerTaskIds(readLF("public/entities.js"));
       assert.deepStrictEqual(peers, ["reference", "review", "coverage", "details"],
@@ -311,8 +311,8 @@ async function n5() {
     defect: "a second surface offers candidate approval, so the decision has two homes again",
     editsByFile: {
       "entities.js": [[
-        `{id:"coverage",label:"What this production needs",detail:"Required views, states and variants",render:()=>entityCoverageStatesMarkup(list,it,mediaByName,media)},`,
-        `{id:"coverage",label:"What this production needs",detail:"Required views, states and variants",render:()=>candidatesTask+entityCoverageStatesMarkup(list,it,mediaByName,media)},`,
+        `{id:"coverage",label:"Production needs",detail:"Required views, states and variants",render:()=>entityCoverageStatesMarkup(list,it,mediaByName,media)},`,
+        `{id:"coverage",label:"Production needs",detail:"Required views, states and variants",render:()=>candidatesTask+entityCoverageStatesMarkup(list,it,mediaByName,media)},`,
       ]],
     },
     probe: async (mutate) => {

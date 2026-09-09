@@ -155,7 +155,22 @@ async function main() {
   };
   const framesPassed = await render('#/shot/L1-01', project, { scan, storage: { 'cinebraid-focused:fixture:shot-task:L1-01': 'frames' } });
   assert(framesPassed.html.includes('PAIR CONTINUITY PASSED'), 'passed frame sequence review must be visible');
-  assert(framesPassed.html.includes('First / last-frame motion is ready'), 'motion readiness must require the passed sequence review');
+  /* The hand-off sentence was rewritten, so the old copy ("First / last-frame motion
+     is ready") no longer appears anywhere. Both anchors below belong to the ONE branch
+     guarded by `sequenceReview?.pass`, which is the invariant this line exists to hold:
+     the plain "Ready for motion" heading is also produced by the single-anchor branch,
+     so asserting that alone would stop proving the review was required. */
+  assert(framesPassed.html.includes('frames-to-motion-cta state-pass'), 'motion readiness must require the passed sequence review');
+  assert(framesPassed.html.includes('approved anchors passed the motion readiness check'), 'the motion hand-off must name the readiness check as what passed');
+  /* THE MOTION WORKSPACE NEEDS A DECLARED ROUTE. Production readiness answers
+     `declare-shot-route` for a shot that has not said how it is made, so motion
+     generation is unavailable and guidedMotionWorkspace renders its review-only panel
+     instead -- which carries the nav map and the returned-video section but not sections
+     1 and 3. That gate is the shipped behaviour, not a defect, and the assertions below
+     are about the full three-section workspace, so the fixture has to declare a route to
+     reach it. Declared here rather than in buildFixture() so every assertion above still
+     runs against an undeclared shot. */
+  project.shots[0].deliveryRoute = 'flf';
   const motion = await render('#/shot/L1-01', project, { scan, storage: { 'cinebraid-focused:fixture:shot-task:L1-01': 'motion' } });
   assert(motion.html.includes('motion-workflow-map'), 'motion must expose a three-stage navigation map');
   for (const text of ['1 · APPROVED FRAMES', '2 · RETURNED VIDEO', '3 · ASSISTED MOTION']) assert(motion.html.includes(text), `${text} heading missing`);

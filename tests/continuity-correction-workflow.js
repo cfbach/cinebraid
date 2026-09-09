@@ -31,7 +31,12 @@ assert(entities.includes('ACCEPT DIFFERENCE AS INTENTIONAL'), 'derived state dif
 assert(entities.includes('INTENTIONAL APPROVED DELTA'), 'accepted differences must modify the state delta before revalidation');
 assert(entities.includes('/api/llm/review-entity-candidate'), 'state validation must use the strict authority reviewer');
 
-assert(library.includes('targetState.parentValidation = null'), 'replacing a state authority must invalidate stale validation');
+/* The loop variable was renamed targetState -> childState when `targetState` became
+   the outer name for the state being approved. The invariant is the same one and is
+   still in library-tools.js: approving a new default authority clears every derived
+   child's parentValidation, so a stale answer about the previous parent image cannot
+   survive the replacement. */
+assert(library.includes('childState.parentValidation = null'), 'replacing a state authority must invalidate stale validation');
 assert(library.includes('validateContinuityStateAgainstParent'), 'approved derived states should schedule validation when vision is ready');
 
 assert(styles.includes('.frame-sequence-correction-modal'), 'sequence correction UI must be styled');
