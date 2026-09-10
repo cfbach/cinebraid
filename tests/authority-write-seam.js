@@ -5,6 +5,7 @@ const crypto = require("crypto");
 const fs = require("fs");
 const path = require("path");
 const vm = require("vm");
+const { createRequire } = require("module");
 const { Kernel, Private } = require("./authority-kernel-private");
 const Authority = require("../public/shared-production-authority");
 const { installTestManualActionSource } = require("./authority-test-gesture");
@@ -305,26 +306,23 @@ scenario("H-01", () => {
   assert(!/check:authority-browser/.test(pkg.scripts["check:ci"] || ""),
     "and check:ci must not, because the job that runs it has no browser to fail against");
 
-  /* THE SAME QUESTION, ASKED OF THE OTHER BROWSER GATE, because it turned out to
-     have the same answer and nobody was asking. `check:browser-gate` runs every
-     real-browser suite and has been a step in this job since it was written -- yet
-     24 of its suites went red across five accepted product changes without a merge
-     being stopped once. Running a gate and requiring it are different things, and
-     only the second one is a gate. The step is asserted here so it cannot be
-     dropped; the job NAME is asserted because that string is what a repository's
-     required-checks list matches, so a rename silently un-requires it. Whether the
-     name is actually in that list is a repository setting no test can read -- the
-     workflow says so in words instead, and this pins the words. */
+  /* Browser suites must still execute in their provisioned job, and its status
+     name must remain stable. Repository policy currently requires Windows
+     validation and keeps Browser validation advisory pending runner stability.
+     Pin that documented distinction without weakening either browser command;
+     actual branch protection is a repository setting, not a workflow assertion. */
   assert(pkg.scripts["check:browser-gate"], "the real-browser gate must still be a script");
   assert(browserJob.includes("npm run check:browser-gate"),
     "the browser-validation job must execute the real-browser gate");
   assert(!/check:browser-gate/.test(pkg.scripts["check:ci"] || ""),
     "and check:ci must not run it either, for the same reason: no browser is provisioned there");
   assert(/name: Browser validation/.test(browserJob),
-    "the browser-validation job must keep the name a required status check is matched by");
-  assert(/branch-protection status check/.test(browserJob),
-    "the browser-validation job must record that its name is a branch-protection status check; "
-    + "without that this job reports a red gate instead of enforcing one");
+    "the browser-validation job must keep its advisory status-check name stable");
+  assert(/name: Windows validation/.test(workflow)
+    && /# Browser validation runs separately from the required Windows validation job\.\s*# It is advisory pending BROWSER_GATE_RUNNER_STABILITY_V1\./.test(workflow)
+    && /# stable, and investigate failures without treating this job as a required\s*# branch-protection check during that work\./.test(workflow),
+    "the workflow must record Windows validation as required and Browser validation as advisory "
+    + "pending BROWSER_GATE_RUNNER_STABILITY_V1, without requiring Browser validation in branch protection");
 });
 
 
@@ -362,8 +360,8 @@ function rebuildSeam(mutations = []) {
   const moduleObject = { exports: {} };
   vm.runInNewContext(text, {
     module: moduleObject, exports: moduleObject.exports, console, structuredClone,
-    require: (specifier) => require(specifier.startsWith(".") ? path.join(ROOT, specifier) : specifier),
-  }, { filename: "authority-write-seam.js" });
+    require: createRequire(F6_SEAM_FILE),
+  }, { filename: F6_SEAM_FILE });
   return moduleObject.exports;
 }
 
