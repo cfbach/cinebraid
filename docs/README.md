@@ -40,8 +40,9 @@ not a promise that every researched model or provider is integrated.
 - [Open Film Project resources and tests](../ofp/)
 - [Public Project Builder resources](../resources/project-builder/)
 
-The server implementation currently remains in root JavaScript files. No future
-source layout is presented here as the current architecture.
+The root `server.js` starts the implementation under `src/`. See the
+[repository layout](architecture/REPOSITORY_LAYOUT.md) for current source domains
+and runtime-data boundaries.
 
 ## Releases
 

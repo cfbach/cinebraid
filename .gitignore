@@ -144,7 +144,7 @@ dist
 /projects/*
 /data/*
 
-# Shipped assets required for a working clone (see prompt-engine.js and
+# Shipped assets required for a working clone (see src/generation/prompt-engine.js and
 # tests/release-package-smoke.js, both of which hard-require these).
 # Each negation names ONE file: data/ also holds config.json and, later, render-node
 # and account records, and a directory-wide negation here would ship credentials.

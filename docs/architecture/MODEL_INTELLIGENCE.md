@@ -19,7 +19,7 @@ Every file, field and test below exists to keep those apart. The worked example:
 | Layer | Says about a MiniMax H3 seed | Where it lives |
 |---|---|---|
 | the model | not documented by MiniMax | `data/model-definitions.json` → `capabilities.flags.seed: false` |
-| fal | not in fal's schema | `fal-h3-backend.js` (the shipped adapter, still the authority) |
+| fal | not in fal's schema | `src/generation/fal/fal-h3-backend.js` (the shipped adapter, still the authority) |
 | Runware | offers one | `data/provider-surfaces.json` → the Runware offering's `flags.seed: true` |
 
 All three are recorded. The divergence is *reported*. And the capability a request is
@@ -35,7 +35,7 @@ never widen one** — flag intersection requires every declaring layer to agree.
 | `data/model-profiles.json` | how to WRITE for a model (pre-existing) | capability or execution metadata |
 | `docs/architecture/model-evidence/*.json` | WHERE every claim came from | the vendor's documentation copied wholesale |
 
-`model-intelligence.js` joins the first two. `public/shared-model-intelligence.js` holds
+`src/generation/model-intelligence.js` joins the first two. `public/shared-model-intelligence.js` holds
 the vocabularies and the pure resolvers, so a browser screen and the server compute the
 same answer — the pattern `shared-generation-capability.js` already established.
 

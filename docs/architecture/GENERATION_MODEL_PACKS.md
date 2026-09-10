@@ -10,11 +10,11 @@ PROJECT BIBLE + SHOT + APPROVED REFERENCES + DIRECTOR INTENT
     ->  prompt-engine spec          provider-neutral, already existed
     ->  planReferences()            semantic reference manifest
     ->  pack.compileMode()          model-specific wording and parameters
-    ->  GenerationPlan              generation-contracts.js
+    ->  GenerationPlan              src/generation/generation-contracts.js
     ->  GenerationJob               unchanged
 ```
 
-`generation-compiler.js` owns everything that is true of every model.
+`src/generation/generation-compiler.js` owns everything that is true of every model.
 `model-packs/<family>.js` owns everything that is true of one.
 
 A **GenerationPlan is a compiled GenerationJob**, not a second intermediate
@@ -33,7 +33,7 @@ prompt-engine spec and is the same whichever model runs.
 `Image 1`, a three-part camera phrase versus a label, whether an aspect ratio is a
 parameter or a sentence. It lives only in a pack.
 
-The line is enforced, not merely described. `generation-contracts.js` refuses provider
+The line is enforced, not merely described. `src/generation/generation-contracts.js` refuses provider
 transport and graph structure inside intent, so a pack that needs to record which model
 input a reference fills puts it in `settings.extensions[modelId]` — namespaced by model
 and deliberately opaque to core.
@@ -103,7 +103,7 @@ Every piece of filmmaking intent the shot actually carries ends in exactly one s
 | `omitted-by-design` | deliberately left out | `reason` |
 | `unsupported` | this model and mode cannot express it | `reason`, plus a warning naming it |
 
-The inventory of what counts as intent is `INTENT_FIELDS` in `generation-compiler.js` —
+The inventory of what counts as intent is `INTENT_FIELDS` in `src/generation/generation-compiler.js` —
 one table, no second list. A field absent from the shot is not intent and needs no
 explanation.
 
@@ -192,7 +192,7 @@ the two cannot drift.
 6. Write a semantic suite. Assert what survived, not what the prompt string looks like.
 7. Add negative controls proving each new regression test detects its defect.
 
-Nothing in `generation-compiler.js`, `generation-contracts.js` or
+Nothing in `src/generation/generation-compiler.js`, `src/generation/generation-contracts.js` or
 `shared-generation-capability.js` should need to change. If it does, the change belongs in
 core because it is true of every model — and if it is true of only one, it belongs in the
 pack.
