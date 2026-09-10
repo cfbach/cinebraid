@@ -32,14 +32,22 @@ This module fixes all three in one place so the nine suites stay short:
     Chromium build it actually started. `tests/run-browser-gate.js` requires
     that receipt from every suite, which is what makes "did browser assertions
     really run?" a question with a mechanical answer rather than a hopeful one.
+
+  * `disposable_workspace(label)` gives a suite its own writable projects root
+    and config file, outside the repository, seeded from the tracked sample. See
+    its own docstring for why a browser suite may no longer inherit whatever
+    projects root the application happens to default to.
 """
 
+import atexit
 import hashlib
 import json
 import os
+import pathlib
 import platform
 import shutil
 import sys
+import tempfile
 
 REQUIRED_ENV = "CINEBRAID_BROWSER_REQUIRED"
 EXECUTABLE_ENV = "CINEBRAID_BROWSER_EXECUTABLE"
@@ -53,6 +61,153 @@ SETUP_HINT = (
     "environment and download Chromium, then re-run this check. "
     "See docs/qa/BROWSER_TESTS.md."
 )
+
+
+# ---------------------------------------------------------------------------
+# A DISPOSABLE WORKSPACE FOR A REAL-BROWSER SUITE
+#
+# WHAT WENT WRONG, so the next person does not undo it. These suites used to
+# start the server with nothing but a port:
+#
+#     env = dict(os.environ, PORT=str(port))
+#     subprocess.Popen(["node", "server.js"], cwd=ROOT, env=env)
+#
+# and relied on the application's DEFAULT projects root being `<install>/projects`,
+# which meant the server opened the tracked `projects/cinebraid-sample` and the
+# interface came up on a real project. Nothing said so; it was inherited.
+#
+# PROJECT_STORAGE_SEPARATION_V1 moved that default off the install, so on a fresh
+# clone the server resolved an empty external folder, `/api/project` answered 404
+# and the app rendered its first-run screen. Three suites then failed looking for
+# a workspace that was never going to be there, and the failure named a missing
+# selector rather than a missing project — which is a long way from the cause.
+#
+# The dependency was always wrong, and the default change only revealed it. A test
+# does not get to inherit where a user's work lives:
+#
+#   * a suite that follows the default follows it to a REAL production root on a
+#     machine that has one configured, which is the founder's workstation;
+#   * a suite that writes into the checkout's own `projects/` leaves stray projects
+#     for the next run, which is what scripts/qa-sandbox.js exists because of;
+#   * and a suite whose fixture arrives by inheritance breaks whenever an unrelated
+#     product decision moves the thing it was inheriting.
+#
+# So a suite states its workspace instead. This hands it one, and it is the only
+# way to get one: the root is always a directory THIS function created under the
+# system temp area, so no caller can point it at a production root by passing a
+# path, because there is no path to pass.
+#
+# CINEBRAID_TEST_MODE is set as a second line of defence. The server refuses to
+# start when a run that declares itself a test resolves a projects root inside the
+# application directory, so a future edit that somehow reintroduces the checkout's
+# own root fails loudly at startup rather than quietly writing there.
+#
+# THE SAMPLE IS COPIED, NEVER LINKED, and its runtime artefacts are left behind:
+# a per-install asset ledger belongs to the install that minted it, and the tracked
+# sample must be byte-identical after the gate. tests/run-browser-gate.js census
+# checks exactly that.
+
+# Runtime files CineBraid writes inside a project. The same set
+# scripts/qa-sandbox.js and tests/helpers/disposable-root.js leave behind.
+RUNTIME_ARTIFACTS = frozenset({
+    "backups",
+    "generation-jobs.json",
+    "agent-index.json",
+    "test-feedback.json",
+    "embeddings.json",
+    "media-assets.json",
+})
+
+_REPO_ROOT = pathlib.Path(__file__).resolve().parents[1]
+_BUNDLED_SAMPLE = _REPO_ROOT / "projects" / "cinebraid-sample"
+SAMPLE_SLUG = "cinebraid-sample"
+
+
+def _is_runtime_artifact(name):
+    return name in RUNTIME_ARTIFACTS or name.lower().endswith(".bak")
+
+
+class DisposableWorkspace:
+    """A writable projects root and config path a suite owns outright."""
+
+    def __init__(self, home):
+        self.home = pathlib.Path(home)
+        self.projects_root = self.home / "projects"
+        self.config_path = self.home / "config.json"
+
+    def env(self, port, **extra):
+        """The environment for `subprocess.Popen(["node", "server.js"], ...)`.
+
+        Every provider key is blanked, so a suite that forgets to stub a call
+        gets a refusal rather than a real request.
+        """
+        values = dict(
+            os.environ,
+            PORT=str(port),
+            CINEBRAID_PROJECTS_ROOT=str(self.projects_root),
+            CINEBRAID_CONFIG_PATH=str(self.config_path),
+            CINEBRAID_TEST_MODE="1",
+            FAL_KEY="",
+            OPENAI_API_KEY="",
+            GOOGLE_API_KEY="",
+            ANTHROPIC_API_KEY="",
+        )
+        values.update({key: str(value) for key, value in extra.items()})
+        return values
+
+    def cleanup(self):
+        shutil.rmtree(self.home, ignore_errors=True)
+
+
+def disposable_workspace(label, sample=True, active_project=""):
+    """Create one. `label` only names the directory, so a leftover is traceable.
+
+    Cleanup is bounded and deterministic: call `.cleanup()` in the suite's own
+    `finally`, and an atexit backstop removes it if the suite dies first.
+    """
+    slug = "".join(character if character.isalnum() else "-" for character in str(label))[:40]
+    home = pathlib.Path(tempfile.mkdtemp(prefix="cinebraid-browser-%s-" % slug))
+
+    # Proving it rather than trusting tempfile: a workspace inside the checkout is
+    # the failure this exists to prevent, and it is one bad TMPDIR away.
+    try:
+        home.resolve().relative_to(_REPO_ROOT)
+    except ValueError:
+        pass
+    else:
+        shutil.rmtree(home, ignore_errors=True)
+        raise RuntimeError(
+            "A browser-test workspace may not live inside the repository (%s). "
+            "Check TMPDIR/TEMP." % home
+        )
+
+    workspace = DisposableWorkspace(home)
+    workspace.projects_root.mkdir(parents=True, exist_ok=True)
+
+    if sample:
+        shutil.copytree(
+            _BUNDLED_SAMPLE,
+            workspace.projects_root / SAMPLE_SLUG,
+            ignore=lambda directory, names: [name for name in names if _is_runtime_artifact(name)],
+        )
+
+    workspace.config_path.write_text(
+        json.dumps(
+            {
+                "assistant": {"provider": "none", "visionProvider": "none"},
+                "agents": {"enabled": False},
+                "generation": {"fal": {"enabled": False}},
+                "workspace": {"projectRoot": "", "mediaRoot": "", "outputRoot": "", "backupRoot": ""},
+                "activeProject": active_project,
+            },
+            indent=2,
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+
+    atexit.register(workspace.cleanup)
+    return workspace
 
 
 def browser_required():

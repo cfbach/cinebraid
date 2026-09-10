@@ -1,6 +1,6 @@
 import os, pathlib, shutil, socket, subprocess, time, re, urllib.request, urllib.error
 ROOT=pathlib.Path(__file__).resolve().parents[1]
-from browser_runtime import require_browser, launch_chromium
+from browser_runtime import require_browser, launch_chromium, disposable_workspace
 LABEL='Private-preview layout audit'
 sync_playwright=require_browser(LABEL)
 
@@ -228,7 +228,12 @@ def assert_surface_polish(page, label):
         fit=page.evaluate("() => { const i=document.querySelector('.reference-primary-preview img'); return i?getComputedStyle(i).objectFit:'contain'; }")
         assert fit=='contain', f'{label}: the primary reference image must stay contained, got {fit!r}'
 
-port=free_port(); server=subprocess.Popen(['node','server.js'],cwd=ROOT,env={**os.environ,'PORT':str(port)},stdout=subprocess.DEVNULL,stderr=subprocess.DEVNULL)
+port=free_port()
+# Its own writable projects root and config, outside the checkout, seeded from the
+# tracked sample. This suite used to inherit whatever the application defaulted to;
+# see disposable_workspace() in browser_runtime.py for why that is no longer allowed.
+workspace=disposable_workspace('preview-layout')
+server=subprocess.Popen(['node','server.js'],cwd=ROOT,env=workspace.env(port),stdout=subprocess.DEVNULL,stderr=subprocess.DEVNULL)
 try:
     wait(port)
     with sync_playwright() as pw:
@@ -295,3 +300,4 @@ finally:
     server.terminate()
     try: server.wait(timeout=5)
     except subprocess.TimeoutExpired: server.kill()
+    workspace.cleanup()

@@ -40,7 +40,7 @@ import copy, json, os, pathlib, re, socket, subprocess, sys, time, urllib.parse
 
 ROOT = pathlib.Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "tests"))
-from browser_runtime import require_browser, launch_chromium
+from browser_runtime import require_browser, launch_chromium, disposable_workspace
 
 LABEL = "Entity truth surfaces real-browser audit"
 sync_playwright = require_browser(LABEL)
@@ -134,7 +134,11 @@ STORAGE = {
 state = {"project": build_project(False), "mutate_entities": False}
 
 port = free_port()
-server = subprocess.Popen(["node", "server.js"], cwd=ROOT, env=dict(os.environ, PORT=str(port)),
+# Its own writable projects root and config, outside the checkout, seeded from the
+# tracked sample. This suite used to inherit whatever the application defaulted to;
+# see disposable_workspace() in browser_runtime.py for why that is no longer allowed.
+workspace = disposable_workspace("entity-truth")
+server = subprocess.Popen(["node", "server.js"], cwd=ROOT, env=workspace.env(port),
                           stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
 try:
     wait_server(port)
@@ -320,6 +324,7 @@ finally:
     server.terminate()
     try: server.wait(timeout=10)
     except subprocess.TimeoutExpired: server.kill()
+    workspace.cleanup()
 
 if paid_calls:
     failures.append("A PAID ROUTE WAS CALLED: %s" % paid_calls)

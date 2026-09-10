@@ -6,7 +6,7 @@ ROOT = pathlib.Path(__file__).resolve().parents[1]
 SCREENSHOT_DIR = pathlib.Path(os.environ["CINEBRAID_MANUAL_SCREENSHOT_DIR"]) if os.environ.get("CINEBRAID_MANUAL_SCREENSHOT_DIR") else None
 if SCREENSHOT_DIR:
     SCREENSHOT_DIR.mkdir(parents=True, exist_ok=True)
-from browser_runtime import require_browser, launch_chromium, project_response, project_save
+from browser_runtime import require_browser, launch_chromium, project_response, project_save, disposable_workspace
 LABEL = "Manual-first real browser audit"
 sync_playwright = require_browser(LABEL)
 
@@ -22,7 +22,11 @@ def wait_server(port, timeout=20):
     raise RuntimeError("CineBraid server did not start")
 
 port = free_port()
-env = dict(os.environ, PORT=str(port))
+# Its own writable projects root and config, outside the checkout, seeded from the
+# tracked sample. This suite used to inherit whatever the application defaulted to;
+# see disposable_workspace() in browser_runtime.py for why that is no longer allowed.
+workspace = disposable_workspace("manual-first")
+env = workspace.env(port)
 server = subprocess.Popen(["node", "server.js"], cwd=ROOT, env=env, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, text=True)
 try:
     wait_server(port)
@@ -256,3 +260,4 @@ finally:
     server.terminate()
     try: server.wait(timeout=5)
     except subprocess.TimeoutExpired: server.kill()
+    workspace.cleanup()

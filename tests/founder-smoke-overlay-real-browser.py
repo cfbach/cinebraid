@@ -29,7 +29,7 @@ and answered locally; the only network is the loopback CineBraid server.
 import copy, json, os, pathlib, re, socket, subprocess, sys, time, urllib.error, urllib.request
 
 ROOT = pathlib.Path(__file__).resolve().parents[1]
-from browser_runtime import require_browser, launch_chromium
+from browser_runtime import require_browser, launch_chromium, disposable_workspace
 LABEL = "Founder smoke overlay stacking check"
 sync_playwright = require_browser(LABEL)
 
@@ -74,7 +74,12 @@ runs = [
     },
 ]
 
-port = free_port(); env = dict(os.environ, PORT=str(port))
+port = free_port()
+# Its own writable projects root and config, outside the checkout, seeded from the
+# tracked sample. This suite used to inherit whatever the application defaulted to;
+# see disposable_workspace() in browser_runtime.py for why that is no longer allowed.
+workspace = disposable_workspace("founder-smoke")
+env = workspace.env(port)
 server = subprocess.Popen(["node", "server.js"], cwd=ROOT, env=env, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
 try:
     wait_server(port)
@@ -227,3 +232,4 @@ finally:
     server.terminate()
     try: server.wait(timeout=5)
     except Exception: server.kill()
+    workspace.cleanup()

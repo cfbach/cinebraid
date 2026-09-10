@@ -13,7 +13,7 @@ import urllib.error
 
 ROOT = pathlib.Path(__file__).resolve().parents[1]
 VERSION = json.loads((ROOT / "package.json").read_text(encoding="utf-8"))["version"]
-from browser_runtime import require_browser, launch_chromium
+from browser_runtime import require_browser, launch_chromium, disposable_workspace
 
 LABEL = f"v{VERSION} board-density browser check"
 sync_playwright = require_browser(LABEL)
@@ -39,10 +39,14 @@ def wait_server(port, timeout=20):
 
 
 port = free_port()
+# Its own writable projects root and config, outside the checkout, seeded from the
+# tracked sample. This suite used to inherit whatever the application defaulted to;
+# see disposable_workspace() in browser_runtime.py for why that is no longer allowed.
+workspace = disposable_workspace("board-density")
 server = subprocess.Popen(
     ["node", "server.js"],
     cwd=ROOT,
-    env={**os.environ, "PORT": str(port)},
+    env=workspace.env(port),
     stdout=subprocess.DEVNULL,
     stderr=subprocess.DEVNULL,
 )
@@ -139,3 +143,4 @@ finally:
         server.wait(timeout=5)
     except subprocess.TimeoutExpired:
         server.kill()
+    workspace.cleanup()

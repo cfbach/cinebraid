@@ -6,7 +6,7 @@ No paid requests are sent: prompt and FAL endpoints are intercepted.
 import copy, json, os, pathlib, re, shutil, socket, subprocess, sys, time, urllib.error, urllib.request
 
 ROOT = pathlib.Path(__file__).resolve().parents[1]
-from browser_runtime import require_browser, launch_chromium, project_response, project_save
+from browser_runtime import require_browser, launch_chromium, project_response, project_save, disposable_workspace
 LABEL = "UI state stability browser check"
 sync_playwright = require_browser(LABEL)
 
@@ -36,7 +36,12 @@ SCREENSHOT_DIR = os.environ.get("CINEBRAID_UI_STATE_SCREENSHOT_DIR", "").strip()
 if SCREENSHOT_DIR:
     pathlib.Path(SCREENSHOT_DIR).mkdir(parents=True, exist_ok=True)
 
-port = free_port(); env = dict(os.environ, PORT=str(port))
+port = free_port()
+# Its own writable projects root and config, outside the checkout, seeded from the
+# tracked sample. This suite used to inherit whatever the application defaulted to;
+# see disposable_workspace() in browser_runtime.py for why that is no longer allowed.
+workspace = disposable_workspace("ui-state")
+env = workspace.env(port)
 server = subprocess.Popen(["node", "server.js"], cwd=ROOT, env=env, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
 try:
     wait_server(port)
@@ -285,3 +290,4 @@ finally:
     server.terminate()
     try: server.wait(timeout=5)
     except Exception: server.kill()
+    workspace.cleanup()
