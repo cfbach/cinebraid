@@ -4,6 +4,22 @@ This directory holds durable guidance for public repository presentation. Runtim
 artwork stays in `public/`. Three product screenshots are approved for README publication as recorded below.
 Project Bible is held; social-preview activation remains deferred.
 
+## GitHub Social Preview V1 — approved
+
+`social-preview.png` is product-owner approved as-is for repository publication. GitHub setting activation is reserved for the owner’s manual upload. Prepared from post-Alpha main `5e8d998f9ebf94f73bba5e59472306eda87b9e54`. Project Bible remains held.
+
+- Dimensions: **1280 × 640** RGB PNG, sRGB rendering intent declared. Descriptive metadata stripped; the sRGB colour declaration is the only ancillary metadata. Lossless PNG optimization; 112,657 bytes.
+- Final SHA-256: `8153421e1df485fe8bd553de6b2ffcfab2414188cad10fc93c2404b315861af5`.
+- Native ribbon source: `public/cinebraid-logo-xs.png`, SHA-256 `f29dd3d8ad3dbf8c2b4ff38e612d5e832e90fc8713a1c1c85687246c19afe8dc`, displayed at exactly **80 × 103**. No enlargement, recolouring, tracing or substitution.
+- Screenshot source: `.github/assets/screenshots/production-overview.png`, SHA-256 `4d3c7e1eb77d82cb691945975c3a064211308fb798addc3ab5de3e09be54f14c`. Approved source capture from application SHA `022fe324c725a40b8cd89a6e0283cfd99527e7f6`, disposable `cinebraid-sample-public-media-v1` / The Blue Parcel, route `/#/production`; its state and rights record appears below.
+- Screenshot treatment: the entire 1600 × 1000 capture displayed proportionally at **864 × 540**. No crop, UI retouching, compositing of UI states, or added browser chrome. One genuine screenshot only.
+- Layout: restrained navy `#09121b`, cyan `#28d1df`, light text. Minimum 48 px outer safe margin; screenshot at (368, 50), ribbon at (48, 50). All content remains inside safe margins.
+- Text: **CineBraid** / **Local-first production software for filmmaking.** / **Public Alpha · Source-only**.
+- Visual review: inspected at 1280 × 640 and 640 × 320. Name and positioning remain readable; the production heading, image and next-action card establish real application context. Fine UI text is not expected to be readable at half size.
+- Public safety and rights: uses only the two approved assets with verified hashes. No private production, credentials, personal paths, QA overlays, generated art or outside imagery introduced. Native branding remains covered by Frombach Studios brand terms; public-sample provenance and Apache-2.0 asset terms are recorded below.
+- Lossless composition original and HTML layout remain outside Git in the isolated review-artifact directory. No GitHub settings changed. Human visual approval is complete; no GitHub setting activation is performed by this publication.
+- Repository-only asset: `.github/` remains export-ignored. The exact `.github/assets/social-preview.png` path is recognized only by the repository-presentation allowance, never by runtime SHIPPED_MEDIA. No product/runtime code changes.
+
 ## Accepted README captures — Public Media Capture V1
 
 Product-owner visual review approved the following three genuine captures for README publication. Originals remain outside Git under `C:/CineBraid/Codex-Reviews/public-media-capture-v1/originals/`. Source application SHA for every image: `022fe324c725a40b8cd89a6e0283cfd99527e7f6`. Disposable public demo: `cinebraid-sample-public-media-v1`, displayed as **CineBraid Sample — The Blue Parcel**, derived only from tracked `projects/cinebraid-sample`.

@@ -41,6 +41,7 @@ const SHIPPED_MEDIA = new Set([
 
 // Repository-only presentation assets. These exact files never belong in runtime archives.
 const REPOSITORY_PRESENTATION_MEDIA = new Set([
+  ".github/assets/social-preview.png",
   ".github/assets/screenshots/production-overview.png",
   ".github/assets/screenshots/shot-workspace.png",
   ".github/assets/screenshots/reference-review.png",
