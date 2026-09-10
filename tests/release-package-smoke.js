@@ -39,6 +39,13 @@ const SHIPPED_MEDIA = new Set([
   "public/assets/assistant-character/braidy-front-v32.png",
 ]);
 
+// Repository-only presentation assets. These exact files never belong in runtime archives.
+const REPOSITORY_PRESENTATION_MEDIA = new Set([
+  ".github/assets/screenshots/production-overview.png",
+  ".github/assets/screenshots/shot-workspace.png",
+  ".github/assets/screenshots/reference-review.png",
+]);
+
 function walkFiles(root, current = root, out = []) {
   if (!fs.existsSync(current)) return out;
   for (const entry of fs.readdirSync(current, { withFileTypes: true })) {
@@ -50,7 +57,7 @@ function walkFiles(root, current = root, out = []) {
   return out;
 }
 
-function sanitizedProjectCheck(root) {
+function sanitizedProjectCheck(root, repositoryTree = false) {
   const projectsRoot = path.join(root, "projects");
   assert(fs.existsSync(projectsRoot), "release projects folder is missing");
   const projects = fs.readdirSync(projectsRoot, { withFileTypes: true })
@@ -65,7 +72,8 @@ function sanitizedProjectCheck(root) {
   const files = walkFiles(root);
   const strayMedia = files.filter((file) => MEDIA_EXTENSIONS.has(path.extname(file).toLowerCase())
     && !file.startsWith(`projects/${SAMPLE_PROJECT}/`)
-    && !SHIPPED_MEDIA.has(file));
+    && !SHIPPED_MEDIA.has(file)
+    && !(repositoryTree && REPOSITORY_PRESENTATION_MEDIA.has(file)));
   /* The allowlist must name something that is actually there: a renamed or dropped
      brand asset would otherwise leave a permanently unused exemption behind. */
   for (const shipped of SHIPPED_MEDIA)
@@ -97,7 +105,7 @@ function structuralCheck() {
     const name = `CINEBRAID_v${VERSION}_${suffix}.md`;
     assert(fs.existsSync(path.join(releaseDir, name)), `release documentation is missing ${name}`);
   }
-  sanitizedProjectCheck(ROOT);
+  sanitizedProjectCheck(ROOT, true);
   console.log(`Release package structure passed for CineBraid ${VERSION}.`);
 }
 

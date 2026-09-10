@@ -32,6 +32,10 @@ or support commitment. The release tag is frozen; ongoing development happens on
 
 **Models should be replaceable. The production should not be.**
 
+![CineBraid production overview showing the Blue Parcel demo's three shots and the next pending shot decision.](.github/assets/screenshots/production-overview.png)
+
+See the production and the next shot that needs your attention.
+
 ## Keep the production together
 
 - **Plan the film.** Organize your Project Bible, scenes, shots, and recurring characters, locations, and props.
@@ -42,6 +46,16 @@ or support commitment. The release tag is frozen; ongoing development happens on
 **Human approval stays explicit.** Nothing is approved, locked, or superseded on
 your behalf. A machine can propose; only a person decides. An unavailable provider
 does not block the manual workflow.
+
+## See the workflow
+
+![Parcel opened in CineBraid's Frames workspace, with a selected Frame A candidate awaiting human approval.](.github/assets/screenshots/shot-workspace.png)
+
+Keep each shot connected to its references and chosen frames.
+
+![CineBraid reference approval view for the courier, showing the selected reference target and explicit human approval controls.](.github/assets/screenshots/reference-review.png)
+
+Review a candidate before making an explicit approval.
 
 ## Start
 
