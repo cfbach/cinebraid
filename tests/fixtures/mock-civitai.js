@@ -223,7 +223,11 @@ async function startCineBraidServer(env = {}) {
   const collected = { output: "" };
   const child = spawn(process.execPath, ["server.js"], {
     cwd: ROOT,
-    env: { ...process.env, PORT: String(port), ...env },
+    /* Declares the run a test, which arms the server's refusal to resolve a projects
+       root inside the application directory. Set here rather than in each suite so
+       every caller of this fixture is covered without being edited; `...env` still
+       comes last, so a suite that genuinely needs it off can say so. */
+    env: { ...process.env, PORT: String(port), CINEBRAID_TEST_MODE: "1", ...env },
     stdio: ["ignore", "pipe", "pipe"],
   });
   child.stdout.on("data", (chunk) => { collected.output += chunk; });

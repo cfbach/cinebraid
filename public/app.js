@@ -1341,8 +1341,55 @@ async function showFirstRunWorkspace(message = "") {
   closeProjectMenu({ returnFocus: false });
   setSaveState("loading", "No project open");
   const existing = (projectData.projects || []).map((project) => `<button class="ghost-btn" onclick="switchProject('${attr(project.slug)}')">Open ${esc(project.title || project.slug)}</button>`).join("");
-  $("#main").innerHTML = `<section class="first-run-state" role="status"><div class="first-run-mark">CB</div><div><span>WELCOME TO CINEBRAID</span><h1>Start with a project—or open the sample.</h1><p>CineBraid keeps approved references, continuity, shots, existing media and final deliveries together. AI and in-app generation are optional.</p>${message ? `<small>${esc(message)}</small>` : ""}<div class="first-run-actions"><button class="assemble-btn" onclick="newProject()">Create a project</button>${existing}</div><ol><li>Upload or map existing references.</li><li>Approve the production authorities.</li><li>Attach existing stills, video and audio to shots.</li><li>Mark each approved shot final.</li></ol></div></section>`;
+  /* THE SAMPLE OFFER, KEPT TRUTHFUL.
+
+     The button used to be one of `existing` — it appeared only when a project called
+     the sample was already in the workspace, which was always true while projects
+     lived inside the application. With the workspace somewhere else it is not, and an
+     offer to "open" something that is not there is the kind of small lie that makes a
+     person doubt the rest of the screen. So there are two buttons and they say
+     different things: open the copy you have, or ask for one. */
+  const sample = projectData.sample || {};
+  const sampleAlreadyListed = (projectData.projects || []).some((project) => project.slug === sample.slug);
+  const sampleAction = sampleAlreadyListed || !sample.bundled ? ""
+    : sample.installed
+      ? `<button class="ghost-btn" onclick="switchProject('${attr(sample.slug)}')">Open CineBraid Sample</button>`
+      : `<button class="ghost-btn" onclick="installCineBraidSample()">Add the CineBraid sample</button>`;
+  $("#main").innerHTML = `<section class="first-run-state" role="status"><div class="first-run-mark">CB</div><div><span>WELCOME TO CINEBRAID</span><h1>Start with a project—or open the sample.</h1><p>CineBraid keeps approved references, continuity, shots, existing media and final deliveries together. AI and in-app generation are optional.</p>${message ? `<small>${esc(message)}</small>` : ""}<div class="first-run-actions"><button class="assemble-btn" onclick="newProject()">Create a project</button>${sampleAction}${existing}</div>${firstRunWorkspaceLine(projectData.workspace)}<ol><li>Upload or map existing references.</li><li>Approve the production authorities.</li><li>Attach existing stills, video and audio to shots.</li><li>Mark each approved shot final.</li></ol></div></section>`;
 }
+/* WHERE THE WORK WILL BE KEPT, said on the screen where it is still cheap to change.
+
+   A projects root is chosen once and lived with for years, and the only moment a
+   person is genuinely willing to think about it is before the first project exists.
+   After that it is a migration. So this line is on the first-run screen, it names the
+   actual path, and it puts the change one click away — rather than leaving the
+   default to be discovered later by someone looking for their files.
+
+   The legacy case gets a different sentence, because it is a different situation: the
+   productions are already somewhere they should not be, and nothing has been moved. */
+function firstRunWorkspaceLine(workspace) {
+  if (!workspace || !workspace.projectRoot) return "";
+  const choose = `<button class="ghost-btn" onclick="location.hash='#/settings'">Choose a different folder</button>`;
+  if (workspace.legacyInstallRoot && workspace.legacyInstallRoot.active) {
+    return `<p class="first-run-workspace" data-workspace-state="legacy-install"><b>Your projects are inside the CineBraid application folder.</b> CineBraid is still opening them from <code>${esc(workspace.projectRoot)}</code> and has changed nothing. Updating CineBraid can overwrite that folder — Settings can copy them somewhere safer, such as <code>${esc(workspace.userDefaultRoot || "")}</code>. ${choose}</p>`;
+  }
+  const warning = workspace.rootInsideInstall
+    ? " This folder is inside the CineBraid application, so updating CineBraid can overwrite it."
+    : "";
+  return `<p class="first-run-workspace" data-workspace-state="${attr(workspace.projectRootSource || "default")}">Projects are kept in <code>${esc(workspace.projectRoot)}</code>.${warning} ${choose}</p>`;
+}
+/* Asks the server for an ordinary, editable copy of the bundled sample and opens it.
+   The shipped one is never opened for editing — see the route's header. */
+window.installCineBraidSample = async () => {
+  try {
+    const response = await fetch("/api/projects/install-sample", { method: "POST" });
+    const data = await response.json().catch(() => ({}));
+    if (!response.ok || !data.ok) return toast(data.error || "The sample could not be added.");
+    switchProject(data.slug);
+  } catch (error) {
+    toast("The CineBraid server did not respond — check that it is still running.");
+  }
+};
 /* A failed project load carries the server's structured description of the failure so the
    recovery screen can name the project and print the real file path instead of a guess. */
 function projectLoadError(data) {

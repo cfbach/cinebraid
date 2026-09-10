@@ -13,7 +13,8 @@ were taken from the code, not invented:
 | `PORT` | `server.js` | listening port | `4477` |
 | `CINEBRAID_HOST` | `server.js` | bind address | `127.0.0.1` |
 | `CINEBRAID_LAN` | `server.js` | opt in to binding all interfaces | unset |
-| `CINEBRAID_PROJECTS_ROOT` | `server.js` | **default** projects directory | `<install>/projects` |
+| `CINEBRAID_PROJECTS_ROOT` | `server.js` | **default** projects directory | `%USERPROFILE%/CineBraid Projects` |
+| `CINEBRAID_TEST_MODE` | `server.js` | refuses to start if the projects root is inside the application folder | unset |
 | `CINEBRAID_CONFIG_PATH` | `config.js` | config file path | `<install>/data/config.json` |
 | `FAL_KEY` | `fal-generation.js` | FAL credential | unset |
 | `CINEBRAID_AI_TEXT_TIMEOUT_MS` | `llm.js` | local text model timeout | built-in |

@@ -823,15 +823,75 @@ async function persistWorkspaceSettings(scope) {
 }
 window.saveStorageSettings = () => persistWorkspaceSettings("workspace");
 window.saveNamingSettings = () => persistWorkspaceSettings("naming");
+/* Where the projects ACTUALLY are, in one sentence, in the words that fit the case.
+ *
+ * Four situations and they are not interchangeable. A saved choice is settled and
+ * needs no comment. An environment default is somebody's deliberate isolation and
+ * should say so, or a QA sandbox looks like a lost workspace. The per-user default is
+ * the ordinary case. And the legacy install root is the one that matters: the user's
+ * productions are inside the application folder, nothing has been moved, and they are
+ * one update away from a folder that gets replaced. */
+const WORKSPACE_ROOT_STATE = {
+  configured: (data) => `Projects are kept in ${data.projectRoot}, the folder saved below.`,
+  environment: (data) => `Projects are kept in ${data.projectRoot}, set by CINEBRAID_PROJECTS_ROOT for this CineBraid. A folder saved below would override it.`,
+  default: (data) => `Projects are kept in ${data.projectRoot}, CineBraid's default folder.`,
+  "legacy-install": (data) => {
+    const held = [
+      data.legacyInstallRoot.productions ? `${data.legacyInstallRoot.productions} project${data.legacyInstallRoot.productions === 1 ? "" : "s"}` : "",
+      data.legacyInstallRoot.archived ? `${data.legacyInstallRoot.archived} archived` : "",
+      data.legacyInstallRoot.trashed ? `${data.legacyInstallRoot.trashed} in the trash` : "",
+    ].filter(Boolean).join(", ");
+    return `Your projects are still inside the CineBraid application folder — ${data.projectRoot} (${held}). CineBraid is still opening them from there and has changed nothing. Updating or reinstalling CineBraid can overwrite that folder. Set the project root below to move them; the originals stay where they are.`;
+  },
+};
+function describeWorkspaceRoot(data) {
+  /* A status that could not say where the root is has nothing to tell anyone, and a
+     sentence reading "Projects are kept in undefined" is worse than no sentence. */
+  if (!data || !data.projectRoot) return "CineBraid did not report where projects are kept.";
+  const say = (data.legacyInstallRoot && WORKSPACE_ROOT_STATE[data.projectRootSource]) || WORKSPACE_ROOT_STATE.default;
+  const line = say(data);
+  /* Said as well as, not instead of: a root deliberately pointed back inside the
+     application is a different act from never having moved one, and it carries the
+     same hazard. */
+  return data.rootInsideInstall && data.projectRootSource !== "legacy-install"
+    ? `${line} This folder is inside the CineBraid application, so updating CineBraid can overwrite it.`
+    : line;
+}
 window.refreshWorkspaceStatus = async () => {
-  const note = $("#workspace-settings-note");
+  const note = $("#workspace-settings-note"), state = $("#workspace-root-state");
   if (note) note.textContent = "Checking effective paths…";
   try {
     const r = await fetch("/api/workspace/status");
     const data = await r.json();
     if (!r.ok) throw new Error(data.error || "Status check failed");
     if (note) note.textContent = `Active project root: ${data.projectRoot}${data.outputRoot ? ` · exports: ${data.outputRoot}` : ""}${data.backupRoot ? ` · backups: ${data.backupRoot}` : ""}`;
+    if (state) {
+      state.textContent = describeWorkspaceRoot(data);
+      state.dataset.workspaceState = data.projectRootSource || "default";
+      state.dataset.rootInsideInstall = String(Boolean(data.rootInsideInstall));
+    }
+    WORKSPACE_RECOMMENDED_ROOT = data.userDefaultRoot || "";
   } catch (error) {
     if (note) note.textContent = error.message;
+    if (state) state.textContent = error.message;
   }
 };
+/* Filled by the status read, so the button offers the path the SERVER would pick and
+   not one this file guessed. Empty until then, and the button says so rather than
+   writing a wrong path into the box. */
+let WORKSPACE_RECOMMENDED_ROOT = "";
+window.useRecommendedProjectRoot = () => {
+  const field = $("#cfg-project-root");
+  if (!field) return;
+  if (!WORKSPACE_RECOMMENDED_ROOT) return toast("CineBraid has not reported its default folder yet — press Check active paths.");
+  field.value = WORKSPACE_RECOMMENDED_ROOT;
+  field.focus();
+  toast("Recommended folder filled in — press Apply storage paths to use it.");
+};
+/* The panel is static markup, so the state line has to be filled after it renders.
+   The route already announces itself; listening is cheaper and less invasive than a
+   settings-shaped branch inside the render pipeline. */
+if (typeof window.addEventListener === "function")
+  window.addEventListener("cinebraid:route-rendered", (event) => {
+    if (event?.detail?.view === "settings") window.refreshWorkspaceStatus();
+  });

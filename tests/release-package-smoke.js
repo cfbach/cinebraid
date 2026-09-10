@@ -61,8 +61,19 @@ function walkFiles(root, current = root, out = []) {
 function sanitizedProjectCheck(root, repositoryTree = false) {
   const projectsRoot = path.join(root, "projects");
   assert(fs.existsSync(projectsRoot), "release projects folder is missing");
+  /* `repositoryTree` finally does something, and this is the distinction it was named
+     for. An ARCHIVE may contain nothing but the sample — a `.archive/` or `.trash/`
+     inside one would be somebody's retired project shipped to strangers, so the
+     archive call site stays absolute.
+     A WORKING TREE is different: those two folders are runtime state CineBraid creates
+     inside whatever projects root it is pointed at, and `.gitignore:144` already closes
+     `/projects/*`, so neither can reach an archive in the first place. Counting a folder
+     the application made for itself as shipped project content failed this check for a
+     reason that has nothing to do with publication.
+     What it still refuses either way is what it was written for: an ordinary project
+     directory beside the sample. */
   const projects = fs.readdirSync(projectsRoot, { withFileTypes: true })
-    .filter((entry) => entry.isDirectory())
+    .filter((entry) => entry.isDirectory() && !(repositoryTree && entry.name.startsWith(".")))
     .map((entry) => entry.name)
     .sort();
   assert.deepStrictEqual(projects, [SAMPLE_PROJECT], `release projects must contain only ${SAMPLE_PROJECT}; found ${projects.join(", ") || "none"}`);

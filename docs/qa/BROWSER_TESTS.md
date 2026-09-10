@@ -129,7 +129,10 @@ A quarantine that only tolerates failure is how the original skips became invisi
 
 The suites added in Q1 — and the continuity workspace suite — build a temporary
 directory and point the server at it with `CINEBRAID_CONFIG_PATH` and
-`CINEBRAID_PROJECTS_ROOT`, then delete it. `scripts/qa-sandbox.js` builds the same
+`CINEBRAID_PROJECTS_ROOT`, then delete it. Set `CINEBRAID_TEST_MODE=1` too: CineBraid
+then refuses to start against a projects root inside the checkout, so the isolation is a
+property rather than a habit. `tests/helpers/disposable-root.js` supplies all three in one
+call and is the preferred way to build one. `scripts/qa-sandbox.js` builds the same
 kind of environment for hand testing and refuses to build one inside the repository.
 
 Six older suites predate those variables and still start `node server.js` against

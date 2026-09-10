@@ -59,6 +59,12 @@ node server.js
 saved in the config file overrides it, so a separate `CINEBRAID_CONFIG_PATH` is
 required for real isolation. See `docs/SPARK_QA_SETUP.md`.
 
+For anything automated, set `CINEBRAID_TEST_MODE=1` as well. CineBraid then refuses to
+start if the projects root it resolves is inside the application folder, so a test run
+cannot write to the checkout's own `projects/` and `data/`. `scripts/qa-sandbox.js`
+builds a complete disposable environment; `tests/helpers/disposable-root.js` is the
+same guarantee for a suite.
+
 ## Network posture
 
 A fresh install binds to **127.0.0.1 only**. It is available on the CineBraid computer and not on the LAN.
@@ -83,11 +89,50 @@ CINEBRAID_LAN=1 node server.js
 CINEBRAID_HOST=192.168.1.50 node server.js
 ```
 
+## Where your projects are kept
+
+**Outside the application.** A CineBraid install is disposable — you replace it to
+upgrade — and your productions are not, so they do not live in the same folder.
+
+The default is `%USERPROFILE%\CineBraid Projects` on Windows and
+`~/CineBraid Projects` elsewhere. Nothing is asked at first launch; the startup banner
+names the folder in use and says where that choice came from:
+
+```
+  Projects root: C:\Users\<you>\CineBraid Projects (default)
+```
+
+Change it in **Settings → Files & storage**. Applying a new project root COPIES every
+project into the new location and leaves the originals exactly where they are, then
+reports what arrived and checks the new location against the old one. Nothing is moved
+and nothing is deleted.
+
+Resolution order, most authoritative first:
+
+1. `workspace.projectRoot` saved in the config — an explicit choice, always wins.
+2. `CINEBRAID_PROJECTS_ROOT` — the environment default.
+3. The application's own `projects/` folder, but **only** while it still holds
+   productions. See *Upgrading from a CineBraid that kept projects inside the app*.
+4. The per-user default above.
+
+To prove a copy arrived intact, or that the originals were untouched:
+
+```bash
+node scripts/verify-migration.js --manifest "<old root>" --out before.json
+node scripts/verify-migration.js --compare "<old root>" "<new root>" --documents-republished
+node scripts/verify-migration.js --manifest "<old root>" --out after.json
+node scripts/verify-migration.js --compare-manifests before.json after.json
+```
+
+The first comparison allows `<slug>/project.json` to differ, because a migration
+republishes a live project's document rather than copying it. The last one allows
+nothing: the old location must be byte-identical to how it started.
+
 ## First run
 
-The release includes only the sanitized **CineBraid Sample — The Blue Parcel** project. It opens in manual-first mode and needs no assistant or generation provider.
+The release includes only the sanitized **CineBraid Sample — The Blue Parcel** project, which ships inside the application and stays there. It opens in manual-first mode and needs no assistant or generation provider.
 
-If no projects exist, CineBraid shows a first-run screen with **Create a project** and any available sample/open-project actions. It does not render a blank workspace.
+If no projects exist, CineBraid shows a first-run screen with **Create a project**, the folder your projects will be kept in, and **Add the CineBraid sample** — which puts an ordinary, editable copy of the shipped sample in your own projects folder. The shipped copy is never opened for editing. CineBraid does not render a blank workspace.
 
 ## Optional providers
 
@@ -103,12 +148,31 @@ Provider keys remain server-side. Paid requests require explicit confirmation an
 ## Upgrade an existing installation
 
 1. Stop CineBraid.
-2. Back up `projects/` and `data/`.
+2. Back up your projects root and `data/`.
 3. Install the newer version into a new folder — a fresh clone, or an archive you built — and run `npm ci` there.
-4. Restore your own `projects/` and `data/config.json` when using a new folder. Do not replace them with the release sample/config if preserving existing work.
+4. Restore your own `data/config.json` when using a new folder. Do not replace it with the release config if preserving existing work.
 5. Start CineBraid and hard-refresh the browser once.
 
 The release has no breaking project-schema migration.
+
+### Upgrading from a CineBraid that kept projects inside the app
+
+Earlier versions defaulted to `<install>/projects`, and nobody using that default ever
+had a project root to save. **Those installs are not moved and are not changed.** When
+the application's own `projects/` folder still holds productions — or archived or
+trashed ones — CineBraid keeps opening them from exactly where they are, and says so:
+
+```
+  Projects root: C:\CineBraid\CineBraid-Source\projects (legacy-install)
+  NOTICE: your productions are still inside the CineBraid application folder (2 projects, 1 archived).
+          CineBraid is still opening them from there and has changed nothing.
+          Move them with Settings -> Files & storage. Suggested: C:\Users\<you>\CineBraid Projects
+```
+
+The same statement appears on the welcome screen and in **Settings → Files & storage**.
+Moving them is the supported copy described above: originals stay, and you delete the
+old copies yourself once you are satisfied. Until you do, step 3 of an upgrade will
+overwrite the application folder — which is the reason for the notice.
 
 ## Verification
 

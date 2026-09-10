@@ -77,9 +77,114 @@ const PORT = process.env.PORT || 4477;
 const LAN_OPT_IN = process.argv.includes("--lan") || /^(1|true|yes)$/i.test(String(process.env.CINEBRAID_LAN || ""));
 const HOST = String(process.env.CINEBRAID_HOST || (LAN_OPT_IN ? "0.0.0.0" : "127.0.0.1")).trim() || "127.0.0.1";
 const LOOPBACK_HOSTS = new Set(["127.0.0.1", "localhost", "::1"]);
-const DEFAULT_PROJECTS_ROOT = process.env.CINEBRAID_PROJECTS_ROOT
-  ? path.resolve(process.env.CINEBRAID_PROJECTS_ROOT)
-  : path.join(path.resolve(__dirname, "../.."), "projects");
+/* ---- where a user's productions live ----------------------------------------
+ *
+ * They do not live inside the application. A production is the most valuable thing
+ * CineBraid holds and the application directory is the most disposable: it is
+ * replaced by every update, it is a git checkout on a developer's machine, and a
+ * release archive is built from it. Keeping the two in one folder means an upgrade,
+ * a clean checkout or a packaging script is one mistake away from a production.
+ *
+ * So the default is the user's own space. `%USERPROFILE%\CineBraid Projects` on
+ * Windows, `~/CineBraid Projects` elsewhere — chosen because it needs no decision at
+ * first launch, exists on every machine, and survives reinstalling the app.
+ *
+ * PRECEDENCE, most authoritative first:
+ *
+ *   1. workspace.projectRoot   an explicit choice the user saved. Always wins.
+ *   2. CINEBRAID_PROJECTS_ROOT the environment default — how a second instance, a QA
+ *                              sandbox and CI each get their own workspace.
+ *   3. the legacy install root ONLY while it actually holds productions. See below.
+ *   4. the per-user default.
+ *
+ * ---- 3, and why it is not simply "the new default" ---------------------------
+ *
+ * Every CineBraid before this one defaulted to `<install>/projects`, and nobody who
+ * used that default ever saved a projectRoot — there was nothing to save. Moving the
+ * default without looking would mean an update, and then an empty project list, with
+ * the user's productions still on disk and the application no longer looking at them.
+ * "Where did my film go" is not an acceptable upgrade experience, and telling someone
+ * afterwards where to click does not undo the minute they spent believing it was gone.
+ *
+ * So the install directory keeps being the default for exactly as long as it holds
+ * something. This is a survey, not a migration: nothing is copied, nothing is written,
+ * and the config is not changed. It is reported instead — on the console at startup,
+ * in /api/workspace/status, and in the interface — with the supported move one click
+ * away. Once the user makes a choice, (1) takes over and this stops mattering.
+ *
+ * The bundled sample does not count. A fresh clone or a fresh install has one, and
+ * it is application content rather than the user's work; counting it would pin every
+ * install to the legacy behaviour forever. Archived and trashed projects DO count:
+ * they are the record of productions that existed, they are exactly what a naive
+ * move loses, and a projects root holding nothing but a `.trash` is still holding
+ * somebody's deleted film. */
+const APP_ROOT = path.resolve(__dirname, "../..");
+const INSTALL_PROJECTS_ROOT = path.join(APP_ROOT, "projects");
+const SAMPLE_PROJECT_SLUG = "cinebraid-sample";
+const BUNDLED_SAMPLE_DIR = path.join(INSTALL_PROJECTS_ROOT, SAMPLE_PROJECT_SLUG);
+const ENV_PROJECTS_ROOT = process.env.CINEBRAID_PROJECTS_ROOT
+  ? path.resolve(process.env.CINEBRAID_PROJECTS_ROOT) : "";
+/* USERPROFILE before HOME, which is the opposite order to resolveWorkspacePath()'s `~`
+   expansion below, and deliberately so. That one expands something a user TYPED, where
+   their shell's idea of home is the right answer. This is a machine-derived default,
+   and on Windows under Git Bash or MSYS `HOME` is a POSIX-style path into the MSYS
+   tree while `USERPROFILE` is the real profile folder — which is where a Windows user
+   expects their work, and the only one Explorer can open. */
+const USER_PROJECTS_ROOT = path.join(
+  process.env.USERPROFILE || process.env.HOME || APP_ROOT, "CineBraid Projects");
+
+/* Counted once, at startup. The application directory does not change under a running
+   server, and a default that could change mid-session is worse than either answer. */
+function surveyInstallProjectsRoot() {
+  const documentsUnder = (name) => {
+    const dir = path.join(INSTALL_PROJECTS_ROOT, name);
+    try {
+      return fs.readdirSync(dir, { withFileTypes: true })
+        .filter((entry) => entry.isDirectory() && fs.existsSync(path.join(dir, entry.name, "project.json")))
+        .length;
+    } catch { return 0; }
+  };
+  let entries = [];
+  try { entries = fs.readdirSync(INSTALL_PROJECTS_ROOT, { withFileTypes: true }); } catch { /* no install root */ }
+  const productions = [];
+  let archived = 0, trashed = 0;
+  for (const entry of entries) {
+    if (!entry.isDirectory()) continue;
+    if (entry.name === ".archive") { archived = documentsUnder(".archive"); continue; }
+    if (entry.name === ".trash") { trashed = documentsUnder(".trash"); continue; }
+    if (entry.name === SAMPLE_PROJECT_SLUG) continue;
+    if (fs.existsSync(path.join(INSTALL_PROJECTS_ROOT, entry.name, "project.json"))) productions.push(entry.name);
+  }
+  return {
+    path: INSTALL_PROJECTS_ROOT,
+    productions: productions.sort(),
+    archived, trashed,
+    holdsProductions: productions.length > 0 || archived > 0 || trashed > 0,
+  };
+}
+const INSTALL_PROJECTS_STATE = surveyInstallProjectsRoot();
+const DEFAULT_PROJECTS_ROOT = ENV_PROJECTS_ROOT
+  || (INSTALL_PROJECTS_STATE.holdsProductions ? INSTALL_PROJECTS_ROOT : USER_PROJECTS_ROOT);
+/* Which of the four answered, so the interface can say so rather than infer it. */
+function projectRootSource(config = readConfig()) {
+  if (String(config.workspace?.projectRoot || "").trim()) return "configured";
+  if (ENV_PROJECTS_ROOT) return "environment";
+  if (INSTALL_PROJECTS_STATE.holdsProductions) return "legacy-install";
+  return "default";
+}
+/* Lexical on purpose, and it must stay that way: this is asked of roots that do not
+   exist yet, where realpath throws, and it is used to WARN rather than to authorise a
+   write. Every path decision that grants access resolves physically instead. */
+function pathIsInsideInstall(target) {
+  /* Guarded on the INPUT. path.resolve("") answers the current working directory,
+     which for a server started with `npm start` is the application directory — so an
+     empty root would otherwise report itself as inside the install. */
+  const raw = String(target || "").trim();
+  if (!raw) return false;
+  const rel = path.relative(APP_ROOT, path.resolve(raw));
+  if (!rel) return true; /* the application directory itself */
+  return !path.isAbsolute(rel) && rel !== ".." && !rel.startsWith(".." + path.sep) && !rel.startsWith("../");
+}
 function resolveWorkspacePath(value, fallback = "") {
   const raw = String(value || "").trim();
   if (!raw) return fallback ? path.resolve(fallback) : "";
@@ -766,6 +871,7 @@ function workspaceMigrationFailure(res, error, rollback) {
 }
 function workspaceStatus(config = readConfig()) {
   const root = projectsRoot(config);
+  const source = projectRootSource(config);
   return {
     projectRoot: root,
     mediaRoot: configuredWorkspacePath("mediaRoot", config),
@@ -773,7 +879,38 @@ function workspaceStatus(config = readConfig()) {
     backupRoot: configuredWorkspacePath("backupRoot", config),
     projectRootExists: fs.existsSync(root),
     activeProject: config.activeProject || "",
+    /* WHERE THIS ROOT CAME FROM, said rather than inferred. A browser that has to work
+       out for itself whether a path is a saved choice, an environment default or the
+       old install directory will work it out differently from the server sooner or
+       later, and the one screen that must not be wrong about this is the one telling
+       somebody their productions are still inside the application. */
+    projectRootSource: source,
+    rootInsideInstall: pathIsInsideInstall(root),
+    userDefaultRoot: USER_PROJECTS_ROOT,
+    installProjectsRoot: INSTALL_PROJECTS_ROOT,
+    legacyInstallRoot: {
+      active: source === "legacy-install",
+      holdsProductions: INSTALL_PROJECTS_STATE.holdsProductions,
+      path: INSTALL_PROJECTS_STATE.path,
+      productions: INSTALL_PROJECTS_STATE.productions.length,
+      archived: INSTALL_PROJECTS_STATE.archived,
+      trashed: INSTALL_PROJECTS_STATE.trashed,
+    },
+    /* Whether "Open CineBraid Sample" can be truthful. A fresh install with an
+       external root has no sample in it until one is asked for. */
+    sample: {
+      slug: SAMPLE_PROJECT_SLUG,
+      bundled: fs.existsSync(path.join(BUNDLED_SAMPLE_DIR, "project.json")),
+      installed: fs.existsSync(path.join(root, SAMPLE_PROJECT_SLUG, "project.json")),
+      isBundledLocation: sameRealPathIfPossible(root, INSTALL_PROJECTS_ROOT),
+    },
   };
+}
+/* sameRealPath() throws on a root that does not exist yet, and this is asked of one
+   that may not. A path that cannot be resolved is not the install directory. */
+function sameRealPathIfPossible(left, right) {
+  try { return sameRealPath(realDirectory(left), realDirectory(right)); }
+  catch { return sameRealPath(left, right); } /* lexical, and case-folded only on Windows */
 }
 
 const AGENT_RUNTIME = {
@@ -9674,9 +9811,26 @@ app.get("/api/bible/export", (req, res) => {
   }
 });
 /* ---- project management ---- */
-app.get("/api/projects", (req, res) =>
-  res.json({ active: activeSlug(), projects: listProjects(), archived: listArchivedProjects(), trashed: listTrashedProjects() }),
-);
+app.get("/api/projects", (req, res) => {
+  /* The workspace summary rides along because the ONE screen that most needs it is
+     the one this route feeds when the list comes back empty. A first-run screen that
+     cannot say where projects will be saved, or that offers a sample it has no copy
+     of, is the whole reason a user cannot tell "nothing here yet" from "CineBraid is
+     looking in the wrong place". Additive: every existing field is unchanged. */
+  const status = workspaceStatus();
+  res.json({
+    active: activeSlug(), projects: listProjects(), archived: listArchivedProjects(), trashed: listTrashedProjects(),
+    workspace: {
+      projectRoot: status.projectRoot,
+      projectRootSource: status.projectRootSource,
+      projectRootExists: status.projectRootExists,
+      rootInsideInstall: status.rootInsideInstall,
+      userDefaultRoot: status.userDefaultRoot,
+      legacyInstallRoot: status.legacyInstallRoot,
+    },
+    sample: status.sample,
+  });
+});
 /* The switch is only committed once the target project has been read and validated. A project
    that cannot be opened never becomes active, so the server and the interface can never end up
    pointing at different projects and a later edit cannot land in the failed target. */
@@ -9811,6 +9965,106 @@ app.delete("/api/projects/:slug", (req, res) => {
   }
 });
 
+/* ---- the bundled sample, as an ordinary project the user owns ----------------
+ *
+ * THE PROBLEM THIS SOLVES. `projects/cinebraid-sample` ships inside the application
+ * and is tracked in the repository. It is what a release package asserts on, what the
+ * QA sandbox copies from, and what eight browser suites read as a fixture. It is
+ * application content, and it has to stay exactly as shipped.
+ *
+ * It is also the thing a first-run screen offers as "Open CineBraid Sample" — and the
+ * moment the projects root is somewhere else, that offer is either untrue or it opens
+ * a project the user will then edit, in the application folder, which is the one place
+ * this whole slice exists to get their work out of.
+ *
+ * So the shipped copy is never opened for editing. This makes the user a COPY, in
+ * their own workspace, that is an ordinary project in every respect: they can rename
+ * it, break it, delete it, and nothing they do reaches the pristine one.
+ *
+ * ON DEMAND, never on startup. A workspace that silently grows a sample project the
+ * user did not ask for is a workspace that lies about what is in it, and there is no
+ * good way to tell a sample somebody wanted from one that appeared on its own.
+ *
+ * PUBLISHED AS A WORKSPACE_MIGRATION, which is the class that already means "a project
+ * document is being placed into this workspace" — the same one the legacy v1 migration
+ * above uses to put a document where the workspace can see it. It is CREATE_ONLY, so
+ * "installing the sample cannot damage an existing project" is a property of the
+ * mechanism rather than of this handler being careful.
+ *
+ * NOT UNTRUSTED_IMPORT, and the seam is right to have refused it. That class strips
+ * authority-bearing edges, because a document arriving from outside may not arrive
+ * already claiming which frames are approved. The bundled sample's approved frames,
+ * continuity states and winners are the entire point of shipping it: a sample that
+ * imports with its authorities stripped is a sample of an empty project. The document
+ * is not untrusted — it is the one this build shipped.
+ *
+ * It does not activate the project. The browser switches through the validated switch
+ * route, so a switch the replacement fence refuses cannot leave `activeProject`
+ * pointing somewhere the interface never went. */
+const SAMPLE_RUNTIME_ARTIFACTS = new Set([
+  "backups", "generation-jobs.json", "agent-index.json", "test-feedback.json",
+  "embeddings.json", "media-assets.json",
+]);
+function bundledSampleIsRuntimeArtifact(name) {
+  return SAMPLE_RUNTIME_ARTIFACTS.has(name) || name.toLowerCase().endsWith(".bak");
+}
+app.post("/api/projects/install-sample", (req, res) => {
+  try {
+    const documentPath = path.join(BUNDLED_SAMPLE_DIR, "project.json");
+    if (!fs.existsSync(documentPath))
+      return res.status(404).json({ ok: false, code: "SAMPLE_NOT_BUNDLED",
+        error: "This CineBraid does not carry the sample project." });
+
+    const root = projectsRoot();
+    /* Already there: either the workspace IS the application folder, where the
+       bundled sample simply is the sample, or a copy has been installed before. Both
+       are successes with nothing to do, and neither may make a second copy. */
+    const existing = path.join(root, SAMPLE_PROJECT_SLUG, "project.json");
+    if (fs.existsSync(existing))
+      return res.json({ ok: true, slug: SAMPLE_PROJECT_SLUG, created: false, reason: "already-present" });
+
+    let document;
+    try { document = readJsonSync(documentPath); }
+    catch (error) {
+      return res.status(500).json({ ok: false, code: "SAMPLE_UNREADABLE",
+        error: `The bundled sample could not be read: ${error.message}` });
+    }
+    /* The folder first, exclusively, so an existing one is found rather than claimed —
+       and the document only through the seam, which cannot overwrite. */
+    const slug = SAMPLE_PROJECT_SLUG;
+    /* The root itself may not exist yet, and on a fresh install it usually does not:
+       CineBraid creates nothing at startup, so the per-user default is a path rather
+       than a folder until the first thing is put in it. claimDirectory() is exclusive
+       and non-recursive by design — that is what makes it a proof of creation — so the
+       chain above it has to be there first. Adding the user's own projects folder on an
+       explicit "add the sample" is the same act as adding it on "create a project",
+       which ensureDirs() has always done recursively. */
+    fs.mkdirSync(root, { recursive: true });
+    claimDirectory(path.join(root, slug));
+    const outcome = persistProjectSuccessor({
+      slug, successor: document, writeClass: WRITE_CLASSES.WORKSPACE_MIGRATION,
+      expectedRevision: "", transitionMetadata: { destinationRoot: root },
+    });
+    if (!outcome.ok) return seamFailure(res, outcome, slug);
+
+    /* The media, after the document exists. Runtime artefacts the shipped sample has
+       accumulated on this machine are left behind rather than handed on — the same
+       set scripts/qa-sandbox.js leaves behind, for the same reason: a per-install
+       asset ledger belongs to the install that minted it. */
+    const destination = path.join(root, slug);
+    let copied = 0;
+    for (const entry of fs.readdirSync(BUNDLED_SAMPLE_DIR, { withFileTypes: true })) {
+      if (bundledSampleIsRuntimeArtifact(entry.name) || isProjectDocumentName(entry.name)) continue;
+      const from = path.join(BUNDLED_SAMPLE_DIR, entry.name), to = path.join(destination, entry.name);
+      if (entry.isDirectory()) copied += copyMissingTree(from, to).copied;
+      else if (entry.isFile() && !fs.existsSync(to)) { fs.copyFileSync(from, to); copied += 1; }
+    }
+    res.json({ ok: true, slug, created: true, copied, projectRoot: root });
+  } catch (error) {
+    res.status(500).json({ ok: false, error: error.message || "The sample could not be installed." });
+  }
+});
+
 app.post("/api/projects/new", (req, res) => {
   const title = (req.body.title || "New Project").trim();
   const blank = BLANK();
@@ -9873,6 +10127,48 @@ app.post("/api/projects/new", (req, res) => {
   res.json({ ok: true, slug });
 });
 
+/* ---- test isolation: a test run may not resolve to a workspace in the checkout ---
+ *
+ * Browser and release suites have operated against the repository's own `projects/`
+ * and `data/` before, and the damage is not theoretical: a suite that creates,
+ * switches and deletes projects leaves stray projects and an edited config behind, a
+ * later run inherits them, and a failure that only reproduces on one machine is the
+ * result. scripts/qa-sandbox.js exists because of exactly that, and its header says so.
+ *
+ * A sandbox nobody is obliged to use is a convention. This makes it a property: when a
+ * run declares itself a test, a projects root inside the application directory is
+ * refused before the port is bound, so the failure is a startup error naming the
+ * problem rather than a passing suite that quietly rewrote the developer's workspace.
+ *
+ * IT IS THE RUN THAT DECLARES ITSELF, never this file guessing. `CINEBRAID_TEST_MODE`
+ * is set by the shared server fixture and by the disposable-root helper, so a suite
+ * that goes through either is covered without being edited. NODE_ENV=test arms it too,
+ * for a runner that sets that instead.
+ *
+ * ORDINARY USE IS UNTOUCHED. Without the declaration this is inert, so an installed
+ * CineBraid — and a legacy install still keeping productions inside the application —
+ * starts exactly as before. That case is a notice at startup, not a refusal: refusing
+ * to open somebody's existing workspace because of where it is would be the update
+ * that lost their film, which is the outcome this whole slice exists to avoid. */
+const TEST_MODE = /^(1|true|yes)$/i.test(String(process.env.CINEBRAID_TEST_MODE || ""))
+  || String(process.env.NODE_ENV || "").toLowerCase() === "test";
+function refuseTestRunInsideTheInstall() {
+  if (!TEST_MODE) return;
+  const root = projectsRoot();
+  if (!pathIsInsideInstall(root)) return;
+  console.error(
+    `\n  CineBraid refused to start.\n`
+    + `  This run declared itself a test (CINEBRAID_TEST_MODE / NODE_ENV=test) and its projects root\n`
+    + `  is inside the application directory:\n\n`
+    + `      projects root   ${root}\n`
+    + `      application     ${APP_ROOT}\n\n`
+    + `  A test that writes there edits the repository's own projects/ and data/, and leaves stray\n`
+    + `  projects behind for the next run. Point CINEBRAID_PROJECTS_ROOT and CINEBRAID_CONFIG_PATH at a\n`
+    + `  disposable directory — tests/helpers/disposable-root.js and scripts/qa-sandbox.js both build one.\n`);
+  process.exit(1);
+}
+refuseTestRunInsideTheInstall();
+
 const httpServer = app.listen(PORT, HOST, () => {
   /* Runtime queues are process-local. Reconcile every durable project once at
      restart before serving a supposedly active run forever; GET status remains
@@ -9882,8 +10178,37 @@ const httpServer = app.listen(PORT, HOST, () => {
   const exposure = LOOPBACK_HOSTS.has(HOST)
     ? "Local-only mode: other devices cannot connect."
     : "WARNING: LAN mode exposes CineBraid to devices that can reach this computer. Set an editor passcode before using paid providers or sensitive projects.";
-  console.log(`\n  CINEBRAID → ${localUrl}\n  Bind address: ${HOST}\n  ${exposure}\n  Projects root: ${projectsRoot()}\n`);
+  console.log(`\n  CINEBRAID → ${localUrl}\n  Bind address: ${HOST}\n  ${exposure}\n  Projects root: ${projectsRoot()} (${projectRootSource()})`);
+  /* Said at every start, not once. A production inside the application directory is a
+     standing condition rather than an event, and it stays true until somebody moves
+     it — so the notice has to still be there on the day they read the console. */
+  for (const line of projectRootStartupNotices()) console.log(`  ${line}`);
+  console.log("");
 });
+/* The console's half of the same statement /api/workspace/status makes. Kept next to
+   the banner and derived from the same survey, so the terminal and the interface
+   cannot disagree about whether the productions are in a safe place. */
+function projectRootStartupNotices(config = readConfig()) {
+  const source = projectRootSource(config), root = projectsRoot(config), notices = [];
+  if (source === "legacy-install") {
+    const state = INSTALL_PROJECTS_STATE;
+    const held = [
+      state.productions.length ? `${state.productions.length} project${state.productions.length === 1 ? "" : "s"}` : "",
+      state.archived ? `${state.archived} archived` : "",
+      state.trashed ? `${state.trashed} in the trash` : "",
+    ].filter(Boolean).join(", ");
+    notices.push(`NOTICE: your productions are still inside the CineBraid application folder (${held}).`);
+    notices.push(`        CineBraid is still opening them from there and has changed nothing.`);
+    notices.push(`        Move them with Settings -> Files & storage. Suggested: ${USER_PROJECTS_ROOT}`);
+  } else if (pathIsInsideInstall(root)) {
+    /* Reached by pointing a saved root or CINEBRAID_PROJECTS_ROOT back inside the
+       application. Deliberate, so it is a warning and not a refusal — but it is the
+       same hazard and it gets said. */
+    notices.push(`WARNING: this projects root is inside the CineBraid application folder.`);
+    notices.push(`         Updating or reinstalling CineBraid can overwrite what is in it.`);
+  }
+  return notices;
+}
 
 /* Release the port on shutdown.
    Keep-alive connections hold the listener open, so closing sockets explicitly is what

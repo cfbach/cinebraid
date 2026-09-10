@@ -2996,6 +2996,14 @@ body[data-focused-workspace="1"] .coverage-slot-card.focused-slot-selected .cove
 .first-run-mark{width:104px;height:104px;display:grid;place-items:center;border:1px solid var(--accent);border-radius:22px;color:var(--accent);font:900 30px var(--mono)}
 .first-run-state>div:last-child{display:grid;gap:12px}.first-run-state span{font:800 10px var(--mono);letter-spacing:.14em;color:var(--accent)}.first-run-state h1{margin:0;font-size:34px}.first-run-state p,.first-run-state small{color:var(--muted);max-width:720px}.first-run-actions{display:flex;gap:10px;flex-wrap:wrap}.first-run-state ol{margin:8px 0 0;padding-left:20px;color:var(--muted);display:grid;gap:7px}
 @media(max-width:720px){.first-run-state{grid-template-columns:1fr;margin:18px;padding:22px}.first-run-mark{width:72px;height:72px;border-radius:16px;font-size:22px}.first-run-state h1{font-size:26px}}
+/* WHERE THE WORK IS KEPT. A quiet line on the first-run screen and in Settings, until
+   the productions are inside the application folder — then it is the loudest thing on
+   the panel, because it is the only state a person has to act on. */
+.first-run-workspace,.workspace-root-state{margin:0;padding:10px 12px;border:1px solid var(--line);border-radius:10px;background:var(--panel-2);color:var(--muted);font-size:12px;line-height:1.55}
+.first-run-workspace code,.workspace-root-state code{font:600 11px var(--mono);color:var(--ink);word-break:break-all}
+.first-run-workspace .ghost-btn{margin-left:6px}
+.first-run-workspace[data-workspace-state="legacy-install"],.workspace-root-state[data-workspace-state="legacy-install"],.workspace-root-state[data-root-inside-install="true"]{border-color:var(--amber);color:var(--ink)}
+.first-run-workspace[data-workspace-state="legacy-install"] b{color:var(--amber)}
 
 /* v6.6.3.5 — external-test feedback notepad */
 .test-note-button{width:100%;justify-content:center}

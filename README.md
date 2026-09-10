@@ -111,7 +111,10 @@ assistant or generation provider.
 
 Follow the [first-shot guide](docs/GETTING_STARTED.md) to practice importing
 references, clear the sample's deliberate readiness prompts, and create your own
-project. The sample lives in [`projects/cinebraid-sample/`](projects/cinebraid-sample/).
+project. The sample ships inside the application at
+[`projects/cinebraid-sample/`](projects/cinebraid-sample/) and stays there, untouched.
+**Add the CineBraid sample** on the welcome screen puts an ordinary, editable copy of it
+in your own projects folder, so nothing you do to it changes the shipped one.
 
 ## Optional assistance and generation
 
@@ -142,7 +145,18 @@ from your own CineBraid server, with no third-party fonts, analytics, scripts, o
 stylesheets. It uploads nothing on its own. When you ask an external provider for
 assistance or generation, the material needed for that request goes to that provider.
 
-- `projects/<slug>/` holds each project's document, media, and rolling backups.
+- **Your projects live outside the application.** CineBraid keeps them in
+  `%USERPROFILE%\CineBraid Projects` on Windows and `~/CineBraid Projects` elsewhere,
+  so updating or reinstalling CineBraid cannot touch your work. Change the location in
+  **Settings → Files & storage**; the startup banner and that panel both name the folder
+  actually in use.
+- `<projects root>/<slug>/` holds each project's document, media, and rolling backups.
+  A project folder is self-contained: it stores media by project-relative path, so moving
+  it does not break its references.
+- If you are upgrading from a CineBraid that kept projects inside the application folder,
+  it keeps opening them from there and changes nothing. Both the console and Settings say
+  so, and **Settings → Files & storage** copies them somewhere safer when you ask — leaving
+  the originals exactly where they are.
 - `data/config.json` holds local settings, including provider credentials. Keys stay server-side and are masked when settings are read back.
 - Personal projects and local configuration are excluded from version control and release archives. The public sample and model catalogs are intentional tracked exceptions.
 

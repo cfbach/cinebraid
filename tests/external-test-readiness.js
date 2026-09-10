@@ -221,7 +221,21 @@ async function testSampleCompletesProviderFree() {
 }
 
 function testSanitizedContents() {
-  const projects = fs.readdirSync(path.join(ROOT, "projects"), { withFileTypes: true }).filter((entry) => entry.isDirectory()).map((entry) => entry.name).sort();
+  /* DOT DIRECTORIES ARE INFRASTRUCTURE, NOT SHIPPED CONTENT.
+   *
+   * `.archive/` and `.trash/` are created by CineBraid inside whatever projects root
+   * it is pointed at — they hold retired and deleted projects and are runtime state,
+   * not something a release carries. `.gitignore` already closes `/projects/*`, so
+   * neither can reach a release archive: this assertion is about what a WORKING TREE
+   * is allowed to hold, and counting a folder CineBraid made for itself as a shipped
+   * project made this fail for a reason that has nothing to do with publication.
+   *
+   * What it still refuses is the thing it was written for: an ordinary project
+   * directory beside the sample. That is a real production sitting in the source
+   * checkout, and it is exactly what PROJECT_STORAGE_SEPARATION exists to move out. */
+  const projects = fs.readdirSync(path.join(ROOT, "projects"), { withFileTypes: true })
+    .filter((entry) => entry.isDirectory() && !entry.name.startsWith("."))
+    .map((entry) => entry.name).sort();
   assert.deepStrictEqual(projects, [SAMPLE_SLUG], "source release must contain only the designated sample project");
   const sample = JSON.parse(read(`projects/${SAMPLE_SLUG}/project.json`));
   assert.strictEqual(sample.meta?.title, "CineBraid Sample — The Blue Parcel");
