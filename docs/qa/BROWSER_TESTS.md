@@ -1,12 +1,23 @@
 # Running the real-browser suites
 
-CineBraid has thirteen test suites that drive the shipped client in a real Chromium.
+CineBraid has real-browser suites that drive the shipped client in Chromium.
+The current gate inventory is maintained in [run-browser-gate.js](../../tests/run-browser-gate.js).
 They exist because a whole class of defect is invisible to Node: the frontend is a
 set of plain `<script>` tags sharing one global scope, and a mistake there — a
 duplicate top-level `const`, a module reading shared state off `window` when the
 declaration that made it is a top-level `let` and therefore not on `window` at all,
 a stylesheet that never sizes an image — produces a blank, broken or silently inert
 application while every Node suite passes.
+
+## Current repository policy
+
+**Windows validation is the required public status check. Browser validation is
+advisory pending `BROWSER_GATE_RUNNER_STABILITY_V1`.** Keep investigating browser
+failures; advisory status does not turn a failure or skip into a pass.
+
+This is distinct from command behavior: `check:browser-gate` requires a working
+browser and launch receipts, and fails if either is missing. `check:release` also
+runs that command. Neither command is weakened by the repository policy.
 
 ## Setup
 
@@ -36,7 +47,7 @@ npm run check:browser-setup
 npm run check:browser-gate
 ```
 
-Every real-browser suite, with `CINEBRAID_BROWSER_REQUIRED=1` set. Under that
+Every suite listed by the browser-gate runner, with `CINEBRAID_BROWSER_REQUIRED=1` set. Under that
 variable a missing runtime is a **failure with setup instructions**, not a skip.
 
 The gate does not take a suite's exit code at face value. `tests/browser_runtime.py`
@@ -70,16 +81,17 @@ npm run check:focused-browser      # Focused Workspaces against the real project
 |---|---|---|
 | `npm run check:quick` | board density only | skips |
 | `npm run check:ci` | none | n/a |
-| `npm run check` | nine, best effort | skips |
-| `npm run check:browser-gate` | all thirteen | **fails** |
+| `npm run check` | selected suites in `tests/run-full-check.js` | some suites skip; check each command |
+| `npm run check:browser-gate` | inventory in `tests/run-browser-gate.js` | **fails** |
 | `npm run check:release` | `check` then the gate | **fails** |
 
-`check`, `check:ci` and `check:quick` stay tolerant on purpose: a fresh clone must
-be able to verify everything portable before anyone installs a browser. What changed
-in Q1 is that tolerance is now confined to those tiers and stated in the tier table,
-instead of being the silent behaviour everywhere.
+Use `check:ci` for the portable Windows validation path. For other tiers, consult
+the current runner and individual command output rather than assuming every
+browser suite can skip.
 
-Use `npm run check:release` before tagging or accepting a candidate.
+`npm run check:release` remains the full verification command followed by the
+browser gate. Its strict exit behavior is separate from the current required
+Windows/advisory Browser status-check policy above.
 
 ## Screenshots and evidence
 

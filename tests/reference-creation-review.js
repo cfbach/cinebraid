@@ -408,7 +408,8 @@ async function testApprovalRemainsTheFinalAuthorityStep() {
     "R16 and opens the existing authority modal with the reviewed candidate preselected");
 
   /* THE AUTHORITY MODAL ITSELF IS UNCHANGED, and is proved end to end against real
-     returned media by tests/reference-creation-review-capture.py, which opens it from
+     returned media in the historical capture retained at v6.7.0-alpha.1
+     (tests/reference-creation-review-capture.py), which opened it from
      this control in a real browser and reads "Approve reference — Rex Vandar" out of
      it. What is proved HERE is the wiring and the separation: review does not perform
      approval, and approval does not perform review. */

@@ -11,7 +11,7 @@
 - Documentation truth for a public checkout: the README named fal as the only generation route and never named Braidy; `SETUP.md` listed two of the four optional-service surfaces; `docs/SPARK_QA_SETUP.md` told a public reader to clone the private engineering origin. All corrected. `TRADEMARKS.md` extends the existing brand-asset carve-out to the six Braidy character exports, on the same terms as the logo and without restricting the code.
 - `package.json` declares public `repository`, `homepage`, `bugs` and `author` metadata pointing at `cfbach/cinebraid`.
 - No application behaviour change in this entry's documentation work. Persistence, provider and model configuration, generation, authority and authentication are untouched by it.
-- An alpha, not a released build, and shared as source. See `docs/releases/v6.7.0-alpha.1/`.
+- Released as the source-only Public Alpha [v6.7.0-alpha.1](https://github.com/cfbach/cinebraid/releases/tag/v6.7.0-alpha.1). No binary/native installer or packaged application has been uploaded; GitHub provides generated source archives. Ongoing development on main does not change the frozen release tag. See [Alpha release notes](docs/releases/v6.7.0-alpha.1/CINEBRAID_v6.7.0-alpha.1_RELEASE_NOTES.md).
 
 # CineBraid 6.7.0-dev.1 — Public Source Readiness
 

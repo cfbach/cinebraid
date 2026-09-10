@@ -1,8 +1,9 @@
 # CineBraid 6.7.0-alpha.1 — install
 
-**The Public Alpha is shared as source.** No archive has been published under this
-identity yet, so there is nothing to download and no checksum to verify. Install
-from a clone.
+**[v6.7.0-alpha.1](https://github.com/cfbach/cinebraid/releases/tag/v6.7.0-alpha.1) is a released, source-only Public Alpha.**
+No binary/native installer or packaged application has been uploaded. GitHub
+provides generated source ZIP/tar downloads; these are source archives, not
+installers. The clone below selects the frozen release.
 
 Requires **Node.js 18 or newer**. CineBraid is validated on Node 24 (Active LTS),
 which is what Windows CI runs.
@@ -10,18 +11,24 @@ which is what Windows CI runs.
 ## From source
 
 ```bash
-git clone https://github.com/cfbach/cinebraid.git
+git clone --branch v6.7.0-alpha.1 --depth 1 https://github.com/cfbach/cinebraid.git
 cd cinebraid
 npm ci
 npm start
 ```
 
+This selects a detached checkout of the frozen Alpha tag, which dereferences to
+`a8840198144f7ac81b0a61193491bf58b7f05894`. For post-release development, clone
+without `--branch` and `--depth` to work on main.
+
 Then open the URL printed in the terminal — by default `http://127.0.0.1:4477`.
-`SETUP.md` covers configuration and provider setup in detail;
-`docs/GETTING_STARTED.md` is the short path from install to a finished shot.
+[Setup](../../../SETUP.md) covers configuration and provider setup in detail;
+[Getting started](../../GETTING_STARTED.md) is the short path from install to a
+finished shot.
 
 `npm ci` installs strictly from `package-lock.json` and needs network access once.
-Everything after that runs locally.
+The application runs locally. Optional external assistant/generation requests
+send their required inputs to the selected provider.
 
 ## Building an archive yourself
 
@@ -44,9 +51,16 @@ Output lands in `dist/release/`, which is gitignored.
 There is no patch path from an earlier identity. If you are running an earlier
 CineBraid, install this one **beside** it rather than over it: point it at its own
 workspace with `CINEBRAID_PROJECTS_ROOT` and `CINEBRAID_CONFIG_PATH`, and give it
-its own `PORT`. `docs/SPARK_QA_SETUP.md` documents that isolation in full.
+its own `PORT`. [Spark QA setup](../../SPARK_QA_SETUP.md) documents that isolation
+in full.
 
 Your projects are self-contained folders under the projects root. Nothing in an
 install writes to another install's workspace.
 
 There is no breaking project-schema migration in this version.
+
+## Validation policy
+
+Windows validation is required. Browser validation is advisory pending
+`BROWSER_GATE_RUNNER_STABILITY_V1`; browser commands retain their strict runtime
+and failure behavior. See the [browser test guide](../../qa/BROWSER_TESTS.md).

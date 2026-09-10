@@ -58,16 +58,20 @@ Run it while you work.
 npm run check:ci
 ```
 
-What continuous integration runs on Windows for every pull request. If this
-passes locally, CI should agree.
+The portable suites run by Windows CI for pull requests. **Windows validation is
+the required public status check. Browser validation is advisory pending
+`BROWSER_GATE_RUNNER_STABILITY_V1`.** A local result does not replace the reported
+Windows status for the candidate under review.
 
 ```bash
 npm run check
 ```
 
-The full verification, including the real-browser and release suites. Some
-browser suites self-skip with a printed message when Python Playwright is not
-installed; that is expected on a plain install and is not a failure.
+The full verification, including browser and release-related suites. Some browser
+suites self-skip without their runtime; a skip is not browser validation. The
+separate `check:browser-gate` and `check:release` commands fail when the required
+runtime is missing. Advisory repository status does not weaken those commands.
+See the [browser test guide](docs/qa/BROWSER_TESTS.md).
 
 If your change adds behaviour, add or extend a suite that would fail without it.
 If it changes documented behaviour, update the documentation in the same PR.

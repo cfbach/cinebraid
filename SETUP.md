@@ -12,22 +12,27 @@ node --version
 
 ## Install and start
 
-**The Public Alpha is shared as source.** No archive has been published under this
-identity, so there is nothing to download and no checksum to verify. Install from a
-clone, **on the machine CineBraid will run on**:
+**Public Alpha [v6.7.0-alpha.1](https://github.com/cfbach/cinebraid/releases/tag/v6.7.0-alpha.1) is released as source only.**
+No binary/native installer or packaged application has been uploaded. GitHub offers
+generated source ZIP/tar downloads; these are source archives, not installers.
+Install the frozen source tag **on the machine CineBraid will run on**:
 
 ```bash
-git clone https://github.com/cfbach/cinebraid.git
+git clone --branch v6.7.0-alpha.1 --depth 1 https://github.com/cfbach/cinebraid.git
 cd cinebraid
 npm ci
 npm start
 ```
 
+This selects the frozen Alpha in a detached checkout. Contributors can clone
+without `--branch` and `--depth` to work on post-release main.
+
 Then open `http://127.0.0.1:4477`.
 
 `npm ci` installs strictly from `package-lock.json` and fails if it and
-`package.json` disagree. It needs network access once; everything after that runs
-locally.
+`package.json` disagree. It needs network access to install dependencies. The app
+runs locally; optional external assistant/generation requests send their required
+inputs to the selected provider.
 
 ### From an archive you built
 
@@ -119,4 +124,8 @@ Full maintainer check:
 npm run check
 ```
 
-Python 3 is optional for a normal install. Real-browser verification uses Python Playwright and Chromium when available and skips clearly when unavailable.
+**Windows validation is required; Browser validation is advisory pending
+`BROWSER_GATE_RUNNER_STABILITY_V1`.** Python is optional for a normal install.
+Some individual browser suites skip without a runtime, but `check:browser-gate`
+and `check:release` fail if the required runtime is missing. See the
+[browser test guide](docs/qa/BROWSER_TESTS.md) for setup and command behavior.

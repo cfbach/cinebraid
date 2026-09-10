@@ -1,240 +1,186 @@
-# CineBraid
+<p align="center">
+  <img src="public/cinebraid-logo-xs.png" alt="CineBraid logo" width="80" height="103">
+</p>
 
-**The production layer that keeps AI cinema tied together.
-Your production, your control.**
+<h1 align="center">CineBraid</h1>
 
-CineBraid is a local-first film production application. It holds the approved
-truth of a production — the Project Bible, references, continuity, shots, review
-and approval — and it keeps that truth yours: it runs on your machine, binds
-loopback by default, and uploads nothing on its own.
+<p align="center"><strong>Open-source, local-first production software for modern and AI-assisted filmmaking.</strong><br>
+Keep your Project Bible, references, shots, and approvals together.</p>
 
-You can plan and finish a production entirely by hand, with no AI provider
-configured and no generation enabled. AI assistance and provider-backed
-generation are optional layers on top of that.
+<p align="center">
+  <a href="#start">Get started</a> ·
+  <a href="#documentation">Documentation</a> ·
+  <a href="https://cinebraid.com">Website</a> ·
+  <a href="https://github.com/cfbach/cinebraid/issues">Issues</a> ·
+  <a href="CONTRIBUTING.md">Contribute</a> ·
+  <a href="SECURITY.md">Security</a>
+</p>
 
-**Status: Public Alpha.** The version is `6.7.0-alpha.1` — an alpha identity,
-in development, and not a released or production-ready build. There is no support
-commitment and no supported-version matrix; work happens on `main`. Expect rough
-edges, and read [SECURITY.md](SECURITY.md) before reporting anything sensitive.
+**Public Alpha released · Source-only · [v6.7.0-alpha.1](https://github.com/cfbach/cinebraid/releases/tag/v6.7.0-alpha.1) · [Apache License 2.0](LICENSE)**
 
-## Requirements
+The production layer that keeps AI cinema tied together. **Your production, your control.**
 
-CineBraid requires **Node.js 18 or newer**. The server checks this before it opens
-a port and exits with a single clear line on an unsupported version:
+For filmmakers building shorts, music videos, and other multi-shot productions,
+CineBraid keeps the work and its production context in one place. Import media
+made anywhere, organize the references that must stay consistent, and decide what
+to keep. AI assistance and provider-backed generation are optional.
 
-```
-CineBraid requires Node.js 18 or newer; detected 16.20.0.
-```
+The Public Alpha is **source-only**: there is no binary or native installer.
+The product remains **in development**, with rough edges and no production-readiness
+or support commitment. The release tag is frozen; ongoing development happens on
+`main`.
 
-Check what you have:
+**Models should be replaceable. The production should not be.**
 
-```bash
-node --version
-```
+## Keep the production together
 
-`express` is the only npm runtime dependency, and there is no build step and no
-bundler. It is installed from the lockfile with `npm ci`; nothing is vendored into
-the repository.
+- **Plan the film.** Organize your Project Bible, scenes, shots, and recurring characters, locations, and props.
+- **Carry references forward.** Keep approved looks, views, and continuity states attached to the work that needs them.
+- **Review and finish.** Bring in images, video, and audio; compare candidates, approve your choices, and finalize a shot.
+- **Choose your tools.** Work entirely by hand, or configure Braidy and supported generation backends when they help.
 
-**ffmpeg is optional and is not bundled.** CineBraid never requires it to start or
-to run the manual workflow. It probes for `ffmpeg -version` in two places and
-reports the answer rather than depending on it:
-
-- `/api/system/health` reports whether ffmpeg was found, and its version line.
-- The system assistant raises a low-priority advisory when it is missing, because
-  media inspection and proxy utilities are the things that would want it.
-
-If you never see that advisory, you never needed it. Install it from your own
-package manager if you want those utilities.
-
-### Braidy
-
-**Braidy** is CineBraid's assistant, with its own rail in the shell. It reports
-where it stands before it offers to do anything: a capability you have not turned
-on says so plainly rather than reporting a failure, and an unreachable Braidy
-names the model it was going to use.
-
-Setup asks **where a capability runs** before it asks which protocol to speak:
-
-- **Local / self-hosted** — a server on your own hardware: Ollama, or any
-  OpenAI-compatible server you run. Needs no key.
-- **Cloud** — the OpenAI or Anthropic APIs. Needs a key.
-
-Self-hosted is a statement about whose hardware answers the request, not about
-whether anything travels.
-
-### API keys are optional
-
-No credential is needed to install, start, open a project, or take a shot from
-opening to approved. Provider keys are needed only when you turn on a
-provider-backed feature:
-
-- **Braidy**, for planning and continuity help. "No AI" is a supported setting,
-  not a degraded one, and a self-hosted assistant needs no key at all.
-- **in-app generation**, which CineBraid can dispatch three ways:
-  - **Local ComfyUI** — a ComfyUI server on the same machine as CineBraid. No key
-    and no provider cost; every ComfyUI route refuses a caller that is not on this
-    machine, and its host configuration cannot be edited from another device.
-  - **fal.ai** — a cloud provider. Key required.
-  - **Civitai** — a cloud provider. Key required; a request is priced and
-    explicitly authorised before anything is spent.
-
-  Without a configured backend the generation surfaces stay off and everything
-  else works.
-
-A missing or unreachable provider degrades that feature, not the product. Keys are
-stored server-side in `data/config.json` and masked when settings are read back,
-so they are never sent to the browser in plain text.
+**Human approval stays explicit.** Nothing is approved, locked, or superseded on
+your behalf. A machine can propose; only a person decides. An unavailable provider
+does not block the manual workflow.
 
 ## Start
 
-The Public Alpha is shared as source, so a clone is the install:
+Requires **Node.js 18 or newer**; Node.js 24 is the version used by Windows CI.
+Check your installation with `node --version`. You also need Git to clone the source.
 
 ```bash
-git clone https://github.com/cfbach/cinebraid.git
+git clone --branch v6.7.0-alpha.1 --depth 1 https://github.com/cfbach/cinebraid.git
 cd cinebraid
 npm ci
 npm start
 ```
 
-Then open the local CineBraid URL shown in the terminal — by default
-`http://127.0.0.1:4477`. Set `PORT` if 4477 is taken.
+This installs the frozen Alpha source in a detached checkout. For post-release
+development, clone without `--branch` and `--depth` to follow `main`.
 
-From a release folder — one you built yourself with `npm run release:build`, since
-no archive has been published under this identity — the startup scripts stand in
-for those last two steps:
+Open the URL printed in the terminal — by default [http://127.0.0.1:4477](http://127.0.0.1:4477).
+Set `PORT` if 4477 is taken. Startup also reports the bind address, network posture,
+and projects location.
 
-- Windows: `start.bat`
-- macOS: `start.command`
-- Linux / DGX Spark: `./start.sh`
+There is **no build step**. `express` is the only npm runtime dependency;
+`npm ci` installs it from the lockfile and needs network access. **API keys are
+optional:** no credential is needed to install, start, or use the sample.
+**ffmpeg is optional** and is not bundled. The server probes for it and reports
+its availability for media inspection/proxy utilities; the manual workflow does
+not require it.
 
-They are a convenience, not the documented setup. Each one starts the server, and
-installs dependencies first only if `node_modules` is absent — with
-`npm install --silent`, not the `npm ci` above. `npm ci` installs strictly from
-`package-lock.json` and fails if it and `package.json` disagree; `npm install` may
-resolve a different tree and write the lockfile back. For a reproducible install,
-run `npm ci` yourself before using a launcher.
+See [setup and configuration](SETUP.md) for more detail, including upgrades and
+running a second isolated installation. For DGX Spark, see [Spark setup](SPARK_SETUP.md).
 
-On startup CineBraid prints its URL, the address it bound to, its network posture,
-and where your projects live, so you can confirm all four at a glance.
+<details>
+<summary>Using a startup script or an archive you built</summary>
 
-## How CineBraid uses your network
+`npm run release:build` can create an archive locally. After extracting it, run
+`npm ci` in that folder before using `start.bat` on Windows, `start.command` on
+macOS, or `./start.sh` on Linux / DGX Spark.
 
-**CineBraid is local-only by default.** It binds `127.0.0.1`, so nothing outside
-this computer can reach it, and it says so on startup:
+The launchers install with `npm install --silent` only when `node_modules` is
+absent. They do not perform the same locked install as `npm ci`; running `npm ci`
+first keeps the documented setup reproducible.
 
-```
-Local-only mode: other devices cannot connect.
-```
+</details>
 
-The interface makes no third-party requests to render itself: no font CDN, no
-analytics, no remote scripts or stylesheets. Everything the browser loads is
-served by your own CineBraid.
+## Try your first shot
 
-Reaching the interface from another machine is a **deliberate opt-in**, never a
-default:
+The included **CineBraid Sample — The Blue Parcel** is a three-shot project with
+simple storyboard media, a courier, a railway platform, and a parcel. It needs no
+assistant or generation provider.
+
+1. Open the sample and inspect **References → Approved**.
+2. Open **Production → Parcel opened**. In **Frames**, approve the existing `SAMPLE-03-OPEN.png` as Frame A.
+3. In **Deliver**, finalize the approved still, then return to Production to see the completed shot.
+
+Follow the [first-shot guide](docs/GETTING_STARTED.md) to practice importing
+references, clear the sample's deliberate readiness prompts, and create your own
+project. The sample lives in [`projects/cinebraid-sample/`](projects/cinebraid-sample/).
+
+## Optional assistance and generation
+
+References and Shots remain the production context. Generate when useful, then
+Review the returned work before making a human approval.
+
+**Braidy** is CineBraid's optional assistant, with its own rail for planning,
+continuity, and prompt help. Configure capabilities under **Settings → Optional
+assisted services**. An off or unreachable capability reports its status;
+the manual workflow remains available.
+
+| Tool | Where it runs | What you supply |
+|---|---|---|
+| Braidy with Ollama or an OpenAI-compatible server | Local / self-hosted | A running model server; no cloud API key required |
+| Braidy with OpenAI or Anthropic | Cloud | Your provider API key |
+| ComfyUI generation | On the same machine as CineBraid | A running ComfyUI server; no provider key or provider charge |
+| fal.ai generation | Cloud | Your provider API key |
+| Civitai generation | Cloud | Your provider API key; paid requests are priced and explicitly authorized |
+
+The sample has assistance and generation disabled. Configure only the services
+you want. ComfyUI routes accept callers on the CineBraid machine only; its host
+configuration cannot be edited from another device.
+
+## Your data and your network
+
+CineBraid runs **local-only by default**, bound to `127.0.0.1`. The interface loads
+from your own CineBraid server, with no third-party fonts, analytics, scripts, or
+stylesheets. It uploads nothing on its own. When you ask an external provider for
+assistance or generation, the material needed for that request goes to that provider.
+
+- `projects/<slug>/` holds each project's document, media, and rolling backups.
+- `data/config.json` holds local settings, including provider credentials. Keys stay server-side and are masked when settings are read back.
+- Personal projects and local configuration are excluded from version control and release archives. The public sample and model catalogs are intentional tracked exceptions.
+
+**LAN access is opt-in.** Set an Editor passcode in Settings first, then start
+with `npm run start:lan`. This binds `0.0.0.0`; without a passcode, anyone who can
+reach the port can drive the application. Keep it on a trusted network and do not
+expose it directly to the public internet. A local AI server does not require LAN mode.
+
+Read the [security policy](SECURITY.md) before reporting sensitive information.
+
+## Documentation
+
+Browse the [documentation index](docs/README.md) for current guidance, release
+history, and clearly separated historical engineering provenance.
+
+| I want to… | Start here |
+|---|---|
+| Finish a first shot | [Getting started](docs/GETTING_STARTED.md) |
+| Install, configure providers, or upgrade | [Setup](SETUP.md) |
+| Turn my existing planning material into a project | [Project Builder prompt kit](resources/project-builder/README.md) |
+| Understand this Alpha and its limitations | [Published release](https://github.com/cfbach/cinebraid/releases/tag/v6.7.0-alpha.1) · [Alpha release notes](docs/releases/v6.7.0-alpha.1/CINEBRAID_v6.7.0-alpha.1_RELEASE_NOTES.md) |
+| See what changed | [Changelog](CHANGELOG.md) |
+| Work on model integrations | [Generation model packs](docs/architecture/GENERATION_MODEL_PACKS.md) |
+| Run browser tests | [Browser test guide](docs/qa/BROWSER_TESTS.md) |
+| Understand publication or isolate a test install | [Publication](docs/PUBLICATION.md) · [Spark QA setup](docs/SPARK_QA_SETUP.md) |
+
+## Contribute
+
+Bug reports and focused pull requests are welcome. Open an
+[issue](https://github.com/cfbach/cinebraid/issues) before starting a large change.
+Commits require a DCO `Signed-off-by` line; there is no CLA and you retain your
+copyright. See [Contributing](CONTRIBUTING.md) for the process.
+
+The verification suites need no API key and make no live provider calls:
 
 ```bash
-npm run start:lan
+npm run check:quick  # Fast development checks
+npm run check:ci     # Portable validation used by Windows CI
+npm run check        # Full verification, including browser and release suites
 ```
 
-`--lan` (or `CINEBRAID_LAN=1`) binds `0.0.0.0` and prints an exposure warning.
-**Set an editor passcode in Settings before using LAN mode** with paid providers
-or sensitive projects — without one, anyone who can reach the port can drive the
-application.
+**Windows validation is the required public status check. Browser validation is
+advisory pending `BROWSER_GATE_RUNNER_STABILITY_V1`.** This policy does not change
+the commands: `check:browser-gate` fails if its runtime is missing, while some
+individually run suites can skip. Follow the
+[browser test guide](docs/qa/BROWSER_TESTS.md) for runtime setup and command behavior.
 
-You do not need LAN mode to use CineBraid, and you do not need it to use a local
-AI server: CineBraid reaches out to that, not the other way round.
+Report vulnerabilities through the private channel in [SECURITY.md](SECURITY.md),
+rather than a public issue or pull request.
 
-## Manual first
+## License and branding
 
-CineBraid is a **manual-first** production tool. Every stage — planning, the
-Project Bible, shot work, review and approval — is usable end to end by hand,
-with no AI provider configured and no generation enabled. You can bring in images,
-video and audio made anywhere, organize them, assign continuity, attach them to
-shots, and mark the final result.
-
-Two consequences worth knowing:
-
-- **Human approval stays explicit.** Nothing is approved, locked or superseded on
-  your behalf. A machine can propose; only a person decides.
-- **A missing or unreachable provider degrades the feature, not the product.**
-  If Braidy is off, unconfigured or unreachable, the manual path is still there:
-  import, organise, assign continuity, review, approve and finish by hand.
-
-## The sample project
-
-A fresh install opens `projects/cinebraid-sample` — *CineBraid Sample — The Blue
-Parcel* — a three-shot project with a character, a location, a prop and existing
-media.
-
-It is deliberately configured to need nothing external: no text provider, no
-vision provider, and generation disabled. You can take all three shots from
-opening to approved using only what ships in the box, which is the fastest way to
-see the manual workflow before deciding what to automate.
-
-## Testing an install
-
-Three commands, in increasing order of cost. All are portable and none contacts a
-provider — no suite in CineBraid depends on a live model service, and none needs
-an API key.
-
-```bash
-npm run check:quick
-```
-
-The fast path: syntax, rendering, core contracts and the main workflow suites.
-Use this while working.
-
-```bash
-npm run check:ci
-```
-
-What continuous integration runs on Windows for every change.
-
-```bash
-npm run check
-```
-
-The full verification, including the browser and release suites. It reports how
-many suites ran and which were slowest.
-
-Some browser suites self-skip with a printed message when Python Playwright is
-not installed; that is expected on a plain install and is not a failure.
-
-## Where your data lives
-
-- `projects/<slug>/` — one self-contained folder per project: `project.json`, its
-  media, and rolling backups.
-- `data/config.json` — your settings, including provider credentials.
-
-Projects, media, provider keys and local-model settings all stay inside the
-workspace you configure; nothing is uploaded anywhere by CineBraid itself. When
-you do dispatch a generation, the material for that request goes to the provider
-you chose, and nowhere else.
-
-Both directories are excluded from version control and from release archives.
-
-## Contributing
-
-Pull requests are welcome. Commits need a DCO `Signed-off-by` line; there is no
-CLA and you keep your copyright. See [CONTRIBUTING.md](CONTRIBUTING.md).
-
-Security issues go through [SECURITY.md](SECURITY.md), not a public issue.
-
-## Licence
-
-CineBraid is licensed under the **Apache License 2.0** — see [LICENSE](LICENSE).
-
-The licence covers the code. The CineBraid name and logo are branding held
-separately; see [TRADEMARKS.md](TRADEMARKS.md) before using either in a fork.
-
-## More documentation
-
-- `docs/GETTING_STARTED.md` — the short path from install to a finished shot.
-- `SETUP.md` — install, configuration and provider setup in detail.
-- `docs/PUBLICATION.md` — how a reviewed commit reaches the public repository.
-- `docs/releases/v6.7.0-alpha.1/` — notes and install guidance for this identity.
-
-For an isolated side-by-side QA install on the DGX Spark, see
-`docs/SPARK_QA_SETUP.md`.
+The application code is licensed under the **Apache License 2.0**; see [LICENSE](LICENSE).
+The CineBraid name, logo, and Braidy artwork have separate
+[trademark and brand-asset terms](TRADEMARKS.md).
