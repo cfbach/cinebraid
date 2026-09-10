@@ -722,6 +722,31 @@ window.saveAppearanceSettings = async () => {
   route();
 };
 
+/* What a completed migration actually says, in the order a person needs it.
+ *
+ * The counts alone were never enough, and one defect proved it: an archived project
+ * whose document was silently dropped produced a perfectly accurate "copied N,
+ * skipped M" line, because both numbers came from the loop that dropped it. The
+ * server now measures the new location against the old one afterwards, and this
+ * reports THAT — including the project records, which are the files a person would
+ * most like to be told about and the ones the old line never mentioned.
+ *
+ * A failed check never reads as a failed migration, because it is not one. The copies
+ * are create-only and the originals are untouched under every outcome, so the honest
+ * sentence names what did not line up and says the old location is still intact. */
+function describeMigration(migration) {
+  const records = Number(migration.projectDocuments || 0) + Number(migration.carriedDocuments || 0);
+  const head = `Copied ${migration.copied || 0} files into the new project folder, including ${records} project ${records === 1 ? "record" : "records"}; ${migration.skipped || 0} existing files were kept.`;
+  const verification = migration.verification;
+  if (!verification) return head;
+  if (verification.ok) return `${head} Everything at the old location is present at the new one, at the same size.`;
+  const problems = [];
+  if (verification.missingCount) problems.push(`${verification.missingCount} did not arrive`);
+  if (verification.mismatchedCount) problems.push(`${verification.mismatchedCount} already existed at the new location with different contents`);
+  if (verification.unsupportedCount) problems.push(`${verification.unsupportedCount} could not be read`);
+  const detail = [...(verification.missing || []), ...(verification.mismatched || [])].slice(0, 5);
+  return `${head} Checking the new location against the old one found problems: ${problems.join("; ")}.${detail.length ? ` For example: ${detail.join(", ")}.` : ""} The copies were kept and nothing at the old location was changed.`;
+}
 /* Storage paths and naming rules share one endpoint because the server has to create
    the folders and check write access before it records either. They no longer share a
    request body: a panel sends only the fields it is showing, so saving naming rules
@@ -780,7 +805,7 @@ async function persistWorkspaceSettings(scope) {
   CONFIG = await fetch("/api/config").then((response) => response.json()).catch(() => ({ ...CONFIG, ...body }));
   updateFilenameTemplatePreview();
   const applied = data.migration?.movedRoot
-    ? `Copied ${data.migration.copied || 0} files into the new project folder; ${data.migration.skipped || 0} existing files were kept.`
+    ? describeMigration(data.migration)
     : storage ? "These folders exist and are writable." : "";
   settingsPanelSaved(applied);
   if (note && storage) note.textContent = applied;
@@ -789,7 +814,12 @@ async function persistWorkspaceSettings(scope) {
      note directly above already says so in the same breath. A failure never reaches
      this line at all: a non-ok response returns above, so a partly-copied destination
      can never be announced as a workspace that moved. */
-  toast(data.migration?.movedRoot ? "Projects copied to the new folder" : storage ? "Storage paths applied" : "Naming rules saved");
+  if (!data.migration?.movedRoot) return toast(storage ? "Storage paths applied" : "Naming rules saved");
+  /* The toast is the only part a person reads without looking, so a check that did not
+     pass may not be announced as a plain success. The note beside it carries the detail. */
+  toast(data.migration.verification && !data.migration.verification.ok
+    ? "Projects copied — the check found differences"
+    : "Projects copied to the new folder");
 }
 window.saveStorageSettings = () => persistWorkspaceSettings("workspace");
 window.saveNamingSettings = () => persistWorkspaceSettings("naming");

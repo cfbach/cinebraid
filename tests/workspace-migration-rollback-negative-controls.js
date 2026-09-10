@@ -571,10 +571,24 @@ async function epermAsSkipControl() {
   assert.strictEqual(mutated.first.body.migration.movedRoot, true, "…as a completed move");
   assert.deepStrictEqual(mutated.documentsAfterFirst, ["alpha"],
     "…with the junctioned project silently absent from the new workspace");
-  assert.strictEqual(fs.existsSync(path.join(mutated.dest, "beta")), false,
-    "beta never arrives, and nothing in the response says so");
-  assert.strictEqual(JSON.stringify(mutated.first.body).includes("beta"), false,
-    "which is the defect: the omission is not reported anywhere: " + JSON.stringify(mutated.first.body));
+  assert.strictEqual(fs.existsSync(path.join(mutated.dest, "beta")), false, "beta never arrives");
+  /* THE DEFECT, restated for the shape it has since PSS-2. With all three guards
+     removed the route still answers a plain success — ok true, no refusal code — for
+     a migration that lost a whole project, and that is what these mutations prove is
+     load-bearing.
+
+     What is no longer true is the second half of the original claim, that the omission
+     is reported NOWHERE. PSS-2 added a fourth witness that does not share a line of
+     code with the three being removed here: the destination is measured against the
+     source afterwards, so the entry the copy could not carry is named even when every
+     guard in front of it has been disabled. Asserted rather than deleted, because a
+     backstop nobody checks is a backstop that quietly stops working. */
+  assert.strictEqual(mutated.first.body.ok, true, "the route still calls it a success");
+  assert.strictEqual(mutated.first.body.code, undefined, "with no refusal code");
+  const verification = mutated.first.body.migration.verification;
+  assert.strictEqual(verification.ok, false, "but the independent check must not agree: " + JSON.stringify(verification));
+  assert(verification.unsupported.some((row) => row.path === "beta"),
+    "and must name the entry that never arrived: " + JSON.stringify(verification.unsupported));
 }
 
 /* ==========================================================================

@@ -646,7 +646,7 @@ async function workspaceScenarios() {
   await primary("E-08", async () => {
     reset(baseProject("Migration Source"));
     const nested = path.join(PROJECT_DIR, "docs", "nested", "project.json");
-    fs.mkdirSync(path.dirname(nested), { recursive: true }); fs.writeFileSync(nested, '{"must":"not-copy"}');
+    fs.mkdirSync(path.dirname(nested), { recursive: true }); fs.writeFileSync(nested, '{"must":"be-carried"}');
     const destination = path.join(TEMP, "migrated-projects");
     const result = await expectStatus(server.request("/api/workspace/settings", {
       method: "POST", headers: { "content-type": "application/json" },
@@ -654,7 +654,22 @@ async function workspaceScenarios() {
     }), 200);
     assert.strictEqual(result.body.migration.projectDocuments >= 1, true);
     assert(fs.existsSync(path.join(destination, "o8-project", "project.json")));
-    assert.strictEqual(fs.existsSync(path.join(destination, "o8-project", "docs", "nested", "project.json")), false);
+    /* E-08 used to require the OPPOSITE, and PSS-2 corrected it. The copy loop decided
+       which documents the seam owned by NAME — any project.json, at any depth — and the
+       seam's real set is only the top-level directories that hold one. That is why an
+       archived or trashed project arrived at a new workspace root with its media and no
+       document at all. The skip is now the seam's exact reservation set, so a document
+       the seam does not enrol is carried like the file beside it.
+
+       What E-08 was protecting is unchanged and still asserted above: the enrolled
+       document arrives, published once by the seam. */
+    const carried = path.join(destination, "o8-project", "docs", "nested", "project.json");
+    assert.strictEqual(fs.existsSync(carried), true,
+      "a project.json the seam does not enrol must be carried, not dropped");
+    assert.strictEqual(fs.readFileSync(carried, "utf8"), fs.readFileSync(nested, "utf8"),
+      "and carried byte-identically");
+    assert.strictEqual(result.body.migration.carriedDocuments, 1,
+      "and reported as carried rather than skipped");
   });
   await primary("E-09", async () => {
     const source = fs.readFileSync(path.join(ROOT, "src/server/server.js"), "utf8");

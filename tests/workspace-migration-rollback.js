@@ -454,8 +454,9 @@ async function f11_8() {
     writeProjectAt(source, "alpha", baseProject("Alpha"));
     writeFileAt(path.join(source, "alpha", "media", "frame.bin"), "alpha-frame-bytes");
     writeProjectAt(source, "beta", baseProject("Beta"));
-    /* E-08's shape: a nested project.json that the tree copy must keep skipping. */
-    writeFileAt(path.join(source, "alpha", "docs", "nested", "project.json"), '{"must":"not-copy"}');
+    /* E-08's shape: a project.json below the top level. It is not a project the seam
+       enrols, and PSS-2 made carrying it the requirement — see the assertion below. */
+    writeFileAt(path.join(source, "alpha", "docs", "nested", "project.json"), '{"must":"be-carried"}');
   }, async ({ source, dest, configuredRoot, migrate, server }) => {
     const beforeSource = snapshot(source);
     const result = await migrate();
@@ -477,12 +478,27 @@ async function f11_8() {
       "copied media must be byte-identical");
     assert.deepStrictEqual(snapshot(source), beforeSource, "a successful migration still leaves the source alone");
 
-    /* Untouched by F-11 and asserted here so the ledger work cannot quietly change it:
-       copyMissingTree skips project.json at any depth. That the nested document does
-       not arrive is a separate, still-open finding about archived and trashed
-       projects — see the residual note in this slice's report. */
-    assert.strictEqual(fs.existsSync(path.join(dest, "alpha", "docs", "nested", "project.json")), false,
-      "the tree copy must still skip project.json at depth");
+    /* THE F-11 RESIDUAL, NOW CLOSED BY PSS-2.
+
+       F-11 pinned the then-current behaviour — copyMissingTree skipped project.json at
+       any depth — and recorded in this very comment that an archived or trashed project
+       therefore did not arrive, as a separate still-open finding. It is open no longer.
+       The skip is now the seam's EXACT reservation set rather than a name test, so a
+       document the seam does not enrol is carried like any other file, byte for byte.
+
+       The property F-11 was protecting is unchanged and is asserted immediately below:
+       an ENROLLED document is written once, by the seam, and never also copied. */
+    const nested = path.join(dest, "alpha", "docs", "nested", "project.json");
+    assert.strictEqual(fs.existsSync(nested), true,
+      "a project.json the seam does not enrol must be carried, not dropped");
+    assert.strictEqual(sha(nested), sha(path.join(source, "alpha", "docs", "nested", "project.json")),
+      "and carried byte-identically");
+    assert.strictEqual(result.body.migration.carriedDocuments, 1,
+      "the response must say how many documents the tree copy carried");
+    assert.strictEqual(result.body.migration.verification.documents.enrolled, 2,
+      "and how many the seam enrolled");
+    assert.strictEqual(result.body.migration.verification.ok, true,
+      "and that the new location carries the old one: " + JSON.stringify(result.body.migration.verification));
 
     /* CREATE_ONLY end to end: a third root already holding one of these documents is
        still refused, and refused before anything is written. */

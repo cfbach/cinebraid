@@ -113,13 +113,17 @@ function safeEnsureDirectory(dir) {
    is also what let a reparse point through: `existsSync` says false for a dangling
    junction, and the copy then wrote through it. COPYFILE_EXCL refuses both.
 
-   A caller that passes no ledger gets byte-identical behaviour to before. */
-function copyMissingTree(source, destination, ledger = null) {
-  if (!source || !destination || !fs.existsSync(source)) return { copied: 0, skipped: 0 };
+   A caller that passes no ledger gets byte-identical behaviour to before.
+
+   `reserved`, when supplied, is the EXACT set of destination project documents the
+   migration seam publishes itself — see isEnrolledDocument() below for why an exact
+   set replaced a name test, and what the name test cost. */
+function copyMissingTree(source, destination, ledger = null, reserved = null) {
+  if (!source || !destination || !fs.existsSync(source)) return { copied: 0, skipped: 0, documents: 0 };
   if (!ledger) fs.mkdirSync(destination, { recursive: true });
   else if (claimDirectory(destination).created) ledger.directory(destination);
   else ledger.container(destination); /* found, not made — so prove it is really here */
-  let copied = 0, skipped = 0;
+  let copied = 0, skipped = 0, documents = 0;
   for (const entry of fs.readdirSync(source, { withFileTypes: true })) {
     const src = path.join(source, entry.name), dest = path.join(destination, entry.name);
     /* Classified from the Dirent, at every depth. A migration tree member is a real
@@ -133,18 +137,59 @@ function copyMissingTree(source, destination, ledger = null) {
        slice is correcting — it keeps the behaviour it shipped with. */
     if (ledger && !entry.isDirectory() && !entry.isFile()) throw unsupportedSourceEntry(src, entry);
     if (entry.isDirectory()) {
-      const nested = copyMissingTree(src, dest, ledger);
-      copied += nested.copied; skipped += nested.skipped;
-    } else if (path.basename(entry.name).toLowerCase() === "project.json") {
-      /* Project documents are enrolled separately through WORKSPACE_MIGRATION. */
+      const nested = copyMissingTree(src, dest, ledger, reserved);
+      copied += nested.copied; skipped += nested.skipped; documents += nested.documents;
+    } else if (isEnrolledDocument(reserved, dest)) {
+      /* Published by the seam instead of copied here. Never counted as carried. */
       skipped += 1;
     } else if (ledger) {
+      /* The admission line below is pinned verbatim by tests/workspace-migration-rollback.js
+         S6, which counts every ledger admission in this file and requires each one to be
+         the exact guarded form. Carried documents are therefore counted FROM its outcome,
+         beside it, rather than by opening the branch up and rewriting it. */
+      const before = copied;
       if (claimCopiedFile(src, dest).created) { ledger.file(dest); copied += 1; } else skipped += 1;
+      if (copied > before && isProjectDocumentName(entry.name)) documents += 1;
     } else if (!fs.existsSync(dest)) {
       fs.copyFileSync(src, dest); copied += 1;
     } else skipped += 1;
   }
-  return { copied, skipped };
+  return { copied, skipped, documents };
+}
+/* WHICH project documents the copy must not write, because the seam writes them.
+ *
+ * This used to be answered by NAME: any file called project.json, at any depth, was
+ * skipped. The reasoning was sound for the files it was aimed at — the migration
+ * enrols each live project's document through the Authority Write Seam, so copying
+ * it here as well would be a second writer for one file. What the name test missed
+ * is that it is much broader than the set the seam actually owns.
+ *
+ * The seam's set is built by preflightWorkspaceMigration() from TOP-LEVEL source
+ * directories that contain a project.json. `.archive/` and `.trash/` contain no
+ * project.json at their own top level, so they are not projects and are never
+ * enrolled — but their CHILDREN each hold one. The name test skipped those too, and
+ * nothing else carried them: an archived or trashed project arrived at the new root
+ * with its media, its `.cinebraid-archive.json` manifest and no document at all, and
+ * the migration reported success. That is the whole record of a deleted or retired
+ * production, silently dropped by a workspace move.
+ *
+ * So the question is now asked EXACTLY. A destination path the seam has reserved is
+ * skipped; every other file, whatever it is called and however deep it sits, is
+ * carried by the same create-only, ledgered copy as the media beside it.
+ *
+ * Archived and trashed documents are carried as BYTES rather than enrolled through
+ * the seam, deliberately. Enrolment validates against validateProjectForSave and
+ * mints a fresh revision, which is right for a live project a user is about to open
+ * and wrong for a frozen record: a stale archived document that no longer validates
+ * would refuse the whole migration, and re-minting its revision would rewrite the
+ * history the archive exists to preserve. A byte copy preserves both.
+ *
+ * With no reservation set this is the assisted-media-sync caller, which has never
+ * had a plan to reserve from and keeps the behaviour it shipped with: a project.json
+ * arriving from a watched media folder is not a document this product adopts. */
+function isEnrolledDocument(reserved, destinationFile) {
+  if (reserved) return reserved.has(reservationKey(destinationFile));
+  return isProjectDocumentName(destinationFile);
 }
 /* ---- F-11 workspace migration: preflight + created-paths rollback ledger ----
 
@@ -176,6 +221,21 @@ function insideDirectory(root, candidate) {
   if (!rel) return false; /* the directory itself is not inside itself */
   if (path.isAbsolute(rel)) return false; /* a different volume or share */
   return rel !== ".." && !rel.startsWith(".." + path.sep) && !rel.startsWith("../");
+}
+/* Casing is not comparable raw on Windows, and the reservation set is built from the
+   plan while every lookup is built from readdir, so both go through one normaliser.
+
+   Deliberately inside the F-11 helper block rather than beside copyMissingTree, which
+   is where it reads most naturally: preflightWorkspaceMigration() and
+   migrationTreeVerification() both call it, and the migration suites evaluate this
+   block on its own in a fresh realm. A helper those two depend on that sits outside
+   the block is a ReferenceError the moment a test calls either of them. */
+function reservationKey(target) {
+  const resolved = path.resolve(String(target || ""));
+  return process.platform === "win32" ? resolved.toLowerCase() : resolved;
+}
+function isProjectDocumentName(name) {
+  return path.basename(String(name || "")).toLowerCase() === "project.json";
 }
 /* What a directory entry actually is, in the words a refusal can use. Windows
    reports a junction as a symbolic link, which is the answer we want: it is a
@@ -589,7 +649,87 @@ function preflightWorkspaceMigration(previousRoot, nextRoot) {
     return refuse(422, "WORKSPACE_MIGRATION_PREFLIGHT_FAILED",
       "Workspace migration was refused before anything was copied, because some projects cannot be migrated.",
       { problems });
-  return { ok: true, refusal: null, projects, realSourceRoot, realDestinationRoot };
+  /* The seam's exact set, built here because this is where enrolment is decided.
+     copyMissingTree skips these destination paths and nothing else — see
+     isEnrolledDocument(). Building it anywhere else would let the two lists drift,
+     which is the failure this replaced. */
+  const reserved = new Set(projects.map((item) => reservationKey(item.destinationFile)));
+  return { ok: true, refusal: null, projects, reserved, realSourceRoot, realDestinationRoot };
+}
+/* ---- migration verification -------------------------------------------------
+ *
+ * What `{copied, skipped}` can and cannot tell you. It counts the decisions the copy
+ * loop took, which is exactly the wrong witness for the failure this slice exists to
+ * correct: the archived-document defect produced a HIGH skipped count and a 200, and
+ * every number in that response was accurate. A count taken by the loop can only ever
+ * agree with the loop.
+ *
+ * So the destination is measured against the source AFTERWARDS, by walking both. Every
+ * regular file under the source must be present at the destination — a seam-published
+ * document included, which is what proves enrolment actually landed — and at the same
+ * size.
+ *
+ * STAT ONLY, NEVER A READ, for the same reason src/media/media-asset-indexer.js gives:
+ * `projectsRoot` is user-configurable, Windows puts Documents inside OneDrive, and a
+ * read of a Files-on-Demand placeholder downloads it. This walk calls readdir and stat
+ * and nothing else. Byte-for-byte proof is a separate, explicit, offline job — that is
+ * scripts/verify-migration.js, which hashes because the operator asked it to.
+ *
+ * A difference is REPORTED, never unwound. `mismatched` means the destination already
+ * held a different file under that name: COPYFILE_EXCL refused to replace it, which is
+ * the guarantee working, not a corruption. Deleting the migration's own good copies
+ * over it would turn a name collision into data loss. The response says which paths
+ * and lets the operator decide.
+ *
+ * ONE FILE CLASS IS EXEMPT FROM THE SIZE TEST, and saying why is the whole point of
+ * having written this down. An ENROLLED document is not copied — the Authority Write
+ * Seam publishes a successor of it, carrying a fresh revision and the migration's own
+ * transition metadata. Its bytes therefore SHOULD differ from the source, and a size
+ * comparison would report every migrated project as damaged. What is asked of an
+ * enrolled document here is that it arrived at all; that its CONTENT is right is the
+ * seam's contract, already proven at the call site by `outcome.ok && outcome.created`
+ * before this walk begins. Every other file, at every depth, is compared. */
+const MIGRATION_REPORT_LIMIT = 20;
+function migrationTreeVerification(realSourceRoot, realDestinationRoot, reserved = null) {
+  const missing = [], mismatched = [], unsupported = [];
+  let files = 0, bytes = 0, documents = 0, enrolled = 0;
+
+  const walk = (relative) => {
+    const sourceDir = relative ? path.join(realSourceRoot, relative) : realSourceRoot;
+    let entries;
+    try { entries = fs.readdirSync(sourceDir, { withFileTypes: true }); }
+    catch (error) { unsupported.push({ path: relative || ".", detail: error?.message || "unreadable" }); return; }
+    for (const entry of entries) {
+      const rel = relative ? path.join(relative, entry.name) : entry.name;
+      if (entry.isDirectory()) { walk(rel); continue; }
+      if (!entry.isFile()) { unsupported.push({ path: rel, detail: direntKind(entry) }); continue; }
+      let sourceStat;
+      try { sourceStat = fs.statSync(path.join(realSourceRoot, rel)); }
+      catch (error) { unsupported.push({ path: rel, detail: error?.message || "unreadable" }); continue; }
+      files += 1; bytes += sourceStat.size;
+      const destination = path.join(realDestinationRoot, rel);
+      const republished = isProjectDocumentName(entry.name) && Boolean(reserved) && reserved.has(reservationKey(destination));
+      if (isProjectDocumentName(entry.name)) { if (republished) enrolled += 1; else documents += 1; }
+      let destinationStat;
+      try { destinationStat = fs.statSync(destination); }
+      catch { if (missing.length < MIGRATION_REPORT_LIMIT) missing.push(rel); else missing.push(null); continue; }
+      if (!destinationStat.isFile() || (!republished && destinationStat.size !== sourceStat.size)) {
+        if (mismatched.length < MIGRATION_REPORT_LIMIT) mismatched.push(rel); else mismatched.push(null);
+      }
+    }
+  };
+  walk("");
+
+  const named = (list) => list.filter(Boolean);
+  return {
+    ok: missing.length === 0 && mismatched.length === 0 && unsupported.length === 0,
+    method: "presence-and-size",
+    source: { files, bytes },
+    documents: { enrolled, carried: documents },
+    missing: named(missing), missingCount: missing.length,
+    mismatched: named(mismatched), mismatchedCount: mismatched.length,
+    unsupported: unsupported.slice(0, MIGRATION_REPORT_LIMIT), unsupportedCount: unsupported.length,
+  };
 }
 /* Carries a seam refusal out of the copy loop so one place decides what a failed
    migration says, after cleanup has had its turn. */
@@ -2839,8 +2979,15 @@ app.post("/api/workspace/settings", (req, res) => {
         if (outcome.ok && outcome.created === true) ledger.file(item.destinationFile);
         if (!outcome.ok) throw workspaceMigrationRefusal(outcome, item.slug);
       }
-      const result = copyMissingTree(plan.realSourceRoot, plan.realDestinationRoot, ledger);
-      migration = { ...result, projectDocuments: plan.projects.length, movedRoot: true, from: previousRoot, to: nextRoot };
+      const result = copyMissingTree(plan.realSourceRoot, plan.realDestinationRoot, ledger, plan.reserved);
+      /* Measured against the source, not against the loop that just ran. A verification
+         that disagrees is reported and the copies are kept — see migrationTreeVerification. */
+      const verification = migrationTreeVerification(plan.realSourceRoot, plan.realDestinationRoot, plan.reserved);
+      migration = {
+        ...result, verification,
+        projectDocuments: plan.projects.length, carriedDocuments: result.documents,
+        movedRoot: true, from: previousRoot, to: nextRoot,
+      };
     }
     writeConfig(nextConfig);
     const status = workspaceStatus(nextConfig);

@@ -190,7 +190,10 @@ const SOURCES = [
   "tests/generation-surface-polish.js",
   "tests/public-exposure.js",
   "tests/public-exposure-negative-controls.js",
-  "scripts/publication-preflight.js"
+  "scripts/publication-preflight.js",
+  "scripts/verify-migration.js",
+  "tests/workspace-migration-nested-documents.js",
+  "tests/workspace-migration-nested-documents-negative-controls.js"
 ];
 for (const source of SOURCES) {
   const result = spawnSync(process.execPath, ["--check", source], { cwd: ROOT, stdio: "inherit", windowsHide: true });
