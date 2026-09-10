@@ -47,7 +47,7 @@ const { spawn } = require("child_process");
 const { render, buildFixture } = require("./render-harness");
 
 const ROOT = path.join(__dirname, "..");
-const Contract = require(path.join(ROOT, "reference-review-contract.js"));
+const Contract = require(path.join(ROOT, "src/authority/reference-review-contract.js"));
 const Continuity = require(path.join(ROOT, "public", "shared-continuity.js"));
 
 const notes = [];
@@ -394,7 +394,7 @@ function testScoreCannotOverrideSemantics(C = Contract) {
   /* The decision path itself: pass is the emptiness of the gate list, and the
      semantic terms are in that list. A score comparison cannot be reintroduced
      as a shortcut around it without this going red. */
-  const source = fs.readFileSync(path.join(ROOT, "reference-review-contract.js"), "utf8").replace(/\r\n/g, "\n");
+  const source = fs.readFileSync(path.join(ROOT, "src/authority/reference-review-contract.js"), "utf8").replace(/\r\n/g, "\n");
   assert(source.includes('if (stateEvidence.applies && stateEvidence.issueCount) hardGateFailures.push("declared-state-unsatisfied");'),
     "an unsatisfied declared requirement must be a hard gate, not a scoring input");
   assert(source.includes('if (stateEvidence.applies && stateEvidence.unresolvedCount) hardGateFailures.push("declared-state-unresolved");'),

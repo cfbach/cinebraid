@@ -26,7 +26,7 @@ const {
   OBSERVATION_USER_MESSAGE,
   EVIDENCE_MAX,
 } = require("../public/shared-continuity");
-const { structuredVisionBody } = require("../llm");
+const { structuredVisionBody } = require("../src/assistant/llm");
 
 const FIXTURES = path.join(__dirname, "fixtures", "continuity");
 const contractPath = path.join(FIXTURES, "spark-frozen-request-contract.json");
@@ -146,7 +146,7 @@ assert.strictEqual(built.response_format.json_schema.strict, true);
 assert.strictEqual(JSON.stringify(built.response_format.json_schema.schema), JSON.stringify(contract.cases[0].schema));
 /* guided_json was never the qualified path and must not appear anywhere. */
 assert(!JSON.stringify(built).includes("guided_json"));
-assert(!fs.readFileSync(path.join(__dirname, "..", "llm.js"), "utf8").includes("guided_json"));
+assert(!fs.readFileSync(path.join(__dirname, "..", "src/assistant/llm.js"), "utf8").includes("guided_json"));
 /* And a caller that asks for nothing structured gets nothing added. */
 assert.deepStrictEqual(structuredVisionBody({}), {});
 assert.deepStrictEqual(structuredVisionBody(), {});

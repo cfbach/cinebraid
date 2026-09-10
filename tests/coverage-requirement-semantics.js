@@ -228,7 +228,7 @@ function writerSection() {
     ok(!/\brequired\s*:/.test(body), `${file}:${name}() must not author a coverage slot's legacy boolean`);
     ok(!/\.required\s*=/.test(body), `${file}:${name}() must not assign a coverage slot's legacy boolean`);
   }
-  const server = stripComments(fs.readFileSync(path.join(ROOT, "server.js"), "utf8").replace(/\r\n/g, "\n"));
+  const server = stripComments(fs.readFileSync(path.join(ROOT, "src/server/server.js"), "utf8").replace(/\r\n/g, "\n"));
   ok(!/\bslot\?\.required\b/.test(server), "the Project Builder importer must not read a supplied boolean directly");
   for (const name of ["normalizeBuilderCoverage", "builderCoverageRequirement"]) {
     const body = functionSource(server, name);

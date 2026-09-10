@@ -36,7 +36,7 @@ const Suite = require("./candidate-review-semantics");
    a multi-line anchor written with \n would match nothing there and the control
    would report itself stale instead of biting. */
 const readLF = (file) => fs.readFileSync(file, "utf8").replace(/\r\n/g, "\n");
-const CONTRACT_PATH = path.join(ROOT, "reference-review-contract.js");
+const CONTRACT_PATH = path.join(ROOT, "src/authority/reference-review-contract.js");
 const CONTRACT_SOURCE = readLF(CONTRACT_PATH);
 
 const applied = [];

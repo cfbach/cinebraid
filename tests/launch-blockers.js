@@ -30,7 +30,7 @@ const os = require('os');
 const path = require('path');
 const vm = require('vm');
 const Aspect = require('../public/shared-aspect');
-const { registerFalGeneration } = require('../fal-generation');
+const { registerFalGeneration } = require('../src/generation/fal/fal-generation');
 const { addMotionPromptBuild } = require('./h3-execution-fixture');
 const { withGenerationDeclaration } = require('./generation-request-fixture');
 

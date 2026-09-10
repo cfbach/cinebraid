@@ -134,7 +134,7 @@ async function testInboxGatingFiltersAndBatchPartialResults() {
 
 function testNormalizationAndSourceContracts() {
   const app = fs.readFileSync(path.join(__dirname, "..", "public", "app.js"), "utf8");
-  const server = fs.readFileSync(path.join(__dirname, "..", "server.js"), "utf8");
+  const server = fs.readFileSync(path.join(__dirname, "..", "src/server/server.js"), "utf8");
   const creation = fs.readFileSync(path.join(__dirname, "..", "public", "creation-studio.js"), "utf8");
   assert(!creation.includes("enforceLockedAssetSheetPrompt(list, x, d.compiledPrompt)"), "state prompt builder must not retain the undefined x reference");
   assert(!creation.includes("assetPromptRequestsReferenceSheet(list, x)"), "state prompt warnings must use the actual entity");

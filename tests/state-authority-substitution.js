@@ -51,10 +51,10 @@ const vm = require("vm");
 
 const ROOT = path.join(__dirname, "..");
 const Continuity = require("../public/shared-continuity");
-const { deterministicHealth } = require("../agent-suite");
+const { deterministicHealth } = require("../src/assistant/agent-suite");
 const { render, buildFixture } = require("./render-harness");
 const Entities = require("../public/shared-entities");
-const PromptEngine = require("../prompt-engine");
+const PromptEngine = require("../src/generation/prompt-engine");
 
 let checks = 0;
 const ok = (condition, message) => { assert(condition, message); checks++; };
@@ -227,7 +227,7 @@ function extractFunction(source, name) {
   throw new Error(`could not find the end of ${name} in server.js`);
 }
 
-const SERVER_SOURCE = fs.readFileSync(path.join(ROOT, "server.js"), "utf8");
+const SERVER_SOURCE = fs.readFileSync(path.join(ROOT, "src/server/server.js"), "utf8");
 
 function serverAuthority(options = {}) {
   const source = options.mutateSource ? String(options.mutateSource(SERVER_SOURCE)) : SERVER_SOURCE;
@@ -720,7 +720,7 @@ function motionGateSection() {
   eq(blocked.map((entry) => entry.reason), ["FLF requires approved first and last frames."],
     "the FLF gate still blocks unapproved endpoints in its own words, untouched by this repair");
 
-  const source = fs.readFileSync(path.join(ROOT, "agent-suite.js"), "utf8");
+  const source = fs.readFileSync(path.join(ROOT, "src/assistant/agent-suite.js"), "utf8");
   const start = source.indexOf('if (c.kind === "flf")');
   const end = source.indexOf('reason: "FLF requires approved first and last frames."');
   ok(start >= 0 && end > start, "the FLF gate is still where it was, in agent-suite.js");
@@ -761,7 +761,7 @@ async function main() {
 
   /* server.js was read into memory and lifted from by exact source. It must be
      byte-identical to what was read at the top of this file. */
-  assert.strictEqual(fs.readFileSync(path.join(ROOT, "server.js"), "utf8"), SERVER_SOURCE,
+  assert.strictEqual(fs.readFileSync(path.join(ROOT, "src/server/server.js"), "utf8"), SERVER_SOURCE,
     "server.js was modified on disk — this suite reads it and never writes it");
 
   console.log(`State-specific authority passed ${checks} checks: a declared non-default state resolves its OWN approved image or nothing at all, the default keeps the entity-level file it has always used, frame overrides and shot inheritance both follow the P4-SEM-B canonical rule across A/B/C and across entities that share state ids, for primary visual attachments, automation preflight and generation authority lookup agree on state-specific authority, while state-bearing-only speakers and vehicles stay outside generation entity membership, resolution writes nothing, and the FLF motion gate is exactly where it was. Provider calls made: 0.`);

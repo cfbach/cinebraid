@@ -36,7 +36,7 @@ const vm = require("vm");
 
 const ROOT = path.join(__dirname, "..");
 const PUBLIC = path.join(ROOT, "public");
-const SERVER = path.join(ROOT, "server.js");
+const SERVER = path.join(ROOT, "src/server/server.js");
 const { render, rawFixture, buildFixture, withCanon } = require("./render-harness");
 
 const PAGE_FILES = ["library-tools.js", "entities.js", "media-results.js", "automation.js", "app.js", "shared-bible-canon.js", "mutations.js"];

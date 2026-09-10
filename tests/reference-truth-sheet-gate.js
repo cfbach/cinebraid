@@ -228,7 +228,7 @@ function approveThrough(kernel, manual, project, list = "characters", id = "CHAR
 function testGeneratedReferenceDeclaresStructure() {
   const dispatch = fs.readFileSync(path.join(ROOT, "public/fal-generation.js"), "utf8");
   const automation = fs.readFileSync(path.join(ROOT, "public/automation.js"), "utf8");
-  const server = fs.readFileSync(path.join(ROOT, "fal-generation.js"), "utf8");
+  const server = fs.readFileSync(path.join(ROOT, "src/generation/fal/fal-generation.js"), "utf8");
 
   /* BOTH SIBLING PRODUCERS, because fixing one and leaving the other undeclared
      would make approval succeed or refuse depending on which button was pressed. */

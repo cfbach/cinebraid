@@ -552,7 +552,7 @@ async function testRepeatedReviewKeepsPassProvenance() {
 
 /* I — the neighbouring contracts this repair must not touch. */
 function testNoProviderRegression() {
-  const llm = require(path.join(ROOT, "llm.js"));
+  const llm = require(path.join(ROOT, "src/assistant/llm.js"));
   assert.deepStrictEqual(llm.tokenLimitBody(llm.openAiProviderDialect({}), 4000), { max_completion_tokens: 4000 }, "official OpenAI must still receive max_completion_tokens");
   assert.deepStrictEqual(llm.tokenLimitBody(llm.openAiProviderDialect({ endpoint: { url: "http://127.0.0.1:8000/v1" } }), 4000), { max_tokens: 4000 }, "an OpenAI-compatible endpoint must still receive max_tokens");
 

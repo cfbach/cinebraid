@@ -231,7 +231,7 @@ async function main() {
   /* =====================================================================
      PART A — S1, at the wire. Provider credential scoping.
      ===================================================================== */
-  const { vision, resolveProviderConnection } = require("../llm");
+  const { vision, resolveProviderConnection } = require("../src/assistant/llm");
   const IMAGE = [PNG.toString("base64")];
 
   /* ---- A1. no endpoint override: OpenAI behaviour is unchanged ---- */
@@ -314,7 +314,7 @@ async function main() {
   const {
     CONFIG_SECRETS, MASK_PREFIX, SECRET_PRESENCE_SET,
     maskSecrets, mergeConfig, normalizeConfig, restoreSecrets,
-  } = require("../config");
+  } = require("../src/server/config");
 
   const stored = normalizeConfig({
     anthropicKey: ANTHROPIC_KEY, openaiKey: OPENAI_KEY, customKey: CUSTOM_KEY,

@@ -172,7 +172,7 @@ async function testTextResolvesThroughTheAcceptedPath() {
   ok(studio.includes('guidedPromptRequest("/api/prompt/asset-compile"'),
     "2. the builder posts to the shared compile route");
 
-  const server = fs.readFileSync(path.join(PUBLIC, "..", "server.js"), "utf8");
+  const server = fs.readFileSync(path.join(PUBLIC, "..", "src/server/server.js"), "utf8");
   const compileRoute = server.slice(
     server.indexOf('app.post("/api/prompt/asset-compile"'),
     server.indexOf('app.post("/api/prompt/asset-compile"') + 14000,
@@ -183,7 +183,7 @@ async function testTextResolvesThroughTheAcceptedPath() {
   ok(/await llm\(/.test(helper.slice(0, 1200)),
     "2. and that calls llm(), the one provider dispatch");
   /* llm() is the one dispatch and lives in llm.js, not in the route. */
-  const dispatch = fs.readFileSync(path.join(PUBLIC, "..", "llm.js"), "utf8");
+  const dispatch = fs.readFileSync(path.join(PUBLIC, "..", "src/assistant/llm.js"), "utf8");
   ok(/if \(provider === "custom"\)[\s\S]{0,40}return callOpenAICompatible\(/.test(dispatch),
     "2. llm() dispatches a custom provider to the OpenAI-compatible caller");
   ok(dispatch.includes("cfg.customBaseUrl") && dispatch.includes("modelOverride || cfg.customModel"),

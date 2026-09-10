@@ -354,8 +354,8 @@ async function sectionFormatAndAspect() {
      new project current, which is a separate act (see B1's active-project
      fence). If it ever starts writing into the document, it belongs in the list
      above and this assertion fails until it is. */
-  const routeStart = read("server.js").indexOf('app.post("/api/projects/new"');
-  const newProjectRoute = read("server.js").slice(routeStart, read("server.js").indexOf("\n});", routeStart));
+  const routeStart = read("src/server/server.js").indexOf('app.post("/api/projects/new"');
+  const newProjectRoute = read("src/server/server.js").slice(routeStart, read("src/server/server.js").indexOf("\n});", routeStart));
   const accepted = [...new Set([...newProjectRoute.matchAll(/req\.body\.(\w+)/g)].map((m) => m[1]))].sort();
   const PERSISTED = ["aspectRatio", "firstScene", "format", "globalNegativePrompt", "globalStylePrompt", "title", "worldSetting"];
   assert.deepStrictEqual(accepted, [...PERSISTED, "activate"].sort(),

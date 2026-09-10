@@ -29,8 +29,8 @@ const vm = require("vm");
 const express = require("express");
 
 const ROOT = path.join(__dirname, "..");
-const { registerFalGeneration } = require("../fal-generation");
-const { compileImageExecutionPlan } = require("../image-execution");
+const { registerFalGeneration } = require("../src/generation/fal/fal-generation");
+const { compileImageExecutionPlan } = require("../src/generation/image-execution");
 const { addFramePromptBuild, addBlockingPromptBuild } = require("./image-execution-fixture");
 const { render, buildFixture } = require("./render-harness");
 const { withGenerationDeclaration } = require("./generation-request-fixture");
@@ -500,7 +500,7 @@ async function dialogSection() {
    that from being a passing implementation. */
 
 const PACK_SOURCE = readLF(path.join(ROOT, "model-packs", "gpt-image-2.js"));
-const SERVER_SOURCE = readLF(path.join(ROOT, "fal-generation.js"));
+const SERVER_SOURCE = readLF(path.join(ROOT, "src/generation/fal/fal-generation.js"));
 const CLIENT_SOURCE = readLF(path.join(ROOT, "public", "fal-generation.js"));
 const PICKER_SOURCE = readLF(path.join(ROOT, "public", "generation-picker.js"));
 

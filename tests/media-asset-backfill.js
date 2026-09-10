@@ -13,9 +13,9 @@ const os = require("os");
 const path = require("path");
 const { spawn } = require("child_process");
 
-const A = require("../media-assets");
-const S = require("../media-asset-store");
-const I = require("../media-asset-indexer");
+const A = require("../src/media/media-assets");
+const S = require("../src/media/media-asset-store");
+const I = require("../src/media/media-asset-indexer");
 
 const ROOT = path.join(__dirname, "..");
 const TEMP = fs.mkdtempSync(path.join(os.tmpdir(), "cinebraid-backfill-"));

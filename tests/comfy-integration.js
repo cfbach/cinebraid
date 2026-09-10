@@ -191,9 +191,9 @@ async function makeHarness({ shots = ["SC-01-01"], comfyBaseUrl, workflowFolder,
      the cache is cleared and before anything requires it — so the routes below are built
      ON the defect rather than beside it. In memory only; nothing is written to disk. */
   if (typeof mutate === "function") mutate({ ROOT });
-  const Config = require(path.join(ROOT, "config.js"));
-  const Registry = require(path.join(ROOT, "comfy-registry.js"));
-  const { registerComfyGeneration } = require(path.join(ROOT, "comfy-generation.js"));
+  const Config = require(path.join(ROOT, "src/server/config.js"));
+  const Registry = require(path.join(ROOT, "src/generation/comfyui/comfy-registry.js"));
+  const { registerComfyGeneration } = require(path.join(ROOT, "src/generation/comfyui/comfy-generation.js"));
 
   const slugs = ["film-a", "film-b"];
   for (const slug of slugs) {
@@ -287,7 +287,7 @@ function writeWorkflowFolder(root, files) {
 /* ===========================================================================
    1. FORMAT TRUTH — and the refusal to pretend. */
 function formatTruth() {
-  const W = require(path.join(ROOT, "comfy-workflow.js"));
+  const W = require(path.join(ROOT, "src/generation/comfyui/comfy-workflow.js"));
   assert.strictEqual(W.detectWorkflowFormat(JSON.stringify(apiWorkflow())).format, "api");
 
   const ui = W.detectWorkflowFormat(JSON.stringify(UI_WORKFLOW));
@@ -307,7 +307,7 @@ function formatTruth() {
 /* ===========================================================================
    2. SUGGESTION IS NEVER CONFIRMATION. */
 function suggestionIsNotConfirmation() {
-  const W = require(path.join(ROOT, "comfy-workflow.js"));
+  const W = require(path.join(ROOT, "src/generation/comfyui/comfy-workflow.js"));
   const inspection = W.inspectWorkflow(apiWorkflow());
   const suggestions = W.suggestMappings(inspection);
 
@@ -336,7 +336,7 @@ function suggestionIsNotConfirmation() {
 /* ===========================================================================
    3. CHANGE DETECTION — five cases the brief names. */
 function changeDetection() {
-  const W = require(path.join(ROOT, "comfy-workflow.js"));
+  const W = require(path.join(ROOT, "src/generation/comfyui/comfy-workflow.js"));
   const base = apiWorkflow();
   const inspection = W.inspectWorkflow(base);
   const at = new Date().toISOString();
@@ -417,7 +417,7 @@ function changeDetection() {
 /* ===========================================================================
    4. THE DISPATCH GRAPH — built from the file, never onto it. */
 function dispatchGraph() {
-  const W = require(path.join(ROOT, "comfy-workflow.js"));
+  const W = require(path.join(ROOT, "src/generation/comfyui/comfy-workflow.js"));
   const base = apiWorkflow();
   const inspection = W.inspectWorkflow(base);
   const mapping = W.mappingFromRequest({
@@ -552,7 +552,7 @@ async function connectionTruth() {
 
     /* THE BOUNDARY. Neither a LAN address nor a public one may be dialled, and the
        refusal names the reason instead of timing out. */
-    const Client = require(path.join(ROOT, "comfy-client.js"));
+    const Client = require(path.join(ROOT, "src/generation/comfyui/comfy-client.js"));
     for (const address of ["http://192.168.1.50:8188", "http://10.0.0.9:8188", "http://172.16.0.4:8188", "http://comfy.example.com", "https://example.com:8188"]) {
       const probed = await Client.probe(address);
       assert.strictEqual(probed.connected, false, `${address} must not be dialled`);
@@ -742,7 +742,7 @@ async function provenanceAndCost() {
     assert.strictEqual(job.accounting.costClass, "free_local");
     assert.strictEqual(job.accounting.estimate.unit, "none");
     assert.strictEqual(job.accounting.estimate.amount, 0);
-    const Contracts = require(path.join(ROOT, "generation-contracts.js"));
+    const Contracts = require(path.join(ROOT, "src/generation/generation-contracts.js"));
     assert(Contracts.validateCostEstimate(job.accounting.estimate).ok);
     assert.strictEqual(Contracts.requiresExplicitAuthorization(job.accounting.estimate), false,
       "a local render has nothing to authorise, which is why it never enters the paid boundary");
@@ -956,7 +956,7 @@ async function ordinaryCandidate() {
     /* AND THE FAL CANDIDATE SHAPE IS UNCHANGED — the same reader, the same fields, one
        shared writer. A row that a ComfyUI run produced is structurally a row that a fal
        run produces, which is why the review surface needs no new word. */
-    const Ingest = require(path.join(ROOT, "generation-candidate-ingest.js"));
+    const Ingest = require(path.join(ROOT, "src/generation/generation-candidate-ingest.js"));
     const falRow = Ingest.candidateRow({ storedName: "x.png", originalName: "x.png", job: { id: "j", model: "m" }, provider: "fal", packageLabel: "FAL generation" });
     assert.deepStrictEqual(Object.keys(falRow).sort(), Object.keys(Ingest.candidateRow({
       storedName: "y.png", originalName: "y.png", job: { id: "k", model: "n" }, provider: "ComfyUI", packageLabel: "ComfyUI generation",
@@ -1078,7 +1078,7 @@ async function mappingCertifiesNodeClass() {
    who types 0 means 0, and treating it as absence would be the same defect wearing the
    other face. */
 async function unsuppliedSeedIsAbsent() {
-  const Generation = require(path.join(ROOT, "comfy-generation.js"));
+  const Generation = require(path.join(ROOT, "src/generation/comfyui/comfy-generation.js"));
   for (const [label, seed] of [["null", null], ["undefined", undefined], ["empty string", ""]]) {
     const job = Generation.contractJob({
       jobId: "seed-check", shotId: "SC-01-01", frameId: "frame-a", prompt: "a lighthouse",
@@ -1186,7 +1186,7 @@ function browserLedgerOwnership() {
     "falGenerationJob must route on ownership, or a local render draws fal's strip");
   /* fal-queue is the id fal's own adapters declare; if it is renamed there, the
      predicate above is silently wrong, so the two are joined here. */
-  const backend = fs.readFileSync(path.join(ROOT, "fal-image-backend.js"), "utf8");
+  const backend = fs.readFileSync(path.join(ROOT, "src/generation/fal/fal-image-backend.js"), "utf8");
   assert(/backendId: "fal-queue"/.test(backend), "the predicate's id must be the one fal's adapter actually stamps");
   note("browser ledger: a keyless fal still loads the local ledger and reports it loaded, and fal's shot strip routes on an explicit ownership predicate joined to the backend id its own adapter stamps");
 }
@@ -1366,10 +1366,10 @@ async function startRealServer({ comfyBaseUrl, host }) {
   const registryPath = path.join(dir, "comfy-workflows.json");
 
   const env = { ...process.env, CINEBRAID_CONFIG_PATH: configPath, CINEBRAID_COMFY_REGISTRY_PATH: registryPath };
-  delete require.cache[path.join(ROOT, "config.js")];
+  delete require.cache[path.join(ROOT, "src/server/config.js")];
   const saved = process.env.CINEBRAID_CONFIG_PATH;
   process.env.CINEBRAID_CONFIG_PATH = configPath;
-  const Config = require(path.join(ROOT, "config.js"));
+  const Config = require(path.join(ROOT, "src/server/config.js"));
   Config.writeConfig(Config.mergeConfig(Config.readConfig(), {
     workspace: { projectRoot: projectsRoot },
     generation: { comfy: { enabled: true, baseUrl: comfyBaseUrl, workflowFolder: workflows } },
@@ -1412,15 +1412,15 @@ async function startRealServer({ comfyBaseUrl, host }) {
       child.kill();
       await new Promise((resolve) => child.once("exit", resolve));
       if (saved) process.env.CINEBRAID_CONFIG_PATH = saved; else delete process.env.CINEBRAID_CONFIG_PATH;
-      delete require.cache[path.join(ROOT, "config.js")];
+      delete require.cache[path.join(ROOT, "src/server/config.js")];
       try { fs.rmSync(dir, { recursive: true, force: true }); } catch {}
     },
   };
 }
 
 function localOnlyConfigurationRoutes() {
-  const source = fs.readFileSync(path.join(ROOT, "comfy-generation.js"), "utf8").replace(/\r\n/g, "\n");
-  assert(/const \{ isLoopbackRequest \} = require\("\.\/loopback-request"\);/.test(source),
+  const source = fs.readFileSync(path.join(ROOT, "src/generation/comfyui/comfy-generation.js"), "utf8").replace(/\r\n/g, "\n");
+  assert(/const \{ isLoopbackRequest \} = require\("\.\.\/\.\.\/server\/loopback-request"\);/.test(source),
     "the gate must use the shipped peer-address predicate, not a header check written here");
   assert(/function requireLocalMachine\(req, res\) \{\s*\n\s*if \(isLoopbackRequest\(req\)\) return true;/.test(source),
     "and it must permit on the predicate rather than deny on a guess");
@@ -1450,7 +1450,7 @@ function localOnlyConfigurationRoutes() {
      without it a LAN browser could still set the address through /api/config and leave
      it waiting for the next local action. Asserted to be NARROW — scoped to the comfy
      block, not to /api/config as a whole. */
-  const server = fs.readFileSync(path.join(ROOT, "server.js"), "utf8").replace(/\r\n/g, "\n");
+  const server = fs.readFileSync(path.join(ROOT, "src/server/server.js"), "utf8").replace(/\r\n/g, "\n");
   assert(/if \(!isLoopbackRequest\(req\) && Object\.prototype\.hasOwnProperty\.call\(body\.generation \|\| \{\}, "comfy"\)\) \{/.test(server),
     "a non-loopback caller must not be able to write generation.comfy through the general config endpoint");
   const putConfig = server.slice(server.indexOf('app.put("/api/config"'), server.indexOf('app.get("/api/workspace/status"'));

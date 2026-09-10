@@ -6,13 +6,13 @@ const { spawn } = require("child_process");
 const net = require("net");
 const http = require("http");
 const { resolvePromptBuildList } = require("../public/shared-build-history");
-const PromptEngine = require("../prompt-engine");
-const { httpStatusForError } = require("../http-errors");
+const PromptEngine = require("../src/generation/prompt-engine");
+const { httpStatusForError } = require("../src/server/http-errors");
 const { Kernel: AuthorityKernel, Private: AuthorityPrivate } = require("./authority-kernel-private");
 const { installTestManualActionSource } = require("./authority-test-gesture");
 const AUTHORITY_MANUAL = installTestManualActionSource(AuthorityKernel);
 const RELEASE_VERSION = require("../package.json").version;
-const PROJECT_BUILDER_CONTRACT = require("../project-builder-contract").projectBuilderContract();
+const PROJECT_BUILDER_CONTRACT = require("../src/project/project-builder-contract").projectBuilderContract();
 
 const ROOT = path.join(__dirname, "..");
 const TEMP = fs.mkdtempSync(path.join(os.tmpdir(), "cinebraid-smoke-"));

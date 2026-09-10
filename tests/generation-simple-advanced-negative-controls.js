@@ -37,12 +37,12 @@ const IN_SCOPE = [
   path.join(ROOT, "public", "shared-generation-presentation.js"),
   path.join(ROOT, "public", "shared-generation-rate.js"),
   path.join(ROOT, "public", "shared-generation-capability.js"),
-  path.join(ROOT, "generation-cost.js"),
-  path.join(ROOT, "generation-contracts.js"),
+  path.join(ROOT, "src/generation/generation-cost.js"),
+  path.join(ROOT, "src/generation/generation-contracts.js"),
   /* The route's own guide serializer lives here now, and the positive suite calls it. */
-  path.join(ROOT, "generation-options.js"),
-  path.join(ROOT, "model-intelligence.js"),
-  path.join(ROOT, "config.js"),
+  path.join(ROOT, "src/generation/generation-options.js"),
+  path.join(ROOT, "src/generation/model-intelligence.js"),
+  path.join(ROOT, "src/server/config.js"),
   path.join(__dirname, "generation-simple-advanced.js"),
 ];
 const inScope = (key) => IN_SCOPE.includes(key);
@@ -339,12 +339,12 @@ async function main() {
     id: "NC-H",
     label: "a legacy job with no stored estimate is treated as though one had been recorded",
     guards: "section 7 — a legacy row is read, classified as unrecorded, and left alone",
-    defect: () => patched("generation-cost.js", NC_H_EDITS, async () => {
-      const { recordedEstimate, summarizeRecordedCost } = require("../generation-cost");
+    defect: () => patched("src/generation/generation-cost.js", NC_H_EDITS, async () => {
+      const { recordedEstimate, summarizeRecordedCost } = require("../src/generation/generation-cost");
       const legacy = { id: "legacy", purpose: "motion-h3", outputCount: 1 };
       return recordedEstimate(legacy) !== null && summarizeRecordedCost([legacy]).unrecorded === 0;
     }),
-    guarded: () => patched("generation-cost.js", NC_H_EDITS, () => freshSuite().main()),
+    guarded: () => patched("src/generation/generation-cost.js", NC_H_EDITS, () => freshSuite().main()),
   });
 
   /* ---------------------------------------------------------------------------
@@ -499,12 +499,12 @@ async function main() {
     id: "NC-O",
     label: "the config normaliser accepts a freshness value that is not a date",
     guards: "section 6 — the normaliser must refuse a non-date too",
-    defect: () => patched("config.js", NC_O_EDITS, async () => {
-      const { normalizeConfig } = require("../config");
+    defect: () => patched("src/server/config.js", NC_O_EDITS, async () => {
+      const { normalizeConfig } = require("../src/server/config");
       return normalizeConfig({ generation: { fal: { motionRate: { usdPerSecond: 1, asOf: "yesterday" } } } })
         .generation.fal.motionRate.asOf === "yesterday";
     }),
-    guarded: () => patched("config.js", NC_O_EDITS, () => freshSuite().main()),
+    guarded: () => patched("src/server/config.js", NC_O_EDITS, () => freshSuite().main()),
   });
 
   /* ---------------------------------------------------------------------------
@@ -606,11 +606,11 @@ async function main() {
     id: "NC-R",
     label: "the generation-options wire drops the decision's authored rationale",
     guards: "section 13b — a decided recommendation's reason survives the wire",
-    defect: () => patched("generation-options.js", NC_R_EDITS, async () => {
-      const { guidePayload } = require("../generation-options");
+    defect: () => patched("src/generation/generation-options.js", NC_R_EDITS, async () => {
+      const { guidePayload } = require("../src/generation/generation-options");
       return guidePayload({ decision: { state: "decided", recommended: "m", note: "REAL REASON" } }).note === undefined;
     }),
-    guarded: () => patched("generation-options.js", NC_R_EDITS, () => freshSuite().main()),
+    guarded: () => patched("src/generation/generation-options.js", NC_R_EDITS, () => freshSuite().main()),
   });
 
   /* NC-S — THE SCREEN READS THE WRONG FIELD. `decision.why` is the shortlist rows' field
@@ -668,12 +668,12 @@ async function main() {
     id: "NC-U",
     label: "the config normaliser validates freshness with a second, shape-only rule",
     guards: "section 13c — one calendar serves both readers",
-    defect: () => patched("config.js", NC_U_EDITS, async () => {
-      const { normalizeConfig } = require("../config");
+    defect: () => patched("src/server/config.js", NC_U_EDITS, async () => {
+      const { normalizeConfig } = require("../src/server/config");
       return normalizeConfig({ generation: { fal: { motionRate: { usdPerSecond: 1, asOf: "2026-02-30" } } } })
         .generation.fal.motionRate.asOf === "2026-02-30";
     }),
-    guarded: () => patched("config.js", NC_U_EDITS, () => freshSuite().main()),
+    guarded: () => patched("src/server/config.js", NC_U_EDITS, () => freshSuite().main()),
   });
 
   /* NC-V — THE CORRECTION POSTS ITS RAW BODY AGAIN. The exact defect an independent

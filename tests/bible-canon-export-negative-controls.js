@@ -313,7 +313,7 @@ function ncBible5() {
 
   /* And the architectural guard that stops the second implementation being added:
      exactly one call site derives the Bible's canon. */
-  const serverSource = readLF("server.js");
+  const serverSource = readLF("src/server/server.js");
   const route = serverSource.slice(serverSource.indexOf("function bibleProjection"), serverSource.indexOf("/* ---- project management ----"));
   const mutatedRoute = route + "\napp.get(\"/api/bible/export2\", (req, res) => res.send(BibleCanon.bibleCanonProjection(readJsonSync(DATA()), {})));";
   mustFail("NC-BIBLE5-architecture", "exactly one place derives the Bible's canon",

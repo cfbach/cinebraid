@@ -68,7 +68,7 @@ async function main() {
   const entities = read('public/entities.js');
   const frames = read('public/creation-studio.js');
   const app = read('public/app.js');
-  const server = read('server.js');
+  const server = read('src/server/server.js');
 
   assert(styles.includes('.modal-box:has(.imported-reference-mapper)'), 'import mapper must receive a viewport-bounded modal');
   assert(styles.includes('guided-frame-rail'), 'multi-frame workspace must use a compact frame rail');

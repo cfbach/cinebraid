@@ -43,7 +43,7 @@ const vm = require("vm");
 
 const ROOT = path.join(__dirname, "..");
 const Binding = require("../public/shared-continuity-binding");
-const { deterministicHealth } = require("../agent-suite");
+const { deterministicHealth } = require("../src/assistant/agent-suite");
 const { render, buildFixture } = require("./render-harness");
 
 let checks = 0;
@@ -510,7 +510,7 @@ function motionGateSection() {
   /* Ownership and order, at the source. The gate lives in agent-suite.js and
      reads approvals; automation.js's preflight must not have reached into it,
      and it must not have acquired a continuity input. */
-  const agentSource = fs.readFileSync(path.join(ROOT, "agent-suite.js"), "utf8");
+  const agentSource = fs.readFileSync(path.join(ROOT, "src/assistant/agent-suite.js"), "utf8");
   const start = agentSource.indexOf('if (c.kind === "flf")');
   const end = agentSource.indexOf('reason: "FLF requires approved first and last frames."');
   ok(start >= 0 && end > start, "case 14: the FLF gate is still where it was, in agent-suite.js");

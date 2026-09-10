@@ -43,8 +43,8 @@ const path = require("path");
 const vm = require("vm");
 
 const { render, buildFixture, harnessAssetId, settleApprovalReadiness, HARNESS_PROJECT_REVISION } = require("./render-harness");
-const MediaAssetService = require("../media-asset-service");
-const { readLedger } = require("../media-asset-store");
+const MediaAssetService = require("../src/media/media-asset-service");
+const { readLedger } = require("../src/media/media-asset-store");
 
 let checks = 0;
 function ok(value, message) { checks += 1; assert.ok(value, message); }

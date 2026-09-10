@@ -186,7 +186,7 @@ async function main() {
   assert(read("public/review-provenance.js").includes("buildCandidateCorrectionPrompt"), "candidate review must create targeted correction prompts");
   assert(read("public/review-provenance.js").includes("openCandidateCorrectionModal"), "candidate corrections must expose an executable generation panel");
   assert(read("public/fal-generation.js").includes("startCandidateCorrectionGeneration"), "candidate corrections must submit through the existing FAL job path");
-  assert(read("fal-generation.js").includes('purpose === "correction"'), "server-side FAL ingestion must preserve correction purpose and provenance");
+  assert(read("src/generation/fal/fal-generation.js").includes('purpose === "correction"'), "server-side FAL ingestion must preserve correction purpose and provenance");
   assert(read("public/review-provenance.js").includes("candidate-review-readiness"), "candidate review must expose a compact readiness state");
   const styles = read("public/styles.css");
   const media = read("public/media.js");
@@ -204,14 +204,14 @@ async function main() {
   assert(!media.includes("refmeta-angles"), "available-angle sheets must remain readable without a permanent authoring field");
   assert(media.includes("link?.availableAngles"), "stored available-angle metadata must remain readable");
   assert(media.includes("defaultReferencePriority"), "new reference priority must use a working role-based default");
-  assert(read("server.js").includes('app.post("/api/llm/review-candidate"'), "structured multimodal candidate review endpoint must remain available");
-  assert(read("server.js").includes('app.post("/api/llm/review-entity-candidate"'), "state-specific structured entity candidate review endpoint must remain available");
+  assert(read("src/server/server.js").includes('app.post("/api/llm/review-candidate"'), "structured multimodal candidate review endpoint must remain available");
+  assert(read("src/server/server.js").includes('app.post("/api/llm/review-entity-candidate"'), "state-specific structured entity candidate review endpoint must remain available");
   /* B2a: the declared delta reaches the reviewer as a checklist CineBraid owns,
      what comes back is compared rather than believed, and the review records
      which provider and model actually served it. */
-  assert(read("server.js").includes("declaredRequirements: declaredState.requirements"), "the declared state delta must reach the review contract as data, not only as prompt prose");
-  assert(read("reference-review-contract.js").includes('hardGateFailures.push("declared-state-unsatisfied")'), "an unsatisfied declared requirement must remain a hard gate");
-  assert(read("server.js").includes("reviewer: { provider: assistant.provider || \"\", model: assistant.model || \"\" }"), "candidate review must report the provider and model that served it");
+  assert(read("src/server/server.js").includes("declaredRequirements: declaredState.requirements"), "the declared state delta must reach the review contract as data, not only as prompt prose");
+  assert(read("src/authority/reference-review-contract.js").includes('hardGateFailures.push("declared-state-unsatisfied")'), "an unsatisfied declared requirement must remain a hard gate");
+  assert(read("src/server/server.js").includes("reviewer: { provider: assistant.provider || \"\", model: assistant.model || \"\" }"), "candidate review must report the provider and model that served it");
   assert(read("public/review.js").includes("openEntityCandidateReview"), "entity candidates must expose the structured vision review popup");
   const creationStudio = read("public/creation-studio.js");
   const automation = read("public/automation.js");
@@ -229,30 +229,30 @@ async function main() {
   assert(reports.includes("RUN HISTORY"), "Reports must expose durable run history");
   assert(reports.includes("WHERE EFFORT WENT"), "Reports must aggregate project-wide generation effort");
   for (const fn of ["copyAutomationSupportSummary", "copyAutomationDebugReport", "downloadAutomationRunReport", "downloadAutomationDiagnosticBundle", "flagAutomationRunInefficient", "saveAutomationEfficiencyFeedback"]) assert(reports.includes(fn), `${fn} must remain reachable from Reports`);
-  assert(read("automation-runs.js").includes('/api/automation/reports/summary'), "Reports must expose a project optimization summary endpoint");
-  assert(read("automation-runs.js").includes('/api/automation/runs/:id/report'), "Reports must lazy-load selected run detail");
+  assert(read("src/automation/automation-runs.js").includes('/api/automation/reports/summary'), "Reports must expose a project optimization summary endpoint");
+  assert(read("src/automation/automation-runs.js").includes('/api/automation/runs/:id/report'), "Reports must lazy-load selected run detail");
   assert(sceneAutomation.includes("Max frame passes per shot"), "scene automation must expose more than three configurable generation passes");
   assert(sceneAutomation.includes("maxCorrectionRounds"), "scene automation must include bounded continuity correction cycles");
   assert(sceneAutomation.includes("/api/llm/review-scene-correction"), "scene correction candidates must be reviewed against adjacent approved shots");
   assert(sceneAutomation.includes("v640SceneApplyContext"), "later scene shots must receive approved scene continuity context");
-  assert(read("server.js").includes('app.post("/api/llm/review-scene"'), "the server must expose whole-scene continuity review");
-  assert(read("server.js").includes('app.post("/api/llm/review-scene-correction"'), "the server must expose sequence-aware correction review");
-  assert(read("automation-runs.js").includes("diagnostic.zip"), "automation runs must expose redacted diagnostic ZIP bundles");
-  assert(read("automation-runs.js").includes("repairSceneCorrectionProvenance"), "failed scene corrections must be repairable before retry");
+  assert(read("src/server/server.js").includes('app.post("/api/llm/review-scene"'), "the server must expose whole-scene continuity review");
+  assert(read("src/server/server.js").includes('app.post("/api/llm/review-scene-correction"'), "the server must expose sequence-aware correction review");
+  assert(read("src/automation/automation-runs.js").includes("diagnostic.zip"), "automation runs must expose redacted diagnostic ZIP bundles");
+  assert(read("src/automation/automation-runs.js").includes("repairSceneCorrectionProvenance"), "failed scene corrections must be repairable before retry");
   assert(read("public/automation.js").includes("REPAIR & RETRY FAILED STEP"), "scene correction failures must expose repair-and-retry");
-  assert(read("automation-runs.js").includes("result: source.result"), "scene run review and correction results must persist durably");
-  assert(read("fal-generation.js").includes("reportedUsage"), "the server credit guard must include child-run usage in the parent scene budget");
-  assert(read("automation-runs.js").includes('app.get("/api/automation/runs"'), "automation runs must persist per project");
-  assert(read("fal-generation.js").includes("automationStepKey"), "paid FAL jobs must be idempotent per durable automation step");
-  assert(read("server.js").includes('kind === "blocking"'), "vision review must support blocking candidate sets");
-  assert(read("server.js").includes("compactBlockingImprovePayload"), "blocking improvement must send a compact payload instead of the full mutable shot record");
-  assert(read("server.js").includes("requestStrictAssistantJson"), "blocking improvement must retry incomplete assistant JSON");
-  assert(read("server.js").includes("failed after 3 attempts"), "assistant work must report three-attempt recovery rather than a raw parser error");
-  assert(read("server.js").includes("for (let attempt = 0; attempt < 3; attempt++)"), "assistant work must receive an initial attempt plus two automatic retries");
+  assert(read("src/automation/automation-runs.js").includes("result: source.result"), "scene run review and correction results must persist durably");
+  assert(read("src/generation/fal/fal-generation.js").includes("reportedUsage"), "the server credit guard must include child-run usage in the parent scene budget");
+  assert(read("src/automation/automation-runs.js").includes('app.get("/api/automation/runs"'), "automation runs must persist per project");
+  assert(read("src/generation/fal/fal-generation.js").includes("automationStepKey"), "paid FAL jobs must be idempotent per durable automation step");
+  assert(read("src/server/server.js").includes('kind === "blocking"'), "vision review must support blocking candidate sets");
+  assert(read("src/server/server.js").includes("compactBlockingImprovePayload"), "blocking improvement must send a compact payload instead of the full mutable shot record");
+  assert(read("src/server/server.js").includes("requestStrictAssistantJson"), "blocking improvement must retry incomplete assistant JSON");
+  assert(read("src/server/server.js").includes("failed after 3 attempts"), "assistant work must report three-attempt recovery rather than a raw parser error");
+  assert(read("src/server/server.js").includes("for (let attempt = 0; attempt < 3; attempt++)"), "assistant work must receive an initial attempt plus two automatic retries");
   assert(creationStudio.includes("focusGuidedWorkspaceTarget"), "motion and frame CTAs must wait for the async route render before scrolling to their workspace");
   assert(creationStudio.includes('class="guided-video-target-control"'), "the video model selector must remain visible without opening a nested disclosure");
   for (const family of ["seedance-2", "kling-3", "ltx-2.3", "happy-horse-1.1"]) assert(creationStudio.includes(`"${family}"`), `video target selector must expose ${family}`);
-  assert(read("prompt-engine.js").includes("referenceAwarePromptSpec"), "image and video compilation must replace ungrounded character names with reference-aware visual language");
+  assert(read("src/generation/prompt-engine.js").includes("referenceAwarePromptSpec"), "image and video compilation must replace ungrounded character names with reference-aware visual language");
   assert(creationStudio.includes("assistantWorkingCard"), "prompt workflows must expose the visual assistant working state");
   assert(styles.includes(".assistant-working-card"), "visual assistant working state must be styled");
   /* A1 retired the full-width tone panel; D2 kept the information. The contract is
@@ -268,11 +268,11 @@ async function main() {
   assert(styles.includes(".automation-human-review"), "borderline automation results must expose a visual director review gate");
   assert(automation.includes("v627AcquireAutomationLease"), "durable runs must acquire a single-window server lease before orchestration");
   assert(automation.includes("v6211RevalidatePaidStepLease"), "every paid automation submission must immediately revalidate or reacquire its browser lease");
-  assert(read("automation-runs.js").includes('/lease/revalidate'), "the server must expose atomic paid-step lease revalidation");
+  assert(read("src/automation/automation-runs.js").includes('/lease/revalidate'), "the server must expose atomic paid-step lease revalidation");
   assert(automation.includes("generationSettings: draft.generationSettings"), "automation runs must snapshot the confirmed image quality and resolution settings");
   assert(automation.includes("v6211RunGenerationSettings(run).blockingQuality"), "blocking automation must use the run's saved quality setting");
   assert(automation.includes("v6211RunGenerationSettings(run).frameResolution"), "frame and reference automation must use the run's saved resolution setting");
-  assert(read("automation-runs.js").includes("lastPaidStepRevalidatedAt"), "run reports must preserve historical lease diagnostics after release");
+  assert(read("src/automation/automation-runs.js").includes("lastPaidStepRevalidatedAt"), "run reports must preserve historical lease diagnostics after release");
   /* THIS EXPECTATION CHANGED, and the reason is the finding rather than the
      rename. Dogfood Pass #2 A1 / forensic F1 established that a review passing
      at or above this number CALLED THE APPROVAL WRITER and returned before the
@@ -288,19 +288,19 @@ async function main() {
      controls in tests/dogfood2-p0-negative-controls.js. */
   assert(automation.includes("V627_AUTOMATION_RECOMMENDATION_SCORE = 85"), "the strong-pass threshold must remain explicit at 85");
   assert(!automation.includes("const V627_AUTOMATION_AUTO_APPROVE_SCORE"), "and must no longer be named for approving, because it may no longer approve");
-  assert(read("automation-runs.js").includes('code: "STALE_RUN"'), "stale run writes must be rejected instead of overwriting current state");
-  assert(read("automation-runs.js").includes("cancelRequested: current.cancelRequested === true || body.cancelRequested === true"), "stop requests must remain sticky across stale browser saves");
-  assert(read("automation-runs.js").includes("5 * 60_000"), "automation leases must tolerate ordinary background-tab throttling");
+  assert(read("src/automation/automation-runs.js").includes('code: "STALE_RUN"'), "stale run writes must be rejected instead of overwriting current state");
+  assert(read("src/automation/automation-runs.js").includes("cancelRequested: current.cancelRequested === true || body.cancelRequested === true"), "stop requests must remain sticky across stale browser saves");
+  assert(read("src/automation/automation-runs.js").includes("5 * 60_000"), "automation leases must tolerate ordinary background-tab throttling");
   assert(automation.includes('document.addEventListener("visibilitychange"'), "returning to a visible tab must immediately revalidate active automation leases");
   assert(automation.includes("LEASE LOST — RESUME REQUIRED"), "lease heartbeat failure must be visible in the run console");
   assert(automation.includes("V628_FAL_POLL_TIMEOUT_MS"), "provider polling must have a bounded browser wait deadline");
   assert(automation.includes("providerStillActive: true"), "timed-out polling must preserve the accepted provider job for resume");
   assert(automation.includes("Credit guard is not configured with a valid positive image cap"), "missing or zero automation caps must fail closed before paid submission");
-  const llmAdapter = read("llm.js");
+  const llmAdapter = read("src/assistant/llm.js");
   assert(llmAdapter.includes('"/api/chat"'), "local Ollama text calls must use the native chat endpoint");
   assert(llmAdapter.includes("think: false"), "local thinking models must return usable final content instead of reasoning-only output");
   assert(llmAdapter.includes('payload.format = "json"'), "strict local tasks must request native structured JSON output");
-  assert(read("server.js").includes("returned an empty final response"), "assistant connection testing must reject empty local-model output");
+  assert(read("src/server/server.js").includes("returned an empty final response"), "assistant connection testing must reject empty local-model output");
   assert(automation.includes("v628AttachShotAutomationProvenance"), "approved frames must retain durable automation provenance");
   assert(read("public/entities.js").includes("CANON IMAGES"), "reference pages must separate canon state images from the candidate pile");
   assert(read("public/entities.js").includes("Rejected candidates"), "failed entity generations must remain recoverable outside the active candidate grid");
@@ -663,7 +663,7 @@ async function main() {
       .filter((name) => name.endsWith(".js"))
       .sort()
       .map((name) => ({ name: `tests/${name}`, source: read(`tests/${name}`) })),
-    { name: "server.js", source: read("server.js") },
+    { name: "src/server/server.js", source: read("src/server/server.js") },
   ];
   assert.deepStrictEqual(
     orphanFrontendFunctions(frontendSourceEntries, supportingSourceEntries),
@@ -757,7 +757,7 @@ async function main() {
 
   const app = read("public/app.js");
   const settings = read("public/settings.js");
-  const server = read("server.js");
+  const server = read("src/server/server.js");
   assert(app.includes("flushPendingProjectSave"));
   assert(app.includes('"/api/projects/" + encodeURIComponent(job.slug) + "/project"'));
   assert(app.includes('"/api/projects/" + encodeURIComponent(job.slug) + "/canon-transition"'), "authority changes must use the explicit Canon transition route");

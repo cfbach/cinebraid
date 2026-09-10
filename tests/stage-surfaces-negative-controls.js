@@ -30,7 +30,7 @@ const fs = require("fs");
 
 const suite = require("./stage-surfaces.js");
 const { SOURCES } = suite;
-const { releaseIdentity } = require("../release-identity.js");
+const { releaseIdentity } = require("../src/server/release-identity.js");
 
 /* THE ASSET STAMP IS DERIVED, NEVER TYPED. index.html's cache-busting stamps are
    re-written from package.json by scripts/sync-version.js on every release, so a

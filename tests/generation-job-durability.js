@@ -27,7 +27,7 @@ const {
   JobLedgerUnreadableError,
   jobsPath,
   backupPath,
-} = require(path.join(ROOT, "generation-job-store"));
+} = require(path.join(ROOT, "src/generation/generation-job-store"));
 
 const TEMP = fs.mkdtempSync(path.join(os.tmpdir(), "cinebraid-jobdur-"));
 

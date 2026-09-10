@@ -18,7 +18,7 @@ const TEMP = fs.mkdtempSync(path.join(os.tmpdir(), "cinebraid-custom-provider-")
 const CONFIG_PATH = path.join(TEMP, "config.json");
 process.env.CINEBRAID_CONFIG_PATH = CONFIG_PATH;
 
-const { normalizeConfig } = require("../config");
+const { normalizeConfig } = require("../src/server/config");
 
 const textBodies = [];
 const visionBodies = [];
@@ -94,7 +94,7 @@ async function main() {
     res.end(JSON.stringify({ message: { content: "local reply" } }));
   });
 
-  const { llm, vision, customRequestBody } = require("../llm");
+  const { llm, vision, customRequestBody } = require("../src/assistant/llm");
 
   /* ---- 1. a generic custom endpoint is sent nothing it did not ask for ---- */
   writeConfigFile({});

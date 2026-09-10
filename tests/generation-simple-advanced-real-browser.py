@@ -87,7 +87,7 @@ def node_recorded_estimate(config_file, seconds):
     script = (
         "const cfg=JSON.parse(require('fs').readFileSync(process.argv[1],'utf8'));"
         "const {configuredMotionRate}=require('./public/shared-generation-rate');"
-        "const {submissionAccounting}=require('./generation-cost');"
+        "const {submissionAccounting}=require('./src/generation/generation-cost');"
         "const a=submissionAccounting({purpose:'motion-h3',outputCount:1,"
         "  motionRate:configuredMotionRate(cfg),durationSeconds:Number(process.argv[2]),at:'fixture'});"
         "process.stdout.write(JSON.stringify({confidence:a.estimate.confidence,"

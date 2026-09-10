@@ -201,7 +201,7 @@ const CONTROLS = [
    in-memory Module; the file on disk is opened read-only and never written. */
 
 function compileAgentSuite(source) {
-  const filename = path.join(ROOT, "agent-suite.js");
+  const filename = path.join(ROOT, "src/assistant/agent-suite.js");
   const compiled = new Module(filename, null);
   compiled.filename = filename;
   compiled.paths = Module._nodeModulePaths(path.dirname(filename));
@@ -217,7 +217,7 @@ function motionGateProject() {
   return project;
 }
 
-const AGENT_SOURCE = fs.readFileSync(path.join(ROOT, "agent-suite.js"), "utf8");
+const AGENT_SOURCE = fs.readFileSync(path.join(ROOT, "src/assistant/agent-suite.js"), "utf8");
 
 const GATE_CONTROLS = [
   {
@@ -300,7 +300,7 @@ async function main() {
 
   /* agent-suite.js was read, mutated in memory and compiled from a string. It
      must be byte-identical to what was read at the top of this file. */
-  assert.strictEqual(fs.readFileSync(path.join(ROOT, "agent-suite.js"), "utf8"), AGENT_SOURCE,
+  assert.strictEqual(fs.readFileSync(path.join(ROOT, "src/assistant/agent-suite.js"), "utf8"), AGENT_SOURCE,
     "agent-suite.js was modified on disk — every control here is in-memory only");
 
   const missed = results.filter((result) => result.status === "MISSED");

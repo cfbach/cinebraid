@@ -67,7 +67,7 @@ function mutateScript(fileName, needle, replacement, label) {
    can be what undoes it. */
 function brokenModule(file, needle, replacement, label) {
   const mutated = mutateOnce(readLF(path.join(ROOT, file)), needle, replacement, label);
-  const sandbox = { require: Module.createRequire(path.join(ROOT, file)), module: { exports: {} }, console, __dirname: ROOT, __filename: path.join(ROOT, file) };
+  const sandbox = { require: Module.createRequire(path.join(ROOT, file)), module: { exports: {} }, console, __dirname: path.dirname(path.join(ROOT, file)), __filename: path.join(ROOT, file) };
   sandbox.exports = sandbox.module.exports;
   vm.createContext(sandbox);
   vm.runInContext(mutated, sandbox, { filename: `${path.basename(file)}.broken.js` });
@@ -248,7 +248,7 @@ async function main() {
      NC-G — the written-package budget claiming to be a provider rule. */
   const G_ANCHOR = `      result.warnings.unshift(\`\${profile.name} prompt is close to CineBraid's written-package budget: \${usage}. The dispatch limit is resolved separately from model and backend capability.\`);`;
   const G_BROKEN = `      result.warnings.unshift(\`\${profile.name} prompt is close to the provider schema limit: \${usage}.\`);`;
-  const brokenClaim = () => brokenModule("prompt-engine.js", G_ANCHOR, G_BROKEN, "NC-G budget described as a provider schema limit");
+  const brokenClaim = () => brokenModule("src/generation/prompt-engine.js", G_ANCHOR, G_BROKEN, "NC-G budget described as a provider schema limit");
   await control({
     id: "NC-G",
     label: "CineBraid's own budget described as the provider's schema limit",
@@ -275,7 +275,7 @@ async function main() {
         ? "Attach an approved character image to use the story name in the model prompt."
         : \`\${profile?.name || "This target"} has no image reference slot left in this workflow, so the story name cannot be grounded here. Choose a reference-capable target if identity must come from an approved image.\`;`;
   const H_BROKEN = `    const action = "Attach an approved character image to use the story name in the model prompt.";`;
-  const brokenAdvice = () => brokenModule("prompt-engine.js", H_ANCHOR, H_BROKEN, "NC-H grounding advice unconditional");
+  const brokenAdvice = () => brokenModule("src/generation/prompt-engine.js", H_ANCHOR, H_BROKEN, "NC-H grounding advice unconditional");
   await control({
     id: "NC-H",
     label: "an endpoint-only workflow told to attach a reference it has no slot for",
@@ -300,7 +300,7 @@ async function main() {
      failures of the same sentence. */
   const I_ANCHOR = `  const ungrounded = replacements.filter((row) => !row.visual);`;
   const I_BROKEN = `  const ungrounded = replacements.filter((row) => !row.visual && !row.anchored);`;
-  const brokenDisclosure = () => brokenModule("prompt-engine.js", I_ANCHOR, I_BROKEN, "NC-I disclosure suppressed when anchored");
+  const brokenDisclosure = () => brokenModule("src/generation/prompt-engine.js", I_ANCHOR, I_BROKEN, "NC-I disclosure suppressed when anchored");
   await control({
     id: "NC-I",
     label: "the replaced-name disclosure dropped whenever an endpoint image exists",

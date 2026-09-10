@@ -45,8 +45,8 @@ const ROOT = path.join(__dirname, "..");
 const read = (rel) => fs.readFileSync(path.join(ROOT, rel), "utf8");
 const toLF = (text) => String(text).split("\r\n").join("\n");
 const { render, buildFixture } = require("./render-harness");
-const { releaseIdentity } = require("../release-identity");
-const { buildIdentity } = require("../build-identity");
+const { releaseIdentity } = require("../src/server/release-identity");
+const { buildIdentity } = require("../src/server/build-identity");
 
 const pkg = JSON.parse(read("package.json"));
 const identity = releaseIdentity(pkg.version);
@@ -64,8 +64,8 @@ const SOURCES = () => ({
   app: read("public/app.js"),
   markup: read("public/index.html"),
   css: read("public/styles.css"),
-  server: read("server.js"),
-  build: read("build-identity.js"),
+  server: read("src/server/server.js"),
+  build: read("src/server/build-identity.js"),
   activity: read("public/live-activity.js"),
   surfaces: read("public/creator-surfaces.js"),
 });
@@ -161,7 +161,7 @@ function checkNoRetiredConcatenation(sources) {
    search for "git", because that is the only form of this rule that catches the
    invocation nobody thought to grep for. */
 const ALLOWED_RUNTIME_SUBPROCESSES = new Set(["ffmpeg", "npm", "df"]);
-const RUNTIME_SOURCES = ["server.js", "release-identity.js", "build-identity.js", "config.js", "agent-suite.js", "llm.js", "automation-runs.js", "fal-generation.js"];
+const RUNTIME_SOURCES = ["src/server/server.js", "src/server/release-identity.js", "src/server/build-identity.js", "src/server/config.js", "src/assistant/agent-suite.js", "src/assistant/llm.js", "src/automation/automation-runs.js", "src/generation/fal/fal-generation.js"];
 function checkNoRuntimeGit(sources) {
   const build = sources.build;
   assert(!/require\(["']child_process["']\)/.test(build),
@@ -173,7 +173,7 @@ function checkNoRuntimeGit(sources) {
 
   const found = [];
   for (const file of RUNTIME_SOURCES) {
-    const text = codeOnly(file === "build-identity.js" ? build : file === "server.js" ? sources.server : read(file));
+    const text = codeOnly(file === "src/server/build-identity.js" ? build : file === "src/server/server.js" ? sources.server : read(file));
     for (const match of text.matchAll(/\b(?:exec|execSync|execFile|execFileSync|spawn|spawnSync)\(\s*["'`]([^"'`]+)["'`]/g)) {
       found.push({ file, command: match[1] });
     }

@@ -227,7 +227,7 @@ ok(/filterEntityMedia\(buildEntityOwnerIndex/.test(planning),
 /* Comments are stripped: the repairs quote the code they replaced, because a
    repair that deletes the record of what it repaired is one nobody can review. */
 const stripComments = (source) => source.replace(/\/\*[\s\S]*?\*\//g, "").replace(/^\s*\/\/.*$/gm, "");
-const server = stripComments(read("server.js"));
+const server = stripComments(read("src/server/server.js"));
 ok(/EntityOwnership\.filterEntityFileNames/.test(server), "the server's batch reviewer uses it");
 ok(!/f\.toUpperCase\(\)\.startsWith\(prefix\)/.test(server), "and no longer filters its directory read by prefix");
 /* The anchor moved with the code, not the rule. Public Alpha Slice 2 lifted the

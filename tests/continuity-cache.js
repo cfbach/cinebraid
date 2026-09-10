@@ -28,7 +28,7 @@ const {
   CACHE_VERSION,
   CACHE_FILE,
   MAX_ENTRIES,
-} = require("../continuity-cache");
+} = require("../src/continuity/continuity-cache");
 
 const TEMP = fs.mkdtempSync(path.join(os.tmpdir(), "cinebraid-continuity-cache-"));
 

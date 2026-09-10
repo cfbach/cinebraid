@@ -39,12 +39,13 @@ const ROOT = path.join(__dirname, "..");
    suite proves is closed would return through it. A backend added without being listed
    here is a backend nobody checked, so the list is asserted to be complete rather than
    maintained by hand. */
-const BACKEND_MODULES = fs.readdirSync(ROOT)
-  .filter((name) => /^[a-z0-9-]+-generation\.js$/.test(name))
+const BACKEND_MODULES = fs.readdirSync(path.join(ROOT, "src/generation"), { recursive: true })
+  .filter((name) => /^[a-z0-9-]+-generation\.js$/.test(path.basename(name)))
+  .map((name) => `src/generation/${name.split(path.sep).join("/")}`)
   .sort();
-const { registerFalGeneration, CLAIM_RECOVERY_HEADER } = require(path.join(ROOT, "fal-generation"));
-const { registerAutomationRuns, runnerAbandoned, LEASE_MS } = require(path.join(ROOT, "automation-runs"));
-const { createGenerationPoller, pollEligibility, eligibleJobs } = require(path.join(ROOT, "generation-poller"));
+const { registerFalGeneration, CLAIM_RECOVERY_HEADER } = require(path.join(ROOT, "src/generation/fal/fal-generation"));
+const { registerAutomationRuns, runnerAbandoned, LEASE_MS } = require(path.join(ROOT, "src/automation/automation-runs"));
+const { createGenerationPoller, pollEligibility, eligibleJobs } = require(path.join(ROOT, "src/generation/generation-poller"));
 
 const PNG = Buffer.from("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAusB9Y9Z5xkAAAAASUVORK5CYII=", "base64");
 
@@ -782,7 +783,7 @@ async function differentJobOverlapChecks() {
        `saveOwnerProject`, so a future ingest, repair or error path cannot reintroduce a
        snapshot write without deleting this assertion. Asserted against the source
        because it is a statement about the module's shape, not about one execution. */
-    const source = fs.readFileSync(path.join(ROOT, "fal-generation.js"), "utf8").replace(/\r\n/g, "\n");
+    const source = fs.readFileSync(path.join(ROOT, "src/generation/fal/fal-generation.js"), "utf8").replace(/\r\n/g, "\n");
     /* Comments are stripped first, deliberately: commitProject's own header quotes the
        defective snapshot-write it replaced, and a scan that counted prose would be
        measuring the documentation rather than the code. */
@@ -810,7 +811,7 @@ async function differentJobOverlapChecks() {
      * So the mechanism is asserted where it now lives, and fal is asserted to reach it
      * rather than to reimplement it. The claim is strictly stronger than before: it is
      * now made about the writer EVERY backend uses, not about fal's private copy. */
-    const commitModule = fs.readFileSync(path.join(ROOT, "generation-commit.js"), "utf8").replace(/\r\n/g, "\n");
+    const commitModule = fs.readFileSync(path.join(ROOT, "src/generation/generation-commit.js"), "utf8").replace(/\r\n/g, "\n");
     assert(/commitProjectDocument\(owner, mutate, \{/.test(commitBody),
       "fal's commitProject must delegate to the shared project turn, not open one of its own");
     assert(commitModule.includes("const project = read(owner);"),
@@ -829,7 +830,7 @@ async function differentJobOverlapChecks() {
        invariant now: fal, and anything added later, must reach the shared turn. The list
        is discovered from the tree rather than typed, so a new backend is covered the day
        it lands rather than the day someone remembers this file. */
-    assert(BACKEND_MODULES.includes("fal-generation.js"), `the backend census found ${JSON.stringify(BACKEND_MODULES)}`);
+    assert(BACKEND_MODULES.includes("src/generation/fal/fal-generation.js"), `the backend census found ${JSON.stringify(BACKEND_MODULES)}`);
     for (const file of BACKEND_MODULES) {
       const backend = fs.readFileSync(path.join(ROOT, file), "utf8").replace(/\r\n/g, "\n")
         .replace(/\/\*[\s\S]*?\*\//g, "").replace(/(^|[^:])\/\/[^\n]*/g, "$1");

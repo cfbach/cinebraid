@@ -34,7 +34,7 @@ const RULES_FILE = path.join(ROOT, "ofp", "ofp-migrate-rules.js");
    take the control's meaning with it. */
 const readLF = (file) => fs.readFileSync(file, "utf8").replace(/\r\n/g, "\n");
 const ROUTE_SOURCE = readLF(ROUTE_FILE);
-const SERVER_SOURCE = readLF(path.join(ROOT, "server.js"));
+const SERVER_SOURCE = readLF(path.join(ROOT, "src/server/server.js"));
 
 const Route = require("../public/shared-shot-route");
 const { render, buildFixture } = require("./render-harness");

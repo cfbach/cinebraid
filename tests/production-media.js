@@ -69,7 +69,7 @@ const SOURCES = {
 };
 
 const P4 = require(path.join(PUBLIC, "shared-media-disposition.js"));
-const Cost = require(path.join(ROOT, "generation-cost.js"));
+const Cost = require(path.join(ROOT, "src/generation/generation-cost.js"));
 
 const LEDGER = (seed) => `asset-${String(seed).repeat(32).slice(0, 32)}`;
 

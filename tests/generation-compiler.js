@@ -19,8 +19,8 @@ const assert = require("assert");
 const fs = require("fs");
 const path = require("path");
 
-const Compiler = require("../generation-compiler");
-const Contracts = require("../generation-contracts");
+const Compiler = require("../src/generation/generation-compiler");
+const Contracts = require("../src/generation/generation-contracts");
 const H3 = require("../model-packs/minimax-h3");
 const F = require("./generation-compiler-fixture");
 
@@ -279,7 +279,7 @@ function compile(mode, references, options = {}) {
 }
 /* MediaAsset stays dormant: the planner reads what it is given and mints nothing. */
 {
-  const source = fs.readFileSync(path.join(__dirname, "..", "generation-compiler.js"), "utf8");
+  const source = fs.readFileSync(path.join(__dirname, "..", "src/generation/generation-compiler.js"), "utf8");
   for (const ledger of ["media-assets", "media-asset-store", "media-asset-indexer", "media-hash", "media-asset-verify"])
     assert(!source.includes(`require("./${ledger}")`), `the compiler must not import ${ledger}`);
 }
@@ -396,7 +396,7 @@ function compile(mode, references, options = {}) {
      stripped first — these modules discuss determinism at length, and a prose mention
      of Math.random is not a call to it. */
   const stripComments = (source) => source.replace(/\/\*[\s\S]*?\*\//g, " ").replace(/(^|[^:])\/\/.*$/gm, "$1");
-  for (const file of ["generation-compiler.js", "model-packs/minimax-h3.js"]) {
+  for (const file of ["src/generation/generation-compiler.js", "model-packs/minimax-h3.js"]) {
     const code = stripComments(fs.readFileSync(path.join(__dirname, "..", file), "utf8"));
     for (const forbidden of [
       "require(\"./llm\")", "require(\"../llm\")", "require(\"http", "require(\"node-fetch",

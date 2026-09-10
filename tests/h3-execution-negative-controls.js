@@ -18,8 +18,8 @@ const path = require("path");
 const Module = require("module");
 const express = require("express");
 
-const RealBackend = require("../fal-h3-backend");
-const RealExecution = require("../h3-execution");
+const RealBackend = require("../src/generation/fal/fal-h3-backend");
+const RealExecution = require("../src/generation/h3-execution");
 const H3Pack = require("../model-packs/minimax-h3");
 const { addMotionPromptBuild } = require("./h3-execution-fixture");
 
@@ -107,7 +107,7 @@ async function main() {
      1. The backend writes its own prompt.
         The property: the compiled prompt reaches the provider unchanged. */
   await control("a backend that rebuilds the prompt itself", "the compiled prompt reaches the provider unchanged", () => {
-    const backend = loadModified("fal-h3-backend.js", [
+    const backend = loadModified("src/generation/fal/fal-h3-backend.js", [
       [
         "  const input = { prompt, duration };",
         "  const input = { prompt: `Cinematic shot, ${duration} seconds, high quality.`, duration };",
@@ -127,7 +127,7 @@ async function main() {
        frames are taken by position out of whatever array arrived. Both halves are
        needed — the planner's ordering alone already puts the endpoints right, which is
        why the original defect only ever surfaced on the client's unordered array. */
-    const backend = loadModified("fal-h3-backend.js", [
+    const backend = loadModified("src/generation/fal/fal-h3-backend.js", [
       [
         "function endpointReference(plan, field, references) {\n  const binding = plan?.endpoints?.[field];\n  if (!isRecord(binding) || !binding.refId) return null;\n  return references.find((row) => String(row.refId) === String(binding.refId)) || null;\n}",
         "function endpointReference(plan, field, references) {\n  const images = references.filter((row) => row.mediaType === \"image\");\n  return (field === \"firstFrame\" ? images[0] : images[1]) || null;\n}",
@@ -154,7 +154,7 @@ async function main() {
      3. The backend silently truncates an over-limit prompt.
         The property: an over-limit prompt REFUSES; nothing is trimmed to fit. */
   await control("a backend that trims a prompt to fit", "an over-limit prompt refuses instead of being truncated", () => {
-    const backend = loadModified("fal-h3-backend.js", [
+    const backend = loadModified("src/generation/fal/fal-h3-backend.js", [
       [
         "  if (prompt.length > promptCeiling)",
         "  if (false)",
@@ -181,7 +181,7 @@ async function main() {
      4. The provider request drops one semantic reference.
         The property: every reference the plan lists reaches the request. */
   await control("a request that drops one semantic reference", "every reference in the plan reaches the provider request", () => {
-    const backend = loadModified("fal-h3-backend.js", [
+    const backend = loadModified("src/generation/fal/fal-h3-backend.js", [
       [
         "      input[field] = buckets[media].map((row, index) => {",
         "      input[field] = buckets[media].slice(0, Math.max(1, buckets[media].length - 1)).map((row, index) => {",
@@ -201,7 +201,7 @@ async function main() {
      5. The job omits compiler provenance.
         The property: the durable job records which pack and version compiled it. */
   await control("a job that omits compiler provenance", "the durable job records what compiled it", () => {
-    const execution = loadModified("h3-execution.js", [
+    const execution = loadModified("src/generation/h3-execution.js", [
       [
         "    plan,\n    surface: compiled.surface,",
         "    plan: { ...plan, compiler: undefined },\n    surface: compiled.surface,",
@@ -238,7 +238,7 @@ async function main() {
 
     /* The defect: ownership resolved from whatever is active AT THE MOMENT OF USE
        rather than captured once before the first await. */
-    const falGeneration = loadModified("fal-generation.js", [
+    const falGeneration = loadModified("src/generation/fal/fal-generation.js", [
       [
         "        compiled = compileH3ExecutionPlan({\n          project: ownerProject(owner),",
         "        compiled = compileH3ExecutionPlan({\n          project: readProject(activeSlug()),",
@@ -300,7 +300,7 @@ async function main() {
 
     /* The defect: the pre-compilation dispatcher, restored. It builds its own request
        from the posted prompt and picks the endpoint frames by array position. */
-    const falGeneration = loadModified("fal-generation.js", [
+    const falGeneration = loadModified("src/generation/fal/fal-generation.js", [
       [
         "  async function submitH3(owner, job, cfg) {\n    const compilation = job.compilation;",
         `  async function submitH3(owner, job, cfg) {
@@ -433,7 +433,7 @@ async function main() {
     const compiled = RealExecution.compileH3ExecutionPlan({
       project, shotId: "SH-1", buildId, durationSeconds: 4, resolution: "2K", aspectRatio: "16:9",
       /* The patched pack, injected through the registry the compiler already consults. */
-      getProfile: require("../prompt-engine").getProfile,
+      getProfile: require("../src/generation/prompt-engine").getProfile,
     });
     /* The real pack is still registered, so this asserts the property directly against
        what the patched copy WOULD have produced. */
@@ -452,7 +452,7 @@ async function main() {
      10. The plan's reference ORDER is ignored and the array order used instead.
          The property: serialisation follows the plan's canonical order. */
   await control("a serializer that follows array order rather than the plan's", "reference order comes from the plan", () => {
-    const backend = loadModified("fal-h3-backend.js", [
+    const backend = loadModified("src/generation/fal/fal-h3-backend.js", [
       [
         "    .sort((a, b) => {\n      const orderA = Number.isFinite(Number(a.order)) ? Number(a.order) : Number.MAX_SAFE_INTEGER;",
         "    .sort((a, b) => {\n      return 0;\n      const orderA = Number.isFinite(Number(a.order)) ? Number(a.order) : Number.MAX_SAFE_INTEGER;",
@@ -495,7 +495,7 @@ async function main() {
     fs.writeFileSync(file, JSON.stringify(project, null, 2));
 
     /* The defect: nothing durable until the provider has answered. */
-    const falGeneration = loadModified("fal-generation.js", [
+    const falGeneration = loadModified("src/generation/fal/fal-generation.js", [
       [
         "      await commit(owner, (current) => { current.push(job); });",
         "      await Promise.resolve(); /* control: no durable row before the POST */",
@@ -554,7 +554,7 @@ async function main() {
      12. Duration silently normalised during a paid submission.
          The property: a duration this backend cannot render is refused, not converted. */
   await control("silent 4s→5s normalisation at submission", "a 4-second shot is refused on fal rather than converted", () => {
-    const execution = loadModified("h3-execution.js", [
+    const execution = loadModified("src/generation/h3-execution.js", [
       ["  if (request.enforceDuration && duration > 0) {", "  if (false) {"],
     ]);
     const project = fixtureProject();

@@ -17,12 +17,12 @@ const path = require("path");
 const Module = require("module");
 
 const ROOT = path.join(__dirname, "..");
-const { createModelIntelligence, loadModelIntelligence, DEFINITIONS_PATH, SURFACES_PATH } = require("../model-intelligence");
+const { createModelIntelligence, loadModelIntelligence, DEFINITIONS_PATH, SURFACES_PATH } = require("../src/generation/model-intelligence");
 const { resolveGenerationOptions } = require("../public/shared-generation-options");
-const { publicAdapters, generationConnections, generationOptionsFor } = require("../generation-options");
+const { publicAdapters, generationConnections, generationOptionsFor } = require("../src/generation/generation-options");
 const { checkRequestAgainstCapability } = require("../public/shared-generation-capability");
-const { serializeImagePlanForFal } = require("../fal-image-backend");
-const { compileImageExecutionPlan } = require("../image-execution");
+const { serializeImagePlanForFal } = require("../src/generation/fal/fal-image-backend");
+const { compileImageExecutionPlan } = require("../src/generation/image-execution");
 const { addBlockingPromptBuild, buildRef, REF_IDENTITY } = require("./image-execution-fixture");
 
 const DEFINITIONS = JSON.parse(fs.readFileSync(DEFINITIONS_PATH, "utf8"));
@@ -72,7 +72,7 @@ const find = (resolved, modelId, surfaceId) =>
 /* Two guarantees in fal-generation.js are STRUCTURAL rather than runtime branches, so
    the check and its control both operate on the source text. Normalised to LF: a
    Windows checkout with core.autocrlf on would otherwise never match. */
-const FAL_GENERATION_SOURCE = fs.readFileSync(path.join(ROOT, "fal-generation.js"), "utf8").replace(/\r\n/g, "\n");
+const FAL_GENERATION_SOURCE = fs.readFileSync(path.join(ROOT, "src/generation/fal/fal-generation.js"), "utf8").replace(/\r\n/g, "\n");
 
 /* Every read inside the compiled image path goes through the captured owner. */
 function assertOwnedProjectReads(source) {
@@ -144,7 +144,7 @@ control("deriving dispatchability from the catalogue's offering state", "a catal
    request. The picker would offer it, and pressing Generate would reach nothing. */
 control("adding a Runware adapter entry with no serializer", "every adapter entry resolves to a real serializer", () => {
   const adapters = [
-    ...require("../generation-options").CINEBRAID_GENERATION_ADAPTERS,
+    ...require("../src/generation/generation-options").CINEBRAID_GENERATION_ADAPTERS,
     { adapterId: "runware-seedance", modelId: "seedance/2.5", surfaceId: "runware", modes: ["i2v"] },
   ];
   for (const adapter of adapters)
@@ -202,7 +202,7 @@ control("ignoring the connection map when deciding availability", "an unconnecte
    The defect C2a found in the compiler, reintroduced at the execution boundary: the
    still-image serializer stops refusing a plan that carries time. */
 control("letting a duration through the image serializer", "a still-image request carries no video field", () => {
-  const backend = loadModified("fal-image-backend.js", [
+  const backend = loadModified("src/generation/fal/fal-image-backend.js", [
     ["  if (plan.output?.durationSeconds != null || plan.output?.fps != null)",
       "  if (false)"],
   ]);
@@ -219,7 +219,7 @@ control("letting a duration through the image serializer", "a still-image reques
    builds its own prompt text instead of transporting the compiled one. Everything C1
    guarantees — coverage, anchoring, no silent intent loss — would stop at dispatch. */
 control("letting the image serializer write its own prompt", "the prompt sent is the prompt compiled", () => {
-  const backend = loadModified("fal-image-backend.js", [
+  const backend = loadModified("src/generation/fal/fal-image-backend.js", [
     ["  const input = {\n    prompt,", "  const input = {\n    prompt: `${prompt} Rendered in a cinematic style.`,"],
   ]);
   const compiled = compiledBlocking();
@@ -236,7 +236,7 @@ control("letting the image serializer write its own prompt", "the prompt sent is
    out-of-rule size is snapped to fit and the filmmaker gets a frame at a size nobody
    chose — the failure mode the pre-C2b arithmetic had. */
 control("snapping an out-of-rule size instead of refusing it", "an out-of-rule size is refused by name", () => {
-  const backend = loadModified("fal-image-backend.js", [
+  const backend = loadModified("src/generation/fal/fal-image-backend.js", [
     ["  if (pixels < rules.minTotalPixels || pixels > rules.maxTotalPixels)",
       "  if (false)"],
   ]);

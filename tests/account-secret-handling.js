@@ -28,7 +28,7 @@ const os = require("os");
 const path = require("path");
 
 const { startCineBraidServer, startMockCivitai } = require("./fixtures/mock-civitai");
-const { CONFIG_SECRETS, MASK_PREFIX, maskSecrets, restoreSecrets } = require("../config");
+const { CONFIG_SECRETS, MASK_PREFIX, maskSecrets, restoreSecrets } = require("../src/server/config");
 
 const TEMP = fs.mkdtempSync(path.join(os.tmpdir(), "cinebraid-account-secrets-"));
 const CONFIG_PATH = path.join(TEMP, "config.json");
@@ -138,8 +138,8 @@ async function main() {
 
   /* ---- A5. secrecy comes from the registry, and there is only one of them ----
      A second mask list would be the exact defect the registry was built to end. */
-  const serverSource = fs.readFileSync(path.join(__dirname, "..", "server.js"), "utf8");
-  const accountsSource = fs.readFileSync(path.join(__dirname, "..", "accounts-api.js"), "utf8");
+  const serverSource = fs.readFileSync(path.join(__dirname, "..", "src/server/server.js"), "utf8");
+  const accountsSource = fs.readFileSync(path.join(__dirname, "..", "src/accounts/accounts-api.js"), "utf8");
   for (const [label, source] of [["server.js", serverSource], ["accounts-api.js", accountsSource]]) {
     assert(!/MASK_PREFIX|••••/.test(source.replace(/\/\*[\s\S]*?\*\//g, "")),
       `${label} must not hand-roll masking — CONFIG_SECRETS is the only mechanism`);
@@ -196,11 +196,11 @@ async function main() {
      builds them is handed a project reader and nothing else — no config reader —
      so there is no path from a stored credential into a support export. Asserted
      structurally as well as live, because an empty bundle proves nothing. */
-  const diagnosticSource = fs.readFileSync(path.join(__dirname, "..", "automation-runs.js"), "utf8");
+  const diagnosticSource = fs.readFileSync(path.join(__dirname, "..", "src/automation/automation-runs.js"), "utf8");
   assert(!/\breadConfig\b/.test(diagnosticSource),
     "automation-runs.js builds the support bundle and must have no way to read configuration");
   const registrar = /registerAutomationRuns\(app, \{[^}]*\}\)/.exec(
-    fs.readFileSync(path.join(__dirname, "..", "server.js"), "utf8"),
+    fs.readFileSync(path.join(__dirname, "..", "src/server/server.js"), "utf8"),
   );
   assert(registrar, "the diagnostics registrar call must be findable");
   assert(!/readConfig|writeConfig/.test(registrar[0]),

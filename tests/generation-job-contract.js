@@ -13,7 +13,7 @@
  * Pure module, no I/O, no server.
  */
 const assert = require("assert");
-const C = require("../generation-contracts");
+const C = require("../src/generation/generation-contracts");
 
 function codes(result) {
   return result.errors.map((error) => error.code);
@@ -442,7 +442,7 @@ rejects(baseJob({ inputs: { prompt: "x", references: [reference({ role: "scent-r
 
 /* No conditional on a model, family or vendor name may exist in the contract layer.
    The moment one does, adding a model stops being a data change. */
-const contractSource = require("fs").readFileSync(require("path").join(__dirname, "..", "generation-contracts.js"), "utf8");
+const contractSource = require("fs").readFileSync(require("path").join(__dirname, "..", "src/generation/generation-contracts.js"), "utf8");
 for (const family of ["z-image", "minimax", "gpt-image", "qwen-image", "krea", "flux", "wan", "ltx", "seedream", "nano-banana"])
   assert(
     !new RegExp(`["'\`][^"'\`]*${family}`, "i").test(contractSource.replace(/\/\*[\s\S]*?\*\//g, "")),

@@ -3,11 +3,11 @@ const fs = require("fs");
 const path = require("path");
 const vm = require("vm");
 const { terminalHtml } = require("./terminal-view");
-const { readConfig } = require("../config");
-const PromptEngine = require("../prompt-engine");
-const { annotateProfileLibraryExecution } = require("../generation-options");
-const { releaseIdentity } = require("../release-identity");
-const { buildIdentity } = require("../build-identity");
+const { readConfig } = require("../src/server/config");
+const PromptEngine = require("../src/generation/prompt-engine");
+const { annotateProfileLibraryExecution } = require("../src/generation/generation-options");
+const { releaseIdentity } = require("../src/server/release-identity");
+const { buildIdentity } = require("../src/server/build-identity");
 
 const ROOT = path.join(__dirname, "..");
 const PUBLIC = path.join(ROOT, "public");

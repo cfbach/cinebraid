@@ -214,7 +214,7 @@ function n3MarkerReintroductionIsCaught() {
      annotation is recorded against the object it was made about and never written, so
      there is no appended text for anything to have to remove. N11 covers the strip
      that used to do the removing, and why it had to go. */
-  const server = codeOnly(read("server.js"));
+  const server = codeOnly(read("src/server/server.js"));
   assert(server.includes("recordPlanningInference(inferences,"),
     "N3. the normalizer must record its inferences rather than append them");
   assert(!server.includes("addBuilderMarker("),
@@ -448,7 +448,7 @@ function n11TextualStripIsCaught() {
 
   /* The shipped server carries no such strip, and its removal decision is recorded
      rather than pattern-matched. */
-  const server = codeOnly(read("server.js"));
+  const server = codeOnly(read("src/server/server.js"));
   for (const gone of ["stripPlanningAnnotation", "stripPlanningAnnotations", "collectPlanningAnnotations"])
     assert(!server.includes(gone), `N11. the shipped server must not carry ${gone}`);
   assert(server.includes("recordPlanningInference("), "N11. inferences are recorded");
@@ -676,7 +676,7 @@ function n16OriginBlindDedupIsCaught() {
     "N16. which is exactly what the cinebraid+source assertion catches");
 
   /* The shipped filter is the one in the product, not a lookalike written here. */
-  const server = codeOnly(read("server.js"));
+  const server = codeOnly(read("src/server/server.js"));
   assert(/other\.origin === item\.origin &&\s*other\.path === item\.path &&\s*other\.value === item\.value/.test(server),
     "N16. the shipped de-duplication must key on origin, path and text together");
   const regressed = server.replace(/other\.origin === item\.origin &&\s*/, "");

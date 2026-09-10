@@ -9,7 +9,7 @@ const root = path.join(__dirname, "..");
 const automation = fs.readFileSync(path.join(root, "public/automation.js"), "utf8");
 const creation = fs.readFileSync(path.join(root, "public/creation-studio.js"), "utf8");
 const sceneAutomation = fs.readFileSync(path.join(root, "public/scene-automation.js"), "utf8");
-const server = fs.readFileSync(path.join(root, "server.js"), "utf8");
+const server = fs.readFileSync(path.join(root, "src/server/server.js"), "utf8");
 
 /* `standing` is the capability record's own authority, and every record
    /api/agents/status sends carries one — server.js `capabilityCheck` stamps it on the

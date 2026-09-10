@@ -657,7 +657,7 @@ async function workspaceScenarios() {
     assert.strictEqual(fs.existsSync(path.join(destination, "o8-project", "docs", "nested", "project.json")), false);
   });
   await primary("E-09", async () => {
-    const source = fs.readFileSync(path.join(ROOT, "server.js"), "utf8");
+    const source = fs.readFileSync(path.join(ROOT, "src/server/server.js"), "utf8");
     const migrateBlock = source.slice(source.indexOf("function migrate("), source.indexOf("/* ---- explicit project ownership", source.indexOf("function migrate(")));
     assert(migrateBlock.includes("WRITE_CLASSES.WORKSPACE_MIGRATION"), "startup migrate must enroll project documents through WORKSPACE_MIGRATION");
   });
@@ -1052,7 +1052,7 @@ async function boundedReviewScenarios() {
       assert(status.body.runs.some((row) => row.id === id && row.status === "FAILED"));
     noDurableWrite(afterStartup, "GET /api/agents/status must remain observational", healthyFile);
 
-    const source = fs.readFileSync(path.join(ROOT, "server.js"), "utf8");
+    const source = fs.readFileSync(path.join(ROOT, "src/server/server.js"), "utf8");
     const reconciler = source.slice(source.indexOf("function reconcileOrphanedAgentRuns("), source.indexOf("function cancelAgentRun(", source.indexOf("function reconcileOrphanedAgentRuns(")));
     assert(reconciler.includes("if (changed) writeProject(P, slug)"),
       "restart reconciliation must reach the enrolled project writer");

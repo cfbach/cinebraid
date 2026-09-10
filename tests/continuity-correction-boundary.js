@@ -199,7 +199,7 @@ async function preflightFor(context, pkg) {
   eq(vm.runInContext(`v626FailureClass({ code: "HUMAN_AUTHORITY_REQUIRED", authorityViolation: true })`, context), "local-package",
     "and an authority violation is deterministic too: retrying it would reproduce the same refusal");
 
-  const runs = read("automation-runs.js");
+  const runs = read("src/automation/automation-runs.js");
   /* BATCH 1B widened the deterministic set: the universal pre-provider presence
      gate refuses before a job row exists, so `local-preflight` is deterministic
      on exactly the same terms and must not consume an attempt either. */

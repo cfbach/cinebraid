@@ -17,10 +17,10 @@ const path = require("path");
 const vm = require("vm");
 const express = require("express");
 
-const { registerFalGeneration } = require("../fal-generation");
-const { compileH3ExecutionPlan, H3ExecutionError } = require("../h3-execution");
-const { compileValidatedGenerationPlan } = require("../generation-compiler");
-const { serializeH3PlanForFal, H3BackendError, FAL_H3_BACKEND, falH3BackendLayer, resolveH3FalCapability } = require("../fal-h3-backend");
+const { registerFalGeneration } = require("../src/generation/fal/fal-generation");
+const { compileH3ExecutionPlan, H3ExecutionError } = require("../src/generation/h3-execution");
+const { compileValidatedGenerationPlan } = require("../src/generation/generation-compiler");
+const { serializeH3PlanForFal, H3BackendError, FAL_H3_BACKEND, falH3BackendLayer, resolveH3FalCapability } = require("../src/generation/fal/fal-h3-backend");
 const H3Pack = require("../model-packs/minimax-h3");
 const { resolveCapability } = require("../public/shared-generation-capability");
 const { addMotionPromptBuild, baseSpec } = require("./h3-execution-fixture");
@@ -222,7 +222,7 @@ async function main() {
         (error) => error instanceof H3BackendError && error.code === "H3_PLAN_INVALID",
         "the fal serializer must refuse without a compiled plan",
       );
-      const source = fs.readFileSync(path.join(ROOT, "fal-h3-backend.js"), "utf8");
+      const source = fs.readFileSync(path.join(ROOT, "src/generation/fal/fal-h3-backend.js"), "utf8");
       const signature = source.slice(source.indexOf("function serializeH3PlanForFal"), source.indexOf("module.exports"));
       for (const token of ["spec", "shot", "profile", "directive"])
         assert(!new RegExp(`\\b${token}\\.`).test(signature), `the serializer must not read ${token}`);
@@ -560,7 +560,7 @@ async function main() {
     }
     {
       /* Nothing anywhere trims a prompt to fit. */
-      const backend = fs.readFileSync(path.join(ROOT, "fal-h3-backend.js"), "utf8");
+      const backend = fs.readFileSync(path.join(ROOT, "src/generation/fal/fal-h3-backend.js"), "utf8");
       const serializer = backend.slice(backend.indexOf("function serializeH3PlanForFal"));
       assert(!/\.slice\(0,\s*(promptCeiling|limit|max)/.test(serializer), "the serializer must never truncate a prompt");
       assert(/Refused, never trimmed/.test(backend), "and must say why");
@@ -746,7 +746,7 @@ async function main() {
     }
     {
       /* No assistant, no clock, no network in the compilation layer. */
-      for (const file of ["h3-execution.js", "fal-h3-backend.js"]) {
+      for (const file of ["src/generation/h3-execution.js", "src/generation/fal/fal-h3-backend.js"]) {
         const code = fs.readFileSync(path.join(ROOT, file), "utf8");
         for (const forbidden of ["require(\"./llm\")", "require(\"../llm\")", "fetch(", "Math.random", "Date.now"])
           assert(!code.includes(forbidden), `${file} must not contain ${forbidden}`);

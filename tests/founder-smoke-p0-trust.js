@@ -29,7 +29,7 @@ const ROOT = path.join(__dirname, "..");
 const { render, buildFixture, withCanon } = require("./render-harness");
 const Continuity = require("../public/shared-continuity.js");
 const Lineage = require("../public/shared-state-lineage.js");
-const PromptEngine = require("../prompt-engine.js");
+const PromptEngine = require("../src/generation/prompt-engine.js");
 
 const results = [];
 const record = (id, detail) => results.push(`  ${id.padEnd(6)} ${detail}`);
@@ -109,7 +109,7 @@ async function testCrossProjectActivityIsolation() {
 
   /* The server states which project a run ledger belongs to, and a window that
      disagrees refuses the payload and says why rather than adopting it. */
-  const runsSource = fs.readFileSync(path.join(ROOT, "automation-runs.js"), "utf8");
+  const runsSource = fs.readFileSync(path.join(ROOT, "src/automation/automation-runs.js"), "utf8");
   assert(/runs: runs\.map\(publicRun\), projectSlug: runsOwnerSlug\(\)/.test(runsSource),
     "GET /api/automation/runs must state which project its runs belong to");
   const run = (id) => ({ id, type: "shot-chain", targetId: "L1-01", status: "failed", label: id, steps: {}, revision: 1, createdAt: "2026-08-17T00:00:00Z", updatedAt: "2026-08-17T00:00:00Z" });
@@ -188,7 +188,7 @@ async function testFalLedgerOwnership() {
     "an empty payload has nothing to attribute and must still be admitted");
 
   /* And the route states it, so the browser has something to check. */
-  const falSource = fs.readFileSync(path.join(ROOT, "fal-generation.js"), "utf8");
+  const falSource = fs.readFileSync(path.join(ROOT, "src/generation/fal/fal-generation.js"), "utf8");
   assert(/jobs: jobs\.map\(publicJob\), projectSlug: owner\.slug/.test(falSource),
     "GET /api/generation/fal/jobs must state which project its ledger belongs to");
   /* The first read of the ledger is admitted the same way; it had no check at all. */
@@ -436,7 +436,7 @@ async function testLineageRuntimeSurfaces() {
 
   /* Import: explicit lineage is preserved, unresolvable lineage is dropped and
      named, and a missing one is reported at import rather than at run time. */
-  const serverSource = fs.readFileSync(path.join(ROOT, "server.js"), "utf8");
+  const serverSource = fs.readFileSync(path.join(ROOT, "src/server/server.js"), "utf8");
   const context = { module: { exports: {} }, console };
   context.globalThis = context;
   vm.createContext(context);

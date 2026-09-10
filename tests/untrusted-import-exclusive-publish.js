@@ -38,7 +38,7 @@ const os = require("os");
 const path = require("path");
 
 const { startCineBraidServer } = require("./fixtures/mock-civitai");
-const { WRITE_CLASSES, isCreateOnlyWriteClass } = require("../authority-write-seam");
+const { WRITE_CLASSES, isCreateOnlyWriteClass } = require("../src/authority/authority-write-seam");
 
 const ROOT = path.join(__dirname, "..");
 const TEMP = fs.mkdtempSync(path.join(os.tmpdir(), "cinebraid-untrusted-import-"));
@@ -402,13 +402,13 @@ function ui7() {
   for (const junk of ["", null, undefined, "UNTRUSTED", "untrusted_import"])
     assert.strictEqual(isCreateOnlyWriteClass(junk), false, `${JSON.stringify(junk)} is not a write class`);
 
-  const seam = fs.readFileSync(path.join(ROOT, "authority-write-seam.js"), "utf8");
+  const seam = fs.readFileSync(path.join(ROOT, "src/authority/authority-write-seam.js"), "utf8");
   assert.strictEqual((seam.match(/const CREATE_ONLY = new Set\(/g) || []).length, 1,
     "there is exactly one CREATE_ONLY list");
   assert(/isCreateOnlyWriteClass\(writeClass\) && text\(error\?\.code\) === "EEXIST"/.test(seam),
     "and a lost exclusive publish is recognised from EEXIST alone");
 
-  const serverSource = fs.readFileSync(path.join(ROOT, "server.js"), "utf8");
+  const serverSource = fs.readFileSync(path.join(ROOT, "src/server/server.js"), "utf8");
   const options = serverSource.slice(serverSource.indexOf("atomicWriteJson(file, project, {"));
   const wiring = options.slice(0, options.indexOf("});") + 3);
   assert(/exclusive: isCreateOnlyWriteClass\(context\.writeClass\)/.test(wiring),

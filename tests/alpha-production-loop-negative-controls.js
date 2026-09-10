@@ -40,7 +40,7 @@ const Suite = require("./alpha-production-loop");
    multi-line anchor written with \n would match nothing there and the control would
    report itself stale instead of biting. */
 const readLF = (file) => fs.readFileSync(file, "utf8").replace(/\r\n/g, "\n");
-const LIFECYCLE_PATH = path.join(ROOT, "generation-lifecycle.js");
+const LIFECYCLE_PATH = path.join(ROOT, "src/generation/generation-lifecycle.js");
 const LIFECYCLE_SOURCE = readLF(LIFECYCLE_PATH);
 
 const applied = [];
@@ -162,7 +162,7 @@ async function main() {
     guards: "the shipped default video target is dispatchable",
     defect: async () => {
       /* RECEIPT: this is the exact string both files shipped before the repair. */
-      const before = readLF(path.join(ROOT, "server.js"));
+      const before = readLF(path.join(ROOT, "src/server/server.js"));
       return !before.includes(`videoProfile: "seedance-2/i2v"`);
     },
     guarded: () => Suite.testShippedDefaultIsDispatchable({

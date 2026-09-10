@@ -16,7 +16,7 @@ const path = require("path");
 const Module = require("module");
 
 const ROOT = path.join(__dirname, "..");
-const { createModelIntelligence, loadModelIntelligence, DEFINITIONS_PATH, SURFACES_PATH } = require("../model-intelligence");
+const { createModelIntelligence, loadModelIntelligence, DEFINITIONS_PATH, SURFACES_PATH } = require("../src/generation/model-intelligence");
 const { recommendForUseCase, localCapable, reviewQueue } = require("../public/shared-model-intelligence");
 
 const DEFINITIONS = JSON.parse(fs.readFileSync(DEFINITIONS_PATH, "utf8"));
@@ -72,7 +72,7 @@ control("letting any layer's true flag win", "a provider cannot widen a model", 
   /* Set BEFORE the patched module is compiled: its top-level const binds at load. */
   global.__PATCHED_RESOLVE__ = capability.resolveCapability;
   try {
-    const intelligence = loadModified("model-intelligence.js", [
+    const intelligence = loadModified("src/generation/model-intelligence.js", [
       ['const { resolveCapability } = require("./public/shared-generation-capability");',
         "const resolveCapability = global.__PATCHED_RESOLVE__;"],
     ]);
@@ -214,7 +214,7 @@ control("the no-clock rule", "shared-model-intelligence.js must not contain Date
    The rule that keeps adding a model a data change. A single `if (family === "…")` is
    how it stops being one. */
 control("the no-name-branching rule", "a vendor name must not appear in code", () => {
-  const source = fs.readFileSync(path.join(ROOT, "model-intelligence.js"), "utf8")
+  const source = fs.readFileSync(path.join(ROOT, "src/generation/model-intelligence.js"), "utf8")
     .replace("  function getModel(modelId) {", '  function getModel(modelId) {\n    if (modelId === "minimax-h3/fl2va") return null;');
   const code = source.replace(/\/\*[\s\S]*?\*\//g, "").replace(/^\s*\/\/.*$/gm, "");
   assert(!/["'`][^"'`]*minimax/i.test(code), 'a vendor name appears in code rather than in data');

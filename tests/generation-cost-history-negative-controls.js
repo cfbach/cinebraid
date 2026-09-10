@@ -38,14 +38,14 @@ const readLF = (file) => fs.readFileSync(file, "utf8").replace(/\r\n/g, "\n");
    its module references at require time, so a stale copy would exercise the real code
    and the control would report a false pass. */
 const IN_SCOPE = [
-  path.join(ROOT, "generation-cost.js"),
+  path.join(ROOT, "src/generation/generation-cost.js"),
   /* The arithmetic moved here when the browser quote and the durable record were made
      to derive from one configured rate. A control that patched only generation-cost.js
      would leave the real multiplication in the cache and report a false pass, so the
      module that now performs it is in scope for eviction and for patching. */
   path.join(ROOT, "public", "shared-generation-rate.js"),
-  path.join(ROOT, "fal-generation.js"),
-  path.join(ROOT, "automation-runs.js"),
+  path.join(ROOT, "src/generation/fal/fal-generation.js"),
+  path.join(ROOT, "src/automation/automation-runs.js"),
   path.join(__dirname, "generation-cost-history.js"),
 ];
 const inScope = (key) => IN_SCOPE.includes(key);
@@ -180,7 +180,7 @@ async function main() {
     label: "the server summary re-derives spend from image counts instead of stored estimates",
     guards: "CASE 1 — Reports totals come from stored estimates, not today's rate",
     defect: async () => {
-      return patched("automation-runs.js", NC_A2_EDITS, async () => {
+      return patched("src/automation/automation-runs.js", NC_A2_EDITS, async () => {
         const { harness, submitFrame } = freshSuite();
         const kit = await harness();
         try {
@@ -194,7 +194,7 @@ async function main() {
         } finally { kit.close(); }
       });
     },
-    guarded: () => patched("automation-runs.js", NC_A2_EDITS, () => freshSuite().main()),
+    guarded: () => patched("src/automation/automation-runs.js", NC_A2_EDITS, () => freshSuite().main()),
   });
 
   /* -------------------------------------------------------------------------
@@ -211,7 +211,7 @@ async function main() {
     id: "NC-B",
     label: "a stored job estimate is re-priced when a later job is submitted at a new rate",
     guards: "CASE 1/2 — job A keeps its own estimate while job B is priced at the newer rate",
-    defect: () => patched("fal-generation.js", NC_B_EDITS, async () => {
+    defect: () => patched("src/generation/fal/fal-generation.js", NC_B_EDITS, async () => {
       const { harness, submitFrame } = freshSuite();
       const kit = await harness();
       try {
@@ -224,7 +224,7 @@ async function main() {
         return Math.abs(Number(first.accounting.estimate.amount) - 0.12) > 1e-9;
       } finally { kit.close(); }
     }),
-    guarded: () => patched("fal-generation.js", NC_B_EDITS, () => freshSuite().main()),
+    guarded: () => patched("src/generation/fal/fal-generation.js", NC_B_EDITS, () => freshSuite().main()),
   });
 
   /* -------------------------------------------------------------------------
@@ -235,7 +235,7 @@ async function main() {
     id: "NC-C",
     label: "the dispatch path stops persisting the estimate at submission",
     guards: "CASE 2 — a submitted job must carry accounting",
-    defect: () => patched("fal-generation.js", NC_C_EDITS, async () => {
+    defect: () => patched("src/generation/fal/fal-generation.js", NC_C_EDITS, async () => {
       const { harness, submitFrame } = freshSuite();
       const kit = await harness();
       try {
@@ -244,7 +244,7 @@ async function main() {
         return kit.ledger().every((job) => job.accounting == null);
       } finally { kit.close(); }
     }),
-    guarded: () => patched("fal-generation.js", NC_C_EDITS, () => freshSuite().main()),
+    guarded: () => patched("src/generation/fal/fal-generation.js", NC_C_EDITS, () => freshSuite().main()),
   });
 
   /* -------------------------------------------------------------------------
@@ -263,12 +263,12 @@ async function main() {
     id: "NC-D",
     label: "a legacy job with no stored estimate is treated as though one had been recorded",
     guards: "CASE 4 — a legacy job reads as unrecorded and is never re-priced",
-    defect: () => patched("generation-cost.js", NC_D_EDITS, async () => {
-      const { recordedEstimate, summarizeRecordedCost } = require("../generation-cost");
+    defect: () => patched("src/generation/generation-cost.js", NC_D_EDITS, async () => {
+      const { recordedEstimate, summarizeRecordedCost } = require("../src/generation/generation-cost");
       const legacy = { id: "legacy", purpose: "frame", outputCount: 3 };
       return recordedEstimate(legacy) !== null && summarizeRecordedCost([legacy]).unrecorded === 0;
     }),
-    guarded: () => patched("generation-cost.js", NC_D_EDITS, () => freshSuite().main()),
+    guarded: () => patched("src/generation/generation-cost.js", NC_D_EDITS, () => freshSuite().main()),
   });
 
   /* -------------------------------------------------------------------------
@@ -289,12 +289,12 @@ async function main() {
     id: "NC-E",
     label: "the submission estimate is also written as an actual provider charge",
     guards: "CASE 5 — the accounting record must not imply confirmed spend",
-    defect: () => patched("generation-cost.js", NC_E_EDITS, async () => {
-      const { submissionAccounting } = require("../generation-cost");
+    defect: () => patched("src/generation/generation-cost.js", NC_E_EDITS, async () => {
+      const { submissionAccounting } = require("../src/generation/generation-cost");
       const record = submissionAccounting({ purpose: "frame", outputCount: 2, ratePerImage: 0.06, at: "2026-08-10T00:00:00.000Z" });
       return Math.abs(Number(record.actualCost) - 0.12) < 1e-9;
     }),
-    guarded: () => patched("generation-cost.js", NC_E_EDITS, () => freshSuite().main()),
+    guarded: () => patched("src/generation/generation-cost.js", NC_E_EDITS, () => freshSuite().main()),
   });
 
   /* -------------------------------------------------------------------------
@@ -321,7 +321,7 @@ async function main() {
     label: "a locally computed estimate claims the provider quoted it",
     guards: "CASE 5 — fal does not quote at submission, so nothing may claim it did",
     defect: () => patched("public/shared-generation-rate.js", NC_E2_EDITS, async () => {
-      const { submissionAccounting } = require("../generation-cost");
+      const { submissionAccounting } = require("../src/generation/generation-cost");
       return submissionAccounting({ purpose: "frame", outputCount: 2, ratePerImage: 0.06, at: "2026-08-10T00:00:00.000Z" }).estimate.confidence === "quoted";
     }),
     guarded: () => patched("public/shared-generation-rate.js", NC_E2_EDITS, () => freshSuite().main()),
@@ -339,7 +339,7 @@ async function main() {
     id: "NC-F",
     label: "a job claimed by two runs is added to the project total twice",
     guards: "a job claimed by two runs is one paid request and must not be added to the total twice",
-    defect: () => patched("automation-runs.js", NC_F_EDITS, async () => {
+    defect: () => patched("src/automation/automation-runs.js", NC_F_EDITS, async () => {
       const { harness, submitFrame } = freshSuite();
       const kit = await harness();
       try {
@@ -361,7 +361,7 @@ async function main() {
         return Math.abs(Number(totals.recordedCost.amount) - 0.24) < 1e-9;
       } finally { kit.close(); }
     }),
-    guarded: () => patched("automation-runs.js", NC_F_EDITS, () => freshSuite().main()),
+    guarded: () => patched("src/automation/automation-runs.js", NC_F_EDITS, () => freshSuite().main()),
   });
 
   /* -------------------------------------------------------------------------
@@ -382,8 +382,8 @@ async function main() {
     id: "NC-G",
     label: "recorded amounts are summed across currencies, so 10 Buzz becomes USD 10.00",
     guards: "CASE 6 — a Buzz amount must never land in the US dollar total",
-    defect: () => patched("generation-cost.js", NC_G_EDITS, async () => {
-      const { summarizeRecordedCost } = require(path.join(ROOT, "generation-cost.js"));
+    defect: () => patched("src/generation/generation-cost.js", NC_G_EDITS, async () => {
+      const { summarizeRecordedCost } = require(path.join(ROOT, "src/generation/generation-cost.js"));
       const summary = summarizeRecordedCost([{
         accounting: {
           costClass: "metered_credits",
@@ -393,7 +393,7 @@ async function main() {
       /* Ten Buzz, reported as ten of whatever `currency` claims — which is "usd". */
       return Math.abs(Number(summary.amount) - 10) < 1e-9 && summary.currency === "usd";
     }),
-    guarded: () => patched("generation-cost.js", NC_G_EDITS, () => freshSuite().main()),
+    guarded: () => patched("src/generation/generation-cost.js", NC_G_EDITS, () => freshSuite().main()),
   });
 
   /* The real modules, green, after every control has been undone. */

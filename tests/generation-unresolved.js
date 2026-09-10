@@ -15,9 +15,9 @@ const os = require("os");
 const path = require("path");
 const express = require("express");
 
-const { registerFalGeneration } = require("../fal-generation");
-const Lifecycle = require("../generation-lifecycle");
-const Contracts = require("../generation-contracts");
+const { registerFalGeneration } = require("../src/generation/fal/fal-generation");
+const Lifecycle = require("../src/generation/generation-lifecycle");
+const Contracts = require("../src/generation/generation-contracts");
 const { addMotionPromptBuild } = require("./h3-execution-fixture");
 const { withGenerationDeclaration } = require("./generation-request-fixture");
 
@@ -173,7 +173,7 @@ async function main() {
       }
       /* The asymmetry is the whole design: uncertainty is never rounded down to a known
          failure, because that is the direction that costs money. */
-      const source = fs.readFileSync(path.join(ROOT, "generation-lifecycle.js"), "utf8");
+      const source = fs.readFileSync(path.join(ROOT, "src/generation/generation-lifecycle.js"), "utf8");
       for (const token of ["minimax", "h3", "fal", "seedance", "kling"])
         assert(!new RegExp(`\\b${token}\\b`, "i").test(source.replace(/\/\*[\s\S]*?\*\//g, "")),
           `the lifecycle module must not name ${token} outside its commentary`);
@@ -510,7 +510,7 @@ async function main() {
        10. GENERIC, NOT AN H3 FEATURE
        =================================================================== */
     {
-      const server = fs.readFileSync(path.join(ROOT, "fal-generation.js"), "utf8");
+      const server = fs.readFileSync(path.join(ROOT, "src/generation/fal/fal-generation.js"), "utf8");
       const body = server.replace(/\/\*[\s\S]*?\*\//g, "");
       /* One provider boundary shared by every dispatch in the module, and no state
          decision that branches on a model. */

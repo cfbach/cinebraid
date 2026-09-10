@@ -48,7 +48,7 @@ function ok(condition, message) {
   notes.push(message);
 }
 const source = (file) => fs.readFileSync(path.join(PUBLIC, file), "utf8");
-const serverSource = () => fs.readFileSync(path.join(ROOT, "server.js"), "utf8");
+const serverSource = () => fs.readFileSync(path.join(ROOT, "src/server/server.js"), "utf8");
 /* Comments state intent, and intent is not behaviour. Every source-level check
    below reads code with the commentary stripped, so a sentence in a comment can
    never satisfy an assertion about what the product does. */
@@ -352,7 +352,7 @@ function testCompilerCannotContradictAuthoredMaterial() {
   const fal = source("fal-generation.js");
   ok(/OBJECT\/CONTENT LOCK: preserve exact object shape, crop, proportions, material/.test(fal),
     "W16: a prop's compiled contract locks its material against reinterpretation");
-  ok(/materials, wear not named in the delta, and fixed layout—must remain unchanged/.test(fs.readFileSync(path.join(ROOT, "server.js"), "utf8")),
+  ok(/materials, wear not named in the delta, and fixed layout—must remain unchanged/.test(fs.readFileSync(path.join(ROOT, "src/server/server.js"), "utf8")),
     "W16: and a derived state may change only what its delta names, materials included");
   /* And the authored description reaches generation through ONE resolver, so the
      text a filmmaker reads on the reference is the text the prompt is built from.
@@ -362,7 +362,7 @@ function testCompilerCannotContradictAuthoredMaterial() {
      the compiled prompt elaborates it ("matte, not shiny") without contradiction —
      while the beige moulded plastic chair, the source's deliberately WRONG
      continuity-test candidate, appears only under EXCLUSIONS. */
-  const compiler = fs.readFileSync(path.join(ROOT, "prompt-engine.js"), "utf8");
+  const compiler = fs.readFileSync(path.join(ROOT, "src/generation/prompt-engine.js"), "utf8");
   ok(/entityVisualDescription/.test(compiler),
     "W16: the compiled prompt is built from the entity's authored design description");
   const shared = code(source("shared-entities.js"));

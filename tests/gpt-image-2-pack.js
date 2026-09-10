@@ -15,7 +15,7 @@ const fs = require("fs");
 const path = require("path");
 
 const ROOT = path.join(__dirname, "..");
-const Compiler = require("../generation-compiler");
+const Compiler = require("../src/generation/generation-compiler");
 const Pack = require("../model-packs/gpt-image-2");
 const { resolveCapability } = require("../public/shared-generation-capability");
 const { baseSpec } = require("./generation-compiler-fixture");
@@ -232,7 +232,7 @@ for (const forbidden of ["media-asset", "mediaAsset", "media-hash"])
   assert(!packSource.includes(forbidden), "MediaAsset stays dormant");
 
 /* ---- 12. the core did not change shape to accommodate a second modality ---- */
-const compilerSource = fs.readFileSync(path.join(ROOT, "generation-compiler.js"), "utf8");
+const compilerSource = fs.readFileSync(path.join(ROOT, "src/generation/generation-compiler.js"), "utf8");
 const code = compilerSource.replace(/\/\*[\s\S]*?\*\//g, "").replace(/^\s*\/\/.*$/gm, "");
 for (const name of ["gpt-image", "openai", "minimax", "h3"])
   assert(!new RegExp(`["'\`][^"'\`]*${name}`, "i").test(code),

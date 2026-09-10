@@ -19,8 +19,8 @@ const fs = require("fs");
 const os = require("os");
 const path = require("path");
 
-const mediaHash = require("../media-hash");
-const continuityCache = require("../continuity-cache");
+const mediaHash = require("../src/media/media-hash");
+const continuityCache = require("../src/continuity/continuity-cache");
 
 const TEMP = fs.mkdtempSync(path.join(os.tmpdir(), "cinebraid-media-hash-"));
 

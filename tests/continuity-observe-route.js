@@ -315,7 +315,7 @@ async function main() {
   /* Every observation request ever sent carried exactly one image. */
   for (const body of visionRequests) assert.strictEqual(countImages(body), 1, "no continuity request may ever carry more than one image");
   /* The guard is enforced in code, not only by construction. */
-  const serverSource = fs.readFileSync(path.join(ROOT, "server.js"), "utf8");
+  const serverSource = fs.readFileSync(path.join(ROOT, "src/server/server.js"), "utf8");
   assert(serverSource.includes("CONTINUITY_MAX_IMAGES"), "the one-image limit must be an explicit named assertion");
   assert(/imageB64\.length !== CONTINUITY_MAX_IMAGES/.test(serverSource), "the assertion must run before provider dispatch");
 

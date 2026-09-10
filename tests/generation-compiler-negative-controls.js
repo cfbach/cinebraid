@@ -15,8 +15,8 @@ const fs = require("fs");
 const path = require("path");
 const Module = require("module");
 
-const Compiler = require("../generation-compiler");
-const Contracts = require("../generation-contracts");
+const Compiler = require("../src/generation/generation-compiler");
+const Contracts = require("../src/generation/generation-contracts");
 const H3 = require("../model-packs/minimax-h3");
 const {
   PARCEL, FRAME_A, FRAME_B, REF_IDENTITY,
@@ -97,7 +97,7 @@ control("action propagation", "meaningful action survives", () => {
 /* ===========================================================================
    2. Frame B binding -> the first/last-frame endpoint contract must fail. */
 control("the last-frame binding", "both endpoints survive as structured inputs", () => {
-  const compiler = loadModified("generation-compiler.js", [
+  const compiler = loadModified("src/generation/generation-compiler.js", [
     ['for (const [field, role] of [["firstFrame", "first-frame"], ["lastFrame", "last-frame"]]) {\n    /* The binding comes from the ROLE',
       'for (const [field, role] of [["firstFrame", "first-frame"]]) {\n    /* The binding comes from the ROLE'],
   ]);
@@ -106,7 +106,7 @@ control("the last-frame binding", "both endpoints survive as structured inputs",
 });
 /* And the contract, independently of the compiler, must refuse the result. */
 control("the last-frame binding", "an FLF plan satisfies the GenerationPlan contract", () => {
-  const compiler = loadModified("generation-compiler.js", [
+  const compiler = loadModified("src/generation/generation-compiler.js", [
     ['for (const [field, role] of [["firstFrame", "first-frame"], ["lastFrame", "last-frame"]]) {\n    /* The binding comes from the ROLE',
       'for (const [field, role] of [["firstFrame", "first-frame"]]) {\n    /* The binding comes from the ROLE'],
   ]);
@@ -127,7 +127,7 @@ control("camera propagation", "camera direction survives and is recorded as repr
 });
 /* The core's own check is the backstop: an unclaimed intent must still surface. */
 control("the unaccounted-intent check", "an intent no pack claims becomes a visible gap", () => {
-  const compiler = loadModified("generation-compiler.js", [
+  const compiler = loadModified("src/generation/generation-compiler.js", [
     ["  for (const row of inventory)\n    if (!coverage.has(row.key))", "  for (const row of [])\n    if (!coverage.has(row.key))"],
   ]);
   const forgetful = { packId: "t", packVersion: "1", playbook: { version: "1" }, models: {}, compileMode: () => ({ prompt: "Do something." }) };
@@ -179,7 +179,7 @@ control("the over-limit reference warning", "the excess warns and nothing is sil
 /* ===========================================================================
    5. Raw-identifier sanitation -> the prompt hygiene tests must fail. */
 control("raw-identifier sanitation", "internal identifiers never reach model-facing prose", () => {
-  const compiler = loadModified("generation-compiler.js", [
+  const compiler = loadModified("src/generation/generation-compiler.js", [
     ["  for (const identifier of internalIdentifiers(spec, manifest)) {", "  for (const identifier of []) {"],
   ]);
   const spec = baseSpec({
@@ -191,7 +191,7 @@ control("raw-identifier sanitation", "internal identifiers never reach model-fac
 });
 /* The contract refuses it too, so a pack that hand-builds a prompt cannot get around it. */
 control("raw-identifier sanitation", "the contract refuses an identifier in the prompt", () => {
-  const compiler = loadModified("generation-compiler.js", [
+  const compiler = loadModified("src/generation/generation-compiler.js", [
     ["  for (const identifier of internalIdentifiers(spec, manifest)) {", "  for (const identifier of []) {"],
   ]);
   const spec = baseSpec({
@@ -206,7 +206,7 @@ control("raw-identifier sanitation", "the contract refuses an identifier in the 
 /* ===========================================================================
    6. Seed persistence on a supporting capability -> reproducibility must fail. */
 control("seed persistence", "a supported seed survives into the plan", () => {
-  const compiler = loadModified("generation-compiler.js", [
+  const compiler = loadModified("src/generation/generation-compiler.js", [
     ['    settings = { seedMode: "explicit", seed: Number(input.seed) };', '    settings = { seedMode: "random" };'],
   ]);
   const plan = planWith({ compiler, mode: "t2v", capability: seedCapableCapability("t2v"), seed: 90210 });
@@ -216,7 +216,7 @@ control("seed persistence", "a supported seed survives into the plan", () => {
 /* Losing it further along the chain is caught too: a job minted from the plan must
    still carry it. */
 control("seed persistence into the job", "the seed survives compile -> job", () => {
-  const compiler = loadModified("generation-compiler.js", [
+  const compiler = loadModified("src/generation/generation-compiler.js", [
     ["      ...(isRecord(compiled.parameters) ? { extensions: { [modelId]: compiled.parameters } } : {}),",
       "      ...(isRecord(compiled.parameters) ? { extensions: { [modelId]: compiled.parameters } } : {}),\n      seed: undefined,"],
   ]);

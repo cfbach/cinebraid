@@ -39,7 +39,7 @@ const readLF = (file) => fs.readFileSync(file, "utf8").replace(/\r\n/g, "\n");
 
 const IN_SCOPE = [
   path.join(PUBLIC, "shared-media-disposition.js"),
-  path.join(ROOT, "fal-generation.js"),
+  path.join(ROOT, "src/generation/fal/fal-generation.js"),
   path.join(__dirname, "job-media-identity.js"),
 ];
 const inScope = (key) => IN_SCOPE.includes(key);
@@ -333,7 +333,7 @@ async function main() {
     id: "NC-H",
     defect: "renaming a file mints a generation ledger for a project that has never generated",
     mutatesModule: {
-      file: "fal-generation.js",
+      file: "src/generation/fal/fal-generation.js",
       edits: [[
         `      const ledger = readJobLedger(owner.dir);
       if (!ledger.exists) return { repaired: 0, jobs: 0, reason: "no-ledger" };
@@ -344,7 +344,7 @@ async function main() {
     },
     probe: async () => {
       const os = require("os");
-      const { registerFalGeneration } = require("../fal-generation");
+      const { registerFalGeneration } = require("../src/generation/fal/fal-generation");
       const sandbox = fs.mkdtempSync(path.join(os.tmpdir(), "cinebraid-c4-nch-"));
       try {
         const dir = path.join(sandbox, "quiet");
@@ -372,7 +372,7 @@ async function main() {
     id: "NC-I",
     defect: "an unreadable generation ledger throws out of the rename the approval depends on",
     mutatesModule: {
-      file: "fal-generation.js",
+      file: "src/generation/fal/fal-generation.js",
       edits: [[
         `    } catch (error) {
       return { repaired: 0, jobs: 0, reason: "failed", error: String(error?.message || error) };
@@ -386,7 +386,7 @@ async function main() {
     },
     probe: async () => {
       const os = require("os");
-      const { registerFalGeneration } = require("../fal-generation");
+      const { registerFalGeneration } = require("../src/generation/fal/fal-generation");
       const sandbox = fs.mkdtempSync(path.join(os.tmpdir(), "cinebraid-c4-nci-"));
       try {
         const dir = path.join(sandbox, "broken");

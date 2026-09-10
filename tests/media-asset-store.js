@@ -15,8 +15,8 @@ const fs = require("fs");
 const os = require("os");
 const path = require("path");
 
-const A = require("../media-assets");
-const S = require("../media-asset-store");
+const A = require("../src/media/media-assets");
+const S = require("../src/media/media-asset-store");
 
 const TEMP = fs.mkdtempSync(path.join(os.tmpdir(), "cinebraid-asset-store-"));
 let created = 0;

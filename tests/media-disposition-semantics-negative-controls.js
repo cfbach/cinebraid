@@ -41,7 +41,7 @@ const readLF = (file) => fs.readFileSync(file, "utf8").replace(/\r\n/g, "\n");
    the real code and the control would report a false pass. */
 const IN_SCOPE = [
   path.join(PUBLIC, "shared-media-disposition.js"),
-  path.join(ROOT, "media-asset-service.js"),
+  path.join(ROOT, "src/media/media-asset-service.js"),
   path.join(__dirname, "media-disposition-semantics.js"),
 ];
 const inScope = (key) => IN_SCOPE.includes(key);
@@ -327,7 +327,7 @@ async function main() {
     id: "NC-G",
     defect: "the identity projection answers for a file that is no longer on disk",
     mutatesModule: {
-      file: "media-asset-service.js",
+      file: "src/media/media-asset-service.js",
       edits: [[
         `      if (!storagePath || asset.storage.missing === true) continue;`,
         `      if (!storagePath) continue;`,
@@ -335,7 +335,7 @@ async function main() {
     },
     probe: () => {
       const os = require("os");
-      const Service = require("../media-asset-service");
+      const Service = require("../src/media/media-asset-service");
       const root = fs.mkdtempSync(path.join(os.tmpdir(), "cinebraid-c2-nc-"));
       try {
         fs.mkdirSync(path.join(root, "proj"), { recursive: true });

@@ -24,10 +24,10 @@ const fs = require("fs");
 const path = require("path");
 const vm = require("vm");
 
-const Compiler = require("../generation-compiler");
-const Contracts = require("../generation-contracts");
+const Compiler = require("../src/generation/generation-compiler");
+const Contracts = require("../src/generation/generation-contracts");
 const { deriveLipSync, lipSyncRequiredFrom, CINEBRAID_LIP_SYNC_LEVELS } = require("../public/shared-lip-sync");
-const { serializeH3PlanForFal, resolveH3FalCapability } = require("../fal-h3-backend");
+const { serializeH3PlanForFal, resolveH3FalCapability } = require("../src/generation/fal/fal-h3-backend");
 const H3 = require("../model-packs/minimax-h3");
 const F = require("./generation-compiler-fixture");
 const { render, buildFixture } = require("./render-harness");
@@ -35,7 +35,7 @@ const { render, buildFixture } = require("./render-harness");
 const { baseSpec, capabilityFor, modelIdFor, covered, state, FRAME_A } = F;
 
 const ROOT = path.join(__dirname, "..");
-const SERVER_SOURCE = fs.readFileSync(path.join(ROOT, "server.js"), "utf8");
+const SERVER_SOURCE = fs.readFileSync(path.join(ROOT, "src/server/server.js"), "utf8");
 
 /* server.js exports nothing and starts listening on load, so its import normalisers are
    reached the way every other suite in this repository reaches one: the declaration is
@@ -292,7 +292,7 @@ async function main() {
 
   /* NO DIALOGUE-ONLY SHORTCUT SURVIVES anywhere. The rule was written twice, so the
      regression checks for it twice rather than trusting that one repair found both. */
-  for (const file of ["server.js", "public/motion-sound-composer.js"]) {
+  for (const file of ["src/server/server.js", "public/motion-sound-composer.js"]) {
     /* Comments stripped first, so the prose explaining why the rule was removed is not
        mistaken for the rule. */
     const source = stripComments(fs.readFileSync(path.join(ROOT, file), "utf8"));

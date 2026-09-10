@@ -26,7 +26,7 @@ const ROOT = path.join(__dirname, "..");
 
 const { Kernel } = require("./authority-kernel-private");
 const { render, rawFixture, withCanon } = require("./render-harness.js");
-const seam = require(path.join(ROOT, "authority-write-seam"));
+const seam = require(path.join(ROOT, "src/authority/authority-write-seam"));
 
 let checks = 0;
 const notes = [];
@@ -576,12 +576,12 @@ const NCA_BREAK = `  const c = readConfig();
 async function withMutatedServer(anchor, replacement, body) {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), "cinebraid-nca-"));
   fs.mkdirSync(path.join(dir, "projects"), { recursive: true });
-  const source = fs.readFileSync(path.join(ROOT, "server.js"), "utf8");
+  const source = fs.readFileSync(path.join(ROOT, "src/server/server.js"), "utf8");
   const normalized = source.replace(/\r\n/g, "\n");
   assert.strictEqual(normalized.split(anchor).length - 1, 1,
     "probe receipt: NC-ACTIVE expected exactly one occurrence of its anchor in server.js. "
     + "The control is no longer mutating the live path and must be rewritten.");
-  const mutatedPath = path.join(ROOT, "server.__nca-mutated.js");
+  const mutatedPath = path.join(ROOT, "src/server/server.__nca-mutated.js");
   fs.writeFileSync(mutatedPath, normalized.split(anchor).join(replacement));
 
   const configPath = path.join(dir, "config.json");

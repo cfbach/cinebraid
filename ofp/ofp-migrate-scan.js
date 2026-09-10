@@ -22,7 +22,7 @@
    and `..` paths and is already tested. The rule existed; it was simply never
    applied to project.json. */
 
-const { isProjectRelativePath } = require("../media-assets");
+const { isProjectRelativePath } = require("../src/media/media-assets");
 const { keyLooksSecret, valueLooksSensitive } = require("./ofp-migrate-rules");
 const { makeMigrationDiagnostic } = require("./ofp-migrate-diagnostics");
 

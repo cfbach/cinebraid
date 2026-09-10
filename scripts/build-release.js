@@ -63,7 +63,7 @@ const shortCommit = commit.slice(0, 7);
 /* The version comes from the commit being packaged, not from the working tree,
    so `--ref` can never mislabel an archive. */
 const pkgAtRef = JSON.parse(gitText(["show", `${commit}:package.json`]));
-const identityModule = path.join(ROOT, "release-identity");
+const identityModule = path.join(ROOT, "src/server/release-identity");
 const { releaseIdentity } = require(identityModule);
 const identity = releaseIdentity(pkgAtRef.version);
 
@@ -163,11 +163,16 @@ const projectDirs = [...new Set(
 )].sort();
 assert.deepStrictEqual(projectDirs, ["cinebraid-sample"], `projects/ must contain only cinebraid-sample; found: ${projectDirs.join(", ") || "none"}`);
 
+const sourceFilesAtRef = gitText(["ls-tree", "-r", "--name-only", commit, "src/"])
+  .split(/\r?\n/).filter((file) => file.endsWith(".js"));
+
 const REQUIRED = [
   "package.json",
   "package-lock.json",
   "server.js",
-  "release-identity.js",
+  ...(sourceFilesAtRef.includes("src/server/server.js")
+    ? sourceFilesAtRef
+    : ["release-identity.js"]),
   "public/index.html",
   "data/model-profiles.json",
   "projects/cinebraid-sample/project.json",

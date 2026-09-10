@@ -17,10 +17,10 @@ const os = require("os");
 const path = require("path");
 
 const ROOT = path.join(__dirname, "..");
-const Service = require("../media-asset-service");
-const Store = require("../media-asset-store");
-const Indexer = require("../media-asset-indexer");
-const { clearMediaHashMemo, sha256Hex } = require("../media-hash");
+const Service = require("../src/media/media-asset-service");
+const Store = require("../src/media/media-asset-store");
+const Indexer = require("../src/media/media-asset-indexer");
+const { clearMediaHashMemo, sha256Hex } = require("../src/media/media-hash");
 
 const PNG = Buffer.from(
   "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg==",
@@ -750,7 +750,7 @@ async function main() {
     assert.strictEqual("candidateId" in after.shots[0].candidateFiles[0], false, "23 · no candidateId exists");
     assert.strictEqual("assetId" in after.shots[0].candidateFiles[0], false,
       "24 · and no assetId was propagated into a legacy record — that is C2");
-    assert(!/candidateId/.test(readLF("media-asset-service.js") + readLF("media-asset-indexer.js")),
+    assert(!/candidateId/.test(readLF("src/media/media-asset-service.js") + readLF("src/media/media-asset-indexer.js")),
       "23 · and none is minted anywhere in this phase");
 
     /* Legacy-link audit case 6: renamed bytes while the old filename row remains.
@@ -771,7 +771,7 @@ async function main() {
     note("22-25 · after a backfill, an explicit verification and a reconciled rename, project.json is byte-identical, every approval pointer is unchanged, and no candidateId or assetId was written into a legacy record");
 
     /* The service is structurally incapable of writing a project. */
-    const serviceSource = readLF("media-asset-service.js");
+    const serviceSource = readLF("src/media/media-asset-service.js");
     for (const forbidden of ["writeFileSync", "writeProject", "atomicWriteJson", "renameSync", "unlinkSync"])
       assert(!new RegExp(`\\b${forbidden}\\s*\\(`).test(serviceSource),
         `media-asset-service.js must not call ${forbidden} — it schedules and reads, and the store is the only writer`);
@@ -796,7 +796,7 @@ async function main() {
        prose as the durability discipline it shares, which is a reference to be kept,
        not a dependency to be caught. What must not exist is an import. */
     const stripComments = (source) => source.replace(/\/\*[\s\S]*?\*\//g, "").replace(/(^|[^:])\/\/.*$/gm, "$1");
-    for (const rel of ["fal-generation.js", "generation-job-store.js", "generation-lifecycle.js", "automation-runs.js", "public/library-tools.js", "public/review-provenance.js"]) {
+    for (const rel of ["src/generation/fal/fal-generation.js", "src/generation/generation-job-store.js", "src/generation/generation-lifecycle.js", "src/automation/automation-runs.js", "public/library-tools.js", "public/review-provenance.js"]) {
       const source = stripComments(readLF(rel));
       for (const moduleName of ["media-asset-service", "media-assets", "media-asset-store", "media-asset-indexer", "media-asset-verify"])
         assert(!new RegExp(`require\\(["'.\\/]*${moduleName}["']\\)`).test(source),
@@ -837,7 +837,7 @@ async function main() {
     }
     assert.deepStrictEqual(attempts, [], "30 · activation, indexing, hashing and reconciliation make no outbound request of any kind");
     /* And structurally: the ledger pipeline imports fs, path and crypto, nothing else. */
-    for (const rel of ["media-assets.js", "media-asset-store.js", "media-asset-indexer.js", "media-asset-verify.js", "media-asset-service.js", "media-hash.js"]) {
+    for (const rel of ["src/media/media-assets.js", "src/media/media-asset-store.js", "src/media/media-asset-indexer.js", "src/media/media-asset-verify.js", "src/media/media-asset-service.js", "src/media/media-hash.js"]) {
       const requires = [...readLF(rel).matchAll(/require\("([^"]+)"\)/g)].map((m) => m[1]);
       for (const dependency of requires)
         assert(dependency.startsWith("./") || ["fs", "path", "crypto"].includes(dependency),

@@ -30,7 +30,7 @@ const { spawn } = require("child_process");
 const { ROOT, freePort } = require("./fixtures/mock-civitai");
 
 const TEMP = fs.mkdtempSync(path.join(os.tmpdir(), "cinebraid-ui-nc-"));
-const SERVER = path.join(ROOT, "server.js");
+const SERVER = path.join(ROOT, "src/server/server.js");
 const SHIPPED = fs.readFileSync(SERVER, "utf8").replace(/\r\n/g, "\n");
 const SCRATCH = new Set();
 
@@ -65,7 +65,7 @@ function applyMutations(source, edits) {
 let scratchCounter = 0;
 async function runServer(source, { configPath, projectsRoot }, body) {
   const isShipped = source === SHIPPED;
-  const file = isShipped ? SERVER : path.join(ROOT, `server-ui-control-${process.pid}-${scratchCounter++}.tmp`);
+  const file = isShipped ? SERVER : path.join(path.dirname(SERVER), `server-ui-control-${process.pid}-${scratchCounter++}.tmp`);
   if (!isShipped) { fs.writeFileSync(file, source); SCRATCH.add(file); }
   const port = await freePort();
   const child = spawn(process.execPath, [file], {

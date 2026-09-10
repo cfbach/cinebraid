@@ -16,7 +16,7 @@
 const assert = require("assert");
 const fs = require("fs");
 const path = require("path");
-const A = require("../media-assets");
+const A = require("../src/media/media-assets");
 
 const ROOT = path.join(__dirname, "..");
 
@@ -108,7 +108,7 @@ assert.notStrictEqual(
 );
 /* No writer for dismissedAt exists in Phase 2a — adding one would be a new user
    action, which is a behaviour change. */
-const productionSources = ["media-assets.js", "media-asset-store.js", "media-hash.js"]
+const productionSources = ["src/media/media-assets.js", "src/media/media-asset-store.js", "src/media/media-hash.js"]
   .map((name) => fs.readFileSync(path.join(ROOT, name), "utf8")).join("\n");
 assert(
   !/dismissedAt\s*[=:]\s*(?!null)/.test(productionSources.replace(/\/\*[\s\S]*?\*\//g, "")),

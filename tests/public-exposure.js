@@ -37,7 +37,7 @@ const read = (rel) => lf(fs.readFileSync(path.join(ROOT, rel), "utf8"));
 const exists = (rel) => fs.existsSync(path.join(ROOT, rel));
 
 const pkg = JSON.parse(read("package.json"));
-const { releaseIdentity } = require(path.join(ROOT, "release-identity"));
+const { releaseIdentity } = require(path.join(ROOT, "src/server/release-identity"));
 const scanner = require(path.join(ROOT, "scripts", "scan-secrets"));
 
 /* The commit whose whole reachable history was independently audited for public
@@ -247,7 +247,7 @@ function testReadmeTruth() {
   assert(/ffmpeg/i.test(readme), "README must say what ffmpeg is for");
   assert(/optional/i.test(readme.slice(readme.search(/ffmpeg/i) - 400, readme.search(/ffmpeg/i) + 400)),
     "README must say ffmpeg is optional");
-  assert(execFileSync("node", ["-e", "process.stdout.write(String(require('fs').readFileSync('server.js','utf8').includes('spawnSync(\"ffmpeg\"')))"], { cwd: ROOT, encoding: "utf8" }) === "true",
+  assert(execFileSync("node", ["-e", "process.stdout.write(String(require('fs').readFileSync('src/server/server.js','utf8').includes('spawnSync(\"ffmpeg\"')))"], { cwd: ROOT, encoding: "utf8" }) === "true",
     "server.js no longer probes ffmpeg; the README claim about it is now the stale one");
 
   const deps = Object.keys(pkg.dependencies || {});

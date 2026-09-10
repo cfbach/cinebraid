@@ -55,7 +55,7 @@ const { serializeCanonical } = require("../ofp/ofp-serialize");
 const { parseJsonStrict } = require("../ofp/ofp-json");
 const { previewLegacyMigration } = require("../ofp/ofp-migrate");
 const { ruleById } = require("../ofp/ofp-migrate-rules");
-const { deterministicHealth } = require("../agent-suite");
+const { deterministicHealth } = require("../src/assistant/agent-suite");
 
 const AT = "2026-08-10T00:00:00Z";
 const LEGACY_FIXTURE = path.join(__dirname, "fixtures", "ofp-legacy", "continuity-state-bindings.json");
@@ -613,8 +613,8 @@ function extractFunction(source, name) {
 
 function authoritySection(options = {}) {
   const source = options.mutateSource
-    ? String(options.mutateSource(readText(path.join(ROOT, "server.js"))))
-    : readText(path.join(ROOT, "server.js"));
+    ? String(options.mutateSource(readText(path.join(ROOT, "src/server/server.js"))))
+    : readText(path.join(ROOT, "src/server/server.js"));
   const temp = fs.mkdtempSync(path.join(os.tmpdir(), "cinebraid-authority-"));
   try {
     for (const folder of ["anchors", "plates", "props", "vehicles", "shots"]) fs.mkdirSync(path.join(temp, folder), { recursive: true });
@@ -708,7 +708,7 @@ function motionGateSection() {
     "case 20: and clears when both endpoints are approved — a declared state change does not open or close it");
 
   /* The gate reads approvals. It must not have acquired a continuity input. */
-  const agentSource = readText(path.join(ROOT, "agent-suite.js"));
+  const agentSource = readText(path.join(ROOT, "src/assistant/agent-suite.js"));
   const gate = agentSource.slice(agentSource.indexOf('if (c.kind === "flf")'), agentSource.indexOf('reason: "FLF requires approved first and last frames."'));
   ok(!/continuity|resolveDeclaredStateId|StateSelections/i.test(gate),
     "case 20: nothing in this batch may route the motion go/no-go decision through a continuity engine");

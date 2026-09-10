@@ -164,7 +164,7 @@ function freshSuite() {
    disk. It has to be asked for after the patch, every time. */
 function freshPromptEngine() {
   dropCaches();
-  return require("../prompt-engine");
+  return require("../src/generation/prompt-engine");
 }
 
 async function control({ id, defect, files, probe, guard, expect }) {
@@ -198,7 +198,7 @@ async function nc1() {
     id: "NC-M1",
     expect: /the declared travelling walk must remain the principal action/,
     defect: "the subject guard is removed, so an untouched control puts a stillness directive in front of the declared walk",
-    files: { "prompt-engine.js": [SUBJECT_GUARD] },
+    files: { "src/generation/prompt-engine.js": [SUBJECT_GUARD] },
     probe: async (suite) => {
       const result = suite.compileSwamp(suite.blankPlan());
       assert.ok(/^CH-REX still/.test(suite.firstBeat(result)),
@@ -214,7 +214,7 @@ async function nc2() {
     id: "NC-M2",
     expect: /a prop nobody directed must contribute no beat/,
     defect: "the prop guard is removed, so a prop nobody directed contributes a beat",
-    files: { "prompt-engine.js": [PROP_GUARD] },
+    files: { "src/generation/prompt-engine.js": [PROP_GUARD] },
     probe: async (suite) => {
       const result = suite.compileSwamp(suite.blankPlan({ subjects: [] }));
       assert.ok(result.beats.some((beat) => beat.startsWith(suite.CHAIR)),
@@ -304,7 +304,7 @@ async function nc6() {
     expect: /must not overwrite a declared camera movement/,
     defect: "the camera guard is removed, so an untouched camera row overwrites a camera movement the shot had established",
     files: {
-      "prompt-engine.js": [[
+      "src/generation/prompt-engine.js": [[
         `    if (cameraSays("move")) {`,
         `    if (true) {`,
       ]],
@@ -325,7 +325,7 @@ async function nc7() {
     expect: /must not add a hold-the-final-state requirement/,
     defect: "the timing guard is removed, so an untouched timing row requires a shot that ends mid-stride to settle and hold",
     files: {
-      "prompt-engine.js": [[
+      "src/generation/prompt-engine.js": [[
         `    if (timingSays("holdEnd") && timing.holdEnd) {`,
         `    if (timing.holdEnd) {`,
       ]],
@@ -535,7 +535,7 @@ async function nc14() {
     expect: /an untouched camera move must not publish itself beside a declared intensity/,
     defect: "the camera guard asks per row again, so setting only the intensity publishes the untouched move as locked-off",
     files: {
-      "prompt-engine.js": [[
+      "src/generation/prompt-engine.js": [[
         `    if (cameraSays("move")) {`,
         `    if (declaration.camera.declared) {`,
       ]],
@@ -558,7 +558,7 @@ async function nc15() {
     expect: /an untouched holdEnd must not publish itself beside a declared pacing/,
     defect: "the timing guard asks per row again, so setting only the pacing requires settle-and-hold",
     files: {
-      "prompt-engine.js": [[
+      "src/generation/prompt-engine.js": [[
         `    if (timingSays("holdEnd") && timing.holdEnd) {`,
         `    if (declaration.timing.declared && timing.holdEnd) {`,
       ]],
@@ -581,7 +581,7 @@ async function nc16() {
     expect: /only the declared field may compile/,
     defect: "the subject clause asks per row again, so an end position publishes the untouched action beside it",
     files: {
-      "prompt-engine.js": [[
+      "src/generation/prompt-engine.js": [[
         `        [" ", subjectSays("action") ? normalizedLabel(item.action || "still") : ""],`,
         `        [" ", reading.declared ? normalizedLabel(item.action || "still") : ""],`,
       ]],
@@ -629,7 +629,7 @@ async function nc18() {
     expect: /a declared audio mode must survive the motion brief/,
     defect: "the motion brief recomputes the audio mode unconditionally, so a declared lip-sync becomes generate-voice",
     files: {
-      "prompt-engine.js": [[
+      "src/generation/prompt-engine.js": [[
         `  const audioMode = declaredAudioMode ? cleanText(out.audio?.mode) || derivedMode : derivedMode;`,
         `  const audioMode = derivedMode;`,
       ]],
@@ -657,7 +657,7 @@ async function nc19() {
     expect: /POST \/api\/prompt\/compile replaced a declared lip-sync mode/,
     defect: "the compile route replaces a declared lip-sync mode with a derived one",
     files: {
-      "prompt-engine.js": [[
+      "src/generation/prompt-engine.js": [[
         `  const audioMode = declaredAudioMode ? cleanText(out.audio?.mode) || derivedMode : derivedMode;`,
         `  const audioMode = derivedMode;`,
       ]],
@@ -686,7 +686,7 @@ async function nc20() {
     expect: /no longer belongs to this shot still directed it|orphan reached the compiled prompt/,
     defect: "the current-shot membership boundary is removed, so a subject dropped from the cast keeps compiling",
     files: {
-      "prompt-engine.js": [[
+      "src/generation/prompt-engine.js": [[
         `    const isMember = (id) => !membershipKnown || memberIds.has(cleanText(id));`,
         `    const isMember = () => true;`,
       ]],
@@ -817,7 +817,7 @@ async function nc25() {
     expect: /the filmmaker's narrative must outrank a generated unit label/,
     defect: "buildContext reads a generated unit title as the shot description, ahead of the authored narrative",
     files: {
-      "prompt-engine.js": [[
+      "src/generation/prompt-engine.js": [[
         `        ? MotionIntent.motionUnitAuthoredDirection(segment) || shotNarrative.text || ""`,
         `        ? segment.motionPrompt || segment.note || segment.title || shotNarrative.text || ""`,
       ]],
@@ -885,7 +885,7 @@ async function nc26() {
    the claim: a control that leaves a byte behind turns the next suite green or red for
    reasons nobody can see, and `git checkout` is not an acceptable way to find out. */
 const PATCHED_FILES = [
-  "prompt-engine.js",
+  "src/generation/prompt-engine.js",
   "public/shared-motion-intent.js",
   "public/v607-composer.js",
   "public/motion-sound-composer.js",

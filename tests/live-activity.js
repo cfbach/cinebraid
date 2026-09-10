@@ -21,7 +21,7 @@ const creation = read("public/creation-studio.js");
 const review = read("public/review.js");
 const provenance = read("public/review-provenance.js");
 const sceneReview = read("public/scene-review.js");
-const server = read("server.js");
+const server = read("src/server/server.js");
 const audioBuilder = read("public/audio-prompt-builder.js");
 
 assert(index.includes('id="automation-activity-toggle"'), "topbar must expose the global activity button");

@@ -114,9 +114,9 @@ function staleRuns() {
 }
 
 async function scenario(modules = {}) {
-  const { registerFalGeneration } = modules.falGeneration || require(path.join(ROOT, "fal-generation"));
-  const { registerAutomationRuns } = modules.automation || require(path.join(ROOT, "automation-runs"));
-  const { createGenerationPoller } = modules.poller || require(path.join(ROOT, "generation-poller"));
+  const { registerFalGeneration } = modules.falGeneration || require(path.join(ROOT, "src/generation/fal/fal-generation"));
+  const { registerAutomationRuns } = modules.automation || require(path.join(ROOT, "src/automation/automation-runs"));
+  const { createGenerationPoller } = modules.poller || require(path.join(ROOT, "src/generation/generation-poller"));
 
   const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "cinebraid-reaper-ctrl-"));
   const dir = path.join(tmp, "projects", "reaper-project");
@@ -509,7 +509,7 @@ async function main() {
     "a submission reachable from the sweep",
     "the reaper never submits a provider request",
     () => guardTheSweepNeverSubmits({
-      poller: loadModified("generation-poller.js", [[
+      poller: loadModified("src/generation/generation-poller.js", [[
         "            result = await recovery.collect(owner, job.id, { markFailureOnError: false, unattended: true });",
         "            await fetch(String(job.statusUrl).replace(/\\/status\\/.*$/, \"/openai/gpt-image-2\"), {\n"
         + "              method: \"POST\", headers: { \"content-type\": \"application/json\" }, body: JSON.stringify({ prompt: job.prompt }),\n"
@@ -524,7 +524,7 @@ async function main() {
     "eligibility that does not require a provider handle",
     "only jobs the provider demonstrably took are asked about",
     () => guardOnlyAskableJobsAreAsked({
-      poller: loadModified("generation-poller.js", [[
+      poller: loadModified("src/generation/generation-poller.js", [[
         '  if (!Lifecycle.providerRequestId(job)) return refuse("no-provider-request-id");\n'
         + '  if (!String(job.statusUrl || "")) return refuse("no-status-handle");',
         "",
@@ -537,7 +537,7 @@ async function main() {
     "collections that no longer take their turn",
     "one delivery even when a tab and the sweep observe the same job at once",
     () => guardOneDeliveryUnderOverlap({
-      falGeneration: loadModified("fal-generation.js", [[
+      falGeneration: loadModified("src/generation/fal/fal-generation.js", [[
         "    const next = previous.catch(() => {}).then(run);\n    jobOperationChains.set(key, next.catch(() => {}));",
         "    const next = Promise.resolve().then(run);\n    jobOperationChains.set(key, next.catch(() => {}));",
       ]]),
@@ -550,7 +550,7 @@ async function main() {
     "a background poll that records a provider failure it never received",
     "a failed status request leaves the durable row untouched",
     () => guardAFailedPollWritesNothing({
-      falGeneration: loadModified("fal-generation.js", [[
+      falGeneration: loadModified("src/generation/fal/fal-generation.js", [[
         "    const markFailureOnError = options.markFailureOnError !== false;",
         "    const markFailureOnError = true;",
       ]]),
@@ -562,7 +562,7 @@ async function main() {
     "abandonment that forgets a run mid-claim has not claimed yet",
     "a run that has never recorded a runner is left alone",
     () => guardStaleRunReconciliation({
-      automation: loadModified("automation-runs.js", [[
+      automation: loadModified("src/automation/automation-runs.js", [[
         '  if (!String(run?.runnerId || "")) return false;',
         "",
       ]]),
@@ -574,7 +574,7 @@ async function main() {
     "a reconciliation that leaves the run claiming to be running",
     "an abandoned run stops claiming to be running",
     () => guardStaleRunReconciliation({
-      automation: loadModified("automation-runs.js", [[
+      automation: loadModified("src/automation/automation-runs.js", [[
         '        status: "interrupted",\n        stage: "Interrupted — resume required",',
         '        stage: "Interrupted — resume required",',
       ]]),
@@ -586,7 +586,7 @@ async function main() {
     "a recovery notice that is never claimed",
     "the notice is announced once, to the window that opens",
     () => guardTheRecoveryNoticeIsToldOnce({
-      falGeneration: loadModified("fal-generation.js", [[
+      falGeneration: loadModified("src/generation/fal/fal-generation.js", [[
         "    if (claim) unattendedCollections.delete(slug);",
         "",
       ]]),
@@ -611,7 +611,7 @@ async function main() {
     "a recovery notice that claims no CineBraid window was open",
     "the notice names background recovery and claims nothing about what was open",
     () => guardTheNoticeClaimsOnlyBackgroundRecovery({
-      falGeneration: loadModified("fal-generation.js", [[
+      falGeneration: loadModified("src/generation/fal/fal-generation.js", [[
         '      message: `Collected ${results} result${results === 1 ? "" : "s"} through background recovery.`,',
         '      message: `Collected ${results} result${results === 1 ? "" : "s"} while no CineBraid window was open.`,',
       ]]),
@@ -635,7 +635,7 @@ async function main() {
     "a project write taken from a snapshot instead of a re-reading turn",
     "two different jobs of one project both keep their candidate rows",
     () => guardDifferentJobsBothSurvive({
-      falGeneration: loadModified("fal-generation.js", [[
+      falGeneration: loadModified("src/generation/fal/fal-generation.js", [[
         "    if (!(ownerProject(owner).shots || []).some((item) => String(item.id) === String(job.shotId)))\n"
         + '      throw new Error("Shot no longer exists.");\n'
         + "    /* DOWNLOAD PHASE — see ingestEntity. */\n"
@@ -659,7 +659,7 @@ async function main() {
     "a shutdown that abandons a collection already in flight",
     "shutdown waits for a collection that has already begun",
     () => guardShutdownWaitsForCollection({
-      poller: loadModified("generation-poller.js", [[
+      poller: loadModified("src/generation/generation-poller.js", [[
         "    const inFlight = active;\n    if (!inFlight) return { waited: false, timedOut: false };",
         "    const inFlight = null;\n    if (!inFlight) return { waited: false, timedOut: false };",
       ]]),
@@ -673,7 +673,7 @@ async function main() {
     "a stale-lease correction that claims the browser window stopped",
     "no durable or console surface claims unobservable browser state",
     () => guardNoUnobservableBrowserClaim({
-      automation: loadModified("automation-runs.js", [[
+      automation: loadModified("src/automation/automation-runs.js", [[
         '      const message = "This run lost its active runner: its lease expired with no heartbeat. "',
         '      const message = "The window driving this run stopped and its lease expired with no heartbeat. "',
       ]]),

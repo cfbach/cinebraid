@@ -36,7 +36,7 @@ const vm = require("vm");
 const express = require("express");
 
 const Module = require("module");
-const { registerFalGeneration } = require("../fal-generation");
+const { registerFalGeneration } = require("../src/generation/fal/fal-generation");
 
 /* FAULT INJECTION FOR THE DURABILITY SEAMS.
  *
@@ -47,7 +47,7 @@ const { registerFalGeneration } = require("../fal-generation");
  * string handed to Module._compile, and the anchor is proved unique so a control cannot
  * silently patch nothing. */
 function loadRouteWithFault(edits) {
-  const file = path.join(__dirname, "..", "fal-generation.js");
+  const file = path.join(__dirname, "..", "src/generation/fal/fal-generation.js");
   let code = fs.readFileSync(file, "utf8").replace(/\r\n/g, "\n");
   for (const [from, to] of edits) {
     assert(code.includes(from), `durability fault anchor no longer exists in fal-generation.js:\n${from}`);
@@ -62,7 +62,7 @@ function loadRouteWithFault(edits) {
 }
 const Presentation = require("../public/shared-generation-presentation");
 const BuildHistory = require("../public/shared-build-history");
-const { imageControlCapability, IMAGE_MODEL_ID } = require("../image-execution");
+const { imageControlCapability, IMAGE_MODEL_ID } = require("../src/generation/image-execution");
 const Options = require("../public/shared-generation-options");
 const CoverageOwnership = require("../public/shared-coverage");
 const { referenceAspectLabel } = require("../public/shared-aspect");
@@ -78,7 +78,7 @@ const { referenceAspectLabel } = require("../public/shared-aspect");
 const coverageAspectFor = (body) => (String(body?.coverageJobType || "") === "sheet"
   ? (String(body?.coverageSheetType || "") === "expressions" ? "4:3" : "16:9")
   : referenceAspectLabel(String(body?.entityList || "")));
-const Lifecycle = require("../generation-lifecycle");
+const Lifecycle = require("../src/generation/generation-lifecycle");
 const { addFramePromptBuild, baseSpec, buildRef, REF_IDENTITY } = require("./image-execution-fixture");
 const { declaredGenerationBody } = require("./generation-request-fixture");
 
@@ -2695,7 +2695,7 @@ async function main() {
       /* THE REPRODUCTION: the run restates its own authorisation through sanitizeRun(),
          which is the one function every run writer on that route goes through — the
          progress PUT, the lease, the heartbeat and the retry all merge through it. */
-      const { registerAutomationRuns } = require("../automation-runs");
+      const { registerAutomationRuns } = require("../src/automation/automation-runs");
       const runsApp = express();
       runsApp.use(express.json({ limit: "8mb" }));
       registerAutomationRuns(runsApp, {
@@ -2753,7 +2753,7 @@ async function main() {
       const RUNNER = "runner-1";
       /* The automation half needs the run registry mounted, because the automation permit
          is minted by the route the runner ALREADY calls before every paid step. */
-      const { registerAutomationRuns } = require("../automation-runs");
+      const { registerAutomationRuns } = require("../src/automation/automation-runs");
       const runsApp = express();
       runsApp.use(express.json({ limit: "8mb" }));
       registerAutomationRuns(runsApp, {

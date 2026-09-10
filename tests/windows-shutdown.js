@@ -125,7 +125,7 @@ function nodePids() {
 /* ---------- static guarantees ---------- */
 
 function testServerRetainsListenerAndHandlesSignals() {
-  const source = fs.readFileSync(path.join(ROOT, "server.js"), "utf8");
+  const source = fs.readFileSync(path.join(ROOT, "src/server/server.js"), "utf8");
   assert(/const httpServer = app\.listen\(/.test(source),
     "server.js must keep the app.listen() handle so the listener can be closed");
   assert(/httpServer\.close\(/.test(source),

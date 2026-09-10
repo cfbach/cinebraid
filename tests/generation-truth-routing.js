@@ -50,8 +50,8 @@ const vm = require("vm");
 
 const ROOT = path.join(__dirname, "..");
 const { render, buildFixture } = require("./render-harness");
-const Options = require("../generation-options");
-const PromptEngine = require("../prompt-engine");
+const Options = require("../src/generation/generation-options");
+const PromptEngine = require("../src/generation/prompt-engine");
 
 const readLF = (file) => fs.readFileSync(path.join(ROOT, file), "utf8").replace(/\r\n/g, "\n");
 const notes = [];

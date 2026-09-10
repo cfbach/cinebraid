@@ -25,7 +25,7 @@ const fs = require('fs');
 const path = require('path');
 const vm = require('vm');
 const { render, buildFixture } = require('./render-harness');
-const PromptEngine = require('../prompt-engine');
+const PromptEngine = require('../src/generation/prompt-engine');
 const Aspect = require('../public/shared-aspect');
 
 const ROOT = path.join(__dirname, '..');

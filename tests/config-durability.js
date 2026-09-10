@@ -73,7 +73,7 @@ function newCase() {
    returns { ok, value } or { ok:false, code, message }. */
 function drive(configPath, expression) {
   const script = `
-    const c = require(${JSON.stringify(path.join(ROOT, "config.js"))});
+    const c = require(${JSON.stringify(path.join(ROOT, "src/server/config.js"))});
     try { console.log("@@" + JSON.stringify({ ok: true, value: (${expression}) })); }
     catch (error) { console.log("@@" + JSON.stringify({ ok: false, code: error?.code || "", message: String(error?.message || error) })); }`;
   const out = execFileSync(process.execPath, ["-e", script], {

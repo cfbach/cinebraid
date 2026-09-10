@@ -2,7 +2,7 @@ const assert = require('assert');
 const fs = require('fs');
 const path = require('path');
 const vm = require('vm');
-const PromptEngine = require('../prompt-engine');
+const PromptEngine = require('../src/generation/prompt-engine');
 const { render, buildFixture, withCanon } = require('./render-harness');
 
 function contextFixture() {
@@ -154,8 +154,8 @@ function testSourceIntegration() {
   const root = path.join(__dirname, '..');
   const ui = fs.readFileSync(path.join(root, 'public', 'creation-studio.js'), 'utf8');
   const client = fs.readFileSync(path.join(root, 'public', 'fal-generation.js'), 'utf8');
-  const server = fs.readFileSync(path.join(root, 'fal-generation.js'), 'utf8');
-  const backend = fs.readFileSync(path.join(root, 'fal-h3-backend.js'), 'utf8');
+  const server = fs.readFileSync(path.join(root, 'src/generation/fal/fal-generation.js'), 'utf8');
+  const backend = fs.readFileSync(path.join(root, 'src/generation/fal/fal-h3-backend.js'), 'utf8');
   const motionComposer = fs.readFileSync(path.join(root, 'public', 'motion-sound-composer.js'), 'utf8');
   assert(ui.includes('MINIMAX H3 · MULTI-FRAME INPUT'));
   assert(ui.includes('setH3KeyframeEnabled'));

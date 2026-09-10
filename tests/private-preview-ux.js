@@ -227,7 +227,7 @@ async function main() {
   const app = fs.readFileSync(path.join(ROOT, 'public', 'app.js'), 'utf8');
   const styles = fs.readFileSync(path.join(ROOT, 'public', 'styles.css'), 'utf8');
   const client = fs.readFileSync(path.join(ROOT, 'public', 'fal-generation.js'), 'utf8');
-  const server = fs.readFileSync(path.join(ROOT, 'server.js'), 'utf8');
+  const server = fs.readFileSync(path.join(ROOT, 'src/server/server.js'), 'utf8');
   assert(app.includes('restoreTrashedProject') && app.includes('Recently deleted projects'), 'project management must restore recoverable trash');
   assert(styles.includes('--media-well') && styles.includes('#app[data-surf="light"]{--media-well:'), 'dark and light themes must define media-well colors');
   assert(styles.includes('.modal-box:has(.h3-generation-modal)') && styles.includes('.h3-generation-scroll'), 'H3 modal must use a bounded shell with an internal scroll area');

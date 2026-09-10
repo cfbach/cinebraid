@@ -33,7 +33,7 @@ const vm = require("vm");
 
 const ROOT = path.join(__dirname, "..");
 const Disposition = require("../public/shared-media-disposition");
-const MediaAssetService = require("../media-asset-service");
+const MediaAssetService = require("../src/media/media-asset-service");
 const { render, buildFixture } = require("./render-harness");
 
 const ID_A = "asset-" + "a".repeat(32);

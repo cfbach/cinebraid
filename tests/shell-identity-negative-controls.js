@@ -23,7 +23,7 @@ const path = require("path");
 
 const ROOT = path.join(__dirname, "..");
 const rules = require("./shell-identity");
-const { releaseIdentity } = require("../release-identity");
+const { releaseIdentity } = require("../src/server/release-identity");
 
 const identity = releaseIdentity(JSON.parse(fs.readFileSync(path.join(ROOT, "package.json"), "utf8")).version);
 const toLF = (text) => String(text).split("\r\n").join("\n");
@@ -137,7 +137,7 @@ async function main() {
   await control("N6 the development fallback invents an identifier", () => {
     const temp = fs.mkdtempSync(path.join(os.tmpdir(), "cinebraid-build-control-"));
     try {
-      const broken = mutate(fs.readFileSync(path.join(ROOT, "build-identity.js"), "utf8"),
+      const broken = mutate(fs.readFileSync(path.join(ROOT, "src/server/build-identity.js"), "utf8"),
         `    label: "Development build",`,
         `    label: "Build 0000000",`,
         "N6");

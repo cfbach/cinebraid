@@ -13,7 +13,7 @@
  *   bytes at exactly the moment nothing can re-derive it.
  */
 const assert = require("assert");
-const A = require("../media-assets");
+const A = require("../src/media/media-assets");
 
 /* ---- 1. format ---- */
 const sample = A.mintAssetId();

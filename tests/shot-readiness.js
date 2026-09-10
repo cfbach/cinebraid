@@ -1011,7 +1011,7 @@ function requirementOf(row, needle) {
    HAD TO DUPLICATE.
    =========================================================================== */
 {
-  const server = fs.readFileSync(path.join(ROOT, "server.js"), "utf8").replace(/\r\n/g, "\n");
+  const server = fs.readFileSync(path.join(ROOT, "src/server/server.js"), "utf8").replace(/\r\n/g, "\n");
 
   /* EVERY COPY OF THE ENTITY MEDIA MAP MUST SAY THE SAME THING.
 
@@ -1143,7 +1143,7 @@ async function renderedSurfaceSection() {
 
   /* THE ROUTE'S SHAPE, ASSERTED AGAINST THE SHIPPED SOURCE. A machine consumer must
      not be able to read an all-clear out of the legacy projection. */
-  const server = fs.readFileSync(path.join(ROOT, "server.js"), "utf8").replace(/\r\n/g, "\n");
+  const server = fs.readFileSync(path.join(ROOT, "src/server/server.js"), "utf8").replace(/\r\n/g, "\n");
   const route = server.slice(server.indexOf('app.get("/api/project/readiness"'), server.indexOf('app.put("/api/projects/:slug/project"'));
   ok(route.includes("readiness: shotReadinessProjection(project),"), "the route returns the canonical verdict");
   ok(route.includes("isReadinessVerdict: false,"), "and marks the legacy projection as not one, in the payload");

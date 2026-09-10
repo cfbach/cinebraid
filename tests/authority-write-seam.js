@@ -8,7 +8,7 @@ const vm = require("vm");
 const { Kernel, Private } = require("./authority-kernel-private");
 const Authority = require("../public/shared-production-authority");
 const { installTestManualActionSource } = require("./authority-test-gesture");
-const { WRITE_CLASSES, createAuthorityWriteSeam, canonComparison } = require("../authority-write-seam");
+const { WRITE_CLASSES, createAuthorityWriteSeam, canonComparison } = require("../src/authority/authority-write-seam");
 
 const ROOT = path.join(__dirname, "..");
 const MANUAL = installTestManualActionSource(Kernel);
@@ -141,8 +141,8 @@ scenario("A-22", () => {
   assert(canonComparison(before, after).requiresTransition, "same value/identity at a different home is a tuple delta");
 });
 scenario("B-09", () => {
-  const seamSource = fs.readFileSync(path.join(ROOT, "authority-write-seam.js"), "utf8");
-  const serverSource = fs.readFileSync(path.join(ROOT, "server.js"), "utf8");
+  const seamSource = fs.readFileSync(path.join(ROOT, "src/authority/authority-write-seam.js"), "utf8");
+  const serverSource = fs.readFileSync(path.join(ROOT, "src/server/server.js"), "utf8");
   const route = serverSource.slice(serverSource.indexOf('app.post("/api/projects/:slug/canon-transition"'), serverSource.indexOf('app.get("/api/projects/:slug/backups"'));
   assert(!/\bawait\b/.test(seamSource.slice(seamSource.indexOf("function persistProjectSuccessor"))));
   assert(!/\bawait\b/.test(route));
@@ -273,11 +273,11 @@ scenario("E-02", () => {
   assert.strictEqual(Authority.AUTHORITY_LEDGER_KEY, undefined);
 });
 scenario("E-06", () => {
-  const server = fs.readFileSync(path.join(ROOT, "server.js"), "utf8");
+  const server = fs.readFileSync(path.join(ROOT, "src/server/server.js"), "utf8");
   assert(server.includes('Object.prototype.hasOwnProperty.call(project, "productionAuthority")'));
 });
 scenario("E-07", () => {
-  const server = fs.readFileSync(path.join(ROOT, "server.js"), "utf8");
+  const server = fs.readFileSync(path.join(ROOT, "src/server/server.js"), "utf8");
   assert.strictEqual((server.match(/atomicWriteJson\(/g) || []).length, 2, "definition plus enrolled boundary call only");
   assert(!/fs\.(?:writeFileSync|copyFileSync|cpSync|renameSync)\([^\n]*["']project\.json["']/.test(server));
 });
@@ -344,8 +344,8 @@ scenario("H-01", () => {
    declared. For both shapes the second layer answered "nothing here" about an
    edge the kernel reads, and every green test was measuring the stripper. */
 
-const Seam = require("../authority-write-seam");
-const F6_SEAM_FILE = path.join(ROOT, "authority-write-seam.js");
+const Seam = require("../src/authority/authority-write-seam");
+const F6_SEAM_FILE = path.join(ROOT, "src/authority/authority-write-seam.js");
 
 /* Rebuild the seam from (possibly defective) source, in its own realm, so a
    negative control can reintroduce the old code and watch the real behaviour —
@@ -446,7 +446,7 @@ function proveEdgeRefused(seamModule, project, edgeKey, expectedValue, refusedKe
 /* The OTHER layer, lifted out of server.js so this suite can run it and bypass
    it deliberately instead of assuming what it does. */
 function loadBuilderStripper() {
-  const server = fs.readFileSync(path.join(ROOT, "server.js"), "utf8");
+  const server = fs.readFileSync(path.join(ROOT, "src/server/server.js"), "utf8");
   const from = server.indexOf("function clearUnsupportedBuilderClaims");
   assert(from > 0, "server.js no longer defines clearUnsupportedBuilderClaims");
   const body = server.slice(from, server.indexOf("\nfunction importedProjectShape", from));

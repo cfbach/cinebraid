@@ -17,7 +17,7 @@ const {
   createModelIntelligence,
   loadModelIntelligence,
   SURFACES_PATH,
-} = require("../model-intelligence");
+} = require("../src/generation/model-intelligence");
 const {
   CINEBRAID_SURFACE_KINDS,
   CINEBRAID_SURFACE_ROLES,
@@ -31,7 +31,7 @@ const {
   surfaceCapabilityLayer,
 } = require("../public/shared-model-intelligence");
 const { CINEBRAID_GENERATION_MODES } = require("../public/shared-generation-capability");
-const { MODE_OUTPUT_TYPES } = require("../generation-contracts");
+const { MODE_OUTPUT_TYPES } = require("../src/generation/generation-contracts");
 
 const catalogue = loadModelIntelligence();
 const surfacesFile = JSON.parse(fs.readFileSync(SURFACES_PATH, "utf8"));
@@ -312,7 +312,7 @@ assert(sharedSource.includes("Date.parse"), "reviewQueue parses the date it is g
 /* No branching on a model, family or vendor name anywhere in the intelligence layer.
    That is what turns adding a model into an application-wide edit, and it is the rule
    the whole architecture is built to keep. */
-const intelligenceSource = fs.readFileSync(path.join(ROOT, "model-intelligence.js"), "utf8");
+const intelligenceSource = fs.readFileSync(path.join(ROOT, "src/generation/model-intelligence.js"), "utf8");
 for (const [file, source] of [["shared-model-intelligence.js", sharedSource], ["model-intelligence.js", intelligenceSource]])
   for (const name of ["minimax", "runware", "seedance", "kling", "gpt-image", "z-image", "krea", "flux", "openai", "bytedance", "elevenlabs"]) {
     const code = source.replace(/\/\*[\s\S]*?\*\//g, "").replace(/^\s*\/\/.*$/gm, "");

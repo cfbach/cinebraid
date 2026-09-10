@@ -13,7 +13,7 @@
  * Pure module. No provider is called, and there is no runtime call site anywhere.
  */
 const assert = require("assert");
-const C = require("../generation-contracts");
+const C = require("../src/generation/generation-contracts");
 
 function codes(result) {
   return result.errors.map((error) => error.code);

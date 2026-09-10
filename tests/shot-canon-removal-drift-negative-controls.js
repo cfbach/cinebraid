@@ -34,7 +34,7 @@ const ROOT = path.join(__dirname, "..");
 
 const { Kernel } = require("./authority-kernel-private");
 const { render, rawFixture, withCanon } = require("./render-harness.js");
-const seam = require(path.join(ROOT, "authority-write-seam"));
+const seam = require(path.join(ROOT, "src/authority/authority-write-seam"));
 
 const NEWLINE = /\r\n|\r|\n/g;
 const normalizeNewlines = (text) => String(text).replace(NEWLINE, "\n");

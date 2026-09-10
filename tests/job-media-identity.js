@@ -303,7 +303,7 @@ function stubApp() {
 }
 
 async function ledgerSection() {
-  const { registerFalGeneration } = require("../fal-generation");
+  const { registerFalGeneration } = require("../src/generation/fal/fal-generation");
   const sandbox = fs.mkdtempSync(path.join(os.tmpdir(), "cinebraid-c4-ledger-"));
   const projectsRoot = path.join(sandbox, "projects");
   const dirFor = (slug) => path.join(projectsRoot, slug);

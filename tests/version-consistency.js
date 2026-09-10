@@ -16,7 +16,7 @@ const path = require("path");
 const { execFileSync } = require("child_process");
 
 const ROOT = path.resolve(__dirname, "..");
-const { releaseIdentity } = require(path.join(ROOT, "release-identity"));
+const { releaseIdentity } = require(path.join(ROOT, "src/server/release-identity"));
 
 const pkg = JSON.parse(fs.readFileSync(path.join(ROOT, "package.json"), "utf8"));
 const identity = releaseIdentity(pkg.version);
@@ -52,7 +52,7 @@ assert(fs.existsSync(releaseDir), `release documentation folder is missing: docs
 /* --- schema markers must not follow the application version --------------- */
 
 const SCHEMA_MARKERS = { hubVersion: "v6.0.0", schemaVersion: "6.6" };
-const server = fs.readFileSync(path.join(ROOT, "server.js"), "utf8");
+const server = fs.readFileSync(path.join(ROOT, "src/server/server.js"), "utf8");
 for (const [marker, expected] of Object.entries(SCHEMA_MARKERS)) {
   const found = [...server.matchAll(new RegExp(`${marker}:\\s*"([^"]*)"`, "g"))].map((m) => m[1]);
   assert(found.length > 0, `server.js no longer declares ${marker}`);

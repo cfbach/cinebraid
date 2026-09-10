@@ -791,7 +791,7 @@ async function g_refusalsPersist() {
  * the pre-AT1 successor must be refused with the exact code the audit reported.
  * Nothing here paraphrases the seam - persistProjectSuccessor is the real one. */
 function e8_saveSucceedsThroughTheSeam() {
-  const { WRITE_CLASSES, createAuthorityWriteSeam } = require(path.join(ROOT, "authority-write-seam"));
+  const { WRITE_CLASSES, createAuthorityWriteSeam } = require(path.join(ROOT, "src/authority/authority-write-seam"));
   const crypto = require("crypto");
   const Lineage = require(path.join(PUBLIC, "shared-state-lineage.js"));
 
@@ -992,7 +992,7 @@ async function e9_undrainableReceiptBlocksRemoval() {
     "E9: naming the cause, and what would make it removable: " + seen.refusalText);
 
   /* AND THE DOCUMENT IS STILL SAVEABLE — which is the whole point of refusing. */
-  const seam = require(path.join(ROOT, "authority-write-seam"));
+  const seam = require(path.join(ROOT, "src/authority/authority-write-seam"));
   const crypto = require("crypto");
   let stored = clone(project), writes = 0;
   const boundary = seam.createAuthorityWriteSeam({

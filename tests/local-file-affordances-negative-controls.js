@@ -34,7 +34,7 @@ const path = require("path");
 const { spawnSync } = require("child_process");
 
 const ROOT = path.join(__dirname, "..");
-const Affordance = require(path.join(ROOT, "local-file-affordance"));
+const Affordance = require(path.join(ROOT, "src/media/local-file-affordance"));
 const Shared = require(path.join(ROOT, "public", "shared-local-file"));
 
 /* Canonicalised at the source. P1 makes the resolver answer with the PHYSICAL
@@ -153,7 +153,7 @@ section("control 1 — an endpoint that accepts a client-supplied path");
 
   /* AND THERE IS NO SUCH ENDPOINT TO CALL. Structural, because "we validated it"
      is a weaker claim than "the shape does not exist". */
-  const server = fs.readFileSync(path.join(ROOT, "server.js"), "utf8")
+  const server = fs.readFileSync(path.join(ROOT, "src/server/server.js"), "utf8")
     .replace(/\/\*[\s\S]*?\*\//g, "").replace(/(^|[^:])\/\/.*$/gm, "$1");
   assert.ok(!/\/open-path/.test(server), "no /open-path route may exist");
   const localFileHandlers = server.slice(
@@ -564,7 +564,7 @@ function rest() {
           return fs.existsSync(target) ? { state: "available", path: target } : { state: "missing", path: "" };
         }
 
-        const Service = require(path.join(ROOT, "media-asset-service"));
+        const Service = require(path.join(ROOT, "src/media/media-asset-service"));
 
         if (cross) {
           /* THE REVIEW'S EXACT REPRODUCTION: Film A's asset, under Film B's identity.

@@ -19,11 +19,11 @@ const fs = require("fs");
 const os = require("os");
 const path = require("path");
 
-const A = require("../media-assets");
-const S = require("../media-asset-store");
-const I = require("../media-asset-indexer");
-const V = require("../media-asset-verify");
-const { clearMediaHashMemo, sha256Hex } = require("../media-hash");
+const A = require("../src/media/media-assets");
+const S = require("../src/media/media-asset-store");
+const I = require("../src/media/media-asset-indexer");
+const V = require("../src/media/media-asset-verify");
+const { clearMediaHashMemo, sha256Hex } = require("../src/media/media-hash");
 
 const TEMP = fs.mkdtempSync(path.join(os.tmpdir(), "cinebraid-verify-"));
 const PNG = Buffer.from(

@@ -25,7 +25,7 @@ const os = require("os");
 const path = require("path");
 
 const { startCineBraidServer, startMockCivitai } = require("./fixtures/mock-civitai");
-const { isLoopbackAddress, isLoopbackRequest, requestPeerAddress } = require("../loopback-request");
+const { isLoopbackAddress, isLoopbackRequest, requestPeerAddress } = require("../src/server/loopback-request");
 
 const TEMP = fs.mkdtempSync(path.join(os.tmpdir(), "cinebraid-account-lan-"));
 const CONFIG_PATH = path.join(TEMP, "config.json");
@@ -144,7 +144,7 @@ async function main() {
 
   /* The guard source must not consult a header or Express's proxy setting at all.
      Comments are stripped, because this file explains those headers by name. */
-  const guardSource = fs.readFileSync(path.join(__dirname, "..", "loopback-request.js"), "utf8")
+  const guardSource = fs.readFileSync(path.join(__dirname, "..", "src/server/loopback-request.js"), "utf8")
     .replace(/\/\*[\s\S]*?\*\//g, "").replace(/(^|[^:])\/\/.*$/gm, "$1");
   for (const token of ["req.headers", "headers[", "x-forwarded", "forwarded", "trust proxy", "req.hostname", "req.ip", "req.query", "dns.", "lookup("])
     assert(!guardSource.toLowerCase().includes(token), `the guard must not consult ${token}`);

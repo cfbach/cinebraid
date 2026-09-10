@@ -36,7 +36,7 @@ const { spawn } = require("child_process");
 
 const ROOT = path.join(__dirname, "..");
 const KIT = path.join(ROOT, "resources", "project-builder");
-const Contract = require("../project-builder-contract");
+const Contract = require("../src/project/project-builder-contract");
 const contract = Contract.projectBuilderContract();
 const APP_VERSION = require("../package.json").version;
 
@@ -185,9 +185,9 @@ const STALE_SCHEMA_ALIASES = [
   /* And nothing in the repository points at one. A compatibility alias is only ever
      retained for a live consumer, and there is none. */
   const consumers = [
-    ["server.js", fs.readFileSync(path.join(ROOT, "server.js"), "utf8")],
+    ["server.js", fs.readFileSync(path.join(ROOT, "src/server/server.js"), "utf8")],
     ["public/creation-studio.js", fs.readFileSync(path.join(ROOT, "public", "creation-studio.js"), "utf8")],
-    ["project-builder-contract.js", fs.readFileSync(path.join(ROOT, "project-builder-contract.js"), "utf8")],
+    ["project-builder-contract.js", fs.readFileSync(path.join(ROOT, "src/project/project-builder-contract.js"), "utf8")],
   ];
   for (const [file, source] of consumers)
     for (const alias of STALE_SCHEMA_ALIASES)
@@ -197,8 +197,8 @@ const STALE_SCHEMA_ALIASES = [
 /* THE ROUTE READS THE CONTRACT rather than a list retyped beside it. A retyped list
    is exactly how the download came to name a file the directory had moved on from. */
 {
-  const server = fs.readFileSync(path.join(ROOT, "server.js"), "utf8");
-  assert(/require\("\.\/project-builder-contract"\)/.test(server),
+  const server = fs.readFileSync(path.join(ROOT, "src/server/server.js"), "utf8");
+  assert(/require\("\.\.\/project\/project-builder-contract"\)/.test(server),
     "server.js must read the kit's file list from the contract module");
   const route = server.slice(server.indexOf('app.get("/api/project-builder/kit"'));
   const body = route.slice(0, route.indexOf("\napp."));

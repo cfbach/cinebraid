@@ -124,7 +124,7 @@ async function main() {
     id: "NC-1",
     label: "the paid permit's scope no longer carries the provider request digest",
     guards: "the binding — a mutation after authorization must be refused at dispatch",
-    mutate: () => installBroken("paid-dispatch-permit.js", (source, label) => mutateOnce(
+    mutate: () => installBroken("src/generation/paid-dispatch-permit.js", (source, label) => mutateOnce(
       source,
       'const SCOPE_FIELDS = ["purpose", "surface", "viewMode", "shotId", "frameId", "entityList", "entityId", "buildId", "requestFingerprint"];',
       'const SCOPE_FIELDS = ["purpose", "surface", "viewMode", "shotId", "frameId", "entityList", "entityId", "buildId"];',
@@ -141,7 +141,7 @@ async function main() {
     id: "NC-2",
     label: "the dispatch boundary no longer recomputes the request digest before spending",
     guards: "the binding — a mutation after authorization must be refused at dispatch",
-    mutate: () => installBroken("civitai-generation.js", (source, label) => mutateOnce(
+    mutate: () => installBroken("src/generation/civitai/civitai-generation.js", (source, label) => mutateOnce(
       source,
       'if (PaidPermit.paidScopeFingerprint(dispatchScopeFor(req.body, built.fingerprint)) !== text(membership.scopeFingerprint))',
       'if (false && PaidPermit.paidScopeFingerprint(dispatchScopeFor(req.body, built.fingerprint)) !== text(membership.scopeFingerprint))',
@@ -159,7 +159,7 @@ async function main() {
     id: "NC-3",
     label: "the durable cost is taken from the request body instead of from Civitai",
     guards: "the recorded figure is the one the SERVER obtained, not the one the caller sent",
-    mutate: () => installBroken("civitai-generation.js", (source, label) => mutateOnce(
+    mutate: () => installBroken("src/generation/civitai/civitai-generation.js", (source, label) => mutateOnce(
       source,
       "const quote = { amount: fresh.amount, quotedAt: at };",
       "const quote = { amount: Number(req.body?.authorizedAmount), quotedAt: at };",
@@ -173,7 +173,7 @@ async function main() {
     id: "NC-4",
     label: "a price higher than the one a person approved is submitted anyway",
     guards: "a price that rose past the approved figure must refuse",
-    mutate: () => installBroken("civitai-generation.js", (source, label) => mutateOnce(
+    mutate: () => installBroken("src/generation/civitai/civitai-generation.js", (source, label) => mutateOnce(
       source,
       "if (fresh.amount > approved)",
       "if (false && fresh.amount > approved)",
@@ -190,7 +190,7 @@ async function main() {
     id: "NC-5",
     label: "a materialization failure after a remote success is recorded as COMPLETED",
     guards: "a remote success CineBraid could not materialize is neither COMPLETED nor FAILED",
-    mutate: () => installBroken("civitai-generation.js", (source, label) => mutateOnce(
+    mutate: () => installBroken("src/generation/civitai/civitai-generation.js", (source, label) => mutateOnce(
       source,
       "          row.status = ledgerStatus(Lifecycle.UNRESOLVED);\n          row.error = `Civitai finished this generation, but CineBraid could not download the result:",
       "          row.status = ledgerStatus(\"COMPLETED\");\n          row.ingestedAt = nowIso();\n          row.error = `Civitai finished this generation, but CineBraid could not download the result:",
@@ -207,7 +207,7 @@ async function main() {
     id: "NC-6",
     label: "the Civitai routes answer a non-loopback peer",
     guards: "every Civitai route refuses a real non-loopback peer",
-    mutate: () => installBroken("civitai-generation.js", (source, label) => mutateOnce(
+    mutate: () => installBroken("src/generation/civitai/civitai-generation.js", (source, label) => mutateOnce(
       source,
       "  function requireLocalMachine(req, res) {\n    if (isLoopbackRequest(req)) return true;",
       "  function requireLocalMachine(req, res) {\n    if (true) return true;\n    if (isLoopbackRequest(req)) return true;",
@@ -225,7 +225,7 @@ async function main() {
     id: "NC-7",
     label: "a connection granted identity only is allowed to spend Buzz",
     guards: "an identity-only connection refuses before any provider contact",
-    mutate: () => installBroken("civitai-generation.js", (source, label) => mutateOnce(
+    mutate: () => installBroken("src/generation/civitai/civitai-generation.js", (source, label) => mutateOnce(
       source,
       "if (requireGeneration && isOAuth && !CivitaiProvider.hasGenerationGrant(grantedScope))",
       "if (false && requireGeneration && isOAuth && !CivitaiProvider.hasGenerationGrant(grantedScope))",
@@ -243,7 +243,7 @@ async function main() {
     id: "NC-8",
     label: "a returned result is written as an approved candidate",
     guards: "the result is an unreviewed candidate — nothing is approved by arriving",
-    mutate: () => installBroken("generation-candidate-ingest.js", (source, label) => mutateOnce(
+    mutate: () => installBroken("src/generation/generation-candidate-ingest.js", (source, label) => mutateOnce(
       source,
       '    decision: "unreviewed",',
       '    decision: "approved",',
@@ -260,7 +260,7 @@ async function main() {
     id: "NC-9",
     label: "an unrecognised or expired remote state is recorded as FAILED",
     guards: "a state this product has no word for is UNRESOLVED, not a guess",
-    mutate: () => installBroken("civitai-generation.js", (source, label) => mutateOnce(
+    mutate: () => installBroken("src/generation/civitai/civitai-generation.js", (source, label) => mutateOnce(
       source,
       "    default:\n      return ledgerStatus(Lifecycle.UNRESOLVED);",
       '    default:\n      return ledgerStatus("FAILED");',
@@ -274,7 +274,7 @@ async function main() {
     id: "NC-10",
     label: "a provider-supplied result address is fetched wherever it points",
     guards: "a result address cannot be a file, a private range or a link-local address",
-    mutate: () => installBroken("civitai-client.js", (source, label) => mutateOnce(
+    mutate: () => installBroken("src/generation/civitai/civitai-client.js", (source, label) => mutateOnce(
       source,
       "  if (MOCK_ORCHESTRATOR && (url.protocol === \"http:\" || url.protocol === \"https:\") && loopbackHostname(url.hostname)) return url;",
       "  return url;",
@@ -291,7 +291,7 @@ async function main() {
     id: "NC-11",
     label: "a quoted Buzz cost is recorded with the unit a dollar-priced backend uses",
     guards: "Buzz is recorded as Buzz and never lands in the US dollar total",
-    mutate: () => installBroken("civitai-generation.js", (source, label) => mutateOnce(
+    mutate: () => installBroken("src/generation/civitai/civitai-generation.js", (source, label) => mutateOnce(
       source,
       'const CIVITAI_COST_UNIT = "buzz";',
       'const CIVITAI_COST_UNIT = "usd";',
@@ -310,7 +310,7 @@ async function main() {
     id: "NC-12",
     label: "Connect asks for the spending scope instead of identity only",
     guards: "Connect asks scope 1; spending is a separate grant",
-    mutate: () => installBroken("account-provider-civitai.js", (source, label) => mutateOnce(
+    mutate: () => installBroken("src/accounts/account-provider-civitai.js", (source, label) => mutateOnce(
       source,
       'const AUTHORIZATION_GRANTS = { identity: PHASE_SCOPE, generation: GENERATION_SCOPE };',
       'const AUTHORIZATION_GRANTS = { identity: GENERATION_SCOPE, generation: GENERATION_SCOPE };',
@@ -328,7 +328,7 @@ async function main() {
     id: "NC-13",
     label: "a scope CineBraid cannot read is treated as permission to spend",
     guards: "an unreadable scope is never a yes",
-    mutate: () => installBroken("account-provider-civitai.js", (source, label) => mutateOnce(
+    mutate: () => installBroken("src/accounts/account-provider-civitai.js", (source, label) => mutateOnce(
       source,
       '  if (!/^\\d+$/.test(raw)) return false;',
       '  if (!/^\\d+$/.test(raw)) return true;',
@@ -347,7 +347,7 @@ async function main() {
     id: "NC-14",
     label: "a media redirect is followed wherever it points",
     guards: "every way out of the provider's own origin is refused",
-    mutate: () => installBroken("civitai-client.js", (source, label) => mutateOnce(
+    mutate: () => installBroken("src/generation/civitai/civitai-client.js", (source, label) => mutateOnce(
       source,
       "      if (next.origin !== boundary)",
       "      if (false && next.origin !== boundary)",
@@ -365,7 +365,7 @@ async function main() {
     id: "NC-15",
     label: "every redirect is refused, so a paid result cannot be collected",
     guards: "a same-origin 301 delivers and the already-paid job recovers",
-    mutate: () => installBroken("civitai-client.js", (source, label) => mutateOnce(
+    mutate: () => installBroken("src/generation/civitai/civitai-client.js", (source, label) => mutateOnce(
       source,
       "      if (!(response.status >= 300 && response.status < 400)) break;",
       "      if (response.status >= 300 && response.status < 400) throw new CivitaiClientError(\"CIVITAI_BLOB_REDIRECTED\", \"refused\", {}, 502);\n      break;",
@@ -395,7 +395,7 @@ async function main() {
     id: "NC-16",
     label: "the redirect depth cap is removed, so a loop burns the blob budget and reports a timeout",
     guards: "a redirect loop is refused as a depth refusal, not as a timeout",
-    mutate: () => installBroken("civitai-client.js", (source, label) => mutateOnce(
+    mutate: () => installBroken("src/generation/civitai/civitai-client.js", (source, label) => mutateOnce(
       mutateOnce(source, "  blob: 120000,", "  blob: 2500,", label),
       "      if (hop >= MAX_BLOB_REDIRECTS)",
       "      if (false)",
@@ -453,7 +453,7 @@ async function main() {
     id: "NC-18",
     label: "IPv6 link-local is matched by text prefix, so most of fe80::/10 escapes",
     guards: "every address in fe80::/10 is refused before a single fetch",
-    mutate: () => installBroken("civitai-client.js", (source, label) => mutateOnce(
+    mutate: () => installBroken("src/generation/civitai/civitai-client.js", (source, label) => mutateOnce(
       source,
       "  if ((first & 0xffc0) === 0xfe80) return true;",
       '  if (host.startsWith("fe80")) return true;',

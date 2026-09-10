@@ -23,8 +23,8 @@ const {
   resolveGenerationOptions,
   resolveTaskModes,
 } = require("../public/shared-generation-options");
-const { CINEBRAID_GENERATION_ADAPTERS, generationConnections, generationOptionsFor, publicAdapters } = require("../generation-options");
-const { loadModelIntelligence } = require("../model-intelligence");
+const { CINEBRAID_GENERATION_ADAPTERS, generationConnections, generationOptionsFor, publicAdapters } = require("../src/generation/generation-options");
+const { loadModelIntelligence } = require("../src/generation/model-intelligence");
 const { checkRequestAgainstCapability } = require("../public/shared-generation-capability");
 
 const notes = [];

@@ -7,7 +7,7 @@ const RELEASE_VERSION = require("../package.json").version;
 const css = read('public/styles.css');
 const app = read('public/app.js');
 const views = read('public/views.js');
-const llm = read('llm.js');
+const llm = read('src/assistant/llm.js');
 const index = read('public/index.html');
 
 assert(index.includes(`styles.css?v=${RELEASE_VERSION}`));

@@ -15,7 +15,7 @@ async function main(){
   const app=read('public/app.js');
   const mutations=read('public/mutations.js');
   const settings=read('public/settings.js');
-  const server=read('server.js');
+  const server=read('src/server/server.js');
   assert(focused.includes('taskIdForElement'), 'focused tasks need stable task IDs');
   assert(focused.includes('resolveTaskSelection'), 'legacy numeric task selection must migrate');
   assert(focused.includes('window.selectFocusedTask'), 'cross-section task navigation API required');

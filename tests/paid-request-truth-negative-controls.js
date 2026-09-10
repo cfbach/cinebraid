@@ -29,11 +29,11 @@ const express = require("express");
 
 const Presentation = require("../public/shared-generation-presentation");
 const BuildHistory = require("../public/shared-build-history");
-const { IMAGE_MODEL_ID } = require("../image-execution");
+const { IMAGE_MODEL_ID } = require("../src/generation/image-execution");
 const CoverageOwnership = require("../public/shared-coverage");
 const { referenceAspectLabel } = require("../public/shared-aspect");
 /* The shipped route, for a control whose mutation is in a DIFFERENT module. */
-const falGenerationReal = require("../fal-generation");
+const falGenerationReal = require("../src/generation/fal/fal-generation");
 const { addFramePromptBuild, baseSpec, buildRef, REF_IDENTITY } = require("./image-execution-fixture");
 const { declaredGenerationBody } = require("./generation-request-fixture");
 
@@ -97,7 +97,7 @@ async function withPatchedModule(relative, edits, run) {
     copy.loaded = true;
     /* Required AFTER the patched entry is in place, so its own `require` of the shared
        module resolves to the copy above rather than compiling a second original. */
-    return await run(require(path.join(ROOT, "fal-generation.js")));
+    return await run(require(path.join(ROOT, "src/generation/fal/fal-generation.js")));
   } finally {
     for (const key of Object.keys(require.cache)) if (inRepoScope(key)) delete require.cache[key];
     for (const [key, value] of saved) require.cache[key] = value;
@@ -383,7 +383,7 @@ async function harnessSelfChecks() {
   const stale = await assertHarnessRejects("a stale mutation anchor", async (phase) => {
     /* Exactly what happened to control 7: the anchor no longer matches the shipped
        source, so loadModified() raises an AssertionError before anything is mutated. */
-    loadModified("fal-generation.js", [["a line that has never existed in this file", "x"]]);
+    loadModified("src/generation/fal/fal-generation.js", [["a line that has never existed in this file", "x"]]);
     phase("MUTATION_LANDED");
     phase("UNSAFE_PATH_EXECUTED");
   });
@@ -410,7 +410,7 @@ async function main() {
      with that size — which is the exact bypass a replayed POST performed before. */
   await control("a money boundary that does not restrict the payload it was handed",
     "a control the active view never rendered cannot reach the adapter", async (phase) => {
-      const falGeneration = loadModified("fal-generation.js", [[
+      const falGeneration = loadModified("src/generation/fal/fal-generation.js", [[
         "    const planGate = enforceRequestPlan(owner, req, purpose, trusted);",
         `    const planGate = { ok: true, surface: "compiled-frame", declaration: { viewMode: "simple", selectedOptionId: "", selectedModelId: "" }, payload: req.body, removed: [] };`,
       ]]);
@@ -480,7 +480,7 @@ async function main() {
      widest vocabulary in the system — silently, with no code and no record. */
   await control("an absent declaration defaulted to the widest view instead of refused",
     "a paid request that does not say what built it is refused", async (phase) => {
-      const falGeneration = loadModified("fal-generation.js", [[
+      const falGeneration = loadModified("src/generation/fal/fal-generation.js", [[
         `    if (!declaration.declared)
       return {
         ok: false,
@@ -512,7 +512,7 @@ async function main() {
      the gate politely applies it. */
   await control("a declared surface accepted without checking the request could be it",
     "a request cannot choose the vocabulary that governs it least", async (phase) => {
-      const falGeneration = loadModified("fal-generation.js", [[
+      const falGeneration = loadModified("src/generation/fal/fal-generation.js", [[
         "    if (!legal.includes(declaration.surface))",
         "    if (false && !legal.includes(declaration.surface))",
       ]]);
@@ -542,7 +542,7 @@ async function main() {
      to a dialog left open. */
   await control("a money boundary that does not check whether the package is still current",
     "a package the shot no longer stands behind is refused before dispatch", async (phase) => {
-      const falGeneration = loadModified("fal-generation.js", [[
+      const falGeneration = loadModified("src/generation/fal/fal-generation.js", [[
         "    const staleRefusal = packageFreshnessRefusal(owner, job);",
         "    const staleRefusal = null;",
       ]]);
@@ -583,7 +583,7 @@ async function main() {
      could not ship 4K ships a square instead. */
   await control("a boundary that takes the requested format on the caller's word",
     "a paid request cannot choose a delivery format nothing offered it", async (phase) => {
-      const falGeneration = loadModified("fal-generation.js", [[
+      const falGeneration = loadModified("src/generation/fal/fal-generation.js", [[
         "    const aspectRefusal = aspectAuthorityRefusal(owner, req.body, purpose, trusted);",
         "    const aspectRefusal = null;",
       ]]);
@@ -634,7 +634,7 @@ async function main() {
 
   await control("a boundary that judges the package the request named instead of the one it will compile",
     "a package the shot no longer stands behind is refused before dispatch", async (phase) => {
-      const falGeneration = loadModified("fal-generation.js", [[
+      const falGeneration = loadModified("src/generation/fal/fal-generation.js", [[
         `    job.sourceBuildId = job.sourceBuildId || planGate.resolvedBuildId || "";`,
         "",
       ]]);
@@ -714,7 +714,7 @@ async function main() {
      and the request proceeds with the ledger recording a selection the dispatch ignored. */
   await control("a boundary that dispatches its own model whatever the screen named",
     "the model the screen named is dispatched or the request is refused", async (phase) => {
-      const falGeneration = loadModified("fal-generation.js", [[
+      const falGeneration = loadModified("src/generation/fal/fal-generation.js", [[
         "    const identityRefusal = modelIdentityRefusal(job, cfg);",
         "    const identityRefusal = null;",
       ]]);
@@ -751,7 +751,7 @@ async function main() {
          a detection, and the control reported green having mutated nothing. That false
          green is what the phase discipline and UnsafeBehaviourObserved above exist to
          make impossible; this is the anchor it was hiding. */
-      const falGeneration = loadModified("fal-generation.js", [[
+      const falGeneration = loadModified("src/generation/fal/fal-generation.js", [[
         "      const projected = Number(spent.amount || 0) + pendingAmount;",
         "      const projected = Number(spent.priced?.amount || 0) + pendingAmount;",
       ]]);
@@ -795,7 +795,7 @@ async function main() {
      direction presents a clean bill of health. */
   await control("a coverage projection that quietly drops what CineBraid decided not to send",
     "the boundary reports the compiler's record whole", async (phase) => {
-      const falGeneration = loadModified("fal-generation.js", [[
+      const falGeneration = loadModified("src/generation/fal/fal-generation.js", [[
         `function labelledCoverage(coverage) {
   return (Array.isArray(coverage) ? coverage : []).map((entry) => ({`,
         `function labelledCoverage(coverage) {
@@ -833,7 +833,7 @@ async function main() {
          and what two reviewers in a row walked straight through. The request below
          carries every client-visible coverage marker; what it does not have — and what no
          request can have — is the trusted operation descriptor the coverage route builds. */
-      const falGeneration = loadModified("fal-generation.js", [[
+      const falGeneration = loadModified("src/generation/fal/fal-generation.js", [[
         `    if (trusted?.surface !== "reference-automation") return asked.filter(notCoverageAutomation);
     const sameEntity = String(trusted?.entityList || "") === String(body?.entityList || "")
       && String(trusted?.entityId || "") === String(body?.entityId || "");
@@ -930,7 +930,7 @@ async function main() {
      reviewer's own reproduction, and the false live run is read back off the entity. */
   await control("a coverage run established before the shared paid boundary has accepted",
     "a refused coverage request leaves no live run", async (phase) => {
-      const falGeneration = loadModified("fal-generation.js", [[
+      const falGeneration = loadModified("src/generation/fal/fal-generation.js", [[
         /* The hook fires at the dispatch-commit point; this makes the route fire it up
            front instead, exactly as the held candidate did. */
         /* The anchor moved with the seam: the descriptor now carries the coverage
@@ -1002,7 +1002,7 @@ async function main() {
      exception, not a log line. */
   await control("a coverage projection written before the job that justifies it",
     "persisted coverage never claims paid generation the ledger cannot justify", async (phase) => {
-      const falGeneration = loadModified("fal-generation.js", [[
+      const falGeneration = loadModified("src/generation/fal/fal-generation.js", [[
         /* The anchor moved with the seam: the ledger turn now also consumes the dispatch
            permit, because single-use has to be decided inside the same indivisible write.
            Re-armed where the seam went. */
@@ -1049,7 +1049,7 @@ async function main() {
      filmmaker nothing is wrong. */
   await control("an unpersistable acknowledgement that leaves the coverage run running",
     "a run whose provider answer could not be recorded asks for attention", async (phase) => {
-      const falGeneration = loadModified("fal-generation.js", [[
+      const falGeneration = loadModified("src/generation/fal/fal-generation.js", [[
         `        await updateEntityCoverageRun(owner, job, "needs-attention",
           job.unresolvedReason || \`CineBraid could not record the provider's answer: \${persistError.message}\`).catch(() => {});`,
         `        /* control: the coverage projection is left saying the run is healthy */`,
@@ -1104,7 +1104,7 @@ async function main() {
      the status. */
   await control("a refresh that reads a missing provider handle as failure",
     "an uncertain submission is never turned into a failure that permits a retry", async (phase) => {
-      const falGeneration = loadModified("fal-generation.js", [[
+      const falGeneration = loadModified("src/generation/fal/fal-generation.js", [[
         `      if (Lifecycle.isSubmissionUncertainWithoutHandle(job, "externalId")) {`,
         "      if (Lifecycle.isUnresolved(job) && !job.externalId) {",
       ]]);
@@ -1160,7 +1160,7 @@ async function main() {
      bill, not the status. */
   await control("a cancel that reads local intent as proof the provider never took it",
     "wanting a submission cancelled is never treated as evidence that it did not happen", async (phase) => {
-      const falGeneration = loadModified("fal-generation.js", [[
+      const falGeneration = loadModified("src/generation/fal/fal-generation.js", [[
         `      if (Lifecycle.isSubmissionUncertainWithoutHandle(job, "cancelUrl"))`,
         `      if (Lifecycle.isUnresolved(job) && !job.cancelUrl)`,
       ]]);
@@ -1212,7 +1212,7 @@ async function main() {
      persisted facts read off disk: an uncertain job, and a projection calling it healthy. */
   await control("a reconstructed coverage record that calls an uncertain job healthy",
     "recovery describes an ambiguous durable row as ambiguous, not as ordinary running work", async (phase) => {
-      const falGeneration = loadModified("fal-generation.js", [[
+      const falGeneration = loadModified("src/generation/fal/fal-generation.js", [[
         `        status: uncertain ? "needs-attention" : runningStatus,`,
         `        status: runningStatus,`,
       ]]);
@@ -1293,7 +1293,7 @@ async function main() {
      then the provider actually being contacted for the same production result. */
   await control("a cancellation persisted without the provider confirming it",
     "CineBraid records a cancellation only when the provider confirmed one", async (phase) => {
-      const falGeneration = loadModified("fal-generation.js", [[
+      const falGeneration = loadModified("src/generation/fal/fal-generation.js", [[
         "        if (!response || !response.ok) {",
         "        if (false && !response) {",
       ]]);
@@ -1336,7 +1336,7 @@ async function main() {
      10. AN IDENTITY PAIR NOBODY CHECKS AGAINST ITSELF.  [reviewer blocker 2] */
   await control("a boundary that reads the model half of an identity and ignores the option",
     "a request whose own two names disagree is refused", async (phase) => {
-      const falGeneration = loadModified("fal-generation.js", [[
+      const falGeneration = loadModified("src/generation/fal/fal-generation.js", [[
         "    if (optionId) {",
         "    if (false && optionId) {",
       ]]);
@@ -1369,7 +1369,7 @@ async function main() {
      impossible id onto the row. The mutation restores that scope. */
   await control("an option identity checked only when a model id happens to accompany it",
     "an option identity CineBraid could not have issued is refused however it arrives", async (phase) => {
-      const falGeneration = loadModified("fal-generation.js", [[
+      const falGeneration = loadModified("src/generation/fal/fal-generation.js", [[
         "    if (optionId) {",
         "    if (claimed && optionId) {",
       ]]);
@@ -1437,7 +1437,7 @@ async function main() {
      11. A BUDGET COMPARED IN BINARY FLOATING POINT.  [reviewer blocker 3] */
   await control("a spend ceiling compared with a raw floating-point greater-than",
     "meeting a budget exactly is not exceeding it", async (phase) => {
-      const falGeneration = loadModified("fal-generation.js", [[
+      const falGeneration = loadModified("src/generation/fal/fal-generation.js", [[
         "      if (usdExceeds(projected, authorized.amount))",
         "      if (projected > Number(authorized.amount))",
       ]]);
@@ -1477,7 +1477,7 @@ async function main() {
      12. AN UNKNOWN COST READ AS ZERO.  [reviewer blocker 4] */
   await control("an unpriceable child whose unknown cost falls back to zero",
     "a ceiling that cannot be checked has not been honoured", async (phase) => {
-      const falGeneration = loadModified("fal-generation.js", [[
+      const falGeneration = loadModified("src/generation/fal/fal-generation.js", [[
         `      const pendingAmount = pending.estimate?.confidence === "estimated" ? Number(pending.estimate.amount) : null;
       if (!Number.isFinite(pendingAmount))`,
         `      const pendingAmount = Number(pending.estimate?.amount) || 0;
@@ -1511,7 +1511,7 @@ async function main() {
      13. AN INCOMPLETE TOTAL READ AS A COMPLETE ONE.  [reviewer blocker 4b] */
   await control("a spend bound that omits the run's own children of unknown cost",
     "a known subtotal below a ceiling is not proof the run is inside it", async (phase) => {
-      const falGeneration = loadModified("fal-generation.js", [[
+      const falGeneration = loadModified("src/generation/fal/fal-generation.js", [[
         "      if (runJobs.length && spent.complete !== true)",
         "      if (false)",
       ]]);
@@ -1632,7 +1632,7 @@ async function main() {
 
   await control("a money boundary that never asks what the coverage press authorised",
     "a coverage run cannot exceed the count one press authorised", async (phase) => {
-      const mutated = loadModified("fal-generation.js", [[
+      const mutated = loadModified("src/generation/fal/fal-generation.js", [[
         `    const coverageGuardError = coverageSubmissionError(owner, jobs, req.body, requestedOutputCount, membership);`,
         `    const coverageGuardError = null;`,
       ]]);
@@ -1659,7 +1659,7 @@ async function main() {
 
   await control("a coverage run whose authorised figures are reassigned by every job of it",
     "a request cannot restate the ceiling it is judged by", async (phase) => {
-      const mutated = loadModified("fal-generation.js", [[
+      const mutated = loadModified("src/generation/fal/fal-generation.js", [[
         `          if (!continuing) {
             if (Number(req.body?.coverageRequestCount) > 0) run.requestCount = Number(req.body.coverageRequestCount);`,
         `          if (true) {
@@ -1689,7 +1689,7 @@ async function main() {
 
   await control("an automation run whose authorised bound is whatever its last progress update said",
     "an authorised run cannot restate its own ceiling through the progress route", async (phase) => {
-      const mutatedRuns = loadModified("automation-runs.js", [[
+      const mutatedRuns = loadModified("src/automation/automation-runs.js", [[
         `    const config = preserveAuthorizedBound(
       source.config && typeof source.config === "object" ? source.config : plainObject(base.config),
       existing,
@@ -1770,7 +1770,7 @@ async function main() {
 
   await control("a money boundary that does not require a dispatch permit",
     "no provider-bound paid dispatch happens without redeeming a server-issued permit", async (phase) => {
-      const mutated = loadModified("fal-generation.js", [[
+      const mutated = loadModified("src/generation/fal/fal-generation.js", [[
         `    const permitGate = resolveDispatchPermit(owner, jobs, req, trusted);
     if (!permitGate.ok)`,
         `    const permitGate = { ok: true, membership: { id: "", permitClass: "direct", authorizationRef: "", stepKey: "", scopeFingerprint: "" } };
@@ -1792,7 +1792,7 @@ async function main() {
 
   await control("a boundary that takes any well-formed permit id on the caller's word",
     "a permit CineBraid did not issue is refused", async (phase) => {
-      const mutated = loadModified("fal-generation.js", [[
+      const mutated = loadModified("src/generation/fal/fal-generation.js", [[
         `    if (found.ok) return { ok: true, membership: found.permit };`,
         `    if (found.ok) return { ok: true, membership: found.permit };
     if (found.reason === "unknown") return { ok: true, membership: { id: presented, permitClass: "direct", authorizationRef: "", stepKey: "", scopeFingerprint: PaidPermit.paidScopeFingerprint(dispatchScopeFor(req.body, { surface: "compiled-frame", declaration: { viewMode: "advanced" } }, normalizedPurpose(req.body), effectiveOutputCount(normalizedPurpose(req.body), req.body))) } };`,
@@ -1813,7 +1813,7 @@ async function main() {
       /* The check moves OUT of the commit callback and in front of it, which is where a
          reasonable implementation would put it and is exactly what makes it unsound: two
          requests can both read a ledger with no row before either writes one. */
-      const mutated = loadModified("fal-generation.js", [[
+      const mutated = loadModified("src/generation/fal/fal-generation.js", [[
         `      await commit(owner, (current) => {
         const spent = current.find((item) => String(item?.paidPermitId || "") === String(membership.id || ""));
         if (spent) {
@@ -1863,7 +1863,7 @@ async function main() {
          it in place this control would report a green it had not earned — it would be
          measuring the fingerprint. Both come out, which is what makes the remaining
          question "does membership come from the permit". */
-      const mutated = loadModified("fal-generation.js", [[
+      const mutated = loadModified("src/generation/fal/fal-generation.js", [[
         `    if (membership.permitClass === "automation") {
       req.body = { ...(req.body && typeof req.body === "object" ? req.body : {}) };
       req.body.automationRunId = membership.authorizationRef;
@@ -1878,7 +1878,7 @@ async function main() {
       const h = await harness(mutated);
       const runsApp = express();
       runsApp.use(express.json({ limit: "8mb" }));
-      const { registerAutomationRuns } = require("../automation-runs");
+      const { registerAutomationRuns } = require("../src/automation/automation-runs");
       registerAutomationRuns(runsApp, {
         readConfig: () => ({}), readProject: () => h.project(), writeProject: () => {},
         activeSlug: () => "ctrl", projectDir: () => h.dir, projectDirForSlug: () => ({ slug: "ctrl", dir: h.dir, file: h.file }),
@@ -1927,7 +1927,7 @@ async function main() {
 
   await control("a permit accepted for a run or step other than the one it names",
     "a permit buys work only under the authorization it was minted for", async (phase) => {
-      const mutated = loadModified("fal-generation.js", [[
+      const mutated = loadModified("src/generation/fal/fal-generation.js", [[
         `      req.body.automationRunId = membership.authorizationRef;
       req.body.automationStepKey = membership.stepKey;`,
         `      req.body.automationRunId = String(req.body.automationRunId || membership.authorizationRef);
@@ -1937,7 +1937,7 @@ async function main() {
       const h = await harness(mutated);
       const runsApp = express();
       runsApp.use(express.json({ limit: "8mb" }));
-      const { registerAutomationRuns } = require("../automation-runs");
+      const { registerAutomationRuns } = require("../src/automation/automation-runs");
       registerAutomationRuns(runsApp, {
         readConfig: () => ({}), readProject: () => h.project(), writeProject: () => {},
         activeSlug: () => "ctrl", projectDir: () => h.dir, projectDirForSlug: () => ({ slug: "ctrl", dir: h.dir, file: h.file }),
@@ -1984,7 +1984,7 @@ async function main() {
       /* The scope fingerprint comes out for the same reason as the control above: it
          independently refuses a run-scoped permit presented under a direct surface, so
          leaving it in would measure it instead of the class. */
-      const mutated = loadModified("fal-generation.js", [[
+      const mutated = loadModified("src/generation/fal/fal-generation.js", [[
         `    if (found.ok) return { ok: true, membership: found.permit };`,
         `    if (found.ok) return { ok: true, membership: { ...found.permit, permitClass: String(req.body?.paidPermitClass || found.permit.permitClass), authorizationRef: req.body?.paidPermitClass === "direct" ? "" : found.permit.authorizationRef } };`,
       ], [
@@ -1995,7 +1995,7 @@ async function main() {
       const h = await harness(mutated);
       const runsApp = express();
       runsApp.use(express.json({ limit: "8mb" }));
-      const { registerAutomationRuns } = require("../automation-runs");
+      const { registerAutomationRuns } = require("../src/automation/automation-runs");
       registerAutomationRuns(runsApp, {
         readConfig: () => ({}), readProject: () => h.project(), writeProject: () => {},
         activeSlug: () => "ctrl", projectDir: () => h.dir, projectDirForSlug: () => ({ slug: "ctrl", dir: h.dir, file: h.file }),
@@ -2047,7 +2047,7 @@ async function main() {
 
   await control("coverage membership restored to a comparison of presentation fields",
     "reclassified coverage work cannot escape or replace a live bounded authorization", async (phase) => {
-      const mutated = loadModified("fal-generation.js", [[
+      const mutated = loadModified("src/generation/fal/fal-generation.js", [[
         /* Re-armed at the moved seam: the route now resolves one transition rather than an
            authorization, so the defect is reintroduced by making that transition compare
            presentation fields again. */
@@ -2077,7 +2077,7 @@ async function main() {
     "an authorization with paid work in flight is never destroyed by a later request", async (phase) => {
       /* Membership still comes from the permit; what is removed is the LIVENESS half — the
          rule that a bounded run holding unsettled work owns the entity's coverage work. */
-      const mutated = loadModified("fal-generation.js", [[
+      const mutated = loadModified("src/generation/fal/fal-generation.js", [[
         /* The anchor moved with the seam again: the bounded-run arm of the transition
            table is where "still holding unsettled work" is now asked. Re-armed there. */
         `      if (!outstanding) return { action: COVERAGE_TRANSITIONS.ESTABLISH };`,
@@ -2104,8 +2104,8 @@ async function main() {
       /* The mutation is in the permit module, and the route holds its own copy of it — so
          the patched module is installed in the require cache and fal-generation.js is
          compiled fresh against it, or the boundary would go on running the correct code. */
-      const permitModule = path.join(ROOT, "paid-dispatch-permit.js");
-      const { code } = modifiedSource("paid-dispatch-permit.js", [[
+      const permitModule = path.join(ROOT, "src/generation/paid-dispatch-permit.js");
+      const { code } = modifiedSource("src/generation/paid-dispatch-permit.js", [[
         `  canonical.outputCount = Math.max(0, Math.round(Number(row.outputCount) || 0));`,
         `  canonical.outputCount = 0;`,
       ]]);
@@ -2117,12 +2117,12 @@ async function main() {
       require.cache[permitModule] = { id: permitModule, filename: permitModule, loaded: true, exports: patched.exports };
       let mutated;
       try {
-        delete require.cache[path.join(ROOT, "fal-generation.js")];
-        mutated = require("../fal-generation");
+        delete require.cache[path.join(ROOT, "src/generation/fal/fal-generation.js")];
+        mutated = require("../src/generation/fal/fal-generation");
       } finally {
         if (previous) require.cache[permitModule] = previous; else delete require.cache[permitModule];
-        delete require.cache[path.join(ROOT, "fal-generation.js")];
-        require("../fal-generation");
+        delete require.cache[path.join(ROOT, "src/generation/fal/fal-generation.js")];
+        require("../src/generation/fal/fal-generation");
       }
       phase("MUTATION_LANDED");
       const h = await harness(mutated);
@@ -2145,7 +2145,7 @@ async function main() {
          until the row has been committed and the provider has been asked. The refusal even
          still says providerContacted:false, which is what makes this the worst version:
          the answer is a lie the caller has no way to test. */
-      const mutated = loadModified("fal-generation.js", [[
+      const mutated = loadModified("src/generation/fal/fal-generation.js", [[
         `    const permitGate = resolveDispatchPermit(owner, jobs, req, trusted);
     if (!permitGate.ok)
       return requestTruthRefusal(res, permitGate.status, permitGate.code, permitGate.error, permitGate.detail || {});
@@ -2181,7 +2181,7 @@ async function main() {
          version of the permit correction did. The money question and the filing question
          are not the same question, and conflating them loses a job that is still in flight
          from the board a filmmaker is watching it on. */
-      const mutated = loadModified("fal-generation.js", [[
+      const mutated = loadModified("src/generation/fal/fal-generation.js", [[
         /* Re-armed at the moved seam: the decision is a CELL of the transition table now.
            Row B1 — a compatible unbounded press over live unbounded unsettled work — is the
            one under test, so the mutation makes that cell establish instead of continue,
@@ -2220,7 +2220,7 @@ async function main() {
          which is the shape that silently drops the ceiling rather than the shape that
          discards the projection. That the whole defect is now one cell is the point of
          having a table: before the model this took two mutations in two files. */
-      const mutated = loadModified("fal-generation.js", [[
+      const mutated = loadModified("src/generation/fal/fal-generation.js", [[
         `    if (requestBounded) return { action: COVERAGE_TRANSITIONS.REFUSE, reason: "unsettled-unbounded-work", existingTarget, incomingTarget, outstanding };`,
         `    if (requestBounded) return { action: COVERAGE_TRANSITIONS.CONTINUE, ref: String(run.id || "") };`,
       ]]);
@@ -2293,7 +2293,7 @@ async function main() {
       /* The predicate this model replaced. Empty and "angles" are the same board by
          coverageFilingTarget() and by every reader in the product, and comparing the raw
          strings makes the second press destroy the first. */
-      const mutated = loadModified("fal-generation.js", [[
+      const mutated = loadModified("src/generation/fal/fal-generation.js", [[
         `    const existingTarget = coverageFilingTarget(run.sheetType);
     const sameBoard = existingTarget === incomingTarget;`,
         `    const existingTarget = coverageFilingTarget(run.sheetType);
@@ -2319,7 +2319,7 @@ async function main() {
     "a run holding unsettled paid work is never replaced", async (phase) => {
       /* Row B3. Replacement looks harmless when the existing run quoted nothing — there is
          no ceiling to lose — and it is not: the record of an in-flight paid job goes with it. */
-      const mutated = loadModified("fal-generation.js", [[
+      const mutated = loadModified("src/generation/fal/fal-generation.js", [[
         `    if (!sameBoard) return { action: COVERAGE_TRANSITIONS.REFUSE, reason: "incompatible-filing-target", existingTarget, incomingTarget, outstanding };
     /* B2 — compatible, but it quoted a ceiling. Absorbing it drops that ceiling; replacing
        loses the in-flight work. So it waits. */`,
@@ -2348,7 +2348,7 @@ async function main() {
          still outstanding — passes every "must refuse" assertion and quietly makes the
          entity's other coverage board unusable from then on. A guard that only ever refuses
          looks safe and is not. */
-      const mutated = loadModified("fal-generation.js", [[
+      const mutated = loadModified("src/generation/fal/fal-generation.js", [[
         `    if (!outstanding) {
       if (requestBounded || !sameBoard) return { action: COVERAGE_TRANSITIONS.ESTABLISH };`,
         `    if (!outstanding) {

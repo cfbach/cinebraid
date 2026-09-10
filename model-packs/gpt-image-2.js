@@ -36,7 +36,7 @@
  * shape as C1.1 was for H3.
  */
 
-const { registerModelPack } = require("../generation-compiler");
+const { registerModelPack } = require("../src/generation/generation-compiler");
 
 const PACK_ID = "gpt-image-2";
 const PACK_VERSION = "1.0.0";

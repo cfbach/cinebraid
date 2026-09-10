@@ -217,8 +217,8 @@ async function makeHarness({ orchestratorUrl, tokenSource = "oauth", grantedScop
   if (typeof mutate === "function") mutate({ ROOT });
   if (typeof module.exports.MUTATE === "function") module.exports.MUTATE({ ROOT });
 
-  const Config = require(path.join(ROOT, "config.js"));
-  const { registerCivitaiGeneration } = require(path.join(ROOT, "civitai-generation.js"));
+  const Config = require(path.join(ROOT, "src/server/config.js"));
+  const { registerCivitaiGeneration } = require(path.join(ROOT, "src/generation/civitai/civitai-generation.js"));
 
   const slugs = ["film-a", "film-b"];
   for (const slug of slugs) {
@@ -340,7 +340,7 @@ async function main() {
        keeps Settings' promise literally true: Connect asks for identity, spending is a
        second act, and no caller can ask a person for anything else. */
     {
-      const Provider = require(path.join(ROOT, "account-provider-civitai.js"));
+      const Provider = require(path.join(ROOT, "src/accounts/account-provider-civitai.js"));
       const config = { accountProviders: { civitai: { clientId: "fixture-client" } } };
       const url = (grant) => new URL(Provider.buildAuthorization({ config, redirectUri: "http://127.0.0.1:4477/api/accounts/civitai/callback", grant }).authorizationUrl);
 
@@ -508,7 +508,7 @@ async function main() {
     note("the shipped provider-generic media projection reports Civitai, 10 buzz, quoted — with no Civitai branch");
 
     /* Buzz never enters the US dollar total. */
-    const { summarizeRecordedCost } = require(path.join(ROOT, "generation-cost.js"));
+    const { summarizeRecordedCost } = require(path.join(ROOT, "src/generation/generation-cost.js"));
     const summary = summarizeRecordedCost(kit.jobs());
     assert.strictEqual(summary.amount, 0, "a Buzz job contributes nothing to the US dollar total");
     assert.deepStrictEqual(summary.otherUnits, [{ unit: "buzz", amount: 10, priced: 1 }]);
@@ -832,7 +832,7 @@ async function main() {
     /* =====================================================================
        10. THE BLOB GUARD. The one address CineBraid does not choose. */
     {
-      const Client = require(path.join(ROOT, "civitai-client.js"));
+      const Client = require(path.join(ROOT, "src/generation/civitai/civitai-client.js"));
       const refused = (url) => {
         try { Client.assertDownloadableBlobUrl(url); return ""; } catch (error) { return String(error.code || ""); }
       };
@@ -873,7 +873,7 @@ async function main() {
       /* THE PRODUCTION BOUNDARY, in a child process with the real pinned base, because
          MOCK_ORCHESTRATOR is decided once at module load from the environment. */
       const production = JSON.parse(require("child_process").execFileSync(process.execPath, ["-e", `
-        const C = require(${JSON.stringify(path.join(ROOT, "civitai-client.js"))});
+        const C = require(${JSON.stringify(path.join(ROOT, "src/generation/civitai/civitai-client.js"))});
         const code = (u) => { try { C.assertDownloadableBlobUrl(u); return ""; } catch (e) { return String(e.code || ""); } };
         const hosts = ["::1", "::ffff:127.0.0.1", "fe80::1", "fe90::1", "febf::1", "fc00::1"];
         const out = { mock: C.MOCK_ORCHESTRATOR };
@@ -902,7 +902,7 @@ async function main() {
        The gate is what matters, not just the predicate: nothing may reach the network. So
        global fetch is replaced with a counter and asserted never to have been called. */
     {
-      const Client = require(path.join(ROOT, "civitai-client.js"));
+      const Client = require(path.join(ROOT, "src/generation/civitai/civitai-client.js"));
       const realFetch = globalThis.fetch;
       let fetches = [];
       globalThis.fetch = async (input) => { fetches.push(String(input)); throw new Error("the gate let a refused address reach the network"); };

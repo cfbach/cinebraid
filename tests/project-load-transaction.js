@@ -1890,7 +1890,7 @@ function durableAdvanceIsSharedSection() {
   /* THE REVISION READ IS READ-ONLY, AND CHEAP. It exists so a live window can ask
      every few seconds; a route that parsed the document, recorded activity or took
      a backup would be a page-load's worth of work and a mutation on a timer. */
-  const serverSource = fs.readFileSync(path.join(ROOT, "server.js"), "utf8").replace(/\r\n/g, "\n");
+  const serverSource = fs.readFileSync(path.join(ROOT, "src/server/server.js"), "utf8").replace(/\r\n/g, "\n");
   const routeAt = serverSource.indexOf('app.get("/api/projects/:slug/revision"');
   assert(routeAt > 0, "the lightweight revision route must exist");
   const routeBody = stripComments(serverSource.slice(routeAt, serverSource.indexOf("\n});", routeAt)));

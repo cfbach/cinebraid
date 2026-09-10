@@ -62,7 +62,7 @@ function sabotage(label, mutations) {
     /* core.autocrlf is on for this checkout, so the working tree is CRLF while the
        anchors below are written LF. Normalise, or every multi-line anchor silently
        fails to match and the control tests an unmodified module. */
-    let source = fs.readFileSync(path.join(ROOT, name), "utf8").replace(/\r\n/g, "\n");
+    let source = fs.readFileSync(path.join(ROOT, "src/media", name), "utf8").replace(/\r\n/g, "\n");
     for (const [find, replace] of mutations[name] || []) {
       assert(source.includes(find),
         `NC-${label}: anchor missing from ${name}. A control that does not modify the real code proves nothing.`);
@@ -581,7 +581,7 @@ async function main() {
         + "  const passOptions = { ...options, projectDir, slug, reason };",
       ]],
     });
-    const clean = require(path.join(ROOT, "media-asset-service.js"));
+    const clean = require(path.join(ROOT, "src/media/media-asset-service.js"));
     const files = Object.fromEntries(Array.from({ length: 150 }, (_, i) => [`media/P${i}.png`, bytesOf(`p${i}`)]));
     const sab = makeProject("3", "p", { files });
     const ok = makeProject("3", "q", { files });

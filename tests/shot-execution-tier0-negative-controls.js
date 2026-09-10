@@ -52,10 +52,10 @@ function mutated(relative, transform) {
    future one written with fs.writeFileSync instead of a string — is caught here rather
    than by whatever breaks next. */
 const MUTATED_FILES = [
-  "generation-compiler.js",
-  "fal-h3-backend.js",
+  "src/generation/generation-compiler.js",
+  "src/generation/fal/fal-h3-backend.js",
   "model-packs/minimax-h3.js",
-  "server.js",
+  "src/server/server.js",
   "public/shared-lip-sync.js",
   "public/motion-sound-composer.js",
   "public/app.js",
@@ -80,12 +80,12 @@ function control(id, title, run) {
    between the shot and the model, with no warning anywhere. */
 for (const intent of ["editorial", "endpoints.start", "endpoints.end", "performance.lipSync", "interaction", "subjects.count", "output.nativeAudio"])
   control(`NC-1:${intent}`, `dropping the ${intent} inventory row`, () => {
-    const source = mutated("generation-compiler.js", (text) => {
+    const source = mutated("src/generation/generation-compiler.js", (text) => {
       const line = text.split("\n").find((row) => row.includes(`{ key: "${intent}",`));
       assert(line, `generation-compiler.js no longer declares a row for ${intent}`);
       return text.replace(`${line}\n`, "");
     });
-    const Compiler = compileModule("generation-compiler.js", source);
+    const Compiler = compileModule("src/generation/generation-compiler.js", source);
     const spec = F.baseSpec({
       editorial: "single-take",
       endpoints: { start: "exact", end: "approximate" },
@@ -239,7 +239,7 @@ control("NC-5", "dropping the H3 pack's explicit audio refusal", () => {
   const source = mutated("model-packs/minimax-h3.js", (text) =>
     text.replace(/ *reportUnsatisfiedAudioRequest\(context\);\r?\n/, ""));
   const Pack = compileModule("model-packs/minimax-h3.js", source);
-  const Compiler = require("../generation-compiler");
+  const Compiler = require("../src/generation/generation-compiler");
   const plan = Compiler.compileGenerationPlan({
     spec: F.baseSpec({ output: { nativeAudio: false } }),
     references: [F.FRAME_A], mode: "i2v", pack: Pack.pack,
@@ -266,11 +266,11 @@ control("NC-5", "dropping the H3 pack's explicit audio refusal", () => {
 control("NC-3", "omitting the prompt-expansion flag from the fal request", () => {
   /* Line-ending agnostic: this repository checks out with CRLF, so a mutation anchored
      on a bare "\n" silently matches nothing and the control reports on itself. */
-  const source = mutated("fal-h3-backend.js", (text) =>
+  const source = mutated("src/generation/fal/fal-h3-backend.js", (text) =>
     text.replace(/ *input\[FAL_H3_BACKEND\.promptExpansion\.field\][^\r\n]*\r?\n/, ""));
-  const Backend = compileModule("fal-h3-backend.js", source);
+  const Backend = compileModule("src/generation/fal/fal-h3-backend.js", source);
   const H3 = require("../model-packs/minimax-h3");
-  const Compiler = require("../generation-compiler");
+  const Compiler = require("../src/generation/generation-compiler");
   const plan = Compiler.compileGenerationPlan({
     spec: F.baseSpec(), references: [F.FRAME_A], mode: "i2v",
     modelId: F.modelIdFor("i2v"), surface: "api", capability: F.capabilityFor("i2v"),
@@ -287,11 +287,11 @@ control("NC-3", "omitting the prompt-expansion flag from the fal request", () =>
 
 /* Setting it to `true` is the same defect wearing a value, and must fail the same way. */
 control("NC-3b", "sending prompt expansion explicitly on", () => {
-  const source = mutated("fal-h3-backend.js", (text) =>
+  const source = mutated("src/generation/fal/fal-h3-backend.js", (text) =>
     text.replace("    send: false,", "    send: true,"));
-  const Backend = compileModule("fal-h3-backend.js", source);
+  const Backend = compileModule("src/generation/fal/fal-h3-backend.js", source);
   const H3 = require("../model-packs/minimax-h3");
-  const Compiler = require("../generation-compiler");
+  const Compiler = require("../src/generation/generation-compiler");
   const plan = Compiler.compileGenerationPlan({
     spec: F.baseSpec(), references: [], mode: "t2v",
     modelId: F.modelIdFor("t2v"), surface: "api", capability: F.capabilityFor("t2v"),
@@ -333,7 +333,7 @@ control("NC-4", "removing t2v from the browser clip vocabulary", async () => {
 });
 
 control("NC-4b", "removing t2v from the import vocabulary", () => {
-  const source = mutated("server.js", (text) =>
+  const source = mutated("src/server/server.js", (text) =>
     text.replace(
       'allowedKinds = new Set(["t2v", "i2v", "flf", "r2v", "plan", "post", "reuse", "hold"]),',
       'allowedKinds = new Set(["i2v", "flf", "r2v", "plan", "post", "reuse", "hold"]),',
@@ -359,7 +359,7 @@ control("NC-4b", "removing t2v from the import vocabulary", () => {
    document was routed to image-to-video — demanding an approved still and a paid
    generation — with nothing said to anyone. */
 control("NC-4h", "restoring the i2v default for a clip that names no kind", () => {
-  const source = mutated("server.js", (text) =>
+  const source = mutated("src/server/server.js", (text) =>
     text.replace(
       'let kind = String(source.kind ?? "").trim().toLowerCase(),',
       'let kind = String(source.kind || "i2v").toLowerCase(),',
@@ -398,7 +398,7 @@ control("NC-4i", "removing t2v from the Project Builder contract schema", () => 
   assert(!schema.$defs.clip.properties.kind.enum.includes("t2v"),
     "the control must actually remove the enum member");
   /* And the disagreement is real rather than cosmetic: the importer still takes it. */
-  const clips = builderClipsFrom(read("server.js"));
+  const clips = builderClipsFrom(read("src/server/server.js"));
   const accepted = clips(
     { id: "SH-T2V", clips: [{ id: "SH-T2V-M01", kind: "t2v", dur: 6, motionPrompt: "A storm front." }] },
     [{ id: "SH-T2V-A" }],
@@ -547,7 +547,7 @@ control("NC-4g", "letting an active t2v clip bypass hybrid readiness", async () 
    of the frameless list gives a text-to-video unit a starting frame that its fal
    endpoint has no field to receive. */
 control("NC-4c", "linking a start frame to an imported t2v unit", () => {
-  const source = mutated("server.js", (text) =>
+  const source = mutated("src/server/server.js", (text) =>
     text.replace(
       'framelessKinds = ["t2v", "plan", "post", "reuse"],',
       'framelessKinds = ["plan", "post", "reuse"],',
@@ -627,14 +627,14 @@ async function main() {
      cache, these would now disagree. */
   const LipSync = require("../public/shared-lip-sync");
   assert.strictEqual(LipSync.deriveLipSync({ line: "Bravo two, hold position." }), "implied");
-  const Backend = require("../fal-h3-backend");
+  const Backend = require("../src/generation/fal/fal-h3-backend");
   assert.strictEqual(Backend.FAL_H3_BACKEND.promptExpansion.send, false);
-  const Compiler = require("../generation-compiler");
+  const Compiler = require("../src/generation/generation-compiler");
   const keys = Compiler.INTENT_FIELDS.map((row) => row.key);
   for (const intent of ["editorial", "endpoints.start", "endpoints.end", "performance.lipSync", "interaction", "subjects.count", "output.nativeAudio"])
     assert(keys.includes(intent), `${intent} must still be inventoried by the real compiler`);
   assert(read("public/app.js").includes('"t2v", "i2v", "flf", "r2v", "plan", "post", "reuse"'));
-  assert(read("server.js").includes('framelessKinds = ["t2v", "plan", "post", "reuse"]'));
+  assert(read("src/server/server.js").includes('framelessKinds = ["t2v", "plan", "post", "reuse"]'));
 
   console.log("Shot Execution Tier 0 negative controls passed: " + detected.length + " deliberate defects detected in memory; route requirements, canonical Motion readiness, compiler accounting and provider boundaries all remained guarded. Nothing was written or reverted. Provider calls made: 0.");
 }

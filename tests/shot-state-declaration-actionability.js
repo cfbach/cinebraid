@@ -1183,7 +1183,7 @@ async function batchProductAndCompletenessSection() {
   ok(duplicateHandler.includes("copiedStateDeclarations.map((declaration) => applyShotStateDeclaration(P, declaration))")
     && !duplicateHandler.includes("applyShotStateDeclarationBatch(P, copiedStateDeclarations)"),
   "global writer guard: duplication intentionally filters each cloned declaration through the canonical single-item owner");
-  const serverSource = fs.readFileSync(path.join(ROOT, "server.js"), "utf8");
+  const serverSource = fs.readFileSync(path.join(ROOT, "src/server/server.js"), "utf8");
   const importedShotNormalizer = serverSource.slice(
     serverSource.indexOf("function normalizeBuilderShot("),
     serverSource.indexOf("function normalizeImportedProject("),

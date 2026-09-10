@@ -48,7 +48,7 @@ const ROOT = path.join(__dirname, "..");
 
 const { Kernel } = require("./authority-kernel-private");
 const { render, rawFixture, withCanon } = require("./render-harness.js");
-const seam = require(path.join(ROOT, "authority-write-seam"));
+const seam = require(path.join(ROOT, "src/authority/authority-write-seam"));
 
 let checks = 0;
 const notes = [];

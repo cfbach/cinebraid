@@ -114,7 +114,7 @@ assert(!/\.bible-brand::before\s*\{/.test(css),
    from this server must be fetchable BEFORE anyone has signed in. Stated over the
    whole page rather than over the logo alone, because the next asset added to
    login.html would fail in exactly the same way. */
-const serverSource = read("server.js");
+const serverSource = read("src/server/server.js");
 const allowlist = serverSource.split("const PRE_AUTH_PATHS = [")[1];
 assert(allowlist, "server.js must declare PRE_AUTH_PATHS — the pre-auth allowlist this check reads");
 const preAuth = new Set((allowlist.split("];")[0].match(/"([^"]+)"/g) || []).map((entry) => entry.slice(1, -1)));

@@ -100,8 +100,8 @@ async function main() {
      The detour dogfood hit was a 404: "Local AI" was picked for a vLLM server,
      and `ollama` posts Ollama's own /api/chat, which vLLM does not serve. */
   const views = read("public/views.js");
-  const server = read("server.js");
-  const llm = read("llm.js");
+  const server = read("src/server/server.js");
+  const llm = read("src/assistant/llm.js");
 
   ok(/\["ollama", "Ollama",/.test(views), "U1: the Ollama choice is named Ollama");
   ok(/\["custom", "OpenAI-compatible server",/.test(views),

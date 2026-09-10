@@ -33,7 +33,7 @@ const vm = require("vm");
 const { ROOT, startCineBraidServer } = require("./fixtures/mock-civitai");
 
 const TEMP = fs.mkdtempSync(path.join(os.tmpdir(), "cinebraid-f11-"));
-const SERVER_SOURCE = fs.readFileSync(path.join(ROOT, "server.js"), "utf8").replace(/\r\n/g, "\n");
+const SERVER_SOURCE = fs.readFileSync(path.join(ROOT, "src/server/server.js"), "utf8").replace(/\r\n/g, "\n");
 const passed = [];
 
 /* ==========================================================================

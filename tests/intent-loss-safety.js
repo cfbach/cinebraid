@@ -30,7 +30,7 @@ const vm = require("vm");
 const { spawn } = require("child_process");
 
 const ROOT = path.resolve(__dirname, "..");
-const PromptEngine = require("../prompt-engine");
+const PromptEngine = require("../src/generation/prompt-engine");
 const {
   entityVisualDescription,
   resolveShotDuration,

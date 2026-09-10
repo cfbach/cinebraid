@@ -10,7 +10,7 @@ async function main() {
   const app = read("public/app.js");
   const entities = read("public/entities.js");
   const coverage = read("public/coverage-automation.js");
-  const serverFal = read("fal-generation.js");
+  const serverFal = read("src/generation/fal/fal-generation.js");
   const css = read("public/styles.css");
 
   assert(app.includes("normalizeReferenceCoverageData"), "coverage migration must have an explicit normalization pass");

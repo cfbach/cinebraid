@@ -42,9 +42,9 @@ const CLOSED_FILE = "PROP-CASE-CLOSED.png";
 const OPEN_FILE = "PROP-CASE-OPEN.png";
 const DOOR_FILE = "LOC-DOOR.png";
 
-const SERVER_SOURCE = fs.readFileSync(path.join(ROOT, "server.js"), "utf8");
+const SERVER_SOURCE = fs.readFileSync(path.join(ROOT, "src/server/server.js"), "utf8");
 const CONTINUITY_SOURCE = fs.readFileSync(path.join(ROOT, "public", "shared-continuity.js"), "utf8");
-const AGENT_SOURCE = fs.readFileSync(path.join(ROOT, "agent-suite.js"), "utf8");
+const AGENT_SOURCE = fs.readFileSync(path.join(ROOT, "src/assistant/agent-suite.js"), "utf8");
 
 /* ---------------------------------------------------------------------------
    The same fixture the positive suite uses, so a control reproduces its defect
@@ -420,7 +420,7 @@ const CONTROLS = [
    in-memory Module; the file on disk is opened read-only and never written. */
 
 function compileAgentSuite(source) {
-  const filename = path.join(ROOT, "agent-suite.js");
+  const filename = path.join(ROOT, "src/assistant/agent-suite.js");
   const compiled = new Module(filename, null);
   compiled.filename = filename;
   compiled.paths = Module._nodeModulePaths(path.dirname(filename));
@@ -514,9 +514,9 @@ async function main() {
   /* Every file this suite mutated was mutated in memory. All three must be
      byte-identical to what was read at the top of this file. */
   for (const [label, file, source] of [
-    ["server.js", path.join(ROOT, "server.js"), SERVER_SOURCE],
+    ["server.js", path.join(ROOT, "src/server/server.js"), SERVER_SOURCE],
     ["public/shared-continuity.js", path.join(ROOT, "public", "shared-continuity.js"), CONTINUITY_SOURCE],
-    ["agent-suite.js", path.join(ROOT, "agent-suite.js"), AGENT_SOURCE],
+    ["agent-suite.js", path.join(ROOT, "src/assistant/agent-suite.js"), AGENT_SOURCE],
   ]) assert.strictEqual(fs.readFileSync(file, "utf8"), source, `${label} was modified on disk — every control here is in-memory only`);
 
   const missed = results.filter((result) => result.status === "MISSED");

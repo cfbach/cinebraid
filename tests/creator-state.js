@@ -46,11 +46,11 @@ const SOURCES = {
   stageModel: readSource(path.join(PUBLIC, "shared-stage-model.js")),
   markup: readSource(path.join(PUBLIC, "index.html")),
   styles: readSource(path.join(PUBLIC, "styles.css")),
-  runs: readSource(path.join(ROOT, "automation-runs.js")),
+  runs: readSource(path.join(ROOT, "src/automation/automation-runs.js")),
 };
 
-const Lifecycle = require("../generation-lifecycle.js");
-const Cost = require("../generation-cost.js");
+const Lifecycle = require("../src/generation/generation-lifecycle.js");
+const Cost = require("../src/generation/generation-cost.js");
 
 const notes = [];
 const note = (line) => notes.push(line);

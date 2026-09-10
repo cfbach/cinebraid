@@ -15,7 +15,7 @@ const path = require("path");
 const Module = require("module");
 const express = require("express");
 
-const RealLifecycle = require("../generation-lifecycle");
+const RealLifecycle = require("../src/generation/generation-lifecycle");
 const { addMotionPromptBuild } = require("./h3-execution-fixture");
 const { withGenerationDeclaration } = require("./generation-request-fixture");
 
@@ -169,7 +169,7 @@ async function main() {
   /* =========================================================================
      1. Ambiguous transport failure mapped to FAILED. */
   await control("an ambiguous transport failure recorded as FAILED", "a post-contact transport loss is UNRESOLVED", async () => {
-    const lifecycle = loadModified("generation-lifecycle.js", [
+    const lifecycle = loadModified("src/generation/generation-lifecycle.js", [
       [
         "  if (httpStatus == null)\n    return {\n      status: UNRESOLVED,",
         "  if (httpStatus == null)\n    return {\n      status: \"FAILED\",",
@@ -186,7 +186,7 @@ async function main() {
      2. UNRESOLVED lost on reload. */
   await control("UNRESOLVED collapsing to FAILED on read", "UNRESOLVED survives a reload", async () => {
     /* The defect: the ledger vocabulary forgets the state, so reading normalises it. */
-    const lifecycle = loadModified("generation-lifecycle.js", [
+    const lifecycle = loadModified("src/generation/generation-lifecycle.js", [
       ["function isUnresolved(job) {\n  return String(job?.status || \"\") === UNRESOLVED;\n}", "function isUnresolved() {\n  return false;\n}"],
     ]);
     const stored = { id: "j1", status: "UNRESOLVED", providerContacted: true };
@@ -197,7 +197,7 @@ async function main() {
   /* =========================================================================
      3. Duplicate Generate allowed immediately. */
   await control("resubmission allowed while a submission is unresolved", "a duplicate paid retry is refused", async () => {
-    const falGeneration = loadModified("fal-generation.js", [
+    const falGeneration = loadModified("src/generation/fal/fal-generation.js", [
       [
         "    const unresolvedTwin = jobs.find((item) =>\n      Lifecycle.blocksResubmission(item) && Lifecycle.generationContextKey(item) === requestContext);",
         "    const unresolvedTwin = null;",
@@ -219,7 +219,7 @@ async function main() {
   /* =========================================================================
      4. Reconciliation erasing provenance. */
   await control("reconciliation that erases what happened", "reconciliation preserves the record", async () => {
-    const lifecycle = loadModified("generation-lifecycle.js", [
+    const lifecycle = loadModified("src/generation/generation-lifecycle.js", [
       [
         "    status: resolution.status,\n    reconciliation: {\n      outcome: String(outcome),",
         "    status: resolution.status,\n    compilation: undefined,\n    unresolvedReason: \"\",\n    reconciliation: {\n      outcome: String(outcome),",
@@ -239,7 +239,7 @@ async function main() {
   /* =========================================================================
      5. A stale FAILED overwriting UNRESOLVED. */
   await control("a stale write resolving an unresolved job", "only an authoritative outcome may resolve uncertainty", async () => {
-    const lifecycle = loadModified("generation-lifecycle.js", [
+    const lifecycle = loadModified("src/generation/generation-lifecycle.js", [
       ["  if (from === UNRESOLVED && !options.authoritative) return from;", "  /* control: uncertainty is displaced by anything */"],
     ]);
     assert.strictEqual(lifecycle.nextStatus("UNRESOLVED", "FAILED", {}), "UNRESOLVED",
@@ -251,7 +251,7 @@ async function main() {
   await control("uncertainty handled only for one model family", "the state is generic, not per-model", async () => {
     /* The defect: the shared provider boundary bypassed for the image path, so only the
        H3 route can ever produce the state. */
-    const falGeneration = loadModified("fal-generation.js", [
+    const falGeneration = loadModified("src/generation/fal/fal-generation.js", [
       [
         "    const { data } = await providerPost(`${cfg.baseUrl}/${model}`, {\n      method: \"POST\",\n      headers: {\n        \"content-type\": \"application/json\",\n        Authorization: `Key ${cfg.apiKey}`,\n        \"X-Fal-No-Retry\": \"1\",\n      },\n      body: JSON.stringify(input),\n    }, model);",
         "    const legacyResponse = await fetch(`${cfg.baseUrl}/${model}`, { method: \"POST\", headers: { \"content-type\": \"application/json\", Authorization: `Key ${cfg.apiKey}` }, body: JSON.stringify(input) });\n    const data = await legacyResponse.json().catch(() => ({}));\n    if (!legacyResponse.ok) throw new Error(normalizeError(data, legacyResponse.status));",

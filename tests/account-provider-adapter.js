@@ -66,7 +66,7 @@ async function main() {
   /* =====================================================================
      PART A — PKCE, in isolation and against the published vector.
      ===================================================================== */
-  const adapter = require("../account-provider-civitai");
+  const adapter = require("../src/accounts/account-provider-civitai");
 
   /* RFC 7636 Appendix B. Pinned against the standard, not against this
      implementation's own output — a self-consistent wrong transform would pass

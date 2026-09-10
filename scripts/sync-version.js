@@ -10,7 +10,7 @@
 
 const fs = require("fs");
 const path = require("path");
-const { releaseIdentity } = require("../release-identity");
+const { releaseIdentity } = require("../src/server/release-identity");
 
 const ROOT = path.resolve(__dirname, "..");
 const CHECK_ONLY = process.argv.includes("--check");

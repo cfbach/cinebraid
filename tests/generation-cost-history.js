@@ -23,10 +23,10 @@ const vm = require("vm");
 const express = require("express");
 
 const ROOT = path.join(__dirname, "..");
-const { registerFalGeneration } = require("../fal-generation");
-const { registerAutomationRuns } = require("../automation-runs");
-const { submissionAccounting, summarizeRecordedCost, recordedAmount, recordedEstimate, RECORDED_BASIS } = require("../generation-cost");
-const { validateCostEstimate } = require("../generation-contracts");
+const { registerFalGeneration } = require("../src/generation/fal/fal-generation");
+const { registerAutomationRuns } = require("../src/automation/automation-runs");
+const { submissionAccounting, summarizeRecordedCost, recordedAmount, recordedEstimate, RECORDED_BASIS } = require("../src/generation/generation-cost");
+const { validateCostEstimate } = require("../src/generation/generation-contracts");
 const { declaredRequestInit } = require("./generation-request-fixture");
 
 const PNG = Buffer.from("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAusB9Y9Z5xkAAAAASUVORK5CYII=", "base64");

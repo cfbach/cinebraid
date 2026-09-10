@@ -176,10 +176,10 @@ async function testAutomationReviewPersistenceAndCorrection() {
 }
 
 function testSourceContracts() {
-  const contract = fs.readFileSync(path.join(__dirname, "..", "reference-review-contract.js"), "utf8");
+  const contract = fs.readFileSync(path.join(__dirname, "..", "src/authority/reference-review-contract.js"), "utf8");
   const entities = fs.readFileSync(path.join(__dirname, "..", "public", "entities.js"), "utf8");
   const generation = fs.readFileSync(path.join(__dirname, "..", "public", "fal-generation.js"), "utf8");
-  const ReferenceReview = require("../reference-review-contract");
+  const ReferenceReview = require("../src/authority/reference-review-contract");
   assert.strictEqual(ReferenceReview.ENTITY_REFERENCE_REVIEW_CONTRACT_VERSION, "reference-authority-v3");
   /* The browser cannot require the module, so it carries its own copy of the
      version. A silent divergence would mark every fresh review stale, so the

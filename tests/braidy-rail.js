@@ -42,7 +42,7 @@ const SOURCES = {
      editing either file on disk. */
   exposure: readSource("tests/public-exposure.js"),
   release: readSource("tests/release-package-smoke.js"),
-  server: readSource("server.js"),
+  server: readSource("src/server/server.js"),
 };
 
 const notes = [];
@@ -179,7 +179,7 @@ function readClientFiles() {
     if (!/\.(js|html)$/.test(name)) continue;
     files[name] = fs.readFileSync(path.join(clientDir, name), "utf8");
   }
-  files["server.js"] = fs.readFileSync(path.join(ROOT, "server.js"), "utf8");
+  files["server.js"] = fs.readFileSync(path.join(ROOT, "src/server/server.js"), "utf8");
   return files;
 }
 
@@ -1775,7 +1775,7 @@ function checkSpriteAssets(sources = SOURCES) {
      and shot takes and nothing else. Reordering those two declarations would 404 every
      frame of Braidy while every unit test in this file still passed, which is why the
      order is asserted here rather than left to be rediscovered in a browser. */
-  const staticAt = sources.server.indexOf('express.static(path.join(__dirname, "public")');
+  const staticAt = sources.server.indexOf('express.static(path.join(path.resolve(__dirname, "../.."), "public")');
   const mediaAt = sources.server.indexOf('app.get("/assets/*"');
   assert.notStrictEqual(staticAt, -1, "server.js must serve public/ statically");
   assert.notStrictEqual(mediaAt, -1, "server.js must still have its project-media route");
@@ -1835,7 +1835,7 @@ function serverRegistration(source, start, label) {
   return { at, text: source.slice(at, end + 1) };
 }
 
-const STATIC_MOUNT = 'app.use(\n  "/",\n  express.static(path.join(__dirname, "public")';
+const STATIC_MOUNT = 'app.use(\n  "/",\n  express.static(path.join(path.resolve(__dirname, "../.."), "public")';
 const MEDIA_ROUTE = 'app.get("/assets/*", (req, res) => {';
 
 /* A project directory shaped the way the media route's own allowlist requires:
@@ -1865,7 +1865,7 @@ async function serveRouteStack(source) {
     express,
     path,
     fs,
-    __dirname: ROOT,
+    __dirname: path.join(ROOT, "src/server"),
     PROJECT_DIR: () => fixture.root,
     MEDIA_EXT: new Set([".png", ".jpg", ".jpeg", ".webp", ".gif", ".mp4", ".webm", ".mov", ".wav", ".mp3", ".m4a", ".flac", ".ogg"]),
   };

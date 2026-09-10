@@ -54,7 +54,7 @@ function mutated(relative, transform) {
 /* Every production file any control below rewrites in memory, fingerprinted before and
    after the run. "Nothing is written to disk" is a claim this suite makes in its own
    summary line, and this is its evidence. */
-const MUTATED_FILES = ["generation-binding.js", "fal-generation.js"];
+const MUTATED_FILES = ["src/generation/generation-binding.js", "src/generation/fal/fal-generation.js"];
 function sourceFingerprints() {
   return Object.fromEntries(MUTATED_FILES.map((relative) =>
     [relative, crypto.createHash("sha256").update(fs.readFileSync(path.join(ROOT, relative))).digest("hex")]));
@@ -434,16 +434,16 @@ function control(id, title, run) {
    the resolver falls through the frame's declaration to the shot's, then to the
    entity's default, and answers with a state that did not select these bytes. */
 control("NC-1", "resolving the state from current Canon instead of the dispatch frame", () => {
-  const source = mutated("generation-binding.js", (text) =>
+  const source = mutated("src/generation/generation-binding.js", (text) =>
     text.replace(
       /Continuity\.resolveDeclaredStateId\(shot, text\(frameId\), kind, text\(entityId\)\)/,
       "Continuity.resolveDeclaredStateId(shot, \"\", kind, text(entityId))",
     ));
   assert(/resolveDeclaredStateId\(shot, "", kind/.test(source), "the mutation must drop the frame scope");
-  assert(!/resolveDeclaredStateId\(shot, "", kind/.test(read("generation-binding.js")), "and the shipped source must not");
+  assert(!/resolveDeclaredStateId\(shot, "", kind/.test(read("src/generation/generation-binding.js")), "and the shipped source must not");
 
-  const Binding = compileModule("generation-binding.js", source);
-  const real = require("../generation-binding");
+  const Binding = compileModule("src/generation/generation-binding.js", source);
+  const real = require("../src/generation/generation-binding");
   const input = frameCase();
 
   /* RECEIPT — THE LIVE DEFECT. The real module names the state the frame declared; the
@@ -471,15 +471,15 @@ control("NC-1", "resolving the state from current Canon instead of the dispatch 
    This is §3's failure exactly: a reference the configuration refused before dispatch
    reappears as evidence that it travelled. */
 control("NC-2", "recording a reference that was dropped before serialization", () => {
-  const source = mutated("generation-binding.js", (text) =>
+  const source = mutated("src/generation/generation-binding.js", (text) =>
     text.replace(
       /return listOf\(serialized\.bindings\)\.filter\(isRecord\)\.map\(\(bound, position\) => \{/,
       "return listOf(input.sourceReferences).filter(isRecord).map((bound, position) => {",
     ));
   assert(/listOf\(input\.sourceReferences\)\.filter\(isRecord\)\.map/.test(source));
 
-  const Binding = compileModule("generation-binding.js", source);
-  const real = require("../generation-binding");
+  const Binding = compileModule("src/generation/generation-binding.js", source);
+  const real = require("../src/generation/generation-binding");
   const input = droppedCase();
 
   /* RECEIPT — THE LIVE DEFECT. The refused video reference is back in the record. */
@@ -501,13 +501,13 @@ control("NC-2", "recording a reference that was dropped before serialization", (
    The mirror of NC-2, and the more dangerous direction: a record that is missing an
    input reads as a simpler generation than the one that was paid for. */
 control("NC-3", "omitting a consumed reference", () => {
-  const source = mutated("generation-binding.js", (text) =>
+  const source = mutated("src/generation/generation-binding.js", (text) =>
     text.replace(
       /return listOf\(serialized\.bindings\)\.filter\(isRecord\)/,
       'return listOf(serialized.bindings).filter(isRecord).filter((row) => row.field !== "end_image_url")',
     ));
-  const Binding = compileModule("generation-binding.js", source);
-  const real = require("../generation-binding");
+  const Binding = compileModule("src/generation/generation-binding.js", source);
+  const real = require("../src/generation/generation-binding");
   const input = flfCase();
 
   const shipped = real.buildGenerationBinding(input);
@@ -533,13 +533,13 @@ control("NC-3", "omitting a consumed reference", () => {
    this defect: the shot renders correctly and the evidence says it opened on the frame
    it closed on. Nothing downstream would ever notice. */
 control("NC-4", "swapping the FLF first and last frame identity", () => {
-  const source = mutated("generation-binding.js", (text) =>
+  const source = mutated("src/generation/generation-binding.js", (text) =>
     text.replace(
       /providerField: text\(bound\.field\),/,
       'providerField: bound.field === "image_url" ? "end_image_url" : bound.field === "end_image_url" ? "image_url" : text(bound.field),',
     ));
-  const Binding = compileModule("generation-binding.js", source);
-  const real = require("../generation-binding");
+  const Binding = compileModule("src/generation/generation-binding.js", source);
+  const real = require("../src/generation/generation-binding");
   const input = flfCase();
 
   const shipped = real.buildGenerationBinding(input);
@@ -569,13 +569,13 @@ control("NC-4", "swapping the FLF first and last frame identity", () => {
    A one-character convenience with a permanent consequence: every generation made
    before this phase would report, forever, that it used no references. */
 control("NC-5", "treating a legacy absence as an empty confirmed binding set", () => {
-  const source = mutated("generation-binding.js", (text) =>
+  const source = mutated("src/generation/generation-binding.js", (text) =>
     text.replace(
       /if \(!Array\.isArray\(job\?\.generationBinding\)\) return \{ recorded: false, bindings: null, version: 0 \};/,
       "if (!Array.isArray(job?.generationBinding)) return { recorded: true, bindings: [], version: 0 };",
     ));
-  const Binding = compileModule("generation-binding.js", source);
-  const real = require("../generation-binding");
+  const Binding = compileModule("src/generation/generation-binding.js", source);
+  const real = require("../src/generation/generation-binding");
 
   /* A job that plainly DID consume a reference, and simply has no record of it. */
   const legacy = { id: "legacy-job", references: [{ key: "x", url: A_PNG }] };
@@ -612,7 +612,7 @@ control("NC-5", "treating a legacy absence as an empty confirmed binding set", (
    happy path, which is what makes this worth a control: it only fails when a process
    dies between sending and answering — the one moment the evidence is irreplaceable. */
 control("NC-6a", "capturing the binding after the paid request instead of before the commit", async () => {
-  const source = mutated("fal-generation.js", (text) =>
+  const source = mutated("src/generation/fal/fal-generation.js", (text) =>
     text.replace(
       /(\r?\n\s*)applyBindingRecord\(job, bindingRecordFor\(owner, job, compiled, preflight\)\);/g,
       "$1/* moved after the POST by NC-6a */",
@@ -620,7 +620,7 @@ control("NC-6a", "capturing the binding after the paid request instead of before
   /* RECEIPT 1 — the anchor matched both compiled branches, not one. The dispatcher has
      three writers in total; the third is the uncompiled path, which NC-8 removes on its
      own because it is reached through a different argument shape. */
-  assert.strictEqual((read("fal-generation.js").match(/applyBindingRecord\(job, bindingRecordFor/g) || []).length, 3,
+  assert.strictEqual((read("src/generation/fal/fal-generation.js").match(/applyBindingRecord\(job, bindingRecordFor/g) || []).length, 3,
     "the shipped dispatcher must apply the record on both compiled branches and the uncompiled one");
   assert.strictEqual((source.match(/applyBindingRecord\(job, bindingRecordFor\(owner, job, compiled, preflight\)/g) || []).length, 0,
     "the control must actually remove the compiled pre-commit capture");
@@ -630,8 +630,8 @@ control("NC-6a", "capturing the binding after the paid request instead of before
      the paid POST arrives and before anything answers. That is the only moment this
      defect is visible — the mutated module would still attach a correct binding to the
      response, and a happy-path assertion would pass against it. */
-  const shipped = await dispatchOnce(require("../fal-generation"));
-  const broken = await dispatchOnce(compileModule("fal-generation.js", source));
+  const shipped = await dispatchOnce(require("../src/generation/fal/fal-generation"));
+  const broken = await dispatchOnce(compileModule("src/generation/fal/fal-generation.js", source));
 
   assert(shipped.atBarrier, "the shipped row exists at the barrier");
   assert(broken.atBarrier, "and so does the mutated one — only its evidence is missing");
@@ -660,7 +660,7 @@ control("NC-6a", "capturing the binding after the paid request instead of before
    instead of returning what was recorded. It looks like an improvement and it destroys
    the only property the record has. */
 control("NC-6b", "re-resolving a historical binding from current project state on read", () => {
-  const source = mutated("generation-binding.js", (text) =>
+  const source = mutated("src/generation/generation-binding.js", (text) =>
     text.replace(
       /function readGenerationBinding\(job\) \{/,
       "function readGenerationBinding(job, currentProject, currentShot) {",
@@ -668,8 +668,8 @@ control("NC-6b", "re-resolving a historical binding from current project state o
       /return \{(\r?\n\s*)recorded: true,(\r?\n\s*)bindings: job\.generationBinding,/,
       "return {$1recorded: true,$2bindings: job.generationBinding.map((row) => ({ ...row, ...resolveConsumedState(currentProject, currentShot, job.frameId, row.list, row.entityId, row.file) })),",
     ));
-  const Binding = compileModule("generation-binding.js", source);
-  const real = require("../generation-binding");
+  const Binding = compileModule("src/generation/generation-binding.js", source);
+  const real = require("../src/generation/generation-binding");
 
   /* A job recorded when Frame A declared the rain-soaked state. */
   const recorded = real.buildGenerationBinding(frameCase());
@@ -704,13 +704,13 @@ control("NC-6b", "re-resolving a historical binding from current project state o
    mints a continuity state that is nowhere in the project, in the one record whose
    entire value is that it can be trusted without re-deriving it. */
 control("NC-7", "inventing a default continuity state for an entity that declares none", () => {
-  const source = mutated("generation-binding.js", (text) =>
+  const source = mutated("src/generation/generation-binding.js", (text) =>
     text.replace(
       /const own = listOf\(entity\.continuityStates\)\.some\(\(row\) => text\(row\?\.id\) === stateId\);(\r?\n\s*)if \(!stateId \|\| !own\) return empty;/,
       "const own = true;$1if (!stateId) return empty;",
     ));
-  const Binding = compileModule("generation-binding.js", source);
-  const real = require("../generation-binding");
+  const Binding = compileModule("src/generation/generation-binding.js", source);
+  const real = require("../src/generation/generation-binding");
   const input = statelessEntityCase();
 
   /* THE PREMISE, stated rather than assumed: this entity really does declare nothing. */
@@ -752,7 +752,7 @@ const LEGACY_ZERO_INPUT_BODY = {
    representation reserved for jobs that predate the record, so every new legacy dispatch
    silently backdates itself. */
 control("NC-8", "removing the uncompiled path's binding writer", async () => {
-  const source = mutated("fal-generation.js", (text) =>
+  const source = mutated("src/generation/fal/fal-generation.js", (text) =>
     text.replace(
       /applyBindingRecord\(job, bindingRecordFor\((\r?\n\s*)owner,[\s\S]*?preparedLegacy,(\r?\n\s*)\)\);/,
       "/* removed by NC-8 */",
@@ -760,12 +760,12 @@ control("NC-8", "removing the uncompiled path's binding writer", async () => {
   assert(/preparedLegacy = serializeLegacyRequest/.test(source),
     "the payload must still be prepared — only the RECORD is removed, or this control tests the wrong thing");
 
-  const shipped = await dispatchLegacyOnce(require("../fal-generation"), LEGACY_EDIT_BODY);
-  const broken = await dispatchLegacyOnce(compileModule("fal-generation.js", source), LEGACY_EDIT_BODY);
+  const shipped = await dispatchLegacyOnce(require("../src/generation/fal/fal-generation"), LEGACY_EDIT_BODY);
+  const broken = await dispatchLegacyOnce(compileModule("src/generation/fal/fal-generation.js", source), LEGACY_EDIT_BODY);
   assert.strictEqual(shipped.status, 200, JSON.stringify(shipped.data));
   assert.strictEqual(broken.status, 200, "the mutated dispatcher still sends — that is what makes it dangerous");
 
-  const real = require("../generation-binding");
+  const real = require("../src/generation/generation-binding");
   /* RECEIPT — THE LIVE DEFECT: a job dispatched seconds ago now reads as history. */
   assert.strictEqual(real.readGenerationBinding(shipped.stored).recorded, true);
   assert.strictEqual(real.readGenerationBinding(broken.stored).recorded, false,
@@ -791,7 +791,7 @@ control("NC-9", "letting a binding-capture failure through to the provider", asy
      that tolerates one. The third makes the capture actually fail, because on the
      uncompiled path a payload failure and a capture failure are otherwise the same
      failure and this control has to isolate the second. */
-  const source = mutated("fal-generation.js", (text) => text
+  const source = mutated("src/generation/fal/fal-generation.js", (text) => text
     .replace(
       /record = generationBindingRecord\(\{/,
       "record = ((() => { throw new Error(\"NC-9 simulated capture failure\"); })(), generationBindingRecord({",
@@ -810,9 +810,9 @@ control("NC-9", "letting a binding-capture failure through to the provider", asy
   assert(/function applyBindingRecord\(job, record\) \{\r?\n\s*if \(!record\) return;/.test(source),
     "and the writer must tolerate the null, which is the fail-open shape");
 
-  const shipped = await dispatchLegacyOnce(require("../fal-generation"), LEGACY_EDIT_BODY);
-  const broken = await dispatchLegacyOnce(compileModule("fal-generation.js", source), LEGACY_EDIT_BODY);
-  const real = require("../generation-binding");
+  const shipped = await dispatchLegacyOnce(require("../src/generation/fal/fal-generation"), LEGACY_EDIT_BODY);
+  const broken = await dispatchLegacyOnce(compileModule("src/generation/fal/fal-generation.js", source), LEGACY_EDIT_BODY);
+  const real = require("../src/generation/generation-binding");
 
   /* RECEIPT — THE LIVE DEFECT: paid work left the machine and the row it left behind
      reads as history. */
@@ -836,7 +836,7 @@ control("NC-9b", "proving the shipped dispatcher refuses rather than sending", a
   /* A reference whose file is outside CineBraid media storage. `localAssetFile` refuses
      it, so the hash cannot be taken and the payload cannot be built — the real failure
      this path has to survive, not a simulated one. */
-  const refused = await dispatchLegacyOnce(require("../fal-generation"), {
+  const refused = await dispatchLegacyOnce(require("../src/generation/fal/fal-generation"), {
     ...LEGACY_EDIT_BODY,
     clientRequestId: "nc-legacy-refused",
     references: [{ key: "escape", role: "base", mediaType: "image", url: "/assets/../../etc/passwd" }],
@@ -859,22 +859,22 @@ control("NC-10", "recording a reference the uncompiled route's final limit dropp
      references the request no longer carries. That is precisely a reference dropped by
      the final limit appearing as consumed — and it is invisible without comparing the
      record against the body the provider actually received. */
-  const source = mutated("fal-generation.js", (text) =>
+  const source = mutated("src/generation/fal/fal-generation.js", (text) =>
     text.replace(
       /(input\.image_urls = sent\.map\(\(ref, index\) => \{[\s\S]*?return referenceInput\(owner, ref\);(\r?\n\s*)\}\);)/,
       "$1$2input.image_urls = input.image_urls.slice(0, 2);",
     ));
   assert(/input\.image_urls = input\.image_urls\.slice\(0, 2\);/.test(source),
     "the mutation must truncate the payload after the bindings were built");
-  assert(!/input\.image_urls\.slice\(0, 2\)/.test(read("fal-generation.js")), "and the shipped source must not");
+  assert(!/input\.image_urls\.slice\(0, 2\)/.test(read("src/generation/fal/fal-generation.js")), "and the shipped source must not");
 
   const many = Array.from({ length: 5 }, (unused, index) => ({
     key: `extra-${index + 1}`, role: "reference", mediaType: "image", url: "/assets/anchors/KAI.png",
   }));
   const body = { ...LEGACY_EDIT_BODY, clientRequestId: "nc-legacy-limit", references: many };
 
-  const shipped = await dispatchLegacyOnce(require("../fal-generation"), body);
-  const broken = await dispatchLegacyOnce(compileModule("fal-generation.js", source), body);
+  const shipped = await dispatchLegacyOnce(require("../src/generation/fal/fal-generation"), body);
+  const broken = await dispatchLegacyOnce(compileModule("src/generation/fal/fal-generation.js", source), body);
   assert.strictEqual(shipped.status, 200, JSON.stringify(shipped.data));
   assert.strictEqual(broken.status, 200, JSON.stringify(broken.data));
 
@@ -897,16 +897,16 @@ control("NC-10", "recording a reference the uncompiled route's final limit dropp
    turns a positive statement — this generation consumed nothing — into the absence that
    means the opposite. */
 control("NC-11", "collapsing a new zero-input uncompiled dispatch into no record", async () => {
-  const source = mutated("fal-generation.js", (text) =>
+  const source = mutated("src/generation/fal/fal-generation.js", (text) =>
     text.replace(
       /if \(legacyDispatch\(job\)\) \{(\r?\n\s*)try \{/,
       "if (legacyDispatch(job)) {$1try {$1  if (!(job.references || []).length) throw new Error(\"NC-11: nothing to record\");",
     ));
   assert(/NC-11: nothing to record/.test(source));
 
-  const shipped = await dispatchLegacyOnce(require("../fal-generation"), LEGACY_ZERO_INPUT_BODY);
-  const broken = await dispatchLegacyOnce(compileModule("fal-generation.js", source), LEGACY_ZERO_INPUT_BODY);
-  const real = require("../generation-binding");
+  const shipped = await dispatchLegacyOnce(require("../src/generation/fal/fal-generation"), LEGACY_ZERO_INPUT_BODY);
+  const broken = await dispatchLegacyOnce(compileModule("src/generation/fal/fal-generation.js", source), LEGACY_ZERO_INPUT_BODY);
+  const real = require("../src/generation/generation-binding");
 
   /* RECEIPT — the shipped module records an EMPTY set; the mutated one records nothing,
      and the two are the opposite claim. */
@@ -933,15 +933,15 @@ control("NC-11", "collapsing a new zero-input uncompiled dispatch into no record
    frame A's `stateId` — two provenances on one line, which is worse than either fact
    alone because the row looks complete. */
 control("NC-12", "resolving state against the target frame instead of the consumed frame", () => {
-  const source = mutated("generation-binding.js", (text) =>
+  const source = mutated("src/generation/generation-binding.js", (text) =>
     text.replace(
       /: resolveConsumedState\(project, shot, consumed\.frameId \|\| frameId, list, entityId, identity\.file\);/,
       ": resolveConsumedState(project, shot, frameId, list, entityId, identity.file);",
     ));
   assert(/resolveConsumedState\(project, shot, frameId, list/.test(source));
 
-  const Binding = compileModule("generation-binding.js", source);
-  const real = require("../generation-binding");
+  const Binding = compileModule("src/generation/generation-binding.js", source);
+  const real = require("../src/generation/generation-binding");
   const input = crossFrameCase();
 
   const shipped = real.buildGenerationBinding(input)[0];
@@ -975,16 +975,16 @@ control("NC-12", "resolving state against the target frame instead of the consum
    The mutation returns the LAST row and never consumes it, which is exactly the keyed
    Map's semantics expressed inside the accessor. */
 control("NC-13", "collapsing two same-keyed inputs by correlating on refId alone", () => {
-  const source = mutated("generation-binding.js", (text) =>
+  const source = mutated("src/generation/generation-binding.js", (text) =>
     text.replace(
       /if \(!queue\.length\) return onExhausted\(\);(\r?\n\s*)return queue\.shift\(\);/,
       "if (!queue.length) return onExhausted();$1return queue[queue.length - 1];",
     ));
   assert(/return queue\[queue\.length - 1\];/.test(source), "the mutation must stop consuming in order");
-  assert(!/return queue\[queue\.length - 1\];/.test(read("generation-binding.js")), "and the shipped source must not");
+  assert(!/return queue\[queue\.length - 1\];/.test(read("src/generation/generation-binding.js")), "and the shipped source must not");
 
-  const Binding = compileModule("generation-binding.js", source);
-  const real = require("../generation-binding");
+  const Binding = compileModule("src/generation/generation-binding.js", source);
+  const real = require("../src/generation/generation-binding");
   const input = duplicateKeyCase();
 
   const shipped = real.buildGenerationBinding(input);
@@ -1021,7 +1021,7 @@ async function main() {
      must not rot: a `mutated()` that stopped refusing a no-op would turn every control
      below into a pass that tested nothing. */
   assert.throws(
-    () => mutated("generation-binding.js", (text) => text),
+    () => mutated("src/generation/generation-binding.js", (text) => text),
     /changed nothing/,
     "a mutation that changes nothing must fail loudly rather than count as a pass",
   );
@@ -1046,7 +1046,7 @@ async function main() {
 
     /* AND THE REAL MODULES ARE GREEN AFTERWARDS. If any mutation had reached a module
        cache, these would now disagree. */
-    const Binding = require("../generation-binding");
+    const Binding = require("../src/generation/generation-binding");
     const flf = Binding.buildGenerationBinding(flfCase());
     assert.strictEqual(flf.length, 2);
     assert.strictEqual(flf.find((row) => row.providerField === "image_url").frameId, "FR-A");
@@ -1067,7 +1067,7 @@ async function main() {
     assert.deepStrictEqual(dup.map((row) => row.file), [KAI_PNG, KAI_RAIN_PNG],
       "two same-keyed inputs keep one truthful row each");
     assert.notStrictEqual(dup[0].fileHash, dup[1].fileHash);
-    const live = await dispatchLegacyOnce(require("../fal-generation"), LEGACY_ZERO_INPUT_BODY);
+    const live = await dispatchLegacyOnce(require("../src/generation/fal/fal-generation"), LEGACY_ZERO_INPUT_BODY);
     assert.strictEqual(live.status, 200, JSON.stringify(live.data));
     assert.deepStrictEqual(Binding.readGenerationBinding(live.stored).bindings, [],
       "a real zero-input uncompiled dispatch still records an empty set, not an absence");

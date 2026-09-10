@@ -42,7 +42,7 @@ const ROOT = path.join(__dirname, "..");
 
 /* ------------------------------------------------- the contract under test */
 
-const CONTRACT_PATH = path.join(ROOT, "reference-review-contract.js");
+const CONTRACT_PATH = path.join(ROOT, "src/authority/reference-review-contract.js");
 /* Line endings are a checkout detail, not a fact about the source. This repo
    checks out CRLF on Windows and CI, so a multi-line mutation anchor written
    with \n would match locally and silently match nothing there. Normalising

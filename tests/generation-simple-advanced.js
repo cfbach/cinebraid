@@ -55,10 +55,10 @@ const { render, buildFixture } = require("./render-harness");
 const Presentation = require("../public/shared-generation-presentation");
 const Rate = require("../public/shared-generation-rate");
 const Capability = require("../public/shared-generation-capability");
-const { submissionAccounting, recordedEstimate, recordedAmount, summarizeRecordedCost } = require("../generation-cost");
-const { guidePayload, generationOptionsFor } = require("../generation-options");
-const { createModelIntelligence } = require("../model-intelligence");
-const { validateCostEstimate } = require("../generation-contracts");
+const { submissionAccounting, recordedEstimate, recordedAmount, summarizeRecordedCost } = require("../src/generation/generation-cost");
+const { guidePayload, generationOptionsFor } = require("../src/generation/generation-options");
+const { createModelIntelligence } = require("../src/generation/model-intelligence");
+const { validateCostEstimate } = require("../src/generation/generation-contracts");
 
 const notes = [];
 const note = (line) => notes.push(line);
@@ -402,8 +402,8 @@ function oneRateSection() {
   );
 
   /* THERE IS ONE DERIVATION, and it is required rather than reimplemented. */
-  const costSource = codeOnly(readLF("generation-cost.js"));
-  assert(/require\(["']\.\/public\/shared-generation-rate["']\)/.test(costSource),
+  const costSource = codeOnly(readLF("src/generation/generation-cost.js"));
+  assert(/require\(["']\.\.\/\.\.\/public\/shared-generation-rate["']\)/.test(costSource),
     "E: the recording authority must call the shared derivation rather than keep its own");
   assert(!/rate\s*\*\s*quantity|ratePerImage\s*\*/.test(costSource),
     "E: and must not multiply a rate itself");
@@ -450,7 +450,7 @@ function provenanceSection() {
     assert.strictEqual(parsed.asOf, "", `K: ${JSON.stringify(bad)} is not a date and must not become one`);
   }
   /* And config.js agrees, so a hand-edited file cannot smuggle one in. */
-  const { normalizeConfig } = require("../config");
+  const { normalizeConfig } = require("../src/server/config");
   const normalized = normalizeConfig({ generation: { fal: { motionRate: { usdPerSecond: "0.26", source: " fal ", asOf: "yesterday" } } } });
   assert.strictEqual(normalized.generation.fal.motionRate.asOf, "", "F/K: the config normaliser must refuse a non-date too");
   assert.strictEqual(normalized.generation.fal.motionRate.usdPerSecond, 0.26);
@@ -460,7 +460,7 @@ function provenanceSection() {
   assert.strictEqual(normalizeConfig({ generation: { fal: { motionRate: { usdPerSecond: 9999 } } } }).generation.fal.motionRate.usdPerSecond, 100);
 
   /* NO PRICE TABLE. The rate ships at zero and CineBraid carries no provider prices. */
-  const { DEFAULT_CONFIG } = require("../config");
+  const { DEFAULT_CONFIG } = require("../src/server/config");
   assert.strictEqual(DEFAULT_CONFIG.generation.fal.motionRate.usdPerSecond, 0,
     "O: CineBraid must ship no price; an unconfigured install knows nothing");
   assert.strictEqual(DEFAULT_CONFIG.generation.fal.motionRate.source, "");
@@ -470,7 +470,7 @@ function provenanceSection() {
      legitimately contains a 0.01 sub-cent display threshold and a 1e6 rounding factor —
      a detector that fired on those is one nobody could keep, and a detector nobody keeps
      gets deleted the first time it is inconvenient. */
-  for (const file of ["public/shared-generation-rate.js", "public/shared-generation-presentation.js", "public/generation-view.js", "generation-cost.js"]) {
+  for (const file of ["public/shared-generation-rate.js", "public/shared-generation-presentation.js", "public/generation-view.js", "src/generation/generation-cost.js"]) {
     const source = codeOnly(readLF(file));
     for (const pattern of [/usdPerSecond\s*[:=]\s*[\d.]+/, /ratePerUnit\s*[:=]\s*[\d.]+/, /amount\s*[:=]\s*\d+\.\d+/, /perSecond\s*[:=]\s*[\d.]+/, /estimatedCostPerImage\s*[:=]\s*[\d.]+/])
       assert(!pattern.test(source), `O: ${file} must hold no hard-coded rate (${pattern})`);
@@ -726,14 +726,14 @@ function claimsSection() {
 function preservationSection() {
   /* The contract vocabulary is untouched: this slice chose values inside the accepted
      CostEstimate and defined no second one. */
-  const contracts = readLF("generation-contracts.js");
+  const contracts = readLF("src/generation/generation-contracts.js");
   assert(/const COST_CONFIDENCES = \[/.test(contracts) || /COST_CONFIDENCES/.test(contracts),
     "P: the cost confidence vocabulary must still live in the contract");
   for (const word of ["estimated", "unknown", "quoted"])
     assert(contracts.includes(`"${word}"`), `P/H: the word ${word} must survive in the contract`);
 
   /* generationBinding and provenance are not this slice's business and were not touched. */
-  const binding = readLF("generation-binding.js");
+  const binding = readLF("src/generation/generation-binding.js");
   for (const forbidden of ["motionRate", "generationViewMode", "generationControlPlan", "restrictPayloadToPlan", "simple", "advanced"])
     assert(!new RegExp(`\\b${forbidden}\\b`).test(binding),
       `P/18: generation-binding.js must not have learned ${forbidden}`);
@@ -787,7 +787,7 @@ function noLeakageSection() {
   for (const file of [
     "public/shared-generation-presentation.js", "public/shared-generation-rate.js", "public/generation-view.js",
     "public/generation-picker.js", "public/fal-generation.js", "public/automation.js", "public/scene-automation.js",
-    "config.js", "generation-cost.js",
+    "src/server/config.js", "src/generation/generation-cost.js",
   ]) {
     const source = readLF(file);
     for (const pattern of SLICE_5)
@@ -999,7 +999,7 @@ function recommendationRationaleSection() {
    reading "as of 2026-99-99" is worse than "freshness unknown": it presents a day nobody
    could have read a price on as though somebody had. */
 function calendarDateSection() {
-  const { normalizeConfig } = require("../config");
+  const { normalizeConfig } = require("../src/server/config");
   const impossible = ["2026-99-99", "2026-02-30", "2026-13-01", "2026-00-10", "2026-04-31",
     "2026-06-31", "2026-09-31", "2026-11-31", "2026-02-29", "1900-02-29", "2026-01-32", "2026-12-00"];
   const real = ["2026-08-15", "2026-01-01", "2026-12-31", "2024-02-29", "2000-02-29", "2026-02-28"];
@@ -1030,8 +1030,8 @@ function calendarDateSection() {
   }
 
   /* ONE CALENDAR, TWO READERS. config.js must not carry a second copy of the rule. */
-  const configSource = codeOnly(readLF("config.js"));
-  assert(/require\(["']\.\/public\/shared-generation-rate["']\)/.test(configSource),
+  const configSource = codeOnly(readLF("src/server/config.js"));
+  assert(/require\(["']\.\.\/\.\.\/public\/shared-generation-rate["']\)/.test(configSource),
     "13c: the normaliser must use the shared calendar test");
   assert(!/\^\\d\{4\}-\\d\{2\}-\\d\{2\}\$/.test(configSource),
     "13c: and must not keep a date pattern of its own");

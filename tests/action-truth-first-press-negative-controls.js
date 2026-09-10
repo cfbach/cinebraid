@@ -373,7 +373,7 @@ async function nc5_canonShapedGuard() {
   equal(seen.receiptStatus, "current", "and its receipt is left naming a state that no longer exists");
 
   /* 2. AND THE SEAM REFUSES THE DOCUMENT — the stranding, in full. */
-  const seam = require(path.join(ROOT, "authority-write-seam"));
+  const seam = require(path.join(ROOT, "src/authority/authority-write-seam"));
   const crypto = require("crypto");
   let stored = clone(project), writes = 0;
   const boundary = seam.createAuthorityWriteSeam({

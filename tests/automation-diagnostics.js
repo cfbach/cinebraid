@@ -3,7 +3,7 @@ const fs = require("fs");
 const os = require("os");
 const path = require("path");
 const express = require("express");
-const { registerAutomationRuns } = require("../automation-runs");
+const { registerAutomationRuns } = require("../src/automation/automation-runs");
 const RELEASE_VERSION = require("../package.json").version;
 
 async function listen(app) {

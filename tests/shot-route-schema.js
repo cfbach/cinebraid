@@ -172,7 +172,7 @@ function checkDialects() {
   /* (c) CLIP KINDS, against server.js's own admitted set rather than a list retyped
      here. The three motion kinds that are route tokens map across; the frameless and
      non-generative ones do not. */
-  const serverSource = readLF("server.js");
+  const serverSource = readLF("src/server/server.js");
   const kindLine = serverSource.match(/allowedKinds = new Set\(\[([^\]]+)\]\)/);
   assert(kindLine, "server.js must still declare the import path's clip-kind vocabulary");
   const allowedKinds = kindLine[1].split(",").map((token) => token.trim().replace(/^"|"$/g, "")).filter(Boolean);
@@ -921,9 +921,9 @@ function checkNoWidening() {
     "canonical readiness must own the route-to-required-input projection");
   const owners = [
     "public/shared-generation-options.js", "public/shared-generation-capability.js",
-    "generation-options.js", "generation-compiler.js", "generation-contracts.js",
-    "generation-binding.js", "fal-generation.js", "h3-execution.js",
-    "image-execution.js", "prompt-engine.js", "model-packs/minimax-h3.js",
+    "src/generation/generation-options.js", "src/generation/generation-compiler.js", "src/generation/generation-contracts.js",
+    "src/generation/generation-binding.js", "src/generation/fal/fal-generation.js", "src/generation/h3-execution.js",
+    "src/generation/image-execution.js", "src/generation/prompt-engine.js", "model-packs/minimax-h3.js",
     "model-packs/gpt-image-2.js",
   ];
   for (const file of owners)

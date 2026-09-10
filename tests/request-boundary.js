@@ -31,7 +31,7 @@ const path = require("path");
 const { startCineBraidServer, startMockCivitai } = require("./fixtures/mock-civitai");
 const {
   createRequestPosture, isAllowedHostValue, isAllowedOriginValue, splitAuthority,
-} = require("../request-origin");
+} = require("../src/server/request-origin");
 
 const TEMP = fs.mkdtempSync(path.join(os.tmpdir(), "cinebraid-request-boundary-"));
 const CONFIG_PATH = path.join(TEMP, "config.json");

@@ -40,7 +40,7 @@
  * the entire point of this layer, and why a baseline plan needs no LLM and no network.
  */
 
-const { registerModelPack } = require("../generation-compiler");
+const { registerModelPack } = require("../src/generation/generation-compiler");
 
 const PACK_ID = "minimax-h3";
 const PACK_VERSION = "1.0.0";

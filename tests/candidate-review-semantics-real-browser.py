@@ -59,7 +59,7 @@ REQUIREMENTS = [{"id": "delta-1", "text": "Wax seal broken but still present"},
                 {"id": "delta-3", "text": "same red envelope"}]
 
 CONTRACT_SCRIPT = (
-    "const C=require('./reference-review-contract');"
+    "const C=require('./src/authority/reference-review-contract');"
     "const a=JSON.parse(process.argv[1]);"
     "const rec=(i,f,c,e)=>({requirementId:a.requirements[i].id,feature:a.requirements[i].text,"
     "expectedFeature:'must-remain',observedFeature:f,observedCondition:c,evidence:e});"

@@ -30,7 +30,7 @@ const path = require("path");
 
 const ROOT = path.join(__dirname, "..");
 const read = (name) => fs.readFileSync(path.join(ROOT, name), "utf8");
-const PromptEngine = require("../prompt-engine");
+const PromptEngine = require("../src/generation/prompt-engine");
 const Presence = require("../public/shared-frame-presence");
 
 let checks = 0;
@@ -253,7 +253,7 @@ eq(deduped.length, 1, "the same sentence reaching the spec and the final prompt 
 /* ===========================================================================
    4. THE GATE. Where the contradiction actually stops a request. */
 
-const server = read("server.js");
+const server = read("src/server/server.js");
 ok(/FRAME_PRESENCE_CONTRADICTION/.test(server), "the compile route refuses a contradicting frame");
 ok(/framePresenceContradictions\(\{[\s\S]{0,200}absentEntities/.test(server), "using the shared check");
 ok(/Nothing was sent to a provider/.test(server), "and says so, because a blocked paid render needs that sentence");
@@ -405,7 +405,7 @@ for (const purpose of ["entity-reference", "motion-h3"]) {
 }
 
 /* The declaration is production truth: an assistant rewrite may not soften it. */
-const engine = read("prompt-engine.js");
+const engine = read("src/generation/prompt-engine.js");
 ok(/out\.framePresence = fallback\.framePresence/.test(engine),
   "validateSpec takes the declaration from the deterministic fallback only — a supplied or assistant-rewritten spec may not drop, soften or invent one");
 

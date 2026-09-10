@@ -54,9 +54,9 @@ const PUBLIC = path.join(ROOT, "public");
 const MODULE_TARGETS = {
   continuity: path.join(PUBLIC, "shared-continuity.js"),
   lineage: path.join(PUBLIC, "shared-state-lineage.js"),
-  engine: path.join(ROOT, "prompt-engine.js"),
+  engine: path.join(ROOT, "src/generation/prompt-engine.js"),
 };
-const SERVER = path.join(ROOT, "server.js");
+const SERVER = path.join(ROOT, "src/server/server.js");
 
 /* Every file this suite mutates, read once so byte-identity can be proved at the
    end against exactly what was there at the start. */

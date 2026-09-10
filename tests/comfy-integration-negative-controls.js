@@ -128,7 +128,7 @@ const DISPATCH = { shotId: "SC-01-01", frameId: "frame-a", frameLabel: "A", rela
 async function nc1() {
   await mustBeCaught("NC-1 a broken mapping still dispatches", () => withHarness({
     mutate: () => {
-      installBroken("comfy-workflow.js", (source, label) => mutateOnce(
+      installBroken("src/generation/comfyui/comfy-workflow.js", (source, label) => mutateOnce(
         source,
         `  const validated = validateMapping(mapping, inspection);
   if (!validated.ok)
@@ -142,7 +142,7 @@ async function nc1() {
       ), "NC-1 buildDispatchGraph refusal");
       /* And the registry's own gate, so the defect is genuinely reachable rather than
          stopped one layer earlier by a different guard. */
-      installBroken("comfy-registry.js", (source, label) => mutateOnce(
+      installBroken("src/generation/comfyui/comfy-registry.js", (source, label) => mutateOnce(
         source,
         `  if (state.state !== "ready" && state.state !== "changed")`,
         `  if (false)`,
@@ -189,7 +189,7 @@ async function nc2() {
        and a filmmaker is free to go elsewhere. */
     onView: (harness) => harness.setActive("film-b"),
     mutate: () => {
-      installBroken("comfy-generation.js", (source, label) => mutateOnce(
+      installBroken("src/generation/comfyui/comfy-generation.js", (source, label) => mutateOnce(
         source,
         `      const outputs = await commitProject(owner, (P) => {`,
         `      const outputs = await commitProject(ownerForSlug(activeSlug()), (P) => {`,
@@ -235,7 +235,7 @@ async function nc2() {
 async function nc3() {
   await mustBeCaught("NC-3 a delivered result bypasses the shared candidate writer", () => withHarness({
     mutate: () => {
-      installBroken("comfy-generation.js", (source, label) => mutateOnce(
+      installBroken("src/generation/comfyui/comfy-generation.js", (source, label) => mutateOnce(
         source,
         `        const written = writeShotCandidates({`,
         `        const written = (() => {
@@ -278,13 +278,13 @@ async function nc3() {
 async function nc4() {
   await mustBeCaught("NC-4 a changed workflow is recorded as unchanged", () => withHarness({
     mutate: () => {
-      installBroken("comfy-registry.js", (source, label) => mutateOnce(
+      installBroken("src/generation/comfyui/comfy-registry.js", (source, label) => mutateOnce(
         source,
         `  const contentMoved = text(record.mappedHash) && text(record.mappedHash) !== text(described.contentHash);`,
         `  const contentMoved = false;`,
         label,
       ), "NC-4 changed-workflow detection");
-      installBroken("comfy-generation.js", (source, label) => mutateOnce(
+      installBroken("src/generation/comfyui/comfy-generation.js", (source, label) => mutateOnce(
         source,
         `        changedSinceConfirmed: Boolean(workflow.mappedHash) && workflow.mappedHash !== workflow.contentHash,`,
         `        changedSinceConfirmed: false,`,
@@ -318,7 +318,7 @@ async function nc4() {
 async function nc5() {
   await mustBeCaught("NC-5 a suggestion becomes a confirmation nobody made", () => withHarness({
     mutate: () => {
-      installBroken("comfy-workflow.js", (source, label) => mutateOnce(
+      installBroken("src/generation/comfyui/comfy-workflow.js", (source, label) => mutateOnce(
         source,
         `    if (!text(binding.confirmedAt)) {
       fail("unconfirmed", \`\${semantic.label} was never confirmed by anyone.\`, "Open the workflow's inputs and confirm this mapping.");
@@ -332,7 +332,7 @@ async function nc5() {
       ), "NC-5 confirmation gate in validateMapping");
     },
   }, async ({ harness }) => {
-    const W = require(path.join(ROOT, "comfy-workflow.js"));
+    const W = require(path.join(ROOT, "src/generation/comfyui/comfy-workflow.js"));
     const inspection = W.inspectWorkflow(Suite.apiWorkflow());
     /* Exactly what suggestMappings produces, posted straight into the registry with no
        confirmation stamp — a machine agreeing with itself. */
@@ -363,7 +363,7 @@ async function nc5() {
 async function nc6() {
   await mustBeCaught("NC-6 a local render is recorded as a hosted charge", () => withHarness({
     mutate: () => {
-      installBroken("comfy-generation.js", (source, label) => mutateOnce(
+      installBroken("src/generation/comfyui/comfy-generation.js", (source, label) => mutateOnce(
         source,
         `    costClass: "free_local",
     estimate: { costClass: "free_local", unit: "none", amount: 0, confidence: "quoted", quotedAt: at },`,
@@ -376,7 +376,7 @@ async function nc6() {
     await confirm(harness, { positivePrompt: { nodeId: "6", input: "text" } });
     const sent = await Suite.call(harness, "POST", "/api/generation/comfy/jobs", DISPATCH);
     const job = harness.jobs().at(-1) || {};
-    const Contracts = require(path.join(ROOT, "generation-contracts.js"));
+    const Contracts = require(path.join(ROOT, "src/generation/generation-contracts.js"));
     /* THE CLAIM, three ways: the recorded class, the contract's own rule, and the
        authorisation consequence a filmmaker would feel. */
     assert.strictEqual(job.accounting?.costClass, "free_local",
@@ -401,7 +401,7 @@ async function nc6() {
 async function nc7() {
   await mustBeCaught("NC-7 a raw filesystem path is accepted as workflow identity", () => withHarness({
     mutate: () => {
-      installBroken("comfy-registry.js", (source, label) => {
+      installBroken("src/generation/comfyui/comfy-registry.js", (source, label) => {
         const withoutShapeTest = mutateOnce(
           source,
           `  if (rel.startsWith("/") || /^[a-zA-Z]:/.test(rel) || rel.split("/").some((part) => part === "" || part === "." || part === ".."))`,
@@ -419,7 +419,7 @@ async function nc7() {
   }, async ({ harness, folder }) => {
     const outside = path.join(harness.dir, "outside-secret.json");
     fs.writeFileSync(outside, JSON.stringify(Suite.apiWorkflow()));
-    const Registry = require(path.join(ROOT, "comfy-registry.js"));
+    const Registry = require(path.join(ROOT, "src/generation/comfyui/comfy-registry.js"));
     let code = "";
     try {
       Registry.describeForMapping(folder, "../outside-secret.json");
@@ -438,13 +438,13 @@ async function nc7() {
    address cannot become an outbound request to anywhere but this machine. */
 async function nc8() {
   await mustBeCaught("NC-8 a non-loopback ComfyUI address is dialled", async () => {
-    installBroken("comfy-client.js", (source, label) => mutateOnce(
+    installBroken("src/generation/comfyui/comfy-client.js", (source, label) => mutateOnce(
       source,
       `  if (!isLocalProviderEndpoint(origin))`,
       `  if (false)`,
       label,
     ), "NC-8 loopback boundary");
-    const Client = require(path.join(ROOT, "comfy-client.js"));
+    const Client = require(path.join(ROOT, "src/generation/comfyui/comfy-client.js"));
     for (const address of ["http://192.168.1.50:8188", "http://10.0.0.9:8188", "http://comfy.example.com"]) {
       let code = "";
       try {
@@ -473,7 +473,7 @@ async function nc8() {
 async function nc9() {
   await mustBeCaught("NC-9 an unsupplied seed is applied as zero", () => withHarness({
     mutate: () => {
-      installBroken("comfy-generation.js", (source, label) => mutateOnce(
+      installBroken("src/generation/comfyui/comfy-generation.js", (source, label) => mutateOnce(
         source,
         "    const seed = optionalNumber(request.seed);",
         "    const seed = Number.isFinite(Number(request.seed)) ? Number(request.seed) : null;",
@@ -509,7 +509,7 @@ async function nc9() {
 async function nc10() {
   await mustBeCaught("NC-10 a confirmed mapping does not certify the node class", () => withHarness({
     mutate: () => {
-      installBroken("comfy-workflow.js", (source, label) => mutateOnce(
+      installBroken("src/generation/comfyui/comfy-workflow.js", (source, label) => mutateOnce(
         source,
         "    bindings[key] = { nodeId, input, classType: node ? node.classType : \"\", confirmedAt: stamp };",
         "    bindings[key] = { nodeId, input, confirmedAt: stamp };",
@@ -518,7 +518,7 @@ async function nc10() {
       /* The legacy gate would otherwise catch the missing class on its own. It is the
          SAFETY NET, not the guard under test, so it is stood down to leave the original
          defect exactly as it was: a class check with nothing to check against. */
-      installBroken("comfy-registry.js", (source, label) => mutateOnce(
+      installBroken("src/generation/comfyui/comfy-registry.js", (source, label) => mutateOnce(
         source,
         "  if (state.state !== \"ready\" && state.state !== \"changed\")",
         "  if (state.state !== \"ready\" && state.state !== \"changed\" && state.state !== \"broken\")",
@@ -578,8 +578,8 @@ async function nc11() {
      finally, the originals are held in memory, and the suite asserts the bytes came back
      before it finishes. */
   const targets = [
-    { file: path.join(ROOT, "comfy-generation.js"), find: "  app.post(\"/api/generation/comfy/test\", async (req, res) => {\n    if (!requireLocalMachine(req, res)) return;", replace: "  app.post(\"/api/generation/comfy/test\", async (req, res) => {", label: "NC-11 inbound peer guard on the test route" },
-    { file: path.join(ROOT, "server.js"), find: "  if (!isLoopbackRequest(req) && Object.prototype.hasOwnProperty.call(body.generation || {}, \"comfy\")) {", replace: "  if (false) {", label: "NC-11 scoped config restriction" },
+    { file: path.join(ROOT, "src/generation/comfyui/comfy-generation.js"), find: "  app.post(\"/api/generation/comfy/test\", async (req, res) => {\n    if (!requireLocalMachine(req, res)) return;", replace: "  app.post(\"/api/generation/comfy/test\", async (req, res) => {", label: "NC-11 inbound peer guard on the test route" },
+    { file: path.join(ROOT, "src/server/server.js"), find: "  if (!isLoopbackRequest(req) && Object.prototype.hasOwnProperty.call(body.generation || {}, \"comfy\")) {", replace: "  if (false) {", label: "NC-11 scoped config restriction" },
   ];
   const originals = targets.map((target) => ({ ...target, bytes: fs.readFileSync(target.file) }));
   let comfy = null;

@@ -29,7 +29,7 @@ const path = require("path");
 const { spawn, spawnSync } = require("child_process");
 
 const ROOT = path.join(__dirname, "..");
-const Affordance = require(path.join(ROOT, "local-file-affordance"));
+const Affordance = require(path.join(ROOT, "src/media/local-file-affordance"));
 const Shared = require(path.join(ROOT, "public", "shared-local-file"));
 
 /* Canonicalised at the source. P1 makes the resolver answer with the PHYSICAL
@@ -825,7 +825,7 @@ async function projectRootJunctions() {
       "fixture invalid: film-alias must physically be film-a");
 
     /* The project directory is refused BEFORE any ledger read. */
-    const resolved = require(path.join(ROOT, "media-asset-service"))
+    const resolved = require(path.join(ROOT, "src/media/media-asset-service"))
       .resolvePhysicalProjectDir(PROJECTS_ROOT, FILM_ALIAS);
     assert.strictEqual(resolved.ok, false, "P1-A project-directory validation must refuse a cross-project junction");
     assert.strictEqual(resolved.reason, "project-root-redirected");
@@ -833,7 +833,7 @@ async function projectRootJunctions() {
     ok("P1-A project-directory validation refuses `film-alias -> film-a` and names the reason");
 
     /* The ledger is never consulted: Film A's id does not answer under the alias. */
-    const located = require(path.join(ROOT, "media-asset-service")).assetLocation({
+    const located = require(path.join(ROOT, "src/media/media-asset-service")).assetLocation({
       projectsRoot: PROJECTS_ROOT, slug: FILM_ALIAS, assetId: ASSET_A_ANCHOR,
     });
     assert.strictEqual(located.known, false, "P1-A the ledger must not be read through a redirected project root");
@@ -886,13 +886,13 @@ async function projectRootJunctions() {
     assert.ok(fs.existsSync(path.join(ESCAPE_DIR, "media-assets.json")),
       "fixture invalid: the outside project must be complete, or the refusal proves nothing");
 
-    const resolved = require(path.join(ROOT, "media-asset-service"))
+    const resolved = require(path.join(ROOT, "src/media/media-asset-service"))
       .resolvePhysicalProjectDir(PROJECTS_ROOT, FILM_ESCAPE);
     assert.strictEqual(resolved.ok, false, "P1-B a project root pointing outside the root must be refused");
     assert.strictEqual(resolved.reason, "project-root-redirected");
     ok("P1-B project-directory validation refuses a junction leading outside the projects root");
 
-    const located = require(path.join(ROOT, "media-asset-service")).assetLocation({
+    const located = require(path.join(ROOT, "src/media/media-asset-service")).assetLocation({
       projectsRoot: PROJECTS_ROOT, slug: FILM_ESCAPE, assetId: ASSET_OUTSIDE,
     });
     assert.strictEqual(located.known, false, "P1-B no ledger outside the projects root may be read");
@@ -936,7 +936,7 @@ async function projectRootJunctions() {
   ok("P1-D Open project folder uses the same validation and follows neither junction");
 
   /* ---- P1-C: an ordinary physical project is unaffected ---- */
-  const ordinary = require(path.join(ROOT, "media-asset-service"))
+  const ordinary = require(path.join(ROOT, "src/media/media-asset-service"))
     .resolvePhysicalProjectDir(PROJECTS_ROOT, FILM_B);
   assert.strictEqual(ordinary.ok, true, "P1-C an ordinary project directory must still validate");
   assert.strictEqual(ordinary.realDir, B_DIR);
@@ -956,12 +956,12 @@ async function projectRootJunctions() {
 
   /* ---- P1-E: the supported workspace.mediaRoot mechanism is not redefined ---- */
   const stripComments = (source) => source.replace(/\/\*[\s\S]*?\*\//g, "").replace(/(^|[^:])\/\/.*$/gm, "$1");
-  const affordanceSource = stripComments(fs.readFileSync(path.join(ROOT, "local-file-affordance.js"), "utf8"));
-  const serviceSource = stripComments(fs.readFileSync(path.join(ROOT, "media-asset-service.js"), "utf8"));
+  const affordanceSource = stripComments(fs.readFileSync(path.join(ROOT, "src/media/local-file-affordance.js"), "utf8"));
+  const serviceSource = stripComments(fs.readFileSync(path.join(ROOT, "src/media/media-asset-service.js"), "utf8"));
   for (const [name, source] of [["local-file-affordance.js", affordanceSource], ["media-asset-service.js", serviceSource]])
     for (const token of ["mediaRoot", "syncConfiguredMediaRoot", "copyMissingTree", "configuredWorkspacePath"])
       assert.ok(!source.includes(token), `P1-E ${name} must not reach the workspace media-root mechanism (${token})`);
-  const serverSource = stripComments(fs.readFileSync(path.join(ROOT, "server.js"), "utf8"));
+  const serverSource = stripComments(fs.readFileSync(path.join(ROOT, "src/server/server.js"), "utf8"));
   assert.ok(/function syncConfiguredMediaRoot\(/.test(serverSource),
     "P1-E the supported media-root sync must still exist, unchanged by this seam");
   const localFileBlock = serverSource.slice(
@@ -984,8 +984,8 @@ function structure() {
   section("11. the seam cannot grow a path-taking endpoint or a shell");
   const stripComments = (source) =>
     source.replace(/\/\*[\s\S]*?\*\//g, "").replace(/(^|[^:])\/\/.*$/gm, "$1");
-  const server = stripComments(fs.readFileSync(path.join(ROOT, "server.js"), "utf8"));
-  const affordance = stripComments(fs.readFileSync(path.join(ROOT, "local-file-affordance.js"), "utf8"));
+  const server = stripComments(fs.readFileSync(path.join(ROOT, "src/server/server.js"), "utf8"));
+  const affordance = stripComments(fs.readFileSync(path.join(ROOT, "src/media/local-file-affordance.js"), "utf8"));
 
   /* Every local-file route is loopback-gated. A count, not a vibe: a fourth route
      that forgot the gate fails this. */

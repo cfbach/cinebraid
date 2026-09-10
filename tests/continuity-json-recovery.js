@@ -22,7 +22,7 @@ const {
   RECOVERY_EOF,
   RECOVERY_BOTH,
   parseContinuityResponse,
-} = require("../continuity-json");
+} = require("../src/continuity/continuity-json");
 const { validateObservationSet, buildObservationSchema } = require("../public/shared-continuity");
 
 const results = [];
@@ -222,7 +222,7 @@ const VALID = JSON.stringify({
   assert.deepStrictEqual(schema.properties.coordinate_mode.enum, ["permille"], "the schema must not move");
   assert.strictEqual(schema.properties.entities.properties["CHAR-KAI"].properties.evidence.maxLength, 48);
   /* Recovery must not have needed a new cache component either. */
-  const cacheSource = fs.readFileSync(path.join(__dirname, "..", "continuity-cache.js"), "utf8");
+  const cacheSource = fs.readFileSync(path.join(__dirname, "..", "src/continuity/continuity-cache.js"), "utf8");
   assert(!/recovery/i.test(cacheSource), "the cache must not learn about serialization recovery");
   pass("the qualified request contract, prompt version, schema and cache identity are all untouched");
 }

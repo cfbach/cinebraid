@@ -1047,7 +1047,7 @@ for (const name of MIGRATABLE) {
    firing. */
 
 {
-  const serverSource = fs.readFileSync(path.join(__dirname, "..", "server.js"), "utf8");
+  const serverSource = fs.readFileSync(path.join(__dirname, "..", "src/server/server.js"), "utf8");
   for (const line of TEMPLATE_QC_CHECKLIST)
     assert(serverSource.includes(line), `the BLANK() template no longer contains ${JSON.stringify(line.slice(0, 40))}; M053 would stop recognising a default`);
   const templated = preview("template-default.json");

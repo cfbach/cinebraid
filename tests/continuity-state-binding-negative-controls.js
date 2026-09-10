@@ -418,15 +418,15 @@ function stateIdBelongsToEntity(states, stateId) {
     id: "NC-J",
     defect: "the FLF motion-readiness gate is redirected through the continuity resolver",
     mutatesModule: {
-      file: "agent-suite.js",
+      file: "src/assistant/agent-suite.js",
       edits: [[
         `        if (!a?.winner || !b?.winner)`,
-        `        const declaredState = require("./public/shared-continuity").resolveDeclaredStateId(s, c.toFrame, "character", (s.characters || [])[0] || "");
+        `        const declaredState = require("../../public/shared-continuity").resolveDeclaredStateId(s, c.toFrame, "character", (s.characters || [])[0] || "");
         if (!declaredState && (!a?.winner || !b?.winner))`,
       ]],
     },
     probe: (suite) => {
-      const { deterministicHealth } = require("../agent-suite");
+      const { deterministicHealth } = require("../src/assistant/agent-suite");
       const project = suite.runtimeProject();
       const shot = project.shots[0];
       shot.keyframes[0].winner = "fr-a-approved.png";

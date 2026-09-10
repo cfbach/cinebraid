@@ -1,6 +1,6 @@
 const assert = require("assert");
 const vm = require("vm");
-const PromptEngine = require("../prompt-engine");
+const PromptEngine = require("../src/generation/prompt-engine");
 const { render, buildFixture, withCanon } = require("./render-harness");
 
 function contextFixture() {
@@ -812,7 +812,7 @@ function testProtectedCompilerHashes() {
      and trains everyone to ignore it. Normalising to LF is what makes the assertion mean
      what it claims: the compiler text is unchanged, on every platform. It removes no
      strictness — a single altered character still moves the hash. */
-  const source = fs.readFileSync(require.resolve("../prompt-engine"), "utf8").replace(/\r\n/g, "\n");
+  const source = fs.readFileSync(require.resolve("../src/generation/prompt-engine"), "utf8").replace(/\r\n/g, "\n");
   const expected = {
     compileSeedanceI2VCompact: "fc610ec962969248aedb9cb6e1d7d182543c49cf7f8029df143e61f171d356af",
     compileKlingI2VCompact: "b4b2bd06b014ba3fad11dc01eba3c226fd11d8a83fc1fb041050bc1a904abd7c",

@@ -18,14 +18,14 @@ const os = require("os");
 const path = require("path");
 const express = require("express");
 
-const { registerFalGeneration } = require("../fal-generation");
-const { compileImageExecutionPlan, ImageExecutionError, resolveImageMode, IMAGE_MODEL_ID } = require("../image-execution");
+const { registerFalGeneration } = require("../src/generation/fal/fal-generation");
+const { compileImageExecutionPlan, ImageExecutionError, resolveImageMode, IMAGE_MODEL_ID } = require("../src/generation/image-execution");
 const {
   FAL_IMAGE_BACKEND, FalImageBackendError, falImageBackendLayer, imageSizeField,
   resolveImageFalCapability, serializeImagePlanForFal,
-} = require("../fal-image-backend");
+} = require("../src/generation/fal/fal-image-backend");
 const ImagePack = require("../model-packs/gpt-image-2");
-const { validateGenerationPlan } = require("../generation-contracts");
+const { validateGenerationPlan } = require("../src/generation/generation-contracts");
 const { withGenerationDeclaration } = require("./generation-request-fixture");
 const {
   addBlockingPromptBuild, addFramePromptBuild, baseSpec, buildRef,

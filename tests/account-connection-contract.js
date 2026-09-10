@@ -33,7 +33,7 @@ const {
   upsertConnection,
   validateConnection,
   validateConnectionList,
-} = require("../account-connections");
+} = require("../src/accounts/account-connections");
 
 const TEMP = fs.mkdtempSync(path.join(os.tmpdir(), "cinebraid-account-contract-"));
 const CONFIG_PATH = path.join(TEMP, "config.json");
@@ -347,7 +347,7 @@ async function main() {
      precisely because staying away from both is the point, and a scan that could
      not tell an explanation from a call site would punish saying so. */
   const stripComments = (source) => source.replace(/\/\*[\s\S]*?\*\//g, "").replace(/(^|[^:])\/\/.*$/gm, "$1");
-  const accountSources = ["account-connections.js", "account-providers.js", "account-provider-civitai.js", "accounts-api.js", "account-errors.js", "loopback-request.js"];
+  const accountSources = ["src/accounts/account-connections.js", "src/accounts/account-providers.js", "src/accounts/account-provider-civitai.js", "src/accounts/accounts-api.js", "src/accounts/account-errors.js", "src/server/loopback-request.js"];
   for (const rel of accountSources) {
     const source = stripComments(fs.readFileSync(path.join(ROOT, rel), "utf8"));
     for (const forbidden of ["media-asset", "media-hash", "indexProject", "verifyAssets", "writeLedger", "readLedger"])

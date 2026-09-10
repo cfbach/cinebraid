@@ -21,8 +21,8 @@ const fs = require("fs");
 const os = require("os");
 const path = require("path");
 
-const I = require("../media-asset-indexer");
-const S = require("../media-asset-store");
+const I = require("../src/media/media-asset-indexer");
+const S = require("../src/media/media-asset-store");
 
 const TEMP = fs.mkdtempSync(path.join(os.tmpdir(), "cinebraid-no-hydration-"));
 const PNG = Buffer.from(
@@ -111,7 +111,7 @@ async function main() {
   /* ---- 1. the module cannot hash, structurally ----
      The strongest form of this proof is not a counter: the indexer does not import
      a hasher at all, so it has nothing to call. */
-  const indexerSource = fs.readFileSync(path.join(__dirname, "..", "media-asset-indexer.js"), "utf8")
+  const indexerSource = fs.readFileSync(path.join(__dirname, "..", "src/media/media-asset-indexer.js"), "utf8")
     .replace(/\/\*[\s\S]*?\*\//g, "");
   for (const forbidden of ["media-hash", "hashMediaFile", "hashImageFile", "readFileSync", "createReadStream", "readFile("])
     assert(!indexerSource.includes(forbidden),

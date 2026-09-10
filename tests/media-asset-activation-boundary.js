@@ -93,6 +93,9 @@ function sourceFilesIn(dir, prefix = "") {
 }
 const productionFiles = [
   ...sourceFilesIn("", ""),
+  ...fs.readdirSync(path.join(ROOT, "src"), { recursive: true })
+    .filter((name) => name.endsWith(".js"))
+    .map((name) => `src/${name.split(path.sep).join("/")}`),
   ...sourceFilesIn("public", "public/"),
   ...sourceFilesIn("scripts", "scripts/"),
   ...sourceFilesIn("ofp", "ofp/"),
@@ -103,7 +106,7 @@ for (const rel of productionFiles) {
   const source = stripComments(fs.readFileSync(path.join(ROOT, rel), "utf8"));
   const allowed = PURE_PREDICATE_BORROWERS.get(rel) || [];
   for (const moduleName of LEDGER_MODULES) {
-    if (!new RegExp(`require\\(["'.\\/]*${moduleName}["']\\)`).test(source)) continue;
+    if (!new RegExp(`require\\(["'](?:[^"']*[/])?${moduleName}["']\\)`).test(source)) continue;
     if (allowed.includes(moduleName)) continue;
     importers.push(`${rel} -> ${moduleName}`);
   }
@@ -118,7 +121,7 @@ assert.deepStrictEqual(importers, [],
 
 /* And the owner really is an owner: it imports all four, so the boundary is a
    funnel rather than a name nothing goes through. */
-const ownerSource = fs.readFileSync(path.join(ROOT, `${LEDGER_OWNER}.js`), "utf8");
+const ownerSource = fs.readFileSync(path.join(ROOT, "src/media", `${LEDGER_OWNER}.js`), "utf8");
 for (const moduleName of LEDGER_MODULES)
   assert(new RegExp(`require\\("\\./${moduleName}"\\)`).test(ownerSource),
     `${LEDGER_OWNER}.js must own ${moduleName} — the boundary is the module that imports them all`);
@@ -126,12 +129,12 @@ for (const moduleName of LEDGER_MODULES)
 /* ---- 1b. the server enters the ledger through one function, from known places ----
    A count, not a vibe: if a fourth route starts activating the ledger this fails
    and someone has to say why in the diff. */
-const serverSource = fs.readFileSync(path.join(ROOT, "server.js"), "utf8");
+const serverSource = fs.readFileSync(path.join(ROOT, "src/server/server.js"), "utf8");
 const serverNoComments = stripComments(serverSource);
-assert(/require\("\.\/media-asset-service"\)/.test(serverNoComments),
+assert(/require\("\.\.\/media\/media-asset-service"\)/.test(serverNoComments),
   "server.js reaches the ledger through the service");
 for (const moduleName of LEDGER_MODULES)
-  assert(!new RegExp(`require\\(["'.\\/]*${moduleName}["']\\)`).test(serverNoComments),
+  assert(!new RegExp(`require\\(["'](?:[^"']*[/])?${moduleName}["']\\)`).test(serverNoComments),
     `server.js must not import ${moduleName} directly`);
 assert.strictEqual((serverNoComments.match(/MediaAssetService\.activateProject\(/g) || []).length, 1,
   "server.js schedules activation from exactly one place — noteProjectActivity");
@@ -178,7 +181,7 @@ assert.strictEqual((serverNoComments.match(/MediaAssetService.prepareAssetIdenti
 
 /* ---- 2. the schema and store layers stay free of discovery and hashing ---- */
 const foundationSource = ["media-assets", "media-asset-store"]
-  .map((name) => stripComments(fs.readFileSync(path.join(ROOT, `${name}.js`), "utf8")))
+  .map((name) => stripComments(fs.readFileSync(path.join(ROOT, "src/media", `${name}.js`), "utf8")))
   .join("\n");
 for (const forbidden of ["readdirSync", "readdir", "opendirSync", "globSync", "hashMediaFile", "hashImageFile"])
   assert(!new RegExp(`\\b${forbidden}\\b`).test(foundationSource),
@@ -189,16 +192,16 @@ assert(!/readFileSync\s*\(\s*[^)]*\bmedia\b/i.test(foundationSource),
 /* ---- 2b. the indexer STILL cannot hash — activation did not weaken this ----
    This is the cloud-sync guarantee in structural form, and it is the single
    assertion that most needs to survive the ledger becoming reachable. */
-const indexerSource = stripComments(fs.readFileSync(path.join(ROOT, "media-asset-indexer.js"), "utf8"));
+const indexerSource = stripComments(fs.readFileSync(path.join(ROOT, "src/media/media-asset-indexer.js"), "utf8"));
 for (const forbidden of ["media-hash", "hashMediaFile", "hashImageFile", "readFileSync", "createReadStream"])
   assert(!indexerSource.includes(forbidden),
     `media-asset-indexer.js references ${forbidden} — the default index must be unable to read bytes`);
-const verifierSource = stripComments(fs.readFileSync(path.join(ROOT, "media-asset-verify.js"), "utf8"));
+const verifierSource = stripComments(fs.readFileSync(path.join(ROOT, "src/media/media-asset-verify.js"), "utf8"));
 assert(/require\("\.\/media-hash"\)/.test(verifierSource),
   "media-asset-verify.js is the one module allowed to hash, and must use the shared hasher");
 /* media-hash.js IS imported by continuity-cache.js, which is the point of the
    extraction. Assert it explicitly so the scan above cannot be misread. */
-assert(/require\("\.\/media-hash"\)/.test(fs.readFileSync(path.join(ROOT, "continuity-cache.js"), "utf8")),
+assert(/require\("\.\.\/media\/media-hash"\)/.test(fs.readFileSync(path.join(ROOT, "src/continuity/continuity-cache.js"), "utf8")),
   "continuity-cache.js must consume the shared hasher — that is the extraction");
 
 /* ---- 3. runtime proof of the NEW contract ---- */
@@ -419,7 +422,7 @@ async function main() {
   assert.strictEqual(afterRename.assets.length, 1, "and one row survives, not two");
 
   /* ---- 6. FAL and the browser are untouched by this phase ---- */
-  for (const rel of ["fal-generation.js", "public/fal-generation.js", "public/app.js", "public/index.html"]) {
+  for (const rel of ["src/generation/fal/fal-generation.js", "public/fal-generation.js", "public/app.js", "public/index.html"]) {
     const source = fs.readFileSync(path.join(ROOT, rel), "utf8");
     for (const moduleName of [...LEDGER_MODULES, LEDGER_OWNER, "media-hash"])
       assert(!source.includes(moduleName),

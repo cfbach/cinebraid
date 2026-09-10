@@ -26,8 +26,8 @@ const os = require("os");
 const path = require("path");
 const express = require("express");
 
-const { registerFalGeneration } = require("../fal-generation");
-const { GENERATION_BINDING_VERSION, readGenerationBinding } = require("../generation-binding");
+const { registerFalGeneration } = require("../src/generation/fal/fal-generation");
+const { GENERATION_BINDING_VERSION, readGenerationBinding } = require("../src/generation/generation-binding");
 const { addMotionPromptBuild } = require("./h3-execution-fixture");
 const { addFramePromptBuild } = require("./image-execution-fixture");
 const { baseSpec, KAI, HANGAR } = require("./generation-compiler-fixture");

@@ -68,9 +68,9 @@
 const assert = require("assert");
 const vm = require("vm");
 
-const PromptEngine = require("../prompt-engine");
-const Compiler = require("../generation-compiler");
-const Contracts = require("../generation-contracts");
+const PromptEngine = require("../src/generation/prompt-engine");
+const Compiler = require("../src/generation/generation-compiler");
+const Contracts = require("../src/generation/generation-contracts");
 const MotionIntent = require("../public/shared-motion-intent");
 const { render, buildFixture } = require("./render-harness");
 const F = require("./generation-compiler-fixture");

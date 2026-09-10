@@ -760,7 +760,7 @@ function controlWriter(spec) {
    for Default is refused by CineBraid, which is verbatim the dogfood. */
 controlWriter({
   label: "S1-C1 ingest carries the generated declaration",
-  file: "fal-generation.js",
+  file: "src/generation/fal/fal-generation.js",
   anchor: 'coverageJobType: job.coverageJobType || job.artifactStructure || "",',
   replacement: 'coverageJobType: job.coverageJobType || "",',
   probe: (text) => {
@@ -806,7 +806,7 @@ function s1CarryEmittedBody(emitted) {
   const whitelist = ["single-reference", "sheet", ""];
   const declared = whitelist.includes(String(emitted || "")) ? String(emitted || "") : "";
   const job = { coverageJobType: "", artifactStructure: declared };
-  const rowDeclaration = ingestDeclarationFrom(source("fal-generation.js"), "S1 carry")(job);
+  const rowDeclaration = ingestDeclarationFrom(source("src/generation/fal/fal-generation.js"), "S1 carry")(job);
   const result = approveGenerated(build(KERNEL_FILE, null), generatedProject({ coverageJobType: rowDeclaration }));
   return { reached: true, held: result.wrote === true, reason: result.wrote ? "approved" : `refused(${result.code})` };
 }
@@ -911,7 +911,7 @@ controlAsync({
    the other's half. */
 controlWriter({
   label: "S1-C4 the declaration stays out of coverage-run membership",
-  file: "fal-generation.js",
+  file: "src/generation/fal/fal-generation.js",
   anchor: 'coverageJobType: ["sheet", "slot", ""].includes(String(req.body?.coverageJobType || "")) ? String(req.body?.coverageJobType || "") : "",',
   replacement: 'coverageJobType: String(req.body?.coverageJobType || req.body?.artifactStructure || ""),',
   probe: (text) => {

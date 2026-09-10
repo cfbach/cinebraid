@@ -152,7 +152,7 @@ async function main() {
     res.end(JSON.stringify({ message: { content: "local reply" } }));
   });
 
-  const { llm, vision, tokenLimitBody, openAiProviderDialect, OPENAI_DIALECT, COMPATIBLE_DIALECT } = require("../llm");
+  const { llm, vision, tokenLimitBody, openAiProviderDialect, OPENAI_DIALECT, COMPATIBLE_DIALECT } = require("../src/assistant/llm");
   const { OBSERVATION_REQUEST_CONTRACT, OBSERVATION_SCHEMA_NAME, buildObservationSchema } = require("../public/shared-continuity");
 
   /* ================================================================

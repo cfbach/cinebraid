@@ -45,10 +45,10 @@ const CONFIG_B = { frameQuality: "medium", frameResolution: "2k", blockingQualit
 
 /* The modules a patch may invalidate. Everything the compiled image path pulls in. */
 const IN_SCOPE = [
-  path.join(ROOT, "fal-generation.js"),
-  path.join(ROOT, "image-execution.js"),
-  path.join(ROOT, "fal-image-backend.js"),
-  path.join(ROOT, "generation-compiler.js"),
+  path.join(ROOT, "src/generation/fal/fal-generation.js"),
+  path.join(ROOT, "src/generation/image-execution.js"),
+  path.join(ROOT, "src/generation/fal/fal-image-backend.js"),
+  path.join(ROOT, "src/generation/generation-compiler.js"),
   path.join(ROOT, "model-packs"),
 ];
 const inScope = (key) => IN_SCOPE.some((prefix) => key === prefix || key.startsWith(prefix + path.sep) || key.startsWith(prefix));
@@ -122,7 +122,7 @@ async function control({ id, label, guards, defect, guarded }) {
 /* ---------------------------------------------------------------------------
    A live compiled-image server built on whatever fal-generation.js is in the cache. */
 async function serverOn(config) {
-  const { registerFalGeneration } = require("../fal-generation");
+  const { registerFalGeneration } = require("../src/generation/fal/fal-generation");
   const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "cinebraid-b1-nc-"));
   fs.mkdirSync(path.join(tmp, "shots", "SH-1", "takes"), { recursive: true });
   for (const dir of ["anchors", "plates", "props"]) fs.mkdirSync(path.join(tmp, dir), { recursive: true });
@@ -212,7 +212,7 @@ async function main() {
     label: "the frame quality falling back to the pack's Auto instead of the saved setting",
     guards: "a frame dialog under saved LOW opens at low",
     defect: async () => {
-      return patched("fal-generation.js", [[SAVED_SETTINGS_BODY, `    return {
+      return patched("src/generation/fal/fal-generation.js", [[SAVED_SETTINGS_BODY, `    return {
       resolution: String(body?.resolution || (blocking ? cfg.blockingResolution : cfg.frameResolution) || ""),
       quality: String(body?.quality || ""),
     };`]], async () => {
@@ -225,7 +225,7 @@ async function main() {
       });
     },
     guarded: async () => {
-      await patched("fal-generation.js", [[SAVED_SETTINGS_BODY, `    return {
+      await patched("src/generation/fal/fal-generation.js", [[SAVED_SETTINGS_BODY, `    return {
       resolution: String(body?.resolution || (blocking ? cfg.blockingResolution : cfg.frameResolution) || ""),
       quality: String(body?.quality || ""),
     };`]], async () => {
@@ -248,7 +248,7 @@ async function main() {
     id: "NC-B1-B",
     label: "the frame size taken from the ratio ladder instead of the saved tier",
     guards: "a saved 2K resolves a 2K-tier size for the shot's format",
-    defect: async () => patched("fal-generation.js", SIZE_MUTATION, async () => {
+    defect: async () => patched("src/generation/fal/fal-generation.js", SIZE_MUTATION, async () => {
       const h = await serverOn(CONFIG_B);
       try {
         const { data } = await h.plan({ aspectRatio: "1:1" });
@@ -257,7 +257,7 @@ async function main() {
         return data.size === "1024x1024";
       } finally { h.close(); }
     }),
-    guarded: async () => patched("fal-generation.js", SIZE_MUTATION, async () => {
+    guarded: async () => patched("src/generation/fal/fal-generation.js", SIZE_MUTATION, async () => {
       const h = await serverOn(CONFIG_B);
       try {
         const { data } = await h.plan({ aspectRatio: "1:1" });
@@ -328,7 +328,7 @@ async function main() {
     id: "NC-B1-D1",
     label: "the still-image defaults pinned to the audit's LOW / 1K",
     guards: "a frame dialog under saved MEDIUM opens at medium",
-    defect: async () => patched("fal-generation.js", PINNED, async () => {
+    defect: async () => patched("src/generation/fal/fal-generation.js", PINNED, async () => {
       const h = await serverOn(CONFIG_B);
       try {
         const { data } = await h.plan();
@@ -336,7 +336,7 @@ async function main() {
         return data.quality === "low";
       } finally { h.close(); }
     }),
-    guarded: async () => patched("fal-generation.js", PINNED, async () => {
+    guarded: async () => patched("src/generation/fal/fal-generation.js", PINNED, async () => {
       const h = await serverOn(CONFIG_B);
       try {
         const { data } = await h.plan();
@@ -370,7 +370,7 @@ async function main() {
     id: "NC-B1-E",
     label: "the paid submit compiling a different size and quality than the preview confirmed",
     guards: "the mocked provider request carries the value the dialog confirmed",
-    defect: async () => patched("fal-generation.js", DIVERGENT_SUBMIT, async () => {
+    defect: async () => patched("src/generation/fal/fal-generation.js", DIVERGENT_SUBMIT, async () => {
       const h = await serverOn(CONFIG_B);
       try {
         const { data } = await h.plan();
@@ -381,7 +381,7 @@ async function main() {
           && !!sent && sent.image_size?.width === 3840 && sent.quality === "high";
       } finally { h.close(); }
     }),
-    guarded: async () => patched("fal-generation.js", DIVERGENT_SUBMIT, async () => {
+    guarded: async () => patched("src/generation/fal/fal-generation.js", DIVERGENT_SUBMIT, async () => {
       const h = await serverOn(CONFIG_B);
       try {
         const { sent } = await h.submit();
@@ -403,7 +403,7 @@ async function main() {
     id: "NC-B1-F",
     label: "the saved default overwriting an explicit dialog override at submission",
     guards: "an explicit dialog override survives submission and is what gets charged for",
-    defect: async () => patched("fal-generation.js", SETTINGS_WINS, async () => {
+    defect: async () => patched("src/generation/fal/fal-generation.js", SETTINGS_WINS, async () => {
       const h = await serverOn(CONFIG_B);
       try {
         const { sent } = await h.submit({ quality: "high", resolution: "3840x2160" });
@@ -412,7 +412,7 @@ async function main() {
         return !!sent && sent.image_size?.width === 2048 && sent.quality === "medium";
       } finally { h.close(); }
     }),
-    guarded: async () => patched("fal-generation.js", SETTINGS_WINS, async () => {
+    guarded: async () => patched("src/generation/fal/fal-generation.js", SETTINGS_WINS, async () => {
       const h = await serverOn(CONFIG_B);
       try {
         const { sent } = await h.submit({ quality: "high", resolution: "3840x2160" });

@@ -227,7 +227,7 @@ function writePreload(dir, find, replace) {
 
 async function main() {
   /* ---- 1. what counts as an endpoint on this machine ---- */
-  const { isLocalProviderEndpoint } = require("../llm");
+  const { isLocalProviderEndpoint } = require("../src/assistant/llm");
   for (const local of [
     "http://127.0.0.1:11436",
     "http://127.0.0.1:11436/v1",
@@ -272,7 +272,7 @@ async function main() {
      code earns that by being incapable of the dangerous direction: it can make an
      endpoint LESS local and nothing else, so the worst a wrong value can do is make
      CineBraid refuse to send something. */
-  const { designatedRemoteEndpoint } = require("../llm");
+  const { designatedRemoteEndpoint } = require("../src/assistant/llm");
   const declared = process.env.CINEBRAID_TEST_REMOTE_ENDPOINTS;
   try {
     delete process.env.CINEBRAID_TEST_REMOTE_ENDPOINTS;
@@ -508,7 +508,7 @@ async function main() {
         CINEBRAID_PROJECTS_ROOT: PROJECTS_ROOT,
         CINEBRAID_CONFIG_PATH: CONFIG_PATH,
         CINEBRAID_TEST_REMOTE_ENDPOINTS: spy.origin,
-        CINEBRAID_TEST_PATCH_TARGET: path.join(ROOT, "server.js"),
+        CINEBRAID_TEST_PATCH_TARGET: path.join(ROOT, "src/server/server.js"),
         CINEBRAID_TEST_PATCH_FIND: preload.find,
         CINEBRAID_TEST_PATCH_REPLACE: preload.replace,
       },

@@ -1623,7 +1623,7 @@ function architectureCases() {
   ok(!/function currentHumanAuthority|function entityProductionTruth/.test(codeOnly),
     "architecture: and must not define its own");
 
-  const serverSource = readLF("server.js");
+  const serverSource = readLF("src/server/server.js");
   const route = serverSource.slice(serverSource.indexOf("function bibleProjection"), serverSource.indexOf("/* ---- project management ----"));
   ok(route.length > 200, "architecture: the Bible routes were located in server.js");
   equal((route.match(/BibleCanon\.bibleCanonProjection\(/g) || []).length, 1,
@@ -1691,7 +1691,7 @@ function architectureCases() {
 
 function bureaucracyCases() {
   const projectionSource = readLF("public/shared-bible-canon.js");
-  const serverSource = readLF("server.js");
+  const serverSource = readLF("src/server/server.js");
   const route = serverSource.slice(serverSource.indexOf("function bibleProjection"), serverSource.indexOf("/* ---- project management ----"));
   ok(!/approveBible|bibleApproval|bibleAuthority|bibleLedger/i.test(projectionSource + route),
     "bureaucracy: the Bible gains no approval step and no ledger of its own");

@@ -39,10 +39,10 @@ const vm = require("vm");
 
 const ROOT = path.join(__dirname, "..");
 const { render, buildFixture } = require("./render-harness");
-const Options = require("../generation-options");
-const Lifecycle = require("../generation-lifecycle");
-const PromptEngine = require("../prompt-engine");
-const { H3_MODEL_IDS } = require("../h3-execution");
+const Options = require("../src/generation/generation-options");
+const Lifecycle = require("../src/generation/generation-lifecycle");
+const PromptEngine = require("../src/generation/prompt-engine");
+const { H3_MODEL_IDS } = require("../src/generation/h3-execution");
 
 const readLF = (file) => fs.readFileSync(path.join(ROOT, file), "utf8").replace(/\r\n/g, "\n");
 const notes = [];
@@ -205,7 +205,7 @@ function declaredVideoDefaults() {
     assert(match, `${file} must declare a default video profile`);
     return match[1];
   };
-  return { "server.js": grab("server.js"), "public/app.js": grab("public/app.js") };
+  return { "server.js": grab("src/server/server.js"), "public/app.js": grab("public/app.js") };
 }
 
 function testShippedDefaultIsDispatchable(overrides = null) {
@@ -358,7 +358,7 @@ async function testUnsupportedTargetCannotReachSubmission(mutateSource = null) {
     assert.strictEqual(support.dispatchable, false, `${profile.id} must not resolve to an adapter`);
     assert.strictEqual(support.adapterId, "", `${profile.id} must name no adapter`);
   }
-  const serverGuard = readLF("fal-generation.js");
+  const serverGuard = readLF("src/generation/fal/fal-generation.js");
   assert(/MiniMax H3 motion generation requires a minimax-h3 prompt profile/.test(serverGuard),
     "the server route must still refuse a motion job whose profile family is not the wired one");
   note("C4: no unwired target has an adapter, the screen offers no paid action for one, and the route still refuses it");
@@ -541,7 +541,7 @@ function testApprovalStatesStayDistinct() {
   assert(/function markBatchApprovalAsHumanDecision\(row\)/.test(review), "the batch approval must mark the human decision");
   assert(/row\.humanApprovedWithoutAI = false;/.test(review),
     "and must not claim the director approved without an AI result in front of them");
-  const reviewers = readLF("reference-review-contract.js");
+  const reviewers = readLF("src/authority/reference-review-contract.js");
   assert(!/humanApproved\s*=/.test(reviewers), "no review contract may write the human-approval mark");
   note("D: human approval, AI pass, rejection and unreviewed remain four separate answers");
 }
@@ -596,7 +596,7 @@ async function testDismissCopyDoesNotPromiseIndefiniteReports(mutateSource = nul
 }
 
 function testRetentionItselfIsUnchanged() {
-  const runs = readLF("automation-runs.js");
+  const runs = readLF("src/automation/automation-runs.js");
   assert(/const MAX_TERMINAL_RUNS = 100;/.test(runs), "the run-history limit must be unchanged");
   assert(/const terminal = runs\.filter\(\(run\) => !active\.includes\(run\)\)\.slice\(-MAX_TERMINAL_RUNS\);/.test(runs),
     "terminal runs must still be retained by the same rule");
@@ -630,7 +630,7 @@ function testFailureAndUncertaintyClassifyFromRealFields(lifecycle = Lifecycle) 
   for (const row of cases)
     assert.strictEqual(lifecycle.providerAcceptedRequest(row.job), row.accepted, row.why);
   /* And the diagnostic reader is the one asking. */
-  const runs = readLF("automation-runs.js");
+  const runs = readLF("src/automation/automation-runs.js");
   assert(/Lifecycle\.providerAcceptedRequest\(job\)/.test(runs), "the diagnostic must ask the lifecycle module");
   assert(/failed_after_provider_acceptance/.test(runs) && /failed_before_provider_acceptance/.test(runs),
     "and must still classify a failure by whether the provider had accepted it");
@@ -640,7 +640,7 @@ function testFailureAndUncertaintyClassifyFromRealFields(lifecycle = Lifecycle) 
 /* The invariant, repo-wide: no reader may test a job field no writer produces. */
 function testNoReaderInventsAProviderIdField() {
   const files = [
-    "automation-runs.js", "fal-generation.js", "generation-lifecycle.js",
+    "src/automation/automation-runs.js", "src/generation/fal/fal-generation.js", "src/generation/generation-lifecycle.js",
     ...fs.readdirSync(path.join(ROOT, "public")).filter((name) => name.endsWith(".js")).map((name) => `public/${name}`),
   ];
   const offenders = [];
