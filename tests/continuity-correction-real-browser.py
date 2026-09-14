@@ -1,6 +1,6 @@
 import os, pathlib, shutil, socket, subprocess, time, re, urllib.request, urllib.error, urllib.parse
 ROOT=pathlib.Path(__file__).resolve().parents[1]
-from browser_runtime import require_browser, launch_chromium
+from browser_runtime import require_browser, launch_chromium, disposable_workspace
 LABEL='Continuity correction real-browser audit'
 sync_playwright=require_browser(LABEL)
 def free_port():
@@ -11,7 +11,10 @@ def wait(p):
             with socket.create_connection(('127.0.0.1',p),.2): return
         except OSError: time.sleep(.1)
     raise RuntimeError('server timeout')
-port=free_port(); server=subprocess.Popen(['node','server.js'],cwd=ROOT,env={**os.environ,'PORT':str(port)},stdout=subprocess.DEVNULL,stderr=subprocess.DEVNULL)
+# Its own disposable settings and projects root, never whatever the application would
+# default to on this machine. No sample: the recorded quarantine failure is against an
+# empty workspace, which is what a fresh clone resolves to.
+port=free_port(); workspace=disposable_workspace('continuity-correction', sample=False); server=subprocess.Popen(['node','server.js'],cwd=ROOT,env=workspace.env(port),stdout=subprocess.DEVNULL,stderr=subprocess.DEVNULL)
 try:
     wait(port)
     with sync_playwright() as pw:
@@ -93,3 +96,4 @@ finally:
     server.terminate()
     try: server.wait(timeout=5)
     except subprocess.TimeoutExpired: server.kill()
+    workspace.cleanup()

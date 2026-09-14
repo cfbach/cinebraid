@@ -46,6 +46,7 @@ import os
 import pathlib
 import platform
 import shutil
+import subprocess
 import sys
 import tempfile
 
@@ -98,9 +99,14 @@ SETUP_HINT = (
 # path, because there is no path to pass.
 #
 # CINEBRAID_TEST_MODE is set as a second line of defence. The server refuses to
-# start when a run that declares itself a test resolves a projects root inside the
-# application directory, so a future edit that somehow reintroduces the checkout's
-# own root fails loudly at startup rather than quietly writing there.
+# start a run that declares itself a test unless its settings file and projects
+# root are disposable, so a future edit that somehow reintroduces a live location
+# fails loudly at startup rather than quietly reading or writing there.
+#
+# ONE RULE, NOT TWO. The workspace is built by tests/helpers/disposable-root.js,
+# driven here through its command line, so the Python and Node suites share one
+# definition of "disposable" (src/server/test-isolation.js) instead of two
+# implementations that could drift apart.
 #
 # THE SAMPLE IS COPIED, NEVER LINKED, and its runtime artefacts are left behind:
 # a per-install asset ledger belongs to the install that minted it, and the tracked
@@ -120,94 +126,88 @@ RUNTIME_ARTIFACTS = frozenset({
 
 _REPO_ROOT = pathlib.Path(__file__).resolve().parents[1]
 _BUNDLED_SAMPLE = _REPO_ROOT / "projects" / "cinebraid-sample"
+_SEAM = _REPO_ROOT / "tests" / "helpers" / "disposable-root.js"
 SAMPLE_SLUG = "cinebraid-sample"
 
 
-def _is_runtime_artifact(name):
-    return name in RUNTIME_ARTIFACTS or name.lower().endswith(".bak")
+def _seam(*args):
+    return subprocess.run(
+        ["node", str(_SEAM), *args],
+        cwd=str(_REPO_ROOT),
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+    )
 
 
 class DisposableWorkspace:
     """A writable projects root and config path a suite owns outright."""
 
-    def __init__(self, home):
-        self.home = pathlib.Path(home)
-        self.projects_root = self.home / "projects"
-        self.config_path = self.home / "config.json"
+    def __init__(self, created):
+        self.home = pathlib.Path(created["home"])
+        self.projects_root = pathlib.Path(created["projectsRoot"])
+        self.config_path = pathlib.Path(created["configPath"])
+        self._env = {key: str(value) for key, value in created["env"].items()}
+        self._removed = False
 
     def env(self, port, **extra):
         """The environment for `subprocess.Popen(["node", "server.js"], ...)`.
 
-        Every provider key is blanked, so a suite that forgets to stub a call
-        gets a refusal rather than a real request.
+        The helper's variables win over anything inherited: the disposable
+        settings file and projects root, CINEBRAID_TEST_MODE, and every provider
+        key blanked, so a suite that forgets to stub a call gets a refusal rather
+        than a real request.
         """
-        values = dict(
-            os.environ,
-            PORT=str(port),
-            CINEBRAID_PROJECTS_ROOT=str(self.projects_root),
-            CINEBRAID_CONFIG_PATH=str(self.config_path),
-            CINEBRAID_TEST_MODE="1",
-            FAL_KEY="",
-            OPENAI_API_KEY="",
-            GOOGLE_API_KEY="",
-            ANTHROPIC_API_KEY="",
-        )
+        values = dict(os.environ)
+        values.update(self._env)
+        values["PORT"] = str(port)
         values.update({key: str(value) for key, value in extra.items()})
         return values
 
     def cleanup(self):
-        shutil.rmtree(self.home, ignore_errors=True)
+        if self._removed:
+            return
+        result = _seam("cleanup", "--home", str(self.home))
+        if result.returncode != 0:
+            raise RuntimeError(
+                "The disposable test workspace could not be removed: %s"
+                % (result.stderr or result.stdout).strip()
+            )
+        self._removed = True
 
 
-def disposable_workspace(label, sample=True, active_project=""):
+def disposable_workspace(label, sample=True, active_project="", profile=False):
     """Create one. `label` only names the directory, so a leftover is traceable.
 
-    Cleanup is bounded and deterministic: call `.cleanup()` in the suite's own
+    There is no path parameter: the shared helper creates the workspace in a
+    location it has proved disposable, so no caller can point a suite at a real
+    installation, the ordinary per-user settings or a production root. Cleanup
+    is bounded and deterministic: call `.cleanup()` in the suite's own
     `finally`, and an atexit backstop removes it if the suite dies first.
     """
-    slug = "".join(character if character.isalnum() else "-" for character in str(label))[:40]
-    home = pathlib.Path(tempfile.mkdtemp(prefix="cinebraid-browser-%s-" % slug))
-
-    # Proving it rather than trusting tempfile: a workspace inside the checkout is
-    # the failure this exists to prevent, and it is one bad TMPDIR away.
-    try:
-        home.resolve().relative_to(_REPO_ROOT)
-    except ValueError:
-        pass
-    else:
-        shutil.rmtree(home, ignore_errors=True)
-        raise RuntimeError(
-            "A browser-test workspace may not live inside the repository (%s). "
-            "Check TMPDIR/TEMP." % home
-        )
-
-    workspace = DisposableWorkspace(home)
-    workspace.projects_root.mkdir(parents=True, exist_ok=True)
-
+    args = ["create", "--label", str(label)]
     if sample:
-        shutil.copytree(
-            _BUNDLED_SAMPLE,
-            workspace.projects_root / SAMPLE_SLUG,
-            ignore=lambda directory, names: [name for name in names if _is_runtime_artifact(name)],
+        args.append("--sample")
+    if active_project:
+        args += ["--active-project", str(active_project)]
+    if profile:
+        args.append("--profile")
+    result = _seam(*args)
+    if result.returncode != 0:
+        raise RuntimeError(
+            "The disposable test workspace could not be created: %s"
+            % (result.stderr or result.stdout).strip()
         )
-
-    workspace.config_path.write_text(
-        json.dumps(
-            {
-                "assistant": {"provider": "none", "visionProvider": "none"},
-                "agents": {"enabled": False},
-                "generation": {"fal": {"enabled": False}},
-                "workspace": {"projectRoot": "", "mediaRoot": "", "outputRoot": "", "backupRoot": ""},
-                "activeProject": active_project,
-            },
-            indent=2,
-        )
-        + "\n",
-        encoding="utf-8",
-    )
-
-    atexit.register(workspace.cleanup)
+    workspace = DisposableWorkspace(json.loads(result.stdout.strip().splitlines()[-1]))
+    atexit.register(_cleanup_at_exit, workspace)
     return workspace
+
+
+def _cleanup_at_exit(workspace):
+    try:
+        workspace.cleanup()
+    except Exception as error:  # the suite has finished; report it without masking its result
+        print("[browser-runtime] %s" % error, file=sys.stderr)
 
 
 def browser_required():

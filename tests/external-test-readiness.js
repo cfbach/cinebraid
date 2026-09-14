@@ -7,9 +7,13 @@ const path = require("path");
 const vm = require("vm");
 const { spawn, spawnSync } = require("child_process");
 const { render, emptyFixture } = require("./render-harness");
+const { disposableRoot } = require("./helpers/disposable-root");
 
 const ROOT = path.resolve(__dirname, "..");
 const SAMPLE_SLUG = "cinebraid-sample";
+/* Every server this check starts gets disposable settings and projects. It used to start
+   them against the checkout's own data/ and the application's default projects root. */
+const WORKSPACE = disposableRoot("external-readiness");
 
 function read(rel) {
   return fs.readFileSync(path.join(ROOT, rel), "utf8");
@@ -74,7 +78,7 @@ async function stopChild(child) {
 function spawnServer(port, args = [], extraEnv = {}) {
   const child = spawn(process.execPath, ["server.js", ...args], {
     cwd: ROOT,
-    env: { ...process.env, PORT: String(port), ...extraEnv },
+    env: WORKSPACE.serverEnv(port, extraEnv),
     stdio: ["ignore", "pipe", "pipe"],
   });
   child.output = "";
@@ -104,7 +108,7 @@ function testDeclaredRuntimeAndDocs() {
 function testUnsupportedNodeFailsClearly() {
   const result = spawnSync(process.execPath, ["server.js"], {
     cwd: ROOT,
-    env: { ...process.env, CINEBRAID_TEST_NODE_VERSION: "16.20.0", PORT: "0" },
+    env: WORKSPACE.serverEnv("0", { CINEBRAID_TEST_NODE_VERSION: "16.20.0" }),
     encoding: "utf8",
     timeout: 5000,
   });
@@ -191,12 +195,22 @@ function sampleScan(project) {
 
 async function testSampleCompletesProviderFree() {
   const sample = JSON.parse(read(`projects/${SAMPLE_SLUG}/project.json`));
-  const config = JSON.parse(read("data/config.json"));
+  /* What a FRESH install starts with, derived from the shipped defaults. This used to read
+     the checkout's own data/config.json: a file no release ships (scripts/build-release.js
+     forbids it), and on a working machine the file holding real provider credentials. A
+     readiness check has no business reading that. What it stood in for is the defaults a
+     new install normalises to — and a new install selects no project; its first-run state
+     offers the sample instead, which testZeroProjectFirstRun proves. */
+  const { normalizeConfig, CONFIG_SECRETS } = require("../src/server/config");
+  const config = normalizeConfig({});
   assert.strictEqual(sample.meta?.workflowEmphasis, "manual", "sample must open manual-first");
-  assert.strictEqual(config.activeProject, SAMPLE_SLUG, "fresh release must select the sample");
-  assert.strictEqual(config.assistant?.provider, "none", "sample configuration must not require a text provider");
-  assert.strictEqual(config.assistant?.visionProvider, "none", "sample configuration must not require a vision provider");
-  assert.strictEqual(config.generation?.fal?.enabled, false, "sample configuration must keep FAL disabled");
+  assert.strictEqual(config.activeProject || "", "", "a fresh install selects no project; the first-run state offers the sample");
+  assert(!["openai", "anthropic"].includes(config.assistant?.provider), "a fresh install must not require a cloud text provider");
+  assert.strictEqual(config.generation?.fal?.enabled, false, "a fresh install must keep FAL disabled");
+  assert.deepStrictEqual(config.accounts, [], "a fresh install carries no account connections");
+  const populated = CONFIG_SECRETS.filter((secret) => !secret.path.includes("[*]"))
+    .filter((secret) => secret.path.split(".").reduce((node, key) => (node == null ? node : node[key]), config));
+  assert.deepStrictEqual(populated.map((secret) => secret.path), [], "a fresh install carries no credentials");
 
   const requested = [];
   const rendered = await render("#/shot/SAMPLE-03", sample, {
@@ -252,6 +266,7 @@ async function main() {
   await testZeroProjectFirstRun();
   await testSampleCompletesProviderFree();
   await testNetworkPosture();
+  WORKSPACE.cleanup();
   console.log("External test readiness passed sanitized packaging, Node 18 declaration and startup guard, loopback-by-default networking, deliberate LAN warning, first-run guidance, and provider-free sample completion.");
 }
 

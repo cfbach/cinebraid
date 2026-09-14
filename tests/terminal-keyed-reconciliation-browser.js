@@ -25,6 +25,7 @@ const fs = require("fs");
 const net = require("net");
 const os = require("os");
 const path = require("path");
+const { disposableRoot } = require("./helpers/disposable-root");
 
 const ROOT = path.join(__dirname, "..");
 const DEBUG_PORT = 9422;
@@ -159,8 +160,11 @@ async function main() {
   }
 
   const port = await freePort();
+  /* Its own disposable settings and projects, with the sample open, rather than whatever
+     the application would default to on this machine. */
+  const workspace = disposableRoot("terminal-keyed", { withSample: true, config: { activeProject: "cinebraid-sample" } });
   const server = spawn(process.execPath, ["server.js"], {
-    cwd: ROOT, env: { ...process.env, PORT: String(port) }, stdio: "ignore",
+    cwd: ROOT, env: workspace.serverEnv(port), stdio: "ignore",
   });
   const app = `http://127.0.0.1:${port}/`;
   const profile = fs.mkdtempSync(path.join(os.tmpdir(), "cb-kr-"));
@@ -458,6 +462,7 @@ async function main() {
     /* The browser holds the profile directory open for a moment after it is killed. */
     await sleep(300);
     try { fs.rmSync(profile, { recursive: true, force: true }); } catch { /* best effort */ }
+    try { workspace.cleanup(); } catch { /* retried when the process exits */ }
   }
 }
 

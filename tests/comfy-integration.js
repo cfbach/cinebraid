@@ -1365,7 +1365,12 @@ async function startRealServer({ comfyBaseUrl, host }) {
   const configPath = path.join(dir, "config.json");
   const registryPath = path.join(dir, "comfy-workflows.json");
 
-  const env = { ...process.env, CINEBRAID_CONFIG_PATH: configPath, CINEBRAID_COMFY_REGISTRY_PATH: registryPath };
+  const env = {
+    ...process.env, CINEBRAID_CONFIG_PATH: configPath, CINEBRAID_COMFY_REGISTRY_PATH: registryPath,
+    /* Stated, not only saved in the config below, so the environment alone says this run
+       cannot fall back to the application's default projects root. */
+    CINEBRAID_PROJECTS_ROOT: projectsRoot,
+  };
   delete require.cache[path.join(ROOT, "src/server/config.js")];
   const saved = process.env.CINEBRAID_CONFIG_PATH;
   process.env.CINEBRAID_CONFIG_PATH = configPath;

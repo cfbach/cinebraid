@@ -629,6 +629,8 @@ async function main() {
     "terminal-view.js",
     "terminal-visual-corrections-negative-controls.js",
     "terminal-visual-corrections.js",
+    "test-isolation-negative-controls.js",
+    "test-isolation.js",
     "ui-state-stability-real-browser.py",
     "untrusted-import-exclusive-publish-negative-controls.js",
     "untrusted-import-exclusive-publish.js",

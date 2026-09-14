@@ -60,10 +60,13 @@ saved in the config file overrides it, so a separate `CINEBRAID_CONFIG_PATH` is
 required for real isolation. See `docs/SPARK_QA_SETUP.md`.
 
 For anything automated, set `CINEBRAID_TEST_MODE=1` as well. CineBraid then refuses to
-start if the projects root it resolves is inside the application folder, so a test run
-cannot write to the checkout's own `projects/` and `data/`. `scripts/qa-sandbox.js`
-builds a complete disposable environment; `tests/helpers/disposable-root.js` is the
-same guarantee for a suite.
+start unless its settings file, projects root and storage paths are disposable — inside
+the system temporary directory, and not in the application folder, another CineBraid
+installation, or your ordinary per-user settings or projects locations. The settings
+location is checked before the file is read, so a test run cannot read or write the
+checkout's own `data/` or your real settings. `scripts/qa-sandbox.js` builds a complete
+disposable environment for hand testing; `tests/helpers/disposable-root.js` is the same
+guarantee for a suite.
 
 ## Network posture
 

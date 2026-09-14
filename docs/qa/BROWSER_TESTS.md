@@ -127,31 +127,32 @@ A quarantine that only tolerates failure is how the original skips became invisi
 
 ## Isolation
 
-The suites added in Q1 — and the continuity workspace suite — build a temporary
-directory and point the server at it with `CINEBRAID_CONFIG_PATH` and
-`CINEBRAID_PROJECTS_ROOT`, then delete it. Set `CINEBRAID_TEST_MODE=1` too: CineBraid
-then refuses to start against a projects root inside the checkout, so the isolation is a
-property rather than a habit. `tests/helpers/disposable-root.js` supplies all three in one
-call and is the preferred way to build one. `scripts/qa-sandbox.js` builds the same
-kind of environment for hand testing and refuses to build one inside the repository.
+Every browser suite owns a disposable workspace: a temporary directory the server is
+pointed at with `CINEBRAID_CONFIG_PATH` and `CINEBRAID_PROJECTS_ROOT`, then deleted.
+`tests/helpers/disposable-root.js` builds one in one call, and `browser_runtime.py`'s
+`disposable_workspace()` drives that same helper, so Python and Node suites share one
+definition of "disposable" (`src/server/test-isolation.js`). `scripts/qa-sandbox.js`
+builds the same kind of environment for hand testing.
 
-Six older suites predate those variables and still start `node server.js` against
-the repository's own roots. Rather than trust that they only ever read, the gate
-brackets its whole run with a byte census of `data/` and `projects/` and fails naming
-any file that changed. On a machine that already has `data/config.json`, nothing
-changes. On a **fresh clone** the first server start creates that file — the
-application bootstrapping its own defaults — and the gate reports it as such:
+The gate runs every suite with `CINEBRAID_TEST_MODE=1`. A server started that way refuses
+a settings file, projects root or storage path that is not disposable, and judges the
+settings location before reading it, so the isolation is a property rather than a
+habit. The gate then checks three things and fails naming the problem:
+
+- every workspace a suite reports is disposable and was removed when the suite exited;
+- the live configuration locations — this checkout's `data/` settings and the account's
+  per-user settings directories — are unchanged by existence, size and modification time;
+- a byte census of `data/` and `projects/` is identical before and after.
 
 ```
-isolation  26 files under data/ and projects/ byte-identical after the run
-           first run created data/config.json, projects/cinebraid-sample/media-assets.json
-           — six suites still start the server against the repository's own roots
+isolation  14 files under data/ and projects/ byte-identical after the run
+disposable 9 workspaces reported by 9 suites, every one disposable and removed
+live       9 live configuration locations unchanged
 ```
 
-Three files may be created, all named exactly, and all because starting the
-application is what creates them:
+`data/config.json` appearing during a gate run is damage. Two files may be created, both
+named exactly, and both because opening the shipped sample is what creates them:
 
-- `data/config.json` — CineBraid bootstrapping its own defaults.
 - `projects/cinebraid-sample/media-assets.json` — since P4-SEM-C1, opening a project
   mints a durable `assetId` per media file, and six of these suites open the shipped
   sample through the real server.

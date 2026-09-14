@@ -13,6 +13,7 @@ const crypto = require("crypto");
 const { spawnSync } = require("child_process");
 const { llm, embed, vision, isLocalProviderEndpoint, resolveVisionTarget, providerForTask } = require("../assistant/llm");
 const {
+  CONFIG_PATH,
   configHealth,
   maskSecretValue,
   maskSecrets,
@@ -22,6 +23,7 @@ const {
   restoreSecrets,
   writeConfig,
 } = require("./config");
+const TestIsolation = require("./test-isolation");
 const PromptEngine = require("../generation/prompt-engine");
 const { annotateProfileLibraryExecution } = require("../generation/generation-options");
 const { httpStatusForError } = require("./http-errors");
@@ -945,6 +947,94 @@ const MEDIA_EXT = new Set([
   ".flac",
   ".ogg",
 ]);
+
+/* ---- test isolation: a declared test run owns a disposable environment ------------
+ *
+ * Browser and release suites have operated against the repository's own `projects/`
+ * and `data/` before, and the damage is not theoretical: a suite that creates,
+ * switches and deletes projects leaves stray projects and an edited config behind, a
+ * later run inherits them, and a failure that only reproduces on one machine is the
+ * result. scripts/qa-sandbox.js exists because of exactly that, and its header says so.
+ *
+ * A sandbox nobody is obliged to use is a convention. This makes it a property: when a
+ * run declares itself a test, its settings file, its projects root and every storage
+ * path must be DISPOSABLE — src/server/test-isolation.js, the same rule the disposable
+ * workspace helper builds to and the browser gate checks. Anything else is refused
+ * before the port is bound, as a startup error naming the problem, rather than a passing
+ * suite that quietly read a developer's credentials or rewrote their workspace.
+ *
+ * BEFORE THE SETTINGS FILE IS READ. The settings location is judged from its path alone,
+ * first, because the reconcile below reads that file and a first run writes it. A refusal
+ * that came afterwards would refuse a run that had already touched a live file.
+ *
+ * IT IS THE RUN THAT DECLARES ITSELF, never this file guessing. `CINEBRAID_TEST_MODE`
+ * is set by the shared server fixture, by the disposable-root helper and by the browser
+ * gate, so a suite that goes through any of them is covered without being edited.
+ * NODE_ENV=test arms it too, for a runner that sets that instead.
+ *
+ * ORDINARY USE IS UNTOUCHED. Without the declaration none of this runs, so an installed
+ * CineBraid — and a legacy install still keeping productions inside the application —
+ * starts exactly as before. That case is a notice at startup, not a refusal: refusing
+ * to open somebody's existing workspace because of where it is would be the update
+ * that lost their film, which is the outcome this whole slice exists to avoid. */
+const TEST_MODE = /^(1|true|yes)$/i.test(String(process.env.CINEBRAID_TEST_MODE || ""))
+  || String(process.env.NODE_ENV || "").toLowerCase() === "test";
+function refuseTestConfigOutsideDisposableEnvironment() {
+  if (!TEST_MODE) return;
+  const refusal = TestIsolation.disposableLocationRefusal(CONFIG_PATH, { appRoot: APP_ROOT });
+  if (!refusal) return;
+  console.error(
+    `\n  CineBraid refused to start.\n`
+    + `  This run declared itself a test (CINEBRAID_TEST_MODE / NODE_ENV=test) and its settings file\n`
+    + `  is not disposable: ${refusal.reason}.\n\n`
+    + `      settings file   ${CONFIG_PATH}\n\n`
+    + `  Nothing was read or written. A test may not use the settings of a real installation or the\n`
+    + `  ordinary per-user settings. Point CINEBRAID_CONFIG_PATH at a disposable file —\n`
+    + `  tests/helpers/disposable-root.js builds one.\n`);
+  process.exit(1);
+}
+function refuseTestRunInsideTheInstall() {
+  if (!TEST_MODE) return;
+  let config = {};
+  try { config = readConfig(); } catch (error) {
+    /* An unreadable disposable settings file is the request boundary's to report, as it is
+       for any run. The defaults still say where this run would put its projects. */
+    if (error?.code !== "CONFIG_UNREADABLE") throw error;
+  }
+  const root = projectsRoot(config);
+  if (pathIsInsideInstall(root)) {
+    console.error(
+      `\n  CineBraid refused to start.\n`
+      + `  This run declared itself a test (CINEBRAID_TEST_MODE / NODE_ENV=test) and its projects root\n`
+      + `  is inside the application directory:\n\n`
+      + `      projects root   ${root}\n`
+      + `      application     ${APP_ROOT}\n\n`
+      + `  A test that writes there edits the repository's own projects/ and data/, and leaves stray\n`
+      + `  projects behind for the next run. Point CINEBRAID_PROJECTS_ROOT and CINEBRAID_CONFIG_PATH at a\n`
+      + `  disposable directory — tests/helpers/disposable-root.js and scripts/qa-sandbox.js both build one.\n`);
+    process.exit(1);
+  }
+  const storage = [
+    ["projects root", root],
+    ["media root", configuredWorkspacePath("mediaRoot", config)],
+    ["output root", configuredWorkspacePath("outputRoot", config)],
+    ["backup root", configuredWorkspacePath("backupRoot", config)],
+  ].filter(([, target]) => target);
+  for (const [subject, target] of storage) {
+    const refusal = TestIsolation.disposableLocationRefusal(target, { appRoot: APP_ROOT });
+    if (!refusal) continue;
+    console.error(
+      `\n  CineBraid refused to start.\n`
+      + `  This run declared itself a test (CINEBRAID_TEST_MODE / NODE_ENV=test) and its ${subject}\n`
+      + `  is not disposable: ${refusal.reason}.\n\n`
+      + `      ${subject.padEnd(15)} ${target}\n\n`
+      + `  A test may not read or write a real production workspace. Point CINEBRAID_PROJECTS_ROOT and\n`
+      + `  CINEBRAID_CONFIG_PATH at a disposable directory — tests/helpers/disposable-root.js builds one.\n`);
+    process.exit(1);
+  }
+}
+refuseTestConfigOutsideDisposableEnvironment();
+refuseTestRunInsideTheInstall();
 
 /* Reconcile legacy defaults before any route reads the configuration.
 
@@ -3092,6 +3182,21 @@ app.post("/api/workspace/settings", (req, res) => {
     const nextConfig = mergeConfig(current, { workspace: requestedWorkspace, naming: requestedNaming });
     const nextRoot = projectsRoot(nextConfig);
     const paths = [nextRoot, configuredWorkspacePath("mediaRoot", nextConfig), configuredWorkspacePath("outputRoot", nextConfig), configuredWorkspacePath("backupRoot", nextConfig)].filter(Boolean);
+    /* A declared test run may only move its storage somewhere disposable. The same rule the
+       startup refusal applies, asked again here because this is the one route that can point
+       a running server at a new location — and asked before anything is created. */
+    if (TEST_MODE) {
+      const refused = paths
+        .map((target) => ({ target, refusal: TestIsolation.disposableLocationRefusal(target, { appRoot: APP_ROOT }) }))
+        .find((row) => row.refusal);
+      if (refused) {
+        return res.status(400).json({
+          ok: false,
+          code: "TEST_WORKSPACE_NOT_DISPOSABLE",
+          error: `This run declared itself a test, so its storage must be disposable, and ${refused.target} is not: ${refused.refusal.reason}.`,
+        });
+      }
+    }
     paths.forEach(safeEnsureDirectory);
     let migration = { copied: 0, skipped: 0, movedRoot: false };
     if (path.resolve(previousRoot) !== path.resolve(nextRoot) && fs.existsSync(previousRoot)) {
@@ -10127,47 +10232,9 @@ app.post("/api/projects/new", (req, res) => {
   res.json({ ok: true, slug });
 });
 
-/* ---- test isolation: a test run may not resolve to a workspace in the checkout ---
- *
- * Browser and release suites have operated against the repository's own `projects/`
- * and `data/` before, and the damage is not theoretical: a suite that creates,
- * switches and deletes projects leaves stray projects and an edited config behind, a
- * later run inherits them, and a failure that only reproduces on one machine is the
- * result. scripts/qa-sandbox.js exists because of exactly that, and its header says so.
- *
- * A sandbox nobody is obliged to use is a convention. This makes it a property: when a
- * run declares itself a test, a projects root inside the application directory is
- * refused before the port is bound, so the failure is a startup error naming the
- * problem rather than a passing suite that quietly rewrote the developer's workspace.
- *
- * IT IS THE RUN THAT DECLARES ITSELF, never this file guessing. `CINEBRAID_TEST_MODE`
- * is set by the shared server fixture and by the disposable-root helper, so a suite
- * that goes through either is covered without being edited. NODE_ENV=test arms it too,
- * for a runner that sets that instead.
- *
- * ORDINARY USE IS UNTOUCHED. Without the declaration this is inert, so an installed
- * CineBraid — and a legacy install still keeping productions inside the application —
- * starts exactly as before. That case is a notice at startup, not a refusal: refusing
- * to open somebody's existing workspace because of where it is would be the update
- * that lost their film, which is the outcome this whole slice exists to avoid. */
-const TEST_MODE = /^(1|true|yes)$/i.test(String(process.env.CINEBRAID_TEST_MODE || ""))
-  || String(process.env.NODE_ENV || "").toLowerCase() === "test";
-function refuseTestRunInsideTheInstall() {
-  if (!TEST_MODE) return;
-  const root = projectsRoot();
-  if (!pathIsInsideInstall(root)) return;
-  console.error(
-    `\n  CineBraid refused to start.\n`
-    + `  This run declared itself a test (CINEBRAID_TEST_MODE / NODE_ENV=test) and its projects root\n`
-    + `  is inside the application directory:\n\n`
-    + `      projects root   ${root}\n`
-    + `      application     ${APP_ROOT}\n\n`
-    + `  A test that writes there edits the repository's own projects/ and data/, and leaves stray\n`
-    + `  projects behind for the next run. Point CINEBRAID_PROJECTS_ROOT and CINEBRAID_CONFIG_PATH at a\n`
-    + `  disposable directory — tests/helpers/disposable-root.js and scripts/qa-sandbox.js both build one.\n`);
-  process.exit(1);
-}
-refuseTestRunInsideTheInstall();
+/* ---- test isolation ----
+ * The test-mode refusals run at startup, before the settings file is read: see
+ * refuseTestConfigOutsideDisposableEnvironment() above the configuration reconcile. */
 
 const httpServer = app.listen(PORT, HOST, () => {
   /* Runtime queues are process-local. Reconcile every durable project once at

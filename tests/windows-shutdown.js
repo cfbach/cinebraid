@@ -23,6 +23,7 @@ const os = require("os");
 const path = require("path");
 const http = require("http");
 const { spawn, execFileSync } = require("child_process");
+const { disposableRoot } = require("./helpers/disposable-root");
 
 const ROOT = path.join(__dirname, "..");
 const HARD_TIMEOUT_MS = 60000;
@@ -155,9 +156,12 @@ async function testDirectSpawnTerminatesCleanly() {
   const port = await freePort();
   const before = nodePids();
 
+  /* Its own disposable settings and projects: this check is about the listener, and it
+     used to start the server against the checkout's own data/ to prove it. */
+  const workspace = disposableRoot("windows-shutdown");
   const child = spawn(process.execPath, ["server.js"], {
     cwd: ROOT,
-    env: { ...process.env, PORT: String(port), CINEBRAID_HOST: "127.0.0.1" },
+    env: workspace.serverEnv(port, { CINEBRAID_HOST: "127.0.0.1" }),
     stdio: "ignore",
     windowsHide: true,
   });
@@ -195,6 +199,7 @@ async function testDirectSpawnTerminatesCleanly() {
     }
   } finally {
     if (processAlive(child.pid)) { try { child.kill("SIGKILL"); } catch {} }
+    try { workspace.cleanup(); } catch { /* retried when the process exits */ }
   }
 }
 

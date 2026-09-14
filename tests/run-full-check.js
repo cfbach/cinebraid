@@ -261,6 +261,8 @@ const nodeSuites = [
   "check:migration-documents-negative",
   "check:project-storage",
   "check:project-storage-negative",
+  "check:test-isolation",
+  "check:test-isolation-negative",
   "check:untrusted-import",
   "check:untrusted-import-negative",
   "check:recovery-quarantine",

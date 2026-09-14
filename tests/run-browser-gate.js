@@ -20,6 +20,9 @@ const crypto = require("crypto");
 const fs = require("fs");
 const path = require("path");
 const { spawnSync } = require("child_process");
+const os = require("os");
+const TestIsolation = require("../src/server/test-isolation");
+const { LEDGER_ENV, readLedger, verifyLedgerEntries } = require("./helpers/disposable-root");
 
 const ROOT = path.resolve(__dirname, "..");
 const RECEIPT = /^\[browser-runtime\] (.+): launched Chromium (\S+) \((.+)\)$/;
@@ -150,8 +153,14 @@ function npmLauncher() {
 }
 const launcher = npmLauncher();
 
+/* Each suite reports every disposable workspace it builds to its own ledger, and runs
+   declared as a test, so every server it starts refuses a settings file or projects root
+   that is not disposable (src/server/test-isolation.js). */
+const LEDGER_DIR = fs.mkdtempSync(path.join(os.tmpdir(), "cinebraid-gate-ledger-"));
+process.on("exit", () => { try { fs.rmSync(LEDGER_DIR, { recursive: true, force: true }); } catch { /* best effort */ } });
 function runSuite(name) {
   const startedAt = Date.now();
+  const ledger = path.join(LEDGER_DIR, `${name.replace(/[^a-z0-9-]+/gi, "-")}.jsonl`);
   console.log(`\n=== ${name} ===`);
   const result = spawnSync(launcher.command, [...launcher.prefix, "run", "--silent", name], {
     cwd: ROOT,
@@ -159,12 +168,14 @@ function runSuite(name) {
     shell: launcher.shell,
     windowsHide: true,
     maxBuffer: 64 * 1024 * 1024,
-    env: { ...process.env, CINEBRAID_BROWSER_REQUIRED: "1" },
+    env: { ...process.env, CINEBRAID_BROWSER_REQUIRED: "1", CINEBRAID_TEST_MODE: "1", [LEDGER_ENV]: ledger },
   });
   const output = `${result.stdout || ""}${result.stderr || ""}`;
   process.stdout.write(output);
+  const environments = readLedger(ledger);
+  const isolation = { environments: environments.length, isolationProblems: verifyLedgerEntries(environments) };
   if (result.error) {
-    return { name, launched: false, status: 1, seconds: 0, detail: result.error.message, output };
+    return { name, launched: false, status: 1, seconds: 0, detail: result.error.message, output, ...isolation };
   }
   const receipts = output.split(/\r?\n/).map((line) => line.match(RECEIPT)).filter(Boolean);
   return {
@@ -174,6 +185,7 @@ function runSuite(name) {
     chromium: receipts.length ? receipts[0][2] : "",
     source: receipts.length ? receipts[0][3] : "",
     receipts: receipts.length,
+    ...isolation,
     status: result.status == null ? 1 : result.status,
     seconds: (Date.now() - startedAt) / 1000,
     detail: "",
@@ -182,23 +194,31 @@ function runSuite(name) {
 
 /* Isolation, proved rather than asserted in a comment.
 
-   Six of these suites predate CINEBRAID_CONFIG_PATH / CINEBRAID_PROJECTS_ROOT and
-   still start `node server.js` against the repository's own data/ and projects/.
-   They pass, and rewriting six working harnesses is a different piece of work from
-   making browser QA run - so instead of trusting that they only ever read, the whole
-   gate is bracketed by a byte census of both directories. Anything a browser suite
-   writes to the real config or the shipped sample fails the gate and names the file.
+   Three checks, because a suite can be wrong in three places.
+
+   1. Every suite runs declared as a test and reports the disposable workspaces it builds
+      to a ledger. Each reported settings file and projects root must be disposable, and
+      each workspace must be gone when the suite exits.
+   2. The live configuration locations — this checkout's data/ settings and the account's
+      per-user settings directories — are compared by existence, size and modification
+      time before and after the run. Their contents are never read by this part.
+   3. The whole gate is still bracketed by a byte census of data/ and projects/. Anything
+      a browser suite writes to the checkout's own settings or the shipped sample fails
+      the gate and names the file.
 
    Bytes are compared, not normalised: the same file is being read twice on one
    machine, so line endings cannot differ between the two reads. */
 const WATCHED = ["data", "projects"];
 
-/* Files CineBraid writes for itself the first time it starts, which a fresh clone
-   legitimately does not have. Their CREATION is the application bootstrapping, not a
-   test writing where it should not - CI proved this by failing on exactly it. Their
-   MODIFICATION is still damage and still fails: on a real machine data/config.json
-   holds the founder's settings, and a suite overwriting it is the thing being
-   guarded against.
+/* Files CineBraid writes for itself the first time it opens the shipped sample, which a
+   fresh clone legitimately does not have. Their CREATION is the application
+   bootstrapping, not a test writing where it should not - CI proved this by failing on
+   exactly it. Their MODIFICATION is still damage and still fails.
+
+   data/config.json is NOT on this list any more. Every browser suite now owns disposable
+   settings, and a server declared as a test refuses the checkout's own settings file
+   before reading it, so that file appearing during a gate run is damage, not
+   bootstrapping.
 
    EXACT PATHS ONLY, never a pattern or a directory. A stray test project appearing
    under projects/ is precisely the failure this census exists to catch, and it still
@@ -222,7 +242,6 @@ const WATCHED = ["data", "projects"];
    should not, and refusing the .bak would only mean the gate failed on the ledger
    working correctly. */
 const FIRST_RUN_ARTIFACTS = new Set([
-  "data/config.json",
   "projects/cinebraid-sample/media-assets.json",
   "projects/cinebraid-sample/media-assets.json.bak",
 ]);
@@ -243,7 +262,22 @@ function census() {
   return seen;
 }
 
+/* Existence, size and modification time of every live configuration location. */
+function liveCensus() {
+  const seen = new Map();
+  const stamp = (target) => {
+    try { const stat = fs.statSync(target); return stat.isDirectory() ? "directory" : `${stat.size}:${stat.mtimeMs}`; }
+    catch { return "absent"; }
+  };
+  for (const location of TestIsolation.liveConfigurationLocations(ROOT)) {
+    seen.set(location.path, stamp(location.path));
+    for (const name of ["config.json", "config.json.bak"]) seen.set(path.join(location.path, name), stamp(path.join(location.path, name)));
+  }
+  return seen;
+}
+
 const before = census();
+const liveBefore = liveCensus();
 
 const results = SUITES.map(runSuite);
 const quarantine = QUARANTINED.map((row) => ({ ...row, ...runSuite(row.suite) }));
@@ -260,6 +294,16 @@ for (const file of after.keys()) {
   if (FIRST_RUN_ARTIFACTS.has(file)) bootstrapped.push(file);
   else damage.push(`created  ${file}`);
 }
+const liveAfter = liveCensus();
+for (const [target, stamp] of liveBefore) {
+  if (liveAfter.get(target) !== stamp) damage.push(`changed live configuration location ${target}`);
+}
+const reported = [...results, ...quarantine];
+for (const row of reported) {
+  for (const problem of row.isolationProblems || []) damage.push(`${row.name}: ${problem}`);
+}
+const environmentsReported = reported.reduce((sum, row) => sum + (row.environments || 0), 0);
+const suitesReporting = reported.filter((row) => row.environments).length;
 
 const names = [...results, ...quarantine].map((row) => row.name);
 const column = Math.max(...names.map((name) => name.length));
@@ -287,7 +331,9 @@ console.log(`quarantine launched ${QUARANTINED.length}   failing as recorded ${p
 console.log(`browser launches ${totalReceipts}`);
 console.log(`isolation  ${before.size} files under ${WATCHED.join("/ and ")}/ ${damage.length ? `CHANGED (${damage.length})` : "byte-identical after the run"}`);
 if (bootstrapped.length)
-  console.log(`           first run created ${bootstrapped.join(", ")} — six suites still start the server against the repository's own roots (docs/qa/BROWSER_TESTS.md)`);
+  console.log(`           first run created ${bootstrapped.join(", ")} (docs/qa/BROWSER_TESTS.md)`);
+console.log(`disposable ${environmentsReported} workspaces reported by ${suitesReporting} suites, every one disposable and removed${damage.some((row) => row.includes(" was ")) ? " — NOT" : ""}`);
+console.log(`live       ${liveBefore.size} live configuration locations ${[...liveBefore].every(([target, stamp]) => liveAfter.get(target) === stamp) ? "unchanged" : "CHANGED"}`);
 for (const row of pinned) console.log(`  known stale  ${row.name} — ${row.why}`);
 
 if (failed.length || silent.length || escaped.length || drifted.length || mute.length || damage.length) {
