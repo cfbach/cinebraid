@@ -1599,6 +1599,9 @@ const AuthorityWriteBoundary = createAuthorityWriteSeam({
       prepared.agentRuns = Array.isArray(current.agentRuns) ? current.agentRuns : [];
       Coverage.preserveServerOwnedCoverageRuns(prepared, current);
     }
+    if ([WRITE_CLASSES.NORMAL_SAVE, WRITE_CLASSES.CANON_TRANSITION].includes(context.writeClass)) {
+      ReferenceMedia.validateSuccessor({current,successor:prepared,projectsRoot:projectsRoot(),slug:context.slug,canon:context.writeClass === WRITE_CLASSES.CANON_TRANSITION});
+    }
     normalizePromptBuildHistory(prepared, { applyRetention: false });
     return prepared;
   },
@@ -2271,6 +2274,7 @@ function projectReadinessIssues(P) {
    entityApprovedDiskPath() carries the same map as a literal and explains at its
    own declaration why it cannot read this one; tests/shot-readiness.js asserts the
    two agree, so the duplication is checked rather than hoped. */
+const ReferenceMedia = require("../media/reference-media");
 const ENTITY_MEDIA_DIR = { characters: "anchors", locations: "plates", props: "props", vehicles: "vehicles" };
 
 /* THE MEDIA ORACLE READINESS IS ALLOWED TO HAVE.
@@ -2299,7 +2303,8 @@ const ENTITY_MEDIA_DIR = { characters: "anchors", locations: "plates", props: "p
  * whose file was renamed still resolves through resolveApprovalMedia(), which is
  * identity-first. Without it the resolver falls back to the filename and behaves
  * exactly as it did before media identity existed. */
-function readinessMediaOracle() {
+function readinessMediaOracle(project = readProject()) {
+  const references = ReferenceMedia.resolver({projectsRoot:projectsRoot(),slug:activeSlug(),project});
   const directories = new Map();
   let identity = null;
   const listing = (rel) => {
@@ -2312,7 +2317,7 @@ function readinessMediaOracle() {
   return {
     mediaListing: (list, entityId) => {
       const folder = ENTITY_MEDIA_DIR[String(list || "")];
-      return folder && entityId ? listing(folder) : [];
+      return folder && entityId ? references.listing(list,(project[list] || []).find(e=>e.id===entityId)).filter(r=>r.available) : [];
     },
     shotMediaListing: (shotId) => {
       const id = path.basename(String(shotId || ""));
@@ -2344,7 +2349,7 @@ function readinessMediaOracle() {
  * second spelling of it. A consumer reading `data.issues` now gets `undefined`,
  * which is a loud break rather than a silent wrong answer. */
 function shotReadinessProjection(P) {
-  return ShotReadiness.evaluateProjectReadiness(P, readinessMediaOracle());
+  return ShotReadiness.evaluateProjectReadiness(P, readinessMediaOracle(P));
 }
 const PROJECT_SETUP_ANSWERS = "project-setup-completeness";
 app.get("/api/project/readiness", (req, res) => {
@@ -2686,8 +2691,44 @@ function scanProject(slug = "") {
     media: listMedia("media", identity, base),
     shots,
     workspaceSync: sync,
+    references: ReferenceMedia.resolver({projectsRoot:projectsRoot(),slug:slug || activeSlug(),project:readProject(slug || activeSlug())}).projection(),
   };
 }
+/* Enrollment is one explicit normal-save transaction. It cannot write Canon. */
+app.get("/api/references/media", (req,res) => {
+  try {
+    const slug = String(req.query.project || ""); projectDirForSlug(slug);
+    const project = readProject(slug);
+    res.json({projectSlug:slug,images:ReferenceMedia.resolver({projectsRoot:projectsRoot(),slug,project}).productionImages()});
+  } catch(error) { res.status(400).json({error:error.message}); }
+});
+app.get("/api/references/image", (req,res) => {
+  try {
+    const slug = String(req.query.project || ""); projectDirForSlug(slug);
+    const image = ReferenceMedia.resolveUrl({projectsRoot:projectsRoot(),slug,url:req.originalUrl});
+    if (!image?.available) return res.status(404).json({error:"This exact reference image is unavailable.",reason:image?.reason});
+    res.setHeader("Cache-Control","no-store"); res.sendFile(image.path);
+  } catch(error) { res.status(404).json({error:"Reference image unavailable."}); }
+});
+app.post("/api/references/enroll", (req,res) => {
+  try {
+    const slug=String(req.body.projectSlug || ""); projectDirForSlug(slug);
+    if (!req.headers["if-match"] || !req.body.expectedIdentity) return res.status(409).json({error:"Refresh the production media selection before adding it."});
+    const result=ReferenceMedia.enroll({...req.body,entityId:req.body.entityId,project:readProject(slug),projectsRoot:projectsRoot(),slug,at:new Date().toISOString(),bindingId:undefined});
+    const outcome=persistProjectSuccessor({slug,successor:result.project,writeClass:WRITE_CLASSES.NORMAL_SAVE,expectedRevision:String(req.headers["if-match"]),transitionMetadata:{}});
+    if (!outcome.ok) return seamFailure(res,outcome,slug);
+    res.json({ok:true,bindingId:result.candidate.stored,assetId:result.candidate.referenceBinding.assetId,revision:outcome.revision});
+  } catch(error) { res.status(409).json({error:error.message}); }
+});
+app.post("/api/references/prepare-approval", (req,res) => {
+  try {
+    const slug=String(req.body.projectSlug || ""); projectDirForSlug(slug);
+    const project=readProject(slug), entity=(project[req.body.list] || []).find(e=>e.id===req.body.entityId);
+    const found=ReferenceMedia.resolver({projectsRoot:projectsRoot(),slug,project}).resolve(req.body.list,entity,String(req.body.key || ""));
+    if (found.stateId && found.stateId !== req.body.stateId) return res.status(409).json({status:"unavailable",reason:"binding-state-mismatch"});
+    res.json(found.available && found.assetId ? {status:"ready",assetId:found.assetId,contentHash:found.identity?.contentHash || "",size:found.identity?.bytes,mtimeMs:found.identity?.mtimeMs} : {status:"unavailable",reason:found.reason || "identity-unavailable"});
+  } catch(error) { res.status(400).json({status:"unavailable",reason:error.message}); }
+});
 app.get("/api/scan", (req, res) => {
   /* Contained through the same helper config.activeProject passes through, so a
      scope cannot address anything outside the projects root. An unknown or
@@ -7584,8 +7625,8 @@ function entityApprovedDiskPath(list, entity, stateId = "") {
   const requested = stateId ? states.find((item) => String(item?.id) === String(stateId)) : null;
   const state = requested || states.find((item) => item?.isDefault) || null;
   const file = Continuity.stateApprovedFile(entity, state);
-  const full = path.join(PROJECT_DIR(), folder, path.basename(file));
-  return file && fs.existsSync(full) && IMG_ONLY(full) ? full : "";
+  const found = ReferenceMedia.resolver({projectsRoot:projectsRoot(),slug:activeSlug(),project:readProject()}).resolve(list,entity,file,String(state?.approvedAssetId || (state?.isDefault || !state ? entity.approvedAssetId : "") || ""));
+  return found.available ? found.path : "";
 }
 function derivedFrameContext(P, shot, frame) {
   const context = [];
@@ -8028,6 +8069,10 @@ function normalizeStructuredCandidateReview(parsed, referenceLabels) {
 function projectAssetPath(value) {
   let rel = String(value || "").trim();
   if (!rel) return "";
+  if (rel.startsWith("/api/references/image?")) {
+    const found=ReferenceMedia.resolveUrl({projectsRoot:projectsRoot(),slug:activeSlug(),url:rel});
+    return found?.available ? found.path : "";
+  }
   if (rel.startsWith("/assets/")) rel = rel.slice(8).split("/").map((part) => decodeURIComponent(part)).join("/");
   rel = rel.replace(/^\/+/, "").replace(/\\/g, "/");
   const root = path.resolve(PROJECT_DIR());
@@ -8133,17 +8178,20 @@ app.post("/api/llm/review-entity-candidate", async (req, res) => {
     const coverageSlot = candidateRow.targetCoverageSlotId
       ? ([...(entity.coverageSlots || []), ...(entity.expressionSlots || [])].find((item) => String(item?.id) === String(candidateRow.targetCoverageSlotId)) || null)
       : null;
-    const candidatePath = path.join(PROJECT_DIR(), folder, fileName);
-    if (!fileName || !IMG_ONLY(fileName) || !fs.existsSync(candidatePath)) return res.status(400).json({ error: "candidate image is unavailable" });
+    const referenceResolver = ReferenceMedia.resolver({projectsRoot:projectsRoot(),slug:activeSlug(),project:P});
+    const candidateResolved = referenceResolver.resolve(list,entity,fileName);
+    const candidatePath = candidateResolved.available ? candidateResolved.path : "";
+    if (!candidatePath) return res.status(400).json({ error: "candidate image is unavailable" });
     const state = entityReviewStateRecord(entity, String(req.body?.stateId || candidateRow.targetStateId || "state-default"));
     const images = [fs.readFileSync(candidatePath).toString("base64")];
     const inputLabels = [{ image: 1, label: fileName, role: "candidate under review", fileName }];
     const seen = new Set([fileName]);
     const addEntityFile = (name, label, role) => {
       const safe = path.basename(String(name || ""));
-      if (!safe || seen.has(safe) || !IMG_ONLY(safe) || images.length >= 12) return;
-      const full = path.join(PROJECT_DIR(), folder, safe);
-      if (!fs.existsSync(full)) return;
+      if (!safe || seen.has(safe) || images.length >= 12) return;
+      const resolved=referenceResolver.resolve(list,entity,safe);
+      if (!resolved.available) return;
+      const full=resolved.path;
       seen.add(safe);
       images.push(fs.readFileSync(full).toString("base64"));
       inputLabels.push({ image: images.length, label, role, fileName: safe });

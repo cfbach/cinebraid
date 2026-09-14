@@ -169,6 +169,7 @@ function entityMediaPool(list) {
    It answers one now: WHICH FILES MAY BECOME CANON FOR THIS ENTITY. A file
    qualifies only through a unique durable claim. */
 function entityMedia(list, it) {
+  if (SCAN.references && typeof CineBraidReferenceMedia !== "undefined" && CineBraidReferenceMedia.dirs[list]) return CineBraidReferenceMedia.listing(SCAN,list,it?.id);
   return filterEntityMedia(entityOwnerIndex(list), it?.id, entityMediaPool(list));
 }
 /* The other question, kept separate on purpose. Files whose NAME matches this
@@ -208,7 +209,11 @@ window.claimEntityMedia = (list, id, fileName) => {
   toast(`${fileName} is now a candidate for ${entity.name || id}`);
 };
 function entityCandidateRow(entity, fileName, create = false) {
-  entity.candidateFiles = Array.isArray(entity.candidateFiles) ? entity.candidateFiles : [];
+  if (!entity) return null;
+  if (!Array.isArray(entity.candidateFiles)) {
+    if (!create) return null;
+    entity.candidateFiles = [];
+  }
   let row = entity.candidateFiles.find((item) => (item.stored || item.name) === fileName);
   if (!row && create) {
     row = { stored: fileName, original: fileName, addedAt: new Date().toISOString(), decision: "unreviewed" };
@@ -3073,6 +3078,10 @@ function entityDetailsHistoryMarkup(list, entity, extra) {
   return `<section class="entity-subworkspace"><nav class="entity-subworkspace-tabs" aria-label="Details and history"><button type="button" class="${selected.id==="details"?"selected":""}" onclick="selectBoundedItem('entity-detail-view','${attr(context)}','details')">Details</button><button type="button" class="${selected.id==="history"?"selected":""}" onclick="selectBoundedItem('entity-detail-view','${attr(context)}','history')">History</button></nav>${selected.render()}${dangerZone}</section>`;
 }
 function entityPage(list, id, extra) {
+  if (window.CineBraidReferenceDesk && CineBraidReferenceMedia.dirs[list]) {
+    const desk=window.CineBraidReferenceDesk.view(list,id);
+    if(desk) return desk;
+  }
   const rows = Array.isArray(P[list]) ? P[list] : [];
   const it=rows.find((x)=>x.id===id);
   if(!it) {
@@ -3179,7 +3188,9 @@ function entityPage(list, id, extra) {
   } catch {}
   const selected=specs.find((spec)=>spec.id===selectedId)||specs[0];
   const integrityWarnings=(P.meta?.dataIntegrityWarnings||[]).filter((warning)=>String(warning).includes(it.id)||String(warning).includes(list.slice(0,-1)));
-  return `<div class="bounded-entity-page clarity-entity-page" data-bounded-entity="1" data-selected-task="${attr(selected.id)}"><div class="crumb"><a href="#/library/${list}">References</a> / ${esc(it.id)}</div>${integrityWarnings.length ? `<div class="data-integrity-warning"><b>Project data needs attention</b><small>${integrityWarnings.map((warning)=>esc(warning)).join(" · ")}</small></div>` : ""}${typeof actionRefusalMarkup === "function" ? actionRefusalMarkup(`entity-delete:${list}:${id}`) : ""}<header class="entity-clarity-head"><div><input class="page-title-input" value="${attr(it.name)}" onchange="setVal('${list}','${id}','name',this.value)"><div class="entity-head-meta"><span class="canon-code">${esc(it.id)}</span><span class="entity-head-review"><label class="entity-head-review-label" for="entity-review-status">Design status</label><select id="entity-review-status" class="workflow-select wf-${wf.cls}" onchange="setEntityWorkflow('${list}','${id}',this.value)">${WORKFLOW_STATES.filter((x)=>x!=="APPROVED"||wf.key==="APPROVED").map((st)=>`<option value="${st}" ${wf.key===st?"selected":""}>${workflowStatusLabel(st)}</option>`).join("")}</select></span></div></div><div class="entity-head-actions"><button class="ghost-btn" onclick="document.getElementById('entity-file').click()">${manualFirstWorkflow()?"UPLOAD REFERENCES":"UPLOAD CANDIDATES"}</button></div></header><input type="file" id="entity-file" multiple accept="image/*,video/*" style="display:none">${entityAuthoritySummaryMarkup(list,it,states,mediaByName,selected.id)}${boundedEntityTaskbarMarkup(list,it,specs,selected.id,activeCandidates,states)}<div class="bounded-selected-task" data-bounded-task="${attr(selected.id)}">${selected.render()}</div><div class="submission-bar"><div><b>${esc(wf.label)}</b><span>${it.reviewNote ? esc(it.reviewNote) : it.submissionNote ? esc(it.submissionNote) : "Work remains editable until submitted for review."}</span></div>${wf.key === "READY FOR REVIEW" ? `<button class="changes-btn" onclick="requestEntityChanges('${list}','${id}')">Request changes</button>` : ""}${wf.key !== "APPROVED" ? `<button class="submit-btn" onclick="submitEntity('${list}','${id}')">SUBMIT FOR REVIEW</button>` : ""}</div></div>`;
+  const toolsPrefix = location.hash.endsWith("/tools") ? `<div class="rd-existing-tools" data-reference-tools><a class="rd-tools-back" href="#/${ENTITY_ROUTE[list]}/${encodeURIComponent(id)}">← Back to reference</a>` : "";
+  const toolsSuffix = toolsPrefix ? "</div>" : "";
+  return `${toolsPrefix}<div class="bounded-entity-page clarity-entity-page" data-bounded-entity="1" data-selected-task="${attr(selected.id)}"><div class="crumb"><a href="#/library/${list}">References</a> / ${esc(it.id)}</div>${integrityWarnings.length ? `<div class="data-integrity-warning"><b>Project data needs attention</b><small>${integrityWarnings.map((warning)=>esc(warning)).join(" · ")}</small></div>` : ""}${typeof actionRefusalMarkup === "function" ? actionRefusalMarkup(`entity-delete:${list}:${id}`) : ""}<header class="entity-clarity-head"><div><input class="page-title-input" value="${attr(it.name)}" onchange="setVal('${list}','${id}','name',this.value)"><div class="entity-head-meta"><span class="canon-code">${esc(it.id)}</span><span class="entity-head-review"><label class="entity-head-review-label" for="entity-review-status">Design status</label><select id="entity-review-status" class="workflow-select wf-${wf.cls}" onchange="setEntityWorkflow('${list}','${id}',this.value)">${WORKFLOW_STATES.filter((x)=>x!=="APPROVED"||wf.key==="APPROVED").map((st)=>`<option value="${st}" ${wf.key===st?"selected":""}>${workflowStatusLabel(st)}</option>`).join("")}</select></span></div></div><div class="entity-head-actions"><button class="ghost-btn" onclick="document.getElementById('entity-file').click()">${manualFirstWorkflow()?"UPLOAD REFERENCES":"UPLOAD CANDIDATES"}</button></div></header><input type="file" id="entity-file" multiple accept="image/*,video/*" style="display:none">${entityAuthoritySummaryMarkup(list,it,states,mediaByName,selected.id)}${boundedEntityTaskbarMarkup(list,it,specs,selected.id,activeCandidates,states)}<div class="bounded-selected-task" data-bounded-task="${attr(selected.id)}">${selected.render()}</div><div class="submission-bar"><div><b>${esc(wf.label)}</b><span>${it.reviewNote ? esc(it.reviewNote) : it.submissionNote ? esc(it.submissionNote) : "Work remains editable until submitted for review."}</span></div>${wf.key === "READY FOR REVIEW" ? `<button class="changes-btn" onclick="requestEntityChanges('${list}','${id}')">Request changes</button>` : ""}${wf.key !== "APPROVED" ? `<button class="submit-btn" onclick="submitEntity('${list}','${id}')">SUBMIT FOR REVIEW</button>` : ""}</div></div>${toolsSuffix}`;
 }
 
 /* ---------- the assembler: canon → prompt option ---------- */

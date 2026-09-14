@@ -311,6 +311,10 @@
   function resolveApprovalMedia(edge, media) {
     const target = dispositionRecord(edge);
     const items = dispositionList(media);
+    // A binding is a specific relationship; another binding of the same bytes is not its replacement.
+    if (String(target.file || "").startsWith("ref-")) {
+      return items.find(item => item.name === target.file && item.available !== false && (!target.assetId || item.assetId === target.assetId)) || null;
+    }
     if (isLedgerAssetId(target.assetId)) {
       const byIdentity = items.find((item) => dispositionRecord(item).assetId === target.assetId);
       if (byIdentity) return byIdentity;

@@ -493,7 +493,7 @@
     syncFocusedRouteMode(view);
     const root = document.getElementById("main");
     if (!root || !activeProject()) return;
-    if (root.querySelector("[data-shot-desk]")) return;
+    if (root.querySelector("[data-shot-desk], [data-reference-desk], [data-reference-library], [data-reference-tools]")) return;
     if (view === "shot") enhanceShot(root, id);
     else if (["character", "location", "prop", "vehicle", "sound"].includes(view)) enhanceEntity(root, view, id);
     else if (view === "scene") enhanceScene(root, id);

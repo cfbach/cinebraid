@@ -1361,6 +1361,11 @@ function registerFalGeneration(app, context) {
   }
   function localAssetFile(owner, url) {
     const raw = String(url || "");
+    if (raw.startsWith("/api/references/image?")) {
+      const found = require("../../media/reference-media").resolveUrl({projectsRoot:path.dirname(owner.dir),slug:path.basename(owner.dir),url:raw});
+      if (!found?.available) throw new Error("The exact reference asset is unavailable: " + (found?.reason || "unresolved"));
+      return found.path;
+    }
     if (!raw.startsWith("/assets/")) return "";
     const rel = decodeURIComponent(raw.slice("/assets/".length)).replace(/\\/g, "/");
     const allowed = /^(anchors|plates|props|vehicles|audio|media)\/[^/]+$/.test(rel) || /^shots\/[\w.-]+\/(takes|locked|blocking)\/[^/]+$/.test(rel);

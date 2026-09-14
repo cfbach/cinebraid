@@ -898,7 +898,7 @@ function renderEntityApprovalReadiness() {
   if (line) {
     line.dataset.state = ready ? "ready" : preparing ? "preparing" : "unavailable";
     const sentence = ready
-      ? `Ready to approve · ${want.name}`
+      ? (entityCandidateRow(P[want.list]?.find(e=>e.id===want.id),want.name,false)?.referenceBinding ? "Ready for your approval" : `Ready to approve · ${want.name}`)
       : preparing ? "Preparing this image for approval…" : refusal.message;
     /* A settled "not ready" is re-asked only when the filmmaker asks, so the way
        to ask is on screen beside the reason rather than hidden in a reload. */
@@ -935,10 +935,11 @@ window.prepareEntityApprovalIdentity = async () => {
   const saveGeneration = PROJECT_SAVE_GENERATION;
   let prepared = null;
   try {
-    const response = await fetch("/api/media/prepare-identity", {
+    const bound = !!entityCandidateRow(P[want.list]?.find(e=>e.id===want.id),want.name,false)?.referenceBinding;
+    const response = await fetch(bound ? "/api/references/prepare-approval" : "/api/media/prepare-identity", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ projectSlug: slug, dir: ENTITY_MEDIA[want.list], name: want.name }),
+      body: JSON.stringify(bound ? {projectSlug:slug,list:want.list,entityId:want.id,key:want.name,stateId:want.stateId} : { projectSlug: slug, dir: ENTITY_MEDIA[want.list], name: want.name }),
     });
     prepared = await response.json().catch(() => ({}));
     if (!response.ok) prepared = { status: "unavailable", reason: String(prepared?.error || "request-failed") };
@@ -1162,6 +1163,7 @@ window.approveEntityFile = (list, id, name, stateId = "", mode = "primary-author
   };
   const eligiblePool = media.filter((item) => eligibleForPrimary(item.name));
   const namedMedia = name ? media.find((item) => item.name === name) : null;
+  if (name && !namedMedia) return toast("This exact reference candidate is unavailable. No other image was selected.");
   /* THE SHEET-SOURCE OPERATION CARRIES ITS OWN ENTRY CONDITION, and it is a
      POSITIVE one: the named file must be a DECLARED sheet. An undeclared file is
      not "close enough to a sheet" — it is a file nothing has classified, and
@@ -1304,14 +1306,14 @@ window.syncEntityApprovalModal = () => {
   );
   let fileName = requestedFile;
   let lostSelection = false;
-  if (primaryIntent && !eligibleNow(fileName)) {
-    /* The entry pool's own rule, applied again: another currently eligible
-       candidate may take over, and if there is none this modal has nothing left
-       to approve and says so rather than holding a selection it cannot write. */
-    const stillEligible = (typeof entityMedia === "function" ? entityMedia(current.list, x) : [])
-      .filter((item) => item.name !== fileName && eligibleNow(item.name));
-    fileName = stillEligible.length ? stillEligible[stillEligible.length - 1].name : "";
+  if (primaryIntent && (!eligibleNow(fileName) || !entityMedia(current.list,x).some(m=>m.name===fileName))) {
     lostSelection = true;
+    const confirm = document.getElementById("entity-approve-confirm"), next = document.getElementById("entity-approve-continue");
+    if (confirm) confirm.disabled = true;
+    if (next) next.disabled = true;
+    const line = document.getElementById("entity-approval-readiness");
+    if (line) line.textContent = "This exact candidate is unavailable or no longer eligible. No image was substituted.";
+    return;
   }
   if (fileName !== requestedFile) {
     const revert = document.getElementById("entity-approve-file");
@@ -1482,8 +1484,8 @@ async function finishEntityApprovalCeremony(meta) {
   toast(meta.sheetSource
     ? `${meta.fileName} is ready as a reference sheet — extract its individual views next`
     : meta.nextStateName
-      ? `Approved ${meta.fileName} for ${meta.stateName || "Default"} — editing ${meta.nextStateName}`
-      : `Approved ${meta.fileName} for ${meta.stateName || "Default"}`);
+      ? `Approved ${meta.displayName || meta.fileName} for ${meta.stateName || "Default"} — editing ${meta.nextStateName}`
+      : `Approved ${meta.displayName || meta.fileName} for ${meta.stateName || "Default"}`);
 }
 
 /* The one door out of the pending surface that ends in an approval. `stored` is
@@ -1702,6 +1704,7 @@ window.confirmEntityApproval = async (continueToNext = false) => {
     stateId: entityAuthorityStateId,
     stateName: targetState?.name || "Default",
     fileName: finalName,
+    displayName: originalApprovalRow?.referenceBinding ? x.name || id : finalName,
     assetId: approvedAssetId,
     url: (entityMedia(list, x).find((item) => item.name === finalName) || {}).url || "",
     nextStateId: nextState?.id || "",

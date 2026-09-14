@@ -244,7 +244,7 @@
     },
     "open-generated-media": {
       id: "open-generated-media",
-      label: "Open Generated Media",
+      label: "Open Production media",
       call: () => "location.hash='#/results'",
     },
   });

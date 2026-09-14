@@ -166,6 +166,11 @@ function comfyConfig(readConfig) {
    film A cannot be read while generating for film B. */
 function resolveOwnedMedia(owner, assetUrl) {
   const raw = text(assetUrl);
+  if (raw.startsWith("/api/references/image?")) {
+    const found = require("../../media/reference-media").resolveUrl({projectsRoot:path.dirname(owner.dir),slug:path.basename(owner.dir),url:raw});
+    if (!found?.available) throw new Error("The exact reference asset is unavailable: " + (found?.reason || "unresolved"));
+    return found.path;
+  }
   if (!raw) throw new ComfyGenerationError("COMFY_REFERENCE_UNNAMED", "A reference image was requested with no media identity.", {}, 400);
   if (!raw.startsWith("/assets/"))
     throw new ComfyGenerationError("COMFY_REFERENCE_NOT_CINEBRAID_MEDIA", "A reference must be CineBraid media, named the way CineBraid names it.", { assetUrl: raw }, 400);

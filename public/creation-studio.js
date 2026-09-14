@@ -1859,10 +1859,6 @@ function creationEntityReference(list, entity, s, role, frameId = "") {
   const file = entityApprovedFileForState(entity, state?.id || "");
   const pool = entityMedia(list, entity);
   let media = file ? pool.find((m) => m.name === file) : null;
-  if (file && !media) {
-    const bucket = { characters: "anchors", locations: "plates", props: "props", vehicles: "vehicles" }[list];
-    media = (SCAN[bucket] || []).find((m) => m.name === file) || null;
-  }
   return {
     key: `${list}:${entity.id}:${keyState?.id || "default"}`,
     entityId: entity.id,
@@ -1909,14 +1905,16 @@ function desiredCoverageViewForShot(s, list = "", entity = null) {
   if (cameraView && !["reference-view", "front"].includes(cameraView)) return cameraView;
   return "front-three-quarter-left";
 }
-function coverageSlotReferences(list, entity, s) {
+function coverageSlotReferences(list, entity, s, frameId = "") {
+  const referenceState = creationDeclaredState(s,entity,list,frameId);
+  const selectedKey = slot => typeof CineBraidReferenceMedia !== "undefined" ? CineBraidReferenceMedia.selectedKey(entity,slot,referenceState?.id || "state-default") : slotSelectedFile(slot);
   const slots = Array.isArray(entity?.coverageSlots) ? entity.coverageSlots : [];
   if (!slots.length) return [];
   const media = entityMedia(list, entity);
   const desiredView = desiredCoverageViewForShot(s, list, entity);
   const desiredRegion = [ensureShotCreation(s).action, ensureShotCreation(s).staging, s.positioning, s.desc].filter(Boolean).join(" ");
-  const candidates = slots.filter((slot) => slotSelectedFile(slot) && slotSelectedFile(slot) !== entity.approvedFile).map((slot) => {
-    const item = media.find((row) => row.name === slotSelectedFile(slot));
+  const candidates = slots.filter((slot) => selectedKey(slot) && selectedKey(slot) !== entity.approvedFile).map((slot) => {
+    const item = media.find((row) => row.name === selectedKey(slot));
     if (!item) return null;
     const role = list === "characters" ? "identity" : list === "locations" ? "alternate-view" : "prop";
     const angleTag = coverageSlotReferenceView(slot);
@@ -1968,14 +1966,14 @@ function shotCreationReferences(s, frameId = "") {
   const location = P.locations.find((x) => x.id === c.locationId);
   if (location) {
     refs.push(creationEntityReference("locations", location, s, "base", frameId));
-    refs.push(...coverageSlotReferences("locations", location, s));
+    refs.push(...coverageSlotReferences("locations", location, s, frameId));
     refs.push(...assetSupplementalReferences("locations", location, s));
   }
   for (const id of s.characters || []) {
     const x = P.characters.find((e) => e.id === id);
     if (x) {
       refs.push(creationEntityReference("characters", x, s, "identity", frameId));
-      refs.push(...coverageSlotReferences("characters", x, s));
+      refs.push(...coverageSlotReferences("characters", x, s, frameId));
       refs.push(...assetSupplementalReferences("characters", x, s));
     }
   }
@@ -1984,11 +1982,11 @@ function shotCreationReferences(s, frameId = "") {
     const vehicle = (P.vehicles || []).find((e) => e.id === id);
     if (prop) {
       refs.push(creationEntityReference("props", prop, s, "prop", frameId));
-      refs.push(...coverageSlotReferences("props", prop, s));
+      refs.push(...coverageSlotReferences("props", prop, s, frameId));
       refs.push(...assetSupplementalReferences("props", prop, s));
     } else if (vehicle) {
       refs.push(creationEntityReference("vehicles", vehicle, s, "prop", frameId));
-      refs.push(...coverageSlotReferences("vehicles", vehicle, s));
+      refs.push(...coverageSlotReferences("vehicles", vehicle, s, frameId));
       refs.push(...assetSupplementalReferences("vehicles", vehicle, s));
     }
   }
@@ -2780,7 +2778,7 @@ const RETURNED_REVIEW_STALE_WORDS = {
 
    This was a single sentence — "its media is no longer available" — printed for every
    reason that reached it. For a candidate whose FRAME was removed that is simply false:
-   the file is on disk, it is in Generated Media, and the Inspector opens it. Only its
+   the file is on disk, it is in Production media, and the Inspector opens it. Only its
    production target is gone. Telling somebody their result had disappeared, when what
    disappeared was the frame they deleted, sends them to look for a lost file and invites
    them to regenerate something they still have.
@@ -2827,7 +2825,7 @@ function returnedReviewStaleCardMarkup(s, neighbors, review, readiness, next) {
  *
  * This is an INTEGRITY state, not a review. No candidate decision is offered — there is
  * nothing to judge — and the primary action deliberately is not a generation: it is the
- * shipped Generated Media destination, where the durable record of this result lives.
+ * shipped Production media destination, where the durable record of this result lives.
  * The readiness action stays where it belongs, as secondary context, which is also what
  * keeps "Produce the frame" from taking the first line of the card. */
 function returnedMediaUnavailableCardMarkup(s, neighbors, review, readiness, next) {
@@ -2836,7 +2834,7 @@ function returnedMediaUnavailableCardMarkup(s, neighbors, review, readiness, nex
   const previous = neighbors.prev ? `<a href="#/shot/${neighbors.prev.id}">Previous</a>` : "";
   const following = neighbors.next ? `<a href="#/shot/${neighbors.next.id}">Next</a>` : "";
   const unit = item.owner.kind === "shot-motion" ? "Motion" : `Frame ${item.owner.frameLabel || item.owner.frameId || "A"}`;
-  return `<section class="guided-next-action returned-review-card returned-review-unavailable state-readiness-${attr(String(readiness?.status || "unavailable").toLowerCase())}" data-shot-readiness="${attr(readiness?.status || "UNAVAILABLE")}" data-returned-review="0" data-returned-review-unavailable="1" data-returned-review-file="${attr(item.candidate.name)}" data-returned-review-owner="${attr(item.owner.kind)}" data-returned-review-blocked="${attr(String(review.blockers.length))}" style="${attr(shotCanvasStyle(s))}"><div class="guided-lifecycle-preview"><div class="guided-lifecycle-empty"><span>MEDIA NOT AVAILABLE</span></div></div><div><span>RETURNED RESULT · ${esc(unit.toUpperCase())} · MEDIA NOT AVAILABLE</span><h2>A returned result is recorded but its file is missing</h2><p>${esc(item.candidate.name)} is recorded as a returned result nobody has decided about, and the file is no longer in this project. Restore it, or dispose of the record, before generating more.${others > 0 ? ` ${plural(others, "other returned result")} in this shot ${others === 1 ? "is" : "are"} in the same state.` : ""}</p><div class="guided-next-actions"><button class="assemble-btn shot-primary-action" onclick="location.hash='#/results'">Open Generated Media</button></div>${returnedReviewSecondaryMarkup(s, readiness, next)}</div><nav>${previous}${following}</nav></section>`;
+  return `<section class="guided-next-action returned-review-card returned-review-unavailable state-readiness-${attr(String(readiness?.status || "unavailable").toLowerCase())}" data-shot-readiness="${attr(readiness?.status || "UNAVAILABLE")}" data-returned-review="0" data-returned-review-unavailable="1" data-returned-review-file="${attr(item.candidate.name)}" data-returned-review-owner="${attr(item.owner.kind)}" data-returned-review-blocked="${attr(String(review.blockers.length))}" style="${attr(shotCanvasStyle(s))}"><div class="guided-lifecycle-preview"><div class="guided-lifecycle-empty"><span>MEDIA NOT AVAILABLE</span></div></div><div><span>RETURNED RESULT · ${esc(unit.toUpperCase())} · MEDIA NOT AVAILABLE</span><h2>A returned result is recorded but its file is missing</h2><p>${esc(item.candidate.name)} is recorded as a returned result nobody has decided about, and the file is no longer in this project. Restore it, or dispose of the record, before generating more.${others > 0 ? ` ${plural(others, "other returned result")} in this shot ${others === 1 ? "is" : "are"} in the same state.` : ""}</p><div class="guided-next-actions"><button class="assemble-btn shot-primary-action" onclick="location.hash='#/results'">Open Production media</button></div>${returnedReviewSecondaryMarkup(s, readiness, next)}</div><nav>${previous}${following}</nav></section>`;
 }
 function returnedReviewCardMarkup(s, neighbors, review, readiness, next) {
   const item = review.item;
@@ -2932,7 +2930,7 @@ window.reviseReturnedResult = (shotId, key) => {
 };
 /* KEEP LOOKING disposes of this exact candidate through the shipped decision writer.
    It is a rejection, not a deletion: the row keeps its file, its provenance and its
-   lineage, and Generated Media keeps showing it. */
+   lineage, and Production media keeps showing it. */
 window.rejectReturnedResult = (shotId, name) => {
   const s = shotById(shotId);
   if (!s) return;
@@ -5987,7 +5985,7 @@ window.removeGuidedFrame = (id, frameId) => {
        * bound to anything.
        *
        * So the row is left exactly as it is. The file stays on disk, stays visible in
-       * Generated Media and the workspace, and stops claiming a frame. Reusing it on a
+       * Production media and the workspace, and stops claiming a frame. Reusing it on a
        * surviving frame is a real thing a filmmaker might want, and when it exists it
        * will be an act with a name — not a side effect of deleting something else.
        * public/app.js removeKeyframe() has always left the stamp alone; this is the

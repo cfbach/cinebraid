@@ -192,6 +192,8 @@ function assignSlotReference(slot, request = {}) {
      APPROVED and coverage automation submitted one as `approved-view`.
      The value moves; nothing is lost. */
   target.selectedFile = fileName;
+  if (slotText(it.stateId)) target.referenceBindings = {...slotObject(target.referenceBindings),[slotText(it.stateId)]:fileName};
+  if (slotText(it.assetId)) target.selectedAssetId = slotText(it.assetId);
   delete target.approvedFile;
   target.status = "selected";
   target.selectedAt = at;

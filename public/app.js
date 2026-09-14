@@ -6673,7 +6673,7 @@ function productionResultInbox(limit = 6) {
    per-row confirmation veto. */
 function readinessOracleForBrowser() {
   return {
-    mediaListing: (list) => (typeof entityMediaPool === "function" ? entityMediaPool(list) : []),
+    mediaListing: (list,entityId) => SCAN.references && CineBraidReferenceMedia.dirs[list] ? CineBraidReferenceMedia.listing(SCAN,list,entityId) : (typeof entityMediaPool === "function" ? entityMediaPool(list) : []),
     shotMediaListing: (shotId) => takesFor(shotId),
   };
 }
@@ -7394,6 +7394,7 @@ function libraryCard(list, x, canonOnly = false) {
   return `<div class="library-card-shell" data-reference-category="${attr(list)}"><a class="library-card ${status}" href="#/${route}/${x.id}"><div class="library-preview">${preview}<span class="library-status ${status}">${statusLabel}</span>${addCue}</div><div class="library-body"><span class="review-kind">${type}</span><b>${esc(x.name || x.id)}</b>${description ? `<small>${description}</small>` : ""}</div></a>${enlarge}</div>`;
 }
 function libraryView(tab = "all") {
+  if(window.CineBraidReferenceDesk) { const desk=window.CineBraidReferenceDesk.library(tab); if(desk)return desk; }
   /* "approved" is still accepted as an incoming route so an old bookmark or a
      remembered tab lands somewhere sensible; it resolves to Canon. */
   if (tab === "approved") tab = "canon";

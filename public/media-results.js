@@ -1,17 +1,17 @@
-/* CineBraid — Generated Media, the project-level destination for production results.
+/* CineBraid — Production media, the project-level destination for production results.
 
    THE PROPERTY THIS FILE EXISTS FOR, in one line: there is ONE place a filmmaker can
    go to find everything CineBraid has created or accepted into this production, and
    it agrees with every stage-local grid because all of them read the same projection.
 
    ---------------------------------------------------------------------------
-   THE NAME. "Generated Media" rather than "Results", and rather than "Library".
+   THE NAME. "Production media" rather than "Results", and rather than "Library".
 
    `#/library` already ships under the label REFERENCES and is a list of ENTITIES —
    characters, locations, props — not of files. Calling this one Library would put two
    different nouns behind one word in the same navigation. "Results" was the other
    candidate and was rejected because the surface also holds imported and hand-made
-   media that CineBraid did not produce; "Generated Media" is what the product calls
+   media that CineBraid did not produce; "Production media" is what the product calls
    the thing a filmmaker is actually looking for ("where did that generation go"), and
    the imported rows sit inside it as an acknowledged minority rather than the label
    being wrong for the majority. The ROUTE is `#/results` because that is what the
@@ -199,7 +199,7 @@
   function resultsView(tab = "current") {
     if (!RESULTS_TABS.includes(tab)) tab = "current";
     if (typeof productionMediaRecords !== "function" || typeof P === "undefined" || !P)
-      return `<div class="empty-state"><h2>Generated Media is unavailable</h2><p>The production media projection did not load.</p></div>`;
+      return `<div class="empty-state"><h2>Production media is unavailable</h2><p>The production media projection did not load.</p></div>`;
 
     const built = window.CineBraidMediaInspector?.projection?.() || null;
     const records = built ? built.records : [];
@@ -245,7 +245,7 @@
         ? `<div class="empty-state"><h2>No media matches this filter</h2><p>Change the status view or the media filter to see the other ${plural(counts.total, "file")} in this production.</p></div>`
         : `<div class="empty-state"><div class="empty-mark">◎</div><h2>No production media yet</h2><p>Generated, imported and approved media appears here as soon as this production has some.</p></div>`;
 
-    return `<div class="view-head"><div><div class="eyebrow">Generated Media</div><span class="view-title">Generated Media</span>
+    return `<div class="view-head"><div><div class="eyebrow">Production media</div><span class="view-title">Production media</span>
       <div class="view-sub">Everything CineBraid has created or accepted into this production, with what it is authority for.</div></div></div>
       ${tabs}
       <div class="results-controls" role="group" aria-label="Filter by media kind">${kindChips}</div>
