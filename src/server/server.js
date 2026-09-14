@@ -13,7 +13,9 @@ const crypto = require("crypto");
 const { spawnSync } = require("child_process");
 const { llm, embed, vision, isLocalProviderEndpoint, resolveVisionTarget, providerForTask } = require("../assistant/llm");
 const {
+  CONFIG_LOCATION,
   CONFIG_PATH,
+  activateConfigLocation,
   configHealth,
   maskSecretValue,
   maskSecrets,
@@ -24,6 +26,7 @@ const {
   writeConfig,
 } = require("./config");
 const TestIsolation = require("./test-isolation");
+const ConfigLocation = require("./config-location");
 const PromptEngine = require("../generation/prompt-engine");
 const { annotateProfileLibraryExecution } = require("../generation/generation-options");
 const { httpStatusForError } = require("./http-errors");
@@ -979,19 +982,85 @@ const MEDIA_EXT = new Set([
  * that lost their film, which is the outcome this whole slice exists to avoid. */
 const TEST_MODE = /^(1|true|yes)$/i.test(String(process.env.CINEBRAID_TEST_MODE || ""))
   || String(process.env.NODE_ENV || "").toLowerCase() === "test";
+/* ---- where the settings file is: config-location.js decides, startup acts on it ----
+ *
+ * The order below is the contract. The location is RESOLVED when config.js loads, which
+ * reads nothing. Then, before any settings file is read, created or moved:
+ *
+ *   1. no location at all      -> refused; there is nowhere safe to keep settings;
+ *   2. a declared test run     -> refused unless every location it would touch is disposable;
+ *   3. activation              -> the per-user file is used, moved in once, or created fresh;
+ *   4. the projects-root check -> which reads the settings it activated.
+ *
+ * Every refusal names a symbolic location and a reason, never a profile path or a value. */
+function refuseStartup(lines) {
+  console.error(`\n  CineBraid refused to start.\n${lines.map((line) => `  ${line}\n`).join("")}`);
+  process.exit(1);
+}
+function refuseUnresolvedConfigLocation() {
+  if (CONFIG_LOCATION.mode !== "unresolved") return;
+  const variable = process.platform === "win32" ? "LOCALAPPDATA" : process.platform === "darwin" ? "HOME" : "XDG_CONFIG_HOME or HOME";
+  let legacy = true;
+  try { legacy = ConfigLocation.legacySettingsPresent(CONFIG_LOCATION); } catch { /* cannot tell: say the stronger thing */ }
+  refuseStartup(legacy
+    ? [
+      "Settings: legacy migration required — CineBraid could not work out this account's per-user settings",
+      "location, so the settings kept in the application folder cannot be moved there. Nothing was changed.",
+      `Set ${variable} for this account, or point CINEBRAID_CONFIG_PATH at a settings file.`,
+    ]
+    : [
+      "Settings: per-user location unavailable — CineBraid could not work out this account's per-user",
+      "settings location, so it has nowhere safe to keep settings. Nothing was changed.",
+      `Set ${variable} for this account, or point CINEBRAID_CONFIG_PATH at a settings file.`,
+    ]);
+}
+function activateConfigLocationOrRefuse() {
+  try {
+    return activateConfigLocation();
+  } catch (error) {
+    if (error?.code !== "CONFIG_LOCATION_REFUSED") throw error;
+    refuseStartup([
+      `Settings: ${error.status} — ${error.reason}.`,
+      `Nothing was changed: ${ConfigLocation.symbolicLegacyPath()} is exactly as it was, and`,
+      `${CONFIG_LOCATION.symbolic} was not created.`,
+      "Repair the settings file in the application folder, or point CINEBRAID_CONFIG_PATH at a settings file,",
+      "then start CineBraid again.",
+    ]);
+  }
+  return {};
+}
 function refuseTestConfigOutsideDisposableEnvironment() {
   if (!TEST_MODE) return;
+  /* An override is a path the test chose, so naming it back is fine. The per-user location is
+     said symbolically: on a real machine it is somebody's profile. */
+  const shown = CONFIG_LOCATION.mode === "override" ? CONFIG_PATH : CONFIG_LOCATION.symbolic;
   const refusal = TestIsolation.disposableLocationRefusal(CONFIG_PATH, { appRoot: APP_ROOT });
-  if (!refusal) return;
-  console.error(
-    `\n  CineBraid refused to start.\n`
-    + `  This run declared itself a test (CINEBRAID_TEST_MODE / NODE_ENV=test) and its settings file\n`
-    + `  is not disposable: ${refusal.reason}.\n\n`
-    + `      settings file   ${CONFIG_PATH}\n\n`
-    + `  Nothing was read or written. A test may not use the settings of a real installation or the\n`
-    + `  ordinary per-user settings. Point CINEBRAID_CONFIG_PATH at a disposable file —\n`
-    + `  tests/helpers/disposable-root.js builds one.\n`);
-  process.exit(1);
+  if (refusal) {
+    console.error(
+      `\n  CineBraid refused to start.\n`
+      + `  This run declared itself a test (CINEBRAID_TEST_MODE / NODE_ENV=test) and its settings file\n`
+      + `  is not disposable: ${refusal.reason}.\n\n`
+      + `      settings file   ${shown}\n\n`
+      + `  Nothing was read or written. A test may not use the settings of a real installation or the\n`
+      + `  ordinary per-user settings. Point CINEBRAID_CONFIG_PATH at a disposable file —\n`
+      + `  tests/helpers/disposable-root.js builds one.\n`);
+    process.exit(1);
+  }
+  /* A per-user run with no per-user file of its own would MOVE the application folder's
+     settings into it, which reads that folder's settings file. So the application itself has
+     to be a disposable copy made for the test — never a real checkout. */
+  if (CONFIG_LOCATION.mode === "per-user" && !fs.existsSync(CONFIG_PATH) && ConfigLocation.legacySettingsPresent(CONFIG_LOCATION)) {
+    const installation = TestIsolation.disposableInstallationRefusal(APP_ROOT);
+    if (installation) {
+      console.error(
+        `\n  CineBraid refused to start.\n`
+        + `  This run declared itself a test (CINEBRAID_TEST_MODE / NODE_ENV=test) and would move the settings\n`
+        + `  kept in an application folder that is not disposable: ${installation.reason}.\n\n`
+        + `  Nothing was read or written. A test may only move settings out of a disposable copy of the\n`
+        + `  application — stageInstallation() in tests/helpers/disposable-root.js builds one.\n`);
+      process.exit(1);
+    }
+  }
 }
 function refuseTestRunInsideTheInstall() {
   if (!TEST_MODE) return;
@@ -1033,7 +1102,9 @@ function refuseTestRunInsideTheInstall() {
     process.exit(1);
   }
 }
+refuseUnresolvedConfigLocation();
 refuseTestConfigOutsideDisposableEnvironment();
+const CONFIG_ACTIVATION = activateConfigLocationOrRefuse();
 refuseTestRunInsideTheInstall();
 
 /* Reconcile legacy defaults before any route reads the configuration.
@@ -1051,12 +1122,20 @@ try {
   CONFIG_FAULT = error;
   console.error(
     "CineBraid could not read its settings, and the backup copy could not be read either.\n"
-    + `  settings : ${error.detail?.path || ""}\n`
-    + `  backup   : ${error.detail?.backupPath || ""}\n`
+    + `  settings : ${CONFIG_LOCATION.symbolic}\n`
+    + `  backup   : the .bak copy beside it\n`
+    + (CONFIG_LOCATION.mode === "per-user" ? "It will not fall back to settings kept anywhere else.\n" : "")
     + "Nothing has been changed. CineBraid is refusing to start with empty settings, because that\n"
     + "would switch off any passcode you had set and discard every connected account. Repair or\n"
     + "remove the settings file and start CineBraid again.",
   );
+  /* Refused, not served. Startup work after this point reads the settings — restart
+     reconciliation lists projects from the configured root — and a read that threw from
+     there crashed the process and printed the error's detail: the settings file's location
+     and the parser's message. Nothing has been written, so exiting leaves the file exactly as
+     it was found. The request boundary below still refuses if the file becomes unreadable
+     while CineBraid is running. */
+  process.exit(1);
 }
 
 /* ---- multi-project: each folder under projects/ is fully self-contained ---- */
@@ -3165,7 +3244,7 @@ app.put("/api/config", (req, res) => {
 
 
 app.get("/api/workspace/status", (req, res) => {
-  try { res.json({ ok: true, ...workspaceStatus() }); }
+  try { res.json({ ok: true, ...workspaceStatus(), settingsLocation: ConfigLocation.settingsLocationDisclosure(req, CONFIG_LOCATION) }); }
   catch (error) { res.status(500).json({ error: error.message }); }
 });
 app.post("/api/workspace/settings", (req, res) => {
@@ -10245,7 +10324,7 @@ const httpServer = app.listen(PORT, HOST, () => {
   const exposure = LOOPBACK_HOSTS.has(HOST)
     ? "Local-only mode: other devices cannot connect."
     : "WARNING: LAN mode exposes CineBraid to devices that can reach this computer. Set an editor passcode before using paid providers or sensitive projects.";
-  console.log(`\n  CINEBRAID → ${localUrl}\n  Bind address: ${HOST}\n  ${exposure}\n  Projects root: ${projectsRoot()} (${projectRootSource()})`);
+  console.log(`\n  CINEBRAID → ${localUrl}\n  Bind address: ${HOST}\n  ${exposure}\n  ${ConfigLocation.startupSettingsLine(CONFIG_LOCATION, CONFIG_ACTIVATION)}\n  Projects root: ${projectsRoot()} (${projectRootSource()})`);
   /* Said at every start, not once. A production inside the application directory is a
      standing condition rather than an event, and it stays true until somebody moves
      it — so the notice has to still be there on the day they read the console. */

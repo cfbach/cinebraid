@@ -32,6 +32,7 @@
 const fs = require("fs");
 const os = require("os");
 const path = require("path");
+const ConfigLocation = require("./config-location");
 
 /* Written into every disposable workspace, and required before one is removed. */
 const DISPOSABLE_MARKER = ".cinebraid-disposable";
@@ -75,16 +76,11 @@ function installationContaining(target) {
   }
 }
 
-/* The ordinary per-user configuration directories for an account on the host platform. */
+/* The ordinary per-user configuration directories for an account on the host platform. They
+   come from config-location.js, the one platform table, so the directory this rule refuses is
+   always the directory the product writes. */
 function perUserConfigurationDirectories(home = realAccountHome(), platform = process.platform) {
-  if (!home) return [];
-  if (platform === "win32") {
-    return [path.win32.join(home, "AppData", "Local", "CineBraid"), path.win32.join(home, "AppData", "Roaming", "CineBraid")];
-  }
-  if (platform === "darwin") {
-    return [path.posix.join(home, "Library", "Application Support", "CineBraid"), path.posix.join(home, ".config", "cinebraid")];
-  }
-  return [path.posix.join(home, ".config", "cinebraid")];
+  return ConfigLocation.knownPerUserConfigurationDirectories(home, platform);
 }
 
 function defaultProjectsRoot(home = realAccountHome(), platform = process.platform) {
@@ -101,6 +97,7 @@ function liveConfigurationDirectories({ home = realAccountHome(), env = process.
   const relocated = [
     env.LOCALAPPDATA && path.join(env.LOCALAPPDATA, "CineBraid"),
     env.APPDATA && path.join(env.APPDATA, "CineBraid"),
+    env.XDG_CONFIG_HOME && path.join(env.XDG_CONFIG_HOME, ConfigLocation.APPLICATION_DIRECTORY),
     env.XDG_CONFIG_HOME && path.join(env.XDG_CONFIG_HOME, "cinebraid"),
   ].filter((dir) => dir && !contains(temporary, physical(dir)));
   const seen = new Set();
@@ -145,10 +142,18 @@ function disposableLocationRefusal(target, { appRoot = "", tmpdir = os.tmpdir(),
   return null;
 }
 
+/* null when `appRoot` is a disposable COPY of the application: its folder sits somewhere
+   disposable and inside no other installation. A real checkout never is one. A test run may
+   only move settings out of an application folder like that. */
+function disposableInstallationRefusal(appRoot, options = {}) {
+  return disposableLocationRefusal(path.dirname(physical(appRoot)), { ...options, appRoot: "" });
+}
+
 module.exports = {
   DISPOSABLE_MARKER,
   contains,
   defaultProjectsRoot,
+  disposableInstallationRefusal,
   disposableLocationRefusal,
   installationContaining,
   liveConfigurationDirectories,

@@ -15,7 +15,7 @@ were taken from the code, not invented:
 | `CINEBRAID_LAN` | `server.js` | opt in to binding all interfaces | unset |
 | `CINEBRAID_PROJECTS_ROOT` | `server.js` | **default** projects directory | `%USERPROFILE%/CineBraid Projects` |
 | `CINEBRAID_TEST_MODE` | `server.js` | refuses to start unless the settings file, projects root and storage paths are disposable | unset |
-| `CINEBRAID_CONFIG_PATH` | `config.js` | config file path | `<install>/data/config.json` |
+| `CINEBRAID_CONFIG_PATH` | `config.js` | config file path; when set, nothing else is looked at | per-user: `${XDG_CONFIG_HOME:-~/.config}/CineBraid/config.json` (Linux) |
 | `FAL_KEY` | `fal-generation.js` | FAL credential | unset |
 | `CINEBRAID_AI_TEXT_TIMEOUT_MS` | `llm.js` | local text model timeout | built-in |
 | `CINEBRAID_AI_VISION_TIMEOUT_MS` | `llm.js` | local vision model timeout | built-in |

@@ -263,6 +263,8 @@ const nodeSuites = [
   "check:project-storage-negative",
   "check:test-isolation",
   "check:test-isolation-negative",
+  "check:config-location",
+  "check:config-location-negative",
   "check:untrusted-import",
   "check:untrusted-import-negative",
   "check:recovery-quarantine",

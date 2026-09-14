@@ -5,6 +5,7 @@ const ROOT = path.resolve(__dirname, "..");
 const SOURCES = [
   "src/server/config.js",
   "src/server/test-isolation.js",
+  "src/server/config-location.js",
   "src/server/release-identity.js",
   "src/server/build-identity.js",
   "src/project/project-builder-contract.js",

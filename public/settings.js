@@ -857,8 +857,18 @@ function describeWorkspaceRoot(data) {
     ? `${line} This folder is inside the CineBraid application, so updating CineBraid can overwrite it.`
     : line;
 }
+/* WHERE THE SETTINGS FILE IS, said quietly and only when asked. The server decides what may be
+   shown: the exact path to a browser on the CineBraid computer, the symbolic location to anyone
+   else. The file's contents — keys, passcodes — are never part of the answer. */
+function describeSettingsLocation(location) {
+  if (!location || !location.symbolic) return "CineBraid did not report where its settings are kept.";
+  if (location.mode === "explicit override") {
+    return `Settings are read from the file named by CINEBRAID_CONFIG_PATH${location.path ? `: ${location.path}` : ""}. Saved keys stay in that file and are never shown here.`;
+  }
+  return `Settings are kept in your user profile, outside the application folder: ${location.path || location.symbolic}. Saved keys stay in that file and are never shown here.`;
+}
 window.refreshWorkspaceStatus = async () => {
-  const note = $("#workspace-settings-note"), state = $("#workspace-root-state");
+  const note = $("#workspace-settings-note"), state = $("#workspace-root-state"), settingsLocation = $("#settings-location-detail");
   if (note) note.textContent = "Checking effective paths…";
   try {
     const r = await fetch("/api/workspace/status");
@@ -871,6 +881,7 @@ window.refreshWorkspaceStatus = async () => {
       state.dataset.rootInsideInstall = String(Boolean(data.rootInsideInstall));
     }
     WORKSPACE_RECOMMENDED_ROOT = data.userDefaultRoot || "";
+    if (settingsLocation) settingsLocation.textContent = describeSettingsLocation(data.settingsLocation);
   } catch (error) {
     if (note) note.textContent = error.message;
     if (state) state.textContent = error.message;

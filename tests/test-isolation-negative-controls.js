@@ -29,20 +29,23 @@ const {
 
 const SERVER = fs.readFileSync(path.join(ROOT, "src", "server", "server.js"), "utf8").replace(/\r\n/g, "\n");
 const RULE = fs.readFileSync(path.join(ROOT, "src", "server", "test-isolation.js"), "utf8").replace(/\r\n/g, "\n");
-const HOME_FN = 'function realAccountHome() {\n  try { return os.userInfo().homedir || ""; } catch { return ""; }\n}';
+/* The settings refusal and the activation it guards, as they sit in server.js. */
+const GUARD_THEN_ACTIVATION = "refuseTestConfigOutsideDisposableEnvironment();\nconst CONFIG_ACTIVATION = activateConfigLocationOrRefuse();\n";
+const ACTIVATION_ONLY = "const CONFIG_ACTIVATION = activateConfigLocationOrRefuse();\n";
+const HOME_FN ='function realAccountHome() {\n  try { return os.userInfo().homedir || ""; } catch { return ""; }\n}';
 const withHome = (rule, home) => applyOnce(rule, HOME_FN, `function realAccountHome() {\n  return ${JSON.stringify(home)};\n}`);
 
 async function nc1(scratch) {
   const shipped = stageInstallation("nc1-shipped");
   const broken = stageInstallation("nc1-broken", { replace: { "src/server/server.js":
-    applyOnce(SERVER, "refuseTestConfigOutsideDisposableEnvironment();\nrefuseTestRunInsideTheInstall();\n", "refuseTestRunInsideTheInstall();\n") } });
+    applyOnce(SERVER, GUARD_THEN_ACTIVATION, ACTIVATION_ONLY) } });
   const workspace = disposableRoot("nc1");
   try {
-    const refused = await startServer(shipped, workspace, { CINEBRAID_CONFIG_PATH: "" });
+    const refused = await startServer(shipped, workspace, { CINEBRAID_CONFIG_PATH: path.join(shipped.app, "data", "config.json") });
     assert.strictEqual(refused.started, false, "shipped: refused");
     assert.strictEqual(fs.existsSync(path.join(shipped.app, "data", "config.json")), false, "shipped: nothing written");
 
-    const started = await startServer(broken, workspace, { CINEBRAID_CONFIG_PATH: "" });
+    const started = await startServer(broken, workspace, { CINEBRAID_CONFIG_PATH: path.join(broken.app, "data", "config.json") });
     try {
       assert.strictEqual(started.started, true, "broken: a test run starts on its installation's settings: " + started.output());
       assert.strictEqual(fs.existsSync(path.join(broken.app, "data", "config.json")), true, "broken: and writes them");
@@ -53,13 +56,13 @@ async function nc1(scratch) {
 
 async function nc2() {
   const late = applyOnce(
-    applyOnce(SERVER, "refuseTestConfigOutsideDisposableEnvironment();\nrefuseTestRunInsideTheInstall();\n", "refuseTestRunInsideTheInstall();\n"),
+    applyOnce(SERVER, GUARD_THEN_ACTIVATION, ACTIVATION_ONLY),
     "  migrateConfigFile();\n} catch (error) {",
     "  migrateConfigFile();\n  refuseTestConfigOutsideDisposableEnvironment();\n} catch (error) {");
   const broken = stageInstallation("nc2-late", { replace: { "src/server/server.js": late } });
   const workspace = disposableRoot("nc2");
   try {
-    const run = await startServer(broken, workspace, { CINEBRAID_CONFIG_PATH: "" });
+    const run = await startServer(broken, workspace, { CINEBRAID_CONFIG_PATH: path.join(broken.app, "data", "config.json") });
     assert.strictEqual(run.started, false, "late: still refuses");
     assert.strictEqual(fs.existsSync(path.join(broken.app, "data", "config.json")), true,
       "late: but only after the settings file was already written — which TI-7 C rejects");

@@ -183,9 +183,10 @@ function ti2(scratch) {
   assert.strictEqual(refusal(path.join(scratch, "config.json")), null, "a temporary location is disposable");
 
   /* Synthetic account homes: the rule joins onto whatever home it is given. */
-  assert.deepStrictEqual(TestIsolation.perUserConfigurationDirectories("/srv/account", "linux"), ["/srv/account/.config/cinebraid"]);
+  assert.deepStrictEqual(TestIsolation.perUserConfigurationDirectories("/srv/account", "linux"),
+    ["/srv/account/.config/CineBraid", "/srv/account/.config/cinebraid"]);
   assert.deepStrictEqual(TestIsolation.perUserConfigurationDirectories("/srv/account", "darwin"),
-    ["/srv/account/Library/Application Support/CineBraid", "/srv/account/.config/cinebraid"]);
+    ["/srv/account/Library/Application Support/CineBraid", "/srv/account/.config/CineBraid", "/srv/account/.config/cinebraid"]);
   assert.deepStrictEqual(TestIsolation.perUserConfigurationDirectories("Z:\\profile", "win32"),
     ["Z:\\profile\\AppData\\Local\\CineBraid", "Z:\\profile\\AppData\\Roaming\\CineBraid"]);
   return "per-user, default projects, install-local, inside-install, other installation, linked, relocated and non-temporary locations refused";
@@ -244,13 +245,17 @@ function stagedSeam(scratch, { fakeHome, helper = (text) => text } = {}) {
   const stage = fs.mkdtempSync(path.join(scratch, "seam-"));
   fs.mkdirSync(path.join(stage, "tests", "helpers"), { recursive: true });
   fs.mkdirSync(path.join(stage, "src", "server"), { recursive: true });
-  let rule = fs.readFileSync(path.join(ROOT, "src", "server", "test-isolation.js"), "utf8");
+  /* Line endings normalised first: a checkout with autocrlf has CRLF sources, and the
+     edits below are written with \n. */
+  let rule = fs.readFileSync(path.join(ROOT, "src", "server", "test-isolation.js"), "utf8").replace(/\r\n/g, "\n");
   if (fakeHome) {
     rule = applyOnce(rule, 'function realAccountHome() {\n  try { return os.userInfo().homedir || ""; } catch { return ""; }\n}',
       `function realAccountHome() {\n  return ${JSON.stringify(fakeHome)};\n}`);
   }
   fs.writeFileSync(path.join(stage, "src", "server", "test-isolation.js"), rule);
-  fs.writeFileSync(path.join(stage, "tests", "helpers", "disposable-root.js"), helper(fs.readFileSync(SEAM, "utf8")));
+  for (const dependency of ["config-location.js", "loopback-request.js"])
+    fs.copyFileSync(path.join(ROOT, "src", "server", dependency), path.join(stage, "src", "server", dependency));
+  fs.writeFileSync(path.join(stage, "tests", "helpers", "disposable-root.js"), helper(fs.readFileSync(SEAM, "utf8").replace(/\r\n/g, "\n")));
   return path.join(stage, "tests", "helpers", "disposable-root.js");
 }
 
@@ -477,9 +482,8 @@ async function ti7(scratch) {
 
     const refusals = disposableRoot("ti-refusals");
     try {
-      /* C. No settings path: the installation's own settings file. */
-      assertRefused(await startServer(app, refusals, { CINEBRAID_CONFIG_PATH: "" }), /settings file[\s\S]*application directory/, "implicit settings");
-      assert.strictEqual(fs.existsSync(stagedSettings), false, "refused before anything was read or written");
+      /* C. No settings path at all resolves the per-user location. It is proved inside G, against
+            a fake account home, so a broken refusal could never touch the real one. */
 
       /* D. The installation's settings file, named explicitly. */
       assertRefused(await startServer(app, refusals, { CINEBRAID_CONFIG_PATH: stagedSettings }), /application directory/, "install-local settings");
@@ -497,7 +501,7 @@ async function ti7(scratch) {
 
       /* G. The ordinary per-user settings, against a fake account home in a second copy. */
       const fakeHome = fs.mkdtempSync(path.join(scratch, "server-account-home-"));
-      const rule = fs.readFileSync(path.join(ROOT, "src", "server", "test-isolation.js"), "utf8");
+      const rule = fs.readFileSync(path.join(ROOT, "src", "server", "test-isolation.js"), "utf8").replace(/\r\n/g, "\n");
       const perUserApp = stageInstallation("ti-per-user", { replace: { "src/server/test-isolation.js": applyOnce(rule,
         'function realAccountHome() {\n  try { return os.userInfo().homedir || ""; } catch { return ""; }\n}',
         `function realAccountHome() {\n  return ${JSON.stringify(fakeHome)};\n}`) } });
@@ -505,6 +509,17 @@ async function ti7(scratch) {
         const perUser = path.join(TestIsolation.perUserConfigurationDirectories(fakeHome)[0], "config.json");
         assertRefused(await startServer(perUserApp, refusals, { CINEBRAID_CONFIG_PATH: perUser }), /per-user configuration/, "ordinary per-user settings");
         assert.strictEqual(fs.existsSync(path.dirname(perUser)), false, "the per-user directory is not created");
+
+        /* C. No settings path at all, in an environment whose per-user location is that same
+              account's: refused before the location is read, created or moved into. */
+        const accountEnv = {
+          CINEBRAID_CONFIG_PATH: "", USERPROFILE: fakeHome, HOME: fakeHome,
+          LOCALAPPDATA: path.join(fakeHome, "AppData", "Local"), APPDATA: path.join(fakeHome, "AppData", "Roaming"),
+          XDG_CONFIG_HOME: path.join(fakeHome, ".config"),
+        };
+        assertRefused(await startServer(perUserApp, refusals, accountEnv), /settings file[\s\S]*per-user configuration/, "implicit settings");
+        assert.strictEqual(fs.existsSync(path.dirname(perUser)), false, "refused before anything was read or written");
+        assert.strictEqual(fs.existsSync(path.join(perUserApp.app, "data", "config.json")), false);
       } finally { perUserApp.cleanup(); }
 
       /* H. A projects root that is not disposable. */
@@ -512,15 +527,18 @@ async function ti7(scratch) {
       assert.strictEqual(fs.existsSync(NOT_DISPOSABLE), false);
 
       /* I. NODE_ENV=test arms the same refusal. */
-      assertRefused(await startServer(app, refusals, { CINEBRAID_TEST_MODE: "", NODE_ENV: "test", CINEBRAID_CONFIG_PATH: "" }), /settings file/, "NODE_ENV=test");
+      assertRefused(await startServer(app, refusals, { CINEBRAID_TEST_MODE: "", NODE_ENV: "test", CINEBRAID_CONFIG_PATH: stagedSettings }), /settings file[\s\S]*application directory/, "NODE_ENV=test");
       assert.strictEqual(fs.existsSync(stagedSettings), false);
 
-      /* J. Undeclared, it is inert: ordinary startup is unchanged. */
-      const ordinary = await startServer(app, refusals, { CINEBRAID_TEST_MODE: "", CINEBRAID_CONFIG_PATH: "" });
+      /* J. Undeclared, it is inert: an ordinary run starts — in a disposable profile, where a
+            first run creates its settings in the per-user location and never the installation. */
+      const ordinaryHome = disposableRoot("ti-ordinary", { profile: true, perUserSettings: true });
+      const ordinary = await startServer(app, ordinaryHome, { CINEBRAID_TEST_MODE: "" });
       try {
-        assert.strictEqual(ordinary.started, true, "an ordinary run starts exactly as before: " + ordinary.output());
-        assert.strictEqual(fs.existsSync(stagedSettings), true, "and creates its installation's settings on first run, as before");
-      } finally { await stopServer(ordinary); }
+        assert.strictEqual(ordinary.started, true, "an ordinary run starts: " + ordinary.output());
+        assert.strictEqual(fs.existsSync(ordinaryHome.configPath), true, "and creates its per-user settings on first run");
+        assert.strictEqual(fs.existsSync(stagedSettings), false, "never its installation's");
+      } finally { await stopServer(ordinary); ordinaryHome.cleanup(); }
       results.push("implicit, install-local, inside-install, other-installation, per-user and live-root locations refused before any read or write; NODE_ENV=test arms it; undeclared runs unchanged");
     } finally { refusals.cleanup(); }
   } finally {

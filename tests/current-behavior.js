@@ -385,6 +385,8 @@ async function main() {
     "comfy-integration.js",
     "composer-motion.js",
     "config-durability.js",
+    "config-location-negative-controls.js",
+    "config-location.js",
     "config-secret-registry.js",
     "continuity-cache.js",
     "continuity-compare-route.js",

@@ -151,9 +151,9 @@ Provider keys remain server-side. Paid requests require explicit confirmation an
 ## Upgrade an existing installation
 
 1. Stop CineBraid.
-2. Back up your projects root and `data/`.
+2. Back up your projects root and your settings file.
 3. Install the newer version into a new folder — a fresh clone, or an archive you built — and run `npm ci` there.
-4. Restore your own `data/config.json` when using a new folder. Do not replace it with the release config if preserving existing work.
+4. Settings live in your per-user settings location (`%LOCALAPPDATA%\CineBraid\config.json` on Windows, `~/Library/Application Support/CineBraid/config.json` on macOS, `${XDG_CONFIG_HOME:-~/.config}/CineBraid/config.json` on Linux), so a new folder keeps them. Upgrading from a CineBraid that kept `data/config.json` inside the application folder copies that file there once, on first start, and leaves the original untouched; if a per-user settings file already exists, it is used and the old one is ignored — the two are never merged.
 5. Start CineBraid and hard-refresh the browser once.
 
 The release has no breaking project-schema migration.

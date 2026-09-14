@@ -45,6 +45,7 @@ const fs = require("fs");
 const os = require("os");
 const path = require("path");
 const TestIsolation = require("../../src/server/test-isolation");
+const ConfigLocation = require("../../src/server/config-location");
 
 const ROOT = path.resolve(__dirname, "..", "..");
 const BUNDLED_SAMPLE = path.join(ROOT, "projects", "cinebraid-sample");
@@ -134,36 +135,43 @@ function claimHome(label, at) {
    APPDATA and XDG_CONFIG_HOME all inside the workspace — and leaves the projects root to
    the application's own default, which then resolves inside that profile. It is how a
    check exercises default-path behaviour without the real account's locations. */
-function disposableRoot(label = "suite", { withSample = false, config = {}, at = "", profile = false, register = true } = {}) {
+/* `perUserSettings` (with `profile`) names no settings path at all, so CineBraid resolves its
+   per-user settings location inside the disposable profile, and nothing is written there in
+   advance. `configPath` is where that resolves to. */
+function disposableRoot(label = "suite", { withSample = false, config = {}, at = "", profile = false, perUserSettings = false, register = true } = {}) {
+  if (perUserSettings && !profile) throw new Error("perUserSettings needs a disposable profile to resolve inside.");
   const home = claimHome(label, at);
   fs.writeFileSync(path.join(home, DISPOSABLE_MARKER),
     JSON.stringify({ label: String(label), pid: process.pid, createdAt: new Date().toISOString() }) + "\n", "utf8");
 
   const profileHome = profile ? path.join(home, "profile") : "";
   const projectsRoot = profile ? path.join(profileHome, "CineBraid Projects") : path.join(home, "projects");
-  const configPath = path.join(home, "config.json");
+  const profileEnv = profile
+    ? {
+      CINEBRAID_PROJECTS_ROOT: "",
+      USERPROFILE: profileHome,
+      HOME: profileHome,
+      LOCALAPPDATA: path.join(profileHome, "AppData", "Local"),
+      APPDATA: path.join(profileHome, "AppData", "Roaming"),
+      XDG_CONFIG_HOME: path.join(profileHome, ".config"),
+    }
+    : {};
+  const configPath = perUserSettings
+    ? ConfigLocation.resolveConfigLocation({ env: profileEnv, appRoot: ROOT }).path
+    : path.join(home, "config.json");
   if (profile) {
     for (const parts of [["AppData", "Local"], ["AppData", "Roaming"], [".config"]])
       fs.mkdirSync(path.join(profileHome, ...parts), { recursive: true });
   } else {
     fs.mkdirSync(projectsRoot, { recursive: true });
   }
-  fs.writeFileSync(configPath, JSON.stringify(isolatedConfig(config), null, 2) + "\n", "utf8");
+  if (!perUserSettings) fs.writeFileSync(configPath, JSON.stringify(isolatedConfig(config), null, 2) + "\n", "utf8");
 
   const env = {
-    CINEBRAID_CONFIG_PATH: configPath,
+    CINEBRAID_CONFIG_PATH: perUserSettings ? "" : configPath,
     CINEBRAID_TEST_MODE: "1",
     ...Object.fromEntries(CREDENTIAL_ENV.map((name) => [name, ""])),
-    ...(profile
-      ? {
-        CINEBRAID_PROJECTS_ROOT: "",
-        USERPROFILE: profileHome,
-        HOME: profileHome,
-        LOCALAPPDATA: path.join(profileHome, "AppData", "Local"),
-        APPDATA: path.join(profileHome, "AppData", "Roaming"),
-        XDG_CONFIG_HOME: path.join(profileHome, ".config"),
-      }
-      : { CINEBRAID_PROJECTS_ROOT: projectsRoot }),
+    ...(profile ? profileEnv : { CINEBRAID_PROJECTS_ROOT: projectsRoot }),
   };
 
   const workspace = {

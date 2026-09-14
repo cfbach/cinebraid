@@ -142,6 +142,8 @@ const FORBIDDEN = [
   [/^\.claude\//, "local agent state"],
   [/(^|\/)\.claude\/settings\.local\.json$/, ".claude/settings.local.json"],
   [/^data\/config\.json$/, "runtime configuration"],
+  [/(^|\/)config\.json(\.bak|\.corrupt)?$/, "runtime configuration or one of its sidecars"],
+  [/(^|\/)migration\.json$/, "a settings migration record"],
   [/\.(zip|tar\.gz|tgz)$/, "a nested release artifact"],
   [/(^|\/)(qa-backups|screenshots|exports|my-output)\//, "QA evidence or generated output"],
   [/(^|\/)backups\//, "project backups"],

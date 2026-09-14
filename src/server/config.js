@@ -1,10 +1,16 @@
 const crypto = require("crypto");
 const fs = require("fs");
 const path = require("path");
+const ConfigLocation = require("./config-location");
 
-const CONFIG_PATH = process.env.CINEBRAID_CONFIG_PATH
-  ? path.resolve(process.env.CINEBRAID_CONFIG_PATH)
-  : path.join(path.resolve(__dirname, "../.."), "data", "config.json");
+/* WHERE THE SETTINGS FILE IS. Resolved once, from the environment, by config-location.js:
+   an explicit CINEBRAID_CONFIG_PATH, otherwise the per-user settings location. Resolving
+   reads nothing. Whether an existing install's settings still have to be moved there is
+   decided at startup by activateConfigLocation(), before anything reads the file — and
+   every write, backup, temporary file and corrupt copy below lives beside that file. */
+const APP_ROOT = path.resolve(__dirname, "../..");
+const CONFIG_LOCATION = ConfigLocation.resolveConfigLocation({ env: process.env, platform: process.platform, appRoot: APP_ROOT });
+const CONFIG_PATH = CONFIG_LOCATION.path;
 const MASK_PREFIX = "••••";
 
 /* The calendar test the motion rate's freshness is validated with. Shared with the
@@ -525,11 +531,11 @@ function normalizeConfig(config, options = {}) {
 
      MISSING is a valid first-run state -> defaults, and writing them is correct.
      CORRUPT is not missing            -> recover, or refuse. Never invent. */
-const CONFIG_BACKUP_PATH = `${CONFIG_PATH}.bak`;
+const CONFIG_BACKUP_PATH = CONFIG_PATH ? `${CONFIG_PATH}.bak` : "";
 /* The corrupt bytes are kept once, beside the file, so a user who lost a key can
    still see it and a support request has something to look at. Deliberately not a
    growing series: the most recent corruption is the useful one. */
-const CONFIG_CORRUPT_PATH = `${CONFIG_PATH}.corrupt`;
+const CONFIG_CORRUPT_PATH = CONFIG_PATH ? `${CONFIG_PATH}.corrupt` : "";
 
 class ConfigUnreadableError extends Error {
   constructor(message, detail) {
@@ -546,8 +552,8 @@ class ConfigUnreadableError extends Error {
    exactly where one shows up. An empty file is treated as corruption rather than as
    an empty document, because a zero-byte config.json is what an interrupted
    truncate leaves and has never been a thing CineBraid writes. */
-function parseConfigDocument(target) {
-  const raw = String(fs.readFileSync(target, "utf8")).replace(/^﻿/, "");
+function parseConfigBytes(bytes) {
+  const raw = Buffer.from(bytes).toString("utf8").replace(/^\uFEFF/, "");
   if (!raw.trim()) {
     const error = new Error("The file is empty.");
     error.configEmpty = true;
@@ -556,6 +562,9 @@ function parseConfigDocument(target) {
   const parsed = JSON.parse(raw);
   if (!isPlainObject(parsed)) throw new Error("The file is not a configuration document.");
   return parsed;
+}
+function parseConfigDocument(target) {
+  return parseConfigBytes(fs.readFileSync(target));
 }
 
 /* Reads the configuration document without normalising it.
@@ -567,6 +576,8 @@ function parseConfigDocument(target) {
      primary corrupt -> the backup, recovered:true
      both unusable   -> THROWS ConfigUnreadableError, having written nothing   */
 function loadConfigDocument() {
+  /* No location at all: nothing to read. Startup refuses before this can matter. */
+  if (!CONFIG_PATH) return { config: DEFAULT_CONFIG, exists: false, recovered: false, warning: "" };
   let primaryError = null;
   try {
     return { config: parseConfigDocument(CONFIG_PATH), exists: true, recovered: false, warning: "" };
@@ -603,7 +614,10 @@ function loadConfigDocument() {
 
   /* Preserve the evidence before anything is allowed to replace the primary. */
   try {
-    if (fs.existsSync(CONFIG_PATH)) fs.copyFileSync(CONFIG_PATH, CONFIG_CORRUPT_PATH);
+    if (fs.existsSync(CONFIG_PATH)) {
+      fs.copyFileSync(CONFIG_PATH, CONFIG_CORRUPT_PATH);
+      restrictSettingsMode(CONFIG_CORRUPT_PATH);
+    }
   } catch { /* evidence is best-effort; recovery is not */ }
 
   return {
@@ -643,8 +657,11 @@ function writeConfig(config) {
   const payload = JSON.stringify(normalized, null, 2);
   JSON.parse(payload); /* never rename a temp file we cannot read back */
 
+  if (!CONFIG_PATH) {
+    throw new Error("CineBraid could not work out where to keep its settings. Point CINEBRAID_CONFIG_PATH at a settings file.");
+  }
   const dir = path.dirname(CONFIG_PATH);
-  fs.mkdirSync(dir, { recursive: true });
+  fs.mkdirSync(dir, { recursive: true, mode: 0o700 });
   const temp = path.join(
     dir,
     `.${path.basename(CONFIG_PATH)}.${process.pid}.${Date.now()}.${crypto.randomBytes(4).toString("hex")}.tmp`,
@@ -652,7 +669,7 @@ function writeConfig(config) {
 
   let fd;
   try {
-    fd = fs.openSync(temp, "wx");
+    fd = fs.openSync(temp, "wx", 0o600);
     fs.writeFileSync(fd, payload, "utf8");
     fs.fsyncSync(fd);
     fs.closeSync(fd);
@@ -660,7 +677,10 @@ function writeConfig(config) {
     /* Backup BEFORE the primary is replaced, so a crash between the two leaves a
        readable previous configuration rather than nothing — and only when the
        primary is worth keeping. */
-    if (fs.existsSync(CONFIG_PATH) && primaryConfigIsReadable()) fs.copyFileSync(CONFIG_PATH, CONFIG_BACKUP_PATH);
+    if (fs.existsSync(CONFIG_PATH) && primaryConfigIsReadable()) {
+      fs.copyFileSync(CONFIG_PATH, CONFIG_BACKUP_PATH);
+      restrictSettingsMode(CONFIG_BACKUP_PATH);
+    }
     fs.renameSync(temp, CONFIG_PATH);
   } catch (error) {
     if (fd !== undefined) { try { fs.closeSync(fd); } catch {} }
@@ -670,6 +690,48 @@ function writeConfig(config) {
     throw error;
   }
   return normalized;
+}
+
+/* Owner-only where the platform has modes: the settings file holds credentials, and copyFileSync
+   does not promise to carry a mode across. Windows access comes from the ACL the settings
+   folder inherits. */
+function restrictSettingsMode(target) {
+  if (process.platform === "win32") return;
+  try { fs.chmodSync(target, 0o600); } catch { /* the folder's own mode still applies */ }
+}
+
+/* Which declared credentials are set, and nothing about their values. What a move must
+   preserve, and what it may compare without ever holding a key in a message. */
+function secretPresence(config) {
+  const out = {};
+  for (const secret of CONFIG_SECRETS) {
+    const seen = [];
+    visitSecretPath(isPlainObject(config) ? config : {}, undefined, secretSegments(secret), 0, (node, _stored, key) => {
+      seen.push(Boolean(node[key]));
+    });
+    out[secret.path] = seen;
+  }
+  return out;
+}
+
+/* Rules 2-4 of config-location.js for a per-user location; an override needs nothing.
+   Throws ConfigLocationError, which startup turns into a refusal naming no path. */
+function activateConfigLocation() {
+  if (CONFIG_LOCATION.mode === "override") return { state: "override" };
+  if (CONFIG_LOCATION.mode === "unresolved") {
+    const legacy = ConfigLocation.legacySettingsPresent(CONFIG_LOCATION);
+    throw new ConfigLocation.ConfigLocationError(
+      legacy ? "legacy migration required" : "per-user location unavailable",
+      "LOCATION_UNRESOLVED",
+      "this account's per-user settings location could not be worked out",
+    );
+  }
+  return ConfigLocation.activatePerUserSettings({
+    location: CONFIG_LOCATION,
+    appRoot: APP_ROOT,
+    parseBytes: parseConfigBytes,
+    presence: secretPresence,
+  });
 }
 
 function mergeConfig(current, patch) {
@@ -714,7 +776,11 @@ function configHealth() {
 module.exports = {
   CONFIG_BACKUP_PATH,
   CONFIG_CORRUPT_PATH,
+  CONFIG_LOCATION,
   CONFIG_PATH,
+  activateConfigLocation,
+  parseConfigBytes,
+  secretPresence,
   CONFIG_SECRETS,
   ConfigUnreadableError,
   DEFAULT_CONFIG,

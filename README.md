@@ -157,7 +157,7 @@ assistance or generation, the material needed for that request goes to that prov
   it keeps opening them from there and changes nothing. Both the console and Settings say
   so, and **Settings → Files & storage** copies them somewhere safer when you ask — leaving
   the originals exactly where they are.
-- `data/config.json` holds local settings, including provider credentials. Keys stay server-side and are masked when settings are read back.
+- Settings, including provider credentials, live outside the application folder in your per-user settings location: `%LOCALAPPDATA%\CineBraid\config.json` on Windows, `~/Library/Application Support/CineBraid/config.json` on macOS, `${XDG_CONFIG_HOME:-~/.config}/CineBraid/config.json` on Linux. An older CineBraid's `data/config.json` is copied there once, on first start, and left where it was. Keys stay server-side and are masked when settings are read back.
 - Personal projects and local configuration are excluded from version control and release archives. The public sample and model catalogs are intentional tracked exceptions.
 
 **LAN access is opt-in.** Set an Editor passcode in Settings first, then start
