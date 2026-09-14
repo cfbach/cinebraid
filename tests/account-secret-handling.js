@@ -28,6 +28,8 @@ const os = require("os");
 const path = require("path");
 
 const { startCineBraidServer, startMockCivitai } = require("./fixtures/mock-civitai");
+/* The settings module is loaded in-process, so disposable settings are named before it is. */
+require("./helpers/disposable-root").isolateInProcessSettings("account-secret-handling");
 const { CONFIG_SECRETS, MASK_PREFIX, maskSecrets, restoreSecrets } = require("../src/server/config");
 
 const TEMP = fs.mkdtempSync(path.join(os.tmpdir(), "cinebraid-account-secrets-"));

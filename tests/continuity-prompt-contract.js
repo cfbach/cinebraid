@@ -26,6 +26,8 @@ const {
   OBSERVATION_USER_MESSAGE,
   EVIDENCE_MAX,
 } = require("../public/shared-continuity");
+/* llm.js loads the settings module in-process, so disposable settings are named before it is. */
+require("./helpers/disposable-root").isolateInProcessSettings("continuity-prompt-contract");
 const { structuredVisionBody } = require("../src/assistant/llm");
 
 const FIXTURES = path.join(__dirname, "fixtures", "continuity");

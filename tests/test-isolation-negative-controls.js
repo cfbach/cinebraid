@@ -23,8 +23,10 @@ const fs = require("fs");
 const path = require("path");
 const TestIsolation = require("../src/server/test-isolation");
 const { ROOT, disposableRoot, stageInstallation, verifyLedgerEntries } = require("./helpers/disposable-root");
+/* Disposable settings named before anything below — including the staged sources NC-TI-10 writes. */
+require("./helpers/disposable-root").isolateInProcessSettings("test-isolation-negative");
 const {
-  applyOnce, classifySpawn, fakeInstallation, nodeEval, spawnSites, stagedSeam, startServer, stopServer, SENTINEL,
+  applyOnce, classifySpawn, fakeInstallation, nodeEval, spawnSites, stagedSeam, startServer, stopServer, SENTINEL, unisolatedSettingsChain,
 } = require("./test-isolation");
 
 const SERVER = fs.readFileSync(path.join(ROOT, "src", "server", "server.js"), "utf8").replace(/\r\n/g, "\n");
@@ -181,6 +183,49 @@ function nc9() {
   return "implicit Node and Python starts named; unproven explicit settings named; seam starts accepted";
 }
 
+/* NC-TI-10 — an in-process settings consumer that does not name disposable settings first. */
+function nc10(scratch) {
+  /* Static: the chain check names a consumer that loads settings before naming any. */
+  const tree = fs.mkdtempSync(path.join(scratch, "nc10-tree-"));
+  fs.mkdirSync(path.join(tree, "src", "server"), { recursive: true });
+  fs.mkdirSync(path.join(tree, "tests"), { recursive: true });
+  const settings = path.join(tree, "src", "server", "config.js");
+  fs.writeFileSync(settings, "module.exports = {};\n");
+  fs.writeFileSync(path.join(tree, "tests", "bare.js"), 'const Config = require("../src/server/config");\n');
+  fs.writeFileSync(path.join(tree, "tests", "isolated.js"),
+    'require("./helpers/disposable-root").isolateInProcessSettings("x");\nconst Config = require("../src/server/config");\n');
+  const chain = (name) => unisolatedSettingsChain(path.join(tree, "tests", name), { root: tree, configModule: settings });
+  assert(chain("bare.js"), "a bare in-process load is named");
+  assert.strictEqual(chain("isolated.js"), null, "an isolated one is not");
+
+  /* Runtime: the same representative load, with the shipped helper and with a helper that does
+     nothing, in a staged tree whose per-user location is a fake profile. */
+  const stage = (label, helperText) => {
+    const root = fs.mkdtempSync(path.join(scratch, `nc10-${label}-`));
+    for (const relative of ["src/server/config.js", "src/server/config-location.js", "src/server/loopback-request.js", "src/server/test-isolation.js", "public/shared-generation-rate.js"]) {
+      fs.mkdirSync(path.dirname(path.join(root, relative)), { recursive: true });
+      fs.copyFileSync(path.join(ROOT, relative), path.join(root, relative));
+    }
+    fs.mkdirSync(path.join(root, "tests", "helpers"), { recursive: true });
+    fs.writeFileSync(path.join(root, "tests", "helpers", "disposable-root.js"), helperText);
+    fs.writeFileSync(path.join(root, "tests", "consumer.js"),
+      'require("./helpers/disposable-root").isolateInProcessSettings("nc10");\n'
+      + 'console.log(require("../src/server/config").CONFIG_LOCATION.mode);\n');
+    return path.join(root, "tests", "consumer.js");
+  };
+  const seam = fs.readFileSync(path.join(ROOT, "tests", "helpers", "disposable-root.js"), "utf8").replace(/\r\n/g, "\n");
+  const profile = disposableRoot("nc10-profile", { profile: true, perUserSettings: true });
+  try {
+    const env = { ...profile.env, CINEBRAID_CONFIG_PATH: "" };
+    const mode = (consumer) => nodeEval(`require(${JSON.stringify(consumer)});`, env).stdout.trim().split(/\r?\n/).pop();
+    assert.strictEqual(mode(stage("shipped", seam)), "override", "shipped: disposable settings are named before the load");
+    const inert = applyOnce(seam, 'function isolateInProcessSettings(label = "in-process") {\n', 'function isolateInProcessSettings(label = "in-process") {\n  return null;\n');
+    assert.strictEqual(mode(stage("broken", inert)), "per-user", "broken: the load resolves the ordinary per-user location");
+    assert.strictEqual(fs.existsSync(path.dirname(profile.configPath)), false);
+  } finally { profile.cleanup(); }
+  return "without the helper an in-process settings load resolves the per-user location, and the chain check names such a consumer";
+}
+
 async function main() {
   const scratchWorkspace = disposableRoot("nc-ti-scratch");
   const scratch = scratchWorkspace.home;
@@ -194,6 +239,7 @@ async function main() {
     ["NC-TI-7", () => nc7(scratch)],
     ["NC-TI-8", () => nc8(scratch)],
     ["NC-TI-9", () => nc9()],
+    ["NC-TI-10", () => nc10(scratch)],
   ];
   let failed = 0;
   try {

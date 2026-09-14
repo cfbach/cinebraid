@@ -24,6 +24,8 @@ const fs = require("fs");
 const path = require("path");
 const Module = require("module");
 const vm = require("vm");
+/* Settings defaults are loaded in-process below; disposable settings are named first. */
+require("./helpers/disposable-root").isolateInProcessSettings("generation-simple-advanced-negative");
 
 const ROOT = path.resolve(__dirname, "..");
 const readLF = (file) => fs.readFileSync(path.join(ROOT, file), "utf8").replace(/\r\n/g, "\n");

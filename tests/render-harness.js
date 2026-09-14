@@ -3,6 +3,9 @@ const fs = require("fs");
 const path = require("path");
 const vm = require("vm");
 const { terminalHtml } = require("./terminal-view");
+/* Settings are read in-process here, so this process names disposable ones first: no render
+   check may resolve or read an installation's settings or the account's per-user settings. */
+require("./helpers/disposable-root").isolateInProcessSettings("render-harness");
 const { readConfig } = require("../src/server/config");
 const PromptEngine = require("../src/generation/prompt-engine");
 const { annotateProfileLibraryExecution } = require("../src/generation/generation-options");

@@ -14,6 +14,8 @@ const net = require("net");
 const os = require("os");
 const path = require("path");
 const { spawn } = require("child_process");
+/* llm.js, loaded below, reads settings in-process; disposable settings are named first. */
+require("./helpers/disposable-root").isolateInProcessSettings("local-only-policy");
 
 const ROOT = path.resolve(__dirname, "..");
 const TEMP = fs.mkdtempSync(path.join(os.tmpdir(), "cinebraid-local-only-"));

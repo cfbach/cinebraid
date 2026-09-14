@@ -37,6 +37,8 @@ const {
   disposableRoot, readLedger, removeDisposableHome, stageInstallation, verifyLedgerEntries,
 } = require("./helpers/disposable-root");
 const { freePort } = require("./fixtures/mock-civitai");
+/* TI-3 loads the settings module in-process; disposable settings are named before it can be. */
+require("./helpers/disposable-root").isolateInProcessSettings("test-isolation");
 
 const SEAM = path.join(ROOT, "tests", "helpers", "disposable-root.js");
 const SENTINEL = "cs1-sentinel-not-a-credential";
@@ -550,6 +552,134 @@ async function ti7(scratch) {
 
 /* --------------------------------------------------------------------------------------- */
 
+/* ---------------------------------------------------------------------------------------
+   TI-8 — in-process settings consumers
+   --------------------------------------------------------------------------------------- */
+
+const CONFIG_MODULE = path.join(ROOT, "src", "server", "config.js");
+const REQUIRE_CALL = /require\(\s*(?:(["'`])([^"'`]+)\1|path\.(?:join|resolve)\(\s*(ROOT|__dirname)\s*,\s*((?:["'`][^"'`]+["'`]\s*,?\s*)+)\))/g;
+/* What names disposable settings before the settings module loads: the shared helper, or an
+   explicit assignment of a disposable path, as the bounded configuration suites make. */
+const NAMES_SETTINGS = /isolateInProcessSettings\(|process\.env\.CINEBRAID_CONFIG_PATH\s*=/;
+
+function requireEdges(file, root) {
+  let source;
+  try { source = fs.readFileSync(file, "utf8"); } catch { return { source: "", edges: [] }; }
+  const edges = [];
+  for (const match of source.matchAll(REQUIRE_CALL)) {
+    let target;
+    if (match[2]) {
+      if (!match[2].startsWith(".")) continue;
+      target = path.resolve(path.dirname(file), match[2]);
+    } else {
+      const parts = [...match[4].matchAll(/["'`]([^"'`]+)["'`]/g)].map((part) => part[1]);
+      target = path.resolve(match[3] === "ROOT" ? root : path.dirname(file), ...parts);
+    }
+    const resolved = [target, `${target}.js`, path.join(target, "index.js")].find((candidate) => {
+      try { return fs.statSync(candidate).isFile(); } catch { return false; }
+    });
+    if (resolved) edges.push({ file: resolved, index: match.index });
+  }
+  return { source, edges };
+}
+
+/* A require path from `file` to the settings module along which nothing named disposable
+   settings first — or null. Each file answers for itself: an edge taken after that file has
+   named settings is safe, whatever lies beyond it. */
+function unisolatedSettingsChain(file, { root = ROOT, configModule = CONFIG_MODULE, memo = new Map(), visiting = new Set() } = {}) {
+  if (path.resolve(file) === path.resolve(configModule)) return [file];
+  if (memo.has(file)) return memo.get(file);
+  if (visiting.has(file)) return null;
+  visiting.add(file);
+  const { source, edges } = requireEdges(file, root);
+  let found = null;
+  for (const edge of edges) {
+    if (NAMES_SETTINGS.test(source.slice(0, edge.index))) continue;
+    const rest = unisolatedSettingsChain(edge.file, { root, configModule, memo, visiting });
+    if (rest) { found = [file, ...rest]; break; }
+  }
+  visiting.delete(file);
+  memo.set(file, found);
+  return found;
+}
+
+function registeredNodeEntries() {
+  const scripts = JSON.parse(fs.readFileSync(path.join(ROOT, "package.json"), "utf8")).scripts;
+  const entries = new Set();
+  for (const command of Object.values(scripts)) {
+    for (const match of command.matchAll(/(?:^|&&|\s)node\s+((?:tests|scripts)\/[\w./-]+\.js)/g)) entries.add(match[1]);
+  }
+  return [...entries].sort();
+}
+
+function reachesSettings(file) {
+  const memo = new Map();
+  const walk = (current, seen = new Set()) => {
+    if (path.resolve(current) === path.resolve(CONFIG_MODULE)) return true;
+    if (seen.has(current)) return false;
+    seen.add(current);
+    if (memo.has(current)) return memo.get(current);
+    const result = requireEdges(current, ROOT).edges.some((edge) => walk(edge.file, seen));
+    memo.set(current, result);
+    return result;
+  };
+  return walk(file);
+}
+
+function ti8(scratch) {
+  const entries = registeredNodeEntries();
+  const consumers = entries.filter((entry) => reachesSettings(path.join(ROOT, entry)));
+  const memo = new Map();
+  const unisolated = consumers
+    .map((entry) => ({ entry, chain: unisolatedSettingsChain(path.join(ROOT, entry), { memo }) }))
+    .filter((row) => row.chain)
+    .map((row) => `${row.entry}: ${row.chain.map((file) => path.relative(ROOT, file).split(path.sep).join("/")).join(" -> ")}`);
+  assert.deepStrictEqual(unisolated, [], "every registered check that loads settings in-process names disposable settings first");
+  assert(consumers.length > 100, `the inventory must find the in-process consumers, found ${consumers.length}`);
+
+  /* The representative consumer, in a process whose environment names no settings at all and
+     whose per-user location points into a fake account profile. */
+  const profile = disposableRoot("ti8-profile", { profile: true, perUserSettings: true });
+  try {
+    const env = { ...profile.env, CINEBRAID_CONFIG_PATH: "", CINEBRAID_TEST_MODE: "" };
+    const report = (loader) => nodeEval(`${loader}
+      const Config = require(${JSON.stringify(CONFIG_MODULE)});
+      const Rule = require(${JSON.stringify(path.join(ROOT, "src", "server", "test-isolation.js"))});
+      const settings = Config.readConfig();
+      const within = (outer) => Rule.contains(Rule.physical(outer), Rule.physical(Config.CONFIG_PATH || "."));
+      console.log(JSON.stringify({
+        mode: Config.CONFIG_LOCATION.mode,
+        disposable: Rule.disposableLocationRefusal(Config.CONFIG_PATH, { appRoot: ${JSON.stringify(ROOT)} }) === null,
+        insideProfile: within(${JSON.stringify(profile.profileHome)}),
+        insideApplication: within(${JSON.stringify(ROOT)}),
+        defaults: !settings.activeProject && settings.generation.fal.enabled === false,
+      }));`, env);
+    const lastJson = (run) => JSON.parse(run.stdout.trim().split(/\r?\n/).pop());
+
+    const harness = report(`require(${JSON.stringify(path.join(ROOT, "tests", "render-harness.js"))});`);
+    assert.strictEqual(harness.status, 0, harness.stderr);
+    assert.deepStrictEqual(lastJson(harness), { mode: "override", disposable: true, insideProfile: false, insideApplication: false, defaults: true },
+      "the render harness names disposable settings, so its reads never reach per-user or installation settings");
+    assert.strictEqual(fs.existsSync(path.dirname(profile.configPath)), false, "and the per-user location is not created");
+
+    const bare = report("");
+    assert.strictEqual(bare.status, 0, bare.stderr);
+    assert.deepStrictEqual({ ...lastJson(bare), defaults: undefined }, { mode: "per-user", disposable: true, insideProfile: true, insideApplication: false, defaults: undefined },
+      "without it, the same load resolves the ordinary per-user location — here the fake profile's");
+
+    /* Fail-closed: a live location already named, or already loaded, is refused. */
+    const install = fakeInstallation(scratch, "ti8-installation");
+    const liveEnv = { ...env, CINEBRAID_CONFIG_PATH: path.join(install, "data", "config.json") };
+    const helper = JSON.stringify(path.join(ROOT, "tests", "helpers", "disposable-root.js"));
+    const named = nodeEval(`try { require(${helper}).isolateInProcessSettings("ti8"); console.log("ACCEPTED"); } catch (error) { console.log("REFUSED " + error.message); }`, liveEnv);
+    assert(/^REFUSED .*not disposable/m.test(named.stdout), named.stdout + named.stderr);
+    const late = nodeEval(`require(${JSON.stringify(CONFIG_MODULE)});
+      try { require(${helper}).isolateInProcessSettings("ti8"); console.log("ACCEPTED"); } catch (error) { console.log("REFUSED " + error.message); }`, liveEnv);
+    assert(/^REFUSED .*loaded before/m.test(late.stdout), late.stdout + late.stderr);
+  } finally { profile.cleanup(); }
+  return `${consumers.length} registered checks load settings in-process, 0 without disposable settings first; the render harness resolves disposable settings and reads defaults, not the (fake) per-user location; a live location named or loaded first is refused`;
+}
+
 async function main() {
   const live = liveStamps();
   const scratchWorkspace = disposableRoot("ti-scratch");
@@ -562,6 +692,7 @@ async function main() {
     ["TI-5", "cleanup is deterministic", () => ti5()],
     ["TI-6", "reported locations are checked, and the browser gate checks them", () => ti6(scratch)],
     ["TI-7", "the server accepts disposable environments and refuses live ones before reading", () => ti7(scratch)],
+    ["TI-8", "in-process settings consumers name disposable settings before loading them", () => ti8(scratch)],
   ];
   let failed = 0;
   try {
@@ -587,7 +718,7 @@ async function main() {
   console.log(`\nCS-1 test isolation passed: ${checks.length} checks.`);
 }
 
-module.exports = { classifySpawn, spawnSites, fakeInstallation, stagedSeam, startServer, stopServer, applyOnce, nodeEval, NOT_DISPOSABLE, SENTINEL };
+module.exports = { unisolatedSettingsChain, classifySpawn, spawnSites, fakeInstallation, stagedSeam, startServer, stopServer, applyOnce, nodeEval, NOT_DISPOSABLE, SENTINEL };
 
 if (require.main === module) {
   main().catch((error) => { console.error(error.stack || error.message); process.exit(1); });

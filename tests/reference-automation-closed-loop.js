@@ -35,6 +35,8 @@ const assert = require("assert");
 const fs = require("fs");
 const path = require("path");
 const vm = require("vm");
+/* llm.js loads the settings module in-process; disposable settings are named first. */
+require("./helpers/disposable-root").isolateInProcessSettings("reference-automation-closed-loop");
 const { render, buildFixture } = require("./render-harness");
 
 const ROOT = path.join(__dirname, "..");

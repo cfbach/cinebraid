@@ -7,7 +7,9 @@ const path = require("path");
 const vm = require("vm");
 const { spawn, spawnSync } = require("child_process");
 const { render, emptyFixture } = require("./render-harness");
-const { disposableRoot } = require("./helpers/disposable-root");
+const { disposableRoot, isolateInProcessSettings } = require("./helpers/disposable-root");
+/* Settings defaults are loaded in-process below; disposable settings are named first. */
+isolateInProcessSettings("external-test-readiness");
 
 const ROOT = path.resolve(__dirname, "..");
 const SAMPLE_SLUG = "cinebraid-sample";

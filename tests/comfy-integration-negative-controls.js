@@ -30,6 +30,8 @@
 const assert = require("assert");
 const fs = require("fs");
 const path = require("path");
+/* comfy-client.js loads the settings module in-process; disposable settings are named first. */
+require("./helpers/disposable-root").isolateInProcessSettings("comfy-integration-negative");
 const Module = require("module");
 
 const ROOT = path.join(__dirname, "..");

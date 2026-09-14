@@ -213,6 +213,39 @@ function disposableRoot(label = "suite", { withSample = false, config = {}, at =
   return workspace;
 }
 
+/* FOR A PROCESS THAT LOADS CINEBRAID'S SETTINGS MODULE ITSELF — a render check, a unit suite —
+   without starting a server. Call it before anything requires src/server/config.js.
+
+   config.js resolves where settings live when it is first loaded. Unless the process has
+   already named a disposable settings file, that resolution is an installation's own
+   data/config.json or the account's per-user settings, and a later read would read somebody's
+   real configuration. So an already-named disposable file is kept, and otherwise the process
+   gets a disposable settings path that does not exist yet — which reads exactly as a fresh
+   checkout does, the shipped defaults. A settings module already loaded against a location
+   that is not disposable, or a named location that is not disposable, is refused rather than
+   quietly accepted. */
+function isolateInProcessSettings(label = "in-process") {
+  const loaded = require.cache[path.join(ROOT, "src", "server", "config.js")];
+  if (loaded) {
+    const why = refusal((loaded.exports && loaded.exports.CONFIG_PATH) || "");
+    if (why) {
+      throw new Error(`CineBraid's settings module was loaded before this process named disposable settings (${why.reason}). `
+        + "Call isolateInProcessSettings() before anything requires src/server/config.js.");
+    }
+    return null;
+  }
+  const named = process.env.CINEBRAID_CONFIG_PATH;
+  if (named) {
+    const why = refusal(named);
+    if (why) throw new Error(`CINEBRAID_CONFIG_PATH names settings that are not disposable: ${why.reason}.`);
+    return null;
+  }
+  const workspace = disposableRoot(label);
+  fs.rmSync(workspace.configPath, { force: true });
+  process.env.CINEBRAID_CONFIG_PATH = workspace.configPath;
+  return workspace;
+}
+
 function readLedger(file) {
   if (!file || !fs.existsSync(file)) return [];
   return fs.readFileSync(file, "utf8").split(/\r?\n/).filter((line) => line.trim()).map((line) => JSON.parse(line));
@@ -263,6 +296,7 @@ module.exports = {
   RUNTIME_ARTIFACTS,
   disposableRoot,
   insideRepository,
+  isolateInProcessSettings,
   isolatedConfig,
   readLedger,
   removeDisposableHome,
