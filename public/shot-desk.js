@@ -114,6 +114,9 @@
     }
     const confirm = box.querySelector('[onclick="confirmApproveTake()"]');
     if (confirm) confirm.textContent = "Approve image";
+    // The native modal helper encounters a hidden target input first.
+    // Focus the visible safe action without changing its trap or approval handler.
+    box.querySelector(".cancel")?.focus({ preventScroll: true });
     focusNext = "sd-decision-state";
   }
   function action(id) {

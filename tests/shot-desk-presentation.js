@@ -225,4 +225,3 @@ comparisonUsesOnlyTheReceiptBackedReference();
 labelsDistinguishHumanDecisionFromMachineSelection();
 presentationNeverMutatesTheProjection();
 console.log("shot-desk-presentation: " + checks + " assertions passed");
-
