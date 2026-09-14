@@ -2899,6 +2899,12 @@ window.openReturnedResultReview = (shotId, key) => {
     return toast("That returned result is no longer waiting for review");
   }
   if (item.owner.kind === "shot-motion") return openGuidedPanel(shotId, "motion");
+  if (window.CineBraidShotDesk) {
+    const href = shotReviewHref(shotId, item.key);
+    if (location.hash === href) return route();
+    location.hash = href;
+    return;
+  }
   return openCandidateReview(shotId, item.owner.frameId, item.candidate.name);
 };
 /* REVISE THIS TAKE starts the repair FROM THIS CANDIDATE, through the shipped review

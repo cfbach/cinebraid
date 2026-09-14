@@ -92,6 +92,8 @@ const ROUTES = {
   async shot(id) {
     const s = shotById(id);
     if (!s) return sharedNotFoundView("Shot", id, "#/shots/board", "Shots", (P.shots || []).map((row) => row.id), "#/shot");
+    const reviewKey = routeReviewClaim();
+    if (reviewKey && window.CineBraidShotDesk?.handles(s, reviewKey)) return window.CineBraidShotDesk.view(s, reviewKey);
     await fetch("/api/shots/" + id + "/folder", { method: "POST" });
     const takes = takesFor(id), sc = sceneById(s.scene), state = workflowState(s, takes), refs = referenceRecordsForShot(s), planningMedia = shotMediaLinks(s), neighbors = shotNeighbors(s);
     return guidedShotWorkspaceView(s, takes, sc, state, refs, planningMedia, neighbors);

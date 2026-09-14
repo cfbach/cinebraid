@@ -596,6 +596,13 @@ window.confirmApproveTake = async () => {
   }
   dirty();
   closeModal();
+  /* Presentation notification only: the authority write and optional rename above
+     remain the single owners. A path-based review can now follow those exact bytes. */
+  if (typeof CustomEvent === "function") window.dispatchEvent(new CustomEvent("cinebraid:take-approved", { detail: {
+    projectSlug: typeof activeProjectSlug === "function" ? activeProjectSlug() : "",
+    shotId: id, frameId: canonTarget?.kind === "shot-frame" ? canonTarget.frameId : "",
+    target, previousName: name, name: finalName, assetId: approvedAssetId,
+  } }));
   route();
   /* A run parked on "approve this frame" is satisfied by THIS act even though the
      act happened outside the run's own modal. Reconciling here is what stops

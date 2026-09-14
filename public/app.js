@@ -5865,7 +5865,7 @@ function projectNextProductionAction(feed = projectShotReadiness()) {
       message: `${first.label}. ${total > 1
         ? `${plural(total, "returned result")} are waiting for review across this project.`
         : "It is waiting for your review — approve it, keep it as an alternate, or reject it."}`,
-      actionLabel: "REVIEW RETURNED RESULT",
+      actionLabel: "REVIEW SHOT IMAGE",
     };
   }
   /* RETURNED MEDIA THE PROJECT STILL OWES A DECISION ON AND CANNOT FIND.
