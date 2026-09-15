@@ -169,7 +169,7 @@ function resolveOwnedMedia(owner, assetUrl) {
   if (raw.startsWith("/api/references/image?")) {
     const found = require("../../media/reference-media").resolveUrl({projectsRoot:path.dirname(owner.dir),slug:path.basename(owner.dir),url:raw});
     if (!found?.available) throw new Error("The exact reference asset is unavailable: " + (found?.reason || "unresolved"));
-    return found.path;
+    return { ...found, file: found.path, relativePath: found.storagePath, assetUrl: raw };
   }
   if (!raw) throw new ComfyGenerationError("COMFY_REFERENCE_UNNAMED", "A reference image was requested with no media identity.", {}, 400);
   if (!raw.startsWith("/assets/"))

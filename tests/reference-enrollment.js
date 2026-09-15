@@ -39,16 +39,49 @@ check("an identity from another project cannot resolve",()=>assert.equal(Referen
 check("a malformed binding retains its identity and cannot resolve",()=>{const bad=structuredClone(project);bad.props[0].candidateFiles[0].referenceBinding.entityId="another";const m=Reference.resolver({...opts(),project:bad}).resolve("props",bad.props[0],fixed);assert.equal(m.available,false);assert.equal(m.assetId,image.assetId);});
 fs.writeFileSync(path.join(dir,"project.json"),JSON.stringify(project));
 check("downstream URL resolution receives the enrolled source file",()=>{const item=resolve().resolve("props",project.props[0],fixed);assert.equal(Reference.resolveUrl({...opts(),url:item.url}).path,path.join(dir,"media/source.png"));assert.equal(Reference.resolveUrl({...opts(),slug:"film-b",url:item.url}).available,false);});
+// The two adapters deliberately have different caller contracts. Fal consumes
+// a filename; ComfyUI spreads a record into preparation before reading its file.
+const adapters={};
 for (const [file,name,next] of [["../src/generation/fal/fal-generation.js","localAssetFile","mimeFor"],["../src/generation/comfyui/comfy-generation.js","resolveOwnedMedia",""]]) {
   const absolute=require.resolve(file), source=fs.readFileSync(absolute,"utf8"),start=source.indexOf("function "+name+"(");
-  let end=next?source.indexOf("function "+next+"(",start):source.indexOf("const MIME_BY_EXT",start+10);
-  const fn=require("vm").runInNewContext("("+source.slice(start,end).trim()+")",{require:require("module").createRequire(absolute),path,text:v=>String(v||"")});
-  check(name+" downstream adapter loads exact binding and refuses cross-project",()=>{
-    const url=resolve().resolve("props",project.props[0],fixed).url;
-    assert.equal(fn({dir},url),path.join(dir,"media/source.png"));
-    assert.throws(()=>fn({dir:foreign},url),/unavailable/);
+  const end=next?source.indexOf("function "+next+"(",start):source.indexOf("const MIME_BY_EXT",start+10);
+  adapters[name]=require("vm").runInNewContext("("+source.slice(start,end).trim()+")",{
+    require:require("module").createRequire(absolute),path,fs,text:v=>String(v||""),
+    isProjectRelativeMediaPath:require("../public/shared-local-file").isProjectRelativeMediaPath,
+    ComfyGenerationError:require("../src/generation/comfyui/comfy-generation").ComfyGenerationError,
   });
 }
+const enrolledUrl=resolve().resolve("props",project.props[0],fixed).url;
+check("Fal keeps its string-oriented enrolled reference contract",()=>{
+  assert.equal(adapters.localAssetFile({dir},enrolledUrl),path.join(dir,"media/source.png"));
+  assert.throws(()=>adapters.localAssetFile({dir:foreign},enrolledUrl),/unavailable/);
+});
+check("ComfyUI prepares enrolled and legacy references without submitting or approving",()=>{
+  const before=JSON.stringify(project),diskBefore=fs.readFileSync(path.join(dir,"project.json")),mediaBefore=fs.readdirSync(path.join(dir,"media"));
+  const {contractJob}=require("../src/generation/comfyui/comfy-generation");
+  const client=require("../src/generation/comfyui/comfy-client");
+  const originals={uploadImage:client.uploadImage,submitPrompt:client.submitPrompt};let calls=0;
+  client.uploadImage=client.submitPrompt=()=>{calls++;throw Error("Preparation must not contact ComfyUI");};
+  try {
+    for(const url of [enrolledUrl,"/assets/props/old.png"]){
+      const resolved=adapters.resolveOwnedMedia({dir},url),reference={key:"startImage",role:"first-frame",...resolved};
+      const relative=url===enrolledUrl?"media/source.png":"props/old.png";
+      assert.equal(reference.file,path.join(dir,relative));assert.equal(reference.relativePath,relative);assert.equal(reference.assetUrl,url);
+      if(url===enrolledUrl){assert.equal(reference.assetId,image.assetId);assert.equal(reference.storagePath,image.storage.path);assert.equal(reference.bindingId,fixed);assert.equal(reference.stateId,"state-default");assert.equal(reference.slotId,"front");}
+      const job=contractJob({jobId:"prepare-only",shotId:"shot",frameId:"frame",prompt:"Synthetic reference",references:[reference],recipeId:"fixture.json",status:"preparing_inputs"});
+      assert.equal(job.inputs.references[0].source.path,relative);
+      assert.deepEqual(fs.readFileSync(reference.file),png); // the next upload preparation input
+    }
+    assert.equal(calls,0);assert.equal(JSON.stringify(project),before);assert.deepEqual(fs.readFileSync(path.join(dir,"project.json")),diskBefore);assert.deepEqual(fs.readdirSync(path.join(dir,"media")),mediaBefore);
+    assert.equal(project.productionAuthority,undefined,"preparation creates no approval");
+  } finally {Object.assign(client,originals);}
+});
+check("ComfyUI refuses foreign project/entity, missing and malformed references",()=>{
+  assert.throws(()=>adapters.resolveOwnedMedia({dir:foreign},enrolledUrl),/unavailable/);
+  const wrong=new URL(enrolledUrl,"http://local");wrong.searchParams.set("id","other-tool");
+  assert.throws(()=>adapters.resolveOwnedMedia({dir},wrong.pathname+wrong.search),/unavailable/);
+  for(const url of ["/assets/props/missing.png","/assets/../foreign.png","/api/references/image?project=film-a&assetId=asset-"+"f".repeat(32)])assert.throws(()=>adapters.resolveOwnedMedia({dir},url));
+});
 check("repeated discovery and inspection do not change project data",()=>{const before=JSON.stringify(project);for(let i=0;i<3;i++){resolve().projection();resolve().productionImages();}assert.equal(JSON.stringify(project),before);});
 project.props[0].candidateFiles.push({stored:"old.png",coverageJobType:"single-reference"});
 check("folder-backed candidates remain readable without migration",()=>assert.equal(resolve().resolve("props",project.props[0],"old.png").assetId,legacy.assetId));
@@ -57,9 +90,11 @@ const approved=structuredClone(project);
 check("an approval for the wrong asset identity cannot resolve",()=>assert.equal(resolve().resolve("props",project.props[0],fixed,side.assetId).available,false));
 fs.renameSync(path.join(dir,"media/source.png"),path.join(dir,"media/source-missing.png"));
 check("missing bound image does not fill coverage or resolve downstream",()=>{const r=resolve();assert.equal(r.resolve("props",project.props[0],fixed).available,false);assert.equal(Shared.coverage(project.props[0],r.listing("props",project.props[0]),"state-default").filled,1);});
+check("both downstream adapters refuse the missing enrolled asset",()=>{for(const fn of Object.values(adapters))assert.throws(()=>fn({dir},enrolledUrl),/unavailable/);});
 check("missing image cannot pass the server approval transition check",()=>{const current=structuredClone(approved);current.productionAuthority={version:1,receipts:[]};assert.throws(()=>Reference.validateSuccessor({current,successor:approved,projectsRoot:w.projectsRoot,slug,canon:true}),/unavailable/);});
 fs.renameSync(path.join(dir,"media/source-missing.png"),path.join(dir,"media/source.png"));fs.appendFileSync(path.join(dir,"media/source.png"),"replacement");
 check("changed bytes reject stale selection, not a same-name replacement",()=>{assert.equal(resolve().resolve("props",project.props[0],fixed).available,false);assert.throws(()=>Reference.enroll({...request,project}),/unavailable/);});
+check("both downstream adapters refuse a stale enrolled identity",()=>{for(const fn of Object.values(adapters))assert.throws(()=>fn({dir},enrolledUrl),/unavailable/);});
 check("existing bound identity cannot be retargeted through normal save",()=>{const bad=structuredClone(project);bad.props[0].candidateFiles[0].referenceBinding.assetId=side.assetId;assert.throws(()=>Reference.validateSuccessor({current:project,successor:bad,projectsRoot:w.projectsRoot,slug}),/immutable/);});
 check("a state/view map cannot substitute a binding from another assignment",()=>{
   const bad=structuredClone(project),slot=bad.props[0].coverageSlots[0];slot.referenceBindings.weathered=fixed;
