@@ -26,7 +26,8 @@ What this establishes, in the order a director meets it:
   I  a second entity that never passes exhausts exactly and says so
 
 NOTHING HERE IS PAID. /api/generation/fal/jobs and /api/llm/review-entity-candidate
-are fulfilled locally by this file; the suite fails if any request leaves the
+submission/review responses are fulfilled locally by this file. Completion and
+ingestion use the real server against a loopback-only provider; the suite fails if any browser request leaves the
 loopback host, and it counts the generation submissions so an unbounded run
 cannot pass unnoticed. The prompt compiler is the real one: only the optional
 local-advisor call is stubbed out (as unavailable, which is what the deterministic
@@ -38,7 +39,8 @@ CINEBRAID_CONFIG_PATH and CINEBRAID_PROJECTS_ROOT, so data/ and the shipped
 sample are never touched, and the directory is removed at the end.
 """
 
-import base64, json, os, pathlib, shutil, socket, subprocess, sys, tempfile, time
+import base64, json, os, pathlib, shutil, socket, subprocess, sys, tempfile, time, threading
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 
 def open_reference_tools(page):
@@ -188,8 +190,39 @@ project_file.write_text(json.dumps(project, indent=2), encoding="utf-8")
 
 anchors = project_dir / "anchors"
 anchors.mkdir(parents=True, exist_ok=True)
-for name in REVIEWS:
-    (anchors / name).write_bytes(PIXEL)
+# No loose candidate files: only the canonical production collector may create them.
+provider_jobs, provider_calls = {}, []
+class SyntheticProvider(BaseHTTPRequestHandler):
+    def log_message(self, *_args): pass
+    def do_GET(self):
+        provider_calls.append(self.path)
+        kind, key = self.path.strip('/').split('/', 1)
+        if kind == 'status' and key in provider_jobs:
+            data, mime = json.dumps({'status': 'COMPLETED'}).encode(), 'application/json'
+        elif kind == 'result' and key in provider_jobs:
+            data = json.dumps({'images': [{'url': f'{provider_origin}/image/{name}', 'file_name': name}
+                                         for name in provider_jobs[key]]}).encode()
+            mime = 'application/json'
+        elif kind == 'image' and key in REVIEWS:
+            data, mime = PIXEL, 'image/png'
+        else:
+            self.send_error(404); return
+        self.send_response(200); self.send_header('Content-Type', mime)
+        self.send_header('Content-Length', str(len(data))); self.end_headers(); self.wfile.write(data)
+    def do_POST(self):
+        provider_calls.append('UNEXPECTED POST ' + self.path)
+        self.send_error(405)
+provider = ThreadingHTTPServer(('127.0.0.1', 0), SyntheticProvider)
+provider_origin = f'http://127.0.0.1:{provider.server_port}'
+threading.Thread(target=provider.serve_forever, daemon=True).start()
+
+def stored_name(case):
+    current = json.loads(project_file.read_text(encoding='utf-8'))
+    matches = [row['stored'] for entity in current['characters'] for row in entity.get('candidateFiles', [])
+               if row.get('original') == case]
+    assert len(matches) == 1, f'canonical ingestion must own exactly one candidate for {case}: {matches}'
+    return matches[0]
+
 
 port = free_port()
 server = subprocess.Popen(
@@ -201,6 +234,45 @@ server = subprocess.Popen(
 
 console_errors, page_errors, offsite, failed_requests = [], [], [], []
 submissions, review_calls, compiles, advisor_stubs = [], [], [], []
+# Diagnostic-only event history. No authorization headers, prompts or config
+# bodies are recorded; only this synthetic fixture's transaction identities.
+http_trace, request_orders = [], {}
+trace_started = time.monotonic()
+
+def trace_request(request):
+    endpoint = request.url.split('://', 1)[-1].partition('/')[2]
+    if not endpoint.startswith(('api/project', 'api/scan', 'api/generation/fal/jobs', 'api/automation/runs')):
+        return
+    order = len(http_trace) + 1
+    request_orders[request] = order
+    try: body = json.loads(request.post_data or '{}')
+    except (ValueError, TypeError): body = {}
+    http_trace.append({'order': order, 'event': 'request', 'elapsed': time.monotonic()-trace_started,
+                       'method': request.method, 'endpoint': '/'+endpoint,
+                       'ifMatch': request.headers.get('if-match', ''),
+                       'identity': {k:body[k] for k in ('id','revision','projectSlug','entityId','entityList',
+                                    'continuityStateId','automationRunId','automationStepKey','fileName','assetId') if k in body}})
+
+def trace_response(response):
+    order = request_orders.get(response.request)
+    if order is None: return
+    row = {'order': len(http_trace)+1, 'requestOrder': order, 'event':'response',
+           'elapsed': time.monotonic()-trace_started, 'status':response.status,
+           'method':response.request.method, 'endpoint':'/'+response.url.split('://',1)[-1].partition('/')[2],
+           'revision':response.headers.get('x-cinebraid-project-revision',''),
+           'etag':response.headers.get('etag','')}
+    if response.status == 409 or row['endpoint'].split('?')[0].endswith('/refresh'):
+        try:
+            body=response.json()
+            row['response']={k:body[k] for k in ('code','error','message','revision','projectUpdated') if k in body}
+            for key in ('job','run'):
+                value=body.get(key) or {}
+                row[key]={k:value[k] for k in ('id','revision','status','ingestedAt','entityId','continuityStateId') if k in value}
+        except Exception as error: row['diagnosticError']=str(error)
+    http_trace.append(row)
+    if response.status == 409:
+        print('HTTP_CONFLICT_TRANSACTION '+json.dumps({'request':http_trace[order-1], 'response':row}), flush=True)
+
 # The one console error this suite manufactures: the optional local prompt
 # advisor is answered 503 on purpose, and the browser logs every failed fetch.
 # Forgiven by exact text and exact count, so a real console error still fails.
@@ -224,6 +296,8 @@ try:
         page.on("console", lambda m: console_errors.append(m.text) if m.type == "error" else None)
         page.on("pageerror", lambda e: page_errors.append(str(e)))
         page.on("requestfailed", lambda r: failed_requests.append(f"{r.method} {r.url} ({r.failure or ''})"))
+        page.on('request', trace_request)
+        page.on('response', trace_response)
 
         def json_body(route):
             try: return json.loads(route.request.post_data or "{}")
@@ -232,7 +306,7 @@ try:
         def guard(route):
             """Providers are fulfilled here. Nothing leaves this machine."""
             request, url = route.request, route.request.url
-            if PAID_ROUTE in url and request.method == "POST":
+            if url.split("?")[0].endswith(PAID_ROUTE) and request.method == "POST":
                 body = json_body(route)
                 entity = str(body.get("entityId") or "")
                 index = len([row for row in submissions if row["entity"] == entity])
@@ -243,18 +317,35 @@ try:
                 files = batches[index]
                 submissions.append({"entity": entity, "files": files, "outputCount": body.get("outputCount"),
                                     "prompt": str(body.get("prompt") or "")})
-                return route.fulfill(status=200, content_type="application/json", body=json.dumps({
-                    "ok": True, "job": {"id": f"job-{entity}-{index + 1}", "status": "COMPLETED",
-                                        "purpose": "entity-reference", "model": "GPT Image 2",
-                                        "entityList": "characters", "entityId": entity,
-                                        "outputs": [{"name": name, "url": f"/assets/anchors/{name}"} for name in files]}}))
+                job_id = f"job-{entity}-{index + 1}"
+                provider_jobs[job_id] = files
+                job = {**body, "id": job_id, "externalId": job_id, "provider": "fal",
+                       "status": "IN_QUEUE", "purpose": "entity-reference", "model": "GPT Image 2",
+                       "references": [], "outputs": [], "projectSlug": "dogfood-sample",
+                       "statusUrl": f"{provider_origin}/status/{job_id}",
+                       "responseUrl": f"{provider_origin}/result/{job_id}"}
+                # Seed only simulated accepted work through the existing ledger writer.
+                # POST .../refresh is NOT intercepted: production collects, ingests and
+                # persists ownership; the browser then reloads the real projection.
+                subprocess.run(["node", "-e", "const fs=require('fs'),s=require('./src/generation/generation-job-store');"
+                                "const x=JSON.parse(fs.readFileSync(0,'utf8'));"
+                                "s.writeJobLedgerSync(x.dir,[...s.readJobLedger(x.dir).jobs,x.job]);"],
+                               input=json.dumps({"dir": str(project_dir), "job": job}), text=True,
+                               cwd=ROOT, check=True, capture_output=True)
+                return route.fulfill(status=200, content_type="application/json",
+                                     body=json.dumps({"ok": True, "job": job}))
             if "/api/llm/review-entity-candidate" in url and request.method == "POST":
                 body = json_body(route)
                 name = str(body.get("fileName") or "")
-                assert name in REVIEWS, f"a review was requested for {name}, which no pass generated"
-                review_calls.append(name)
+                current = json.loads(project_file.read_text(encoding='utf-8'))
+                owner = next(row for row in current['characters'] if row['id'] == body['id'])
+                candidate = next((row for row in owner.get('candidateFiles', []) if row['stored'] == name), None)
+                assert candidate and candidate['targetStateId'] == body['stateId'], 'review requires ingested state ownership'
+                case = candidate['original']
+                assert case in REVIEWS, f'a review was requested for an ungenerated candidate: {name}'
+                review_calls.append(case)
                 return route.fulfill(status=200, content_type="application/json", body=json.dumps({
-                    "review": REVIEWS[name],
+                    "review": REVIEWS[case],
                     "inputLabels": [{"image": 1, "fileName": name, "role": "candidate under review"}]}))
             if "/api/prompt/asset-compile" in url and request.method == "POST" and not json_body(route).get("useLLM"):
                 # Recorded, then passed through to the real compiler: what the client
@@ -466,7 +557,7 @@ try:
 
         # ---- E. the progression is on screen, in Reports -----------------
         progression_text = progression_on_reports("MARA", "E")
-        for fragment in ("PASS 1 OF 3", "PASS 2 OF 3", "MARA-P1-A.png", "62", "Preserve", "Correct",
+        for fragment in ("PASS 1 OF 3", "PASS 2 OF 3", stored_name("MARA-P1-A.png"), "62", "Preserve", "Correct",
                          "What changed from pass 1"):
             assert fragment in progression_text, f"E: the progression panel omits {fragment!r}"
         assert "Face too dark" in progression_text and "Framing too wide" in progression_text, \
@@ -495,9 +586,9 @@ try:
             f"F: the gate does not state what came back or how it scored: {gate_summary[:200]!r}"
         offered = gate.locator("button.automation-review-open")
         assert offered.count() == 1, "F: the gate offers no way into the returned candidates"
-        assert "MARA-P2-A.png" in (offered.first.get_attribute("onclick") or ""), \
+        assert stored_name("MARA-P2-A.png") in (offered.first.get_attribute("onclick") or ""), \
             "F: the gate's review control does not hand off to the passing candidate"
-        assert page.locator('.entity-candidate-card[data-candidate-file="MARA-P2-A.png"]').count() == 1, \
+        assert page.locator('.entity-candidate-card[data-candidate-file="%s"]' % stored_name("MARA-P2-A.png")).count() == 1, \
             "F: the passing candidate is not offered for approval in the grid the gate hands off to"
 
         # ---- G. a rejected candidate keeps a way into its review --------
@@ -509,13 +600,13 @@ try:
         page.wait_for_selector("#main .entity-candidate-section", timeout=20000)
         page.evaluate("() => document.querySelectorAll('#main details').forEach(node => { node.open = true; })")
         page.wait_for_timeout(300)
-        card = page.locator('.entity-candidate-card[data-candidate-file="MARA-P1-B.png"]').first
+        card = page.locator('.entity-candidate-card[data-candidate-file="%s"]' % stored_name("MARA-P1-B.png")).first
         assert card.count() == 1, "G: the pass-1 candidate is not listed"
         card.get_by_role("button", name="REJECT", exact=True).click()
         page.wait_for_timeout(700)
         page.evaluate("() => document.querySelectorAll('#main details').forEach(node => { node.open = true; })")
         page.wait_for_timeout(300)
-        rejected = page.locator('.entity-rejected-candidates .entity-candidate-card[data-candidate-file="MARA-P1-B.png"]').first
+        rejected = page.locator('.entity-rejected-candidates .entity-candidate-card[data-candidate-file="%s"]' % stored_name("MARA-P1-B.png")).first
         assert rejected.count() == 1, "G: the rejected candidate is not in the rejected list"
         review_button = rejected.locator("button.rejected-review-action")
         assert review_button.count() == 1, \
@@ -536,7 +627,7 @@ try:
         page.locator(".entity-candidate-review-modal .cancel").first.click()
         page.wait_for_timeout(400)
         still_rejected = page.evaluate(
-            "() => (P.characters.find(row => row.id === 'MARA').candidateFiles.find(row => (row.stored||row.name) === 'MARA-P1-B.png') || {}).decision")
+            "name => (P.characters.find(row => row.id === 'MARA').candidateFiles.find(row => (row.stored||row.name) === name) || {}).decision", stored_name("MARA-P1-B.png"))
         assert still_rejected == "rejected", f"H: reading a review changed the human decision to {still_rejected!r}"
 
         # ---- I. exhaustion, on a second entity --------------------------
@@ -569,27 +660,27 @@ try:
         # work the run produced.
         champions = ((nell_run.get("result") or {}).get("referenceChampions") or {})
         champion = champions.get("state-default") or {}
-        assert champion.get("file") == "NELL-P2-C.png", \
+        assert champion.get("file") == stored_name("NELL-P2-C.png"), \
             f"J: the champion should be the pass-2 64, got {champion.get('file')!r}"
         assert champion.get("score") == 64 and champion.get("passNumber") == 2, \
             f"J: the champion regressed to a later pass: {champion!r}"
         assert exhaustion["bestScore"] == 64, \
             f"J: the exhaustion summary reported {exhaustion['bestScore']} instead of the run's best"
-        assert exhaustion["bestFile"] == "NELL-P2-C.png"
+        assert exhaustion["bestFile"] == stored_name("NELL-P2-C.png")
         assert "Best across every pass" in panel, "J: the champion is not named on screen"
-        assert "NELL-P2-C.png" in panel, "J: the champion file is not shown in the progression panel"
+        assert stored_name("NELL-P2-C.png") in panel, "J: the champion file is not shown in the progression panel"
         assert "a later pass scored lower and did not replace it" in panel, \
             f"J: the panel does not explain that a later pass was worse: {panel[:400]!r}"
-        assert "NELL-P2-C.png" in gate_text, \
+        assert stored_name("NELL-P2-C.png") in gate_text, \
             "J: the human review gate must still offer the run's best candidate, not only the last pass"
         assert "BEST CANDIDATE OF THE WHOLE RUN" in gate_text, \
             f"J: the gate does not surface the champion: {gate_text!r}"
 
         # ---- K. the review modal states which job the reviewer was doing --
-        page.evaluate("() => openEntityCandidateReview('characters','NELL','NELL-P2-C.png','state-default')")
+        page.evaluate("name => openEntityCandidateReview('characters','NELL',name,'state-default')", stored_name("NELL-P2-C.png"))
         page.wait_for_timeout(400)
         modal = page.locator("#modal").first.inner_text()
-        assert "NELL-P2-C.png" in modal, f"K: the champion's own review did not open: {modal[:200]!r}"
+        assert stored_name("NELL-P2-C.png") in modal, f"K: the champion's own review did not open: {modal[:200]!r}"
         assert "ESTABLISHING FIRST AUTHORITY" in modal, \
             f"K: the review must say it was establishing the first authority: {modal[:400]!r}"
         assert "a missing prior authority is not a fault here" in modal, \
@@ -603,12 +694,64 @@ try:
         page.evaluate("() => closeModal()")
         page.wait_for_timeout(200)
 
+        # ---- L. canonical delivery, durable previews and refusal boundaries ----
+        page.reload(wait_until='domcontentloaded')
+        page.wait_for_function("document.body.dataset.renderReady === '1'", timeout=30000)
+        media_snapshot = ("() => ['MARA','NELL'].flatMap(id => { const e=P.characters.find(x=>x.id===id);"
+                          " return entityMedia('characters',e).map(m=>({entity:id,...m})); })")
+        delivered = page.evaluate(media_snapshot)
+        assert len(delivered) == 15 and all(m.get('available') for m in delivered), \
+            f'all canonical candidates must remain available immediately after reload: {delivered}'
+        # Identity activation is deliberately asynchronous and throttled (15s),
+        # independent of immediate ownership-based reviewability. Wait for that
+        # existing contract; do not manufacture IDs or rescan files in the fixture.
+        pending_ids = [m['name'] for m in delivered if not m.get('assetId')]
+        if pending_ids:
+            print('Reviewable after reload; awaiting background identity activation: ' + json.dumps(pending_ids))
+        deadline = time.monotonic() + 25
+        while any(not m.get('assetId') for m in delivered) and time.monotonic() < deadline:
+            page.wait_for_timeout(1000)
+            page.evaluate("() => load({intent:'refresh'})")
+            delivered = page.evaluate(media_snapshot)
+        assert len(delivered) == 15 and all(m.get('available') and m.get('assetId') for m in delivered), \
+            f'background identity activation must preserve every available candidate: {delivered}'
+        for item in delivered:
+            response = page.request.get(base + item['url'])
+            assert response.ok and response.body() == PIXEL, 'durable preview must load the ingested synthetic bytes'
+        assert page.evaluate("() => ['MARA','NELL'].every(id=>{const e=P.characters.find(x=>x.id===id);"
+                             "return !e.approvedFile && (e.continuityStates||[]).every(s=>!s.approvedFile);})"), \
+            'generation and AI recommendations must leave references unapproved'
+        # Exercise the same resolver on the resulting real ingested record. Only
+        # disposable media is changed; no scan may replace a stale identity.
+        proof = subprocess.run(['node', '-e', r"""
+const fs=require('fs'),path=require('path'),assert=require('assert/strict');
+const R=require('./src/media/reference-media');
+const x=JSON.parse(fs.readFileSync(0,'utf8')), slug='dogfood-sample';
+const dir=path.join(x.root,slug),project=JSON.parse(fs.readFileSync(path.join(dir,'project.json'),'utf8'));
+const e=project.characters.find(e=>e.id==='MARA'),other=project.characters.find(e=>e.id==='NELL');
+const key=e.candidateFiles[0].stored, get=()=>R.resolver({projectsRoot:x.root,slug,project});
+const found=get().resolve('characters',e,key);
+assert(found.available && found.assetId); assert.equal(get().resolve('characters',other,key).available,false);
+assert.equal(get().asset('asset-'+ 'f'.repeat(32)).available,false);
+assert.equal((project.productionAuthority?.receipts||[]).filter(r=>['MARA','NELL'].includes(r.entityId)&&r.status==='current').length,0);
+assert(e.candidateFiles.every(c=>c.targetStateId==='state-default'));
+fs.renameSync(found.path,found.path+'.missing');
+assert.equal(get().resolve('characters',e,key,found.assetId).available,false);
+fs.renameSync(found.path+'.missing',found.path);fs.appendFileSync(found.path,'stale synthetic replacement');
+assert.equal(get().resolve('characters',e,key,found.assetId).available,false);
+console.log('Canonical generated candidates: durable identity, state ownership, no approval, foreign/missing/stale refusal passed.');
+"""], input=json.dumps({'root':str(projects_root)}), text=True, cwd=ROOT, capture_output=True)
+        assert proof.returncode == 0, proof.stdout + proof.stderr
+        print(proof.stdout.strip())
+
         # ---- A again, after everything ----------------------------------
         assert not page_errors, f"the automation flow raised uncaught errors: {page_errors}"
         assert not product_console_errors(), f"the automation flow logged console errors: {console_errors}"
         browser.close()
 
     assert not offsite, f"browser QA attempted to leave this machine: {offsite}"
+    assert sum(path.startswith('/image/') for path in provider_calls) == 15, 'canonical ingestion must download every returned image exactly once'
+    assert not any(path.startswith('UNEXPECTED POST') for path in provider_calls), 'collection must not submit provider work'
     assert len(submissions) == 5, f"the suite made {len(submissions)} generation submissions, expected 5"
     assert len(review_calls) == 15, f"the suite made {len(review_calls)} review calls, expected 15"
     assert len(console_errors) == len(advisor_stubs), (
@@ -626,6 +769,17 @@ try:
         f"the review modal named the authority mode and grouped findings by who can act on them. {len(submissions)} simulated generation submissions, {len(review_calls)} simulated reviews, "
         f"no request left the loopback host and nothing paid was called.")
 finally:
+    if sys.exc_info()[0] is not None:
+        print('HTTP_TRANSACTION_ORDER '+json.dumps(http_trace), flush=True)
+        try:
+            failed_project=json.loads(project_file.read_text(encoding='utf-8'))
+            print('SYNTHETIC_CANDIDATE_STATE '+json.dumps({e['id']: {
+                'approvedFile':e.get('approvedFile',''),
+                'candidates':[{k:r.get(k) for k in ('stored','targetStateId','generationJobId','decision')}
+                              for r in e.get('candidateFiles',[])]}
+                for e in failed_project['characters'] if e['id'] in ('MARA','NELL')}), flush=True)
+        except Exception as error: print('Candidate diagnostic unavailable: '+str(error), flush=True)
+    provider.shutdown(); provider.server_close()
     server.terminate()
     try: server.wait(timeout=5)
     except subprocess.TimeoutExpired: server.kill()

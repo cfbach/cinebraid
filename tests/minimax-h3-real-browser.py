@@ -179,20 +179,17 @@ try:
         page.wait_for_selector('#main'); page.wait_for_function("document.body.dataset.renderReady === '1'",timeout=30000)
         # ---- the approvals, performed the way a filmmaker performs them ---------------
         #
-        # The reference first: an approvedFile with no receipt is HISTORIC, so the hero
-        # offers "Approve as primary reference" and one trusted click writes the entity
-        # -state receipt r2v requires. Then each frame's own approve control, because the
-        # keyframe panel composes approved frames. Nothing here writes authority directly.
+        # A historic pointer still needs the Reference Desk's deliberate approval.
+        # Nothing in this fixture writes authority directly.
         page.evaluate("(hash) => { location.hash = hash; }", '#/character/H3-CHAR')
         page.evaluate('() => route()')
-        page.wait_for_selector('#main .reference-primary-hero', timeout=20000)
-        approve = page.locator('#main .reference-primary-actions button')
-        assert approve.count() == 1, 'the reference hero must offer exactly one primary action'
-        approve.first.click()
-        # The hero's control opens the approval dialog; the decision itself is the
-        # dialog's APPROVE, which is the gesture that writes canon.
-        page.wait_for_selector('#modal button:text-is("APPROVE")', timeout=20000)
-        page.locator('#modal button:text-is("APPROVE")').click()
+        page.wait_for_selector('[data-reference-desk]', timeout=20000)
+        assert page.locator('#rd-title').inner_text().strip(), 'Reference Desk must identify the reference'
+        approve = page.get_by_role('button', name='Approve reference…', exact=True)
+        assert approve.count() == 1, 'Reference Desk must offer one explicit reference approval action'
+        approve.click()
+        page.wait_for_selector('#entity-approve-confirm:not([disabled])', timeout=20000)
+        page.get_by_role('button', name='Approve reference', exact=True).click()
         page.wait_for_function(
             "() => (P.productionAuthority?.receipts || []).some(r => r.kind === 'entity-state'"
             " && r.entityId === 'H3-CHAR' && r.status === 'current')", timeout=20000)
