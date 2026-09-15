@@ -120,7 +120,14 @@ try:
             page.wait_for_selector("#main")
         open_hash("#/character/CHAR-MANUAL")
         page.wait_for_timeout(250)
-        assert page.get_by_text("Build the reference pack").count() == 1
+        # Reference Desk owns the reference entry; the manual creation tools
+        # remain reachable through its explicit tools navigation.
+        assert page.locator('[data-reference-desk]').count() == 1, "Reference Desk must own the reference page"
+        assert page.locator('#rd-title').inner_text() == "Manual reference artist"
+        page.locator('[data-rd-action="inspect"]').click()
+        page.locator('.rd-tool-link:visible').click()
+        page.wait_for_selector('[data-reference-tools]')
+        assert not page.locator('#modal:not(.hidden)').count(), "tools navigation must dismiss Reference details"
         assert page.get_by_text("Human approval is enough", exact=False).count() >= 1
         assisted = page.locator("details.reference-assisted-tools")
         assert assisted.count() == 1 and not assisted.first.evaluate("node => node.open"), "assisted tools must start collapsed"
@@ -183,19 +190,20 @@ try:
         if SCREENSHOT_DIR:
             page.screenshot(path=str(SCREENSHOT_DIR / "manual-reference-coverage.png"), full_page=True)
 
-        # The "Approved" tab is the Canon tab now, and it is receipt-backed. This
-        # entity has a selected coverage view and NO canon receipt, so the point of
-        # the assertion is that it does NOT appear here — the Dogfood #2 acceptance
-        # audit rendered exactly this entity under Approved, with an APPROVED badge
-        # and copy saying these media define production truth.
+        # Approved remains receipt-backed. Supporting selections are discoverable
+        # in All references, but cannot appear in the Approved category.
         open_hash("#/library/canon")
-        assert page.locator(".view-head .view-title").inner_text().strip() == "References"
-        assert page.get_by_text("Supporting views, historic pointers, candidates and automation are hidden", exact=False).count() == 1
-        assert page.locator(".library-card.canon").count() == 0, "a supporting selection must not put an entity in the Canon tab"
-        assert page.get_by_text("APPROVED", exact=True).count() == 0, "the library must never badge a supporting selection APPROVED"
+        library = page.locator('[data-reference-library]')
+        assert library.get_by_role("heading", name="References", exact=True).count() == 1
+        assert library.locator('nav[aria-label="Reference types"] a.selected').inner_text() == "Approved"
+        assert library.locator('.rd-library-card').count() == 0, "a supporting selection must not put an entity in Approved"
+        assert library.get_by_text("Approved reference", exact=True).count() == 0, "the library must never badge a supporting selection Approved"
         open_hash("#/library/all")
-        assert page.locator(".library-status.canon").count() == 0, "no canon badge without a receipt"
-        assert page.locator(".library-status.reference").count() >= 1, "a selected supporting view reads as REFERENCES"
+        entry = page.locator('[data-reference-library]').get_by_role("link").filter(has=page.get_by_role("heading", name="Manual reference artist", exact=True))
+        assert entry.count() == 1 and entry.is_visible(), "a supporting reference remains discoverable in All"
+        assert "Approved reference" not in entry.inner_text() and "Approved image" not in entry.inner_text(), "no approval status without a receipt"
+        assert page.evaluate("() => P.characters.find(x=>x.id==='CHAR-MANUAL').coverageSlots.find(x=>x.id==='profile').selectedFile") == "CHAR-MANUAL-PROFILE.png", "library navigation must retain the supporting selection"
+        assert page.evaluate("() => !(P.productionAuthority?.receipts || []).some(r=>r.entityId==='CHAR-MANUAL' && r.status==='current')"), "view assignment and browsing cannot create approval"
 
         open_hash(f"#/shot/{shot_id}")
         page.locator(".focused-task-button").filter(has=page.get_by_text("Frames", exact=True)).click()

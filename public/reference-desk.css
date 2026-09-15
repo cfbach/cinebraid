@@ -233,3 +233,44 @@ body.reference-desk-active #modal .rd-confirm-box{width:650px;max-width:90vw;bac
 .rd-picker-layout{height:calc(92vh - 190px);min-height:0}.rd-picker-library,.rd-assignment{min-height:0}.rd-assignment figure{flex:1 1 200px;min-height:145px}.rd-assignment figure img{max-height:100%;min-height:0}.rd-picker-grid img{content-visibility:auto}
 
 .rd-existing-tools{height:100%;width:100%;overflow:auto;padding:24px}.rd-tools-back,.rd-tool-link{display:inline-block;color:#a6c9cf;margin:0 0 20px;font-size:13px}
+
+/* Preserve the covered phone reference workflow without changing desktop rails. */
+@media (max-width: 767px) {
+  body.reference-desk-active #app { --cb-nav-width: 0px; display: block; }
+  body.reference-desk-active #rail { position: fixed; top: 0; left: 0; bottom: 0; width: 240px; height: 100dvh; transform: translateX(-102%); }
+  body.reference-desk-active.rail-open #rail { transform: none; }
+  body.reference-desk-active #mobile-nav { display: block; }
+  body.reference-desk-active #topbar { padding-inline: 12px; }
+  body.reference-desk-active .topbar-context { flex: 1; overflow: hidden; }
+  body.reference-desk-active .topbar-project { min-width: 0; max-width: 44vw; }
+  body.reference-desk-active .topbar-actions { gap: 6px; }
+  body.reference-desk-active #app #main { overflow: auto; }
+  .reference-desk { height: auto; min-height: 100%; overflow: visible; padding: 16px 12px 0; gap: 12px; }
+  .rd-heading,.rd-toolbar,.rd-decision,.rd-library-tools { flex-wrap: wrap; gap: 12px; }
+  .rd-heading>div,.rd-toolbar>label { min-width: 0; }
+  .rd-toolbar>label { width: 100%; flex-wrap: wrap; gap: 6px; }
+  .rd-toolbar select { min-width: 0; width: 100%; }
+  .rd-body,.rd-body.rd-inspection-open { grid-template-columns: minmax(0,1fr); flex: 0 0 auto; }
+  .rd-working { overflow: visible; }
+  .rd-canvas { flex: none; height: 260px; min-height: 260px; }
+  .rd-canvas:has(.rd-empty) { height: auto; }
+  .rd-empty { padding: 24px 12px; }
+  .rd-coverage header { flex-wrap: wrap; gap: 8px; }
+  .rd-candidates { flex-basis: auto; min-height: 83px; }
+  .rd-decision { margin-top: auto; }
+  .rd-library { padding: 16px 12px; }
+  .rd-library-tools,.rd-search,.rd-search input { width: 100%; }
+  .rd-library-grid { grid-template-columns: minmax(0,1fr); }
+  .reference-desk .rd-button,.rd-library .rd-button,.rd-toolbar select,
+  .rd-picker button,.rd-picker .cancel,.rd-picker select,.rd-confirm button,.rd-confirm .cancel { min-height: 44px; }
+  .rd-picker header { flex-wrap: wrap; gap: 12px; }
+  body.reference-desk-active #modal .rd-picker-box,
+  body.reference-desk-active #modal .rd-confirm-box { padding: 16px; }
+  .rd-picker-layout { grid-template-columns: minmax(0,1fr); height: auto; max-height: none; gap: 16px; }
+  .rd-picker-library,.rd-assignment { overflow: visible; }
+  .rd-picker-grid { grid-template-columns: repeat(2,minmax(0,1fr)); }
+  .rd-assignment figure { flex: none; height: 190px; }
+  .rd-picker footer { flex-wrap: wrap; }
+  .rd-picker footer p { max-width: 100%; }
+  .rd-confirm figure { height: 190px; }
+}
