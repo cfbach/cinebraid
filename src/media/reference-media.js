@@ -14,6 +14,7 @@ function resolver({projectsRoot, slug, project}) {
   try { if (physical.ok) registry = Assets.readAssets(projectsRoot,slug); } catch { /* Preserve unavailable bindings; never guess from filenames. */ }
   const assets = registry.readOnly ? [] : registry.assets || [];
   const byId = new Map(assets.map(a => [a.assetId,a]));
+  const libraryByPath = new Map((project.mediaAssets || []).map(m => [m.storagePath || (m.file ? "media/"+m.file : ""),m]));
   function asset(assetId, expected) {
     if (!/^asset-[a-f0-9]{32}$/.test(assetId || "")) return unavailable("",assetId,"invalid-asset-identity");
     const row = byId.get(assetId);
@@ -21,7 +22,8 @@ function resolver({projectsRoot, slug, project}) {
     const rel = String(row.storage?.path || "");
     if (!rel || /[\\:]/.test(rel) || rel.startsWith("/") || rel.split("/").some(x => !x || x === "." || x === "..")) return unavailable("",assetId,"outside-project");
     if (row.mediaType !== "image" || !IMAGE.test(rel)) return unavailable("",assetId,"incompatible-media");
-    const located = localFileAffordance({projectsRoot,slug,key:"asset:"+assetId});
+    if (row.storage?.missing === true) return unavailable("",assetId,"missing");
+    const located = localFileAffordance({projectsRoot,slug,key:"path:"+rel});
     if (located.state !== "available") return unavailable("",assetId,located.reason || located.state);
     const stat = fs.statSync(located.path);
     if ((Number.isFinite(row.storage.bytes) && row.storage.bytes !== stat.size) || (Number.isFinite(row.storage.mtimeMs) && Math.abs(row.storage.mtimeMs-stat.mtimeMs)>1)) return unavailable("",assetId,"identity-observation-stale");
@@ -69,7 +71,7 @@ function resolver({projectsRoot, slug, project}) {
   function productionImages() {
     return assets.filter(a => a.mediaType === "image").map(a => {
       const found = asset(a.assetId), rel = a.storage?.path;
-      const library = (project.mediaAssets || []).find(m => (m.storagePath || (m.file ? "media/"+m.file : "")) === rel);
+      const library = libraryByPath.get(rel);
       const {path:disk,...row} = found;
       return {...row,mediaType:a.mediaType,source:a.source,storagePath:rel,sourceName:found.sourceName || path.basename(rel || ""),title:library?.title || found.sourceName || path.basename(rel || ""),addedAt:library?.createdAt || "",links:library?.links || []};
     });
@@ -77,7 +79,7 @@ function resolver({projectsRoot, slug, project}) {
   // Read-only inventory: retain ledger identity and verify the recorded local original. No hydration or writes.
   function inventory() {
     return assets.filter(a => !String(a.storage?.path || "").includes("/locked/")).map(a => {
-      const rel=a.storage?.path || "", library=(project.mediaAssets || []).find(m => (m.storagePath || (m.file ? "media/"+m.file : "")) === rel);
+      const rel=a.storage?.path || "", library=libraryByPath.get(rel);
       const located=a.storage?.missing===true?{state:'missing'}:localFileAffordance({projectsRoot,slug,key:'path:'+rel});
       if(located.state==='available'){const stat=fs.statSync(located.path);if((Number.isFinite(a.storage.bytes)&&a.storage.bytes!==stat.size)||(Number.isFinite(a.storage.mtimeMs)&&Math.abs(a.storage.mtimeMs-stat.mtimeMs)>1)){located.state='unavailable';located.reason='identity-observation-stale';}}
       return {assetId:a.assetId,storagePath:rel,source:a.source,mediaType:a.mediaType,scope:a.scope,

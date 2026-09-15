@@ -204,7 +204,7 @@
   window.addEventListener("cinebraid:route-rendered", mount);
   window.CineBraidShotDesk = {
     handles(shot, key) {
-      const item = candidateReviewContext(returnedReviewProjectionForBrowser(), key);
+      const item = (returnedReviewProjectionForBrowser()?.items || []).find(row => row.key === key && row.shotId === shot.id);
       return !item || item.owner.kind !== "shot-motion";
     },
     view,

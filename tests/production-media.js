@@ -121,6 +121,7 @@ function loadInspector(sources, PM) {
   context.window = context;
   context.globalThis = context;
   Object.assign(context, PM);
+  context.CineBraidMediaDiscovery = require("../public/shared-media-discovery");
   vm.runInContext(sources.inspector, context, { filename: "media-inspector.js" });
   return context.window.CineBraidMediaInspector;
 }
@@ -899,7 +900,8 @@ function checkActions({ PM, sources }) {
         `${name}: has no candidate row, so ${forbidden} must not be offered`);
 
   /* EVERY ACTION THE INSPECTOR DISPATCHES IS A SHIPPED HANDLER. */
-  const handlers = ["approveTake", "approveEntityFile", "setCandidateDecision", "setEntityCandidateDecision", "openCandidateReview", "openEntityCandidateReview", "openMediaTheatre"];
+  const handlers = ["openMediaTheatre"];
+  for (const handler of ["approveTake", "approveEntityFile", "setCandidateDecision", "setEntityCandidateDecision", "openCandidateReview", "openEntityCandidateReview"]) assert(!stripComments(sources.inspector).includes("window." + handler + "("), "Inspector must hand off decisions instead of dispatching " + handler);
   for (const handler of handlers)
     assert(sources.inspector.includes(handler), `the Inspector must dispatch the shipped ${handler}`);
   for (const [handler, owner] of [["approveTake", "library-tools.js"], ["approveEntityFile", "library-tools.js"], ["setCandidateDecision", "review-provenance.js"], ["setEntityCandidateDecision", "entities.js"]])
@@ -973,7 +975,7 @@ function checkRendering({ PM, Results, Inspector }) {
 
   /* CURRENT PINS APPROVED FIRST and never hides rejected behind a wall. */
   const current = Results.orderRecords(Results.tabRecords(built.records, "current"), true);
-  assert.strictEqual(current[0].disposition.role, "approved", "the default view leads with approved media");
+  assert.strictEqual(current[0].key, Results.orderRecords(Results.tabRecords(built.records, "current"), false)[0].key, "Current uses recorded recency without approved pinning");
   assert(!current.some((row) => row.disposition.role === "rejected"), "...and Current excludes rejected work");
   const rejectedTab = Results.tabRecords(built.records, "rejected");
   assert.strictEqual(rejectedTab.length, built.counts.rejected, "...which is still fully reachable under Rejected");
@@ -1052,7 +1054,7 @@ function checkRendering({ PM, Results, Inspector }) {
     for (const section of ["identity", "status", "authority", "review", "provenance"])
       assert(html.includes(`data-mi-section="${section}"`), `${kind}: the Inspector must render the ${section} section`);
   }
-  return "rendering: Current leads with approved, rejected reachable, recommendation never painted as approval, unknowns printed";
+  return "rendering: Current uses recency without approval pinning, rejected reachable, recommendation never painted as approval, unknowns printed";
 }
 
 /* =========================================================================

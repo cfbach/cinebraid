@@ -199,7 +199,7 @@
     "check:media-asset-activation-negative": "node tests/media-asset-activation-negative-controls.js",
     "check:local-file": "node tests/local-file-affordances.js",
     "check:local-file-negative": "node tests/local-file-affordances-negative-controls.js",
-    "check:production-media": "node tests/production-media.js",
+    "check:production-media": "node tests/production-media.js && node tests/media-discovery.js",
     "check:production-media-negative": "node tests/production-media-negative-controls.js",
     "check:production-media-browser": "node tests/run-python-check.js tests/production-media-real-browser.py",
     "check:media-disposition": "node tests/media-disposition-semantics.js",

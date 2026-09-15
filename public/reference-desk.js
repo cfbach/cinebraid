@@ -51,7 +51,7 @@
       const key=R.selectedKey(m.entity,slot,m.state.stateId),img=m.media.find(r=>r.name===key),filled=img?.available;
       return '<button class="rd-slot" data-rd-slot="'+a(slot.id)+'" aria-label="'+a(slot.label||slot.id)+' — '+(filled?'View filled':'No image assigned yet')+'">'+(filled?'<img src="'+a(img.url)+'" alt="">':'<span class="rd-slot-empty">＋</span>')+'<span><b>'+e(slot.label||slot.id)+'</b><small>'+e(filled?'View filled · review separately':key?'Image unavailable':'No image assigned yet')+'</small></span></button>';
     }).join('');
-    return '<section class="reference-desk" data-reference-desk>'+context(m)+'<header class="rd-heading"><div><p class="rd-eyebrow">'+e(types[list])+' reference</p><h1 id="rd-title" tabindex="-1">'+e(m.entity.name||id)+'</h1></div><div class="rd-heading-actions">'+(m.media.length?button('choose','Choose from production media','rd-primary')+button('upload','Upload new'):'')+'</div></header><div class="rd-toolbar"><label>Continuity state <select id="rd-state">'+m.allStates.map(s=>'<option value="'+a(s.id)+'" '+(s.id===m.state.stateId?'selected':'')+'>'+e(s.name||s.id)+'</option>').join('')+'</select></label>'+button('inspect','Reference details')+'</div><div class="rd-body '+(show?'rd-inspection-open':'')+'"><div class="rd-working"><figure class="rd-canvas">'+canvas+'</figure>'+(m.media.length?'<div class="rd-candidates" aria-label="Reference candidates">'+m.media.map((item,i)=>'<button data-rd-candidate="'+a(item.name)+'" aria-pressed="'+(item.name===m.state.selected)+'" aria-label="Review candidate '+(i+1)+' — '+a(words(m,item))+'">'+(item.available?'<img src="'+a(item.url)+'" alt="">':'<span>Unavailable</span>')+'<small>Image '+(i+1)+'</small></button>').join('')+'</div>':'')+'<section class="rd-coverage"><header><h2>Required views</h2><span>'+m.coverage.filled+' of '+m.coverage.required+' required views filled</span></header><div class="rd-slots">'+slots+'</div><p>Filling a view records coverage. Approval remains a separate decision.</p></section></div>'+(show?'<aside class="rd-inspection"><header><h2>Reference details</h2>'+button('inspect','Close')+'</header>'+inspect(m)+'</aside>':'')+'</div><footer class="rd-decision"><div><strong id="rd-status" role="status" tabindex="-1">'+e(selected?words(m,selected):'Choose an image for this reference')+'</strong><small>'+e(selected?.available?'Approval sets the visual authority for '+(m.currentState?.name||'this continuity state')+'.':'Adding a candidate will not approve it or mark the design complete.')+'</small></div>'+(selected?.available && !(m.truth.standing==='canon'&&m.truth.file===selected.name)?button('approve','Approve reference…','rd-primary'):'')+'</footer></section>';
+    return '<section class="reference-desk" data-reference-desk>'+context(m)+'<header class="rd-heading"><div><p class="rd-eyebrow">'+e(types[list])+' reference</p><h1 id="rd-title" tabindex="-1">'+e(m.entity.name||id)+'</h1></div><div class="rd-heading-actions">'+(m.media.length?button('choose','Choose from production media','rd-primary')+button('upload','Upload new'):'')+'</div></header><div class="rd-toolbar"><label>Continuity state <select id="rd-state">'+m.allStates.map(s=>'<option value="'+a(s.id)+'" '+(s.id===m.state.stateId?'selected':'')+'>'+e(s.name||s.id)+'</option>').join('')+'</select></label>'+button('inspect','Reference details')+'</div><div class="rd-body '+(show?'rd-inspection-open':'')+'"><div class="rd-working"><figure class="rd-canvas">'+canvas+'</figure>'+(m.media.length?'<div class="rd-candidates" aria-label="Reference candidates">'+m.media.map((item,i)=>'<button data-rd-candidate="'+a(item.name)+'" aria-pressed="'+(item.name===m.state.selected)+'" aria-label="Review candidate '+(i+1)+' — '+a(words(m,item))+'">'+(item.available?'<img src="'+a(item.url)+'" alt="">':'<span>Unavailable</span>')+'<small>Image '+(i+1)+'</small></button>').join('')+'</div>':'')+'<section class="rd-coverage"><header><h2>Required views</h2><span>'+m.coverage.filled+' of '+m.coverage.required+' required views filled</span></header><div class="rd-slots">'+slots+'</div><p>Filling a view records coverage. Approval remains a separate decision.</p></section></div>'+(show?'<aside class="rd-inspection"><header><h2>Reference details</h2>'+button('inspect','Close')+'</header>'+inspect(m)+'</aside>':'')+'</div><footer class="rd-decision"><div><strong id="rd-status" role="status" tabindex="-1">'+e(selected?words(m,selected):'Choose an image for this reference')+'</strong><small>'+e(selected?.available?'Approval sets the visual authority for '+(m.currentState?.name||'this continuity state')+'.':'Adding a candidate will not approve it or mark the design complete.')+'</small></div>'+(selected?.available && m.row?.decision==='rejected'?button('restore','Restore candidate','rd-primary'):selected?.available && !(m.truth.standing==='canon'&&m.truth.file===selected.name)?button('approve','Approve reference…','rd-primary'):'')+'</footer></section>';
   }
   function library(tab='all') {
     if(tab==='audio')return null;
@@ -68,7 +68,7 @@
   function repaint(focus){nextFocus=focus||'';route();}
   async function openPicker(slotId='',upload=false) {
     const m=model(active.list,active.id);if(!m)return;
-    picker={list:m.list,id:m.id,slug:ACTIVE_PROJECT_SLUG,epoch:PROJECT_OPEN_EPOCH,revision:PROJECT_REVISION,stateId:m.state.stateId,slotId,images:[],selected:'',busy:false,upload,file:null,error:''};
+    picker={discovery:CineBraidMediaDiscovery.defaults(true),list:m.list,id:m.id,slug:ACTIVE_PROJECT_SLUG,epoch:PROJECT_OPEN_EPOCH,revision:PROJECT_REVISION,stateId:m.state.stateId,slotId,images:[],selected:'',busy:false,upload,file:null,error:''};
     openModal('<div class="rd-picker"><h3>'+(upload?'Upload a reference image':'Choose from production media')+'</h3><button class="cancel" autofocus onclick="closeModal()">Cancel</button><p role="status">Loading available images…</p></div>');
     document.querySelector('#modal .modal-box')?.classList.add('rd-picker-box');
     const own=picker;
@@ -78,18 +78,48 @@
       if(!response.ok)throw Error(data.error||'Could not load production media.');
       if(picker!==own||!modalOpen())return;
       const linked=r=>(r.links||[]).some(l=>l.targetType===ENTITY_ROUTE[own.list]&&l.targetId===own.id);
-      own.images=data.images.sort((a,b)=>Number(linked(b))-Number(linked(a)));renderPicker();
-    }catch(error){if(picker===own){own.error=error.message;renderPicker();}}
+      own.images=data.images;renderPicker();
+    }catch(error){if(picker===own){own.error=error.message;own.loadFailed=true;renderPicker();}}
   }
   function renderPicker(focus='rd-picker-cancel') {
     if(!picker||!modalOpen())return;
     const p=picker,entity=P[p.list]?.find(e=>e.id===p.id),selected=p.images.find(r=>r.assetId===p.selected),state=collection(entity).find(s=>s.id===p.stateId),slot=(entity.coverageSlots||[]).find(s=>s.id===p.slotId);
     const preview=p.file?p.fileUrl:selected?.available?selected.url:'';
-    const valid=!!preview&&!!state&&!!slot&&p.single===true&&!p.busy;
-    const images=p.upload?'<label class="rd-file">Choose an image file<input id="rd-upload-file" type="file" accept="image/png,image/jpeg,image/webp,image/avif,image/gif,image/bmp"></label><p>Your file stays outside the project until you add it as a candidate.</p>':p.images.length?'<div class="rd-picker-grid" aria-label="Production images">'+p.images.map((r,i)=>'<button data-rd-asset="'+a(r.assetId)+'" aria-pressed="'+(p.selected===r.assetId)+'" '+(!r.available?'disabled':'')+' aria-label="'+a(r.title)+'"><span class="rd-picker-thumb">'+(r.available?'<img loading="lazy" src="'+a(r.url)+'" alt="">':'<span>Unavailable</span>')+'</span><b>'+e(r.title)+'</b><small>'+e((r.links||[]).some(l=>l.targetType===ENTITY_ROUTE[p.list]&&l.targetId===p.id)?'Linked to this reference':r.available?'Production image':r.reason)+'</small></button>').join('')+'</div>':'<div class="rd-empty"><h4>No compatible production images available</h4><p>Upload a new image to continue. No files have been imported or changed.</p></div>';
-    const html='<div class="rd-picker"><header><div><h3>'+(p.upload?'Upload a reference image':'Choose from production media')+'</h3><p>'+e(entity.name)+' · '+e(types[p.list])+'</p></div><button id="rd-picker-cancel" class="cancel" autofocus onclick="closeModal()" '+(p.busy?'disabled':'')+'>Cancel</button></header><div class="rd-picker-layout"><section class="rd-picker-library">'+images+'</section><section class="rd-assignment" aria-label="Assignment preview"><figure>'+ (preview?'<img id="rd-picker-preview" src="'+a(preview)+'" alt="Selected image for assignment">':'<span>Select an image to inspect it</span>')+'</figure><label>Continuity state<select id="rd-assign-state">'+collection(entity).map(s=>'<option value="'+a(s.id)+'" '+(s.id===p.stateId?'selected':'')+'>'+e(s.name||s.id)+'</option>').join('')+'</select></label><label>Required view<select id="rd-assign-slot"><option value="">Choose the view this image represents</option>'+(entity.coverageSlots||[]).map(s=>'<option value="'+a(s.id)+'" '+(s.id===p.slotId?'selected':'')+'>'+e(s.label||s.id)+'</option>').join('')+'</select></label><label class="rd-check"><input id="rd-single" type="checkbox" '+(p.single?'checked':'')+'> This is one reference view, not a multi-view sheet</label><div class="rd-assignment-summary" aria-live="polite"><b>'+(slot?e(slot.label||slot.id):'Choose a required view')+'</b><p>'+e(state?.name||'Choose a continuity state')+'</p><small>'+(slot&&R.selectedKey(entity,slot,p.stateId)?'This replaces the selected image for this view. The previous candidate and any approval are retained.':'This adds a candidate and fills the selected view.')+' Approval remains a separate decision.</small></div></section></div><footer><p id="rd-picker-error" role="alert">'+e(p.error||'')+'</p><button class="rd-button rd-primary" id="rd-add-candidate" '+(!valid?'disabled':'')+'>'+(p.busy?'Adding candidate…':'Add as candidate')+'</button></footer></div>';
+    const issue=selected?CineBraidMediaDiscovery.eligibility(pickerRecords(p).find(r=>r.assetId===selected.assetId),p):'';
+    const valid=!!preview&&!!state&&!!slot&&p.single===true&&!p.busy&&!issue;
+    const images=p.upload?'<label class="rd-file">Choose an image file<input id="rd-upload-file" type="file" accept="image/png,image/jpeg,image/webp,image/avif,image/gif,image/bmp"></label><p>Your file stays outside the project until you add it as a candidate.</p>':CineBraidMediaBrowser.mount('reference-picker',{selector:true,target:p,state:p.discovery,records:()=>pickerRecords(p),select:row=>{p.selected=row.assetId;p.error=CineBraidMediaDiscovery.eligibility(row,p);p.single=false;document.getElementById('rd-single').checked=false;syncPicker();},inspect:row=>inspectPicker(row,p)});
+    const html='<div class="rd-picker"><header><div><h3>'+(p.upload?'Upload a reference image':'Choose from production media')+'</h3><p>'+e(entity.name)+' · '+e(types[p.list])+'</p></div><button id="rd-picker-cancel" class="cancel" autofocus onclick="closeModal()" '+(p.busy?'disabled':'')+'>Cancel</button></header><div class="rd-picker-layout"><section class="rd-picker-library">'+images+'</section><section class="rd-assignment" aria-label="Assignment preview"><figure>'+ (preview?'<img id="rd-picker-preview" src="'+a(preview)+'" alt="Selected image for assignment">':'<span>Select an image to inspect it</span>')+'</figure><label>Continuity state<select id="rd-assign-state">'+collection(entity).map(s=>'<option value="'+a(s.id)+'" '+(s.id===p.stateId?'selected':'')+'>'+e(s.name||s.id)+'</option>').join('')+'</select></label><label>Required view<select id="rd-assign-slot"><option value="">Choose the view this image represents</option>'+(entity.coverageSlots||[]).map(s=>'<option value="'+a(s.id)+'" '+(s.id===p.slotId?'selected':'')+'>'+e(s.label||s.id)+'</option>').join('')+'</select></label><label class="rd-check"><input id="rd-single" type="checkbox" '+(p.single?'checked':'')+'> I identify this image as the selected single view. A multi-view sheet cannot fill one view unless that view is explicitly identified.</label><div class="rd-assignment-summary" aria-live="polite"><b>'+(slot?e(slot.label||slot.id):'Choose a required view')+'</b><p>'+e(state?.name||'Choose a continuity state')+'</p><small>'+(slot&&R.selectedKey(entity,slot,p.stateId)?'This replaces the selected image for this view. The previous candidate and any approval are retained.':'This adds a candidate and fills the selected view.')+' Approval remains a separate decision.</small></div></section></div><footer>'+(p.refreshNeeded?'<button id="rd-picker-refresh" class="rd-button">Refresh selection</button>':'')+(p.loadFailed?'<button id="rd-picker-retry" class="rd-button">Retry loading media</button>':'')+'<p id="rd-picker-error" role="alert">'+e(p.error||'')+'</p><button class="rd-button rd-primary" id="rd-add-candidate" '+(!valid?'disabled':'')+'>'+(p.busy?'Adding candidate…':'Add as candidate')+'</button></footer></div>';
     updateOpenModal(html);document.getElementById(focus)?.focus({preventScroll:true});
     const img=document.getElementById('rd-picker-preview');if(img){img.onerror=()=>{p.error='The selected image could not be loaded. Choose an available image.';p.selected='';renderPicker();};}
+  }
+  async function refreshPickerInventory(p){
+    const previous=p.images.find(r=>r.assetId===p.selected);
+    try {
+      for(let i=0;i<30&&!projectSaveSettled().settled;i++)await new Promise(resolve=>setTimeout(resolve,100));
+      if(p!==picker||p.slug!==ACTIVE_PROJECT_SLUG||p.epoch!==PROJECT_OPEN_EPOCH)return;
+      if(!projectSaveSettled().settled)throw Error('The owning workflow has unsaved changes. Finish saving, then refresh this selection.');
+      const revision=PROJECT_REVISION;
+      const response=await fetch('/api/references/media?project='+encodeURIComponent(p.slug),{cache:'no-store'}),data=await response.json();
+      if(!response.ok)throw Error(data.error||'Could not refresh production media.');
+      if(p!==picker||p.slug!==ACTIVE_PROJECT_SLUG||p.epoch!==PROJECT_OPEN_EPOCH)return;
+      if(revision!==PROJECT_REVISION)throw Error('The project changed during refresh. Refresh the selection again.');
+      const current=data.images.find(r=>r.assetId===p.selected);
+      p.images=data.images;p.revision=revision;p.error='';p.loadFailed=false;p.refreshNeeded=false;
+      if(previous&&JSON.stringify(previous.identity)!==JSON.stringify(current?.identity)){p.selected='';p.discovery.selected='';p.single=false;p.error='The selected original changed. Inspect and select it again before adding.';}
+    }catch(error){p.error=error.message;p.refreshNeeded=true;}
+  }
+  function pickerRecords(p){return CineBraidMediaDiscovery.compose(P,CineBraidMediaInspector.projection()?.records||[],p.images).filter(r=>p.images.some(i=>i.assetId===r.assetId));}
+  function inspectPicker(row,p){
+    const box=document.querySelector('#modal .modal-box'),top=box?.scrollTop||0,libraryTop=document.querySelector('.rd-picker-library')?.scrollTop||0,assignmentTop=document.querySelector('.rd-assignment')?.scrollTop||0;
+    const resume=async()=>{if(p!==picker||p.slug!==ACTIVE_PROJECT_SLUG||p.epoch!==PROJECT_OPEN_EPOCH)return;const fromOwner=!modalOpen();if(fromOwner){openModal('<div class="rd-picker"><h3>Return to media selection</h3><p role="status">Checking this selection…</p></div>');document.querySelector('#modal .modal-box')?.classList.add('rd-picker-box');await refreshPickerInventory(p);}if(p!==picker||!modalOpen())return;renderPicker('');syncPicker();requestAnimationFrame(()=>{const box=document.querySelector('#modal .modal-box');if(box)box.scrollTop=top;const library=document.querySelector('.rd-picker-library'),assignment=document.querySelector('.rd-assignment');if(library)library.scrollTop=libraryTop;if(assignment)assignment.scrollTop=assignmentTop;[...document.querySelectorAll('[data-md-inspect]')].find(el=>el.dataset.mdInspect===row.key)?.focus({preventScroll:true});});};
+    if(row.raw)CineBraidMediaInspector.inspect(row.key,{resume});else CineBraidMediaInspector.inspectInventory(row,{resume});
+  }
+  function selectContext({list,id,stateId,candidateName,assetId}){
+    const entity=P[list]?.find(e=>e.id===id);if(!entity)return false;
+    const item=R.listing(SCAN,list,id,true).find(r=>r.name===candidateName&&(!assetId||r.assetId===assetId)&&(!stateId||!r.stateId||r.stateId===stateId));if(!item)return false;
+    const wanted=stateId||item.stateId||(collection(entity).find(s=>s.isDefault)||collection(entity)[0])?.id;
+    if(!collection(entity).some(s=>s.id===wanted))return false;
+    Object.assign(local(list,id),{stateId:wanted,selected:candidateName});return true;
   }
   function syncPicker() {
     if (!picker || !modalOpen()) return;
@@ -98,6 +128,7 @@
     const url=p.file?p.fileUrl:selected?.available?selected.url:'';
     const figure=document.querySelector('.rd-assignment figure');
     let img=document.getElementById('rd-picker-preview');
+    if(!url){figure.innerHTML='<span>Original unavailable. Select an available image to continue.</span>';img=null;}
     if(url && (!img || img.getAttribute('src')!==url)){
       figure.innerHTML='<img id="rd-picker-preview" src="'+a(url)+'" alt="Selected image for assignment">';img=document.getElementById('rd-picker-preview');
     }
@@ -106,7 +137,9 @@
     if(summary)summary.innerHTML='<b>'+e(slot?.label||'Choose a required view')+'</b><p>'+e(state?.name||'Choose a continuity state')+'</p><small>'+(slot&&R.selectedKey(entity,slot,p.stateId)?'This replaces the selected image for this view. The previous candidate and any approval are retained.':'This adds a candidate and fills the selected view.')+' Approval remains a separate decision.</small>';
     document.getElementById('rd-picker-error').textContent=p.error||'';
     const btn=document.getElementById('rd-add-candidate');
-    const update=()=>{if(btn)btn.disabled=!(url&&state&&slot&&p.single&&img?.complete&&img.naturalWidth>0&&!p.busy);};
+    const item=selected?pickerRecords(p).find(r=>r.assetId===selected.assetId):null;const issue=item?CineBraidMediaDiscovery.eligibility(item,p):'';
+    if(issue)document.getElementById('rd-picker-error').textContent=issue;
+    const update=()=>{if(btn)btn.disabled=!(url&&state&&slot&&p.single&&img?.complete&&img.naturalWidth>0&&!p.busy&&!issue);};
     if(img){img.onload=update;img.onerror=()=>{p.error='This exact image could not be loaded. It cannot be added.';document.getElementById('rd-picker-error').textContent=p.error;update();};}update();
     if(btn)btn.textContent=p.busy?'Adding candidate…':'Add as candidate';
     document.getElementById('rd-picker-cancel').disabled=p.busy;
@@ -129,6 +162,7 @@
         selected=inventory.images.find(r=>r.assetId===identity.assetId);p.images=inventory.images;p.selected=identity.assetId;
       }
       if(!selected?.available)throw Error('The exact selected image is unavailable.');
+      const item=pickerRecords(p).find(r=>r.assetId===selected.assetId);const issue=item?CineBraidMediaDiscovery.eligibility(item,p):'Media identity is not ready.';if(issue)throw Error(issue);
       const response=await fetch('/api/references/enroll',{method:'POST',headers:{'Content-Type':'application/json','If-Match':p.revision},body:JSON.stringify({projectSlug:p.slug,list:p.list,entityId:p.id,stateId:p.stateId,slotId:p.slotId,assetId:selected.assetId,expectedIdentity:selected.identity})}),data=await response.json();
       if(!response.ok)throw Error(data.error||'The candidate could not be added.');
       local(p.list,p.id).selected=data.bindingId;local(p.list,p.id).stateId=p.stateId;
@@ -137,7 +171,7 @@
     }catch(error){p.error=error.message;p.busy=false;syncPicker();document.getElementById('rd-picker-cancel')?.focus();}
   }
   function approval(m) {
-    if(!m.selected?.available)return;
+    if(!m.selected?.available||m.row?.decision==='rejected')return;
     approveEntityFile(m.list,m.id,m.selected.name,m.state.stateId);
     if(!window._entityApproval||!modalOpen())return;
     updateOpenModal('<div class="rd-confirm"><h3>Approve this reference?</h3><p>'+e(m.entity.name)+' · '+e(m.currentState?.name||'Default')+'</p><figure id="entity-approval-preview"><img src="'+a(m.selected.url)+'" alt="Selected reference candidate"></figure><p>This image becomes the approved visual authority for this continuity state. It replaces any current approved image for that state.</p><p>Other states and candidates remain unchanged. Filling a required view alone does not create approval.</p><div id="entity-approval-readiness" role="status">Preparing this image for approval…</div><footer><button class="cancel" autofocus onclick="closeModal()">Cancel</button><button class="rd-button rd-primary" id="entity-approve-confirm" disabled onclick="confirmEntityApproval(false)">Approve reference</button></footer><input id="entity-approve-file" type="hidden" value="'+a(m.selected.name)+'"><input id="entity-approve-target" type="hidden" value="'+a(m.state.stateId)+'"></div>');
@@ -149,6 +183,7 @@
     if(!active)return;
     const m=model(active.list,active.id);if(!m)return;
     if(id==='choose'||id==='upload')return openPicker('',id==='upload');
+    if(id==='restore'&&m.selected?.available&&m.row?.decision==='rejected'){setEntityCandidateDecision(m.list,m.id,m.selected.name,'unreviewed');return;}
     if(id==='approve')return approval(m);
     if(id==='refresh')return load({intent:'refresh'}).then(()=>repaint('rd-status'));
     if(id==='return'&&origin){returning=origin;origin=null;location.hash=returning.route;return;}
@@ -200,7 +235,9 @@
       const shot=match?shotById(decodeURIComponent(match[1])):null;
       origin=shot?{project:ACTIVE_PROJECT_SLUG,route:location.hash,shotId:shot.id,frameLabel:document.querySelector('.sd-frame')?.textContent||'',scrollTop:document.getElementById('main').scrollTop,focusId:link.id||''}:null;
     }
-    const t=event.target.closest('[data-rd-action],[data-rd-candidate],[data-rd-slot],[data-rd-asset],#rd-add-candidate');if(!t)return;
+    const t=event.target.closest('[data-rd-action],[data-rd-candidate],[data-rd-slot],[data-rd-asset],#rd-add-candidate,#rd-picker-retry,#rd-picker-refresh');if(!t)return;
+    if(t.id==='rd-picker-refresh'&&picker){const p=picker;refreshPickerInventory(p).then(()=>{if(picker===p){renderPicker();syncPicker();}});return;}
+    if(t.id==='rd-picker-retry'&&picker)return openPicker(picker.slotId);
     if(t.id==='rd-add-candidate')return commitPicker();
     if(t.hasAttribute('data-rd-asset')&&picker){picker.selected=t.dataset.rdAsset;picker.error='';syncPicker();document.getElementById('rd-assign-slot')?.focus();return;}
     if(t.hasAttribute('data-rd-candidate')&&active){local(active.list,active.id).selected=t.dataset.rdCandidate;repaint('rd-status');return;}
@@ -211,8 +248,8 @@
     const t=event.target;
     if(t.id==='rd-state'&&active){local(active.list,active.id).stateId=t.value;local(active.list,active.id).selected='';repaint('rd-state');}
     if(!picker)return;
-    if(t.id==='rd-assign-state')picker.stateId=t.value;
-    if(t.id==='rd-assign-slot')picker.slotId=t.value;
+    if(t.id==='rd-assign-state'){picker.stateId=t.value;picker.single=false;document.getElementById('rd-single').checked=false;}
+    if(t.id==='rd-assign-slot'){picker.slotId=t.value;picker.single=false;document.getElementById('rd-single').checked=false;}
     if(t.id==='rd-single')picker.single=t.checked;
     if(t.id==='rd-upload-file'){if(picker.fileUrl)URL.revokeObjectURL(picker.fileUrl);picker.file=t.files[0]||null;picker.fileUrl=picker.file?URL.createObjectURL(picker.file):'';}
     if(['rd-assign-state','rd-assign-slot','rd-single','rd-upload-file'].includes(t.id))syncPicker();
@@ -237,5 +274,5 @@
     const img=document.getElementById('rd-image');if(img){const check=()=>{const good=img.complete&&img.naturalWidth>0;const btn=document.querySelector('[data-rd-action="approve"]');if(btn)btn.disabled=!good;const err=document.querySelector('.rd-image-error');if(err)err.hidden=!(img.complete&&!good);};img.onload=check;img.onerror=check;check();}
   });
   matchMedia('(min-width:1360px)').addEventListener('change',()=>{if(active&&!modalOpen())repaint();});
-  window.CineBraidReferenceDesk={view,library};
+  window.CineBraidReferenceDesk={view,library,selectContext};
 })();

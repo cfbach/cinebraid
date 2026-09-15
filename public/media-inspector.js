@@ -1,57 +1,4 @@
-/* CineBraid — the Universal Media Inspector.
-
-   THE PROPERTY THIS FILE EXISTS FOR, in one line: any important piece of production
-   media, wherever a filmmaker clicked it, opens the SAME inspection surface reading
-   the SAME projection — so "what is this, and what authority does it have" has one
-   answer instead of one per grid.
-
-   ---------------------------------------------------------------------------
-   WHAT THIS IS NOT.
-
-   * IT IS NOT A SOURCE OF TRUTH. Every field comes from
-     public/shared-production-media.js, which reads the records their own owners
-     wrote. This file contains no approval rule, no disposition rule and no cost
-     arithmetic. It renders tokens into words and nothing else — the same constraint
-     public/shared-continuity.js holds for continuity and public/stage-surfaces.js
-     holds for stages.
-
-   * IT IS NOT A SECOND DECISION WRITER. `approve`, `reject` and `restore` dispatch
-     the SHIPPED handlers — approveEntityFile / approveTake open their existing
-     confirmation modals, setEntityCandidateDecision / setCandidateDecision are the
-     existing decision writers. Nothing here writes to a project.
-
-   * IT IS NOT A SECOND REVIEW TRIGGER. The Inspector SHOWS what a review said and
-     hands off to the shipped review modal, which is where running or re-running one
-     already lives. A second dispatcher would be a second place that could attribute a
-     review, and "the reviewer that actually ran, never the current Settings value" is
-     only true while there is one.
-
-   * IT IS NOT THE THEATRE. Clean fullscreen viewing is openMediaTheatre() and stays
-     there. The Inspector offers it as `Open full preview` and the theatre offers the
-     way back, so opening the picture larger never costs the filmmaker the identity
-     they were inspecting.
-
-   ---------------------------------------------------------------------------
-   THE THREE CONCEPTS THAT ARE RENDERED SEPARATELY, ON PURPOSE.
-
-     HUMAN DECISION      what a person decided. Rendered first, largest, and with the
-                         only treatment that reads as authority.
-     AI RECOMMENDATION   what a reviewer SUGGESTED. Advisory wording, always, and the
-                         word "approved" can never appear in it.
-     AI REVIEW           that a review happened, by whom, when, and what it found.
-
-   A candidate an AI recommended and nobody approved renders as CANDIDATE with an
-   advisory note. There is no code path in this file that can turn a recommendation
-   into an approval, and the words are separated at the source: `decisionWords()`
-   reads humanDecision and nothing else, `recommendationWords()` reads
-   aiRecommendation and nothing else, and neither can see the other's input.
-
-   ---------------------------------------------------------------------------
-   MISSING DATA IS PRINTED, NOT HIDDEN. Every uncertain field arrives as a {state,
-   value} triple and is rendered through one function, `fact()`, so there is exactly
-   one place in CineBraid that decides how an unknown looks. `not-recorded` reads
-   "Not recorded", `unavailable` reads "Generation record unavailable", and neither
-   can render as an empty string, a dash or a zero. */
+/* Universal read-only Media Inspector. Human decisions stay in the exact owning workflow. */
 
 (function () {
   if (typeof document === "undefined") return;
@@ -62,6 +9,7 @@
      is a record that can be stale, and the Inspector's whole claim is that it shows
      current truth. */
   let INSPECTED_KEY = "";
+  let inspectionSession=null, theatreKey="";
 
   function activeProject() {
     return typeof P === "undefined" ? null : P;
@@ -222,7 +170,8 @@
 
   function previewMarkup(row) {
     const url = row.file.url;
-    if (!url) return `<div class="mi-preview mi-preview-empty"><span>This file is not on disk</span></div>`;
+    if (!url) return `<div class="mi-preview mi-preview-empty"><span>Original unavailable. The recorded asset is retained.</span></div>`;
+    if (!["image","video","audio"].includes(row.file.mediaType)) return `<div class="mi-preview mi-preview-empty"><span>No preview for this media type. Inspect the original through File details.</span></div>`;
     if (row.file.mediaType === "video")
       return `<div class="mi-preview"><video controls muted playsinline preload="metadata" src="${attr(url)}#t=0.1"></video></div>`;
     if (row.file.mediaType === "audio")
@@ -418,39 +367,32 @@
 
      Rendered from the projection's own bounded list. This function adds no action of
      its own and cannot: `invoke()` dispatches a fixed switch over the same ids. */
-  const ACTION_WORDS = {
-    "open-full-preview": "Open full preview",
-    "open-owner": "Open in workspace",
-    "view-review": "Open review",
-    approve: "Approve",
-    reject: "Reject",
-    restore: "Restore to candidates",
-  };
-
-  function actionsMarkup(row) {
-    const buttons = row.actions.map((id) => {
-      const primary = id === "approve";
-      return `<button type="button" class="${primary ? "approve-btn" : "ghost-btn"}" data-mi-action="${attr(id)}"`
-        + ` onclick="window.CineBraidMediaInspector.invoke('${attr(row.key)}','${attr(id)}')">${esc(ACTION_WORDS[id] || id)}</button>`;
-    }).join("");
-    return `<div class="modal-actions mi-actions" data-mi-action-count="${row.actions.length}">
-      <button class="cancel" onclick="closeModal()">Close</button>${buttons}</div>`;
-  }
-
+  function discovery(row){return window.CineBraidMediaDiscovery?.compose(activeProject(),[row],typeof SCAN==='undefined'?[]:SCAN.mediaInventory||[]).find(r=>r.key===row.key);}
+  function encodedKey(key){return encodeURIComponent(key).replace(/'/g,'%27');}
+  function ownerToken(use){const c=use.context;return encodeURIComponent(JSON.stringify([use.kind,c.shotId.value,c.entityList.value,c.entityId.value,c.stateId.value,c.frameId.value,c.coverageSlotId.value,use.file.name])).replace(/'/g,"%27");}
+  function ownerLabel(use){return use.kind==='shot-blocking'?'Open shot':use.context.shotId.value?'Review in '+(use.kind==='shot-motion'?'motion workflow':'Shot Desk'):use.context.entityList.value==='audio'?'Review in audio workflow':use.context.entityId.value?'Review in Reference Desk':'';}
   function inspectorMarkup(row) {
-    return `<div class="media-inspector-modal" data-media-inspector="1" data-mi-key="${attr(row.key)}" data-mi-kind="${attr(row.kind)}" data-mi-scope="${attr(row.scope)}">
-      <header>
-        <div><span>MEDIA INSPECTOR</span><h3>${esc(row.file.title.state === "known" ? row.file.title.value : row.file.name)}</h3>
-        <p>${esc(KIND_WORDS[row.kind] || row.kind)} · ${esc(row.identity.resolvedBy === "ledger" ? "Resolved by durable identity" : row.identity.resolvedBy === "library" ? "Resolved by project library row" : "Resolved by stored path")}</p></div>
-      </header>
-      <div class="media-inspector-body">
-        <div class="media-inspector-stage">${previewMarkup(row)}</div>
-        <div class="media-inspector-detail">
-          ${identityMarkup(row)}${statusMarkup(row)}${authorityMarkup(row)}${reviewMarkup(row)}${provenanceMarkup(row)}
-        </div>
-      </div>
-      ${actionsMarkup(row)}
-    </div>`;
+    const d=discovery(row),uses=row.relationships?.length?row.relationships:[row];
+    const actions=uses.map((use,i)=>ownerLabel(use)?`<button class="rd-button rd-primary" data-mi-action="open-owner" onclick="CineBraidMediaInspector.owner(decodeURIComponent('${attr(encodedKey(row.key))}'),'${attr(ownerToken(use))}')">${esc(ownerLabel(use))}${uses.length>1?' · '+esc(d.relationships[i].label):''}</button>`:'').join('');
+    return `<div class="media-inspector-modal md-inspector" data-media-inspector="1" data-mi-key="${attr(row.key)}" data-mi-kind="${attr(row.kind)}" data-mi-scope="${attr(row.scope)}"><header><div><span>Media Inspector</span><h3>${esc(d.title)}</h3><p>${esc(d.related.map(r=>r.label).join(' · ')||'Project media')}</p></div><button class="cancel" onclick="CineBraidMediaInspector.dismiss()">${inspectionSession?.resume?'Back to selection':'Close'}</button></header><div class="media-inspector-body"><div class="media-inspector-stage">${previewMarkup({...row,file:{...row.file,url:d.url,mediaType:d.type}})}</div><div class="media-inspector-detail"><section class="mi-section md-summary"><h4>${esc(CineBraidMediaDiscovery.decisionLabel(d))}</h4><p>Original availability · <b>${esc(d.availability)}</b></p><p>Source · <b>${esc(CineBraidMediaDiscovery.sources[d.source]||'Not recorded')}</b></p><p>Rights not recorded</p><small>Rights knowledge does not establish clearance or prohibit use.</small></section><section class="mi-section"><h4>Recorded uses</h4>${uses.map((use,i)=>`<article class="md-use"><b>${esc(d.relationships[i].label)}</b><p>${esc(decisionWords(use).label)}</p>${use.availability?.state&&use.availability.state!=='available'?`<p>This recorded use is ${esc(use.availability.state)}. Review its binding in the owning workflow.</p>`:''}${authorityMarkup(use)}</article>`).join('')}</section><details><summary>Review &amp; recommendation</summary>${uses.map(use=>statusMarkup(use)+reviewMarkup(use)).join('')}</details><details><summary>Origin, generation &amp; cost</summary>${uses.map(use=>provenanceMarkup(use)).join('')}</details><details><summary>File details &amp; identifiers</summary>${identityMarkup(row)}</details></div></div><footer class="modal-actions mi-actions">${actions||'<span>No decision workflow is recorded for this asset.</span>'}${row.file.url&&['image','video','audio'].includes(row.file.mediaType)?`<button class="ghost-btn" data-mi-action="open-full-preview" onclick="CineBraidMediaInspector.invoke(decodeURIComponent('${attr(encodedKey(row.key))}'),'open-full-preview')">Open full preview</button>`:''}</footer></div>`;
+  }
+  function inspectInventory(row,options={}){
+    inspectionSession={...options,origin:CineBraidMediaReturn.capture({resume:options.resume})};INSPECTED_KEY=row.key;
+    const visual=row.availability==='available'?(row.type==='image'?`<img src="${attr(row.url)}" alt="${attr(row.title)}">`:row.type==='video'?`<video controls preload="metadata" src="${attr(row.url)}"></video>`:row.type==='audio'?`<audio controls preload="metadata" src="${attr(row.url)}"></audio>`:'<p>No preview for this media type.</p>'):`<p>Original ${esc(row.availability)}. The asset record is retained.</p>`;
+    const show=options.resume?updateOpenModal:openModal;
+    show(`<div class="md-inspector media-inspector-modal" data-media-inspector><header><h3>${esc(row.title)}</h3><button class="cancel" onclick="CineBraidMediaInspector.dismiss()">${options.resume?'Back to selection':'Close'}</button></header><div class="media-inspector-body"><div class="media-inspector-stage mi-preview">${visual}</div><div class="media-inspector-detail"><h4>Production media</h4><p>Original availability · ${esc(row.availability)}</p><p>Source · ${esc(CineBraidMediaDiscovery.sources[row.source]||'Not recorded')}</p><p>Rights not recorded</p><p>No target-specific decision is recorded. Adding a reference candidate does not approve it.</p><details><summary>File details &amp; identifiers</summary><p>${esc(row.assetId)}</p><p>${esc(row.fileName)}</p>${row.availability==='available'?`<a href="${attr(row.url)}" target="_blank" rel="noopener">Open original</a>`:''}</details></div></div></div>`);
+    document.querySelector("[data-media-inspector] .cancel")?.focus({preventScroll:true});
+  }
+  document.addEventListener?.('keydown',event=>{if(event.key==='Escape'&&theatreKey&&document.querySelector('.media-theatre-modal')){event.preventDefault();event.stopImmediatePropagation();inspect(theatreKey);return;}if(event.key==='Escape'&&inspectionSession?.resume&&document.querySelector('[data-media-inspector]')){event.preventDefault();event.stopImmediatePropagation();dismiss();}},true);
+  function dismiss(){if(inspectionSession?.resume){const resume=inspectionSession.resume;inspectionSession=null;INSPECTED_KEY='';resume();}else closeModal();}
+  function owner(key,token=""){
+    const row=recordFor(key);if(!row)return false;const uses=row.relationships?.length?row.relationships:[row];const use=token?uses.find(use=>ownerToken(use)===token):uses[0];if(!use)return toast("This recorded use changed. Close the Inspector and inspect it again.");
+    const c=use.context,shot=c.shotId.value,list=c.entityList.value,id=c.entityId.value;let hash='';
+    if(shot){hash=use.kind==='shot-blocking'?'#/shot/'+encodeURIComponent(shot):typeof shotReviewHref==='function'?shotReviewHref(shot,use.key):'#/shot/'+encodeURIComponent(shot);}
+    else if(list==='audio'&&id){hash='#/sound/'+encodeURIComponent(id);}
+    else if(id&&list){if(!window.CineBraidReferenceDesk?.selectContext({list,id,stateId:c.stateId.value||'',candidateName:use.file.name,assetId:use.identity.ledger.value||''}))return toast('This reference use changed. Return and refresh the project.');hash='#/'+({characters:'character',locations:'location',props:'prop',vehicles:'vehicle',audio:'sound'}[list]||'library')+'/'+encodeURIComponent(id);}
+    if(!hash)return false;
+    return CineBraidMediaReturn.go(hash,inspectionSession?.origin||CineBraidMediaReturn.capture());
   }
 
   /* ==========================================================================
@@ -459,18 +401,25 @@
      THE bounded helper the whole product uses. Every media surface calls this with a
      durable projection key and nothing else — no surface reconstructs Inspector data
      for itself, which is the property that keeps one Inspector from becoming six. */
-  function inspect(key) {
+  function inspect(key, options={}) {
     const wanted = String(key || "");
     const row = recordFor(wanted);
     if (!row) {
+      const inventory=typeof SCAN==='undefined'?[]:SCAN.mediaInventory||[];
+      const model=CineBraidMediaDiscovery.compose(activeProject(),[],inventory).find(r=>r.key===wanted);
+      if(model)return inspectInventory(model,options);
       INSPECTED_KEY = "";
       return toast("That media is no longer in this project");
     }
     /* SET BEFORE THE PAINT, so a decision taken from inside the modal repaints the
        record that is actually open. Cleared by close, so a stale key can never
        resurface behind a later modal. */
+    const already=!!document.querySelector("#modal:not(.hidden) [data-media-inspector]");
+    if(!already&&theatreKey!==wanted)inspectionSession={...options,origin:options.origin||CineBraidMediaReturn.capture({resume:options.resume})};
     INSPECTED_KEY = row.key;
-    openModal(inspectorMarkup(row));
+    if(options.resume||already||theatreKey===wanted)updateOpenModal(inspectorMarkup(row));else openModal(inspectorMarkup(row));
+    theatreKey="";
+    document.querySelector("[data-media-inspector] .cancel")?.focus({preventScroll:true});
     hydrateLocalFile();
     return true;
   }
@@ -485,7 +434,7 @@
     if (!modal.querySelector("[data-media-inspector]")) return false;
     const row = recordFor(INSPECTED_KEY);
     if (!row) return false;
-    openModal(inspectorMarkup(row));
+    updateOpenModal(inspectorMarkup(row));
     hydrateLocalFile();
     return true;
   }
@@ -510,6 +459,7 @@
       /* The theatre, with the way back. `returnTo` is what stops opening the picture
          larger from costing the filmmaker the identity they were inspecting. */
       if (typeof window.openMediaTheatre !== "function") return false;
+      theatreKey=row.key;
       window.openMediaTheatre(
         encodeURIComponent(row.file.url),
         encodeURIComponent(row.file.title.state === "known" ? row.file.title.value : name),
@@ -519,64 +469,7 @@
       return true;
     }
 
-    if (id === "open-owner") {
-      const route = shotId
-        ? `#/shot/${encodeURIComponent(shotId)}`
-        : entityList && entityId
-          ? `#/${({ characters: "character", locations: "location", props: "prop", vehicles: "vehicle", audio: "sound" })[entityList] || "library"}/${encodeURIComponent(entityId)}`
-          : "";
-      if (!route) return false;
-      closeModal();
-      location.hash = route;
-      return true;
-    }
-
-    if (id === "view-review") {
-      closeModal();
-      if (shotId && typeof window.openCandidateReview === "function") {
-        window.openCandidateReview(shotId, context.frameId.value || "", name);
-        return true;
-      }
-      if (entityList && entityId && typeof window.openEntityCandidateReview === "function") {
-        window.openEntityCandidateReview(entityList, entityId, name, context.stateId.value || "");
-        return true;
-      }
-      return false;
-    }
-
-    if (id === "approve") {
-      /* The shipped approval modals. Both replace this modal with their own
-         confirmation, which is deliberate: an approval names a target, and choosing
-         that target is what those modals are for. */
-      closeModal();
-      if (shotId && typeof window.approveTake === "function") { window.approveTake(shotId, name); return true; }
-      if (entityList && entityId && typeof window.approveEntityFile === "function") {
-        window.approveEntityFile(entityList, entityId, name, context.stateId.value || "");
-        return true;
-      }
-      return false;
-    }
-
-    if (id === "reject" || id === "restore") {
-      if (shotId && typeof window.setCandidateDecision === "function") {
-        /* The shot writer TOGGLES: `row.decision === decision ? "unreviewed" : decision`.
-           So BOTH acts send "rejected" — on a candidate it rejects, and on an
-           already-rejected row it clears back to unreviewed. Sending "unreviewed" for
-           the restore would instead SET the literal token on a row that is not holding
-           it, which is a different write from the one the shipped UI performs. */
-        window.setCandidateDecision(shotId, name, "rejected");
-      } else if (entityList && entityId && typeof window.setEntityCandidateDecision === "function") {
-        /* The entity writer ASSIGNS rather than toggling, so the restore names the
-           token it wants. Two dialects, two calls, and neither is coerced through the
-           other — the constraint media-assets.js states and C2's closeout repeated. */
-        window.setEntityCandidateDecision(entityList, entityId, name, id === "reject" ? "rejected" : "unreviewed");
-      } else return false;
-      /* The decision writers call route(), which repaints the page beneath. The
-         Inspector is a modal and is not repainted by that, so it is refreshed here —
-         and it must show the decision, not the state before it. */
-      refresh();
-      return true;
-    }
+    if (id === "open-owner") return owner(key);
     return false;
   }
 
@@ -627,12 +520,15 @@
   window.CineBraidMediaInspector = {
     inspect,
     inspectFile,
+    inspectInventory,
+    dismiss,
+    owner,
     invoke,
     refresh,
     projection,
     recordFor,
     inspectorMarkup,
     inspectedKey: () => INSPECTED_KEY,
-    clear: () => { INSPECTED_KEY = ""; },
+    clear: () => { INSPECTED_KEY = ""; theatreKey=""; inspectionSession=null; },
   };
 })();

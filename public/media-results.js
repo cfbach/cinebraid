@@ -1,50 +1,4 @@
-/* CineBraid — Production media, the project-level destination for production results.
-
-   THE PROPERTY THIS FILE EXISTS FOR, in one line: there is ONE place a filmmaker can
-   go to find everything CineBraid has created or accepted into this production, and
-   it agrees with every stage-local grid because all of them read the same projection.
-
-   ---------------------------------------------------------------------------
-   THE NAME. "Production media" rather than "Results", and rather than "Library".
-
-   `#/library` already ships under the label REFERENCES and is a list of ENTITIES —
-   characters, locations, props — not of files. Calling this one Library would put two
-   different nouns behind one word in the same navigation. "Results" was the other
-   candidate and was rejected because the surface also holds imported and hand-made
-   media that CineBraid did not produce; "Production media" is what the product calls
-   the thing a filmmaker is actually looking for ("where did that generation go"), and
-   the imported rows sit inside it as an acknowledged minority rather than the label
-   being wrong for the majority. The ROUTE is `#/results` because that is what the
-   destination IS to the workflow, and the route name is not visible to a filmmaker.
-
-   ---------------------------------------------------------------------------
-   WHAT THIS IS NOT.
-
-   * NOT A FILE BROWSER. It shows production media with a disposition, an owner and a
-     provenance. Caches, sidecars, backups and locked delivery copies are excluded by
-     public/shared-production-media.js and the exclusions are declared there.
-
-   * NOT A DAM. No folders, no tags, no saved searches, no bulk operations, no query
-     language. Four status views and one context filter, both derived from fields the
-     records actually carry.
-
-   * NOT A REPLACEMENT FOR STAGE-LOCAL MEDIA. A shot's own candidate grid is where a
-     filmmaker works; this is where they look when they do not know where something
-     went. Both now open the same Inspector.
-
-   * NOT A SECOND OPINION. Every disposition, every count and every badge comes out of
-     the projection. This file sorts and paginates. It decides nothing.
-
-   ---------------------------------------------------------------------------
-   THE DEFAULT VIEW IS "CURRENT", and that is the whole ordering argument.
-
-   A destination that opens on ALL buries the two things a filmmaker came for —
-   what is approved, and what is waiting on them — under every rejected take the
-   production has ever produced. So the default shows approved and candidate media
-   with APPROVED PINNED FIRST, and rejected work is one visible click away rather than
-   hidden. Nothing is dropped: `Rejected` is a tab with a count, and the count is
-   rendered even when it is large, because a surface that hides its own history reads
-   as a surface that lost it. */
+/* Production contact sheet. Legacy card helpers remain available to existing local surfaces. */
 
 (function () {
   if (typeof window === "undefined") return;
@@ -92,11 +46,6 @@
      and is the order the scan already returned. */
   function orderRecords(rows, pinApproved) {
     return [...rows].sort((a, b) => {
-      if (pinApproved) {
-        const rank = (row) => (row.disposition.role === "approved" ? 0 : 1);
-        const byRole = rank(a) - rank(b);
-        if (byRole) return byRole;
-      }
       const timeA = a.file.addedAt.state === "known" ? a.file.addedAt.value : "";
       const timeB = b.file.addedAt.state === "known" ? b.file.addedAt.value : "";
       if (timeA && timeB && timeA !== timeB) return timeB.localeCompare(timeA);
@@ -196,66 +145,18 @@
 
   /* ==========================================================================
      THE VIEW. */
-  function resultsView(tab = "current") {
-    if (!RESULTS_TABS.includes(tab)) tab = "current";
-    if (typeof productionMediaRecords !== "function" || typeof P === "undefined" || !P)
-      return `<div class="empty-state"><h2>Production media is unavailable</h2><p>The production media projection did not load.</p></div>`;
-
-    const built = window.CineBraidMediaInspector?.projection?.() || null;
-    const records = built ? built.records : [];
-    const counts = built ? built.counts : { total: 0, approved: 0, candidate: 0, rejected: 0 };
-    const kindFilter = currentKindFilter();
-
-    const inTab = tabRecords(records, tab);
-    const filtered = kindFilter === "all" ? inTab : inTab.filter((row) => row.kind === kindFilter);
-    const ordered = orderRecords(filtered, tab === "current");
-    const page = boundedPage(ordered, "results", "all", RESULTS_PAGE_SIZE);
-    const pager = boundedPagerMarkup("results", "all", page, "media");
-
-    const tabs = workspaceTabs("results", tab, [
-      ["current", "Current", counts.approved + counts.candidate],
-      ["approved", "Approved", counts.approved],
-      ["candidates", "Candidates", counts.candidate],
-      ["rejected", "Rejected", counts.rejected],
-    ]);
-
-    /* Counts on the kind filter are computed over the CURRENT TAB, so a number never
-       promises media the click will not show. */
-    const kindChips = RESULTS_KIND_FILTERS.map(([value, label]) => {
-      const count = value === "all" ? inTab.length : inTab.filter((row) => row.kind === value).length;
-      return `<button type="button" class="results-kind-chip ${kindFilter === value ? "on" : ""}" data-results-kind="${attr(value)}"
-        onclick="setResultsKindFilter('${attr(value)}')" aria-pressed="${kindFilter === value ? "true" : "false"}">${esc(label)} <span>${count}</span></button>`;
-    }).join("");
-
-    /* THE LEDGER NOTICE, printed rather than swallowed. When the generation ledger was
-       never loaded, every provenance block in this project will say so; saying it once
-       here as well is the difference between a surface that looks incomplete and one
-       that explains why. */
-    const ledgerNote = built && built.jobsAvailable === false
-      ? `<p class="results-notice" data-results-ledger="unavailable">Generation records are not loaded in this session, so provider, model and cost cannot be shown for generated media. Disposition, authority and review are unaffected.</p>`
-      : "";
-
-    const collapsed = built && built.duplicatesCollapsed > 0
-      ? `<p class="results-notice" data-results-collapsed="${built.duplicatesCollapsed}">${esc(`${built.duplicatesCollapsed} file${built.duplicatesCollapsed === 1 ? "" : "s"} reachable from more than one place ${built.duplicatesCollapsed === 1 ? "is" : "are"} shown once, by durable identity.`)}</p>`
-      : "";
-
-    const empty = tab === "rejected"
-      ? `<div class="empty-state"><h2>Nothing has been rejected</h2><p>Rejected media is kept here as evidence of a decision, not deleted.</p></div>`
-      : counts.total
-        ? `<div class="empty-state"><h2>No media matches this filter</h2><p>Change the status view or the media filter to see the other ${plural(counts.total, "file")} in this production.</p></div>`
-        : `<div class="empty-state"><div class="empty-mark">◎</div><h2>No production media yet</h2><p>Generated, imported and approved media appears here as soon as this production has some.</p></div>`;
-
-    return `<div class="view-head"><div><div class="eyebrow">Production media</div><span class="view-title">Production media</span>
-      <div class="view-sub">Everything CineBraid has created or accepted into this production, with what it is authority for.</div></div></div>
-      ${tabs}
-      <div class="results-controls" role="group" aria-label="Filter by media kind">${kindChips}</div>
-      ${ledgerNote}${collapsed}${pager}
-      <div class="results-grid" data-results-grid="1" data-results-tab="${attr(tab)}" data-results-count="${page.rows.length}">
-        ${page.rows.map(cardMarkup).join("") || empty}
-      </div>
-      ${pager}`;
+  const discoveryStates=new Map();
+  function resultsView() {
+    const built=window.CineBraidMediaInspector?.projection?.();
+    if(!built)return '<div class="empty-state"><h2>Production media is unavailable</h2><p>Reload the project to try again.</p></div>';
+    const key=ACTIVE_PROJECT_SLUG+':'+PROJECT_OPEN_EPOCH;
+    if(!discoveryStates.has(key))discoveryStates.set(key,CineBraidMediaDiscovery.defaults());
+    const state=discoveryStates.get(key);
+    const records=()=>CineBraidMediaDiscovery.compose(P,window.CineBraidMediaInspector.projection()?.records||[],SCAN.mediaInventory||[]);
+    return '<section class="production-contact-sheet"><header class="md-heading"><p>Production</p><h1>Production media</h1><p>Find your media. See where it belongs. Return to the work.</p></header>'+CineBraidMediaBrowser.mount('production',{state,records,select:row=>window.inspectMedia(row.key)})+(built.unresolvedReferences?.length?'<details class="md-unresolved"><summary>'+built.unresolvedReferences.length+' references need identity or availability attention</summary><p>These records have no resolvable media identity. Open their owning reference to inspect the recorded assignment.</p>'+built.unresolvedReferences.map(r=>'<p>'+esc(r.context.entityName.value||'Reference')+' · '+esc(r.file.name)+'</p>').join('')+'</details>':'')+'</section>';
   }
 
+  window.addEventListener?.('cinebraid:route-rendered',()=>document.body.classList.toggle('production-media-active',!!document.querySelector('.production-contact-sheet')));
   window.resultsView = resultsView;
   window.CineBraidResults = {
     RESULTS_TABS,
