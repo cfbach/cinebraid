@@ -106,41 +106,7 @@ const CINEBRAID_SHOT_ROUTE_MODES = {
   hybrid: "",
 };
 
-/* The legacy `shot.route` dialect: the EXACT strings CineBraid writes, and nothing else.
-
-   THE FIELD IS FREE TEXT IN THE WILD, and that is the whole reason this table is exact
-   rather than a search. `window.setOutputPlan` writes exactly five values — "GENERATE",
-   "GENERATE (FLF)", "GENERATE (R2V)", "COMPOSITE", "REUSE" — but nothing has ever
-   constrained the field, and the sanitized Overfit corpus in tests/fixtures is full of
-   prose a human typed:
-
-       "GENERATE (hero)"                            "EDIT (swap locked states)"
-       "GENERATE / EDIT off endpoint"               "GENERATE + heavy post"
-       "GENERATE + STAGE-3 (FLF t.b.d. at build)"   <- 12 shots, in real data
-
-   That last one is the case that settles it. A substring reading turns a sentence whose
-   own words say the FLF decision is TO BE DECIDED AT BUILD into a declared first/last-
-   frame route — inventing the exact production intent a filmmaker wrote down as not yet
-   made. So only whole-value equality is admitted, and everything else is absent.
-
-   WHY THIS DELIBERATELY DOES NOT COPY app.js's READ. public/app.js does test
-   `(s.route || "").includes("FLF")`, and this file does not follow it. Those two readers
-   are answering different questions. app.js is picking a starting clip kind while
-   CONVERTING a shot the filmmaker is actively editing, where a poor guess is visible in
-   front of them and one click away from correction. A declared delivery route is a
-   durable statement attributed to the filmmaker, and a wrong one is silent. Absence is
-   the only safe wrong answer here, so the loose read is not inherited.
-
-   "GENERATE" is absent on purpose even though it is exact: setOutputPlan writes it for
-   `still`, `animate` AND `sequence`, so it is three different plans wearing one word and
-   reading a route out of it would be a guess. "COMPOSITE" and "REUSE" are absent because
-   they describe a shot CineBraid does not generate at all.
-
-   CASE IS FOLDED, and only case. server.js's import normaliser stores this field as
-   `String(source.route || "GENERATE").toUpperCase()`, so CineBraid itself treats the
-   vocabulary as case-insensitive and canonicalises it upward. Surrounding whitespace is
-   trimmed as whole-value hygiene — it strips only the ends and can never admit a value
-   that carries any extra content. */
+/* Generic legacy compatibility; behavior is covered with synthetic fixtures. */
 const CINEBRAID_SHOT_ROUTE_LEGACY_VALUES = {
   "GENERATE (FLF)": "flf",
   "GENERATE (R2V)": "r2v",

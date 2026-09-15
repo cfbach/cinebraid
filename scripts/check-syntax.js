@@ -3,6 +3,7 @@ const { spawnSync } = require("child_process");
 const path = require("path");
 const ROOT = path.resolve(__dirname, "..");
 const SOURCES = [
+  "tests/ofp-synthetic-conformance.js",
   "src/server/config.js",
   "src/server/test-isolation.js",
   "src/server/config-location.js",
@@ -75,9 +76,6 @@ const SOURCES = [
   "ofp/ofp-migrate-write.js",
   "scripts/validate-ofp.js",
   "scripts/preview-ofp-migration.js",
-  "scripts/overfit-sanitizer.js",
-  "scripts/overfit-fixture-model.js",
-  "scripts/build-overfit-golden-fixtures.js",
   "public/shared-entities.js",
   "public/shared-continuity-binding.js",
   "public/shared-frame-presence.js",

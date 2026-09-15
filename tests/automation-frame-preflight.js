@@ -255,14 +255,7 @@ async function independenceSection() {
   ], "case 8: and selecting only that frame blocks on exactly its declared states");
 }
 
-/* ===========================================================================
-   4. Case 9 — owner-scoped state ids.
-
-   THE reading P4-SEM-B is built on: all twelve state records across every entity
-   of the real overfit-18 generation carry the id `state-default`. That is legal —
-   `id.duplicate` is defined per collection — and permanent. So the same state id
-   on two entities must resolve to two different records and two different
-   answers. A global lookup would make these two cases agree, and they must not. */
+/* Generic legacy compatibility; behavior is covered with synthetic fixtures. */
 
 async function ownerScopeSection() {
   const project = fixtureProject({});
@@ -303,15 +296,7 @@ async function ownerScopeSection() {
     "case 9: both entities really do declare it — the ids are equal, the records are not");
 }
 
-/* ===========================================================================
-   5. Case 10/11 — what must NOT have changed.
-
-   The whole existing corpus declares no states at all: measured across all 18
-   sanitized Overfit generations there are zero occurrences of
-   continuityStateSelections or of a frame-level selection. So the no-declaration
-   path is the path every real project takes, and it must read exactly as before —
-   same verdicts, same wording, in the entity-level shape AND the state-record
-   shape. */
+/* Generic legacy compatibility; behavior is covered with synthetic fixtures. */
 
 async function unchangedSection() {
   const legacyShaped = async (mutate) => {

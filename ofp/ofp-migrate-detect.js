@@ -1,36 +1,6 @@
 "use strict";
 
-/* Source detection: what IS this document, before anything is migrated.
-
-   Migration is explicit (P0 Decision 12), and an explicit operation still has to
-   know what it was handed. The one thing this module must never do is guess
-   silently - it returns a classification with its evidence, and a caller decides.
-
-   THE FIVE VERSION MARKERS ARE NOT INTERCHANGEABLE. The audit found twelve
-   version-ish fields and no project format version among them, so the single
-   most valuable thing detection can do is refuse to conflate these:
-
-     application version     package.json / release-identity. NEVER stored in a
-                             project as a schema marker. Read here only to be
-                             recognised and rejected as one.
-     meta.hubVersion         tracked the APP across the pre-6.x generations
-                             (v1 -> v5.8.1), then froze at "v6.0.0" and became a
-                             de-facto schema marker. Both meanings live in one
-                             field, which is why it is evidence and never an
-                             answer on its own.
-     meta.version            broken three ways: "v1" from BLANK(), an app version
-                             in the shipped sample, and the FILM'S OWN DRAFT
-                             NUMBER ("v2.1") in every Overfit generation.
-     meta.schemaVersion      the only real schema marker, and it does not exist
-                             before CineBraid 6.6 - absent in 13 of 18 measured
-                             Overfit generations.
-     format.version          the OFP CONTRACT version. A document carrying one is
-                             already OFP and is not a migration source.
-
-   So detection sniffs SHAPE when there is no marker, reports which markers it
-   saw, and says how confident it is. `migratable` is a separate field from `ok`
-   because "I understood this document" and "I should convert it" are different
-   questions. */
+/* Generic legacy compatibility; behavior is covered with synthetic fixtures. */
 
 const { classifyDocument, DOCUMENT_CLASS } = require("./ofp-format");
 
@@ -52,8 +22,7 @@ const SOURCE_GENERATION = {
   V6_7: "6.7",
   /* meta.schemaVersion "6.6" - the baseline the marker was introduced at. */
   V6_6: "6.6",
-  /* No schemaVersion at all. Thirteen of eighteen measured Overfit generations.
-     Identified by shape, never by a marker that is not there. */
+  /* Generic legacy compatibility; behavior is covered with synthetic fixtures. */
   PRE_6_6: "pre-6.6",
   UNKNOWN: "unknown",
 };
@@ -66,7 +35,7 @@ const META_VERSION_CLASS = {
   TEMPLATE_DEFAULT: "template-default",
   /* Looks like a CineBraid release ("6.6.4-studio.2"). The field was misused. */
   APPLICATION_VERSION: "application-version",
-  /* Looks like the film's own draft label ("v2.1"). The Overfit reading. */
+  /* Generic legacy compatibility; behavior is covered with synthetic fixtures. */
   FILM_DRAFT: "film-draft",
   UNKNOWN: "unknown",
 };

@@ -289,25 +289,7 @@ reachable from `HEAD` — 719 paths reachable, 0 of them research.
 
 Run on this candidate, all green:
 
-| Suite | Result |
-|---|---|
-| `check:version` | pass |
-| `check:syntax` | pass |
-| `check:behavior` | pass |
-| `check:secrets` | pass, both targets clean |
-| `check:public-exposure` | pass |
-| `check:public-exposure-negative` | pass, 24 receipts |
-| `publication:preflight` | refuses in this worktree — `main` is not the candidate, which is the correct answer for an unmerged branch |
-| `publication:preflight` (bound throwaway repo) | clears, and prints exactly `main:refs/heads/main` |
-| `check:local-only` | pass |
-| `check:environment` | pass |
-| `check:package` | pass |
-| `check:render` | pass |
-| `check:api` | pass |
-| `check:browser` | pass |
-| `release:build` | pass, archives built and scanned |
-| `check:ofp-overfit` | pass after the goldens were re-pinned |
-| `check:ofp-overfit-negative` | pass, 21 defects caught |
+External-production evidence is omitted from the current distribution; generic synthetic checks remain authoritative.
 
 `npm run check:ci` expands to 167 leaves. It was run as one chain until it
 aborted, then leaf by leaf so that every remaining suite reported its own exit
@@ -315,20 +297,9 @@ code rather than being skipped by the `&&`. **165 of 167 pass.**
 
 ### The version change re-pinned three OFP goldens
 
-`check:ofp-overfit` failed on the first pass and the failure was real, not
-inherited: it passes on the pristine foundation. The OFP migration writes the
-producing application's version into `format.generator.version`
-(`ofp/ofp-migrate.js:41`, `APPLICATION_VERSION` from `package.json`), and three
-overfit goldens pin a full migrated document.
+External-production evidence is omitted from the current distribution; generic synthetic checks remain authoritative.
 
-Re-pinned with the command the suite itself names,
-`node scripts/build-overfit-golden-fixtures.js --goldens-only`, and the result was
-compared field by field against the previous goldens: the only leaves that moved
-are `candidateSha256` (18) and `candidateBytes` (18), every byte count lower by
-exactly 4 — the difference between `6.7.0-private.1` and `6.7.0-dev.1`. No
-migration behaviour changed, no statement count moved, and no other field
-differs. Both `check:ofp-overfit` and `check:ofp-overfit-negative` pass
-afterwards.
+External-production evidence is omitted from the current distribution; generic synthetic checks remain authoritative.
 
 Two other files still carry `6.7.0-private.1` and correctly keep it:
 `tests/fixtures/ofp-legacy/clean.json` and

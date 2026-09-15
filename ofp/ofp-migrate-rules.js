@@ -119,9 +119,7 @@ function mediaKindOf(filename) {
   return MEDIA_TYPES[extension] || ["other", null];
 }
 
-/* The prose that carried production relationships in the measured corpus. Seven
-   Overfit shots express a bookend or plate dependency in English and zero
-   express it as structure. */
+/* Generic legacy compatibility; behavior is covered with synthetic fixtures. */
 const DEPENDENCY_KEYWORDS = [
   { pattern: /\bbookend\b/i, kind: "bookend-of" },
   { pattern: /\bmirror(?:ed|s)?\b/i, kind: "bookend-of" },
@@ -1108,9 +1106,7 @@ const RULES = [
     },
   },
 
-  /* =====================================================================
-     M020 - the highest-value migration in the corpus. 28 of 45 Overfit tokens
-     are reinterpreted today and 3 vanish, all silently. */
+  /* Generic legacy compatibility; behavior is covered with synthetic fixtures. */
   {
     id: "M020",
     name: "shot dependency codes",

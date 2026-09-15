@@ -1,48 +1,4 @@
-/* State-specific authority — a missing non-default state never borrows the
- * entity's default image.
- *
- * THE PROPERTY THIS FILE EXISTS FOR, in one line: a request for rain-soaked Rhea
- * is answered with rain-soaked Rhea or with NOTHING, and never with clean Rhea.
- *
- * P4-SEM-B made the declared entity-state precedence canonical and PR #58 made
- * the automation preflight honour it per frame. Both stopped one layer above the
- * defect this file covers. Two authority lookups ended in the same `||`:
- *
- *     server.js  entityApprovedDiskPath()   state?.approvedFile || entity.approvedFile
- *     app.js     entityApprovedFileForState()  st?.approvedFile || entity.approvedFile
- *
- * and ensureEntityStateList() keeps `entity.approvedFile` synced to the DEFAULT
- * state's file. So a frame that declared "Rhea is rain-soaked", resolved that
- * state correctly, and found it had no approved reference of its own was handed
- * the clean image as its character identity authority. The declared state and
- * the pixels generated against it were two truths — exactly what P4-SEM-B set
- * out to make impossible, one call deeper than PR #58 reached.
- *
- * THE RULE, now owned once by Continuity.stateApprovedFile():
- *
- *     default state                       -> the default's file, and the
- *                                            entity-level file still answers
- *                                            for it (the whole legacy corpus)
- *     non-default WITH an approved file   -> that state's file
- *     non-default WITHOUT one            -> "" — missing is an answer
- *
- * WHAT IS DRIVEN HERE. The two real server functions that choose an authority
- * image, lifted out of server.js by exact source; the shipped browser scripts in
- * their shipped order through render-harness; and the real automation preflight,
- * so §10's agreement is asserted between the actual two readers rather than
- * between two restatements of them.
- *
- * OWNER-SCOPED STATE IDS. Every entity here declares `state-default` and
- * `state-alt` — the shape the real overfit-18 corpus has, where all twelve state
- * records across every entity carry `state-default`. A resolution that looked a
- * state id up globally would pass a suite that gave each entity unique ids and
- * would be wrong in production.
- *
- * NO PAID PROVIDER CALL IS POSSIBLE HERE. Nothing dispatches a generation. The
- * server functions are evaluated against files in a temporary directory, and the
- * browser sections never leave the vm. FAL is presented as configured only so the
- * preflight reaches its reference checks at all.
- */
+/* Generic legacy compatibility; behavior is covered with synthetic fixtures. */
 const assert = require("assert");
 const fs = require("fs");
 const os = require("os");
@@ -190,12 +146,7 @@ function ruleSection() {
   eq(Continuity.stateApprovedFile(null, state(rhea, DEFAULT_ID)), "",
     "no entity, no authority");
 
-  /* Both entities call their non-default state `state-alt`, which is legal and
-     permanent — `id.duplicate` is defined per collection and all twelve state
-     records in the real overfit-18 corpus carry `state-default`. This function
-     answers about the RECORD it is handed and never looks an id up, so owner
-     scoping is the caller's resolution step; it is asserted where that step
-     happens, in the server and browser sections below. */
+  /* Generic legacy compatibility; behavior is covered with synthetic fixtures. */
   const caseEntity = fixture({ openApproved: true }).props[0];
   eq(Continuity.stateApprovedFile(caseEntity, state(caseEntity, ALT_ID)), OPEN_FILE,
     "case 8: `state-alt` on the prop answers with the prop's file");

@@ -1,25 +1,4 @@
-/* P-1 regression suite: no meaningful director intent may silently disappear,
-   and opening a project is not a migration.
-
-   Each block reproduces a defect that shipped, so each assertion fails if that
-   defect returns:
-
-   F1 - Creation Studio writes entity.creationDescription, but the prompt
-        compiler resolved `block || description`. A visual description authored
-        through the current UI reached continuity and never reached image
-        generation.
-   F2 - the compiler read only `shot.dur`, so the shipped sample's SAMPLE-03,
-        which stores `duration: 4`, compiled as a defaulted 5-second shot.
-   F3 - `codes[]` resolves a token through a prefix compatibility rule, so
-        LOC-HULL-A silently becomes LOC-HULL and STAGE-3 silently becomes
-        nothing. Resolution is deliberately unchanged here; the loss is now
-        reported.
-   F4 - normalizing a project on load cleared coverage approvedFile values,
-        performing a destructive migration before the filmmaker asked for one.
-
-   Everything runs against synthetic fixtures, a disposable copy of the shipped
-   sample, or an os.tmpdir() projects root. No real user project is read or
-   written, and no Overfit data is used. */
+/* Generic legacy compatibility; behavior is covered with synthetic fixtures. */
 const assert = require("assert");
 const fs = require("fs");
 const http = require("http");

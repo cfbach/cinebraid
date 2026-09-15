@@ -1,10 +1,6 @@
 # Open Film Project conformance fixtures (1.0-draft.1)
 
-Every file here is **synthetic**. No real user material, no migrated Overfit
-generation, no copy of anybody's project. `legacy-project.json` imitates the
-*shape* of a legacy CineBraid document — a `schemaVersion`, a shot with a
-`codes[]` token — so the "a real project stays legacy" path has something
-realistic to run against, but its content is invented.
+External-production evidence is omitted from the current distribution; generic synthetic checks remain authoritative.
 
 Draft documents are never published as spec examples or public artifacts
 (P0 §7 rule 3). These are test inputs.

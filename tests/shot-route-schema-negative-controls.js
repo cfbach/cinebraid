@@ -191,11 +191,7 @@ async function moduleControls() {
     },
   );
 
-  /* NC-7a — THE REPRODUCED REVIEW BLOCKER, put back. The legacy `shot.route` reader
-     searches for a token instead of matching the whole value, so arbitrary text becomes a
-     declared delivery route. This is the control for the exact defect independent review
-     found, and it is checked against the REAL Overfit corpus as well as the named
-     reproductions, because the corpus is where the consequence actually lands. */
+  /* Generic legacy compatibility; behavior is covered with synthetic fixtures. */
   await mustFail(
     "NC-7a the legacy output-plan reader searches for a token instead of matching the value",
     "must name no route",

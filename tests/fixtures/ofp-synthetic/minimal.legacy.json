@@ -1,0 +1,80 @@
+{
+  "meta": {
+    "title": "CineBraid synthetic conformance",
+    "version": "v1",
+    "hubVersion": "v6.0.0",
+    "schemaVersion": "6.7"
+  },
+  "scenes": [
+    {
+      "id": "SC-TEST",
+      "title": "Sample scene"
+    }
+  ],
+  "shots": [
+    {
+      "id": "SHOT-ONE",
+      "scene": "SC-TEST",
+      "title": "Place sample",
+      "desc": "A maker sets down a cube.",
+      "dur": 3,
+      "characters": [
+        "CHAR-MAKER"
+      ],
+      "codes": [
+        "LOC-TABLE",
+        "PROP-CUBE"
+      ],
+      "keyframes": [
+        {
+          "id": "frame-a",
+          "description": "Cube on table"
+        }
+      ]
+    },
+    {
+      "id": "SHOT-TWO",
+      "scene": "SC-TEST",
+      "title": "Lift sample",
+      "desc": "A maker lifts the cube.",
+      "dur": 4,
+      "parentShot": "SHOT-ONE",
+      "characters": [
+        "CHAR-MAKER"
+      ],
+      "codes": [
+        "LOC-TABLE"
+      ],
+      "keyframes": [
+        {
+          "id": "frame-a",
+          "description": "Cube above table"
+        }
+      ],
+      "customImportNote": "Keep this invented note for review."
+    }
+  ],
+  "characters": [
+    {
+      "id": "CHAR-MAKER",
+      "name": "Maker",
+      "description": "Plain apron"
+    }
+  ],
+  "locations": [
+    {
+      "id": "LOC-TABLE",
+      "name": "Sample table",
+      "description": "A square table"
+    }
+  ],
+  "props": [
+    {
+      "id": "PROP-CUBE",
+      "name": "Sample cube",
+      "description": "Blue cube"
+    }
+  ],
+  "vehicles": [],
+  "audio": []
+}

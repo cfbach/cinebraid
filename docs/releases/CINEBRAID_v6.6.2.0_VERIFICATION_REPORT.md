@@ -2,7 +2,7 @@
 
 ## Audit acceptance run
 
-The acceptance bot used a disposable copy of **The Overfit**, expanded to 22 shots and a four-state mural chain. FAL was disabled.
+External-production evidence is omitted from the current distribution; generic synthetic checks remain authoritative.
 
 All acceptance criteria passed:
 

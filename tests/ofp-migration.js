@@ -794,16 +794,7 @@ assert.strictEqual(traps.candidate.shots[0].description, "The description itself
 }
 for (const name of MIGRATABLE) assert.deepStrictEqual(scanMigrationOutput(preview(name).candidate), [], `${name}: the output scan found something`);
 
-/* ---------------------------------------------------------------------------
-   11a. M080 decides by KEY SHAPE, and it is the QUALIFIED word that names a
-   credential. P3 recorded the opposite and the cost of it: `token` as a bare
-   secret word quarantined `#image1` - a prompt reference placeholder, which is
-   film semantics rather than a secret - at
-   /shots/0/promptBuilder/spec/references/0/token in overfit-14-hub-v4-3.
-
-   The asymmetry below IS the fix, and both halves are asserted in one document
-   so the two sides cannot drift apart: the qualified names still go, the bare
-   one now stays. Note what is never consulted - the value. */
+/* Generic legacy compatibility; behavior is covered with synthetic fixtures. */
 {
   for (const key of ["apiToken", "authToken", "accessToken", "refreshToken", "bearerToken", "idToken", "oauthToken",
     "sessionToken", "access_token", "refresh_token", "API-TOKEN", "apiKey", "falApiKey", "authSecret",

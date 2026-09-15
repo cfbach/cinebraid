@@ -1,0 +1,32 @@
+{
+  "title": "CineBraid Synthetic Workshop",
+  "sceneIds": [
+    "SC-SAMPLE"
+  ],
+  "shotIds": [
+    "TEST-01",
+    "TEST-02"
+  ],
+  "characterIds": [
+    "CHAR-MAKER"
+  ],
+  "locationIds": [
+    "LOC-WORKSHOP"
+  ],
+  "propIds": [
+    "PROP-CUBE"
+  ],
+  "dialogue": [
+    "The sample is ready."
+  ],
+  "forbiddenText": [
+    "third shot",
+    "red sphere"
+  ],
+  "minimumConflictMarkers": 0,
+  "sceneShotCounts": {
+    "SC-SAMPLE": 2
+  },
+  "expectedSceneCount": 1,
+  "expectedShotCount": 2
+}

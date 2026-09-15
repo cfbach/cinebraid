@@ -1,0 +1,87 @@
+{
+  "meta": {
+    "title": "CineBraid Synthetic Workshop"
+  },
+  "scenes": [
+    {
+      "id": "SC-SAMPLE",
+      "title": "Work table"
+    }
+  ],
+  "shots": [
+    {
+      "id": "TEST-01",
+      "scene": "SC-SAMPLE",
+      "desc": "A maker places a blue cube on a table.",
+      "dialogue": "The sample is ready.",
+      "keyframes": [
+        {
+          "id": "frame-a"
+        }
+      ],
+      "clips": [
+        {
+          "id": "clip-a",
+          "kind": "r2v",
+          "dur": 5
+        }
+      ]
+    },
+    {
+      "id": "TEST-02",
+      "scene": "SC-SAMPLE",
+      "desc": "The maker lifts the cube.",
+      "keyframes": [
+        {
+          "id": "frame-a"
+        }
+      ],
+      "clips": [
+        {
+          "id": "clip-a",
+          "kind": "i2v",
+          "dur": 4
+        }
+      ]
+    }
+  ],
+  "characters": [
+    {
+      "id": "CHAR-MAKER",
+      "name": "Maker",
+      "continuityStates": [
+        {
+          "id": "state-default",
+          "name": "Default",
+          "isDefault": true
+        }
+      ]
+    }
+  ],
+  "locations": [
+    {
+      "id": "LOC-WORKSHOP",
+      "name": "Workshop",
+      "continuityStates": [
+        {
+          "id": "state-default",
+          "name": "Default",
+          "isDefault": true
+        }
+      ]
+    }
+  ],
+  "props": [
+    {
+      "id": "PROP-CUBE",
+      "name": "Blue cube",
+      "continuityStates": [
+        {
+          "id": "state-default",
+          "name": "Default",
+          "isDefault": true
+        }
+      ]
+    }
+  ]
+}

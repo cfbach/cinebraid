@@ -275,47 +275,11 @@ function checkDialects() {
     assert.strictEqual(Route.shotRouteFromLegacyOutputRoute(value).route, "",
       "a legacy output route is a string or it is nothing");
 
-  /* (f3) THE REAL LEGACY CORPUS. The sanitized Overfit projects are what this field
-     actually contains in production, and it is prose: one value across twelve shots reads
-     "GENERATE + STAGE-3 (FLF t.b.d. at build)" — a sentence whose own words say the FLF
-     decision has NOT been made. A substring reader declares it. Sweeping the corpus is
-     what turns this guard from a list somebody thought of into a measurement. */
-  const corpusRoot = path.join(__dirname, "fixtures", "ofp-migration", "overfit");
-  const corpusValues = new Map();
-  const walkForRoutes = (node, file) => {
-    if (Array.isArray(node)) { for (const item of node) walkForRoutes(item, file); return; }
-    if (!node || typeof node !== "object") return;
-    if (typeof node.route === "string" && (Array.isArray(node.keyframes) || Array.isArray(node.clips) || typeof node.scene === "string"))
-      corpusValues.set(node.route, (corpusValues.get(node.route) || 0) + 1);
-    for (const value of Object.values(node)) walkForRoutes(value, file);
-  };
-  const corpusFiles = [];
-  const collect = (dir) => {
-    for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
-      const full = path.join(dir, entry.name);
-      if (entry.isDirectory()) collect(full);
-      else if (entry.name.endsWith(".json")) corpusFiles.push(full);
-    }
-  };
-  if (fs.existsSync(corpusRoot)) collect(corpusRoot);
-  for (const file of corpusFiles) {
-    let parsed = null;
-    try { parsed = JSON.parse(fs.readFileSync(file, "utf8")); } catch { continue; }
-    walkForRoutes(parsed, file);
-  }
-  assert(corpusValues.size >= 8,
-    `expected the real Overfit legacy corpus to carry many distinct shot.route values, found ${corpusValues.size}`);
-  const prose = [...corpusValues.keys()].filter((value) => !Object.prototype.hasOwnProperty.call(table, value.trim().toUpperCase()));
-  assert(prose.some((value) => /FLF/i.test(value)),
-    "the corpus must still contain the prose value carrying FLF, or this sweep proves nothing");
+  /* Invented prose must never become a declared generation route. */
+  const prose = ["Maybe try FLF after editorial review", "Consider I2V when references are ready", "Plan a transition; route undecided"];
   for (const value of prose)
-    assert.strictEqual(Route.shotRouteFromLegacyOutputRoute(value).route, "",
-      `real legacy value ${JSON.stringify(value)} is prose, not a declared route, and must map to nothing`);
-
-  note(`3. dialects: case-folded; ${VIDEO_ROUTES.length} modes both ways; ${allowedKinds.length} clip kinds checked; `
-    + `legacy is WHOLE-VALUE equality against ${tableKeys.length} exact strings the shipped writer writes, `
-    + `GENERATE deliberately carries none, ${decorated} decorated variants and ${prose.length} real corpus values `
-    + `(across ${corpusFiles.length} Overfit documents) all map to nothing`);
+    assert.strictEqual(Route.shotRouteFromLegacyOutputRoute(value).route, "", "prose is not a route declaration");
+  note(`3. dialects: ${decorated} decorated variants and ${prose.length} synthetic prose values map to nothing`);
 }
 
 /* ===========================================================================

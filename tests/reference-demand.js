@@ -1311,21 +1311,7 @@ async function agreementMatrixSection(options = {}) {
     + `case, and returned-result review is not merged into it`);
 }
 
-/* ================================================ 15 · LOC1-LOC7 · AN EXPLICIT
-   CLEAR MUST SURVIVE NORMALISATION.
-
-   Clearing a primary Location on a shot that also had a SUPPORTING location left
-   `locationId` empty with the support still in `codes[]`, and the very next
-   normalisation promoted the support into primary. The filmmaker's clear
-   survived one render.
-
-   WHY A RECORDED DECISION RATHER THAN PRESENCE/ABSENCE, measured rather than
-   assumed. Both existing shapes already mean "please infer": of 611 shots across
-   77 project documents in this repository, 533 carry no `locationId` key and 23
-   carry it PRESENT AND EMPTY — 16 of those being real sanitized Overfit shots
-   whose `codes[]` name a location and which depend on the inference. Reading
-   present-and-empty as "explicitly cleared" would silently take the primary plate
-   away from those 16. LOC3b holds that. */
+/* Generic legacy compatibility; behavior is covered with synthetic fixtures. */
 async function locationDurabilitySection(options = {}) {
   const INPUTS = { "cinebraid-focused:fixture:shot-task:L1-01": "inputs" };
   const fixture = ({ codes, brief }) => {
@@ -1390,7 +1376,7 @@ async function locationDurabilitySection(options = {}) {
   assert.strictEqual(state(legacy.context).locationId, "LOC-HULL",
     "LOC3: an imported shot that never stored a primary must still have one inferred");
 
-  /* LOC3b · and so must the 16 real Overfit shots that store it present-and-empty. */
+  /* Generic legacy compatibility; behavior is covered with synthetic fixtures. */
   const legacyEmpty = await render("#/shot/L1-01", fixture({ codes: ["LOC-HULL", "PR-TOOL"], brief: { locationId: "" } }),
     { ...options, storage: INPUTS });
   assert.strictEqual(state(legacyEmpty.context).locationId, "LOC-HULL",
@@ -1427,7 +1413,7 @@ async function locationDurabilitySection(options = {}) {
 
   note("15. LOC1-LOC7 · an explicitly cleared primary Location stays cleared through normalizeShotV5 AND a "
     + "save/load round trip, with a supporting location left attached as support rather than promoted or deleted. "
-    + "Legacy inference is untouched for BOTH legacy shapes — 533 corpus shots with no key and the 16 real Overfit "
+    + "Legacy inference is untouched for both synthetic legacy shapes: absent fields and "
     + "shots that store it present-and-empty, which is why the decision is recorded rather than inferred from "
     + "presence. Re-selecting either location works, and canon, receipts, plate and approved frames are unchanged");
 }

@@ -1,42 +1,4 @@
-/* P4-SEM-B — canonical shot and frame continuity-state bindings.
- *
- * THE PROPERTY THIS FILE EXISTS FOR, in one line: a declared entity state is one
- * fact with one owner, so the state a project SAYS a frame uses and the
- * authority image CineBraid generates that frame against cannot disagree.
- *
- * Before this batch the fact existed only as runtime storage. `resolveDeclaredStateId`
- * in public/shared-continuity.js resolved frame -> shot -> entity default and the
- * continuity manifest used it, but:
- *
- *   - OFP had no home for it. M042 preserved `shot.continuityStateSelections`
- *     and M014 preserved `creationBrief.frameWorkflows` into
- *     extensions["com.cinebraid.legacy"].preserved[], so a migrated project
- *     carried a director's declared state change as an opaque blob and no other
- *     client could read it, validate it or honour it;
- *   - server.js `derivedFrameContext` — the code that picks which approved image
- *     is a frame's design authority — read the frame's own workflow maps and
- *     then fell straight past the SHOT's declared state to the entity default.
- *     A shot that declared "Rhea is rain-soaked" therefore generated every
- *     unoverridden frame against the clean authority. That is case 18.
- *
- * The tests below drive the real paths: the shared contract directly, the real
- * runtime resolver, the real OFP schema, validator, serializer and migration,
- * the two REAL server functions that choose an authority image, a real
- * save/reload through a real server process, and the real FLF motion gate.
- *
- * THE READING THAT MATTERS, asserted rather than assumed: STATE IDS ARE
- * OWNER-SCOPED. All twelve state records across every entity of the real
- * overfit-18 generation carry the id `state-default` — legal, because
- * `id.duplicate` is defined per collection, and permanent. So a binding never
- * says `stateId` alone and no resolution anywhere may look a state id up
- * globally. Case 7 is three entities all saying `state-default` and all meaning
- * something different.
- *
- * NO PAID PROVIDER CALL IS POSSIBLE HERE. Nothing dispatches a generation; the
- * two authority functions are evaluated against files on disk in a temporary
- * directory, and the server section spawns server.js against a temporary
- * projects root with no provider credentials.
- */
+/* Entity-local state identifiers are validated with synthetic fixtures. */
 const assert = require("assert");
 const fs = require("fs");
 const os = require("os");
@@ -566,23 +528,7 @@ function ofpSection() {
   ok(!(bound.candidate.continuity.shots || []).some((entry) => entry.shotId === "BIND-E"),
     "and no binding is written for the shot whose selections could not be resolved");
 
-  /* Case 18 of the reconciliation's own concern: the real corpus does not
-     exercise this path at all, so nothing here may claim it does. */
-  const corpus = path.join(__dirname, "fixtures", "ofp-migration", "overfit", "generations");
-  let occurrences = 0;
-  for (const name of fs.readdirSync(corpus)) {
-    const text = readText(path.join(corpus, name));
-    for (const key of ["continuityStateSelections", "frameWorkflows", "characterStateSelections", "propStateSelections", "vehicleStateSelections", "locationStateSelections", "locationStateId"])
-      occurrences += text.split(`"${key}"`).length - 1;
-  }
-  eq(occurrences, 0,
-    "the 18 sanitized Overfit generations contain no shot-level or frame-level state selection of any kind; this suite's synthetic fixtures are the only coverage of the migration path and must not be described as corpus-proved");
-  for (const name of fs.readdirSync(path.join(__dirname, "fixtures", "ofp-migration", "overfit", "goldens"))) {
-    if (!name.endsWith(".ofp.json")) continue;
-    const golden = parseJsonStrict(readText(path.join(__dirname, "fixtures", "ofp-migration", "overfit", "goldens", name)));
-    ok(!("continuity" in golden), `${name}: no golden gains a continuity block, because no generation declares a state selection`);
-    ok(!golden.format.profiles.includes("continuity"), `${name}: and none of them declares the profile`);
-  }
+
 }
 
 /* ===========================================================================

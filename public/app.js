@@ -747,32 +747,7 @@ function normalizeShotV5(s) {
   const resolvedLocationId = resolvedEntities.locations[0]?.id || "";
   // Preserve stale explicit IDs so the Inputs workspace can show and repair them.
   // Only infer a location when the project has no explicit location relationship.
-  /* AND NEVER OVER A DECISION THE FILMMAKER ALREADY MADE.
-   *
-   * This inference exists for imported and legacy documents, where a location
-   * lives in `codes[]` and no primary was ever stored. It reads the first
-   * resolvable location, which is a guess — harmless while the only alternative
-   * is nothing, and wrong the moment a person has said "no primary plate".
-   *
-   * Clearing the primary on a shot that also has a SUPPORTING location left
-   * `locationId` empty with the support still in `codes[]`, so the very next
-   * normalisation promoted the support into primary. The filmmaker's clear
-   * survived one render and was gone by the next load.
-   *
-   * WHY PRESENCE/ABSENCE CANNOT CARRY THIS, measured rather than assumed. The
-   * obvious encoding — "key present and empty means explicitly cleared, key
-   * absent means never decided" — was tested against the corpus in this
-   * repository: 611 shots across 77 project documents. 533 carry no
-   * `locationId` key at all, and 23 carry it PRESENT AND EMPTY — of which 16 are
-   * real sanitized Overfit shots whose `codes[]` do name a location and which
-   * depend on this inference to show a plate at all. Both existing shapes
-   * already mean "please infer", so neither is free to mean "explicitly
-   * cleared", and adopting that encoding would silently take the primary plate
-   * away from 16 real shots on load.
-   *
-   * So the decision is recorded, additively, by the writer that makes it. It is
-   * ABSENT on every one of those 611 shots, which is why no document changes
-   * behaviour: absence reads exactly as it always did. */
+  /* Generic legacy compatibility; behavior is covered with synthetic fixtures. */
   if (!String(s.creationBrief.locationId || "").trim() && resolvedLocationId
       && s.creationBrief[SHOT_NO_PRIMARY_LOCATION_KEY] !== true) {
     s.creationBrief.locationId = resolvedLocationId;

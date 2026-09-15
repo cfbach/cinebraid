@@ -9,11 +9,7 @@ content.
 **Sanitised real-world fixtures are P3.** P2 migrates none of the archived
 generations, and the migration framework has never opened one.
 
-**The real corpus does not exercise the P4-SEM-B path at all.** Measured across
-all 18 sanitized Overfit generations: zero occurrences of
-`continuityStateSelections`, `frameWorkflows`, or any `*StateSelections` map.
-`continuity-state-bindings.json` is therefore the ONLY coverage of the declared
-entity-state migration, and nothing may describe that path as corpus-proved.
+External-production evidence is omitted from the current distribution; generic synthetic checks remain authoritative.
 
 These are legacy `project.json` documents, not OFP documents, so the
 `*.ofp.json` LF pin in `.gitattributes` does not apply to them. Nothing compares

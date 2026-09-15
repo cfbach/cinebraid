@@ -437,10 +437,12 @@ async function testApprovalOfferFailsClosed() {
     `(() => { const sel = document.getElementById('entity-approve-file');
        sel.value = 'CHAR-IREN-PRIMARY.png';
        syncEntityApprovalModal();
-       return { selection: window._entityApproval.name, element: sel.value }; })()`,
+       return { selection: window._entityApproval.name, element: sel.value, disabled: document.getElementById("entity-approve-confirm").disabled, message: document.getElementById("entity-approval-readiness").textContent }; })()`,
     p3.context);
   eq(p3After.selection, "CHAR-IREN-GEN.png", "UI-P3: an injected undeclared file does not become the selection");
-  eq(p3After.element, "CHAR-IREN-GEN.png", "UI-P3: and the control is put back to the eligible file it left");
+  eq(p3After.element, "CHAR-IREN-PRIMARY.png", "UI-P3: the invalid request is retained, not substituted");
+  eq(p3After.disabled, true, "UI-P3: the invalid request cannot be approved");
+  ok(p3After.message.includes("No image was substituted"), "UI-P3: unavailability is explicit");
 
   const p4 = await withMedia([sheet, declared]);
   offer(p4);
@@ -589,7 +591,7 @@ async function testStaleSelectionIsRevalidated() {
   eq(v3Restructure(p1, "CHAR-IREN-GEN.png", {}), "undeclared", "STALE-P1: the row is now undeclared");
   p1.context.syncEntityApprovalModal();
   const p1After = v3State(p1);
-  eq(p1After.selection, "", "STALE-P1: an undeclared row does not remain the selection even under the same filename");
+  eq(p1After.selection, "CHAR-IREN-GEN.png", "STALE-P1: invalidated identity is retained for diagnosis, never replaced");
   eq(p1After.confirmDisabled, true, "STALE-P1: and the approval control is withdrawn");
 
   /* STALE-P4 — the writer refuses independently of the visual state. */
@@ -611,30 +613,54 @@ async function testStaleSelectionIsRevalidated() {
     "STALE-P2: the row is now a sheet");
   p2.context.syncEntityApprovalModal();
   const p2After = v3State(p2);
-  eq(p2After.selection, "", "STALE-P2: a sheet cannot remain a primary-authority selection");
+  eq(p2After.selection, "CHAR-IREN-GEN.png", "STALE-P2: invalidated identity is retained without authority");
+  eq(p2After.confirmDisabled, true, "STALE-P2: an invalidated sheet cannot be approved as identity");
   eq(p2After.mode, "primary-authority", "STALE-P2: and the operation is still the one that was started");
 
-  /* STALE-P3 — a second eligible candidate exists, so the modal moves to it and
-     says so rather than holding something it cannot write. */
+  /* Another candidate may be reviewed, but is never substituted automatically. */
   const p3 = await v3Page([V3_SINGLE, V3_SINGLE_B]);
   p3.context.approveEntityFile("characters", "CHAR-IREN", "CHAR-IREN-GEN.png", "state-default", "primary-authority");
-  eq(v3State(p3).selection, "CHAR-IREN-GEN.png", "STALE-P3: opens on A");
   v3Restructure(p3, "CHAR-IREN-GEN.png", {});
   p3.context.syncEntityApprovalModal();
-  const p3After = v3State(p3);
-  eq(p3After.selection, "CHAR-IREN-GEN-B.png", "STALE-P3: it moves to the candidate that is still eligible");
-  /* THE ALPHA IMPORTED-REFERENCE SLICE CHANGED WHAT "AVAILABLE" COSTS, NOT WHAT
-     IT MEANS. Confirmation now additionally waits for a prepared durable identity
-     for the exact candidate on screen, and preparation is a request — so the
-     button is correctly withdrawn for the moment after the selection moves, and
-     comes back when CineBraid can say which bytes it would approve. The claim
-     here is unchanged: the candidate that is still eligible remains approvable.
-     What changed is that the suite has to let the preparation it just triggered
-     settle before reading the button, instead of reading it one line later. */
-  await settleApprovalReadiness(p3);
-  eq(v3State(p3).confirmDisabled, false, "STALE-P3: and approval remains available for that one");
-  ok(p3After.toasts.some((line) => /no longer recorded as a single reference/.test(line)),
-    "STALE-P3: and the move is stated rather than silent");
+  eq(v3State(p3).selection, "CHAR-IREN-GEN.png", "STALE-P3: B is not substituted for invalidated A");
+  eq(v3State(p3).confirmDisabled, true, "STALE-P3: approval remains unavailable");
+  eq(v3State(p3).canon, 0, "STALE-P3: no candidate becomes authority");
+  ok(vm.runInContext("document.getElementById('entity-approval-readiness').textContent.includes('No image was substituted')", p3.context),
+    "STALE-P3: the incomplete decision remains visible");
+  vm.runInContext("document.getElementById('entity-approve-file').value='CHAR-IREN-GEN-B.png'; syncEntityApprovalModal();", p3.context);
+  eq(v3State(p3).selection, "CHAR-IREN-GEN-B.png", "STALE-P3: the user may explicitly choose B for review");
+  eq(v3State(p3).canon, 0, "STALE-P3: explicit review selection still creates no approval");
+
+}
+
+async function testCandidateIsNotProductionAuthority() {
+  const page = await v3Page([V3_SINGLE]);
+  const primary = () => vm.runInContext("__CINEBRAID_COVERAGE_AUTOMATION.primaryReference('characters',P.characters[0])", page.context);
+  const canonPackage = () => vm.runInContext("__CINEBRAID_COVERAGE_AUTOMATION.coverageReferencePackage('characters',P.characters[0]).filter(r=>r.kind==='identity-canon')", page.context);
+  eq(primary(), null, "an unapproved candidate is not an identity input for production generation");
+  eq(canonPackage().length, 0, "no unapproved candidate is packaged as production authority");
+  ok(page.context.document.getElementById("main").innerHTML.includes("No approved image yet"), "missing approval is visible while the candidate is reviewable");
+  page.context.approveEntityFile("characters", "CHAR-IREN", "CHAR-IREN-GEN.png", "state-default", "primary-authority");
+  await settleApprovalReadiness(page);
+  eq(primary(), null, "approval preparation is not authority");
+  await page.gesture.act(() => page.context.confirmEntityApproval(false));
+  eq(v3State(page).canon, 1, "deliberate approval creates authority through the existing writer");
+  eq(primary().name, "CHAR-IREN-GEN.png", "production reference loading uses the deliberately approved image");
+  eq(canonPackage()[0].item.name, "CHAR-IREN-GEN.png", "the production package uses that approved asset");
+  const kernel = kernelRealm(), manual = installTestManualActionSource(kernel);
+  const project = entityProject({ coverageJobType: "single-reference", targetStateId: "state-default" });
+  project.characters.push({id:"CHAR-B",candidateFiles:project.characters[0].candidateFiles,continuityStates:[{id:"state-default",isDefault:true}]});
+  project.characters[0].candidateFiles=[];
+  eq(approveThrough(kernel, manual, project).wrote, false, "a foreign entity candidate cannot approve this reference");
+  eq((project.productionAuthority?.receipts || []).length, 0, "foreign entity rejection writes no authority");
+  // Legacy generation target hints are not state ownership. Explicit reference bindings are.
+  const ReferenceMedia = require("../public/shared-reference-media");
+  const slot = {id:"front",requirement:"required",referenceBindings:{"state-default":"ref-test"}};
+  const owner = {coverageSlots:[slot],candidateFiles:[{stored:"ref-test",referenceBinding:{stateId:"state-other",slotId:"front"}}]};
+  eq(ReferenceMedia.selectedKey(owner,slot,"state-default"), "", "a foreign-state binding cannot satisfy this state's selection");
+  eq(ReferenceMedia.coverage(owner,[{name:"ref-test",available:true}],"state-default").filled, 0,
+    "foreign-state media cannot silently substitute even as coverage");
+
 }
 
 async function testOperationModeIsSticky() {
@@ -1351,6 +1377,7 @@ async function main() {
   await testSheetSourceSpeaksForItself();
   await testStaleSelectionIsRevalidated();
   await testOperationModeIsSticky();
+  await testCandidateIsNotProductionAuthority();
   testTheBoundaryRefusesASheet();
   testUnresolvableClassifierFailsClosed();
   await testExistingBadPrimaryIsReportedNotRevoked();
