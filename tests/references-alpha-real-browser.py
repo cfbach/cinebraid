@@ -68,12 +68,16 @@ def verify_reference_dialog_navigation(page, entity_id):
     if output: pathlib.Path(output).mkdir(parents=True,exist_ok=True)
     def enter():
         page.set_viewport_size({'width':1280,'height':900})
-        page.evaluate("async id => { location.hash='#/character/'+id; await route(); }",entity_id)
+        page.evaluate("""async id => {
+            await new Promise(requestAnimationFrame);
+            history.replaceState(null,'','#/character/'+id);
+            await route();
+        }""",entity_id)
         page.wait_for_selector('[data-reference-desk]')
     def details(width, keyboard=False):
         enter()
         opener=page.locator('[data-rd-action="inspect"]');opener.focus()
-        if keyboard: page.keyboard.press('Enter')
+        if keyboard: opener.press('Enter')
         else: opener.click()
         page.wait_for_selector('#modal:not(.hidden) [data-reference-details-dialog]')
         page.set_viewport_size({'width':width,'height':900})
@@ -107,6 +111,10 @@ def verify_reference_dialog_navigation(page, entity_id):
             evidence.append({'width':width,'activation':mode,**state,'tabIntoDestination':True,'pointerActionSucceeded':True})
         for dismissal in ('Close','Escape','backdrop'):
             details(width)
+            # Re-rendering the same route may replace its opener while the dialog
+            # is open. Dismissal must restore the corresponding control, not body.
+            if width==1920 and dismissal=='Escape':
+                page.evaluate("""() => { const old=MODAL_RETURN_FOCUS; old.replaceWith(old.cloneNode(true)); }""")
             if dismissal=='Close': page.locator('#modal .cancel').click()
             elif dismissal=='Escape': page.keyboard.press('Escape')
             else: page.locator('#modal').click(position={'x':8,'y':8})
@@ -124,6 +132,7 @@ def verify_reference_dialog_navigation(page, entity_id):
 ROOT = pathlib.Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "tests"))
 from browser_runtime import require_browser, launch_chromium
+from media_browser_contract import assert_media_image, assert_reference_rejected, fixture_asset
 
 LABEL = "References alpha blockers real-browser audit"
 sync_playwright = require_browser(LABEL)
@@ -200,7 +209,8 @@ def base_project():
         "meta": {"title": "References Alpha", "format": "Test", "version": "v1",
                  "hubVersion": "v6.0.0", "schemaVersion": "6.6", "aiPolicy": "project-default",
                  "world": {}, "models": []},
-        "qcChecklist": [], "characters": [character()], "locations": [], "props": [],
+        "qcChecklist": [], "characters": [character(), {"id":"CHAR-OTHER", "name":"Other reference",
+            "candidateFiles":[{"stored":"OTHER.png"},{"stored":"MISSING.png"}]}], "locations": [], "props": [],
         "vehicles": [], "audio": [], "mediaAssets": [], "jobs": [], "agentRuns": [],
         "decisions": [], "sessions": [], "finishJobs": [],
         "productionAuthority": {"version": 1, "receipts": [RECEIPT]},
@@ -238,6 +248,7 @@ anchors_dir.mkdir(parents=True, exist_ok=True)
 (anchors_dir / PRIMARY).write_bytes(PIXEL_PNG)
 (anchors_dir / LOOSE).write_bytes(PIXEL_PNG)
 (anchors_dir / SHEET).write_bytes(SHEET_PNG)
+(anchors_dir / "OTHER.png").write_bytes(PIXEL_PNG)
 
 config = json.loads(config_path.read_text(encoding="utf-8"))
 config["activeProject"] = SLUG
@@ -534,7 +545,9 @@ try:
             };
         }""")
         assert staged["mode"] == "staged", "4. clicking a card must stage the choice"
-        assert LOOSE in staged["src"], f"4. and preview the image it chose, got {staged['src']!r}"
+        assert_media_image(page, project_dir, "#coverage-slot-preview img", "anchors/"+LOOSE, ("characters",ENTITY))
+        assert_reference_rejected(page, project_dir, ENTITY, "OTHER.png")
+        assert_reference_rejected(page, project_dir, "CHAR-OTHER", "MISSING.png")
         assert staged["visible"], "4. visibly — a preview with no height is not a preview"
         assert staged["noteVisible"] and "PREVIEWING" in staged["noteText"], \
             f"4. and say it is only previewing, got {staged['noteText']!r}"
@@ -637,11 +650,8 @@ try:
         }""")
         assert front_state and front_state["state"] == "satisfied", \
             f"8. and the board shows the view satisfied without a second selection, got {front_state}"
-        # WHAT THIS SUITE DOES NOT CLAIM. Whether the edit reaches the project file is
-        # the durable-save seam's property and is measured by check:authority-write-seam
-        # against a project the server itself created; a hand-seeded fixture installed
-        # under the sandbox slug does not exercise that path honestly, and asserting on
-        # it here would report a save-transaction result as a References UX result.
+        # The crop transaction now awaits the existing project writer before its
+        # ownership-based scan. The disposable project's stored record is checked below.
         findings.append(f"8. Save crop & use wrote {after_use['front']}, assigned Front, returned to Coverage and "
                         "opened no review")
 
@@ -728,6 +738,28 @@ try:
 
         page.evaluate("() => selectCoverageCropSlot('front-three-quarter')")
         before_candidate = slot_files()
+        page.evaluate("async () => { await flushPendingProjectSave(); if(!projectSaveSettled().settled) throw Error('fixture not saved'); }")
+        stored_before = (project_dir/'project.json').read_bytes()
+        files_before = {p.name:p.read_bytes() for p in anchors_dir.iterdir() if p.is_file()}
+        authority_before = json.loads(stored_before).get('productionAuthority')
+        # Fail only this ordinary candidate write. Keep the crop and the error visible
+        # for an explicit retry; no success/approval or second upload is permitted.
+        failed_writes=[]
+        def fail_candidate_write(route):
+            failed_writes.append(route.request.method)
+            route.fulfill(status=500,content_type='application/json',body=json.dumps({'error':'Injected candidate persistence failure'}))
+        write_url=f"**/api/projects/{SLUG}/project"
+        page.route(write_url,fail_candidate_write)
+        page.locator('.coverage-extractor-actions button:has-text("SAVE AS CANDIDATE")').click()
+        page.wait_for_selector('#coverage-crop-save-error')
+        pending=page.evaluate("() => ({name:_coverageCrop.pendingCrop.row.stored,saving:_coverageCrop.saving,modal:!document.getElementById('modal').classList.contains('hidden')})")
+        assert failed_writes==['PUT'] and pending['modal'] and not pending['saving'],pending
+        assert (project_dir/'project.json').read_bytes()==stored_before, 'failed save must not persist an unusable candidate'
+        assert (anchors_dir/pending['name']).is_file(), 'exact crop must remain available for retry'
+        assert {p.name for p in anchors_dir.iterdir() if p.is_file()}==set(files_before)|{pending['name']}, 'failure created extra crops'
+        assert all((anchors_dir/name).read_bytes()==data for name,data in files_before.items()), 'failure changed existing media'
+        assert 'Candidate save not complete' in page.locator('#coverage-crop-save-error').inner_text()
+        page.unroute(write_url,fail_candidate_write)
         page.locator('.coverage-extractor-actions button:has-text("SAVE AS CANDIDATE")').click()
         # WAIT FOR THE END OF THE ACTION, not for its first visible effect. The
         # candidate row is pushed before the upload's scan refresh, the dirty mark
@@ -753,10 +785,35 @@ try:
             "9. without opening a review on the filmmaker's behalf either"
         findings.append(f"9. Save as candidate preserved {fresh[0]['file']} and left every view exactly as it was")
 
-        # ---- 10. an unreviewed candidate has no green factors --------------------------
-        page.evaluate("""(name) => openEntityCandidateReview('characters', P.characters[0].id, name, 'state-default')""",
-                      fresh[0]["file"])
+        # Durable save, exact state ownership and no implicit authority transition.
+        saved=json.loads((project_dir/'project.json').read_text(encoding='utf-8'))
+        row=next(r for r in saved['characters'][0]['candidateFiles'] if r.get('stored')==fresh[0]['file'])
+        assert row['stored']==pending['name'], 'retry must reuse the exact crop'
+        assert row['decision']=='unreviewed' and row['targetStateId']=='state-default',row
+        assert row['assetId']==fixture_asset(project_dir,'anchors/'+row['stored'])[0]
+        assert saved.get('productionAuthority')==authority_before, 'saving created authority'
+        assert not any(row['stored']==r.get('stored') for e in saved['characters'][1:] for r in e.get('candidateFiles',[])), 'foreign entity owns crop'
+        assert {p.name for p in anchors_dir.iterdir() if p.is_file()}==set(files_before)|{pending['name']}, 'retry duplicated physical crop'
+        assert_reference_rejected(page,project_dir,'CHAR-OTHER',row['stored'])
+        assert_reference_rejected(page,project_dir,ENTITY,'MISSING.png')
+        # ---- 10. a saved candidate is immediately reviewable, including after reload ---
+        # Review belongs to the existing candidate cards on Primary reference;
+        # Coverage itself holds the slot chooser, not a duplicate review gallery.
+        page.locator('.bounded-entity-taskbar button',has_text='Primary reference').click()
+        review_selector=f'.entity-candidate-card[data-candidate-file="{row["stored"]}"] .candidate-review-action'
+        page.locator(review_selector).first.click()
         page.wait_for_selector(".entity-candidate-review-modal", timeout=15000)
+        assert assert_media_image(page,project_dir,'.entity-candidate-review-visual > img','anchors/'+row['stored'],('characters',ENTITY))==row['assetId']
+        page.evaluate("() => closeModal()")
+        page.reload(wait_until='domcontentloaded')
+        page.wait_for_function("id => P?.characters?.some(e=>e.id===id)",arg=ENTITY)
+        open_reference()
+        page.locator('.bounded-entity-taskbar button',has_text='Primary reference').click()
+        page.locator(review_selector).first.click()
+        page.wait_for_selector(".entity-candidate-review-modal", timeout=15000)
+        assert assert_media_image(page,project_dir,'.entity-candidate-review-visual > img','anchors/'+row['stored'],('characters',ENTITY))==row['assetId']
+        assert page.evaluate("name => P.characters[0].candidateFiles.find(r=>r.stored===name).decision",row['stored'])=='unreviewed'
+        findings.append('9a. failed persistence reported failure and retained one recoverable crop; retry reused it, persisted ownership and durable identity, exposed Review immediately and after reload, and created no approval')
         review = page.evaluate("""() => ({
             overall: ((document.querySelector('.entity-review-summary b') || {}).textContent || '').trim(),
             status: ((document.querySelector('.entity-review-score') || {}).textContent || '').trim(),
@@ -782,6 +839,8 @@ try:
                         f"{len(review['factors'])} neutral factors and no green border")
         page.evaluate("() => closeModal()")
 
+        # Return to the coverage board used by the original assignment assertions.
+        open_coverage();open_board()
         # ---- N2. and the assign action is a control that can be present ----------------
         page.evaluate("""(name) => openEntityCandidateReview('characters', P.characters[0].id, name, 'state-default')""",
                       after_use["rows"][0]["file"])

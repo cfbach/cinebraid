@@ -828,10 +828,9 @@
    *                                        This is exactly what the old default
    *                                        button did, kept and renamed.
    *
-   * NOTHING BELOW CHANGED SHAPE. The crop, the upload, the candidate row, the
-   * provenance, `reviewRequired`, the scan refresh and the coverage hand-off are
-   * the same writes in the same order; `approve` is simply read from the caller
-   * instead of from a DOM element. A boolean argument is still accepted, meaning
+   * Candidate ownership is persisted before resolving the uploaded crop. The
+   * existing save writer retains recoverable edits on failure, and a retry reuses
+   * the exact upload. A boolean argument is still accepted, meaning
    * what it always meant, so a page mid-session cannot break on an old handler. */
   window.extractCoverageCrop = async (options = false) => {
     const settings = options && typeof options === "object" ? options : { assign: false, next: options !== true };
@@ -845,25 +844,62 @@
     const slot = state?.slots.find((item) => item.id === state.slotId);
     const img = document.getElementById("coverage-crop-source");
     if (!state || !entity || !slot || !img?.naturalWidth) return toast("The source sheet is not ready");
-    const sx = Math.round(img.naturalWidth * state.crop.x / 100), sy = Math.round(img.naturalHeight * state.crop.y / 100);
-    const sw = Math.max(1, Math.round(img.naturalWidth * state.crop.w / 100)), sh = Math.max(1, Math.round(img.naturalHeight * state.crop.h / 100));
-    const canvas = document.createElement("canvas"); canvas.width = sw; canvas.height = sh;
-    canvas.getContext("2d").drawImage(img, sx, sy, sw, sh, 0, 0, sw, sh);
-    const blob = await new Promise((resolve) => canvas.toBlob(resolve, "image/png", 1));
-    if (!blob) return toast("Could not create the crop");
-    const safeSlot = String(slot.id || "view").replace(/[^a-z0-9]+/gi, "-").toUpperCase();
-    const name = `${entity.id}-COVERAGE-${safeSlot}-${Date.now().toString(36).toUpperCase()}.png`;
-    const response = await fetch(`/api/media/upload?type=${encodeURIComponent(entityFolder(state.list))}&name=${encodeURIComponent(name)}${projectSlugParam()}`, { method: "POST", headers: { "Content-Type": "image/png" }, body: blob });
-    const data = await response.json().catch(() => ({}));
-    if (!response.ok) return toast(data.error || "Could not save the extracted crop");
+    if (state.saving) return;
+    const project=P,slug=ACTIVE_PROJECT_SLUG;
+    const targetStateId=state.sourceRow.targetStateId || entityStateListRead(entity,true).find(s=>s.isDefault)?.id || "state-default";
+    if(!entityStateById(entity,targetStateId))return toast("The source sheet's continuity state is unavailable");
+    state.saving=true;
+    try {
+      // A retry completes this exact upload; it never creates another crop.
+      if(!state.pendingCrop) {
+        const sx = Math.round(img.naturalWidth * state.crop.x / 100), sy = Math.round(img.naturalHeight * state.crop.y / 100);
+        const sw = Math.max(1, Math.round(img.naturalWidth * state.crop.w / 100)), sh = Math.max(1, Math.round(img.naturalHeight * state.crop.h / 100));
+        const canvas = document.createElement("canvas"); canvas.width = sw; canvas.height = sh;
+        canvas.getContext("2d").drawImage(img, sx, sy, sw, sh, 0, 0, sw, sh);
+        const blob = await new Promise((resolve) => canvas.toBlob(resolve, "image/png", 1));
+        if (!blob) throw new Error("Could not create the crop");
+        const safeSlot = String(slot.id || "view").replace(/[^a-z0-9]+/gi, "-").toUpperCase();
+        const name = `${entity.id}-COVERAGE-${safeSlot}-${Date.now().toString(36).toUpperCase()}.png`;
+        const response = await fetch(`/api/media/upload?type=${encodeURIComponent(entityFolder(state.list))}&name=${encodeURIComponent(name)}&slug=${encodeURIComponent(slug)}`, { method: "POST", headers: { "Content-Type": "image/png" }, body: blob });
+        const data = await response.json().catch(() => ({}));
+        if (!response.ok) throw new Error(data.error || "Could not save the extracted crop");
+        const note = document.getElementById("coverage-crop-note")?.value || "";
+        state.pendingCrop={slug,project,slotId:slot.id,row:{ stored: data.name, original: data.name, addedAt: new Date().toISOString(), decision: "unreviewed", reviewRequired: !assign, directApprovalRequested: !!assign, targetStateId, targetCoverageSlotId: slot.id, targetCoverageSlotName: slot.label, coverageGroup: state.sheetType === "expressions" ? "expressions" : "angles", coverageCrop: { sourceSheet: state.fileName, layout: state.layout, panelIndex: state.panelIndex, normalized: { ...state.crop }, sourceBuildId: state.sourceRow.sourceBuildId || "", generationJobId: state.sourceRow.generationJobId || "", manuallyAdjusted: true, note }, coverageJobType: "extracted-crop", referenceView: coverageSlotViewTag(state.list, slot) }};
+      }
+      const pending=state.pendingCrop;
+      if(P!==pending.project || ACTIVE_PROJECT_SLUG!==pending.slug || slot.id!==pending.slotId)throw new Error("The reference context changed. The uploaded crop is kept; reopen this reference before continuing.");
+      const preparedResponse=await fetch('/api/media/prepare-identity',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({projectSlug:slug,dir:entityFolder(state.list),name:pending.row.stored})});
+      const prepared=await preparedResponse.json();
+      if(!preparedResponse.ok || prepared.status!=='ready' || !prepared.assetId)throw new Error("The crop's identity is not ready. Retry this save.");
+      if(P!==project || ACTIVE_PROJECT_SLUG!==slug)throw new Error("The project changed while saving the crop.");
+      pending.row.assetId=prepared.assetId;
+      entity.candidateFiles = Array.isArray(entity.candidateFiles) ? entity.candidateFiles : [];
+      if(!entity.candidateFiles.includes(pending.row))entity.candidateFiles.push(pending.row);
+      updateCoverageTerminalState(state.list, entity);
+      dirty();
+      // Use the existing serialized writer, including its retry/refusal behavior.
+      clearTimeout(saveTimer);saveTimer=null;
+      await queueProjectSave(captureProjectSave());
+      const settled=projectSaveSettled();
+      if(P!==project || ACTIVE_PROJECT_SLUG!==slug || !settled.settled)throw new Error(settled.reason || "The project changed while saving the crop.");
+      const scanResponse=await fetch('/api/scan');
+      if(!scanResponse.ok)throw new Error("The candidate is saved, but its media could not be checked. Retry.");
+      const scan=await scanResponse.json();
+      if(P!==project || ACTIVE_PROJECT_SLUG!==slug)throw new Error("The project changed while checking the crop.");
+      const resolved=scan.references?.[state.list]?.[state.entityId]?.find(r=>r.name===pending.row.stored);
+      if(!resolved?.available || resolved.assetId!==prepared.assetId)throw new Error("The candidate is saved, but its exact image is unavailable. Retry after checking the media.");
+      SCAN=scan;
+    } catch(error) {
+      // Retain the exact upload and unsaved edit under the existing save-error
+      // recovery. No success, assignment, approval, deletion or duplicate upload.
+      const message="Candidate save not complete. "+(error.message || "Retry the save.");
+      let notice=document.getElementById('coverage-crop-save-error');
+      if(!notice && document.querySelector('.coverage-extractor-modal')){notice=document.createElement('p');notice.id='coverage-crop-save-error';notice.setAttribute('role','alert');document.querySelector('.coverage-extractor-actions').before(notice);}
+      if(notice)notice.textContent=message;
+      toast(message);return;
+    } finally { state.saving=false; }
+    const data = { name: state.pendingCrop.row.stored };
     const approve = assign;
-    const note = document.getElementById("coverage-crop-note")?.value || "";
-    entity.candidateFiles = Array.isArray(entity.candidateFiles) ? entity.candidateFiles : [];
-    const candidateRow = { stored: data.name, original: data.name, addedAt: new Date().toISOString(), decision: "unreviewed", reviewRequired: !approve, directApprovalRequested: !!approve, targetCoverageSlotId: slot.id, targetCoverageSlotName: slot.label, coverageGroup: state.sheetType === "expressions" ? "expressions" : "angles", coverageCrop: { sourceSheet: state.fileName, layout: state.layout, panelIndex: state.panelIndex, normalized: { ...state.crop }, sourceBuildId: state.sourceRow.sourceBuildId || "", generationJobId: state.sourceRow.generationJobId || "", manuallyAdjusted: true, note }, coverageJobType: "extracted-crop", referenceView: coverageSlotViewTag(state.list, slot) };
-    entity.candidateFiles.push(candidateRow);
-    SCAN = await fetch("/api/scan").then((r) => r.json());
-    updateCoverageTerminalState(state.list, entity);
-    dirty();
     const group = state.sheetType === "expressions" ? "expressions" : "angles";
     rememberWorkspaceSection(entityCoverageSectionKey(state.list, state.entityId, group), true);
     /* R4 — back to the view this crop was made for, whichever branch runs. */

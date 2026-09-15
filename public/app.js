@@ -4409,6 +4409,7 @@ window.newProject = () =>
 /* ---------- modal helpers ---------- */
 let AGENT_RESULT_MODAL_TIMER = null;
 let MODAL_RETURN_FOCUS = null;
+let MODAL_RETURN_FOCUS_RESOLVER = null;
 let MODAL_KEY_HANDLER = null;
 let MODAL_SCROLL_Y = 0;
 let MODAL_ANCHOR_TOP = null;
@@ -4475,6 +4476,7 @@ function openModal(inner, options = {}) {
   MODAL_RETURN_FOCUS = document.activeElement && document.activeElement !== document.body
     ? document.activeElement
     : (dispatching && typeof dispatching.focus === "function" ? dispatching : null);
+  MODAL_RETURN_FOCUS_RESOLVER = typeof options.resolveReturnFocus === "function" ? options.resolveReturnFocus : null;
   MODAL_SCROLL_Y = Number(window.scrollY || document.documentElement?.scrollTop || 0);
   const modalAnchor = MODAL_RETURN_FOCUS?.closest?.(".asset-creation-card, details.entity-state-generation, .settings-block, .shot-main");
   MODAL_ANCHOR_TOP = modalAnchor?.getBoundingClientRect?.().top ?? null;
@@ -4584,6 +4586,8 @@ window.closeModal = (options = {}) => {
   if (MODAL_KEY_HANDLER) m.removeEventListener?.("keydown", MODAL_KEY_HANDLER);
   MODAL_KEY_HANDLER = null;
   const returnFocus = MODAL_RETURN_FOCUS;
+  const resolveReturnFocus = MODAL_RETURN_FOCUS_RESOLVER;
+  MODAL_RETURN_FOCUS_RESOLVER = null;
   const returnScroll = MODAL_SCROLL_Y;
   const returnAnchorTop = MODAL_ANCHOR_TOP;
   MODAL_RETURN_FOCUS = null;
@@ -4596,7 +4600,8 @@ window.closeModal = (options = {}) => {
   }
   setTimeout(() => {
     if (Number.isFinite(returnScroll)) window.scrollTo?.(0, returnScroll);
-    returnFocus?.focus?.({ preventScroll: true });
+    const target = returnFocus?.isConnected === false ? resolveReturnFocus?.() : returnFocus;
+    target?.focus?.({ preventScroll: true });
     const anchor = returnFocus?.closest?.(".asset-creation-card, details.entity-state-generation, .settings-block, .shot-main");
     if (anchor && Number.isFinite(returnAnchorTop)) {
       const delta = anchor.getBoundingClientRect().top - returnAnchorTop;

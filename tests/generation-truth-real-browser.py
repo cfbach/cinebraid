@@ -40,6 +40,7 @@ import json, os, pathlib, shutil, socket, subprocess, sys, tempfile, time
 ROOT = pathlib.Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "tests"))
 from browser_runtime import require_browser, launch_chromium, canon_receipts
+from media_browser_contract import assert_media_response, fixture_asset
 
 LABEL = "Generation truth / routing real-browser audit"
 sync_playwright = require_browser(LABEL)
@@ -176,7 +177,7 @@ try:
               buildId: build.id,
               profileId: build.profileId,
               waypoints: (build.references || []).filter(r => r.role === 'sequential-keyframe')
-                .map(r => ({ file: String(r.url || '').split('/').pop(), instruction: String(r.instruction || '') })),
+                .map(r => ({ url: String(r.url || ''), instruction: String(r.instruction || '') })),
               promptHasSequenceNote: String(build.prompt || '').includes('SEQ-NOTE'),
               promptHasMiddleBeat: String(build.prompt || '').includes('BEAT-MIDDLE'),
             };
@@ -184,9 +185,12 @@ try:
         assert not built.get("error"), f"A: {built.get('error')}"
         assert built["profileId"] == "minimax-h3/multi-frame", \
             f"A: the package must compile for the chosen multi-frame target, got {built['profileId']!r}"
-        files = [row["file"] for row in built["waypoints"]]
-        assert files == ["SAMPLE-01-ARRIVAL.png", "SAMPLE-01-BEAT-B.png", "SAMPLE-01-BEAT-C.png"], \
-            f"A: all three authored waypoints must travel in the panel's order, got {files}"
+        expected = ["SAMPLE-01-ARRIVAL.png", "SAMPLE-01-BEAT-B.png", "SAMPLE-01-BEAT-C.png"]
+        assert len(built['waypoints'])==len(expected), 'all authored waypoints must reach the package'
+        identities=[assert_media_response(page, project_dir, row['url'], f'shots/{SHOT}/takes/{name}')
+                    for row,name in zip(built['waypoints'],expected)]
+        assert identities==[fixture_asset(project_dir,f'shots/{SHOT}/takes/{name}')[0] for name in expected], \
+            'authored durable assets must travel in the panel order'
         assert "BEAT-MIDDLE" in built["waypoints"][1]["instruction"], \
             "A: the beat directed against the middle frame must reach its reference"
         assert built["promptHasSequenceNote"], "A: the sequence direction must reach the compiled prompt"

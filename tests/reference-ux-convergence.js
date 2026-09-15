@@ -970,6 +970,8 @@ async function testDetailsIsNotADataDump() {
    code, running. */
 function extractorHarness(project, storage) {
   const uploaded = [];
+  let saved = null;
+  const identity = name => "asset-crop-" + uploaded.indexOf(name);
   const scanWith = (extra) => {
     const base = convergenceScan();
     return { ...base, anchors: [...base.anchors, ...extra.map((name) => ({ name, url: `/assets/anchors/${name}` }))] };
@@ -986,7 +988,20 @@ function extractorHarness(project, storage) {
           uploaded.push(name);
           return respond({ name });
         }
-        if (target === "/api/scan") return respond(scanWith(uploaded));
+        if (target === "/api/media/prepare-identity") {
+          const {name} = JSON.parse(options.body);
+          return respond({status: uploaded.includes(name) ? "ready" : "unavailable", assetId: identity(name)});
+        }
+        if (target.startsWith("/api/projects/") && options.method === "PUT") {
+          saved = JSON.parse(options.body);
+          return respond({ok:true});
+        }
+        if (target === "/api/scan") {
+          const result = scanWith(uploaded);
+          result.references = {characters: {"CHAR-UX": (saved?.characters.find(e=>e.id==="CHAR-UX")?.candidateFiles || [])
+            .filter(r=>uploaded.includes(r.stored)).map(r=>({name:r.stored, assetId:r.assetId, available:true, url:"/fixture/crop/"+r.assetId}))}};
+          return respond(result);
+        }
         return null;
       },
     }),
@@ -1174,8 +1189,13 @@ async function testSaveCropAndUseIsOneActionThatConverges() {
   eq(out.slot, "profile", "with the view the crop was made for selected");
 }
 
-async function testSaveAsCandidateAssignsNothing() {
-  const harness = extractorHarness(convergenceFixture(), COVERAGE_STORAGE);
+async function testSaveAsCandidateAssignsNothing(stateId = "state-default") {
+  const project = convergenceFixture();
+  if (stateId !== "state-default") {
+    project.characters[0].continuityStates.push({id:stateId,name:"Alternate",isDefault:false,approvedFile:""});
+    project.characters[0].candidateFiles.find(r=>r.stored==="CHAR-UX-SHEET.png").targetStateId=stateId;
+  }
+  const harness = extractorHarness(project, COVERAGE_STORAGE);
   const rendered = await harness.render();
   const result = await vm.runInContext(`(async () => {
     ${EXTRACTOR_CANVAS}
@@ -1187,7 +1207,7 @@ async function testSaveAsCandidateAssignsNothing() {
     await extractCoverageCrop({ assign: false });
     const rows = (P.characters.find(x => x.id === 'CHAR-UX').candidateFiles || [])
       .filter((r) => r.coverageJobType === 'extracted-crop' && r.coverageCrop)
-      .map((r) => ({ file: r.stored, decision: r.decision, reviewRequired: r.reviewRequired, target: r.targetCoverageSlotId }));
+      .map((r) => ({ file: r.stored, decision: r.decision, reviewRequired: r.reviewRequired, target: r.targetCoverageSlotId, state: r.targetStateId, assetId:r.assetId }));
     return JSON.stringify({ before, after: slots().join('|'), rows,
       modal: document.getElementById('modal').innerHTML,
       modalHidden: document.getElementById('modal').classList.contains('hidden') });
@@ -1195,6 +1215,8 @@ async function testSaveAsCandidateAssignsNothing() {
   const out = JSON.parse(result);
 
   eq(out.rows.length, 1, "the crop is preserved");
+  eq(out.rows[0].state, stateId, "the crop keeps the source sheet continuity-state ownership");
+  ok(out.rows[0].assetId, "the crop has a durable identity before save completes");
   eq(out.rows[0].target, "profile", "still recording which view it was made for");
   eq(out.rows[0].decision, "unreviewed", "as a candidate, not a decision");
   eq(out.rows[0].reviewRequired, true, "and one a review can still be run on");
@@ -1931,6 +1953,7 @@ async function main() {
   await testAttentionSurvivesWhereTheAnswerIsUnknown();
   await testSaveCropAndUseIsOneActionThatConverges();
   await testSaveAsCandidateAssignsNothing();
+  await testSaveAsCandidateAssignsNothing("state-alternate");
   await testAlreadyHeldCandidateIsOfferedNoAssignment();
   await testKnownCurrentDemandStillReadsRequired();
   await testStructuralSeedAndAutomationAreUntouched();

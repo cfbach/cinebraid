@@ -54,6 +54,7 @@ root. NO PROVIDER OR PAID CALL IS MADE.
 """
 
 import json
+import base64
 import urllib.parse
 import os
 import pathlib
@@ -67,6 +68,7 @@ import time
 ROOT = pathlib.Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent))
 from browser_runtime import require_browser, launch_chromium
+from media_browser_contract import assert_media_image
 
 LABEL = "Returned media ownership"
 sync_playwright = require_browser(LABEL)
@@ -116,6 +118,11 @@ projects_root = temp / "projects"
 project_dir = projects_root / "returned-project"
 project_dir.mkdir(parents=True)
 build_fixture(project_dir)
+# The shared Node fixture uses text sentinels. Browser identity proof also needs
+# decodable pixels. Replace only its existing synthetic images before indexing;
+# the intentionally missing SH-C file stays absent.
+for image in project_dir.rglob('*.png'):
+    image.write_bytes(base64.b64decode('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII='))
 config_path = temp / "config.json"
 config_path.write_text(
     json.dumps({"activeProject": "returned-project", "providers": {}, "agents": {}}),
@@ -255,8 +262,7 @@ try:
               f"A. named with its owning unit: {card}")
         check("came back and needs your decision" in card["body"],
               f"A. the card must say what the filmmaker is looking at, read {card['body']!r}")
-        check(CANDIDATE_A in card["heroSrc"],
-              f"A. the returned image itself must be on the card, src was {card['heroSrc']!r}")
+        assert_media_image(page, project_dir, '.guided-lifecycle-preview img', f'shots/{SHOT_A}/takes/{CANDIDATE_A}')
         check("inspectMediaFile" in card["heroCall"],
               f"A. and it must hand off to the Inspector rather than only enlarging: {card['heroCall']!r}")
         check(card["primaryCount"] == 1, f"A. exactly one primary action, saw {card['primaryCount']}")
@@ -290,11 +296,10 @@ try:
         before = [c for c in repair["compares"] if c["kicker"] == "before"]
         check(len(before) == 1, f"B. the take being repaired must be on the card as Before: {repair['compares']}")
         check(PARENT_B in before[0]["text"], f"B. named: {before[0]['text']!r}")
-        check(PARENT_B in before[0]["src"],
-              f"B. with its own image, comparable without leaving the page: {before[0]['src']!r}")
+        assert_media_image(page, project_dir, '[data-returned-review-compare=before] img', f'shots/{SHOT_B}/takes/{PARENT_B}')
         check("Composition" in before[0]["text"],
               f"B. alongside what the repair was asked to fix: {before[0]['text']!r}")
-        check(REPAIR_B in repair["heroSrc"], f"B. while the repaired result is the hero: {repair['heroSrc']!r}")
+        assert_media_image(page, project_dir, '.guided-lifecycle-preview img', f'shots/{SHOT_B}/takes/{REPAIR_B}')
         findings.append(
             f"B. {SHOT_B} opened on the repair {repair['file']} with {PARENT_B} shown as Before "
             f"and the recorded correction intent beside it")
@@ -402,8 +407,7 @@ try:
         page.wait_for_selector('[data-shot-desk] #sd-primary-image', timeout=30000)
         check(page.evaluate("() => routeReviewClaim()") == claim['reviewKey'],
               'E. Shot Desk keeps the exact review identity carried by Production')
-        check(CANDIDATE_A in page.locator('#sd-primary-image').get_attribute('src'),
-              'E. the displayed media is the claimed candidate, not another pending image')
+        assert_media_image(page, project_dir, '#sd-primary-image', f'shots/{SHOT_A}/takes/{CANDIDATE_A}')
         findings.append(f'E. Production opened the accepted Shot Desk on {CANDIDATE_A}')
 
         # The accepted desk keeps the exact rejected image visible with its decision.
@@ -412,8 +416,12 @@ try:
         page.locator('#sd-reject').click()
         page.wait_for_function("() => document.querySelector('.sd-decision')?.textContent.includes('Rejected')")
         check(page.evaluate("() => routeReviewClaim()") == claim['reviewKey'], 'F. rejection retains the exact route identity')
-        check(CANDIDATE_A in page.locator('#sd-primary-image').get_attribute('src'), 'F. rejection does not substitute another image')
-        check(page.locator('#sd-approve, #sd-reject').count() == 0, 'F. a settled rejection offers no pending decision action')
+        assert_media_image(page, project_dir, '#sd-primary-image', f'shots/{SHOT_A}/takes/{CANDIDATE_A}')
+        # Inspection of rejected history inherits the existing media action contract:
+        # approve is 'not-approved'; reject is 'undecided'. Leaving the pending
+        # queue does not remove the deliberate approval option from this image.
+        check(page.locator('#sd-approve').count() == 1 and page.locator('#sd-reject').count() == 0,
+              'F. rejected history keeps deliberate approval and drops repeated rejection')
         decided = page.evaluate("""() => {
             const projection = returnedReviewProjectionForBrowser();
             const shot = P.shots.find((row) => row.id === 'SH-A');
@@ -437,8 +445,8 @@ try:
         page.goto(f"{base}/{stale_href}", wait_until="domcontentloaded", timeout=30000)
         page.wait_for_selector('[data-shot-desk] #sd-primary-image', timeout=30000)
         page.wait_for_function("() => document.querySelector('.sd-decision')?.textContent.includes('Rejected')")
-        check(CANDIDATE_A in page.locator('#sd-primary-image').get_attribute('src'), 'F. reload preserves the rejected image, not the next pending image')
-        check(page.locator('#sd-approve, #sd-reject').count() == 0, 'F. the bookmarked decision remains settled')
+        assert_media_image(page, project_dir, '#sd-primary-image', f'shots/{SHOT_A}/takes/{CANDIDATE_A}')
+        check(page.locator('#sd-approve').count() == 1 and page.locator('#sd-reject').count() == 0, 'F. bookmarked rejected history keeps the same permitted actions')
         findings.append(f'F. the reviewed link remains on rejected {CANDIDATE_A}, without substituting {CANDIDATE_A2}')
 
         # Continuing to another frame remains explicit through Shot preparation.
@@ -447,7 +455,7 @@ try:
         check(card_state(page)['file'] == CANDIDATE_A2, 'G. preparation names the still-pending image')
         page.locator('.shot-primary-action').click()
         page.wait_for_selector('[data-shot-desk] #sd-primary-image', timeout=30000)
-        check(CANDIDATE_A2 in page.locator('#sd-primary-image').get_attribute('src'), 'G. deliberate navigation opens the next pending image')
+        assert_media_image(page, project_dir, '#sd-primary-image', f'shots/{SHOT_A}/takes/{CANDIDATE_A2}')
         check(page.evaluate("() => routeReviewClaim()") == production['secondKey'], 'G. the new route carries that image identity')
         findings.append(f'G. explicit preparation-to-review navigation reached {CANDIDATE_A2}')
 

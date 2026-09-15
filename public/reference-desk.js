@@ -154,7 +154,13 @@
     if(id==='return'&&origin){returning=origin;origin=null;location.hash=returning.route;return;}
     if(id==='details'){openModal('<div data-reference-details-dialog><h3>Notes &amp; history</h3>'+entityDetailsHistoryMarkup(m.list,m.entity,()=>'<p>'+e(m.entity.notes||'No additional notes.')+'</p>')+'<button class="cancel" onclick="closeModal()">Close</button></div>');return;}
     if(id==='inspect'){
-      if(!matchMedia('(min-width:1360px)').matches){openModal('<div data-reference-details-dialog><h3>Reference details</h3>'+inspect(m)+'<button class="cancel" autofocus onclick="closeModal()">Close</button></div>');return;}
+      if(!matchMedia('(min-width:1360px)').matches){
+        const from=location.hash,project=ACTIVE_PROJECT_SLUG;
+        openModal('<div data-reference-details-dialog><h3>Reference details</h3>'+inspect(m)+'<button class="cancel" autofocus onclick="closeModal()">Close</button></div>',{
+          // A same-route responsive render can replace the original DOM node.
+          resolveReturnFocus:()=>location.hash===from && ACTIVE_PROJECT_SLUG===project ? document.querySelector('.rd-toolbar [data-rd-action="inspect"]') : null,
+        });return;
+      }
       m.state.inspect=!m.state.inspect;repaint();
     }
   }

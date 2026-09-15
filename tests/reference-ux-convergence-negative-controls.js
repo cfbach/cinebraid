@@ -412,6 +412,8 @@ const sheetFixture = () => {
 };
 const drawExtractor = (mutateSource) => {
   const uploaded = [];
+  let saved = null;
+  const identity = name => "asset-crop-" + uploaded.indexOf(name);
   const scan = (extra) => {
     const base = uxScan();
     return { ...base, anchors: [...base.anchors, { name: "CHAR-NC-SHEET.png", url: "/assets/anchors/CHAR-NC-SHEET.png" },
@@ -430,7 +432,20 @@ const drawExtractor = (mutateSource) => {
           uploaded.push(name);
           return respond({ name });
         }
-        if (target === "/api/scan") return respond(scan(uploaded));
+        if (target === "/api/media/prepare-identity") {
+          const {name} = JSON.parse(options.body);
+          return respond({status: uploaded.includes(name) ? "ready" : "unavailable", assetId: identity(name)});
+        }
+        if (target.startsWith("/api/projects/") && options.method === "PUT") {
+          saved = JSON.parse(options.body);
+          return respond({ok:true});
+        }
+        if (target === "/api/scan") {
+          const result = scan(uploaded);
+          result.references = {characters: {"CHAR-NC": (saved?.characters.find(e=>e.id==="CHAR-NC")?.candidateFiles || [])
+            .filter(r=>uploaded.includes(r.stored)).map(r=>({name:r.stored, assetId:r.assetId, available:true, url:"/fixture/crop/"+r.assetId}))}};
+          return respond(result);
+        }
         return null;
       },
     }),

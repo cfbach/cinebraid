@@ -501,6 +501,7 @@ async function main() {
     "media-disposition-semantics-negative-controls.js",
     "media-disposition-semantics.js",
     "media-hash-extraction.js",
+    "media_browser_contract.py",
     "minimax-h3-real-browser.py",
     "minimax-h3.js",
     "model-definition-registry.js",
