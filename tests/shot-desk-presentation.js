@@ -176,10 +176,10 @@ function comparisonUsesOnlyTheReceiptBackedReference() {
 
 function labelsDistinguishHumanDecisionFromMachineSelection() {
   for (const [extra, expected] of [
-    [{ humanDecision: "approved", settled: "human-approved", candidate: { receiptBacked: true } }, "Human approved"],
+    [{ humanDecision: "approved", settled: "human-approved", candidate: { receiptBacked: true } }, "Approved"],
     [{ humanDecision: "rejected", settled: "human-rejected", actions: [] }, "Rejected"],
     [{ settled: "kept-as-alternate" }, "Kept as alternate"],
-    [{ humanDecision: "machine-selected", settled: "machine-selected" }, "Selected; not human approved"],
+    [{ humanDecision: "machine-selected", settled: "machine-selected" }, "Selected; not approved"],
     [{ settled: "settled-by-pick" }, "Another image is selected"],
     [{ settled: "unit-already-picked" }, "Another image is selected"],
     [{ humanDecision: "undecided", settled: "" }, "Awaiting your decision"],
@@ -198,7 +198,7 @@ function labelsDistinguishHumanDecisionFromMachineSelection() {
   ]) {
     const target = item("unproven-approval", extra);
     const result = shotDeskPresentation(projection([target]), SHOT, target.key);
-    equal(result.decisionLabel === "Human approved", false,
+    equal(result.decisionLabel === "Approved", false,
       "human approval requires both a human decision and its receipt");
   }
 }

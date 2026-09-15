@@ -28,10 +28,10 @@
       && comparison.url && comparison.key !== item.key ? comparison : null;
     const actions = Array.isArray(item.actions) ? item.actions : [];
     let decisionLabel = "Awaiting your decision";
-    if (item.humanDecision === "approved" && item.candidate.receiptBacked === true) decisionLabel = "Human approved";
+    if (item.humanDecision === "approved" && item.candidate.receiptBacked === true) decisionLabel = "Approved";
     else if (item.humanDecision === "rejected" || item.settled === "human-rejected") decisionLabel = "Rejected";
     else if (item.settled === "kept-as-alternate") decisionLabel = "Kept as alternate";
-    else if (item.settled === "machine-selected") decisionLabel = "Selected; not human approved";
+    else if (item.settled === "machine-selected") decisionLabel = "Selected; not approved";
     else if (["unit-already-picked", "settled-by-pick"].includes(item.settled)) decisionLabel = "Another image is selected";
     return Object.freeze({
       state: "ready", item, candidates: Object.freeze(candidates), approvedComparison,

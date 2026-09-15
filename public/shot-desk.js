@@ -33,7 +33,7 @@
   function peers(m) { return m.candidates.filter((row) => row.key !== m.item.key); }
   function comparison(m, state) {
     if (state.comparison === "guide" && m.guide) return { url: m.guide.url, label: m.guide.source === "source-build" ? "Guide from original request" : "Current blocking guide" };
-    if (state.comparison === "approved" && m.approvedComparison) return { url: m.approvedComparison.url, label: "Current human-approved image" };
+    if (state.comparison === "approved" && m.approvedComparison) return { url: m.approvedComparison.url, label: "Current approved image" };
     if (state.comparison === "candidates") {
       const rows = peers(m);
       const peer = rows.find((r) => r.key === state.peer) || rows[0];
@@ -50,7 +50,7 @@
     if (panel === "provenance") {
       const record = window.CineBraidMediaInspector?.recordFor(m.item.key);
       const p = record?.provenance;
-      return `<p>This image keeps its production identity and recorded source through approval.</p><dl><dt>Provider</dt><dd>${e(envelope(p?.provider))}</dd><dt>Model</dt><dd>${e(envelope(p?.model))}</dd><dt>Human decision</dt><dd>${e(m.decisionLabel)}</dd></dl><details><summary>Original prompt</summary><pre>${e(envelope(p?.prompt))}</pre></details><details><summary>File &amp; durable identity</summary><dl><dt>File</dt><dd>${e(m.item.candidate.name)}</dd><dt>Media ID</dt><dd>${e(record?.identity?.ledger?.state === "known" ? record.identity.ledger.value : m.item.candidate.assetId || "Legacy file; no durable ID recorded")}</dd></dl></details>${button("sd-full-record", "Open full media record")}`;
+      return `<p>This image keeps its production identity and recorded source through approval.</p><dl><dt>Provider</dt><dd>${e(envelope(p?.provider))}</dd><dt>Model</dt><dd>${e(envelope(p?.model))}</dd><dt>Decision</dt><dd>${e(m.decisionLabel)}</dd></dl><details><summary>Original prompt</summary><pre>${e(envelope(p?.prompt))}</pre></details><details><summary>File &amp; durable identity</summary><dl><dt>File</dt><dd>${e(m.item.candidate.name)}</dd><dt>Media ID</dt><dd>${e(record?.identity?.ledger?.state === "known" ? record.identity.ledger.value : m.item.candidate.assetId || "Legacy file; no durable ID recorded")}</dd></dl></details>${button("sd-full-record", "Open full media record")}`;
     }
     const frame = m.frame || {};
     const brief = m.shot.creation?.frameWorkflows?.[frame.id]?.action || frame.description || m.shot.desc || "";
@@ -110,7 +110,7 @@
       const opening = (m.shot.keyframes || [])[0]?.id === m.item.owner.frameId;
       preview.className = "sd-confirm-preview";
       preview.innerHTML = `<img src="${a(m.item.candidate.url)}" alt="Selected candidate for ${a(m.shot.id)}"><div><b>${e(m.shot.title || m.shot.id)}</b><span>${e(frameLabel(m))}${m.frame?.title ? ` · ${e(m.frame.title)}` : ""}</span></div>`;
-      preview.insertAdjacentHTML("afterend", `<div class="sd-confirm-effects"><p>This becomes the human-approved image for this frame${opening ? " and the current shot still" : ""}.</p>${m.approvedComparison ? "<p>It replaces the current approved image for this frame. Motion that depends on the replaced image may need review again.</p>" : ""}<p>Other frames and project references are not approved by this decision.</p></div>`);
+      preview.insertAdjacentHTML("afterend", `<div class="sd-confirm-effects"><p>This becomes the approved image for this frame${opening ? " and the current shot still" : ""}.</p>${m.approvedComparison ? "<p>It replaces the current approved image for this frame. Motion that depends on the replaced image may need review again.</p>" : ""}<p>Other frames and project references are not approved by this decision.</p></div>`);
     }
     const confirm = box.querySelector('[onclick="confirmApproveTake()"]');
     if (confirm) confirm.textContent = "Approve image";
