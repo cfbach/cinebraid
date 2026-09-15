@@ -6,8 +6,9 @@ audit measured — three duration aliases, seven prose fields, an undeclared uni
 namespace in `codes[]`, `INT-1->2`, `[INFERRED FOR PLANNING]` — with invented
 content.
 
-**Sanitised real-world fixtures are P3.** P2 migrates none of the archived
-generations, and the migration framework has never opened one.
+The migration contract is exercised only with synthetic inputs. The small
+`../ofp-synthetic/` fixture also checks supported legacy markers without
+production-derived golden outputs.
 
 External-production evidence is omitted from the current distribution; generic synthetic checks remain authoritative.
 

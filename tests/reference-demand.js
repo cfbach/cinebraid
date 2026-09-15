@@ -1380,7 +1380,7 @@ async function locationDurabilitySection(options = {}) {
   const legacyEmpty = await render("#/shot/L1-01", fixture({ codes: ["LOC-HULL", "PR-TOOL"], brief: { locationId: "" } }),
     { ...options, storage: INPUTS });
   assert.strictEqual(state(legacyEmpty.context).locationId, "LOC-HULL",
-    "LOC3b: a legacy shot storing an empty primary must keep inferring — 16 real corpus shots depend on it");
+    "LOC3b: the synthetic legacy shot with an empty primary keeps its existing inference");
 
   /* LOC4 · the support can be chosen as primary explicitly. */
   vm.runInContext("setShotCreationLocation('L1-01','LOC-SUPPORT')", two.context);
