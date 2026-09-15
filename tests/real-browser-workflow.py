@@ -3,24 +3,13 @@
 import copy, json, os, pathlib, shutil, socket, subprocess, sys, time, urllib.request, urllib.error, re
 
 
-def open_reference_tools(page):
-    """Reach retained tools through Reference Desk without bypassing a dialog."""
-    if not page.locator('[data-reference-desk]').count():
-        return
-    link = page.locator('.rd-tool-link:visible').first
-    if not link.count():
-        page.locator('[data-rd-action="inspect"]').click()
-        link = page.locator('.rd-tool-link:visible').first
-    link.click()
-    page.wait_for_selector('[data-reference-tools]', timeout=20000)
-    assert not page.locator('#modal:not(.hidden)').count(), 'tools navigation left a dialog over its destination'
 
 ROOT = pathlib.Path(__file__).resolve().parents[1]
 SCREENSHOT_DIR = pathlib.Path(os.environ["CINEBRAID_SCREENSHOT_DIR"]) if os.environ.get("CINEBRAID_SCREENSHOT_DIR") else None
 if SCREENSHOT_DIR: SCREENSHOT_DIR.mkdir(parents=True, exist_ok=True)
 def checkpoint(label):
     print(f"[browser] {label}", flush=True)
-from browser_runtime import require_browser, launch_chromium, project_response, project_save, disposable_workspace
+from browser_runtime import open_reference_tools, require_browser, launch_chromium, project_response, project_save, disposable_workspace
 LABEL = "Real browser workflow"
 sync_playwright = require_browser(LABEL)
 

@@ -494,3 +494,41 @@ def canon_receipts(entries, via="browser-fixture"):
                                        "via": via, "gesture": "click"},
         })
     return {"version": 1, "receipts": receipts}
+
+def reference_desk_ready(page, timeout=20000):
+    """A rendered reference context, independent of image availability or approval."""
+    desk = page.locator('[data-reference-desk]')
+    desk.wait_for(state="visible", timeout=timeout)
+    desk.get_by_role("heading", level=1).wait_for(state="visible", timeout=timeout)
+    page.wait_for_function(r"() => /^#\/(character|location|prop|vehicle)\/[^/?#]+\/?$/.test(location.hash)", timeout=timeout)
+    desk.get_by_role("navigation", name="Production context", exact=True).wait_for(state="visible", timeout=timeout)
+    desk.get_by_role("heading", name="Required views", exact=True).wait_for(state="visible", timeout=timeout)
+    desk.get_by_role("button", name="Reference details", exact=True).wait_for(state="visible", timeout=timeout)
+    return desk
+
+
+def open_reference_tools(page, timeout=20000):
+    """Follow the shipped reference navigation; never dismiss a stranded dialog."""
+    page.wait_for_function("() => location.hash.endsWith('/tools') ? document.querySelector('[data-reference-tools]') : document.querySelector('[data-reference-desk]')", timeout=timeout)
+    if not page.locator('[data-reference-tools]').count():
+        desk = reference_desk_ready(page, timeout)
+        link = page.get_by_role("link", name="Continuity & creation tools", exact=True)
+        if not link.is_visible():
+            desk.get_by_role("button", name="Reference details", exact=True).click()
+        link.click()
+    tools = page.locator('[data-reference-tools]')
+    tools.wait_for(state="visible", timeout=timeout)
+    tools.get_by_role("link", name="← Back to reference", exact=True).wait_for(state="visible", timeout=timeout)
+    page.wait_for_function("() => location.hash.endsWith('/tools') && document.body.dataset.renderReady === '1'", timeout=timeout)
+    assert not page.locator('#modal:not(.hidden)').count(), "tools navigation left a dialog over its destination"
+    return tools
+
+
+def shot_desk_ready(page, timeout=30000):
+    """A returned image ready to inspect; no assertion or action confers approval."""
+    desk = page.locator('[data-shot-desk]')
+    viewer = desk.get_by_role("region", name="Shot image review", exact=True)
+    viewer.wait_for(state="visible", timeout=timeout)
+    viewer.get_by_role("img", name="Selected for review", exact=True).wait_for(state="visible", timeout=timeout)
+    viewer.get_by_role("button", name="Provenance", exact=True).wait_for(state="visible", timeout=timeout)
+    return desk

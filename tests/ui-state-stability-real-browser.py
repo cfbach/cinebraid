@@ -6,7 +6,7 @@ No paid requests are sent: prompt and FAL endpoints are intercepted.
 import copy, json, os, pathlib, re, shutil, socket, subprocess, sys, time, urllib.error, urllib.request
 
 ROOT = pathlib.Path(__file__).resolve().parents[1]
-from browser_runtime import require_browser, launch_chromium, project_response, project_save, disposable_workspace
+from browser_runtime import open_reference_tools, reference_desk_ready, require_browser, launch_chromium, project_response, project_save, disposable_workspace
 LABEL = "UI state stability browser check"
 sync_playwright = require_browser(LABEL)
 
@@ -175,6 +175,7 @@ try:
             return before
 
         open_hash("#/prop/PROP-PARCEL")
+        open_reference_tools(page)
         outer, inner = open_reference_builder()
         inner.evaluate("e=>e.scrollIntoView({block:'start'})"); page.wait_for_timeout(80)
         # THE CREATE-REFERENCE CONTROLS WERE RENAMED, NOT REMOVED: the compile button
@@ -209,17 +210,74 @@ try:
         state_builder = page.locator("details.entity-state-generation")
         continuity.evaluate("e=>e.open=true"); state_builder.evaluate("e=>e.open=true"); page.wait_for_timeout(70)
         state_builder.evaluate("e=>e.scrollIntoView({block:'start'})"); page.wait_for_timeout(70)
-        state_top = state_builder.evaluate("e=>e.getBoundingClientRect().top")
-        state_builder.get_by_role("button", name=re.compile("Build state prompt", re.I)).click(); page.wait_for_timeout(450)
-        continuity = page.locator("details.continuity-states"); state_builder = page.locator("details.entity-state-generation")
-        assert continuity.evaluate("e=>e.open") is True, "Build state prompt: continuity editor collapsed"
-        assert state_builder.evaluate("e=>e.open") is True, "Build state prompt: state generation editor collapsed"
-        assert abs(state_builder.evaluate("e=>e.getBoundingClientRect().top") - state_top) <= 18, "Build state prompt shifted the focused editor"
-        state_top = state_builder.evaluate("e=>e.getBoundingClientRect().top")
-        state_builder.get_by_role("button", name="Improve", exact=True).click(); page.wait_for_timeout(450)
-        continuity = page.locator("details.continuity-states"); state_builder = page.locator("details.entity-state-generation")
-        assert continuity.evaluate("e=>e.open") is True and state_builder.evaluate("e=>e.open") is True, "Improve state prompt collapsed the state workflow"
-        assert abs(state_builder.evaluate("e=>e.getBoundingClientRect().top") - state_top) <= 18, "Improve state prompt shifted the focused editor"
+        # Keep the 18px stability contract, separating deliberate result reveal
+        # from restoration. Baseline only after the real button is actionable.
+        def state_measure():
+            return page.evaluate("""() => {
+              const pane=document.querySelector('[data-reference-tools]');
+              return {top:document.querySelector('details.entity-state-generation').getBoundingClientRect().top,
+                scroll:pane.scrollTop, route:location.hash};
+            }""")
+
+        def assert_state_anchor(before, after, reveal=0):
+            assert before['route']==after['route'], "State prompt changed route"
+            assert abs(after['top']-before['top']+reveal)<=18, "State prompt shifted the focused editor"
+            assert abs(after['scroll']-before['scroll']-reveal)<=18, "State prompt reset its scrolling container"
+
+        def state_prompt_action(name, prove_reset=False):
+            target=page.locator('details.entity-state-generation').get_by_role('button',name=name,exact=True)
+            target.evaluate("e=>e.scrollIntoView({block:'center'})")
+            page.evaluate("() => new Promise(r=>requestAnimationFrame(()=>requestAnimationFrame(r)))")
+            before=state_measure()
+            if prove_reset:
+                assert before['scroll']>18, "Negative control requires a scrolled workspace"
+                page.evaluate("document.querySelector('[data-reference-tools]').scrollTop=0")
+                rejected=False
+                try: assert_state_anchor(before,state_measure())
+                except AssertionError: rejected=True
+                assert rejected, "The stability assertion accepted a real scroll reset"
+                page.evaluate("n=>document.querySelector('[data-reference-tools]').scrollTop=n",before['scroll'])
+                page.evaluate("() => new Promise(r=>requestAnimationFrame(()=>requestAnimationFrame(r)))")
+                before=state_measure()
+            # Observe the real pre-focus restoration, without calling product helpers.
+            page.evaluate("""() => {
+              window.__statePromptReveals=[];
+              window.__statePromptFocus=HTMLElement.prototype.focus;
+              HTMLElement.prototype.focus=function(...args){
+                const result=this.closest('.entity-state-prompt-result');
+                if(result && this.matches('button')){
+                  const pane=this.closest('[data-reference-tools]'),pre=result.querySelector('pre');
+                  const bounds=pane.getBoundingClientRect(),bar=pane.querySelector('.bounded-entity-taskbar')?.getBoundingClientRect();
+                  const top=Math.max(bounds.top,bar&&bar.top<=bounds.top+bar.height?bar.bottom:bounds.top);
+                  const bottom=Math.min(bounds.bottom,innerHeight),a=this.getBoundingClientRect(),b=pre.getBoundingClientRect();
+                  const start=Math.min(a.top,b.top),end=Math.max(a.bottom,b.bottom);
+                  window.__statePromptReveals.push({top:document.querySelector('details.entity-state-generation').getBoundingClientRect().top,
+                    scroll:pane.scrollTop,route:location.hash,
+                    reveal:start<top?start-top:end>bottom?Math.min(end-bottom,start-top):0});
+                }
+                return window.__statePromptFocus.apply(this,args);
+              };
+            }""")
+            try:
+                target.click()
+                page.wait_for_function("window.__statePromptReveals.length>0 && document.activeElement?.closest('.entity-state-prompt-result')")
+                page.evaluate("() => new Promise(r=>requestAnimationFrame(()=>requestAnimationFrame(r)))")
+                restored=page.evaluate("window.__statePromptReveals.at(-1)")
+                assert_state_anchor(before,restored)
+                assert_state_anchor(before,state_measure(),restored['reveal'])
+                assert page.locator('details.continuity-states').evaluate('e=>e.open')
+                assert page.locator('details.entity-state-generation').evaluate('e=>e.open')
+                assert page.evaluate("document.activeElement.textContent.trim().toUpperCase()==='COPY'")
+                assert page.locator('.entity-state-prompt-result pre').evaluate("""e=>{
+                  const r=e.getBoundingClientRect(),p=e.closest('[data-reference-tools]').getBoundingClientRect();
+                  return r.top>=p.top && r.bottom<=Math.min(p.bottom,innerHeight);
+                }"""), "Prepared state prompt is outside the working viewport"
+                print(f"{name}: 18px restoration contract passed; deliberate result reveal {restored['reveal']:.1f}px; Copy focused")
+            finally:
+                page.evaluate("HTMLElement.prototype.focus=window.__statePromptFocus;delete window.__statePromptFocus;delete window.__statePromptReveals")
+
+        state_prompt_action('Build state prompt',prove_reset=True)
+        state_prompt_action('Improve')
         if SCREENSHOT_DIR:
             page.screenshot(path=str(pathlib.Path(SCREENSHOT_DIR) / "continuity-state-after-improve.png"), full_page=True)
         # Generic same-route rerender audit across the major task workspaces.
@@ -235,8 +293,18 @@ try:
         ]
         for route_value, task in routes:
             open_hash(route_value)
-            if task:
+            if route_value.startswith("#/character/"):
+                open_reference_tools(page)
+                page.get_by_role("button", name=re.compile(r"^Production needs")).click()
+                page.wait_for_selector('[data-bounded-task="coverage"]')
+            elif task:
                 page.evaluate("([shot,task]) => { selectBoundedTask('shot-task',shot,task); }", ["SAMPLE-01", task]); page.wait_for_timeout(250)
+            desk_before = None
+            if route_value == "#/prop/PROP-PARCEL":
+                desk = reference_desk_ready(page)
+                desk.get_by_role("combobox", name=re.compile(r"^Continuity state")).select_option("state-open")
+                desk_before = page.evaluate("""() => ({state: document.querySelector('#rd-state').value,
+                    selected: document.querySelector('[data-rd-candidate][aria-pressed="true"]')?.getAttribute('data-rd-candidate') || ''})""")
             result = page.evaluate("""() => {
               const entries=routeDetailsEntries(document.querySelector('#main'));
               entries.forEach(({element})=>element.open=true);
@@ -253,6 +321,11 @@ try:
               const common=before.keys.filter(k=>map.has(k));
               return {closed:common.filter(k=>!map.get(k).open), top:before.anchor&&map.get(before.anchor)?map.get(before.anchor).getBoundingClientRect().top:null};
             }""", result)
+            if desk_before is not None:
+                reference_desk_ready(page)
+                desk_after = page.evaluate("""() => ({state: document.querySelector('#rd-state').value,
+                    selected: document.querySelector('[data-rd-candidate][aria-pressed="true"]')?.getAttribute('data-rd-candidate') || ''})""")
+                assert desk_after == desk_before, f"Reference Desk lost its working selection on rerender: {desk_before} → {desk_after}"
             assert not after["closed"], f"{route_value} {task or ''}: disclosures closed after same-route rerender: {after['closed']}"
             if after["top"] is not None:
                 assert abs(after["top"] - result["top"]) <= 20, f"{route_value} {task or ''}: viewport anchor shifted {after['top']-result['top']:.1f}px"

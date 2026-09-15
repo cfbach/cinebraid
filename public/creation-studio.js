@@ -848,6 +848,7 @@ window.buildEntityStatePrompt = async (list, id, stateId, useLLM = false) => {
   const profileId = assetStatePromptProfile(list, entity, state);
   if (commitPendingStateGeneration(entity, state)) dirty();
   const action = useLLM ? "improve" : "compile";
+  const finishContext = preservePreparedReferenceContext(list, id, state.id);
   setGuidedPromptOp("asset-state", `${list}:${id}`, state.id, { status: "busy", action, startedAt: Date.now() });
   route();
   try {
@@ -895,11 +896,13 @@ window.buildEntityStatePrompt = async (list, id, stateId, useLLM = false) => {
     setGuidedPromptOp("asset-state", `${list}:${id}`, state.id, null);
     dirty();
     toast(useLLM ? `${state.name || "State"} prompt improved` : `${state.name || "State"} prompt compiled`);
+    finishContext?.("success");
     route();
     return build;
   } catch (error) {
     setGuidedPromptOp("asset-state", `${list}:${id}`, state.id, { status: "error", action, error: error.message, failedAt: Date.now() });
     toast("State prompt failed: " + error.message);
+    finishContext?.("error");
     route();
     return null;
   }
@@ -948,6 +951,48 @@ function enforceLockedAssetSheetPrompt(list, entity, prompt) {
   return hasSheet && hasAngles ? result : `${locked}\n\nMODEL-ADAPTED CREATIVE DIRECTION\n${result}`.trim();
 }
 
+/* Prompt preparation owns this short-lived result intent. The shared Reference
+ * Tools snapshot handles scrolling for both entity and continuity-state prompts.
+ * Restore its position on each action render, then reveal only the new result.
+ * Leaving this route/project cancels restoration, including queued paint work. */
+function preservePreparedReferenceContext(list, id, stateId = "") {
+  const routeKey = location.hash, project = P, target = `${list}:${id}`;
+  const find = () => [...document.querySelectorAll(stateId
+    ? "[data-reference-tools] [data-entity-state-generation]"
+    : "[data-reference-tools] section.reference-create-section")]
+    .find((node) => stateId ? node.dataset.entityStateGeneration === stateId : node.dataset.createTarget === target);
+  const original = find(), pane = original?.closest("[data-reference-tools]");
+  if (!pane || !routeKey.endsWith("/tools")) return null;
+  const context = captureReferenceToolsContext();
+  let outcome = "busy", active = true, paint = 0;
+  const stop = () => {
+    active = false;
+    window.removeEventListener("cinebraid:route-rendered", rendered);
+    window.removeEventListener("hashchange", stop);
+  };
+  const current = () => active && P === project && location.hash === routeKey;
+  function rendered() {
+    if (!current()) return stop();
+    const section = find(), scroller = section?.closest("[data-reference-tools]");
+    if (!scroller) return stop();
+    restoreReferenceToolsContext(context);
+    const token = ++paint;
+    // Run after the existing route focus/disclosure restoration, at paint time.
+    requestAnimationFrame(() => requestAnimationFrame(() => {
+      if (!current() || token !== paint || !section.isConnected) return;
+      const result = outcome === "busy" ? null : section.querySelector(outcome === "success"
+        ? stateId ? ".entity-state-prompt-result" : ".creation-result"
+        : ".guided-prompt-error");
+      restoreReferenceToolsContext(context, result);
+      if (outcome === "busy") return;
+      stop();
+    }));
+  }
+  window.addEventListener("cinebraid:route-rendered", rendered);
+  window.addEventListener("hashchange", stop);
+  return (result) => { outcome = result; };
+}
+
 window.buildAssetCreationPrompt = async (list, id, useLLM = false) => {
   const x = P[list].find((e) => e.id === id);
   if (!x) return;
@@ -960,6 +1005,8 @@ window.buildAssetCreationPrompt = async (list, id, useLLM = false) => {
     x.assetPromptProfile || P.meta?.promptDefaults?.imageProfile || "",
   );
   const action = useLLM ? "improve" : "compile";
+  const finishContext = preservePreparedReferenceContext(list, id);
+  let outcome = "error";
   setGuidedPromptOp("asset", `${list}:${id}`, "", { status: "busy", action, startedAt: Date.now() });
   route();
   try {
@@ -999,6 +1046,7 @@ window.buildAssetCreationPrompt = async (list, id, useLLM = false) => {
       },
     };
     assetPromptBuilds(x).push(build);
+    outcome = "success";
     setGuidedPromptOp("asset", `${list}:${id}`, "", null);
     dirty();
     toast(useLLM ? "Reference prompt improved" : "Reference prompt compiled");
@@ -1006,6 +1054,7 @@ window.buildAssetCreationPrompt = async (list, id, useLLM = false) => {
     setGuidedPromptOp("asset", `${list}:${id}`, "", { status: "error", action, error: error.message, failedAt: Date.now() });
     toast("Prompt compile failed: " + error.message);
   }
+  finishContext?.(outcome);
   route();
 };
 

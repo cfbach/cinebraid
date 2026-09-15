@@ -32,11 +32,11 @@ the runs endpoint rather than written anywhere — the 3.5s activity poll would 
 replace it mid-assertion, which is the shape of the known check:browser-real flake.
 """
 
-import json, os, pathlib, socket, subprocess, sys, tempfile, time
+import json, os, pathlib, re, socket, subprocess, sys, tempfile, time
 
 ROOT = pathlib.Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "tests"))
-from browser_runtime import require_browser, launch_chromium
+from browser_runtime import reference_desk_ready, require_browser, launch_chromium
 
 LABEL = "Quiet the shell real-browser audit"
 sync_playwright = require_browser(LABEL)
@@ -809,11 +809,14 @@ try:
         # WAIT FOR THE REQUESTED THING, not for the selection that asks for it. The hash
         # change re-renders asynchronously, so reading the DOM straight after the
         # localStorage write reads the page the filmmaker was on a moment ago.
-        page.wait_for_selector("#main .entity-candidate-section", timeout=10000)
+        desk = reference_desk_ready(page, timeout=10000)
+        expected_name = page.evaluate("([list,id]) => P[list].find(row => row.id === id).name", [entity_list, entity_id])
+        assert desk.get_by_role("heading", level=1).inner_text() == expected_name, "10. hand-off opened another reference"
+        desk.get_by_role("button", name=re.compile(r"^Review candidate ")).first.wait_for(state="visible", timeout=10000)
         entity_landed = page.evaluate("""(ctx) => ({
             hash: location.hash,
             selected: localStorage.getItem(`cinebraid-focused:${ACTIVE_PROJECT_SLUG}:entity-task:${ctx}`),
-            candidateSurface: document.querySelectorAll('#main .entity-candidate-section').length,
+            candidateSurface: document.querySelectorAll('[data-reference-desk] [aria-label^="Review candidate " ]').length,
         })""", f"{entity_list}:{entity_id}")
         assert entity_landed["selected"] == "reference", \
             f"10. the entity hand-off must select the reference that owns the candidates, got {entity_landed['selected']!r}"

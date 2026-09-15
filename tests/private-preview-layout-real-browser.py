@@ -1,6 +1,6 @@
 import os, pathlib, shutil, socket, subprocess, time, re, urllib.request, urllib.error
 ROOT=pathlib.Path(__file__).resolve().parents[1]
-from browser_runtime import require_browser, launch_chromium, disposable_workspace
+from browser_runtime import reference_desk_ready, require_browser, launch_chromium, disposable_workspace
 LABEL='Private-preview layout audit'
 sync_playwright=require_browser(LABEL)
 
@@ -175,15 +175,19 @@ def assert_surface_polish(page, label):
     # ---- Unit 9 ---------------------------------------------------------------
     page.evaluate("() => { location.hash='#/library'; window.route && window.route(); }")
     page.wait_for_timeout(500)
-    shelf=page.evaluate('''() => {
-      const card=document.querySelector('.library-card-shell'); if(!card) return null;
-      const chip=card.querySelector('.library-enlarge'), body=card.querySelector('.library-body');
-      if(!chip||!body) return {overlap:false, cards:document.querySelectorAll('.library-card').length};
-      const c=chip.getBoundingClientRect(), b=body.getBoundingClientRect();
-      return {overlap:!(c.right<=b.left||c.left>=b.right||c.bottom<=b.top||c.top>=b.bottom),
-              cards:document.querySelectorAll('.library-card').length}; }''')
-    if shelf:
-        assert not shelf['overlap'], f'{label}: Inspect is sitting on top of the card caption and its counts again'
+    library=page.locator('[data-reference-library]')
+    library.get_by_role('heading', name='References', exact=True).wait_for(state='visible')
+    cards=library.get_by_role('link').filter(has=page.get_by_role('heading', level=2))
+    assert cards.count() > 0, f'{label}: no reference cards rendered'
+    for card in cards.all():
+        card.scroll_into_view_if_needed()
+        geometry=card.evaluate("""n => {
+          const title=n.querySelector('h2'), image=n.querySelector('img');
+          const c=n.getBoundingClientRect(), t=title.getBoundingClientRect(), i=image?.getBoundingClientRect();
+          return {captionInside:t.left>=c.left && t.right<=c.right && t.bottom<=c.bottom,
+                  overlap:!!i && !(i.right<=t.left || i.left>=t.right || i.bottom<=t.top || i.top>=t.bottom)};
+        }""")
+        assert geometry['captionInside'] and not geometry['overlap'], f'{label}: reference card caption/counts overlap its media or leave the clickable card: {geometry}'
 
     # ---- Unit 10 --------------------------------------------------------------
     #
@@ -203,30 +207,17 @@ def assert_surface_polish(page, label):
           const reserve=getComputedStyle(document.getElementById('workspace')).paddingBottom;
           return Math.abs(parseFloat(reserve||'0') - dock.getBoundingClientRect().height) <= 1; }""",
         timeout=20000)
-    # REACHED THE WAY A FILMMAKER REACHES IT, then measured where it comes to rest.
-    # The page is ~1800px tall, so this control is mid-document and lands wherever the
-    # current scroll position puts it; measuring at scrollTop 0 scored an arbitrary
-    # offset. What has to be true is that bringing it into view leaves it clear of the
-    # Terminal, which is what html{scroll-padding-bottom:var(--cb-dock-reserve)} now
-    # guarantees for every scroll the browser performs. Before that property the scroll
-    # was a no-op — the control was already "in view" by every measure the browser had,
-    # and 1.73px of it was behind the dock.
-    page.evaluate("""() => { const a=document.querySelector('.reference-primary-actions button');
-      if (a) a.scrollIntoView({block:'end'}); }""")
-    page.wait_for_timeout(400)
-    settled_floor=page.evaluate('''() => { const d=document.querySelector('#cb-shell-dock');
-      return d ? d.getBoundingClientRect().top : innerHeight; }''')
-    hero=box('.reference-primary-hero .reference-primary-preview')
-    action=page.evaluate('''() => { const n=document.querySelector('.reference-primary-actions button');
-      if(!n) return null; const b=n.getBoundingClientRect(); return {b:b.bottom, h:b.height}; }''')
-    if hero and action:
-        clearance = settled_floor - action['b']
-        assert clearance >= 0, \
-            (f'{label}: the primary reference action ends at {action["b"]:.2f}, '
-             f'{abs(clearance):.2f}px behind the Activity Terminal at {settled_floor:.2f}')
-        assert action['h'] > 0, f'{label}: the primary reference action must still have height'
-        fit=page.evaluate("() => { const i=document.querySelector('.reference-primary-preview img'); return i?getComputedStyle(i).objectFit:'contain'; }")
-        assert fit=='contain', f'{label}: the primary reference image must stay contained, got {fit!r}'
+    desk=reference_desk_ready(page)
+    action=desk.get_by_role('button', name='Choose from production media', exact=True)
+    action.scroll_into_view_if_needed()
+    settled_floor=page.evaluate("() => document.querySelector('#cb-shell-dock')?.getBoundingClientRect().top ?? innerHeight")
+    bounds=action.bounding_box()
+    assert bounds and bounds['height'] > 0 and bounds['y']+bounds['height'] <= settled_floor, f'{label}: reference action is obscured by Activity: {bounds}, floor={settled_floor}'
+    image=desk.locator('#rd-image')
+    if image.count():
+        assert image.evaluate("n => getComputedStyle(n).objectFit") == 'contain', f'{label}: reference media is cropped'
+    else:
+        assert desk.get_by_role('heading', name=re.compile(r'^(No image assigned yet|Image unavailable)$')).is_visible(), f'{label}: missing preview has no explicit unavailable/empty state'
 
 port=free_port()
 # Its own writable projects root and config, outside the checkout, seeded from the

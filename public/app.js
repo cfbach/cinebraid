@@ -4793,6 +4793,47 @@ function routeViewAnchor(main, entries, active) {
     ? { key: visible.entry.key, offset: visible.rect.top - mainRect.top }
     : { key: "", offset: 0 };
 }
+/* Reference Tools owns a nested scrolling workspace. Its snapshot is scoped to
+ * this project and route; unrelated pages keep the existing route behavior.
+ * Prompt transactions reuse the same restoration and may reveal their result. */
+function captureReferenceToolsContext() {
+  const pane = document.querySelector("[data-reference-tools]");
+  if (!pane || !location.hash.endsWith("/tools")) return null;
+  const active = document.activeElement;
+  const scope = pane.contains(active) ? active.closest("[data-entity-state-generation], [data-create-target]") : null;
+  const attribute = scope?.hasAttribute("data-entity-state-generation") ? "data-entity-state-generation" : "data-create-target";
+  return {
+    project: P, routeKey: currentRouteKey(), top: pane.scrollTop, left: pane.scrollLeft,
+    focus: pane.contains(active) ? routeFocusSelector(active) : "",
+    scope: scope ? `[${attribute}="${routeSelectorValue(scope.getAttribute(attribute))}"]` : "",
+  };
+}
+function restoreReferenceToolsContext(state, result = null) {
+  if (!state || state.project !== P || state.routeKey !== currentRouteKey()) return;
+  const pane = document.querySelector("[data-reference-tools]");
+  if (!pane) return;
+  pane.scrollTop = state.top;
+  pane.scrollLeft = state.left;
+  const controls = 'textarea:not([disabled]), input:not([disabled]), button:not([disabled]), a[href]';
+  let target = result ? result.querySelector(controls) : state.focus ? pane.querySelector(state.focus) : null;
+  if (!result && (!target || target.disabled) && state.scope) {
+    const scope = pane.querySelector(state.scope);
+    target = scope?.querySelector('summary, ' + controls) || scope;
+    if (target && !target.matches('summary, ' + controls)) target.tabIndex = -1;
+  }
+  if (!target || target.disabled) return;
+  target.focus({ preventScroll: true });
+  if (!result) return;
+  const content = result.querySelector("pre") || result;
+  const start = Math.min(target.getBoundingClientRect().top, content.getBoundingClientRect().top);
+  const end = Math.max(target.getBoundingClientRect().bottom, content.getBoundingClientRect().bottom);
+  const bounds = pane.getBoundingClientRect();
+  const taskbar = pane.querySelector(".bounded-entity-taskbar")?.getBoundingClientRect();
+  const top = Math.max(bounds.top, taskbar && taskbar.top <= bounds.top + taskbar.height ? taskbar.bottom : bounds.top);
+  const bottom = Math.min(bounds.bottom, window.innerHeight);
+  if (start < top) pane.scrollTop += start - top;
+  else if (end > bottom) pane.scrollTop += Math.min(end - bottom, start - top);
+}
 function captureRouteViewState(targetRouteKey = currentRouteKey()) {
   try {
     if (!CURRENT_RENDER_ROUTE_KEY || CURRENT_RENDER_ROUTE_KEY !== targetRouteKey) return null;
@@ -4801,6 +4842,7 @@ function captureRouteViewState(targetRouteKey = currentRouteKey()) {
     const anchor = routeViewAnchor(main, details, active);
     return {
       routeKey: targetRouteKey,
+      referenceTools: captureReferenceToolsContext(),
       mainScrollTop: Number(main?.scrollTop || 0),
       mainScrollLeft: Number(main?.scrollLeft || 0),
       windowX: Number(window.scrollX || 0),
@@ -4849,6 +4891,7 @@ function restoreRouteViewState(state) {
       main.scrollLeft = state.mainScrollLeft || 0;
     }
     if (typeof window.scrollTo === "function") window.scrollTo(state.windowX || 0, state.windowY || 0);
+    restoreReferenceToolsContext(state.referenceTools);
   } catch {}
   const finish = () => {
     if (token !== ROUTE_VIEW_RESTORE_TOKEN || currentRouteKey() !== state.routeKey) return;
@@ -4856,7 +4899,7 @@ function restoreRouteViewState(state) {
       const currentMain = $("#main");
       const rememberedAnchor = details.get(state.anchorKey);
       const anchor = state.anchorKey ? ((rememberedAnchor?.isConnected ? rememberedAnchor : null) || new Map(routeDetailsEntries(currentMain).map((entry) => [entry.key, entry.element])).get(state.anchorKey)) : null;
-      if (currentMain && anchor) {
+      if (currentMain && anchor && !state.referenceTools) {
         const currentOffset = anchor.getBoundingClientRect().top - currentMain.getBoundingClientRect().top;
         const delta = currentOffset - Number(state.anchorOffset || 0);
         if (Math.abs(delta) > 1) currentMain.scrollTop += delta;
@@ -4867,6 +4910,7 @@ function restoreRouteViewState(state) {
         if (state.selectionStart != null && typeof target.setSelectionRange === "function")
           target.setSelectionRange(state.selectionStart, state.selectionEnd ?? state.selectionStart, state.selectionDirection || "none");
       }
+      restoreReferenceToolsContext(state.referenceTools);
     } catch {}
   };
   if (typeof requestAnimationFrame === "function")

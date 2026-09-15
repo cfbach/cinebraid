@@ -67,7 +67,7 @@ import time
 
 ROOT = pathlib.Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent))
-from browser_runtime import require_browser, launch_chromium
+from browser_runtime import shot_desk_ready, require_browser, launch_chromium
 from media_browser_contract import assert_media_image
 
 LABEL = "Returned media ownership"
@@ -404,7 +404,7 @@ try:
               "E. the route round-trips the identity it carries")
         # Following the link a filmmaker would actually click.
         page.click('.production-next a.assemble-btn')
-        page.wait_for_selector('[data-shot-desk] #sd-primary-image', timeout=30000)
+        shot_desk_ready(page)
         check(page.evaluate("() => routeReviewClaim()") == claim['reviewKey'],
               'E. Shot Desk keeps the exact review identity carried by Production')
         assert_media_image(page, project_dir, '#sd-primary-image', f'shots/{SHOT_A}/takes/{CANDIDATE_A}')
@@ -443,7 +443,7 @@ try:
               f"F. precondition — the claimed candidate is decided and another is pending: {decided['pending']}")
         # A bookmark to that decision still names the same reviewed image.
         page.goto(f"{base}/{stale_href}", wait_until="domcontentloaded", timeout=30000)
-        page.wait_for_selector('[data-shot-desk] #sd-primary-image', timeout=30000)
+        shot_desk_ready(page)
         page.wait_for_function("() => document.querySelector('.sd-decision')?.textContent.includes('Rejected')")
         assert_media_image(page, project_dir, '#sd-primary-image', f'shots/{SHOT_A}/takes/{CANDIDATE_A}')
         check(page.locator('#sd-approve').count() == 1 and page.locator('#sd-reject').count() == 0, 'F. bookmarked rejected history keeps the same permitted actions')
@@ -454,7 +454,7 @@ try:
         page.wait_for_selector('[data-returned-review="1"]', timeout=30000)
         check(card_state(page)['file'] == CANDIDATE_A2, 'G. preparation names the still-pending image')
         page.locator('.shot-primary-action').click()
-        page.wait_for_selector('[data-shot-desk] #sd-primary-image', timeout=30000)
+        shot_desk_ready(page)
         assert_media_image(page, project_dir, '#sd-primary-image', f'shots/{SHOT_A}/takes/{CANDIDATE_A2}')
         check(page.evaluate("() => routeReviewClaim()") == production['secondKey'], 'G. the new route carries that image identity')
         findings.append(f'G. explicit preparation-to-review navigation reached {CANDIDATE_A2}')

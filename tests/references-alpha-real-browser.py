@@ -44,18 +44,6 @@ guard aborts the paid route and anything off-loopback.
 import base64, json, os, pathlib, re, socket, subprocess, sys, tempfile, time
 
 
-def open_reference_tools(page):
-    """Reach retained tools through Reference Desk without bypassing a dialog."""
-    if not page.locator('[data-reference-desk]').count():
-        return
-    link = page.locator('.rd-tool-link:visible').first
-    if not link.count():
-        page.locator('[data-rd-action="inspect"]').click()
-        link = page.locator('.rd-tool-link:visible').first
-    link.click()
-    page.wait_for_selector('[data-reference-tools]', timeout=20000)
-    assert not page.locator('#modal:not(.hidden)').count(), 'tools navigation left a dialog over its destination'
-
 
 def verify_reference_dialog_navigation(page, entity_id):
     """Check the navigation transaction and ordinary dismissal at all supported widths.
@@ -131,7 +119,7 @@ def verify_reference_dialog_navigation(page, entity_id):
 
 ROOT = pathlib.Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "tests"))
-from browser_runtime import require_browser, launch_chromium
+from browser_runtime import open_reference_tools, require_browser, launch_chromium
 from media_browser_contract import assert_media_image, assert_reference_rejected, fixture_asset
 
 LABEL = "References alpha blockers real-browser audit"

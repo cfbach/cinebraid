@@ -40,7 +40,7 @@ import copy, json, os, pathlib, re, socket, subprocess, sys, time, urllib.parse
 
 ROOT = pathlib.Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "tests"))
-from browser_runtime import require_browser, launch_chromium, disposable_workspace
+from browser_runtime import open_reference_tools, require_browser, launch_chromium, disposable_workspace
 
 LABEL = "Entity truth surfaces real-browser audit"
 sync_playwright = require_browser(LABEL)
@@ -206,6 +206,7 @@ try:
                not reload and the second project would never be fetched."""
             loads["n"] += 1
             page.goto("%s/?pass=%d#/prop/%s" % (base, loads["n"], PROP), wait_until="domcontentloaded")
+            open_reference_tools(page)
             page.wait_for_function("() => document.querySelector(%s)" % json.dumps(wait))
             page.wait_for_timeout(150)
 

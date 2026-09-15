@@ -48,21 +48,10 @@ anything off-loopback.
 import json, os, pathlib, shutil, socket, subprocess, sys, tempfile, time
 
 
-def open_reference_tools(page):
-    """Reach retained tools through Reference Desk without bypassing a dialog."""
-    if not page.locator('[data-reference-desk]').count():
-        return
-    link = page.locator('.rd-tool-link:visible').first
-    if not link.count():
-        page.locator('[data-rd-action="inspect"]').click()
-        link = page.locator('.rd-tool-link:visible').first
-    link.click()
-    page.wait_for_selector('[data-reference-tools]', timeout=20000)
-    assert not page.locator('#modal:not(.hidden)').count(), 'tools navigation left a dialog over its destination'
 
 ROOT = pathlib.Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "tests"))
-from browser_runtime import require_browser, launch_chromium
+from browser_runtime import open_reference_tools, require_browser, launch_chromium
 
 LABEL = "Reference reframe real-browser audit"
 sync_playwright = require_browser(LABEL)
@@ -479,6 +468,7 @@ try:
                 localStorage.setItem(`cinebraid-bounded:${ACTIVE_PROJECT_SLUG}:selected:entity-detail-view:characters:${id}`, 'history');
             }""", ENTITY)
         page.evaluate("(id) => { location.hash = '#/character/' + id; }", ENTITY)
+        open_reference_tools(page)
         wait_settled(
             "(() => { const n = document.querySelector('.bounded-entity-page');"
             " return !!n && n.dataset.selectedTask === 'details'; })()",
@@ -511,6 +501,7 @@ try:
              f"route() would have been sufficient and the retired wait would not have raced - got {boundary}")
         wait_settled("location.hash === '#/production'", "the production route after the boundary measurement")
         page.evaluate("(id) => { location.hash = '#/character/' + id; }", ENTITY)
+        open_reference_tools(page)
         wait_settled(
             "(() => { const n = document.querySelector('.bounded-entity-page');"
             " return !!n && n.dataset.selectedTask === 'details'; })()",
@@ -641,36 +632,29 @@ try:
         # standing of an image. Two true statements about two different facts, one of
         # which looked like a denial of the other.
         #
-        # The fix is that the header names its fact, in the SAME word the inspector uses,
-        # so the assertion is that the two surfaces agree rather than that either one
-        # says a particular string.
-        header = page.evaluate(r"""() => {
+        # The tools header names design status separately from image authority.
+        # EV2 removed the permanent inspector: compare the visible status with the
+        # same live entity derivation instead of requiring a duplicate status panel.
+        header = page.evaluate(r"""(entityId) => {
             const select = document.querySelector('#main .workflow-select');
             if (!select) return null;
             const id = select.getAttribute('id');
             const label = id ? document.querySelector(`label[for="${id}"]`) : null;
-            const inspector = [...document.querySelectorAll('.focused-inspector-facts article')]
-                .map((a) => ({ label: (a.querySelector('span') || {}).textContent || '',
-                               value: (a.querySelector('b') || {}).textContent || '' }));
+            const workflow = entityWorkflowState(P.characters.find(row => row.id === entityId));
             return {
                 labelText: label ? label.textContent.trim() : null,
                 labelVisible: label ? label.getBoundingClientRect().width > 0 : false,
                 selected: select.options[select.selectedIndex].text.trim(),
                 storedValue: select.value,
-                inspector,
+                workflow: {key: workflow.key, label: workflow.label},
             };
-        }""")
+        }""", ENTITY)
         assert header, "7c. the reference header must still carry its workflow control"
         assert header["labelText"], "7c. the lifecycle control must be labelled, not a bare verdict"
         assert header["labelVisible"], "7c. and the label must be visible, not only an accessible name"
-        review = next((row for row in header["inspector"]
-                       if row["label"].strip().lower() == header["labelText"].strip().lower()), None)
-        assert review, (
-            f"7c. the header labels this fact {header['labelText']!r}, which names no field in the "
-            f"inspector: {[row['label'] for row in header['inspector']]}")
-        assert review["value"].strip().lower() == header["selected"].strip().lower(), (
-            f"7c. the header and the inspector must state the same value for the same fact: "
-            f"{header['selected']!r} vs {review['value']!r}")
+        assert header["labelText"] == "Design status", "7c. design workflow must be distinguished from image approval"
+        assert header["storedValue"] == header["workflow"]["key"], "7c. visible status must retain the live workflow token"
+        assert header["selected"].lower() == header["workflow"]["label"].lower(), "7c. the header must describe the live entity workflow"
         # AND THE STORED TOKEN IS UNTOUCHED. The whole contract is that only the word a
         # person reads changed; a suite that let the option VALUE drift would have missed
         # the one thing that would have been a data change.
@@ -708,7 +692,7 @@ try:
         assert header["storedValue"] in vocabulary["states"], (
             f"7c. the stored workflow token must remain the shipped vocabulary, got {header['storedValue']!r}")
         findings.append(f"7c. the header labels its lifecycle control {header['labelText']!r} and reads "
-                        f"{header['selected']!r}, the same fact and the same word as the inspector; every option "
+                        f"{header['selected']!r}, matching the live entity workflow; every option "
                         f"matches the label function, the stored vocabulary is unchanged, and APPROVED reads back "
                         f"as {vocabulary['approvedLabel']!r} rather than 'approved'")
 

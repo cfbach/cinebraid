@@ -28,8 +28,7 @@ What it establishes:
   6  A/B/C: a third frame is unaffected throughout
   7  P4-SEM-A coverage is untouched — the board and the shared derivation still
      agree on the mixed requirement case
-  8  Focused Workspaces still runs after PR #56 (.focused-entity-shell, which
-     .focused-taskbar cannot stand in for — two other renderers emit that)
+  8  Reference Desk renders the live entity after returning from continuity tools
   9  opening the project mutated nothing: project.json is byte-identical
 
 WHAT IS AND IS NOT EXERCISED VISUALLY, disclosed rather than implied. The
@@ -52,7 +51,7 @@ sample are never touched, and the directory is removed at the end.
 import base64, hashlib, json, os, pathlib, re, shutil, socket, subprocess, tempfile, time
 
 ROOT = pathlib.Path(__file__).resolve().parents[1]
-from browser_runtime import require_browser, launch_chromium
+from browser_runtime import open_reference_tools, reference_desk_ready, require_browser, launch_chromium
 from playwright.sync_api import Error as PlaywrightError
 
 LABEL = "P4-SEM-B declared state binding real-browser audit"
@@ -534,9 +533,9 @@ try:
             page.wait_for_function("() => typeof P === 'object' && P && Array.isArray(P.locations) && P.locations.length > 0",
                                    timeout=30000)
             # The board only exists in the DOM while its own task is selected, so
-            # it is selected through the module's OWN task API rather than by
-            # reaching past it.
-            page.evaluate("() => window.selectFocusedTask && window.selectFocusedTask('coverage')")
+            # it is selected through the shipped tools navigation and task button.
+            open_reference_tools(page)
+            page.get_by_role("button", name=re.compile(r"^Production needs")).click()
             # BATCH 2 SLICE 3: that task leads with the demand list and keeps the angle /
             # expression / continuity boards behind a toggle, so the board this case
             # reads is opened the way a filmmaker opens it — by clicking — and then
@@ -568,16 +567,13 @@ try:
                 f"case 7: and the mixed case must still resolve to 1 of 2 required, not {seen['canonical']}"
 
         def check_focused_workspaces():
-            """CASE 8 — PR #56's repair still holds. `.focused-taskbar` proves nothing:
-            two bounded renderers put that class into the route's own markup."""
-            seen = page.evaluate("""() => ({
-                shell: !!document.querySelector('.focused-entity-shell'),
-                subnav: !!document.querySelector('.focused-subnav'),
-                inspector: !!document.querySelector('.focused-inspector'),
-                flag: document.getElementById('main').dataset.focusedEntity || '',
-            })""")
-            assert seen["shell"] and seen["subnav"] and seen["inspector"] and seen["flag"] == "1", \
-                f"case 8: Focused Workspaces did not run on the entity route ({seen})"
+            """CASE 8 — the current reference workspace reads the same live entity."""
+            page.get_by_role("link", name="← Back to reference", exact=True).click()
+            desk = reference_desk_ready(page)
+            expected = page.evaluate("() => P.locations.find(row => row.id === 'LOC-DOOR').name")
+            assert desk.get_by_role("heading", level=1).inner_text() == expected, "case 8: Reference Desk did not render the live entity"
+            assert page.evaluate("() => location.hash") == "#/location/LOC-DOOR", "case 8: reference context changed"
+            assert not desk.locator('.focused-inspector').count(), "case 8: retired permanent inspector returned"
 
         def expect_red(name, why, check, *args):
             try:
@@ -678,7 +674,7 @@ try:
         check_coverage_unaffected()
         findings.append("case 7: P4-SEM-A coverage still reads 1 of 2 and still agrees with the shared derivation")
         check_focused_workspaces()
-        findings.append("case 8: Focused Workspaces still builds its own DOM after PR #56")
+        findings.append("case 8: Reference Desk renders the same live entity after returning from tools")
 
         # ---- 6. negative controls, in the browser ----------------------------
         # A page proof that cannot fail is decoration. Both controls serve a

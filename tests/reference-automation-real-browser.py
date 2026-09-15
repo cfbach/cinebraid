@@ -43,21 +43,10 @@ import base64, json, os, pathlib, shutil, socket, subprocess, sys, tempfile, tim
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 
-def open_reference_tools(page):
-    """Reach retained tools through Reference Desk without bypassing a dialog."""
-    if not page.locator('[data-reference-desk]').count():
-        return
-    link = page.locator('.rd-tool-link:visible').first
-    if not link.count():
-        page.locator('[data-rd-action="inspect"]').click()
-        link = page.locator('.rd-tool-link:visible').first
-    link.click()
-    page.wait_for_selector('[data-reference-tools]', timeout=20000)
-    assert not page.locator('#modal:not(.hidden)').count(), 'tools navigation left a dialog over its destination'
 
 ROOT = pathlib.Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "tests"))
-from browser_runtime import require_browser, launch_chromium
+from browser_runtime import open_reference_tools, require_browser, launch_chromium
 LABEL = "Durable reference automation real-browser audit"
 sync_playwright = require_browser(LABEL)
 
