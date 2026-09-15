@@ -674,7 +674,7 @@
        resolves to a position in this list rather than to a filename. */
     const ordinals = new Map();
     const shotRows = new Map();
-    for (const row of list(media.records)) {
+    for (const row of list(media.records).flatMap(record => [record, ...list(record.relationships).slice(1)])) {
       if (text(row.scope) !== "shot") continue;
       const kind = text(row.kind);
       if (kind !== "shot-still" && kind !== "shot-motion") continue;

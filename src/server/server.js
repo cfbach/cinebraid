@@ -2682,16 +2682,23 @@ function scanProject(slug = "") {
         locked: listMedia(path.join("shots", id, "locked"), identity, base),
         blocking: listMedia(path.join("shots", id, "blocking"), identity, base),
       };
+  const mediaProject = readProject(slug || activeSlug());
+  const referenceResolver = ReferenceMedia.resolver({projectsRoot:projectsRoot(),slug:slug || activeSlug(),project:mediaProject});
+  const inventory = referenceResolver.inventory();
+  const metadata = new Map(inventory.map(item => [item.assetId,item]));
+  const enrich = rows => rows.map(item => ({...metadata.get(item.assetId),...item}));
+  for (const shot of Object.values(shots)) for (const key of ["takes","blocking","locked"]) shot[key] = enrich(shot[key]);
   return {
-    anchors: listMedia("anchors", identity, base),
-    plates: listMedia("plates", identity, base),
-    props: listMedia("props", identity, base),
-    vehicles: listMedia("vehicles", identity, base),
-    audio: listMedia("audio", identity, base),
-    media: listMedia("media", identity, base),
+    mediaInventory: inventory,
+    anchors: enrich(listMedia("anchors", identity, base)),
+    plates: enrich(listMedia("plates", identity, base)),
+    props: enrich(listMedia("props", identity, base)),
+    vehicles: enrich(listMedia("vehicles", identity, base)),
+    audio: enrich(listMedia("audio", identity, base)),
+    media: enrich(listMedia("media", identity, base)),
     shots,
     workspaceSync: sync,
-    references: ReferenceMedia.resolver({projectsRoot:projectsRoot(),slug:slug || activeSlug(),project:readProject(slug || activeSlug())}).projection(),
+    references: referenceResolver.projection(),
   };
 }
 /* Enrollment is one explicit normal-save transaction. It cannot write Canon. */

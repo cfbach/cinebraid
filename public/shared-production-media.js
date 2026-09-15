@@ -345,7 +345,7 @@
       : (typeof globalThis !== "undefined" && typeof globalThis.isAudio === "function" ? globalThis.isAudio : null);
     if (video ? video(file) : /\.(mp4|webm|mov)$/i.test(file)) return "video";
     if (audio ? audio(file) : /\.(wav|mp3|m4a|flac|ogg)$/i.test(file)) return "audio";
-    return "image";
+    return /\.(png|jpe?g|webp|gif|avif|bmp)$/i.test(file) ? "image" : "document";
   }
 
   /* ==========================================================================
@@ -380,6 +380,8 @@
      wrote and is the only path the browser is given, so it is decoded back rather
      than reassembled from a directory the caller would have to remember. */
   function storagePathOf(item) {
+    const stored = text(record(item).storagePath);
+    if (stored && !/[\\:]/.test(stored) && !stored.startsWith("/") && !stored.split("/").some(part => !part || part === "." || part === "..")) return stored;
     const raw = text(record(item).url);
     if (!raw.startsWith("/assets/")) return "";
     let rest = raw.slice("/assets/".length);
@@ -1145,7 +1147,8 @@
       file: deepFreeze({
         name,
         url: text(item.url),
-        mediaType: mediaTypeOf(name),
+        displayName: text(record(libraryRow).title || item.sourceName || row.original || name),
+        mediaType: ["image", "video", "audio", "document"].includes(item.mediaType) ? item.mediaType : mediaTypeOf(item.sourceName || item.storagePath || row.original || name),
         originalName: known(row.original || record(libraryRow).originalName),
         title: known(record(libraryRow).title),
         addedAt: known(row.addedAt || record(libraryRow).createdAt),
@@ -1163,11 +1166,13 @@
           backedTargets: deepFreeze(backedTargets.map((edge) => text(edge.kind) + ":" + text(edge.id))),
         }),
       }),
+      availability: deepFreeze({ state: item.available === false ? (/missing|not-found|absent/.test(text(item.reason)) ? "missing" : "unavailable") : item.url ? "available" : "unknown", reason: text(item.reason) }),
+      source: known(["generated", "uploaded", "imported"].includes(item.source) ? item.source : row.generationProvider || row.generationJobId || record(libraryRow).generationRecord ? "generated" : ""),
       humanDecision: humanDecisionOf(row, receiptBacked, input.automationApproval),
       aiRecommendation: recommendationOf(reviews),
       reviews,
       provenance: input.provenance,
-      actions: actionsFor(input.scope, input.kind, text(disposition.role) || "candidate"),
+      actions: deepFreeze(actionsFor(input.scope, input.kind, text(disposition.role) || "candidate").filter(action => item.available !== false || action === "open-owner")),
     });
   }
 
@@ -1225,6 +1230,8 @@
   }
 
   function entityMediaFor(scan, listName, entity, injected) {
+    const resolved = record(record(scan).references)[listName];
+    if (resolved && Object.prototype.hasOwnProperty.call(resolved, text(entity.id))) return list(resolved[text(entity.id)]);
     if (typeof injected === "function") return list(injected(listName, entity));
     const shared = typeof entityMedia === "function"
       ? entityMedia
@@ -1291,7 +1298,13 @@
     for (const shot of list(record(project).shots)) {
       const it = record(shot);
       const shotScan = record(record(record(scan).shots)[text(it.id)]);
-      const takes = list(shotScan.takes);
+      const takes = [...list(shotScan.takes)];
+      // Retained missing shot records use the ledger's explicit scope, never a prefix.
+      for (const item of list(scan.mediaInventory)) {
+        if (!item.missing || item.scope?.shotId !== it.id || !text(item.storagePath).includes("/takes/")) continue;
+        if (takes.some(t => t.assetId === item.assetId)) continue;
+        takes.push({...item, name:text(item.storagePath).split("/").pop(), url:"", available:false, reason:"missing"});
+      }
       const partition = P4.partitionShotMedia(it, takes);
       for (const group of [partition.approved, partition.candidates, partition.rejected])
         for (const entry of group) {
@@ -1382,7 +1395,12 @@
   function projectRecords(options) {
     const { scan, jobs, jobsAvailable, libraries } = options;
     const rows = [];
-    for (const item of list(record(scan).media)) {
+    const media = [...list(record(scan).media)];
+    for (const item of list(scan.mediaInventory)) {
+      if ((!item.missing && item.mediaType !== "document") || !text(item.storagePath).startsWith("media/")) continue;
+      if (!media.some(m => m.assetId === item.assetId)) media.push({...item,name:text(item.storagePath).split("/").pop(),url:"",...(item.missing?{available:false,reason:"missing"}:{reason:"preview-unsupported"})});
+    }
+    for (const item of media) {
       const path = storagePathOf(item);
       const libraryRow = libraries.byPath.get(path) || null;
       rows.push(buildRecord({
@@ -1461,12 +1479,19 @@
        must show one logical asset, not two. The key is the ledger identity when there
        is one and the storage path otherwise, so a renamed file does not become a
        second row and two different files in two directories never merge into one. */
-    const seen = new Map();
-    for (const row of records) if (row.key && !seen.has(row.key)) seen.set(row.key, row);
-    const unique = [...seen.values()];
+    // Compatibility representative remains unchanged. Every use keeps its own authority,
+    // candidate name and permitted actions; none are unioned into another owner.
+    const seen = new Map(), unresolvedReferences = [];
+    for (const row of records) {
+      if (!row.key) { unresolvedReferences.push(row); continue; }
+      if (!seen.has(row.key)) seen.set(row.key, []);
+      seen.get(row.key).push(row);
+    }
+    const unique = [...seen.values()].map(uses => deepFreeze({ ...uses[0], relationships: deepFreeze(uses) }));
     return deepFreeze({
       contract: PRODUCTION_MEDIA_CONTRACT,
       records: deepFreeze(unique),
+      unresolvedReferences: deepFreeze(unresolvedReferences),
       counts: deepFreeze({
         total: unique.length,
         approved: unique.filter((row) => row.disposition.role === "approved").length,
@@ -1478,7 +1503,7 @@
       }),
       /* Stated rather than silent: how many rows named the same logical asset. A
          surface that truncates without saying so reads as "this is everything". */
-      duplicatesCollapsed: records.length - unique.length,
+      duplicatesCollapsed: records.length - unique.length - unresolvedReferences.length,
       jobsAvailable,
     });
   }

@@ -12,7 +12,7 @@
     });
     if (!projection || projection.available !== true) return empty("unavailable");
     const items = Array.isArray(projection.items) ? projection.items : [];
-    const item = key ? items.find((row) => row.key === key) : null;
+    const item = key ? (items.find((row) => row.key === key && row.shotId === shotId) || items.find((row) => row.key === key)) : null;
     if (!item) return empty("missing");
     if (item.shotId !== shotId || item.owner?.kind !== "shot-frame"
       || item.candidate?.mediaType !== "image") return empty("wrong-owner", item);
