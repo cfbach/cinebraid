@@ -946,7 +946,7 @@ function checkDestination({ sources }) {
   /* ONE ROUTE, ONE NAV ENTRY, ONE LABEL. */
   assert(/^\s*results\(tab\)/m.test(sources.views), "ROUTES must declare exactly one results entry");
   assert.strictEqual((sources.markup.match(/data-view="results"/g) || []).length, 1, "one navigation button");
-  assert(/results: "Generated Media"/.test(sources.app), "the topbar must name the destination");
+  assert(/results: "Production media"/.test(sources.app), "the topbar must name the destination");
   assert(sources.markup.includes("shared-production-media.js"), "the projection must ship");
   assert(sources.markup.includes("media-inspector.js") && sources.markup.includes("media-results.js"), "both O5 surfaces must ship");
 

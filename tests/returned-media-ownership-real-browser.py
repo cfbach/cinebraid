@@ -236,7 +236,7 @@ try:
         check(production["awaiting"] == 4, f"precondition: four returned candidates are waiting, saw {production['awaiting']}")
         check(production["readiness"] == "confirm-existing-reference",
               f"precondition: SH-A's readiness is the reference confirmation, was {production['readiness']!r}")
-        check(production["label"] == "REVIEW RETURNED RESULT",
+        check(production["label"] == "REVIEW SHOT IMAGE",
               f"A. Production's primary action must be to review the returned result, read {production['label']!r}")
         check(production["shotId"] == SHOT_A, f"A. and it must route to the owning shot: {production}")
         check(production["reviewKey"] == production["headKey"],
@@ -399,27 +399,21 @@ try:
               "E. the route round-trips the identity it carries")
         # Following the link a filmmaker would actually click.
         page.click('.production-next a.assemble-btn')
-        page.wait_for_selector('[data-returned-review="1"]', timeout=30000)
-        landed = card_state(page)
-        check(landed["key"] == claim["reviewKey"],
-              f"E. and clicking it lands on that exact candidate: {landed['key']!r}")
-        findings.append(f"E. Production's action carried {CANDIDATE_A} through the route and landed on it")
+        page.wait_for_selector('[data-shot-desk] #sd-primary-image', timeout=30000)
+        check(page.evaluate("() => routeReviewClaim()") == claim['reviewKey'],
+              'E. Shot Desk keeps the exact review identity carried by Production')
+        check(CANDIDATE_A in page.locator('#sd-primary-image').get_attribute('src'),
+              'E. the displayed media is the claimed candidate, not another pending image')
+        findings.append(f'E. Production opened the accepted Shot Desk on {CANDIDATE_A}')
 
-        # ---- F. THE CLAIM GOES STALE: NO SILENT SUBSTITUTION -------------------
-        stale_href = claim["href"]
-        page.click('[data-returned-review-action="reject"]')
-        # The wait is on the REQUESTED THING — the card naming a different candidate —
-        # rather than on a timer, which reads a stale DOM on a slow machine and looks like
-        # a product bug. SH-A holds a second pending candidate, so the card does not go
-        # away: it advances.
-        # The page is standing on the route that CLAIMED A, so the moment A is decided the
-        # workspace must stop presenting a review here — in situ, without a reload. That is
-        # the substitution window, and this is it closing.
-        page.wait_for_selector("[data-returned-review-stale='1']", timeout=30000)
-        advanced = card_state(page)
-        check(advanced["stale"] and not advanced["returnedReview"],
-              f"F. deciding the claimed candidate stops the claim being honoured, in place: {advanced['headline']!r}")
-        check(advanced["primaryCount"] == 1, f"F. with exactly one primary action, saw {advanced['primaryCount']}")
+        # The accepted desk keeps the exact rejected image visible with its decision.
+        # It must never silently replace it with the other pending frame.
+        stale_href = claim['href']
+        page.locator('#sd-reject').click()
+        page.wait_for_function("() => document.querySelector('.sd-decision')?.textContent.includes('Rejected')")
+        check(page.evaluate("() => routeReviewClaim()") == claim['reviewKey'], 'F. rejection retains the exact route identity')
+        check(CANDIDATE_A in page.locator('#sd-primary-image').get_attribute('src'), 'F. rejection does not substitute another image')
+        check(page.locator('#sd-approve, #sd-reject').count() == 0, 'F. a settled rejection offers no pending decision action')
         decided = page.evaluate("""() => {
             const projection = returnedReviewProjectionForBrowser();
             const shot = P.shots.find((row) => row.id === 'SH-A');
@@ -439,29 +433,23 @@ try:
               f"F. and Returned Results agrees, because it reads the same array: {decided['returned']} vs {decided['awaiting']}")
         check(decided["pending"] == [CANDIDATE_A2],
               f"F. precondition — the claimed candidate is decided and another is pending: {decided['pending']}")
-        # Now open the stale link exactly as a bookmark or a stale tab would.
+        # A bookmark to that decision still names the same reviewed image.
         page.goto(f"{base}/{stale_href}", wait_until="domcontentloaded", timeout=30000)
-        page.wait_for_selector("[data-returned-review-stale='1']", timeout=30000)
-        stale = card_state(page)
-        check(not stale["returnedReview"], "F. the stale link presents no review")
-        check(stale["file"] == "", "F. and claims no candidate of its own")
-        check(CANDIDATE_A in stale["body"], f"F. it names the candidate that was asked for: {stale['body']!r}")
-        check(CANDIDATE_A2 not in stale["body"], "F. and does not present the other one as though it had been")
-        check("already been reviewed" in stale["headline"], f"F. saying what happened: {stale['headline']!r}")
-        check(stale["primaryCount"] == 1, f"F. exactly one primary action, saw {stale['primaryCount']}")
-        check(not page.query_selector("[data-returned-review-action]"),
-              "F. and no candidate decision is offered on a stale card")
-        findings.append(f"F. the stale link explained itself and never substituted {CANDIDATE_A2}")
+        page.wait_for_selector('[data-shot-desk] #sd-primary-image', timeout=30000)
+        page.wait_for_function("() => document.querySelector('.sd-decision')?.textContent.includes('Rejected')")
+        check(CANDIDATE_A in page.locator('#sd-primary-image').get_attribute('src'), 'F. reload preserves the rejected image, not the next pending image')
+        check(page.locator('#sd-approve, #sd-reject').count() == 0, 'F. the bookmarked decision remains settled')
+        findings.append(f'F. the reviewed link remains on rejected {CANDIDATE_A}, without substituting {CANDIDATE_A2}')
 
-        # ---- G. CONTINUING IS EXPLICIT, AND IT WORKS ---------------------------
-        page.click(".shot-primary-action")
+        # Continuing to another frame remains explicit through Shot preparation.
+        page.locator('.sd-heading .sd-back').click()
         page.wait_for_selector('[data-returned-review="1"]', timeout=30000)
-        continued = card_state(page)
-        check(continued["file"] == CANDIDATE_A2,
-              f"G. continuing reaches the pending candidate: {continued['file']!r}")
-        check(page.evaluate("() => routeReviewClaim()") == production["secondKey"],
-              "G. through a route that claims it by name, the same way Production's does")
-        findings.append(f"G. the explicit continue reached {CANDIDATE_A2} through a route that named it")
+        check(card_state(page)['file'] == CANDIDATE_A2, 'G. preparation names the still-pending image')
+        page.locator('.shot-primary-action').click()
+        page.wait_for_selector('[data-shot-desk] #sd-primary-image', timeout=30000)
+        check(CANDIDATE_A2 in page.locator('#sd-primary-image').get_attribute('src'), 'G. deliberate navigation opens the next pending image')
+        check(page.evaluate("() => routeReviewClaim()") == production['secondKey'], 'G. the new route carries that image identity')
+        findings.append(f'G. explicit preparation-to-review navigation reached {CANDIDATE_A2}')
 
         # ---- H. A RECORDED RESULT WITH NO BYTES ---------------------------------
         open_shot(page, base, SHOT_C)

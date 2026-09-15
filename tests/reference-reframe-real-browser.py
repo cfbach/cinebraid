@@ -47,6 +47,19 @@ anything off-loopback.
 
 import json, os, pathlib, shutil, socket, subprocess, sys, tempfile, time
 
+
+def open_reference_tools(page):
+    """Reach retained tools through Reference Desk without bypassing a dialog."""
+    if not page.locator('[data-reference-desk]').count():
+        return
+    link = page.locator('.rd-tool-link:visible').first
+    if not link.count():
+        page.locator('[data-rd-action="inspect"]').click()
+        link = page.locator('.rd-tool-link:visible').first
+    link.click()
+    page.wait_for_selector('[data-reference-tools]', timeout=20000)
+    assert not page.locator('#modal:not(.hidden)').count(), 'tools navigation left a dialog over its destination'
+
 ROOT = pathlib.Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "tests"))
 from browser_runtime import require_browser, launch_chromium
@@ -182,6 +195,7 @@ try:
                 }""",
                 {"character": character, "receipt": RECEIPT, "anchors": ANCHORS, "id": ENTITY})
             page.evaluate("() => route()")
+            open_reference_tools(page)
             page.wait_for_selector(f'.bounded-entity-page[data-selected-task]', timeout=15000)
 
         def selected_task():
@@ -521,6 +535,7 @@ try:
         for width in (1600, 1280):
             page.set_viewport_size({"width": width, "height": 1000})
             page.locator(".bounded-entity-taskbar .focused-task-button", has_text="Primary reference").click()
+            open_reference_tools(page)
             page.wait_for_selector("#main .reference-primary-hero", timeout=10000)
             overflow = page.evaluate("() => document.documentElement.scrollWidth - document.documentElement.clientWidth")
             assert overflow <= 0, f"7. the reference page scrolls sideways at {width}px by {overflow}px"
@@ -572,6 +587,7 @@ try:
 
         def primary_cta():
             page.locator(".bounded-entity-taskbar .focused-task-button", has_text="Primary reference").click()
+            open_reference_tools(page)
             page.wait_for_selector("#main .reference-primary-hero", timeout=10000)
             return page.evaluate(CONTRAST)
 
@@ -736,6 +752,7 @@ try:
             {"primary": f"{ENTITY}-PRIMARY.png", "other": f"{ENTITY}-FRONT-A.png"})
         page.wait_for_timeout(500)
         page.locator(".bounded-entity-taskbar .focused-task-button", has_text="Primary reference").click()
+        open_reference_tools(page)
         page.wait_for_selector("#main .reference-primary-hero", timeout=10000)
         page.wait_for_timeout(500)
 
@@ -891,6 +908,7 @@ try:
             """
             page.evaluate("(hash) => { location.hash = hash; }", f"#/{route}/{entity_id}")
             page.evaluate("() => route()")
+            open_reference_tools(page)
             page.wait_for_selector("#main .reference-primary-hero", timeout=15000)
             return page.evaluate("""() => {
                 const line = document.querySelector('#main .reference-primary-usage');

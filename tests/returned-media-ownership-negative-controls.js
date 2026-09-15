@@ -218,7 +218,7 @@ async function ncRM1() {
   /* 1. THE LITERAL BAD STATE. Production says review the returned result; the shot it
         sends you to offers a decision about something else entirely. */
   equal(seen.queue, 1, "NC-RM1: a returned candidate is genuinely waiting");
-  equal(seen.next, "REVIEW RETURNED RESULT", "NC-RM1: and Production routes the filmmaker here to review it");
+  equal(seen.next, "REVIEW SHOT IMAGE", "NC-RM1: and Production routes the filmmaker here to review it");
   equal(card.returnedReview, false, "NC-RM1: yet the workspace card is not about the returned result");
   equal(card.headline, "Confirm existing reference", "NC-RM1: it asks for the reference confirmation instead");
   /* AT1-F. The HEADLINE above still names the act, which is what this control is

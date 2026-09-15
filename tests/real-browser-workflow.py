@@ -2,6 +2,19 @@
 """Optional real Chromium smoke test. Self-skips when Playwright/Chromium are unavailable."""
 import copy, json, os, pathlib, shutil, socket, subprocess, sys, time, urllib.request, urllib.error, re
 
+
+def open_reference_tools(page):
+    """Reach retained tools through Reference Desk without bypassing a dialog."""
+    if not page.locator('[data-reference-desk]').count():
+        return
+    link = page.locator('.rd-tool-link:visible').first
+    if not link.count():
+        page.locator('[data-rd-action="inspect"]').click()
+        link = page.locator('.rd-tool-link:visible').first
+    link.click()
+    page.wait_for_selector('[data-reference-tools]', timeout=20000)
+    assert not page.locator('#modal:not(.hidden)').count(), 'tools navigation left a dialog over its destination'
+
 ROOT = pathlib.Path(__file__).resolve().parents[1]
 SCREENSHOT_DIR = pathlib.Path(os.environ["CINEBRAID_SCREENSHOT_DIR"]) if os.environ.get("CINEBRAID_SCREENSHOT_DIR") else None
 if SCREENSHOT_DIR: SCREENSHOT_DIR.mkdir(parents=True, exist_ok=True)
@@ -200,6 +213,7 @@ try:
 
         if character_id:
             open_hash(f"#/character/{character_id}")
+            open_reference_tools(page)
             page.wait_for_selector(".bounded-entity-page")
             assert page.locator(".entity-candidate-card").count() <= 12, "reference page rendered more than 12 candidates"
             # AMENDED BY BATCH 2 SLICE 3: the coverage workspace is stated as a
@@ -232,6 +246,7 @@ try:
           await route();
         }""", {"ready": ready_capability})
         page.wait_for_timeout(250)
+        open_reference_tools(page)
         page.wait_for_selector(".bounded-entity-page", timeout=5000)
         checkpoint("audit character loaded")
         # AMENDED BY BATCH 2 SLICE 3: candidate review is contextual to the reference

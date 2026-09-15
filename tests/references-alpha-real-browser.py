@@ -43,6 +43,84 @@ guard aborts the paid route and anything off-loopback.
 
 import base64, json, os, pathlib, re, socket, subprocess, sys, tempfile, time
 
+
+def open_reference_tools(page):
+    """Reach retained tools through Reference Desk without bypassing a dialog."""
+    if not page.locator('[data-reference-desk]').count():
+        return
+    link = page.locator('.rd-tool-link:visible').first
+    if not link.count():
+        page.locator('[data-rd-action="inspect"]').click()
+        link = page.locator('.rd-tool-link:visible').first
+    link.click()
+    page.wait_for_selector('[data-reference-tools]', timeout=20000)
+    assert not page.locator('#modal:not(.hidden)').count(), 'tools navigation left a dialog over its destination'
+
+
+def verify_reference_dialog_navigation(page, entity_id):
+    """Check the navigation transaction and ordinary dismissal at all supported widths.
+
+    Details uses a rail when wide. Open its compact dialog before resizing so
+    the dialog-to-page transaction is also exercised at 1440 and 1920.
+    """
+    evidence=[]
+    output=os.environ.get('CINEBRAID_EV2_EVIDENCE_DIR')
+    if output: pathlib.Path(output).mkdir(parents=True,exist_ok=True)
+    def enter():
+        page.set_viewport_size({'width':1280,'height':900})
+        page.evaluate("async id => { location.hash='#/character/'+id; await route(); }",entity_id)
+        page.wait_for_selector('[data-reference-desk]')
+    def details(width, keyboard=False):
+        enter()
+        opener=page.locator('[data-rd-action="inspect"]');opener.focus()
+        if keyboard: page.keyboard.press('Enter')
+        else: opener.click()
+        page.wait_for_selector('#modal:not(.hidden) [data-reference-details-dialog]')
+        page.set_viewport_size({'width':width,'height':900})
+    for width in (1280,1440,1920):
+        for mode in ('pointer','keyboard'):
+            details(width,mode=='keyboard')
+            if mode=='keyboard':
+                for _ in range(12):
+                    if page.evaluate("() => document.activeElement?.matches('#modal .rd-tool-link')"): break
+                    page.keyboard.press('Tab')
+                assert page.evaluate("() => document.activeElement?.matches('#modal .rd-tool-link')"),'tools link must be keyboard reachable'
+                page.keyboard.press('Enter')
+            else: page.locator('#modal .rd-tool-link').click()
+            page.wait_for_selector('[data-reference-tools]')
+            page.wait_for_function("() => document.getElementById('modal').classList.contains('hidden') && document.getElementById('main').contains(document.activeElement)")
+            state=page.evaluate("""() => ({
+                route:location.hash,headingFocused:document.activeElement.matches('h1,h2,.page-title-input,#main'),
+                modalHidden:document.getElementById('modal').classList.contains('hidden'),modalEmpty:document.getElementById('modal').innerHTML==='',
+                keyHandlerCleared:MODAL_KEY_HANDLER===null,returnTargetCleared:MODAL_RETURN_FOCUS===null,noModalOwner:!modalLockOwner(),
+                inert:!!document.getElementById('main').closest('[inert]'),bodyInlineOverflow:document.body.style.overflow,htmlInlineOverflow:document.documentElement.style.overflow
+            })""")
+            assert state['route'].endswith('/tools') and state['headingFocused'],state
+            assert all(state[k] for k in ('modalHidden','modalEmpty','keyHandlerCleared','returnTargetCleared','noModalOwner')),state
+            assert not state['inert'] and state['bodyInlineOverflow']!='hidden' and state['htmlInlineOverflow']!='hidden',state
+            page.keyboard.press('Tab')
+            assert page.evaluate("() => document.getElementById('main').contains(document.activeElement) && document.activeElement.matches('a[href],button,input,select,textarea')"),'destination controls must be reachable by Tab'
+            control=page.locator('[data-reference-tools] .bounded-entity-taskbar button').first
+            control.click(trial=True);control.click()
+            assert not page.locator('#modal:not(.hidden)').count(),'destination action must not revive the old dialog'
+            if output: page.screenshot(path=str(pathlib.Path(output)/f'{width}-{mode}-tools.png'))
+            evidence.append({'width':width,'activation':mode,**state,'tabIntoDestination':True,'pointerActionSucceeded':True})
+        for dismissal in ('Close','Escape','backdrop'):
+            details(width)
+            if dismissal=='Close': page.locator('#modal .cancel').click()
+            elif dismissal=='Escape': page.keyboard.press('Escape')
+            else: page.locator('#modal').click(position={'x':8,'y':8})
+            page.wait_for_function("() => document.getElementById('modal').classList.contains('hidden') && document.activeElement?.matches('[data-rd-action=inspect]')")
+            evidence.append({'width':width,'dismissal':dismissal,'openerRestored':True})
+        enter();page.set_viewport_size({'width':width,'height':900})
+        choose=page.locator('[data-rd-action="choose"]').first;choose.focus();choose.click()
+        page.wait_for_selector('#rd-picker-cancel');page.locator('#rd-picker-cancel').click()
+        page.wait_for_function("() => document.getElementById('modal').classList.contains('hidden') && document.activeElement?.matches('[data-rd-action=choose]')")
+        evidence.append({'width':width,'dismissal':'Cancel','openerRestored':True})
+    if output: (pathlib.Path(output)/'dialog-navigation.json').write_text(json.dumps(evidence,indent=2)+'\n',encoding='utf-8')
+    print('EV2 dialog navigation: six navigation transactions and twelve ordinary dismissals passed at 1280/1440/1920')
+    page.set_viewport_size({'width':1600,'height':1000})
+
 ROOT = pathlib.Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "tests"))
 from browser_runtime import require_browser, launch_chromium
@@ -218,6 +296,7 @@ try:
             page.evaluate("(id) => { location.hash = '#/character/' + id; }", ENTITY)
             page.evaluate("() => route()")
             try:
+                open_reference_tools(page)
                 page.wait_for_selector(".bounded-entity-page[data-selected-task]", timeout=25000)
             except Exception:
                 surface = page.evaluate(
@@ -232,6 +311,7 @@ try:
         page.wait_for_function(
             "(id) => typeof P === 'object' && P && (P.characters || []).some((c) => c && c.id === id)",
             arg=ENTITY, timeout=25000)
+        verify_reference_dialog_navigation(page, ENTITY)
         open_reference()
 
         def open_coverage():
@@ -391,6 +471,7 @@ try:
         page.wait_for_function(
             """() => { const n = document.querySelector('.bounded-entity-page');
                        return n && n.dataset.selectedTask === 'reference'; }""", timeout=25000)
+        open_reference_tools(page)
         page.wait_for_selector(".reference-primary-hero", timeout=25000)
         hero = page.evaluate("""() => {
             const line = document.querySelector('.reference-primary-remaining');
@@ -827,6 +908,7 @@ try:
             boundedWriteState('selected:entity-coverage-view', 'characters:' + id, 'coverage');
         }""", ENTITY)
         page.evaluate("() => route()")
+        open_reference_tools(page)
         page.wait_for_selector(".bounded-entity-page[data-selected-task]", timeout=25000)
         open_coverage()
         open_board()

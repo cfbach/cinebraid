@@ -198,7 +198,14 @@ const SOURCES = [
   "tests/workspace-migration-nested-documents-negative-controls.js",
   "tests/helpers/disposable-root.js",
   "tests/project-storage-separation.js",
-  "tests/project-storage-separation-negative-controls.js"
+  "tests/project-storage-separation-negative-controls.js",
+  "public/reference-desk.js",
+  "public/shared-reference-media.js",
+  "public/shared-shot-desk.js",
+  "public/shot-desk.js",
+  "src/media/reference-media.js",
+  "tests/reference-enrollment.js",
+  "tests/shot-desk-presentation.js",
 ];
 for (const source of SOURCES) {
   const result = spawnSync(process.execPath, ["--check", source], { cwd: ROOT, stdio: "inherit", windowsHide: true });

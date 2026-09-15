@@ -1,52 +1,13 @@
 #!/usr/bin/env python3
-"""Focused Workspaces, executing in a real Chromium against the real project state.
+"""A+ reference runtime compatibility in a real Chromium.
 
-THE DEFECT THIS SUITE EXISTS FOR, in one line: public/focused-workspaces.js read
-project state off `window.P`, and `window.P` does not exist in a browser — so the
-module loaded on every route and did nothing at all.
-
-public/app.js declares project state as `let P` at the top level of a classic
-script. A top-level `let`/`const` lives in the page's global LEXICAL scope, which
-is not the global object, so `window.P` was permanently `undefined` in Chromium,
-`enhance()` returned at its own guard, and no reference navigator, no inspector,
-no entity shell, no generated disclosure label and no blocked-action explanation
-was ever built. The same access mistake covered ACTIVE_PROJECT_SLUG (workspace
-storage keys collapsed to one namespace for every project), AUTOMATION_RUNS,
-`esc` (so every rendered string would have gone in unescaped the moment anything
-DID render), `shotById` and `sceneById` (so the shot inspector and the whole
-scene workspace would still have been dead after a `window.P`-only repair).
-
-Nothing caught it. tests/focused-workspaces.js evaluates the module in an empty
-sandbox and only calls its pure functions; the render harness does not load the
-file at all; and tests/coverage-requirement-semantics.js reaches the inspector's
-arithmetic by handing it an entity directly. Every one of those can pass while
-the shipped browser runs none of this code, which is why the proof has to be a
-real page in a real browser and has to assert something only the module's RUNTIME
-can produce.
-
-What it establishes:
-
-  1  the module's runtime ran — DOM only focused-workspaces.js builds is present
-     (.focused-entity-shell / .focused-subnav / .focused-inspector), which is a
-     different claim from "the script tag loaded"; NC-D holds the script loaded
-     and the runtime skipped, and case 1 goes red for it
-  2  what it shows is CURRENT — an edit made through the app's own path is on
-     screen after the app's own rerender, not a value captured at load
-  3  it reads the AUTHORITATIVE object — the module's own resolver returns the
-     identical object the rest of CineBraid mutates, and no second project state
-     is reachable as a global
-  4  it still agrees with the coverage board on the P4-SEM-A mixed requirement
-     case, both fractions read off the rendered DOM
-  5  it follows an in-session project switch
-  6  opening it mutates nothing: project.json is byte-identical, the in-memory
-     project is JSON-identical, and the app's unsaved-edit counter never moves
-
-NOTHING HERE IS PAID. /api/generation/fal/jobs is aborted and counted if it is
-ever reached, and every off-host request is aborted.
-
-Config and projects live in a temporary directory reached through
-CINEBRAID_CONFIG_PATH and CINEBRAID_PROJECTS_ROOT, so data/ and the shipped
-sample are never touched, and the directory is removed at the end.
+The accepted Reference Desk replaces the permanent legacy reference inspector.
+Keep the original guarantees: live project state, safe text, coverage agreement,
+project switching, read-only browsing, and five observable negative controls.
+The controls now mutate the renderer that owns this surface, not the legacy
+post-render enhancer that intentionally skips it. The retained focused-state
+resolver is still checked for identity with P and absence of a second global.
+All settings/projects are disposable; paid and offsite requests are refused.
 """
 
 import hashlib, json, os, pathlib, re, shutil, socket, subprocess, tempfile, time
@@ -58,7 +19,7 @@ LABEL = "Focused Workspaces real-browser runtime audit"
 sync_playwright = require_browser(LABEL)
 
 PAID_ROUTE = "/api/generation/fal/jobs"
-MODULE = "focused-workspaces.js"
+MODULE = "reference-desk.js"
 FONT_HOSTS = ("https://fonts.googleapis.com", "https://fonts.gstatic.com")
 MODULE_SOURCE = (ROOT / "public" / MODULE).read_text(encoding="utf-8")
 
@@ -190,38 +151,24 @@ try:
         def module_loaded():
             """True of a script tag that merely loaded. Deliberately not proof of
             anything: NC-D keeps this true and case 1 red."""
-            return page.evaluate("() => typeof window.__CINEBRAID_FOCUSED === 'object' "
-                                 "&& typeof window.enhanceFocusedWorkspace === 'function'")
+            return page.evaluate("() => typeof window.CineBraidReferenceDesk === 'object' "
+                                 "&& typeof window.CineBraidReferenceDesk.view === 'function'")
 
         def check_execution():
-            """CASE 1 — the runtime ran, not merely the script tag.
-
-            Every selector here is built by focused-workspaces.js at runtime and by
-            nothing else. `.focused-taskbar` is NOT usable as a signal: the bounded
-            renderers in public/entities.js and public/creation-studio.js put that
-            same class into the route's own markup, so a taskbar was on screen for
-            the entire life of the defect."""
+            """The current renderer must execute, not merely load its script."""
             seen = page.evaluate("""() => ({
-                shell: !!document.querySelector('.focused-entity-shell'),
-                subnav: !!document.querySelector('.focused-subnav'),
-                inspector: !!document.querySelector('.focused-inspector'),
-                flag: document.getElementById('main').dataset.focusedEntity || '',
+                desk: !!document.querySelector('[data-reference-desk]'),
+                heading: !!document.querySelector('#rd-title'),
+                coverage: !!document.querySelector('.rd-coverage'),
+                legacy: !!document.querySelector('.focused-inspector'),
             })""")
-            assert seen["shell"], f"case 1: focused-workspaces.js built no entity shell ({seen})"
-            assert seen["subnav"], f"case 1: no reference navigator was built ({seen})"
-            assert seen["inspector"], f"case 1: no reference inspector was built ({seen})"
-            assert seen["flag"] == "1", f"case 1: the module never marked the route enhanced ({seen})"
-            inspector = text_of(".focused-inspector")
-            assert "reference details" in inspector.lower(), f"case 1: the inspector is not the module's ({inspector!r})"
+            assert seen['desk'] and seen['heading'] and seen['coverage'], f'case 1: Reference Desk did not render: {seen}'
+            assert not seen['legacy'], 'case 1: a competing legacy inspector was mounted on Reference Desk'
 
         def check_current(expected_name):
-            """CASE 2 — what is on screen is the CURRENT project, not a snapshot."""
-            inspector = text_of(".focused-inspector")
-            navigator = text_of(".focused-subnav")
-            assert expected_name in inspector, \
-                f"case 2: the inspector shows stale state, expected {expected_name!r} in {inspector!r}"
-            assert expected_name in navigator, \
-                f"case 2: the reference navigator shows stale state: {navigator!r}"
+            """The accepted page heading reflects the live project after an edit."""
+            heading = text_of('#rd-title')
+            assert heading == expected_name, f'case 2: stale reference heading {heading!r}, expected {expected_name!r}'
 
         def check_authority():
             """CASE 3 — one authoritative project state, proved by IDENTITY.
@@ -256,59 +203,19 @@ try:
                 f"case 3: a write to the app's project was not visible through the workspace's resolver ({live})"
 
         def check_coverage_agreement():
-            """CASE 4 — the P4-SEM-A mixed case, both fractions read off the DOM.
-
-            The board only exists in the DOM while its own task is selected, so it
-            is selected through the module's OWN exported task API rather than by
-            reaching past it. textContent, not innerText: the labels are uppercased
-            by CSS, and a suite that reads the rendered casing is asserting about a
-            stylesheet."""
-            page.evaluate("() => window.selectFocusedTask('coverage')")
-            page.wait_for_timeout(900)
-            # BATCH 2 SLICE 3: that task leads with the demand list and keeps the
-            # angle / expression / continuity boards behind a toggle, so the board
-            # this case reads is opened the way a filmmaker opens it. Waiting for the
-            # board itself rather than for a delay, because the click re-renders.
-            toggle = page.locator(".entity-coverage-detail-toggle")
-            if toggle.count():
-                if page.locator('.entity-coverage-detail[data-coverage-detail-open="1"]').count() == 0:
-                    toggle.first.click()
-                page.wait_for_selector(".entity-coverage-section > summary", timeout=10000)
-            seen = page.evaluate("""([list, id]) => {
-                const board = document.querySelector('.entity-coverage-section > summary');
-                const facts = [...document.querySelectorAll('.focused-inspector .focused-inspector-facts article')];
-                const row = facts.find((article) =>
-                    (article.querySelector('span')?.textContent || '').trim().toLowerCase() === 'coverage');
-                const entity = P[list].find((item) => item.id === id);
-                const stats = coverageStats(ensureCoverageSlots(list, entity));
-                return {
-                    board: board ? board.textContent : null,
-                    inspector: row ? row.querySelector('b').textContent : null,
-                    canonical: [stats.approvedRequired, stats.required, stats.planned, stats.notRequired],
-                    progress: [stats.approvedTotal, stats.total],
-                };
-            }""", ["locations", location_id])
-            board = fraction(seen["board"])
-            inspector = fraction(seen["inspector"])
-            canonical = seen["canonical"]
-            assert board is not None, f"case 4: the coverage board printed no fraction ({seen['board']!r})"
-            assert inspector is not None, f"case 4: the inspector printed no coverage fraction ({seen['inspector']!r})"
-            # P4-SEM-A'S CLAIM, ASSERTED WHERE IT LIVES. The defect was the Reference
-            # Inspector computing the REQUIRED fraction from the legacy boolean while
-            # the board computed it from the enum, so one project read "1 of 3" on one
-            # screen and "1 of 2" on the other. The claim is that the inspector's number
-            # comes from the SHARED derivation, and that is now asserted against the
-            # derivation directly rather than through whatever the board happens to
-            # print — which is a tighter test, and the one NC-E below still trips.
-            assert inspector == tuple(canonical[:2]), \
-                f"case 4: the Reference Inspector disagrees with the shared derivation, {inspector} vs {canonical[:2]}"
-            # The board's fold answers a different question — how much of this coverage
-            # is selected — because "Required" on the board now means the production
-            # requires it NOW, and a fraction of the plan is not that. It is pinned to
-            # its own shared answer so it cannot drift either.
-            assert board == tuple(seen["progress"]), \
-                f"case 4: the coverage board disagrees with the shared derivation, {board} vs {seen['progress']}"
-            return inspector, canonical
+            """The accepted Required views summary reads the shared enum-based owner."""
+            seen = page.evaluate("""(id) => {
+                const entity=P.locations.find(row=>row.id===id), state=document.getElementById('rd-state').value;
+                const value=CineBraidReferenceMedia.coverage(entity,CineBraidReferenceMedia.listing(SCAN,'locations',id),state);
+                const stats=coverageStats(entity.coverageSlots);
+                return {text:document.querySelector('.rd-coverage header span')?.textContent,
+                    canonical:[value.filled,value.required,stats.planned,stats.notRequired]};
+            }""", location_id)
+            match=re.search(r'(\d+) of (\d+) required views filled',seen['text'] or '')
+            assert match, f"case 4: missing required-view summary {seen}"
+            rendered=tuple(map(int,match.groups()))
+            assert rendered==tuple(seen['canonical'][:2]), f"case 4: coverage disagrees with shared owner: {seen}"
+            return rendered,seen['canonical']
 
         def expect_red(name, why, check, *args):
             """Run a positive check that MUST now fail, and record the receipt."""
@@ -363,8 +270,8 @@ try:
 
         # ---- 1 & 3. execution, and one authoritative state -------------------
         check_execution()
-        findings.append("1: the reference navigator, entity shell and Reference Inspector are in the real DOM — "
-                        "markup only focused-workspaces.js builds, and none of it existed before this repair")
+        findings.append("1: the Reference Desk heading and Required views summary are in the real DOM — "
+                        "the current renderer ran and no competing legacy inspector was mounted")
         check_authority()
         findings.append("3: the module's resolver returns the identical object as the app's own P, a write through "
                         "one is immediately visible through the other, and no second project state is reachable")
@@ -379,9 +286,9 @@ try:
         page.wait_for_timeout(900)
         check_execution()
         check_current(RENAMED)
-        findings.append(f"2: a rename made through the app's own path and rerender is on screen in the inspector and "
-                        f"the navigator, and the name's angle brackets and quotes render as text — {RENAMED!r}")
-        escaped = page.evaluate("() => document.querySelector('.focused-inspector').innerHTML")
+        findings.append(f"2: a rename made through the app's own path and rerender is on screen in the heading and "
+                        f"the current context, and the name's angle brackets and quotes render as text — {RENAMED!r}")
+        escaped = page.evaluate("() => document.querySelector('#rd-title').innerHTML")
         assert "&lt;renamed&gt;" in escaped and "<renamed>" not in escaped, \
             "the inspector interpolated a project value into innerHTML without escaping it"
 
@@ -396,9 +303,9 @@ try:
         inspector, canonical = check_coverage_agreement()
         assert canonical[1] == 2 and canonical[3] == 1, \
             f"case 4: the P4-SEM-A mixed fixture did not survive into the browser ({canonical})"
-        findings.append(f"4: on the P4-SEM-A mixed case the Reference Inspector renders {inspector[0]}/{inspector[1]} "
+        findings.append(f"4: on the P4-SEM-A mixed case the Required views summary renders {inspector[0]}/{inspector[1]} "
                         f"from the shared derivation, with {canonical[2]} planned and {canonical[3]} not-required "
-                        f"excluded from the requirement, and the coverage board prints its own selected fraction from "
+                        f"excluded from the requirement, and the summary uses the exact selected-file count from "
                         f"the same function — both read off the DOM, neither recomputed by this suite")
 
         # ---- 5. an in-session project switch ---------------------------------
@@ -411,7 +318,7 @@ try:
         open_route(f"#/character/{SECOND_CHARACTER}", reload=False)
         check_execution()
         check_current("Signal operator")
-        gone = text_of(".focused-subnav")
+        gone = text_of("[data-reference-desk]")
         assert character_id not in gone, \
             f"case 5: the reference navigator still lists the previous project's references ({gone!r})"
         findings.append("5: after an in-session switchProject() the workspace rebuilds against the newly active "
@@ -445,83 +352,48 @@ try:
             assert module_loaded(), "the mutated module failed to load — a load crash proves nothing"
             assert not page_errors, f"the mutated module raised an uncaught error: {page_errors}"
 
-        # ---- NC-A: put the undefined global back -----------------------------
-        arm("NC-A", ("function activeProject() { return typeof P === \"undefined\" ? null : P; }",
-                     "function activeProject() { return typeof window.P === \"undefined\" ? null : window.P; }"))
+        # Five controls over the actual A+ renderer. Each must remain loadable,
+        # expose the intended defect, and fail the same positive assertion.
+        entity_anchor = "const entity=P[list]?.find(r=>r.id===id); if(!entity)return null;"
+        arm("NC-A", (entity_anchor,
+            "const entity=(window.P || {})[list]?.find(r=>r.id===id); if(!entity)return null;"))
         settle(f"#/character/{character_id}")
-        live = page.evaluate("() => ({ resolved: window.__CINEBRAID_FOCUSED.activeProject(), hasP: typeof P })")
-        assert live["resolved"] is None and live["hasP"] == "object", \
-            f"NC-A: the defect is not live — the module still resolved a project ({live})"
-        expect_red("NC-A", "project state read back off window.P, the exact pre-fix defect", check_execution)
+        assert page.evaluate("() => typeof P==='object' && !window.P"), 'NC-A precondition: lexical project remains available'
+        expect_red("NC-A", "reading the absent window.P leaves the current renderer inactive", check_execution)
 
-        # ---- NC-B: a stale snapshot instead of the live object ---------------
-        arm("NC-B", ("function activeProject() { return typeof P === \"undefined\" ? null : P; }",
-                     "let SNAPSHOT = null;\n  function activeProject() { "
-                     "if (!SNAPSHOT && typeof P !== \"undefined\" && P) SNAPSHOT = JSON.parse(JSON.stringify(P)); "
-                     "return SNAPSHOT; }"))
+        arm("NC-B", (entity_anchor,
+            "const snapshot=window.__referenceSnapshot || (window.__referenceSnapshot=JSON.parse(JSON.stringify(P))); "
+            "const entity=snapshot[list]?.find(r=>r.id===id); if(!entity)return null;"))
         settle(f"#/character/{character_id}")
-        page.evaluate("""async ([id]) => {
-            P.characters.find((row) => row.id === id).name = "Renamed after the snapshot";
-            dirty();
-            await route();
-        }""", [character_id])
-        page.wait_for_timeout(900)
-        live = page.evaluate("() => window.__CINEBRAID_FOCUSED.activeProject() === P")
-        assert live is False, "NC-B: the defect is not live — the module is still reading the authoritative object"
-        expect_red("NC-B", "the workspace reads a clone taken once, so a later edit never reaches it",
-                   check_current, "Renamed after the snapshot")
-        page.evaluate("""async ([id, name]) => {
-            P.characters.find((row) => row.id === id).name = name;
-            dirty();
-            if (typeof flushPendingProjectSave === "function") await flushPendingProjectSave();
-        }""", [character_id, RENAMED])
-        page.wait_for_timeout(600)
+        page.evaluate("""async id => {
+            P.characters.find(row=>row.id===id).name='Renamed after the snapshot';
+            dirty(); await route();
+        }""", character_id)
+        assert page.evaluate("() => window.__referenceSnapshot !== P"), 'NC-B must introduce an independent snapshot'
+        expect_red("NC-B", "a stale clone does not reflect the live edit", check_current, 'Renamed after the snapshot')
+        page.evaluate("""async ([id,name]) => {
+            P.characters.find(row=>row.id===id).name=name; dirty();
+            if(typeof flushPendingProjectSave==='function')await flushPendingProjectSave();
+        }""", [character_id,RENAMED])
 
-        # ---- NC-C: a second, independently writable project state ------------
-        arm("NC-C", ("function activeProject() { return typeof P === \"undefined\" ? null : P; }",
-                     "function activeProject() { "
-                     "if (!window.P) window.P = typeof P === \"undefined\" ? null : JSON.parse(JSON.stringify(P)); "
-                     "return window.P; }"))
+        arm("NC-C", (entity_anchor,
+            "const copy=window.P || (window.P=JSON.parse(JSON.stringify(P))); "
+            "const entity=copy[list]?.find(r=>r.id===id); if(!entity)return null;"))
         settle(f"#/character/{character_id}")
-        live = page.evaluate("() => ({ exists: 'P' in window, diverges: window.P !== P })")
-        assert live["exists"] and live["diverges"], \
-            f"NC-C: the defect is not live — no second project object was created ({live})"
-        expect_red("NC-C", "a window.P clone the app never writes to, free to diverge from the real project",
-                   check_authority)
+        assert page.evaluate("() => window.P && window.P !== P"), 'NC-C must expose a second mutable project'
+        expect_red("NC-C", "a second project object is reachable as window.P", check_authority)
 
-        # ---- NC-D: the script loads, the enhancement pass never runs ----------
-        # Both entry points have to go, because there are two: schedule() behind a
-        # rAF, and the direct window.enhanceFocusedWorkspace?.() call app.js makes
-        # after every route render. Everything else about the file still executes —
-        # it defines its functions, publishes __CINEBRAID_FOCUSED, attaches its
-        # listeners and runs syncFocusedRouteMode — so this is precisely the state a
-        # "did the script load?" check cannot tell apart from a working module.
-        arm("NC-D",
-            ("requestAnimationFrame(() => requestAnimationFrame(enhance));", "void enhance;"),
-            ("window.enhanceFocusedWorkspace = enhance;", "window.enhanceFocusedWorkspace = () => {};"))
+        arm("NC-D", ("window.CineBraidReferenceDesk={view,library};",
+            "window.CineBraidReferenceDesk={view:()=>null,library:()=>null};"))
         settle(f"#/character/{character_id}")
-        assert module_loaded(), "NC-D: the module must still load — that is the whole point of this control"
-        assert page.evaluate("() => document.body.dataset.focusedRoute === 'character'"), \
-            "NC-D: the defect is not live — the module did not even run its own top level"
-        expect_red("NC-D", "the script loads, exports its API and syncs the route, and the enhancement never runs",
-                   check_execution)
+        assert module_loaded(), 'NC-D keeps the renderer script loaded'
+        expect_red("NC-D", "a loaded renderer that never produces its surface", check_execution)
 
-        # ---- NC-E: the pre-P4-SEM-A boolean-only coverage reading ------------
-        arm("NC-E", ("const summary = window.summariseCoverage ? window.summariseCoverage(slots) "
-                     ": { required: 0, approvedRequired: 0 };",
-                     "const kept = slots.filter((slot) => slot.required !== false);\n    const summary = "
-                     "{ required: kept.length, approvedRequired: kept.filter((slot) => slot.approvedFile).length };"))
+        arm("NC-E", ("coverage:R.coverage(entity,media,state.stateId)",
+            "coverage:{...R.coverage(entity,media,state.stateId),required:(entity.coverageSlots||[]).filter(s=>s.required!==false).length}"))
         settle(f"#/location/{location_id}")
         check_execution()
-        live = page.evaluate("""([list, id]) => {
-            const entity = P[list].find((row) => row.id === id);
-            return { legacy: window.__CINEBRAID_FOCUSED.inspectorCoverage(entity),
-                     canonical: coverageStats(ensureCoverageSlots(list, entity)).required };
-        }""", ["locations", location_id])
-        assert live["legacy"]["required"] != live["canonical"], \
-            f"NC-E: the defect is not live — the legacy reading happened to agree ({live})"
-        expect_red("NC-E", "the inspector counts every slot without a `required: false` twin, the exact "
-                           "reading P4-SEM-A retired", check_coverage_agreement)
+        expect_red("NC-E", "retired boolean semantics count planned and not-required views as required", check_coverage_agreement)
 
         served["mutation"] = None
         open_route(f"#/location/{location_id}")

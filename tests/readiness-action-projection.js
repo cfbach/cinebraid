@@ -951,7 +951,7 @@ async function ux1_10_returnedResultRouting() {
   equal(aSeen.decisions, 0, "A: and no filmmaker decision is outstanding — the two scopes stay separate");
   equal(aSeen.shotStatus, "READY", "A: precondition — the shot could also be told to produce another frame");
   equal(aSeen.next.kind, "returned-result", "A: the primary action reviews the returned result instead");
-  equal(aSeen.next.actionLabel, "REVIEW RETURNED RESULT", "A: and says so");
+  equal(aSeen.next.actionLabel, "REVIEW SHOT IMAGE", "A: and says so");
   /* The route resolves to the shot the candidate came back for, and since Slice 3 it also
      CARRIES that candidate: `#/shot/<id>/review/<encoded key>`. The extra segments are
      invisible to every hash reader in the product, all of which stop at `[2]` — what they

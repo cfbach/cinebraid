@@ -4588,6 +4588,12 @@ window.closeModal = (options = {}) => {
   const returnAnchorTop = MODAL_ANCHOR_TOP;
   MODAL_RETURN_FOCUS = null;
   MODAL_ANCHOR_TOP = null;
+  // Route-changing dialog navigation hands focus to the destination instead.
+  // Ordinary Close, Cancel, Escape and backdrop dismissal retain their opener.
+  if (options.restoreFocus === false) {
+    m.innerHTML = "";
+    return;
+  }
   setTimeout(() => {
     if (Number.isFinite(returnScroll)) window.scrollTo?.(0, returnScroll);
     returnFocus?.focus?.({ preventScroll: true });
@@ -4723,7 +4729,7 @@ function updateChrome(view, navName) {
     production: "Production",
     shots: "Shots",
     library: "References",
-    results: "Generated Media",
+    results: "Production media",
     create: "New Project",
     reports: "Reports",
     settings: "Settings",

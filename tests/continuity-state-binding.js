@@ -638,6 +638,11 @@ function authoritySection(options = {}) {
     const context = vm.createContext({
       fs, path, console,
       Continuity,
+      // Supply the shipped read-only resolver to this extracted server function.
+      ReferenceMedia: require("../src/media/reference-media"),
+      projectsRoot: () => path.dirname(temp),
+      activeSlug: () => path.basename(temp),
+      readProject: () => project,
       PROJECT_DIR: () => temp,
       IMG_ONLY: (name) => /\.(png|jpg|jpeg|webp|gif)$/i.test(String(name)),
       projectAssetPath: (file) => (file ? path.join(temp, String(file)) : ""),

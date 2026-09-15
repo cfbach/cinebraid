@@ -40,6 +40,19 @@ sample are never touched, and the directory is removed at the end.
 
 import base64, json, os, pathlib, shutil, socket, subprocess, sys, tempfile, time
 
+
+def open_reference_tools(page):
+    """Reach retained tools through Reference Desk without bypassing a dialog."""
+    if not page.locator('[data-reference-desk]').count():
+        return
+    link = page.locator('.rd-tool-link:visible').first
+    if not link.count():
+        page.locator('[data-rd-action="inspect"]').click()
+        link = page.locator('.rd-tool-link:visible').first
+    link.click()
+    page.wait_for_selector('[data-reference-tools]', timeout=20000)
+    assert not page.locator('#modal:not(.hidden)').count(), 'tools navigation left a dialog over its destination'
+
 ROOT = pathlib.Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "tests"))
 from browser_runtime import require_browser, launch_chromium
@@ -304,6 +317,8 @@ try:
             fails where it happens, naming the precondition."""
             page.goto(f"{base}/#/character/{entity_id}", wait_until="domcontentloaded")
             page.wait_for_selector("#main", timeout=20000)
+            page.wait_for_selector('[data-reference-desk]', timeout=20000)
+            open_reference_tools(page)
             page.wait_for_selector(".focused-task-button", timeout=20000)
             # AMENDED BY BATCH 2 SLICE 3: the task is `Primary reference` now, and it
             # owns the candidate grid as well as the creation hub. Matched exactly
@@ -417,6 +432,8 @@ try:
             # the candidate grid, P itself -- and the disclosures are reopened because
             # a re-render restores their default closed state.
             page.evaluate("hash => { location.hash = hash; }", f"#/character/{entity_id}")
+            page.wait_for_selector('[data-reference-desk]', timeout=20000)
+            open_reference_tools(page)
             page.evaluate("() => route()")
             page.wait_for_selector("#main .entity-candidate-section", timeout=20000)
             page.evaluate("() => document.querySelectorAll('#main details').forEach(node => { node.open = true; })")

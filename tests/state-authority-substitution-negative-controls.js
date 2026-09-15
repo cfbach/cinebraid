@@ -182,6 +182,11 @@ function serverAuthority(options = {}) {
   const shot = project.shots[0];
   const context = vm.createContext({
     fs, path, console, Continuity,
+    // Supply the shipped read-only resolver to this extracted server function.
+    ReferenceMedia: require("../src/media/reference-media"),
+    projectsRoot: () => path.dirname(temp),
+    activeSlug: () => path.basename(temp),
+    readProject: () => project,
     PROJECT_DIR: () => temp,
     IMG_ONLY: (name) => /\.(png|jpg|jpeg|webp|gif)$/i.test(String(name)),
     projectAssetPath: (file) => (file ? path.join(temp, String(file)) : ""),
@@ -356,8 +361,18 @@ const CONTROLS = [
       } finally { env.dispose(); }
     },
     defect: {
-      mutateServer: (source) => rewrite(source, SERVER_REQUESTED_LINE,
-        "  const requested = stateId ? ((globalThis.__ALL_ENTITY_STATES || []).find((item) => String(item?.id) === String(stateId) && item?.approvedFile) || states.find((item) => String(item?.id) === String(stateId))) : null;", "NC-F"),
+      /* This suite proves the END-TO-END authority boundary, not merely that an
+         upstream lookup was corrupted. EV2 independently rejects foreign media,
+         so the broken copy must also bypass that protection. Keep the positive
+         guard unchanged: a real foreign file must reach its observed result. */
+      mutateServer: (source) => {
+        const globalLookup = rewrite(source, SERVER_REQUESTED_LINE,
+          "  const requested = stateId ? ((globalThis.__ALL_ENTITY_STATES || []).find((item) => String(item?.id) === String(stateId) && item?.approvedFile) || states.find((item) => String(item?.id) === String(stateId))) : null;", "NC-F lookup");
+        return rewrite(globalLookup,
+          '  const found = ReferenceMedia.resolver({projectsRoot:projectsRoot(),slug:activeSlug(),project:readProject()}).resolve(list,entity,file,String(state?.approvedAssetId || (state?.isDefault || !state ? entity.approvedAssetId : "") || ""));',
+          '  const found = {available:!!file && fs.existsSync(path.join(PROJECT_DIR(),folder,file)),path:path.join(PROJECT_DIR(),folder,file)};',
+          "NC-F ownership bypass");
+      },
     },
   },
   {
@@ -375,13 +390,19 @@ const CONTROLS = [
         "case 7/8: Rhea's unapproved `state-alt` resolves to nothing — no other entity's approval of the same id answers for it");
     },
     defect: {
-      mutateClient: (file, source) => (file === "app.js"
-        /* A global lookup that prefers whichever entity has approved the id —
-           which is what "resolve the state id, then find its file" degrades to
-           the moment the lookup is not scoped to one entity's own catalogue. */
-        ? rewrite(source, CLIENT_STATE_BY_ID,
-          "  return [...(P.characters || []), ...(P.props || []), ...(P.locations || []), ...(P.vehicles || [])].flatMap((other) => other.continuityStates || []).find((st) => st && st.id === stateId && st.approvedFile) || states.find((st) => st.id === stateId) || null;", "NC-G")
-        : source),
+      /* Like NC-F, this is an end-to-end control. The global lookup alone is
+         harmless at the authority-package boundary while EV2 ownership holds.
+         Restore the unsafe unfiltered fallback ONLY in the in-memory broken
+         copy, so another entity's real media URL reaches the unchanged guard. */
+      mutateClient: (file, source) => {
+        if (file === "app.js") return rewrite(source, CLIENT_STATE_BY_ID,
+          "  return [...(P.characters || []), ...(P.props || []), ...(P.locations || []), ...(P.vehicles || [])].flatMap((other) => other.continuityStates || []).find((st) => st && st.id === stateId && st.approvedFile) || states.find((st) => st.id === stateId) || null;", "NC-G lookup");
+        if (file === "creation-studio.js") return rewrite(source,
+          "  let media = file ? pool.find((m) => m.name === file) : null;",
+          '  let media = file ? (pool.find((m) => m.name === file) || (SCAN[({characters:"anchors",locations:"plates",props:"props",vehicles:"vehicles"})[list]] || []).find((m) => m.name === file)) : null;',
+          "NC-G ownership bypass");
+        return source;
+      },
     },
   },
   {

@@ -2,7 +2,7 @@
 (function() {
   "use strict";
   const R=CineBraidReferenceMedia, states=new Map(), types={characters:"Character",locations:"Location",props:"Prop",vehicles:"Vehicle"};
-  let active=null, picker=null, origin=null, returning=null, lastRoute=location.hash, nextFocus="", lastProject="";
+  let active=null, picker=null, origin=null, returning=null, lastRoute=location.hash, nextFocus="", lastProject="", destinationFocus="";
   const e=esc,a=attr, routeFor=(list,id)=>"#/"+ENTITY_ROUTE[list]+"/"+encodeURIComponent(id);
   const button=(id,label,cls="")=>'<button type="button" class="rd-button '+cls+'" data-rd-action="'+id+'">'+label+'</button>';
   const collection = (entity)=>entityStateListRead(entity,true);
@@ -152,14 +152,20 @@
     if(id==='approve')return approval(m);
     if(id==='refresh')return load({intent:'refresh'}).then(()=>repaint('rd-status'));
     if(id==='return'&&origin){returning=origin;origin=null;location.hash=returning.route;return;}
-    if(id==='details'){openModal('<h3>Notes &amp; history</h3>'+entityDetailsHistoryMarkup(m.list,m.entity,()=>'<p>'+e(m.entity.notes||'No additional notes.')+'</p>')+'<button class="cancel" onclick="closeModal()">Close</button>');return;}
+    if(id==='details'){openModal('<div data-reference-details-dialog><h3>Notes &amp; history</h3>'+entityDetailsHistoryMarkup(m.list,m.entity,()=>'<p>'+e(m.entity.notes||'No additional notes.')+'</p>')+'<button class="cancel" onclick="closeModal()">Close</button></div>');return;}
     if(id==='inspect'){
-      if(!matchMedia('(min-width:1360px)').matches){openModal('<h3>Reference details</h3>'+inspect(m)+'<button class="cancel" autofocus onclick="closeModal()">Close</button>');return;}
+      if(!matchMedia('(min-width:1360px)').matches){openModal('<div data-reference-details-dialog><h3>Reference details</h3>'+inspect(m)+'<button class="cancel" autofocus onclick="closeModal()">Close</button></div>');return;}
       m.state.inspect=!m.state.inspect;repaint();
     }
   }
   window.addEventListener('hashchange',event=>{
     const from=new URL(event.oldURL).hash,to=new URL(event.newURL).hash,match=from.match(new RegExp('^#/shot/([^/]+)'));
+    // All route-changing controls in reference details, including nested history,
+    // hand focus to the destination. Ordinary dismissal keeps the opener rule.
+    if(from!==to && document.querySelector('#modal:not(.hidden) [data-reference-details-dialog]')) {
+      closeModal({restoreFocus:false});
+      if(!modalOpen()) destinationFocus=to;
+    }
     if(match && new RegExp('^#/(character|location|prop|vehicle)/').test(to)){
       if(origin?.project===ACTIVE_PROJECT_SLUG && origin.route===from) return;
       const control=document.activeElement,shot=shotById(decodeURIComponent(match[1]));
@@ -173,6 +179,16 @@
       if(shot&&control)origin={project:ACTIVE_PROJECT_SLUG,route:location.hash,shotId:shot.id,frameLabel:document.querySelector('.sd-frame')?.textContent||'',scrollTop:document.getElementById('main').scrollTop,focusId:control.id||'',onclick:control.getAttribute('onclick')||''};
     }
     const link=event.target.closest('a[href^="#/"]');
+    if(link && link.closest('[data-reference-details-dialog], .rd-inspection')) {
+      const target=link.getAttribute('href');
+      if(target!==location.hash) {
+        if(link.closest('[data-reference-details-dialog]')) {
+          closeModal({restoreFocus:false});
+          if(modalOpen()){event.preventDefault();return;}
+        }
+        destinationFocus=target;
+      }
+    }
     if(link&&new RegExp("^#/(character|location|prop|vehicle)/").test(link.getAttribute('href'))){
       const match=location.hash.match(new RegExp("^#/shot/([^/]+)"));
       const shot=match?shotById(decodeURIComponent(match[1])):null;
@@ -206,6 +222,11 @@
     if(location.hash!==lastRoute&&!new RegExp("^#/(character|location|prop|vehicle)/").test(location.hash))origin=null;
     lastRoute=location.hash;
     if(returning && location.hash===returning.route){const saved=returning;returning=null;requestAnimationFrame(()=>{document.getElementById('main').scrollTop=saved.scrollTop;const el=document.getElementById(saved.focusId)||[...document.querySelectorAll('[onclick]')].find(e=>e.getAttribute('onclick')===saved.onclick);el?.focus({preventScroll:true});});}
+    if(destinationFocus===location.hash && !modalOpen()) {
+      destinationFocus='';
+      const target=document.querySelector('#main h1, #main .page-title-input, #main h2') || document.getElementById('main');
+      if(target){if(!target.matches('input,button,a[href],[tabindex]'))target.tabIndex=-1;target.focus({preventScroll:true});}
+    }
     if(nextFocus&&!modalOpen()){document.getElementById(nextFocus)?.focus({preventScroll:true});nextFocus='';}
     const img=document.getElementById('rd-image');if(img){const check=()=>{const good=img.complete&&img.naturalWidth>0;const btn=document.querySelector('[data-rd-action="approve"]');if(btn)btn.disabled=!good;const err=document.querySelector('.rd-image-error');if(err)err.hidden=!(img.complete&&!good);};img.onload=check;img.onerror=check;check();}
   });

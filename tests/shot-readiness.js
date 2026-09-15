@@ -1030,9 +1030,39 @@ function requirementOf(row, needle) {
      configured media root and schedules a MediaAsset activation pass; readiness is
      answered on every render of the production home view, and asking "what can I
      work on" must not move bytes around. */
-  const start = server.indexOf("function readinessMediaOracle()");
-  ok(start > 0, "the server declares a readiness media oracle");
-  const body = server.slice(start, server.indexOf("\n}", start));
+  const start = server.search(/function\s+readinessMediaOracle\s*\(/);
+  ok(start > 0, "the server exposes the readiness oracle under test");
+  const body = server.slice(start, server.indexOf("\n}", start) + 2);
+  const activeProject = { props: [{ id: "active-prop" }] };
+  const explicitProject = { props: [{ id: "explicit-prop" }] };
+  let activeReads = 0;
+  const resolverProjects = [];
+  const oracleContext = require("vm").createContext({
+    path,
+    ENTITY_MEDIA_DIR: { props: "props" },
+    projectsRoot: () => "/disposable-readiness",
+    activeSlug: () => "fixture",
+    readProject: () => { activeReads++; return activeProject; },
+    ReferenceMedia: { resolver: ({ project }) => {
+      resolverProjects.push(project);
+      return { listing: (_list, entity) => [
+        { name: entity.id, available: true }, { name: "missing", available: false },
+      ] };
+    } },
+    mediaIdentityIndex: () => ({}),
+    listMedia: () => [],
+  });
+  require("vm").runInContext(body, oracleContext);
+  const implicit = oracleContext.readinessMediaOracle();
+  equal(activeReads, 1, "a no-argument oracle reads the active project once");
+  equal(resolverProjects[0], activeProject, "the no-argument oracle forwards that exact project");
+  deepEqual(Array.from(implicit.mediaListing("props", "active-prop"), row => row.name),
+    ["active-prop"], "the default oracle resolves that project's entity and excludes unavailable media");
+  const explicit = oracleContext.readinessMediaOracle(explicitProject);
+  equal(activeReads, 1, "an explicit-project oracle does not read the active project");
+  equal(resolverProjects[1], explicitProject, "the explicit project is forwarded without replacement");
+  deepEqual(Array.from(explicit.mediaListing("props", "explicit-prop"), row => row.name),
+    ["explicit-prop"], "the explicit oracle resolves the supplied project's entity");
   for (const forbidden of ["scanProject", "syncConfiguredMediaRoot", "noteProjectActivity", "verifyNow", "hashMediaFile", "readFileSync"]) {
     ok(!body.includes(forbidden), `the readiness oracle must never call ${forbidden}`);
   }
