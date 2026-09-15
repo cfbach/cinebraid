@@ -1,6 +1,6 @@
 {
   "name": "cinebraid",
-  "version": "6.7.0-alpha.1",
+  "version": "6.8.0-alpha.1",
   "description": "The production layer that keeps AI cinema tied together. A local-first, self-hostable film production application: planning, the Project Bible, references, shot work, review and approval, with optional AI assistance and provider-backed generation.",
   "license": "Apache-2.0",
   "author": "Frombach Studios",

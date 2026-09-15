@@ -236,9 +236,19 @@ function testPublicIdentity() {
 function testReadmeTruth() {
   const readme = read("README.md");
 
-  /* A version literal in the README must be this version. The stale "6.6.5"
-     heading survived two releases because nothing compared it to anything. */
-  const versions = [...readme.matchAll(/\b6\.\d+\.\d+(?:-[A-Za-z0-9.]+)?/g)].map((m) => m[0]);
+  /* Current build claims must match package.json. Explicit published-release
+     links and their pinned install command remain historical: advancing main
+     must not relabel an immutable release as a release that does not exist. */
+  const published = new Set([...readme.matchAll(/https:\/\/github\.com\/cfbach\/cinebraid\/releases\/tag\/v([^\s)]+)/g)].map(m=>m[1]));
+  const currentCopy = readme.replace(/\[[^\]]*\]\((?:https:\/\/github\.com\/cfbach\/cinebraid\/releases\/tag\/v|docs\/releases\/v)([^/)]+)[^)]*\)/g, (link, version) => {
+    assert(published.has(version), `README release notes must name a linked published release: ${version}`);
+    assert(fs.existsSync(path.join(ROOT, "docs", "releases", "v"+version)), `README release has no historical record: ${version}`);
+    return "";
+  }).replace(/^git clone --branch v(\S+) --depth 1 https:\/\/github\.com\/cfbach\/cinebraid\.git\r?$/gm, (command, version) => {
+    assert(published.has(version), `README pinned install must name its published release: ${version}`);
+    return "";
+  });
+  const versions = [...currentCopy.matchAll(/\b6\.\d+\.\d+(?:-[A-Za-z0-9.]+)?/g)].map((m) => m[0]);
   const wrong = [...new Set(versions)].filter((v) => v !== pkg.version);
   assert.deepStrictEqual(wrong, [], `README names versions that are not ${pkg.version}: ${wrong.join(", ")}`);
 
