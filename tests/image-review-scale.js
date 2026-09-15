@@ -19,6 +19,7 @@
 const assert = require('assert');
 const fs = require('fs');
 const path = require('path');
+const vm = require('vm');
 const { render, buildFixture } = require('./render-harness');
 
 const ROOT = path.join(__dirname, '..');
@@ -450,10 +451,34 @@ async function main() {
     'keyboard focus must move into the viewer when it opens',
   );
   const closeModal = appJs.slice(appJs.indexOf('window.closeModal'), appJs.indexOf('function confirmModal'));
-  assert(
-    /returnFocus\?\.focus\?\.\(/.test(closeModal),
-    'focus must return to the triggering thumbnail when the viewer closes',
-  );
+  // Execute the close transaction: focus behavior must not depend on the local
+  // variable name used after resolving an opener replaced by a same-page render.
+  for (const [label, connected, restoreFocus] of [
+    ['connected opener', true, true],
+    ['replaced opener', false, true],
+    ['navigation dismissal', true, false],
+  ]) {
+    const calls = [];
+    const opener = { isConnected: connected, focus: () => calls.push('original'), closest: () => null };
+    const replacement = { focus: () => calls.push('replacement') };
+    const modal = { classList: { add: value => calls.push(value) },
+      removeEventListener: () => calls.push('untrap'), innerHTML: 'dialog' };
+    const context = { window: { scrollTo() {} }, $: () => modal,
+      MODAL_LOCK: null, AGENT_RESULT_MODAL_TIMER: null, MODAL_KEY_HANDLER: () => {},
+      MODAL_RETURN_FOCUS: opener,
+      MODAL_RETURN_FOCUS_RESOLVER: () => { calls.push('resolve'); return replacement; },
+      MODAL_SCROLL_Y: 0, MODAL_ANCHOR_TOP: null,
+      setTimeout: callback => callback(), clearTimeout() {} };
+    vm.createContext(context);
+    vm.runInContext(closeModal, context);
+    context.window.closeModal({ restoreFocus });
+    const expected = !restoreFocus ? ['hidden', 'untrap'] : connected
+      ? ['hidden', 'untrap', 'original'] : ['hidden', 'untrap', 'resolve', 'replacement'];
+    assert.deepStrictEqual(calls, expected, `${label}: close must resolve the correct focus destination`);
+    for (const key of ['MODAL_KEY_HANDLER', 'MODAL_RETURN_FOCUS', 'MODAL_RETURN_FOCUS_RESOLVER'])
+      assert.strictEqual(context[key], null, `${label}: close must clear ${key}`);
+    if (!restoreFocus) assert.strictEqual(modal.innerHTML, '', 'navigation must remove the old dialog content');
+  }
   results.push('viewer: explicit Close + Escape, focus moves in and returns, labelled');
 
   /* ---------- 5. inspection must not be hover-only ---------- */
