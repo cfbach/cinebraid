@@ -31,6 +31,8 @@ const SETTINGS_PANEL_STATE_COPY = {
   },
 };
 let SETTINGS_PANEL_BASELINE = null;
+let SETTINGS_CONFIG_REFRESH_REQUIRED = false;
+let SETTINGS_CONFIG_STALE_DISPLAY = null;
 function settingsPanelStateElement() {
   return document.getElementById("settings-panel-state");
 }
@@ -51,17 +53,34 @@ window.setSettingsPanelState = (state, detail = "") => {
 };
 /* Re-reads the panel and reports clean or dirty against the values it was rendered
    with, so reverting an edit by hand takes the panel back to "No unsaved changes". */
-window.refreshSettingsPanelState = () => {
-  const el = settingsPanelStateElement();
-  if (!el || !SETTINGS_PANEL_BASELINE) return;
+function settingsPanelHasUnsavedChanges() {
+  if (!SETTINGS_PANEL_BASELINE) return false;
   const now = settingsPanelValues();
-  const changed = now.length !== SETTINGS_PANEL_BASELINE.length
+  return now.length !== SETTINGS_PANEL_BASELINE.length
     || now.some((value, index) => value !== SETTINGS_PANEL_BASELINE[index]);
-  setSettingsPanelState(changed ? "dirty" : "clean");
+}
+window.refreshSettingsPanelState = () => {
+  if (!settingsPanelStateElement() || !SETTINGS_PANEL_BASELINE) return;
+  setSettingsPanelState(settingsPanelHasUnsavedChanges() ? "dirty" : "clean");
 };
+function settingsCheckBlocked(note) {
+  if (SETTINGS_CONFIG_REFRESH_REQUIRED && CONFIG !== SETTINGS_CONFIG_STALE_DISPLAY)
+    SETTINGS_CONFIG_REFRESH_REQUIRED = false;
+  const reason = settingsPanelHasUnsavedChanges()
+    ? "Save or discard these changes first. This check uses saved settings."
+    : SETTINGS_CONFIG_REFRESH_REQUIRED
+      ? "Settings were saved, but their safe display could not be refreshed. Reload Settings before checking."
+      : "";
+  if (reason) {
+    if (note) note.textContent = reason;
+    toast(reason);
+  }
+  return Boolean(reason);
+}
 window.initSettingsPanel = () => {
   const panel = document.querySelector(".settings-selected-tab");
   if (!panel) return;
+  if (typeof studioDraftKey === "function") studioDraftKey(panel);
   SETTINGS_PANEL_BASELINE = settingsPanelValues();
   settingsPanelControls().forEach((el) => {
     el.addEventListener("input", refreshSettingsPanelState);
@@ -73,12 +92,84 @@ window.initSettingsPanel = () => {
     setAppearancePreview(null);
     updateInterfaceScaleReadout();
   }
+  if (typeof window.studioRestoreSettingsDraft === "function") {
+    window.studioRestoreSettingsDraft();
+    if (settingsPanelStateElement()?.dataset.state !== "error") refreshSettingsPanelState();
+  }
 };
 /* Accepts the values the server confirmed as the new baseline, so a saved panel
    reports itself clean without being re-rendered from scratch. */
-function settingsPanelSaved(detail = "") {
-  SETTINGS_PANEL_BASELINE = settingsPanelValues();
+function settingsPanelSaved(detail = "", savedValues = null) {
+  SETTINGS_PANEL_BASELINE = savedValues || settingsPanelValues();
   setSettingsPanelState("saved", detail);
+  if (typeof window.studioClearSettingsDraft === "function") window.studioClearSettingsDraft();
+  if (settingsPanelHasUnsavedChanges()) {
+    setSettingsPanelState("dirty", `Earlier changes were saved; newer edits still need saving. ${detail}`.trim());
+    if (typeof window.studioCaptureSettingsDraft === "function") window.studioCaptureSettingsDraft();
+  }
+}
+
+/* Save completion belongs to the panel that initiated it, even when navigation
+   replaces that panel while the request is pending. Snapshots live only for the
+   request; the draft manager receives a masked saved baseline on success. */
+function settingsWriteOwner() {
+  const panel = document.querySelector(".settings-selected-tab");
+  return {
+    panel,
+    key: typeof studioDraftKey === "function" ? studioDraftKey(panel) : panel?.dataset?.settingsTab || "",
+    fields: settingsPanelControls().map((input, index) => ({
+      id: input.id || "", index, input,
+      value: input.type === "checkbox" ? String(input.checked) : String(input.value ?? ""),
+    })),
+  };
+}
+function settingsWriteIsCurrent(owner) {
+  const panel = document.querySelector(".settings-selected-tab");
+  return !!panel && (typeof studioDraftKey === "function"
+    ? studioDraftKey(panel) === owner.key : panel === owner.panel);
+}
+function settingsWriteFailed(owner, reason) {
+  if (settingsWriteIsCurrent(owner)) setSettingsPanelState("error", reason);
+  else if (typeof window.studioSettingsDraftError === "function") window.studioSettingsDraftError(owner.key, reason);
+}
+function settingsWriteSaved(owner, { body = {}, config = null, detail = "", passcodes = false } = {}) {
+  const saved = owner.fields.map(({ id, index, value }) => ({ id, index, value }));
+  for (const [selector, parts] of SETTINGS_SECRET_INPUTS) {
+    const submitted = settingsValueAt(body, parts);
+    const field = saved.find((row) => row.id === selector.slice(1));
+    if (field && submitted !== undefined) {
+      field.secret = true;
+      field.value = config ? String(settingsValueAt(config, parts) || "") : submitted ? "••••saved" : "";
+    }
+  }
+  if (passcodes) {
+    for (const field of saved) if (["cfg-epass", "cfg-vpass"].includes(field.id)) field.value = "";
+  }
+  const current = settingsWriteIsCurrent(owner);
+  const activeControls = current ? settingsPanelControls() : [];
+  for (const field of saved) {
+    const original = owner.fields[field.index];
+    const targets = new Set([original.input, activeControls.find((input, index) => field.id ? input.id === field.id : index === field.index)]);
+    for (const input of targets) {
+      if (!input || input.type === "checkbox" || field.value === original.value) continue;
+      if (String(input.value) === original.value || String(input.value) === "••••saved") {
+        input.value = field.value;
+        if (SETTINGS_SECRET_INPUTS.some(([selector]) => selector.slice(1) === field.id)) input.type = "password";
+      }
+    }
+  }
+  if (typeof window.studioReconcileSettingsDraft === "function")
+    window.studioReconcileSettingsDraft(owner.key, saved, owner.fields);
+  if (current) {
+    const values = activeControls.map((input, index) => {
+      const field = saved.find((row) => input.id ? row.id === input.id : row.index === index);
+      return field ? field.value : input.type === "checkbox" ? String(input.checked) : String(input.value ?? "");
+    });
+    settingsPanelSaved(detail, values);
+  }
+  /* The request snapshot must not retain a submitted credential after settlement. */
+  owner.fields.forEach((field, index) => { field.value = saved[index].value; });
+  return current;
 }
 
 /* ---------- LAN access passcodes ----------
@@ -105,6 +196,7 @@ function passcodeSaveFailed(reason) {
 async function persistPassSettings(body) {
   const fields = passcodeInputs();
   if (!fields) return passcodeSaveFailed("The passcode fields are not on screen — open Settings → Access & security and try again.");
+  const owner = settingsWriteOwner();
   setSettingsPanelState("saving");
   let r;
   try {
@@ -114,30 +206,35 @@ async function persistPassSettings(body) {
       body: JSON.stringify(body),
     });
   } catch (error) {
-    return passcodeSaveFailed("The CineBraid server did not respond — check that it is still running.");
+    const reason = "The CineBraid server did not respond — check that it is still running.";
+    settingsWriteFailed(owner, reason);
+    if (settingsWriteIsCurrent(owner)) { const note = $("#pass-note"); if (note) note.textContent = reason; }
+    return toast("Could not save passcodes");
   }
   if (!r.ok) {
     const data = await r.json().catch(() => ({}));
-    return passcodeSaveFailed(data.error || "The server rejected the change.");
+    const reason = data.error || "The server rejected the change.";
+    settingsWriteFailed(owner, reason);
+    if (settingsWriteIsCurrent(owner)) { const note = $("#pass-note"); if (note) note.textContent = reason; }
+    return toast("Could not save passcodes");
   }
   /* A passcode that has been stored does not stay sitting in the page, and the
      stored one is never read back to replace it. */
-  fields.editor.value = "";
-  fields.viewer.value = "";
+  const current = settingsWriteIsCurrent(owner);
   const held = Object.prototype.hasOwnProperty.call(body, "editorPass") ? !!body.editorPass : !!CONFIG?.editorPass;
-  const state = (id, on) => { const el = $(id); if (el) el.textContent = on ? "Set" : "Not set"; };
+  const state = (id, on) => { const el = current ? $(id) : null; if (el) el.textContent = on ? "Set" : "Not set"; };
   if (Object.prototype.hasOwnProperty.call(body, "editorPass")) state("#cfg-epass-state", !!body.editorPass);
   if (Object.prototype.hasOwnProperty.call(body, "viewerPass")) state("#cfg-vpass-state", !!body.viewerPass);
   if (CONFIG) {
     if (Object.prototype.hasOwnProperty.call(body, "editorPass")) CONFIG.editorPass = body.editorPass ? "(set)" : "";
     if (Object.prototype.hasOwnProperty.call(body, "viewerPass")) CONFIG.viewerPass = body.viewerPass ? "(set)" : "";
   }
-  settingsPanelSaved();
+  settingsWriteSaved(owner, { body, passcodes: true });
   /* Deliberately no re-render. The moment an editor passcode exists the server gates
      every request, so this browser's next call is answered with "Sign in" until it
      has been through /login.html — re-reading the configuration here would replace a
      working panel with the empty defaults of a refused response. */
-  const note = $("#pass-note");
+  const note = current ? $("#pass-note") : null;
   if (note) note.textContent = !Object.keys(body).length
     ? "Nothing changed — both boxes were left blank, so the stored passcodes are untouched."
     : held
@@ -174,138 +271,151 @@ window.savePass = async () => {
   await persistPassSettings(body);
 };
 window.setAssistantProvider = async (v) => {
-  const r = await fetch("/api/config", {
-    method: "PUT",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ assistant: { provider: v } }),
-  });
-  if (r.ok) {
-    CONFIG.assistant = { ...(CONFIG.assistant || {}), provider: v };
-    /* Capability standing is derived from this configuration, so it is stale the
-       moment the provider changes — and the Settings card now READS that standing
-       rather than re-deriving one of its own, so without this the card would show
-       the previous provider's verdict under the newly chosen one. The same single
-       request saveSettings() already makes, on the same kind of explicit action. */
-    if (typeof refreshAgentStatus === "function") await refreshAgentStatus(false);
-    toast("AI assistant updated");
-    route();
-  } else toast("Could not update assistant");
+  if (!["none", "ollama", "custom", "openai", "anthropic"].includes(v)) return;
+  const owner = settingsWriteOwner();
+  try {
+    const response = await fetch("/api/config", {
+      method: "PUT", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ assistant: { provider: v } }),
+    });
+    if (!response.ok) throw new Error("Provider choice not saved");
+  } catch {
+    settingsWriteFailed(owner, "The assistant choice could not be saved. Check the CineBraid server and try again; your other edits are still here.");
+    toast("Could not update assistant");
+    return;
+  }
+  CONFIG.assistant = { ...(CONFIG.assistant || {}), provider: v };
+  if (settingsWriteIsCurrent(owner) && typeof window.studioCaptureSettingsDraft === "function") window.studioCaptureSettingsDraft();
+  if (typeof refreshAgentStatus === "function") {
+    try { await refreshAgentStatus(false); } catch { /* selection saved; readiness unknown */ }
+  }
+  toast("AI assistant updated");
+  if (!settingsWriteIsCurrent(owner)) return;
+  await route();
+  /* A provider switch redraws the provider choices. Restore the equivalent button,
+     not the detached node from before the request. */
+  const choice = Array.from(document.querySelectorAll("button[onclick]")).find(
+    (button) => button.getAttribute("onclick") === `setAssistantProvider('${v}')`,
+  );
+  choice?.focus();
 };
+function assistantTestEndpoint(provider) {
+  const raw = provider === "anthropic" ? "https://api.anthropic.com/v1/messages"
+    : provider === "openai" ? CONFIG.openaiBaseUrl || "https://api.openai.com/v1"
+      : provider === "custom" ? CONFIG.customBaseUrl : CONFIG.ollamaUrl;
+  try {
+    const url = new URL(raw);
+    /* Endpoints can be user-entered. Do not echo credentials or query material. */
+    return `${url.protocol}//${url.host}${url.pathname}`;
+  } catch { return "invalid or missing saved endpoint — correct it before testing"; }
+}
 window.testAssistantConnection = async () => {
   const note = $("#assistant-test-note");
-  if (note) note.textContent = "testing…";
-  try {
-    const r = await fetch("/api/assistant/test", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          provider: CONFIG.assistant?.provider || "ollama",
-        }),
-      }),
-      d = await r.json();
-    if (!r.ok) throw new Error(d.error);
-    if (note) note.textContent = "Connected: " + (d.message || d.provider);
-    toast("Assistant connected");
-  } catch (e) {
-    if (note) note.textContent = "Connection failed: " + e.message;
-    toast("Assistant test failed");
+  if (settingsCheckBlocked(note)) return;
+  const provider = CONFIG.assistant?.provider || "ollama";
+  if (provider === "none") {
+    if (note) note.textContent = "Braidy is off. No test request was sent.";
+    return;
   }
+  const labels = { ollama: "Ollama", custom: "OpenAI-compatible server", openai: "OpenAI", anthropic: "Anthropic" };
+  const model = CONFIG[provider === "ollama" ? "ollamaModel" : provider === "custom" ? "customModel" : provider === "openai" ? "openaiModel" : "anthropicModel"] || "provider default";
+  const hosted = provider === "openai" || provider === "anthropic";
+  const disclosure = hosted
+    ? "This sends a short test prompt to the saved cloud service. The provider may charge for the request."
+    : "This sends a short test prompt to the saved runtime endpoint. An endpoint on another computer receives that text; a remote service may charge.";
+  confirmModal(
+    `Saved target: ${labels[provider] || provider} · ${model}. Saved endpoint: ${assistantTestEndpoint(provider)}. ${disclosure} No project material is included. A successful response does not test image generation or grant approval.`,
+    async () => {
+      if (settingsCheckBlocked(note)) return;
+      if (note) note.textContent = `Sending test prompt to ${labels[provider] || provider} · ${model}…`;
+      try {
+        const response = await fetch("/api/assistant/test", {
+          method: "POST", headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ provider }),
+        });
+        const data = await response.json();
+        if (!response.ok) throw new Error(data.error || "The test request failed.");
+        if (note) note.textContent = `Test prompt answered by ${labels[provider] || provider} · ${model}. Generation and billing availability were not checked.`;
+        toast("Assistant test prompt answered");
+      } catch (error) {
+        if (note) note.textContent = "Test prompt failed. Check the saved endpoint, model and authorization, then retry. A failure does not prove that a provider made no charge.";
+        toast("Assistant test failed");
+      }
+    },
+    { title: "Send a test prompt?", confirmLabel: "SEND TEST PROMPT", danger: false },
+  );
 };
 /* Only the fields the open panel actually shows are sent. Assistant and Generation
    share one configuration document, and sending every field from whichever panel
    happened to be open overwrote the other panel's settings with placeholder
    defaults — saving Generation silently reset the vision assistant to "Same as main
    assistant". A panel now patches its own settings and nothing else. */
-function assistantConfigPatch() {
-  const v = (id, fallback = "") => $(id)?.value ?? fallback;
+/* Collect each rendered control independently. Moving credentials to a connection
+   detail must not fill missing model controls from stale CONFIG, nor switch providers. */
+function settingsPresentFields(definitions) {
   const patch = {};
-  if ($("#assistant-vision-provider")) {
-    patch.assistant = { provider: CONFIG.assistant?.provider || "ollama", visionProvider: v("#assistant-vision-provider", "same") };
-  }
-  if ($("#cfg-continuity-provider")) {
-    patch.continuity = {
-      visionProvider: v("#cfg-continuity-provider", CONFIG.continuity?.visionProvider || ""),
-      /* Blank keeps continuity on the chosen provider's own connection, which is
-         how every install written before this field behaved. */
-      baseUrl: v("#cfg-continuity-base", CONFIG.continuity?.baseUrl || "").trim(),
-      visionModel: v("#cfg-continuity-model", CONFIG.continuity?.visionModel || "").trim(),
-    };
-  }
-  if ($("#cfg-key")) {
-    patch.anthropicKey = v("#cfg-key", CONFIG.anthropicKey || "");
-    patch.anthropicModel = v("#cfg-model", CONFIG.anthropicModel || "claude-sonnet-4-6");
-    patch.anthropicVisionModel = v("#cfg-model", CONFIG.anthropicModel || "claude-sonnet-4-6");
-  }
-  if ($("#cfg-openai-key")) {
-    patch.openaiKey = v("#cfg-openai-key", CONFIG.openaiKey || "");
-    patch.openaiModel = v("#cfg-openai-model", CONFIG.openaiModel || "gpt-5.2");
-    patch.openaiVisionModel = v("#cfg-openai-vision", CONFIG.openaiVisionModel || CONFIG.openaiModel || "gpt-5.2");
-  }
-  if ($("#cfg-custom-url")) {
-    patch.customBaseUrl = v("#cfg-custom-url", CONFIG.customBaseUrl || "http://127.0.0.1:8000/v1");
-    patch.customKey = v("#cfg-custom-key", CONFIG.customKey || "");
-    patch.customModel = v("#cfg-custom-model", CONFIG.customModel || "");
-    patch.customVisionModel = v("#cfg-custom-vision", CONFIG.customVisionModel || "");
-    /* Blank stays blank: the server treats an empty optional request setting as
-       "do not send this field to the custom endpoint at all". */
-    patch.customTemperature = String(v("#cfg-custom-temperature", "")).trim();
-    patch.customTopK = String(v("#cfg-custom-top-k", "")).trim();
-    patch.customThinking = v("#cfg-custom-thinking", CONFIG.customThinking || "auto");
-  }
-  if ($("#cfg-ollama")) {
-    patch.ollamaUrl = v("#cfg-ollama", CONFIG.ollamaUrl || "http://localhost:11434").trim();
-    patch.ollamaModel = v("#cfg-omodel", CONFIG.ollamaModel || "").trim();
-    patch.ollamaVisionModel = v("#cfg-vmodel", CONFIG.ollamaVisionModel || "").trim();
+  for (const [field, id, kind = "text"] of definitions) {
+    const input = $(id);
+    if (!input || input.disabled) continue;
+    patch[field] = kind === "checked" ? !!input.checked
+      : kind === "outputs" ? Number(input.value) || 2
+        : kind === "cost" ? Math.max(0, Number(input.value) || 0)
+          : kind === "raw" ? String(input.value || "")
+            : String(input.value || "").trim();
   }
   return patch;
 }
+function assistantConfigPatch() {
+  const patch = settingsPresentFields([
+    ["anthropicKey", "#cfg-key", "raw"], ["anthropicModel", "#cfg-model"],
+    ["anthropicVisionModel", "#cfg-model"],
+    ["openaiKey", "#cfg-openai-key", "raw"], ["openaiModel", "#cfg-openai-model"],
+    ["openaiVisionModel", "#cfg-openai-vision"],
+    ["customBaseUrl", "#cfg-custom-url"], ["customKey", "#cfg-custom-key", "raw"],
+    ["customModel", "#cfg-custom-model"], ["customVisionModel", "#cfg-custom-vision"],
+    ["customTemperature", "#cfg-custom-temperature"], ["customTopK", "#cfg-custom-top-k"],
+    ["customThinking", "#cfg-custom-thinking"], ["ollamaUrl", "#cfg-ollama"],
+    ["ollamaModel", "#cfg-omodel"], ["ollamaVisionModel", "#cfg-vmodel"],
+  ]);
+  const assistant = settingsPresentFields([["visionProvider", "#assistant-vision-provider"]]);
+  if (Object.keys(assistant).length) patch.assistant = assistant;
+  const continuity = settingsPresentFields([
+    ["visionProvider", "#cfg-continuity-provider"], ["baseUrl", "#cfg-continuity-base"],
+    ["visionModel", "#cfg-continuity-model"],
+  ]);
+  if (Object.keys(continuity).length) patch.continuity = continuity;
+  return patch;
+}
+function falCredentialPatch() {
+  if (CONFIG.generation?.fal?.keySource === "environment") return {};
+  return settingsPresentFields([["apiKey", "#cfg-fal-key", "raw"]]);
+}
 function generationConfigPatch() {
-  const v = (id, fallback = "") => $(id)?.value ?? fallback;
-  if (!$("#cfg-fal-enabled")) return {};
-  return {
-    generation: {
-      fal: {
-        enabled: !!$("#cfg-fal-enabled").checked,
-        apiKey: v("#cfg-fal-key", CONFIG.generation?.fal?.apiKey || ""),
-        textModel: v("#cfg-fal-text-model", CONFIG.generation?.fal?.textModel || "openai/gpt-image-2").trim(),
-        editModel: v("#cfg-fal-edit-model", CONFIG.generation?.fal?.editModel || "openai/gpt-image-2/edit").trim(),
-        h3TextModel: v("#cfg-fal-h3-text-model", CONFIG.generation?.fal?.h3TextModel || "minimax/h3/text-to-video").trim(),
-        h3ImageModel: v("#cfg-fal-h3-image-model", CONFIG.generation?.fal?.h3ImageModel || "minimax/h3/image-to-video").trim(),
-        h3ReferenceModel: v("#cfg-fal-h3-reference-model", CONFIG.generation?.fal?.h3ReferenceModel || "minimax/h3/reference-to-video").trim(),
-        h3Resolution: v("#cfg-fal-h3-resolution", CONFIG.generation?.fal?.h3Resolution || "2K"),
-        blockingOutputs: Number(v("#cfg-fal-blocking-outputs", CONFIG.generation?.fal?.blockingOutputs || "2")) || 2,
-        frameOutputs: Number(v("#cfg-fal-frame-outputs", CONFIG.generation?.fal?.frameOutputs || "2")) || 2,
-        blockingQuality: v("#cfg-fal-blocking-quality", CONFIG.generation?.fal?.blockingQuality || "low"),
-        frameQuality: v("#cfg-fal-frame-quality", CONFIG.generation?.fal?.frameQuality || "high"),
-        blockingResolution: v("#cfg-fal-blocking-resolution", CONFIG.generation?.fal?.blockingResolution || "1k"),
-        frameResolution: v("#cfg-fal-frame-resolution", CONFIG.generation?.fal?.frameResolution || "1k"),
-        estimatedCostPerImage: Math.max(0, Number(v("#cfg-fal-cost-per-image", CONFIG.generation?.fal?.estimatedCostPerImage || "0")) || 0),
-        /* The one motion rate, and the two facts that make it readable later. Bounds and
-           the date format are enforced again in config.js — this is a form, not the
-           authority — but an unparseable value must not arrive as a confident number. */
-        motionRate: {
-          usdPerSecond: Math.max(0, Number(v("#cfg-fal-motion-rate", CONFIG.generation?.fal?.motionRate?.usdPerSecond || "0")) || 0),
-          source: String(v("#cfg-fal-motion-rate-source", CONFIG.generation?.fal?.motionRate?.source || "")).trim(),
-          asOf: String(v("#cfg-fal-motion-rate-asof", CONFIG.generation?.fal?.motionRate?.asOf || "")).trim(),
-        },
-        maxConcurrent: Number(CONFIG.generation?.fal?.maxConcurrent || 1),
-        requireConfirmation: true,
-      },
-      /* Civitai's three fields ride with the panel that renders them. Guarded the same way
-         everything else on this panel is — an absent control means the panel is not on
-         screen and the value must not be carried from a stale CONFIG copy. There is no
-         credential here: `connectionId` names an AccountConnection whose tokens live in
-         `accounts[]` under the config secret registry, and /api/config refuses to touch
-         `accounts` at all. */
-      ...($("#cfg-civitai-enabled") ? {
-        civitai: {
-          enabled: !!$("#cfg-civitai-enabled").checked,
-          connectionId: String(v("#cfg-civitai-connection", CONFIG.generation?.civitai?.connectionId || "")).trim(),
-          resourceAir: String(v("#cfg-civitai-resource", CONFIG.generation?.civitai?.resourceAir || "")).trim(),
-        },
-      } : {}),
-    },
+  const fal = {
+    ...settingsPresentFields([
+      ["enabled", "#cfg-fal-enabled", "checked"], ["textModel", "#cfg-fal-text-model"],
+      ["editModel", "#cfg-fal-edit-model"], ["h3TextModel", "#cfg-fal-h3-text-model"],
+      ["h3ImageModel", "#cfg-fal-h3-image-model"], ["h3ReferenceModel", "#cfg-fal-h3-reference-model"],
+      ["h3Resolution", "#cfg-fal-h3-resolution"], ["blockingOutputs", "#cfg-fal-blocking-outputs", "outputs"],
+      ["frameOutputs", "#cfg-fal-frame-outputs", "outputs"], ["blockingQuality", "#cfg-fal-blocking-quality"],
+      ["frameQuality", "#cfg-fal-frame-quality"], ["blockingResolution", "#cfg-fal-blocking-resolution"],
+      ["frameResolution", "#cfg-fal-frame-resolution"], ["estimatedCostPerImage", "#cfg-fal-cost-per-image", "cost"],
+    ]),
+    ...falCredentialPatch(),
   };
+  const motionRate = settingsPresentFields([
+    ["usdPerSecond", "#cfg-fal-motion-rate", "cost"], ["source", "#cfg-fal-motion-rate-source"],
+    ["asOf", "#cfg-fal-motion-rate-asof"],
+  ]);
+  if (Object.keys(motionRate).length) fal.motionRate = motionRate;
+  const civitai = settingsPresentFields([
+    ["enabled", "#cfg-civitai-enabled", "checked"], ["connectionId", "#cfg-civitai-connection"],
+    ["resourceAir", "#cfg-civitai-resource"],
+  ]);
+  const generation = {};
+  if (Object.keys(fal).length) generation.fal = fal;
+  if (Object.keys(civitai).length) generation.civitai = civitai;
+  return Object.keys(generation).length ? { generation } : {};
 }
 /* The Integrations panel. Three fields, sent only when the panel that owns them is the
    one on screen — the same `if (!$(...)) return {}` guard every other collector uses,
@@ -334,44 +444,75 @@ function accountsConfigPatch() {
   if (!input) return {};
   return { accountProviders: { civitai: { clientId: String(input.value || "").trim() } } };
 }
+/* A successful write must never put an entered secret into the cached display if
+   the subsequent safe GET fails. Only the server's masked response replaces CONFIG. */
+const SETTINGS_SECRET_INPUTS = [
+  ["#cfg-key", ["anthropicKey"]], ["#cfg-openai-key", ["openaiKey"]],
+  ["#cfg-custom-key", ["customKey"]], ["#cfg-fal-key", ["generation", "fal", "apiKey"]],
+];
+function settingsValueAt(object, parts) {
+  return parts.reduce((value, key) => value && Object.prototype.hasOwnProperty.call(value, key) ? value[key] : undefined, object);
+}
 window.saveConfig = async (scope = "assistant") => {
-  const generation = scope === "generation";
-  const accounts = scope === "accounts";
-  const integrations = scope === "integrations";
+  const generation = scope === "generation", accounts = scope === "accounts";
+  const integrations = scope === "integrations", falConnection = scope === "fal-connection";
+  const falCredential = falConnection ? falCredentialPatch() : {};
   const body = integrations ? integrationsConfigPatch()
     : accounts ? accountsConfigPatch()
       : generation ? generationConfigPatch()
-        : assistantConfigPatch();
-  const failed = integrations ? "Could not save ComfyUI settings"
-    : accounts ? "Could not save account settings"
-      : generation ? "Could not save generation settings"
-        : "Could not save assistant settings";
+        : falConnection ? (Object.keys(falCredential).length ? { generation: { fal: falCredential } } : {})
+          : assistantConfigPatch();
+  if (!Object.keys(body).length) return toast("No editable settings to save on this panel.");
+  const label = integrations ? "ComfyUI settings" : accounts ? "account settings"
+    : generation ? "generation settings" : falConnection ? "Fal connection" : "assistant settings";
+  const owner = settingsWriteOwner();
   setSettingsPanelState("saving");
-  let r;
+  let response;
   try {
-    r = await fetch("/api/config", { method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
-  } catch (error) {
-    setSettingsPanelState("error", "The CineBraid server did not respond — check that it is still running.");
-    return toast(failed);
+    response = await fetch("/api/config", { method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
+  } catch {
+    settingsWriteFailed(owner, "The CineBraid server did not respond — check that it is still running.");
+    return toast(`Could not save ${label}`);
   }
-  if (!r.ok) {
-    const data = await r.json().catch(() => ({}));
-    setSettingsPanelState("error", data.error || "The server rejected the change.");
-    return toast(failed);
+  if (!response.ok) {
+    const data = await response.json().catch(() => ({}));
+    settingsWriteFailed(owner, data.error || "The server rejected the change.");
+    return toast(`Could not save ${label}`);
   }
-  CONFIG = await fetch("/api/config").then((response) => response.json()).catch(() => ({ ...CONFIG, ...body, generation: { ...(CONFIG.generation || {}), ...(body.generation || {}), fal: { ...(CONFIG.generation?.fal || {}), ...(body.generation?.fal || {}), apiKey: body.generation?.fal?.apiKey ? "••••saved" : "" } } }));
-  /* Capability readiness is derived from this configuration, so it is stale the
-     moment the configuration changes. Ask once, here, on the save the user just
-     made — the workspace then shows a newly configured provider as available
-     without a page reload, and a removed one as unavailable. Deliberately one
-     request on an explicit action rather than any kind of polling. */
-  if (typeof refreshAgentStatus === "function") await refreshAgentStatus(false);
-  settingsPanelSaved();
-  toast(integrations ? "ComfyUI settings saved"
-    : accounts ? "Account settings saved"
-      : generation ? "Generation settings saved"
-        : "Assistant settings saved");
-  route();
+  /* Remove successfully submitted raw values from their original nodes now.
+     A newly mounted panel is reconciled by owner after the safe read. */
+  for (const [selector, parts] of SETTINGS_SECRET_INPUTS) {
+    const submitted = settingsValueAt(body, parts);
+    const field = owner.fields.find((row) => row.id === selector.slice(1));
+    if (field && submitted !== undefined && String(field.input.value) === String(submitted)) {
+      field.input.type = "password";
+      field.input.value = submitted ? "••••saved" : "";
+    }
+  }
+  let refreshed = null;
+  try {
+    const safeResponse = await fetch("/api/config");
+    if (!safeResponse.ok) throw new Error("Settings display unavailable");
+    const safe = await safeResponse.json();
+    if (!safe || typeof safe !== "object" || safe.error) throw new Error("Settings display unavailable");
+    CONFIG = safe;
+    refreshed = safe;
+    SETTINGS_CONFIG_REFRESH_REQUIRED = false;
+    SETTINGS_CONFIG_STALE_DISPLAY = null;
+  } catch {
+    SETTINGS_CONFIG_REFRESH_REQUIRED = true;
+    SETTINGS_CONFIG_STALE_DISPLAY = CONFIG;
+  }
+  const detail = SETTINGS_CONFIG_REFRESH_REQUIRED
+    ? "The change is stored, but its display could not be refreshed. Reload Settings before checking setup."
+    : "";
+  settingsWriteSaved(owner, { body, config: refreshed, detail });
+  toast(`${label[0].toUpperCase() + label.slice(1)} saved`);
+  /* This refresh updates readiness only; saving never redraws the panel or moves
+     keyboard focus. Its failure cannot turn a successful save into a failed one. */
+  if (!SETTINGS_CONFIG_REFRESH_REQUIRED && typeof refreshAgentStatus === "function") {
+    try { await refreshAgentStatus(false); } catch { /* readiness remains unverified */ }
+  }
 };
 
 /* ---------- account connections ----------
@@ -434,38 +575,50 @@ window.recheckAccountConnection = async (connectionId) => {
     if (!response.ok) throw new Error(data.error || "Could not check the connection");
     if (note) note.textContent = "";
     toast("Connection checked");
+    route();
   } catch (error) {
     if (note) note.textContent = error.message || "Could not check the connection";
   }
-  route();
 };
 window.disconnectAccount = (connectionId) => {
   confirmModal(
-    "Disconnect this account? CineBraid deletes the stored credential from this computer. Nothing in your production changes, and you can connect again at any time.",
+    "Disconnect this account? CineBraid removes its local authorization. Local results, project history and recorded provider/model details remain. This does not revoke the grant at the provider or cancel active jobs. Reconcile existing jobs before making another paid request.",
     async () => {
       try {
         const response = await fetch(`/api/accounts/${encodeURIComponent(String(connectionId || ""))}`, { method: "DELETE" });
         const data = await response.json().catch(() => ({}));
         if (!response.ok) throw new Error(data.error || "Could not disconnect the account");
-        toast("Account disconnected");
+        toast("Account disconnected — local history retained");
+        route();
       } catch (error) {
+        const note = $("#account-note");
+        if (note) note.textContent = error.message || "Could not disconnect the account";
         toast(error.message || "Could not disconnect the account");
       }
-      route();
     },
     { title: "Disconnect account", confirmLabel: "DISCONNECT" },
   );
 };
 window.testFalGenerationConnection = async () => {
   const note = $("#fal-test-note");
+  if (settingsCheckBlocked(note)) return;
   const state = (tone, text) => { if (!note) return; note.dataset.tone = tone; note.textContent = text; };
-  state("checking", "Checking setup…");
+  state("checking", "Checking saved local configuration only — no provider request…");
   try {
     const response = await fetch("/api/generation/fal/test", { method: "POST" });
     const data = await response.json();
-    if (!response.ok) throw new Error(data.error || "FAL setup check failed");
-    state("ready", data.message || "FAL generation is set up");
-    toast("FAL generation is configured");
+    if (!response.ok) {
+      const fal = CONFIG.generation?.fal || {};
+      if (fal.enabled !== true) {
+        const source = fal.keySource === "environment" ? "present · server environment"
+          : fal.apiKey ? "present · saved settings" : "not present";
+        state("off", `Generation is off. Saved credential: ${source}. Provider reachability and balance were not checked. You do not need to enable generation to inspect this setup.`);
+        return;
+      }
+      throw new Error(data.error || "FAL setup check failed");
+    }
+    state("configured", "Saved Fal configuration is complete. Provider reachability, model availability and balance were not checked. No paid request was made.");
+    toast("Fal configuration checked locally");
   } catch (error) {
     state("attention", error.message);
     toast("FAL setup is incomplete");
@@ -677,6 +830,8 @@ window.previewAppearanceSettings = () => {
   refreshSettingsPanelState();
 };
 window.discardAppearancePreview = () => {
+  SETTINGS_PANEL_BASELINE = settingsPanelValues();
+  if (typeof window.studioClearSettingsDraft === "function") window.studioClearSettingsDraft();
   setAppearancePreview(null);
   route();
   toast("Preview discarded — the saved appearance is back");
@@ -696,6 +851,7 @@ window.resetAppearanceSettings = () => {
   previewAppearanceSettings();
 };
 window.saveAppearanceSettings = async () => {
+  const owner = settingsWriteOwner();
   const body = { appearance: appearanceFormValues() };
   setSettingsPanelState("saving");
   let r;
@@ -706,12 +862,12 @@ window.saveAppearanceSettings = async () => {
       body: JSON.stringify(body),
     });
   } catch (error) {
-    setSettingsPanelState("error", "The CineBraid server did not respond — check that it is still running.");
+    settingsWriteFailed(owner, "The CineBraid server did not respond — check that it is still running.");
     return toast("Could not save appearance settings");
   }
   if (!r.ok) {
     const data = await r.json().catch(() => ({}));
-    setSettingsPanelState("error", data.error || "The server rejected the change.");
+    settingsWriteFailed(owner, data.error || "The server rejected the change.");
     return toast("Could not save appearance settings");
   }
   /* Saved on the server first, then in this browser, so the stored theme can never
@@ -719,9 +875,9 @@ window.saveAppearanceSettings = async () => {
   commitWorkspaceAppearance(body.appearance);
   setHelpMode(body.appearance.helpMode);
   CONFIG = await fetch("/api/config").then((response) => response.json()).catch(() => ({ ...CONFIG, ...body }));
-  settingsPanelSaved();
+  const current = settingsWriteSaved(owner);
   toast("Appearance saved");
-  route();
+  if (current) route();
 };
 
 /* What a completed migration actually says, in the order a person needs it.
@@ -754,6 +910,7 @@ function describeMigration(migration) {
    request body: a panel sends only the fields it is showing, so saving naming rules
    cannot blank the storage paths it never displayed. */
 async function persistWorkspaceSettings(scope) {
+  const owner = settingsWriteOwner();
   const present = (id, read = (el) => el.value) => { const el = $(id); return el ? read(el) : undefined; };
   const compact = (entries) => Object.fromEntries(Object.entries(entries).filter(([, value]) => value !== undefined));
   const workspace = compact({
@@ -791,25 +948,25 @@ async function persistWorkspaceSettings(scope) {
       body: JSON.stringify(body),
     });
   } catch (error) {
-    setSettingsPanelState("error", "The CineBraid server did not respond — check that it is still running.");
+    settingsWriteFailed(owner, "The CineBraid server did not respond — check that it is still running.");
     if (note) note.textContent = "The CineBraid server did not respond — check that it is still running.";
     return toast(storage ? "Could not apply storage paths" : "Could not save naming rules");
   }
   const data = await r.json().catch(() => ({}));
   if (!r.ok) {
     const reason = data.error || "The server rejected the change.";
-    setSettingsPanelState("error", reason);
+    settingsWriteFailed(owner, reason);
     if (note) note.textContent = reason;
     return toast(storage ? "Could not apply storage paths" : "Could not save naming rules");
   }
   /* The route says whether it actually rewrote anything. */
   if (data.migration?.movedRoot) noteCurrentProjectDurableAdvance(migrationOwner);
   CONFIG = await fetch("/api/config").then((response) => response.json()).catch(() => ({ ...CONFIG, ...body }));
-  updateFilenameTemplatePreview();
+  if (settingsWriteIsCurrent(owner)) updateFilenameTemplatePreview();
   const applied = data.migration?.movedRoot
     ? describeMigration(data.migration)
     : storage ? "These folders exist and are writable." : "";
-  settingsPanelSaved(applied);
+  settingsWriteSaved(owner, { detail: applied });
   if (note && storage) note.textContent = applied;
   /* "moved safely" was the one line here that was not true. Migration copies into the
      new location and leaves the old one exactly as it was — deliberately, and the

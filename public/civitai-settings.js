@@ -6,8 +6,8 @@
  *                 Connecting is identity only and the panel says so; permission to spend
  *                 Buzz is a SECOND authorization asked for on the connected row.
  *   GENERATION    which account pays and which model runs. Beside fal, because Generation
- *                 is the panel that configures a hosted provider that bills — Integrations
- *                 states in words that nothing on it can spend money, and that stays true.
+ *                 retains the existing provider defaults. Local runtime setup remains
+ *                 separate; a loopback address does not prove every workflow node is offline.
  *
  * NOTHING HERE HANDLES A CREDENTIAL. The browser starts an authorization and reads a
  * boolean; it never receives a token, a refresh token, an authorization code or a scope
@@ -18,7 +18,7 @@
 /* Answered by the server, held for the current screen, and never guessed. An unloaded list
    draws nothing rather than drawing "not authorized" — a claim CineBraid has not checked is
    not a claim to put on a row. */
-const CIVITAI_SETTINGS = { grants: [], loaded: false, loading: false };
+const CIVITAI_SETTINGS = { grants: [], loaded: false, loading: false, error: false };
 
 window.civitaiGrantFor = (connectionId) => {
   if (!CIVITAI_SETTINGS.loaded) return null;
@@ -50,11 +50,15 @@ window.refreshCivitaiGrants = async () => {
   try {
     const response = await fetch("/api/generation/civitai/grants");
     const data = await response.json().catch(() => ({}));
-    CIVITAI_SETTINGS.grants = response.ok && Array.isArray(data.grants) ? data.grants : [];
-    CIVITAI_SETTINGS.loaded = response.ok;
+    if (!response.ok || !Array.isArray(data.grants)) throw new Error("Grant read failed");
+    CIVITAI_SETTINGS.grants = data.grants;
+    CIVITAI_SETTINGS.loaded = true;
+    CIVITAI_SETTINGS.error = false;
   } catch {
-    CIVITAI_SETTINGS.grants = [];
+    /* Keep the last list so a failed read cannot erase an unsaved account choice.
+       loaded=false prevents those older grants from claiming current permission. */
     CIVITAI_SETTINGS.loaded = false;
+    CIVITAI_SETTINGS.error = true;
   } finally {
     CIVITAI_SETTINGS.loading = false;
   }
@@ -67,10 +71,16 @@ window.refreshCivitaiGrants = async () => {
  * screen is simply not found and nothing is written for it. Nothing outside these nodes is
  * touched — which is the whole point, and is what makes this safe to call at any time. */
 function paintCivitaiGrants() {
+  const readNote = document.getElementById("civitai-grants-note");
+  if (readNote) {
+    readNote.innerHTML = CIVITAI_SETTINGS.error
+      ? '<span>Could not read connected accounts. Your selection is preserved; generation permission is not verified.</span> <button class="ghost-btn" onclick="refreshCivitaiGrants()">Retry account check</button>'
+      : "";
+  }
   for (const host of document.querySelectorAll("[data-civitai-grant-note]")) {
     const grant = window.civitaiGrantFor(host.dataset.civitaiGrantNote);
     host.textContent = !grant
-      ? ""
+      ? (CIVITAI_SETTINGS.error ? "Could not read this account's generation permission. Retry the account check." : "")
       : grant.tokenSource === "api_key"
         ? "Connected with an API key, which carries whatever your Civitai account allows. CineBraid cannot check it in advance — Civitai decides at the moment of generating."
         : grant.generationAuthorized
@@ -130,11 +140,17 @@ window.paintCivitaiGrants = paintCivitaiGrants;
    account may generate, and the two cannot disagree. */
 window.civitaiConnectionOptions = (selected = "") => {
   const rows = CIVITAI_SETTINGS.grants || [];
-  if (!rows.length)
-    return `<option value="">${CIVITAI_SETTINGS.loaded ? "No Civitai account is connected" : "Loading connected accounts…"}</option>`;
-  return [`<option value="">Choose a connected Civitai account</option>`]
+  const chosen = String(selected || "");
+  const prompt = CIVITAI_SETTINGS.error ? "Could not read accounts — retry the account check"
+    : !rows.length ? (CIVITAI_SETTINGS.loaded ? "No Civitai account is connected" : "Loading connected accounts…")
+      : "Choose a connected Civitai account";
+  /* Preserve a selection even if the first read fails or a refreshed list no longer
+     contains it. Naming it unavailable is different from silently clearing it. */
+  const missing = chosen && !rows.some((row) => String(row.connectionId) === chosen)
+    ? `<option value="${attr(chosen)}" selected>Selected account · ${CIVITAI_SETTINGS.loaded ? "no longer connected" : "availability not checked"}</option>` : "";
+  return [`<option value="">${prompt}</option>`, missing]
     .concat(rows.map((row) => {
-      const label = `${row.displayName ? `@${row.displayName}` : "Civitai account"}${row.generationAuthorized ? "" : " · not allowed to generate yet"}`;
+      const label = `${row.displayName ? `@${row.displayName}` : "Civitai account"}${CIVITAI_SETTINGS.error ? " · last read; recheck needed" : row.generationAuthorized ? "" : " · not allowed to generate yet"}`;
       return `<option value="${attr(row.connectionId)}" ${row.connectionId === String(selected || "") ? "selected" : ""}>${esc(label)}</option>`;
     }))
     .join("");
@@ -200,11 +216,27 @@ window.startCivitaiGenerationGrant = async (connectionId) => {
    `canGenerate` is answered by Civitai for the CALLING USER, so it is a fact about this
    account and this resource together and cannot be cached across either. The button reads
    what is currently in the field rather than what was last saved, so a person can check a
-   model before committing it — the same shape as ComfyUI's Test connection. */
+   model before committing it. The paying account must already be saved, because the
+   existing resource route resolves that account from server configuration. */
 window.checkCivitaiResource = async () => {
   const note = $("#civitai-resource-note");
-  const air = String($("#cfg-civitai-resource")?.value || "").trim();
-  if (note) { note.dataset.tone = "attention"; note.textContent = "Asking Civitai about this model…"; }
+  const saved = CONFIG.generation?.civitai || {};
+  const account = $("#cfg-civitai-connection");
+  if (account && String(account.value || "").trim() !== String(saved.connectionId || "").trim()) {
+    if (note) { note.dataset.tone = "attention"; note.textContent = "Save generation settings before checking with a different account. This check uses the saved paying account; your selection is still here."; }
+    account.focus();
+    return;
+  }
+  const resourceField = $("#cfg-civitai-resource");
+  const air = String(resourceField?.value ?? saved.resourceAir ?? "").trim();
+  if (!air) {
+    if (note) { note.dataset.tone = "attention"; note.textContent = "Enter a model AIR to check. No model was checked."; }
+    resourceField?.focus();
+    return;
+  }
+  const draftModel = air !== String(saved.resourceAir || "").trim();
+  const checkContext = `${draftModel ? "Unsaved model" : "Model"} checked with the saved paying account. No generation submitted.`;
+  if (note) { note.dataset.tone = "attention"; note.textContent = `Asking Civitai about ${draftModel ? "this unsaved model" : "this model"} with the saved paying account… No generation is submitted.`; }
   try {
     const response = await fetch("/api/generation/civitai/resource", {
       method: "POST",
@@ -220,14 +252,14 @@ window.checkCivitaiResource = async () => {
       /* Two different refusals, and the difference is actionable: a gated resource is one
          this account could be given access to, and one that simply cannot be generated
          with is not. */
-      note.textContent = resource.checkPermission
+      note.textContent = (resource.checkPermission
         ? "Civitai says this model is gated for this account — early access or a private model."
-        : "Civitai says this account cannot generate with this model.";
+        : "Civitai says this account cannot generate with this model.") + ` ${checkContext}`;
       return;
     }
     note.dataset.tone = "ready";
-    note.textContent = `Ready — ${[resource.modelName, resource.versionName].filter(Boolean).join(" · ") || air}`;
-  } catch (error) {
-    if (note) { note.dataset.tone = "attention"; note.textContent = error.message || "CineBraid could not check that model."; }
+    note.textContent = `Available — ${[resource.modelName, resource.versionName].filter(Boolean).join(" · ") || air}. ${checkContext}`;
+  } catch {
+    if (note) { note.dataset.tone = "attention"; note.textContent = "Could not check this model with the saved paying account. Check the model AIR and account connection, then retry. Your edits are preserved; no generation submitted."; }
   }
 };

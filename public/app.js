@@ -118,8 +118,9 @@ window.setProjectWorkflowEmphasis = (value) => {
   if (!P?.meta) return;
   P.meta.workflowEmphasis = value === "assisted" ? "assisted" : "manual";
   dirty();
-  route();
+  const render = route();
   toast(P.meta.workflowEmphasis === "manual" ? "Manual-first workspace enabled" : "Assisted-production workspace enabled");
+  return render;
 };
 const $ = (s) => document.querySelector(s);
 const esc = (t) =>
@@ -4099,9 +4100,9 @@ window.openProjectSettingsFromMenu = () => {
   closeProjectMenu();
   /* Assigned, not routed. The navigation buttons in the rail do exactly this and
      let the hashchange listener render; a route() here would paint twice on every
-     use, and do nothing extra on the one case where the hash is already #/settings
+     use, and do nothing extra on the one case where the hash is already #/settings/project
      — which is a person asking for the page they are already looking at. */
-  location.hash = "#/settings";
+  location.hash = "#/settings/project";
 };
 window.openProjectSwitcherFromMenu = () => {
   closeProjectMenu();
@@ -4991,6 +4992,7 @@ async function route(recoveryAttempt = false) {
      filmmaker, rather than the navigation being silently ignored. */
   if (typeof approvalRecoveryNavigationRefused === "function"
     && approvalRecoveryNavigationRefused(location.hash)) return;
+  if (typeof studioCaptureSettingsDraft === "function") studioCaptureSettingsDraft();
   const requestToken = ++ROUTE_REQUEST_TOKEN;
   if (document.body?.dataset) delete document.body.dataset.renderReady;
   try {

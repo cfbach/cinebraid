@@ -80,6 +80,7 @@ const SCRIPT_ORDER = [
   "entities.js",
   "mutations.js",
   "settings.js",
+  "settings-studio.js",
   "library-tools.js",
   "review.js",
   "scene-review.js",

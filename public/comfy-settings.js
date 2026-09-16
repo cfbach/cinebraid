@@ -43,21 +43,34 @@ function comfyChip(id, tone, words) {
 }
 
 window.testComfyConnection = async () => {
-  comfyChip("comfy-test-note", "checking", "Checking…");
+  const saved = CONFIG.generation?.comfy || {};
+  const targetFields = [
+    ["cfg-comfy-base-url", String(saved.baseUrl || "http://127.0.0.1:8188").trim()],
+    ["cfg-comfy-workflow-folder", String(saved.workflowFolder || "").trim()],
+  ];
+  for (const [id, value] of targetFields) {
+    const field = document.getElementById(id);
+    if (field && String(field.value || "").trim() !== value) {
+      comfyChip("comfy-test-note", "attention", "Save ComfyUI settings before checking. The check uses the saved address and workflow folder; your edits are still here.");
+      field.focus();
+      return;
+    }
+  }
+  comfyChip("comfy-test-note", "checking", "Checking the saved local runtime… No generation is submitted.");
   try {
     const response = await fetch("/api/generation/comfy/test", { method: "POST" });
     const data = await response.json().catch(() => ({}));
     if (!response.ok) throw new Error(data.error || "CineBraid could not reach ComfyUI.");
     if (!data.connected) {
-      comfyChip("comfy-test-note", "attention", data.reason || "CineBraid could not reach ComfyUI.");
+      comfyChip("comfy-test-note", "attention", "Saved ComfyUI runtime did not answer. Check the saved address and start ComfyUI, then retry. No generation submitted.");
       toast("ComfyUI did not answer");
     } else {
       const where = [data.version ? `ComfyUI ${data.version}` : "ComfyUI", data.device].filter(Boolean).join(" · ");
-      comfyChip("comfy-test-note", "ready", `Connected — ${where}`);
-      toast("ComfyUI is connected");
+      comfyChip("comfy-test-note", "ready", `Saved runtime answered — ${where}. Generation was not tested.`);
+      toast("Saved ComfyUI runtime answered; no generation submitted");
     }
-  } catch (error) {
-    comfyChip("comfy-test-note", "attention", error.message || "CineBraid could not reach ComfyUI.");
+  } catch {
+    comfyChip("comfy-test-note", "attention", "Could not check the saved ComfyUI runtime. Check the saved address and retry. No generation submitted.");
     toast("ComfyUI did not answer");
   }
   refreshComfyWorkflowList();

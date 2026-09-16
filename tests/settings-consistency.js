@@ -36,9 +36,10 @@ const views = fs.readFileSync(path.join(ROOT, "public", "views.js"), "utf8");
 const settingsSource = fs.readFileSync(path.join(ROOT, "public", "settings.js"), "utf8");
 const appSource = fs.readFileSync(path.join(ROOT, "public", "app.js"), "utf8");
 
-const TABS = ["appearance", "files", "access", "naming", "project", "assistant", "generation", "integrations", "recovery"];
+const TABS = ["overview", "connections", "appearance", "files", "access", "naming", "project", "assistant", "generation", "integrations", "accounts", "fal", "assistant-ollama", "assistant-openai", "assistant-anthropic", "assistant-custom", "recovery", "project-recovery"];
+const READ_ONLY = ["overview", "connections", "recovery"];
 /* Subsections holding editable settings that are stored only on an explicit action. */
-const EXPLICIT = ["appearance", "files", "access", "naming", "assistant", "generation", "integrations"];
+const EXPLICIT = ["appearance", "files", "access", "naming", "assistant", "generation", "integrations", "accounts", "fal", "assistant-ollama", "assistant-openai", "assistant-anthropic", "assistant-custom"];
 
 /* The desktop column model lives outside any @media block; a narrow-width override
    must never be able to stand in for the rule these checks are about. */
@@ -121,6 +122,7 @@ function mountPanel(view, tab) {
         ? selectedOptionValue(html, match.index + match[0].length)
         : attribute(tag, "value") || "",
       checked: /\bchecked\b/.test(tag),
+      disabled: /\bdisabled\b/.test(tag),
       min: attribute(tag, "min") || "",
       max: attribute(tag, "max") || "",
       dataset: {},
@@ -175,6 +177,12 @@ async function main() {
       view.html.includes(`data-settings-tab="${tab}"`),
       `${tab}: the selected subsection must render`,
     );
+    if (READ_ONLY.includes(tab)) {
+      const body = view.html.slice(view.html.indexOf('class="settings-selected-tab"'));
+      assert(!/id="settings-panel-state"|<input|<textarea|onclick="save/.test(body),
+        `${tab}: read-only navigation and diagnostics must not acquire a preference writer`);
+      continue;
+    }
     assert(
       /class="settings-save-state"/.test(view.html),
       `${tab}: every subsection must state how it stores changes`,
@@ -186,53 +194,42 @@ async function main() {
   }
 
 
-  /* ---- THE GENERATION PANEL DESCRIBES WHAT IS ACTUALLY IN IT ----
-   *
-   * THE DEFECT. The navigation subtitle read "Optional FAL image defaults" and the
-   * panel intro "Optional in-app FAL implementation". Both were written when this
-   * configured FAL images and nothing else. The panel now also holds the MiniMax H3
-   * video endpoints, the motion resolution and per-second rate, and Civitai
-   * generation — so the only two sentences describing this panel excluded the task a
-   * motion or Civitai user had come to do, on the panel that does it.
-   *
-   * The controls are asserted FIRST and the words second, deliberately: this fails
-   * if the wording regresses, and it also fails if a provider or medium leaves the
-   * panel, which is the moment the description would need looking at again. */
+  /* Provider setup and operational defaults have distinct owners, with legacy
+     integrations/accounts/naming destinations still reachable by their old IDs. */
   {
     const generation = panels.generation.html;
-    const scope = [
-      ["cfg-fal-text-model", "FAL image"],
-      ["cfg-fal-h3-text-model", "FAL motion"],
-      ["cfg-fal-motion-rate", "the motion rate"],
-      ["cfg-civitai-resource", "Civitai generation"],
-    ];
-    for (const [id, what] of scope)
-      assert(generation.includes(id), `generation: the panel still configures ${what} (${id})`);
-
-    const nav = generation.slice(generation.indexOf("settings-nav-shell"), generation.indexOf("settings-block"));
-    const subtitle = (nav.match(/<b>Generation<\/b><small>([^<]*)<\/small>/) || [])[1] || "";
-    assert(subtitle, "generation: the navigation tile must carry a subtitle");
-    const intro = (generation.match(/<h3>Generation<\/h3><p class="hint">([^<]*)<\/p>/) || [])[1] || "";
-    assert(intro, "generation: the panel must carry an introduction");
-
-    for (const [label, text] of [["tile subtitle", subtitle], ["panel intro", intro]]) {
-      assert(!/FAL image defaults|in-app FAL implementation/i.test(text),
-        `generation: the ${label} must not still describe this as FAL-image-only — "${text}"`);
-      assert(!/^\s*optional FAL\b/i.test(text),
-        `generation: the ${label} must not name FAL as the only provider — "${text}"`);
-      assert(/motion|video/i.test(text),
-        `generation: the ${label} must account for the motion settings this panel holds — "${text}"`);
-    }
-    assert(/civitai|provider/i.test(intro),
-      `generation: the panel intro must account for more than one provider — "${intro}"`);
-
-    /* AND NOTHING BUT THE WORDS MOVED. Settings keeps its subsections, in order, and
-       the panel keeps every control the defect report found in it. */
-    const tiles = [...generation.matchAll(/<b>([^<]+)<\/b><small>/g)].map((row) => row[1]);
-    assert.deepStrictEqual(tiles,
-      ["Appearance", "Files & storage", "Access & security", "Naming & organization", "Project",
-        "Assistant", "Generation", "Integrations", "Accounts", "Recovery & advanced"],
-      "generation: correcting the description must not reorganise Settings");
+    for (const id of ["cfg-fal-text-model", "cfg-fal-h3-text-model", "cfg-fal-motion-rate", "cfg-civitai-resource"])
+      assert(generation.includes(`id="${id}"`), `generation retains ${id}`);
+    assert(generation.includes("Generation defaults") && /provider-specific defaults/.test(generation));
+    assert(!generation.includes('id="cfg-fal-key"'), "generation must not render the credential owned by Fal connection setup");
+    assert(panels.fal.html.includes('id="cfg-fal-key"'), "Fal connection must retain the credential control");
+    assert(generation.includes('href="#/settings/fal"'), "defaults must link to the owning connection");
+    const nav = generation.match(/<div class="studio-nav-links">([\s\S]*?)<\/div>/)[1];
+    const targets = [...nav.matchAll(/href="#\/settings\/([^"]+)"/g)].map((row) => row[1]);
+    assert.deepStrictEqual(targets, ["overview", "connections", "generation", "assistant", "appearance", "files", "naming", "access", "recovery", "project"],
+      "application navigation must separate connection setup and use, with project context explicitly linked");
+    assert(panels.connections.html.includes('href="#/settings/integrations"'));
+    assert(panels.connections.html.includes('href="#/settings/accounts"'));
+    for (const kind of ["ollama", "openai", "anthropic", "custom"])
+      assert(panels.connections.html.includes(`href="#/settings/assistant-${kind}"`), `${kind} has its own connection route`);
+    for (const id of ["cfg-ollama", "cfg-key", "cfg-openai-key", "cfg-custom-url"])
+      assert(!panels.assistant.html.includes(`id="${id}"`), `assistance selection must not render ${id}'s connection control`);
+    assert(panels["assistant-ollama"].html.includes('id="cfg-ollama"'));
+    assert(panels["assistant-openai"].html.includes('id="cfg-openai-key"'));
+    assert(panels["assistant-anthropic"].html.includes('id="cfg-key"'));
+    assert(panels["assistant-custom"].html.includes('id="cfg-custom-url"'));
+    for (const [tab, id] of [["files", "cfg-file-strategy"], ["naming", "cfg-export-template"], ["naming", "cfg-collision-behavior"]])
+      assert(!panels[tab].html.includes(`id="${id}"`), `${tab}: inert stored option ${id} must not pretend to change behavior`);
+    assert(/retained compatibility values/.test(panels.recovery.html), "inert values remain available as read-only compatibility information");
+    const env = await settingsView("fal", { fetch: async (url, options, response) => url === "/api/config"
+      ? response({ generation: { fal: { keySource: "environment", apiKey: "masked-fixture" } } }) : null });
+    assert(/id="cfg-fal-key"[^>]*disabled/.test(env.html), "environment credential cannot be replaced in the form");
+    assert(/onclick="saveConfig\('fal-connection'\)"[^>]*disabled/.test(env.html), "environment-managed credential cannot offer an effective save");
+    assert(/Managed by the server environment/.test(env.html));
+    assert.deepStrictEqual(JSON.parse(JSON.stringify(env.context.falCredentialPatch())), {},
+      "an environment-owned key must also be omitted by the writer, not merely disabled visually");
+    const direct = await render("#/settings/accounts", buildFixture());
+    assert(direct.html.includes('data-settings-tab="accounts"'), "direct legacy detail route must win over default selection");
   }
 
   /* An explicit-save panel declares its save model so the shared state line can use
@@ -260,7 +257,7 @@ async function main() {
     "project: the panel must say in words that it saves automatically",
   );
   assert(
-    /nothing to save/i.test(panels.recovery.html),
+    /nothing to save/i.test(panels["project-recovery"].html),
     "recovery: a panel with no settings must say so rather than stay silent",
   );
 
@@ -390,6 +387,31 @@ async function main() {
     );
   }
 
+  /* The newly separated connection pages still patch the existing owner with
+     exactly the visible fields. Saving setup must not select Braidy's provider. */
+  {
+    const expected = {
+      "assistant-ollama": ["ollamaModel", "ollamaUrl", "ollamaVisionModel"],
+      "assistant-openai": ["openaiKey", "openaiModel", "openaiVisionModel"],
+      "assistant-anthropic": ["anthropicKey", "anthropicModel", "anthropicVisionModel"],
+      "assistant-custom": ["customBaseUrl", "customKey", "customModel", "customVisionModel", "customTemperature", "customTopK", "customThinking"],
+    };
+    for (const [tab, fields] of Object.entries(expected)) {
+      const { context } = panels[tab];
+      const patch = context.assistantConfigPatch();
+      assert.deepStrictEqual(Object.keys(patch).sort(), fields.sort(), `${tab}: omitted consumers must never be filled from cached CONFIG`);
+      assert(!patch.assistant && !patch.continuity && !patch.generation, `${tab}: setup is not selection, continuity or generation`);
+    }
+    const fal = panels.fal.context.generationConfigPatch();
+    assert.deepStrictEqual(Object.keys(fal.generation.fal), ["apiKey"], "credential detail cannot overwrite model defaults or enable generation");
+    const defaults = panels.generation.context.generationConfigPatch();
+    for (const key of ["apiKey", "maxConcurrent", "requireConfirmation"])
+      assert(!Object.hasOwn(defaults.generation.fal, key), `generation save must not carry unrendered ${key}`);
+    const selection = panels.assistant.context.assistantConfigPatch();
+    assert.deepStrictEqual(Object.keys(selection).sort(), ["assistant", "continuity"], "assistance saves only its selection and continuity controls");
+    assert(!Object.hasOwn(selection.assistant, "provider"), "saving image-reading selection cannot replay Braidy's immediate provider selection");
+  }
+
   /* ---- 4. a failed save says so and never reports success ---- */
   {
     const view = await settingsView("files", {
@@ -484,36 +506,16 @@ async function main() {
   }
   assert(!views.includes("Apply storage settings"), "the old mixed storage verb must be gone");
 
-  /* ---- 8. grouping and units ---- */
-  assert(
-    /BACKUPS & DIAGNOSTICS/.test(panels.recovery.html),
-    "backups and diagnostics are not AI-assisted services and must not be filed as such",
-  );
+  /* ---- 8. project recovery is separate from application connection setup ---- */
   {
-    const services = panels.recovery.html.indexOf("OPTIONAL ASSISTED SERVICES");
-    const backups = panels.recovery.html.indexOf("BACKUPS &amp; DIAGNOSTICS") >= 0
-      ? panels.recovery.html.indexOf("BACKUPS &amp; DIAGNOSTICS")
-      : panels.recovery.html.indexOf("BACKUPS & DIAGNOSTICS");
-    const recoveryTab = panels.recovery.html.indexOf("Recovery &amp; advanced") >= 0
-      ? panels.recovery.html.indexOf("Recovery &amp; advanced")
-      : panels.recovery.html.indexOf("Recovery & advanced");
-    assert(services !== -1 && backups > services, "the backups group must follow the assisted-services group");
-    assert(recoveryTab > backups, "Recovery must sit inside the backups group");
-  }
-  /* The LAN passcodes are a setting like any other and belong in a subsection that
-     says so. The panel that reads them existed for three phases with nowhere to
-     render, which is what tests/lan-passcode-settings.js exists for; the claim here
-     is narrower — Access & security is a real Settings subsection, filed with the
-     rest of this workspace's own settings rather than among the optional services. */
-  {
-    const nav = panels.access.html;
-    const workspace = nav.indexOf("WORKSPACE");
-    const services = nav.indexOf("OPTIONAL ASSISTED SERVICES");
-    const access = nav.indexOf("<b>Access & security</b>");
-    assert(workspace !== -1 && access > workspace && access < services,
-      "Access & security must sit with this workspace's own settings, not among the optional services");
-    assert(/id="cfg-epass"[^>]*type="password"/.test(nav) && /id="cfg-vpass"[^>]*type="password"/.test(nav),
-      "the passcode subsection must render both write-only controls");
+    const recovery = panels["project-recovery"].html;
+    assert(recovery.includes('aria-label="Project settings"'), "project recovery must name its project context");
+    assert(recovery.includes("Project backups & recovery"));
+    assert(panels.recovery.html.includes('href="#/settings/project-recovery"'), "application diagnostics link to the named project's recovery owner");
+    const access = panels.access.html;
+    assert(access.includes('href="#/settings/access" aria-current="page"'), "Access remains a named application destination");
+    assert(/id="cfg-epass"[^>]*type="password"/.test(access) && /id="cfg-vpass"[^>]*type="password"/.test(access),
+      "the passcode subsection must retain both write-only controls");
   }
   assert(
     /Prompt versions kept per shot/.test(panels.project.html),

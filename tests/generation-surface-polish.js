@@ -443,6 +443,25 @@ function testTruthBoundariesHeld() {
     "and must not filter them by which backend is currently selected");
 }
 
+/* EV2-5 moves setup, while the paid/local operation owners stay in shot work. */
+async function testSettingsSetupCannotBecomeAnOperation() {
+  const project = buildFixture();
+  for (const section of ["overview", "connections", "fal", "generation", "integrations"]) {
+    const { html } = await render(`#/settings/${section}`, project);
+    assert(html.includes(`data-settings-tab="${section}"`), `${section}: the requested setup destination must render`);
+    assert(!/onclick="(?:startFalGeneration|startComfyGeneration|submitCivitaiGeneration|approveFrame)/.test(html),
+      `${section}: moving setup must not introduce a generation or approval action`);
+  }
+  const { html: defaults } = await render("#/settings/generation", project);
+  assert(!defaults.includes('id="cfg-fal-key"'), "provider credentials belong to connection setup, not generation defaults");
+  assert(defaults.includes('id="cfg-fal-text-model"') && defaults.includes('id="cfg-fal-h3-text-model"'),
+    "image and motion retain their actual provider-specific default controls");
+  assert(/does not change past results/.test(defaults), "new defaults must not imply relabeling historical generation provenance");
+  const { html: local } = await render("#/settings/integrations", project);
+  assert(/Check saved local runtime/.test(local), "the local probe names its saved target");
+  assert(!/no hosted service is contacted and none can bill/.test(local), "loopback setup cannot attest downstream custom node billing");
+}
+
 async function main() {
   await testGenerateActionIsFindableAndOwned();
   await testLocalAndPaidStaySeparate();
@@ -455,6 +474,7 @@ async function main() {
   testReturnedMediaIsContained();
   testNothingOverflowsHorizontally();
   testTruthBoundariesHeld();
+  await testSettingsSetupCannotBecomeAnOperation();
   console.log("Generation Surface Polish V1: action ownership, local/paid separation, cost visibility, "
     + "changed-mapping reasons, returned-result identity, import/return distinction, rerender state, "
     + "dialog preselection, media containment, overflow guards and truth boundaries all hold.");
