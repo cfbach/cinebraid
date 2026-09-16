@@ -33,6 +33,7 @@ function confirmationDOM(page){
 async function confirmDecision(page,dom,args,store,openDecision=null){
  const before=store.writes();
  dom.reset();await (openDecision?openDecision():page.context.CineBraidResultDecisions.open(...args));
+ assert.equal(store.writes(),before,'opening confirmation must not persist any successor before the explicit decision');
  const button=page.context.document.getElementById('rx-confirm');
  assert(page.context.document.getElementById('modal').innerHTML.includes('rx-confirm'),'exact result confirmation opened');
  assert(button.disabled,'undecoded media cannot confirm: '+JSON.stringify(args)+' '+page.context.document.getElementById('modal').innerHTML);dom.load();assert.equal(button.disabled,false,'saved context and loaded exact media enable confirmation');

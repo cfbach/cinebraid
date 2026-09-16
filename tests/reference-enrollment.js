@@ -1,4 +1,5 @@
 "use strict";
+require("./helpers/disposable-root").isolateInProcessSettings("reference-enrollment");
 const assert=require("assert/strict"),fs=require("fs"),path=require("path"),crypto=require("crypto");
 const {disposableRoot}=require("./helpers/disposable-root");
 const Assets=require("../src/media/media-assets"),Store=require("../src/media/media-asset-store");

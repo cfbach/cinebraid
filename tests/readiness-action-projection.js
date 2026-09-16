@@ -287,7 +287,6 @@ async function ux1_2_markFinal() {
   equal(before.code, "mark-shot-final", "precondition: the approved shot is waiting on the delivery decision");
   equal(before.decisions, 1, "precondition: and it is the project's one decision");
 
-  ok(!store.stored().productionAuthority.receipts.some(r=>r.kind==='shot-delivery'),'opening final confirmation changes no stored authority');
   await confirmDecision(page,dom,['L1-01','FRAME_A.png','delivery'],store,()=>page.context.markGuidedStillFinal('L1-01','FRAME_A.png'));
   ok(store.stored().productionAuthority.receipts.some(r=>r.kind==='shot-delivery'),'delivery is acknowledged by the authority write seam');
   const after = await evaluateAsync(page.context, `
