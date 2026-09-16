@@ -22,3 +22,9 @@
 @media(max-width:1150px){.studio-overview-grid{grid-template-columns:1fr}.studio-settings-layout{grid-template-columns:180px minmax(0,1fr);gap:15px}}
 @media(max-width:760px){.studio-settings-layout{display:block}.studio-nav{position:static;margin:0 0 16px}.studio-nav-links{display:none}.studio-compact-nav{display:flex;flex-direction:column;gap:7px;font-size:12px}.studio-compact-nav select{width:100%;padding:11px;min-height:44px}.studio-settings-layout .settings-block{padding:16px}.studio-connections,.studio-overview-grid{grid-template-columns:1fr}.studio-settings-layout .two-col{grid-template-columns:1fr}.studio-callout{display:block}.studio-callout>a{margin-top:12px}.studio-settings-layout h2{font-size:25px}.studio-lead{font-size:15px}.studio-facts{grid-template-columns:1fr;gap:8px}.studio-facts dd{margin-bottom:12px}.studio-settings-layout .ghost-btn,.studio-settings-layout .add-btn{min-height:44px}.studio-settings-layout .settings-title-row{flex-wrap:wrap}.studio-settings-layout .policy-options{grid-template-columns:1fr}}
 @media(prefers-reduced-motion:reduce){.studio-settings-layout *{scroll-behavior:auto!important;animation:none!important;transition:none!important}}
+
+/* The shared header stacks at 900px. Its desktop 320px flex basis then becomes
+   a reserved height; let the explanatory text size itself in the column layout. */
+@media(max-width:900px){
+  .studio-settings-layout .settings-block>.settings-title-row>div:not(.settings-inline-actions){flex-basis:auto}
+}
