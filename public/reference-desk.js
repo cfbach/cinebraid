@@ -86,8 +86,8 @@
     const p=picker,entity=P[p.list]?.find(e=>e.id===p.id),selected=p.images.find(r=>r.assetId===p.selected),state=collection(entity).find(s=>s.id===p.stateId),slot=(entity.coverageSlots||[]).find(s=>s.id===p.slotId);
     const preview=p.file?p.fileUrl:selected?.available?selected.url:'';
     const issue=selected?CineBraidMediaDiscovery.eligibility(pickerRecords(p).find(r=>r.assetId===selected.assetId),p):'';
-    const valid=!!preview&&!!state&&!!slot&&p.single===true&&!p.busy&&!issue;
-    const images=p.upload?'<label class="rd-file">Choose an image file<input id="rd-upload-file" type="file" accept="image/png,image/jpeg,image/webp,image/avif,image/gif,image/bmp"></label><p>Your file stays outside the project until you add it as a candidate.</p>':CineBraidMediaBrowser.mount('reference-picker',{selector:true,target:p,state:p.discovery,records:()=>pickerRecords(p),select:row=>{p.selected=row.assetId;p.error=CineBraidMediaDiscovery.eligibility(row,p);p.single=false;document.getElementById('rd-single').checked=false;syncPicker();},inspect:row=>inspectPicker(row,p)});
+    const valid=!!preview&&!!state&&!!slot&&p.single===true&&!p.busy&&!issue&&!p.loadFailed;
+    const images=p.upload?'<label class="rd-file">Choose an image file<input id="rd-upload-file" type="file" accept="image/png,image/jpeg,image/webp,image/avif,image/gif,image/bmp"></label><p>Your file stays outside the project until you add it as a candidate.</p>':CineBraidMediaBrowser.mount('reference-picker',{selector:true,target:p,state:p.discovery,loadFailed:()=>p.loadFailed===true,records:()=>pickerRecords(p),select:row=>{p.selected=row.assetId;p.error=CineBraidMediaDiscovery.eligibility(row,p);p.single=false;document.getElementById('rd-single').checked=false;syncPicker();},inspect:row=>inspectPicker(row,p)});
     const html='<div class="rd-picker"><header><div><h3>'+(p.upload?'Upload a reference image':'Choose from production media')+'</h3><p>'+e(entity.name)+' · '+e(types[p.list])+'</p></div><button id="rd-picker-cancel" class="cancel" autofocus onclick="closeModal()" '+(p.busy?'disabled':'')+'>Cancel</button></header><div class="rd-picker-layout"><section class="rd-picker-library">'+images+'</section><section class="rd-assignment" aria-label="Assignment preview"><figure>'+ (preview?'<img id="rd-picker-preview" src="'+a(preview)+'" alt="Selected image for assignment">':'<span>Select an image to inspect it</span>')+'</figure><label>Continuity state<select id="rd-assign-state">'+collection(entity).map(s=>'<option value="'+a(s.id)+'" '+(s.id===p.stateId?'selected':'')+'>'+e(s.name||s.id)+'</option>').join('')+'</select></label><label>Required view<select id="rd-assign-slot"><option value="">Choose the view this image represents</option>'+(entity.coverageSlots||[]).map(s=>'<option value="'+a(s.id)+'" '+(s.id===p.slotId?'selected':'')+'>'+e(s.label||s.id)+'</option>').join('')+'</select></label><label class="rd-check"><input id="rd-single" type="checkbox" '+(p.single?'checked':'')+'> I identify this image as the selected single view. A multi-view sheet cannot fill one view unless that view is explicitly identified.</label><div class="rd-assignment-summary" aria-live="polite"><b>'+(slot?e(slot.label||slot.id):'Choose a required view')+'</b><p>'+e(state?.name||'Choose a continuity state')+'</p><small>'+(slot&&R.selectedKey(entity,slot,p.stateId)?'This replaces the selected image for this view. The previous candidate and any approval are retained.':'This adds a candidate and fills the selected view.')+' Approval remains a separate decision.</small></div></section></div><footer>'+(p.refreshNeeded?'<button id="rd-picker-refresh" class="rd-button">Refresh selection</button>':'')+(p.loadFailed?'<button id="rd-picker-retry" class="rd-button">Retry loading media</button>':'')+'<p id="rd-picker-error" role="alert">'+e(p.error||'')+'</p><button class="rd-button rd-primary" id="rd-add-candidate" '+(!valid?'disabled':'')+'>'+(p.busy?'Adding candidate…':'Add as candidate')+'</button></footer></div>';
     updateOpenModal(html);document.getElementById(focus)?.focus({preventScroll:true});
     const img=document.getElementById('rd-picker-preview');if(img){img.onerror=()=>{p.error='The selected image could not be loaded. Choose an available image.';p.selected='';renderPicker();};}
@@ -106,7 +106,7 @@
       const current=data.images.find(r=>r.assetId===p.selected);
       p.images=data.images;p.revision=revision;p.error='';p.loadFailed=false;p.refreshNeeded=false;
       if(previous&&JSON.stringify(previous.identity)!==JSON.stringify(current?.identity)){p.selected='';p.discovery.selected='';p.single=false;p.error='The selected original changed. Inspect and select it again before adding.';}
-    }catch(error){p.error=error.message;p.refreshNeeded=true;}
+    }catch(error){p.error=error.message;p.loadFailed=true;p.refreshNeeded=false;}
   }
   function pickerRecords(p){return CineBraidMediaDiscovery.compose(P,CineBraidMediaInspector.projection()?.records||[],p.images).filter(r=>p.images.some(i=>i.assetId===r.assetId));}
   function inspectPicker(row,p){
@@ -139,13 +139,13 @@
     const btn=document.getElementById('rd-add-candidate');
     const item=selected?pickerRecords(p).find(r=>r.assetId===selected.assetId):null;const issue=item?CineBraidMediaDiscovery.eligibility(item,p):'';
     if(issue)document.getElementById('rd-picker-error').textContent=issue;
-    const update=()=>{if(btn)btn.disabled=!(url&&state&&slot&&p.single&&img?.complete&&img.naturalWidth>0&&!p.busy&&!issue);};
+    const update=()=>{if(btn)btn.disabled=!(url&&state&&slot&&p.single&&img?.complete&&img.naturalWidth>0&&!p.busy&&!issue&&!p.loadFailed);};
     if(img){img.onload=update;img.onerror=()=>{p.error='This exact image could not be loaded. It cannot be added.';document.getElementById('rd-picker-error').textContent=p.error;update();};}update();
     if(btn)btn.textContent=p.busy?'Adding candidate…':'Add as candidate';
     document.getElementById('rd-picker-cancel').disabled=p.busy;
   }
   async function commitPicker() {
-    const p=picker;if(!p||p.busy||!p.single)return;
+    const p=picker;if(!p||p.busy||p.loadFailed||!p.single)return;
     if(p.slug!==ACTIVE_PROJECT_SLUG||p.epoch!==PROJECT_OPEN_EPOCH){p.error='The open project changed. Cancel and reopen the selection.';renderPicker();return;}
     if(!projectSaveSettled().settled||p.revision!==PROJECT_REVISION){p.error='The project changed while this selection was open. Cancel and reopen it before adding.';renderPicker();return;}
     p.busy=true;syncPicker();
@@ -236,8 +236,7 @@
       origin=shot?{project:ACTIVE_PROJECT_SLUG,route:location.hash,shotId:shot.id,frameLabel:document.querySelector('.sd-frame')?.textContent||'',scrollTop:document.getElementById('main').scrollTop,focusId:link.id||''}:null;
     }
     const t=event.target.closest('[data-rd-action],[data-rd-candidate],[data-rd-slot],[data-rd-asset],#rd-add-candidate,#rd-picker-retry,#rd-picker-refresh');if(!t)return;
-    if(t.id==='rd-picker-refresh'&&picker){const p=picker;refreshPickerInventory(p).then(()=>{if(picker===p){renderPicker();syncPicker();}});return;}
-    if(t.id==='rd-picker-retry'&&picker)return openPicker(picker.slotId);
+    if(['rd-picker-refresh','rd-picker-retry'].includes(t.id)&&picker){const p=picker;refreshPickerInventory(p).then(()=>{if(picker===p){renderPicker();syncPicker();}});return;}
     if(t.id==='rd-add-candidate')return commitPicker();
     if(t.hasAttribute('data-rd-asset')&&picker){picker.selected=t.dataset.rdAsset;picker.error='';syncPicker();document.getElementById('rd-assign-slot')?.focus();return;}
     if(t.hasAttribute('data-rd-candidate')&&active){local(active.list,active.id).selected=t.dataset.rdCandidate;repaint('rd-status');return;}

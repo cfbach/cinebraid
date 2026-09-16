@@ -444,6 +444,7 @@ try:
         page.locator('[data-rd-action="choose"]').first.click()
         page.locator('#rd-picker-retry').wait_for()
         check('Failed selector load has explicit recovery',page.locator('#rd-picker-error').inner_text()=='Synthetic inventory failure')
+        check('Inventory failure never claims an empty production',page.locator('[data-md-load-failure]').count()==1 and 'No production media yet' not in page.locator('.rd-picker-library').inner_text())
         page.screenshot(path=str(OUT/'selector-error.png'))
         context.unroute('**/api/references/media?*')
         page.locator('#rd-picker-retry').click()
