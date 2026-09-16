@@ -104,6 +104,8 @@ try:
   page.set_viewport_size({'width':390,'height':844});page.locator('.wb-missing').scroll_into_view_if_needed();capture(page,'missing-approved-390')
   page.set_viewport_size({'width':1440,'height':900});page.locator('[data-wb="braidy"]').click();check('Opening Braidy is advisory only',page.evaluate('JSON.stringify(P.productionAuthority)')==baseline)
   check('No assistant request made on opening',not any('/ask' in r['url'] for r in mutations))
+  # Disposable in-browser capability fixture; never configures or contacts a provider.
+  page.evaluate("()=>{AGENT_STATUS.capabilities={...AGENT_STATUS.capabilities,text:{ready:true,provider:'synthetic',model:'Synthetic advisory fixture'}};CineBraidCreatorSurfaces.paint();}")
   before_suggestion=page.evaluate('JSON.stringify(P)');page.evaluate("()=>CineBraidBraidy.ask('Suggest one line of creative intent for this character.')");page.wait_for_function("CineBraidBraidy.lastAnswer().includes('Kai speaks')");check('Receiving suggestion changes no project data',page.evaluate('JSON.stringify(P)')==before_suggestion);check('Suggestion stays bound to typed entity',page.evaluate('CineBraidBraidy.handoff().target.id')=='characters:KAI');capture(page,'advisory-suggestion-1440')
   page.goto(base+'/#/settings');page.locator('a[href="#/bible/project"]').wait_for();check('Settings points to single creative editor',page.locator('#cfg-global-visual-style').count()==0)
   viewer=context.new_page();viewer.goto(base+'/bible.html');viewer.locator('.record-target').first.wait_for();capture(viewer,'approved-record-1440')

@@ -2424,13 +2424,23 @@ async function runProjectRefresh() {
   decorateProjectCommit(prepared);
   return { intent: "refresh", committed: true, reason: "" };
 }
+// Presentation only: an open Bible draft does not enter the project save chain.
+let projectSavePresentation = { state: "loading", label: "Opening…" };
 function setSaveState(state, label) {
+  projectSavePresentation = { state, label };
+  paintProjectSaveState();
+}
+function paintProjectSaveState() {
+  let { state, label } = projectSavePresentation;
+  const bibleDraft = state === "saved" && window.CineBraidWorkingBible?.blocked();
+  if (bibleDraft) { state = "dirty"; label = "Unsaved Bible edit"; }
+  window.CineBraidWorkingBible?.refreshIntentStatus();
   /* Settings → Project has no save button because the project record saves itself.
      Any panel that says so mirrors the real save chain, so the promise on screen and
      the state of the file on disk are the same statement. */
   document.querySelectorAll("[data-mirror-save-state]").forEach((mirror) => {
     mirror.dataset.state = state;
-    mirror.textContent = {
+    mirror.textContent = bibleDraft ? label : {
       saved: "Saved automatically",
       saving: "Saving…",
       dirty: "Unsaved changes — saving in a moment",

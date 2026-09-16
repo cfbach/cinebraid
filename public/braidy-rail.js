@@ -193,10 +193,11 @@
      PRESENTATION. Tokens out, so a suite can read exactly what the mascot was told
      without rendering anything — and so it is visible that prose is not among them. */
   function presentationTokens() {
+    const available = capability().available;
     return {
-      pending: !!PENDING,
-      failed: !!FAILURE,
-      acknowledging: Date.now() < ACKNOWLEDGE_UNTIL,
+      pending: available && !!PENDING,
+      failed: available && !!FAILURE,
+      acknowledging: available && Date.now() < ACKNOWLEDGE_UNTIL,
       /* A contextual handoff was opened and nothing has been said to it yet: Braidy is
          holding a subject and waiting for the filmmaker. Deliberately NOT "an answer
          offered some buttons" — every answer does that, and a pose that is always on
@@ -238,6 +239,7 @@
     const shared = contract();
     const asked = String(message == null ? "" : message).trim();
     if (!shared || !handoff) return null;
+    if (!capability().available) { repaint(); return null; }
     if (!asked && handoff.intent === "ask") return null;
     if (PENDING) abort();
 
@@ -276,6 +278,8 @@
        written belongs to a question nobody is waiting on any more. */
     if (id !== SEQUENCE) return null;
     PENDING = null;
+    // Availability may have changed while this advisory request was in flight.
+    if (!capability().available) { FAILURE = ""; repaint(); return null; }
     if (failure) {
       FAILURE = failure;
       repaint();
@@ -368,15 +372,18 @@
   }
 
   function threadMarkup(cap) {
+    // Keep past advisory turns in session memory, but never show them as an
+    // available assistant response while the current capability is unavailable.
+    if (!cap.available)
+      return `<article class="cb-braidy-turn cb-braidy-muted" data-braidy-role="unavailable">`
+        + `<p>${esc_(cap.message || "No assistant is configured, so Braidy has nothing to think with.")}</p>`
+        + `<p>${esc_(cap.action || "Everything below still works without it.")}</p></article>`;
+
     if (FAILURE)
       return `<article class="cb-braidy-turn cb-braidy-trouble" data-braidy-role="trouble"><p>${esc_(FAILURE)}</p></article>`;
     if (PENDING)
       return `<article class="cb-braidy-turn cb-braidy-muted" data-braidy-role="pending"><p>Thinking about it.</p></article>`;
     if (!THREAD.length) {
-      if (!cap.available)
-        return `<article class="cb-braidy-turn cb-braidy-muted" data-braidy-role="unavailable">`
-          + `<p>${esc_(cap.message || "No assistant is configured, so Braidy has nothing to think with.")}</p>`
-          + `<p>${esc_(cap.action || "Everything below still works without it.")}</p></article>`;
       /* WHERE THE QUALIFICATION NOTE IS SAID, and why it is not in the header.
 
          In the header it was thirty words of chrome standing over every conversation
@@ -399,7 +406,7 @@
     const cap = capability();
     const pose = presentation();
     const handoff = activeHandoff();
-    const busy = !!PENDING;
+    const busy = cap.available && !!PENDING;
     return `<section class="cb-braidy" data-braidy="1" data-braidy-state="${attr_(pose.state)}" data-braidy-motion="${attr_(pose.motion)}"`
       + ` data-braidy-intent="${attr_(handoff?.intent || "ask")}" data-braidy-qualified="${cap.qualified ? "1" : "0"}">`
       + `<header class="cb-braidy-head">`
@@ -519,7 +526,7 @@
     submit: () => {
       const field = document.getElementById(INPUT_ID);
       const message = field ? String(field.value || "").trim() : "";
-      if (!message) return;
+      if (!message || !capability().available) return;
       /* Cleared here rather than by the repaint: the reconciler preserves a live
          textarea's value on purpose, so the only thing that may empty it is the send
          that consumed it. */

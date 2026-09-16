@@ -10,7 +10,8 @@
   let approvalsRevision='';
   let session='', query='', filter='all', page=0, draft=null, origin=null, lastHash='', approvals=null, loadError='', loading=false, request=0, pendingReturn=null, notice='';
   const snapshots=new Map();
-  const intentStatus=()=>projectSaveSettled().settled?'Creative intent · saved in this project':'Creative intent · changes not yet saved';
+  const intentStatus=()=>!draft&&projectSaveSettled().settled?'Creative intent · saved in this project':'Creative intent · changes not yet saved';
+  function refreshIntentStatus(){document.querySelectorAll('.wb-intent').forEach(el=>{el.textContent=intentStatus();});}
   const scope=()=>ACTIVE_PROJECT_SLUG+':'+PROJECT_OPEN_EPOCH;
   const here=()=>{const p=location.hash.split('/').slice(2).map(x=>{try{return decodeURIComponent(x);}catch{return '';}});return {list:lists[p[0]]?p[0]:'',id:p[1]||''};};
   const entityOf=t=>arr(P[t.list]).find(x=>x.id===t.id);
@@ -93,12 +94,12 @@
   },true);
   window.addEventListener('beforeunload',ev=>{if(draft){ev.preventDefault();ev.returnValue='';}});
   window.addEventListener('cinebraid:route-rendered',()=>{
-    sync();const isBible=location.hash.startsWith('#/bible');document.body.classList.toggle('working-bible-active',isBible);
+    sync();paintProjectSaveState();const isBible=location.hash.startsWith('#/bible');document.body.classList.toggle('working-bible-active',isBible);
     if(!isBible&&origin?.scope===scope()){const main=document.getElementById('main');if(main&&!main.querySelector('.wb-return'))main.insertAdjacentHTML('afterbegin','<nav class="wb-return" aria-label="Bible return">'+btn('back','Return to Bible')+'</nav>');}
     if(isBible&&(pendingReturn||lastHash!==location.hash)){const s=pendingReturn||snapshots.get(location.hash);pendingReturn=loading?s:null;if(s?.scope===scope()&&s.hash===location.hash){restoreRouteViewState(s.view);requestAnimationFrame(()=>{const rows=document.querySelector('.wb-rows');if(rows)rows.scrollTop=s.browserTop;});}}
     lastHash=location.hash;
     document.querySelectorAll('.wb-approved img').forEach(img=>img.addEventListener('error',()=>{const p=document.createElement('p');p.className='wb-missing';p.textContent='Approved media could not be loaded. The receipt remains recorded.';img.replaceWith(p);},{once:true}));
   });
   function recoveryMarkup(){return draft?`<section class="wb-recovery"><h4>Preserved Bible edit</h4><p>Copy this text before reloading. Reload replaces the unsaved edit.</p><textarea id="wb-recovery-copy" aria-label="Preserved Bible edit" readonly>${esc(draft.value)}</textarea><div class="wb-actions">${btn('copy','Copy text')}${btn('recover','Return to edit')}</div></section>`:'';}
-  window.CineBraidWorkingBible={view,blocked,refuse,braidyTarget,braidyFacts,recoveryMarkup};
+  window.CineBraidWorkingBible={view,blocked,refuse,braidyTarget,braidyFacts,recoveryMarkup,refreshIntentStatus};
 })();
