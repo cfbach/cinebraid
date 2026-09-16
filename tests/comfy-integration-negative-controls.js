@@ -17,7 +17,7 @@
  *   NC-10 a confirmed mapping does not certify the node class
  *   NC-11 a LAN caller can steer a host-local request
  *
- * NOTHING IS WRITTEN TO DISK AND NOTHING IS REVERTED WITH GIT. Each defect is introduced
+ * NO SHARED SOURCE IS WRITTEN AND NOTHING IS REVERTED WITH GIT. Each defect is introduced
  * by compiling a MODIFIED COPY of the real source in memory and installing it in the
  * module cache before the routes are built, so the running code IS the broken code.
  *
@@ -572,13 +572,12 @@ async function nc11() {
     res.writeHead(200, { "content-type": "application/json" });
     res.end(JSON.stringify({ system: { comfyui_version: "decoy" }, devices: [{ name: "decoy" }] }));
   });
-  await new Promise((resolve) => decoy.listen(49199, "127.0.0.1", resolve));
+  await new Promise((resolve,reject) => { decoy.once("error",reject); decoy.listen(0, "127.0.0.1", resolve); });
+  const decoyUrl = `http://127.0.0.1:${decoy.address().port}`;
 
-  /* Mutating a SPAWNED server means editing the two files on disk, running the control,
-     and restoring them. Every other control compiles its defect in memory; this one
-     cannot, because the defect spans server.js and a child process. The restore is in a
-     finally, the originals are held in memory, and the suite asserts the bytes came back
-     before it finishes. */
+  // The deliberately broken modules exist only in this disposable child's loader.
+  // Concurrent tests and the integration checkout always read the unmodified source.
+  const mutant = require('./helpers/disposable-root').disposableRoot('comfy-nc11');
   const targets = [
     { file: path.join(ROOT, "src/generation/comfyui/comfy-generation.js"), find: "  app.post(\"/api/generation/comfy/test\", async (req, res) => {\n    if (!requireLocalMachine(req, res)) return;", replace: "  app.post(\"/api/generation/comfy/test\", async (req, res) => {", label: "NC-11 inbound peer guard on the test route" },
     { file: path.join(ROOT, "src/server/server.js"), find: "  if (!isLoopbackRequest(req) && Object.prototype.hasOwnProperty.call(body.generation || {}, \"comfy\")) {", replace: "  if (false) {", label: "NC-11 scoped config restriction" },
@@ -587,29 +586,28 @@ async function nc11() {
   let comfy = null;
   let spawned = null;
   try {
-    for (const target of targets) {
-      const source = readLF(target.file);
-      fs.writeFileSync(target.file, mutateOnce(source, target.find, target.replace, target.label), "utf8");
-    }
+    const replacements = Object.fromEntries(targets.map(target=>[path.resolve(target.file).toLowerCase(),mutateOnce(readLF(target.file),target.find,target.replace,target.label)]));
+    const preload=path.join(mutant.home,'mutant-loader.cjs');
+    fs.writeFileSync(preload,'const Module=require("module"),path=require("path"),sources='+JSON.stringify(replacements)+';const original=Module._extensions[".js"];Module._extensions[".js"]=function(module,file){const source=sources[path.resolve(file).toLowerCase()];if(source!==undefined)return module._compile(source,file);return original(module,file);};');
     comfy = await Suite.startFakeComfy();
-    spawned = await Suite.startRealServer({ comfyBaseUrl: comfy.baseUrl, host: "0.0.0.0" });
+    spawned = await Suite.startRealServer({ comfyBaseUrl: comfy.baseUrl, host: "0.0.0.0", preload });
 
-    const wrote = await spawned.request("PUT", "/api/config", { generation: { comfy: { baseUrl: "http://127.0.0.1:49199" } } }, lanAddress);
+    const wrote = await spawned.request("PUT", "/api/config", { generation: { comfy: { baseUrl: decoyUrl } } }, lanAddress);
     const tested = await spawned.request("POST", "/api/generation/comfy/test", {}, lanAddress);
     note(`NC-11 with the guards removed: config write -> ${wrote.status}, test -> ${tested.status}, `
-      + `intercepted on 49199 -> ${JSON.stringify(intercepted)}`);
+      + `intercepted on ${decoyUrl} -> ${JSON.stringify(intercepted)}`);
     assert(intercepted.length > 0,
-      "NC-11 DID NOT REPRODUCE — with both guards removed a LAN caller should have reached 127.0.0.1:49199");
+      "NC-11 DID NOT REPRODUCE — with both guards removed a LAN caller should have reached the attacker-selected decoy");
     notes.push(`NC-11 a LAN caller can steer a host-local request → reproduced: ${intercepted.length} request(s) reached the attacker-selected port `
       + `(${intercepted.join(", ")}), which the shipped guards prevent`);
   } finally {
     if (spawned) await spawned.close();
     if (comfy) comfy.close();
     decoy.close();
-    for (const original of originals) fs.writeFileSync(original.file, original.bytes);
+    mutant.cleanup();
     for (const original of originals)
       assert(fs.readFileSync(original.file).equals(original.bytes),
-        `NC-11 FAILED TO RESTORE ${path.basename(original.file)} — the working tree is not what it was`);
+        `NC-11 CHANGED SHARED SOURCE ${path.basename(original.file)} — the working tree is not what it was`);
   }
 }
 

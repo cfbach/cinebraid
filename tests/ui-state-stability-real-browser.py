@@ -305,6 +305,8 @@ try:
                 desk.get_by_role("combobox", name=re.compile(r"^Continuity state")).select_option("state-open")
                 desk_before = page.evaluate("""() => ({state: document.querySelector('#rd-state').value,
                     selected: document.querySelector('[data-rd-candidate][aria-pressed="true"]')?.getAttribute('data-rd-candidate') || ''})""")
+            page.wait_for_function("()=>document.body.dataset.renderReady==='1' && CURRENT_RENDER_ROUTE_KEY===currentRouteKey()")
+            page.evaluate("()=>new Promise(r=>requestAnimationFrame(()=>requestAnimationFrame(()=>requestAnimationFrame(r))))")
             result = page.evaluate("""() => {
               const entries=routeDetailsEntries(document.querySelector('#main'));
               entries.forEach(({element})=>element.open=true);
@@ -312,9 +314,11 @@ try:
               if (visible) visible.element.scrollIntoView({block:'start'});
               return {keys:entries.map(x=>x.key), anchor:visible?.key||'', top:visible?.element.getBoundingClientRect().top||0};
             }""")
-            page.wait_for_timeout(70)
-            page.evaluate("route()")
-            page.wait_for_timeout(350)
+            # Disclosure toggle events and the prior route's two-frame restoration
+            # must settle before defining the viewport baseline.
+            page.evaluate("()=>new Promise(r=>requestAnimationFrame(()=>requestAnimationFrame(()=>requestAnimationFrame(r))))")
+            result['top'] = page.evaluate("key=>routeDetailsEntries(document.querySelector('#main')).find(x=>x.key===key)?.element.getBoundingClientRect().top||0",result['anchor'])
+            page.evaluate("async()=>{await route();await new Promise(r=>requestAnimationFrame(()=>requestAnimationFrame(()=>requestAnimationFrame(r))));}")
             after = page.evaluate("""(before) => {
               const entries=routeDetailsEntries(document.querySelector('#main'));
               const map=new Map(entries.map(x=>[x.key,x.element]));

@@ -1214,7 +1214,7 @@ function browserLedgerOwnership() {
    The defect this closes, exactly as it was reproduced: comfy-client.js constrains where
    CineBraid may CONNECT, and that says nothing about who chose the address. A LAN browser
    wrote `generation.comfy.baseUrl` through /api/config, called /test, and made the host
-   issue requests to 127.0.0.1:49199 — a private service on the operator's machine the
+   issue requests to an attacker-selected local port — a private service the
    browser could not reach itself. The destination being loopback is not the property that
    matters; the caller controlling it is.
 
@@ -1223,7 +1223,7 @@ function browserLedgerOwnership() {
    boundary. A fabricated `req` object would be testing this file's idea of a peer rather
    than the socket the server actually sees.
 
-   THE INTERCEPTOR IS THE ASSERTION. A listener on 49199 records every connection, so
+   THE INTERCEPTOR IS THE ASSERTION. An isolated ephemeral listener records every connection, so
    "refused" is proven by nothing arriving rather than by a status code alone. */
 async function lanCallerCannotSteerHostRequests() {
   const os = require("os");
@@ -1246,16 +1246,19 @@ async function lanCallerCannotSteerHostRequests() {
     res.writeHead(200, { "content-type": "application/json" });
     res.end(JSON.stringify({ system: { comfyui_version: "decoy" }, devices: [] }));
   });
-  await new Promise((resolve) => decoy.listen(49199, "127.0.0.1", resolve));
+  await new Promise((resolve,reject) => { decoy.once("error",reject); decoy.listen(0, "127.0.0.1", resolve); });
+  const decoyUrl = `http://127.0.0.1:${decoy.address().port}`;
 
-  const comfy = await startFakeComfy();
+  let comfy = null;
+  let spawned = null;
+  try {
+  comfy = await startFakeComfy();
   /* THE REAL server.js, spawned and bound to 0.0.0.0. The config half of this boundary
      lives in PUT /api/config, which the in-process harness does not mount — and a
      harness that re-implemented that rule would be proving its own copy rather than the
      product's. tests/generation-ingest-reaper.js spawns a real server for the same
      reason. */
-  const spawned = await startRealServer({ comfyBaseUrl: comfy.baseUrl, host: "0.0.0.0" });
-  try {
+  spawned = await startRealServer({ comfyBaseUrl: comfy.baseUrl, host: "0.0.0.0" });
     /* A confirmed, runnable workflow, so LAN-C3's refusal is the boundary rather than an
        unregistered workflow refusing for an unrelated reason. */
     const asLoopback = (method, route, body) => spawned.request(method, route, body, "127.0.0.1");
@@ -1269,7 +1272,7 @@ async function lanCallerCannotSteerHostRequests() {
     const asLan = (method, route, body) => spawned.request(method, route, body, lanAddress);
 
     /* --- LAN-C1: the exact reproduction. --------------------------------------- */
-    const wrote = await asLan("PUT", "/api/config", { generation: { comfy: { baseUrl: "http://127.0.0.1:49199" } } });
+    const wrote = await asLan("PUT", "/api/config", { generation: { comfy: { baseUrl: decoyUrl } } });
     assert.strictEqual(wrote.status, 403, `LAN-C1: the config write must be refused — ${JSON.stringify(wrote.data)}`);
     assert.strictEqual(wrote.data.code, "LOOPBACK_REQUIRED");
     assert.strictEqual(spawned.Config.readConfig().generation.comfy.baseUrl, comfy.baseUrl,
@@ -1278,17 +1281,17 @@ async function lanCallerCannotSteerHostRequests() {
     const tested = await asLan("POST", "/api/generation/comfy/test");
     assert.strictEqual(tested.status, 403, `LAN-C1: the test route must be refused — ${JSON.stringify(tested.data)}`);
     assert.strictEqual(tested.data.code, "LOOPBACK_REQUIRED");
-    assert.deepStrictEqual(intercepted, [], "LAN-C1: and nothing may reach 49199");
+    assert.deepStrictEqual(intercepted, [], "LAN-C1: and nothing may reach the attacker-selected decoy");
 
     /* --- LAN-C2: the malicious address is already in the configuration. --------- */
     spawned.Config.writeConfig(spawned.Config.mergeConfig(spawned.Config.readConfig(), {
-      generation: { comfy: { baseUrl: "http://127.0.0.1:49199" } },
+      generation: { comfy: { baseUrl: decoyUrl } },
     }));
     const testedAgain = await asLan("POST", "/api/generation/comfy/test");
     assert.strictEqual(testedAgain.status, 403, "LAN-C2: the route still refuses");
     const statusAsLan = await asLan("GET", "/api/generation/comfy/status");
     assert.strictEqual(statusAsLan.status, 403, "LAN-C2: and so does status, which also probes");
-    assert.deepStrictEqual(intercepted, [], "LAN-C2: still nothing may reach 49199");
+    assert.deepStrictEqual(intercepted, [], "LAN-C2: still nothing may reach the attacker-selected decoy");
     spawned.Config.writeConfig(spawned.Config.mergeConfig(spawned.Config.readConfig(), {
       generation: { comfy: { baseUrl: comfy.baseUrl } },
     }));
@@ -1339,11 +1342,11 @@ async function lanCallerCannotSteerHostRequests() {
       "LAN-C5: and the comfy block is unchanged throughout");
 
     assert.deepStrictEqual(intercepted, [], "no request may ever have reached the attacker-selected port");
-    note(`LAN boundary: against the real server bound to 0.0.0.0 and driven from ${lanAddress}, the config write is refused and not persisted, all nine ComfyUI routes refuse by name, dispatch queues nothing, and the decoy on 127.0.0.1:49199 recorded ZERO requests — while loopback still tests, dispatches and runs, and appearance and fal settings still save from the LAN`);
+    note(`LAN boundary: against the real server bound to 0.0.0.0 and driven from ${lanAddress}, the config write is refused and not persisted, all nine ComfyUI routes refuse by name, dispatch queues nothing, and the decoy on ${decoyUrl} recorded ZERO requests — while loopback still tests, dispatches and runs, and appearance and fal settings still save from the LAN`);
   } finally {
-    await spawned.close();
-    comfy.close();
-    decoy.close();
+    if (spawned) await spawned.close();
+    if (comfy) comfy.close();
+    await new Promise(resolve=>decoy.close(resolve));
   }
 }
 
@@ -1351,7 +1354,7 @@ async function lanCallerCannotSteerHostRequests() {
    Returns a request helper that can be pointed at either the loopback address or a
    genuine LAN address on this machine, so the peer the server sees is a real socket
    peer rather than this file's opinion of one. */
-async function startRealServer({ comfyBaseUrl, host }) {
+async function startRealServer({ comfyBaseUrl, host, preload = "" }) {
   const { spawn } = require("child_process");
   const dir = fs.mkdtempSync(path.join(fs.realpathSync.native(os.tmpdir()), "cb-lan-"));
   const projectsRoot = path.join(dir, "projects");
@@ -1380,24 +1383,47 @@ async function startRealServer({ comfyBaseUrl, host }) {
     generation: { comfy: { enabled: true, baseUrl: comfyBaseUrl, workflowFolder: workflows } },
   }));
 
-  const port = 4000 + Math.floor(Math.random() * 900);
-  const child = spawn(process.execPath, ["server.js"], {
+  const reservation = require("net").createServer();
+  await new Promise((resolve,reject)=>{reservation.once("error",reject);reservation.listen(0,"127.0.0.1",resolve);});
+  const port = reservation.address().port;
+  await new Promise(resolve=>reservation.close(resolve));
+  assert.notStrictEqual(port,4477);
+  const child = spawn(process.execPath, [...(preload ? ["--require",preload] : []),"server.js"], {
     cwd: ROOT,
+    windowsHide: true,
     env: { ...env, PORT: String(port), CINEBRAID_HOST: host },
     stdio: ["ignore", "pipe", "pipe"],
   });
   const logs = [];
+  let spawnError = null;
+  child.once("error", error => { spawnError = error; });
   child.stdout.on("data", (chunk) => logs.push(String(chunk)));
   child.stderr.on("data", (chunk) => logs.push(String(chunk)));
+  const close = async () => {
+    if (!spawnError && child.exitCode === null && child.signalCode === null) {
+      const exited = new Promise(resolve=>child.once("exit",resolve)); child.kill(); await exited;
+    }
+    if (saved) process.env.CINEBRAID_CONFIG_PATH=saved; else delete process.env.CINEBRAID_CONFIG_PATH;
+    delete require.cache[path.join(ROOT,"src/server/config.js")];
+    fs.rmSync(dir,{recursive:true,force:true});
+  };
   const deadline = Date.now() + 30000;
-  for (;;) {
+  try { for (;;) {
+    if (spawnError) throw spawnError;
+    if (child.exitCode !== null || child.signalCode !== null) throw new Error(`fixture server exited: ${logs.join("")}`);
     if (Date.now() > deadline) throw new Error(`server did not start: ${logs.join("")}`);
+    // Only this child's successful listen callback certifies ownership of the port.
+    if (!logs.join("").includes(`Projects root: ${projectsRoot}`) || !logs.join("").includes(`http://127.0.0.1:${port}`)) {
+      await new Promise(resolve=>setTimeout(resolve,25)); continue;
+    }
     try {
       const probe = await fetch(`http://127.0.0.1:${port}/api/me`);
       if (probe.ok) break;
     } catch { /* still starting */ }
     await new Promise((resolve) => setTimeout(resolve, 250));
   }
+
+  } catch(error) { await close(); throw error; }
 
   return {
     dir, port, configPath, registryPath, Config, logs,
@@ -1413,13 +1439,7 @@ async function startRealServer({ comfyBaseUrl, host }) {
       const file = path.join(projectsRoot, "film-a", "generation-jobs.json");
       return fs.existsSync(file) ? JSON.parse(fs.readFileSync(file, "utf8")) : [];
     },
-    close: async () => {
-      child.kill();
-      await new Promise((resolve) => child.once("exit", resolve));
-      if (saved) process.env.CINEBRAID_CONFIG_PATH = saved; else delete process.env.CINEBRAID_CONFIG_PATH;
-      delete require.cache[path.join(ROOT, "src/server/config.js")];
-      try { fs.rmSync(dir, { recursive: true, force: true }); } catch {}
-    },
+    close,
   };
 }
 

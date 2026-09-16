@@ -369,6 +369,7 @@ function resolveNpmLauncher() {
   };
 }
 const launcher = resolveNpmLauncher();
+let qualificationFailure = null;
 
 function runScript(name) {
   return new Promise((resolve, reject) => {
@@ -381,10 +382,12 @@ function runScript(name) {
       windowsHide: true,
       shell: launcher.shell,
     });
-    child.on("error", reject);
+    child.on("error", error => { qualificationFailure ||= error; reject(error); });
     child.on("exit", (code, signal) => {
-      if (signal) return reject(new Error(`${name} terminated by ${signal}`));
-      if (code !== 0) return reject(new Error(`${name} failed with exit code ${code}`));
+      if (signal || code !== 0) {
+        const error=new Error(signal ? `${name} terminated by ${signal}` : `${name} failed with exit code ${code}`);
+        qualificationFailure ||= error; return reject(error);
+      }
       resolve({ name, seconds: (Date.now() - startedAt) / 1000 });
     });
   });
@@ -394,27 +397,32 @@ async function runWithConcurrency(names, limit) {
   const pending = [...names];
   const completed = [];
   async function worker() {
-    while (pending.length) {
+    while (pending.length && !qualificationFailure) {
       const name = pending.shift();
       completed.push(await runScript(name));
     }
   }
-  await Promise.all(Array.from({ length: Math.min(limit, names.length) }, worker));
+  const settled=await Promise.allSettled(Array.from({ length: Math.min(limit, names.length) }, worker));
+  const failed=settled.find(row=>row.status === "rejected");
+  if (failed) throw failed.reason;
   return completed;
 }
 
 (async () => {
   const startedAt = Date.now();
   const results = [];
-  const [nodeResults, browserResults] = await Promise.all([
+  const groups = await Promise.allSettled([
     runWithConcurrency(nodeSuites, 4),
     (async () => {
       const completed = [];
-      for (const script of browserSuites) completed.push(await runScript(script));
+      for (const script of browserSuites) { if (qualificationFailure) break; completed.push(await runScript(script)); }
       return completed;
     })(),
   ]);
-  results.push(...nodeResults, ...browserResults);
+  const failed=groups.find(row=>row.status === "rejected");
+  if (failed) throw failed.reason;
+  if (qualificationFailure) throw qualificationFailure;
+  results.push(...groups[0].value, ...groups[1].value);
   for (const script of serialSuites) results.push(await runScript(script));
   for (const script of releaseSuites) results.push(await runScript(script));
   const elapsedSeconds = ((Date.now() - startedAt) / 1000).toFixed(1);
@@ -424,5 +432,5 @@ async function runWithConcurrency(names, limit) {
   console.log(`Slowest suites: ${slowest}.`);
 })().catch((error) => {
   console.error(`\nCineBraid full verification failed: ${error.message}`);
-  process.exit(1);
+  process.exitCode = 1;
 });

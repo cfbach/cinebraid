@@ -380,6 +380,16 @@ try:
             receipts: P.productionAuthority.receipts.length,
         })"""
         before = page.evaluate(LINEAGE_SNAPSHOT)
+        # Observe the real deferred continuation without replacing its behavior.
+        # Its route starts after the first visible card, so that card alone is not completion.
+        page.evaluate("""() => {
+            const original=window.revealEntityContinuityState;
+            window.__variantRevealToken=0;
+            window.revealEntityContinuityState=function(...args){
+                try { return original.apply(this,args); }
+                finally { window.__variantRevealToken=ROUTE_REQUEST_TOKEN;window.revealEntityContinuityState=original; }
+            };
+        }""")
         page.locator('.entity-demand-row[data-demand-id="state-soot"] button', has_text="Use approved").first.click()
         # WAIT FOR EACH REQUESTED THING IN TURN, so a failure names the step that broke
         # rather than timing out on a symptom three steps downstream. The selection is
@@ -392,6 +402,7 @@ try:
             """() => { const n = document.querySelector('.entity-coverage-detail'); return !!n && n.dataset.coverageDetailOpen === '1'; }""",
             timeout=10000)
         page.wait_for_selector('[data-continuity-state-id="state-soot"]', state="visible", timeout=10000)
+        page.wait_for_function("()=>window.__variantRevealToken>0&&ROUTE_REQUEST_TOKEN===window.__variantRevealToken&&document.body.dataset.renderReady==='1'&&CURRENT_RENDER_ROUTE_KEY===currentRouteKey()")
         after = page.evaluate(LINEAGE_SNAPSHOT)
         assert after == before, \
             "5. opening the state workflow must write nothing — not a parent, not a generation mode, not an approval"
@@ -417,33 +428,12 @@ try:
         # Section 5 clicked a continuity-state control. openContinuityStateVariant selects
         # `coverage` synchronously AND schedules revealEntityContinuityState, which selects
         # it again and routes — a legitimate continuation of the click, and the reason the
-        # editor is reachable at all. Section 5's waits are satisfied by the synchronous
-        # half, so writing a remembered task here raced that continuation: on a GitHub
-        # runner it landed at 1258ms, after this write at 1167ms, and the next route
-        # correctly opened on `coverage`. Locally it landed first and the write survived.
+        # editor is reachable at all. The former card-only waits could finish before
+        # that continuation and let it overwrite the next fixture's remembered task.
         #
-        # Leaving the reference route and waiting for the app's own settled answer is what
-        # closes the window: nothing is still pending against this entity once production
-        # has rendered and settled. No sleep, no widened timeout, and renderReady stays the
-        # authority. The remembered task is written below, once the route is somewhere else.
+        # The observed continuation above has already selected its final route.
+        # Now leave it and require both the current route identity and its rendered page.
         page.evaluate("() => { location.hash = '#/production'; }")
-        # SYNCHRONISED ON THE APP'S OWN ANSWER, NOT ON A SHAPE APPEARING.
-        #
-        # `location.hash === '#/production'` proves nothing: the hash is assigned
-        # synchronously, so that wait returns before any rendering has begun. And
-        # `.bounded-entity-page[data-selected-task="details"]` is written by
-        # entities.js while route() is still running, so waiting for it can return
-        # mid-render -- an intermediate state, which is why widening its timeout made a
-        # run green without making the test correct.
-        #
-        # public/app.js already publishes the real answer. route() is async and is also
-        # bound to hashchange, so several renders can be in flight at once; it deletes
-        # `body[data-render-ready]` when a render starts, and markRouteRenderSettled()
-        # restores it after two animation frames ONLY if that render is still the newest
-        # one. So `renderReady === "1"` means: rendering has finished and nothing has
-        # superseded it. Combined with the shape the operation should have produced, that
-        # is the completion condition -- the old DOM cannot satisfy the shape half, and an
-        # unsettled render cannot satisfy the readiness half.
         def wait_settled(condition, what):
             try:
                 page.wait_for_function(
@@ -462,7 +452,7 @@ try:
                 }""")
                 raise AssertionError(f"{what}: the route never settled - {evidence}") from error
 
-        wait_settled("location.hash === '#/production'", "the production route")
+        wait_settled("location.hash === '#/production' && !!document.querySelector('.production-home-head') && CURRENT_RENDER_ROUTE_KEY === currentRouteKey()", "the production route")
         # Settled and elsewhere: the click's continuation has run and cannot overwrite this.
         page.evaluate(
             """(id) => {
@@ -476,41 +466,28 @@ try:
             " return !!n && n.dataset.selectedTask === 'details'; })()",
             "the reference route opened fresh on its details task")
 
-        # ---- 6-NC. AWAITING route() IS NOT AWAITING THE RENDER -----------------------
-        #
-        # Measured, synchronously, with no scheduling in the assertion. A real render
-        # clears body[data-render-ready] on entry, and markRouteRenderSettled() restores
-        # it from inside requestAnimationFrame(requestAnimationFrame(...)) -- so it is
-        # still absent at the moment route()'s own promise resolves.
-        #
-        # That is the whole defect the retired wait had. It awaited route() and then
-        # polled for a rendered shape, and the shape is written during the window this
-        # measures: both can be satisfied while the render has not settled and while a
-        # newer render may still supersede this one. Widening its timeout could only
-        # change how long it waited before reading the same intermediate state. The wait
-        # this suite uses now requires the flag as well, so it cannot return there.
-        boundary = page.evaluate("""() => {
-            const before = document.body.dataset.renderReady || null;
-            location.hash = '#/production';
-            const pending = route();
-            const during = document.body.dataset.renderReady || null;
-            return pending.then(() => ({ before, during, after: document.body.dataset.renderReady || null }));
+        # ---- 6-NC. Current render readiness belongs only to the winning token.
+        boundary = page.evaluate("""async() => {
+            const before=document.body.dataset.renderReady||null;
+            const tokenBefore=ROUTE_REQUEST_TOKEN;
+            await route();
+            const after=document.body.dataset.renderReady||null;
+            delete document.body.dataset.renderReady;
+            markRouteRenderSettled(ROUTE_REQUEST_TOKEN-1);
+            const stale=document.body.dataset.renderReady||null;
+            markRouteRenderSettled(ROUTE_REQUEST_TOKEN);
+            return {before,advanced:ROUTE_REQUEST_TOKEN>tokenBefore,after,stale,current:document.body.dataset.renderReady||null,routeMatches:CURRENT_RENDER_ROUTE_KEY===currentRouteKey()};
         }""")
-        assert boundary["before"] == "1",             f"6-NC setup: the page must start settled, or this control measures nothing - got {boundary}"
-        assert boundary["during"] is None,             ("6-NC: a render must clear body[data-render-ready] on entry, or the flag is not a completion "
-             f"signal and this suite's wait proves nothing - got {boundary}")
-        assert boundary["after"] is None,             ("6-NC: the flag must still be absent when route() resolves - if it were already restored, awaiting "
-             f"route() would have been sufficient and the retired wait would not have raced - got {boundary}")
-        wait_settled("location.hash === '#/production'", "the production route after the boundary measurement")
+        assert boundary == {'before':'1','advanced':True,'after':'1','stale':None,'current':'1','routeMatches':True}, f"6-NC: readiness must belong to the settled current route, not a stale token: {boundary}"
+        page.evaluate("() => { location.hash = '#/production'; }")
+        wait_settled("location.hash === '#/production' && !!document.querySelector('.production-home-head') && CURRENT_RENDER_ROUTE_KEY === currentRouteKey()", "the production route after the boundary measurement")
         page.evaluate("(id) => { location.hash = '#/character/' + id; }", ENTITY)
         open_reference_tools(page)
         wait_settled(
             "(() => { const n = document.querySelector('.bounded-entity-page');"
             " return !!n && n.dataset.selectedTask === 'details'; })()",
             "the reference route after the boundary measurement")
-        findings.append("6-NC: a render clears body[data-render-ready] on entry and has still not restored it when "
-                        "route() resolves, so awaiting route() and polling for a shape - the retired wait - could "
-                        "read a render still in flight whatever its timeout; the settled wait cannot")
+        findings.append("6-NC: each render advances its token, the winning route is ready, and a stale token cannot declare a newer route ready")
         page.wait_for_selector("#main .entity-subworkspace", timeout=10000)
         provenance = page.evaluate("""() => {
             const node = [...document.querySelectorAll('#main details')]
