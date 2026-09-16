@@ -2078,6 +2078,7 @@ function projectHasUnsavedEdits() {
    prepared snapshot is discarded whole — a refresh never merges, never installs
    part of what it read, and never escalates into a replacement. */
 function projectRefreshRefusal(ticket, prepared) {
+  if (window.CineBraidWorkingBible?.blocked()) return window.CineBraidWorkingBible.refuse();
   if (!prepared || !prepared.available)
     return "the server no longer has this project to read";
   if (!P || !ACTIVE_PROJECT_SLUG)
@@ -2181,6 +2182,7 @@ function beginProjectRefresh() {
    "normal mode", and leaving Recovery mode for either would be the same untruth
    the mode exists to prevent. */
 function projectReplacementRefusal(prepared) {
+  if (window.CineBraidWorkingBible?.blocked()) return window.CineBraidWorkingBible.refuse();
   if (!prepared || prepared.available !== true)
     return "the server did not serve a project document";
   if (!prepared.project || typeof prepared.project !== "object" || Array.isArray(prepared.project))
@@ -2364,6 +2366,7 @@ function decorateProjectCommit(prepared) {
    the continuity workspace, and showFirstRunWorkspace(), which clears the record
    entirely. Neither appears in the refresh lifecycle at all. */
 async function runProjectReplacement() {
+  if (window.CineBraidWorkingBible?.blocked()) { toast(window.CineBraidWorkingBible.refuse()); return {intent:"open",committed:false,reason:"Open Bible edit"}; }
   applyTheme();
   const prepared = await prepareProjectSnapshot({ claimRecovery: true });
   if (!prepared.available) {
@@ -2614,6 +2617,7 @@ function releaseProjectAsyncMutationsByKey(key) {
 /* "" when a replacement may begin, otherwise what is still running. Named when
    CineBraid knows the name, because "wait" is easier to accept with a reason. */
 function projectQuiescenceRefusal() {
+  if (window.CineBraidWorkingBible?.blocked()) return window.CineBraidWorkingBible.refuse();
   const pending = projectAsyncMutationsInFlight();
   /* Automation runs keep their own in-flight registry and mutate the project
      from their own continuations. It is read here rather than re-modelled. */
@@ -2853,6 +2857,7 @@ function projectConflict(data) {
       `<h3>This project changed while this view was open</h3>`
       + `<div class="modal-sub">YOUR LAST EDITS IN THIS TAB WERE NOT SAVED</div>`
       + `<p>${message}</p>`
+      + (window.CineBraidWorkingBible?.recoveryMarkup() || "")
       + `<div class="modal-actions"><button class="approve-btn large" onclick="location.reload()">RELOAD PROJECT</button></div>`,
     );
 }
@@ -4136,9 +4141,11 @@ $("#project-title").onkeydown = (event) => {
 /* Asked for once, at load, because it cannot change while this page is open. */
 loadAppIdentity();
 window.requestArchiveProject = (slug, title) => {
+  if (window.CineBraidWorkingBible?.blocked()) return toast(window.CineBraidWorkingBible.refuse());
   confirmModal(`Archive “${title}”? It will disappear from the active project list but can be restored from this same window.`, async () => {
     try {
       await flushPendingProjectSave();
+      if (window.CineBraidWorkingBible?.blocked()) return toast(window.CineBraidWorkingBible.refuse());
       const response = await fetch(`/api/projects/${encodeURIComponent(slug)}/archive`, { method: "POST" });
       const data = await response.json().catch(() => ({}));
       if (!response.ok) throw new Error(data.error || "Could not archive project");
@@ -4169,11 +4176,13 @@ window.restoreTrashedProject = async (trashName) => {
   } catch (error) { toast(error.message || "Could not restore deleted project"); }
 };
 window.requestDeleteProject = (slug, title) => {
+  if (window.CineBraidWorkingBible?.blocked()) return toast(window.CineBraidWorkingBible.refuse());
   confirmModal(
     `Delete “${title}”? CineBraid will close it and move the complete project folder to recoverable trash. You can restore it later from Project Management.`,
     async () => {
       try {
         await flushPendingProjectSave();
+        if (window.CineBraidWorkingBible?.blocked()) return toast(window.CineBraidWorkingBible.refuse());
         const response = await fetch(`/api/projects/${encodeURIComponent(slug)}`, { method: "DELETE" });
         const data = await response.json().catch(() => ({}));
         if (!response.ok) throw new Error(data.error || "Could not delete project");
@@ -4190,6 +4199,7 @@ window.requestDeleteProject = (slug, title) => {
    anything is shown, so the interface and the server never disagree about which project is open
    and a later edit cannot be written into the project that failed. */
 window.switchProject = async (slug) => {
+  if (window.CineBraidWorkingBible?.blocked()) return toast(window.CineBraidWorkingBible.refuse());
   /* A switch from THIS window cannot race the manual replacement commit: the
      commit's conditional activation states which project it believes is active,
      and a switch dispatched from the same window between that belief and the
@@ -4329,6 +4339,7 @@ window.newProject = () =>
        scene. It is offered on the create screen and editable in Settings → Project;
        the endpoint still accepts it, so nothing about the capability changed. */
     async (v) => {
+      if (window.CineBraidWorkingBible?.blocked()) return toast(window.CineBraidWorkingBible.refuse());
       try {
         await flushPendingProjectSave();
       } catch (error) {
@@ -4707,6 +4718,7 @@ function updateChrome(view, navName) {
     prop: "Prop",
     vehicle: "Vehicle",
     sound: "Audio asset",
+    bible: "Project Bible",
     production: "Production",
     shots: "Shots",
     library: "References",

@@ -3,6 +3,9 @@ const { spawnSync } = require("child_process");
 const path = require("path");
 const ROOT = path.resolve(__dirname, "..");
 const SOURCES = [
+  "src/server/approved-record.js",
+  "public/working-bible.js",
+  "tests/ev2-4-bible-audience.js",
   "tests/ofp-synthetic-conformance.js",
   "src/server/config.js",
   "src/server/test-isolation.js",

@@ -10,5 +10,5 @@
     if(pending&&location.hash===origin.hash){const saved=origin;pending=false;origin=null;requestAnimationFrame(()=>requestAnimationFrame(()=>{if(saved.view&&typeof applyRouteDisclosureState==='function')applyRouteDisclosureState(saved.view);document.getElementById('main').scrollTop=saved.scroll;if(saved.resume)saved.resume();else {const el=[...document.querySelectorAll('[data-md-open]')].find(x=>x.dataset.mdOpen===saved.focus);el?.focus({preventScroll:true});}}));return;}
     if(location.hash!==origin.hash||origin.resume){const main=document.getElementById('main');if(main&&!main.querySelector('[data-media-return]')){const button=document.createElement('button');button.type='button';button.className='md-return';button.dataset.mediaReturn='';button.textContent=origin.resume?'Return to media selection':'Return to Production media';button.onclick=back;(main.querySelector('.reference-desk,.shot-desk')||main).prepend(button);}}
   });
-  window.CineBraidMediaReturn={capture,go,back};
+  window.CineBraidMediaReturn={capture,go,back,cancel(){origin=null;pending=false;}};
 })();

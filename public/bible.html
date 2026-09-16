@@ -1,28 +1,5 @@
 <!DOCTYPE html>
-<html lang="en">
-<head>
-<meta charset="UTF-8">
-<meta name="viewport" content="width=device-width,initial-scale=1">
-<title>CineBraid Project Bible</title>
-<link rel="icon" href="/cinebraid-mark.svg">
-<link rel="stylesheet" href="styles.css">
-</head>
-<body class="bible-page">
-<div id="bible-app" class="bible-app">
-  <aside class="bible-sidebar">
-    <a class="bible-brand" href="/"><img src="/cinebraid-logo-xs.png" alt="" width="80" height="103"><span>Cine<b>Braid</b></span></a>
-    <div id="bible-project-mini" class="bible-project-mini">Loading…</div>
-    <div class="bible-sidebar-actions"><button id="bible-visual-toggle" type="button" aria-pressed="false">Visual mode</button><a href="/" class="bible-back-link">Back to workspace</a></div>
-    <!-- Two presets, no configuration and no filename to type. Both are plain
-         links: the server names the file and sends it, so the export needs no
-         script and makes no call off this machine. -->
-    <div class="bible-export-actions" aria-label="Export this Bible"><span>Export</span><a id="bible-export-canon" class="bible-back-link" href="/api/bible/export?preset=canon">Canon only</a><a id="bible-export-appendix" class="bible-back-link" href="/api/bible/export?preset=canon-appendix">Canon + supporting material</a></div>
-    <div class="bible-search-wrap"><input id="bible-search" placeholder="Search approved canon"><kbd>/</kbd></div>
-    <nav id="bible-toc" class="bible-toc" aria-label="Bible sections"></nav>
-    <div class="bible-sidebar-foot">YOUR PRODUCTION, YOUR CONTROL<br><span>Current approved material</span></div>
-  </aside>
-  <main id="bible" class="bible-main">Loading project bible…</main>
-</div>
-<script src="bible.js"></script>
-</body>
-</html>
+<html lang="en"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>CineBraid · Approved record</title><link rel="icon" href="/cinebraid-mark.svg"><link rel="stylesheet" href="/styles.css">
+<style>
+body{margin:0;background:#111315;color:#edeef0;font:16px/1.6 system-ui}#record{max-width:1120px;margin:auto;padding:clamp(20px,4vw,56px)}.record-head{border-bottom:1px solid #393e43;padding-bottom:24px}.record-head h1{font-size:clamp(28px,4vw,44px);line-height:1.1}.record-links{display:flex;gap:20px;flex-wrap:wrap}a{color:#7dcad3}input{width:100%;box-sizing:border-box;min-height:44px;margin:24px 0}.record-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(min(100%,300px),1fr));gap:20px}.record-target{padding:20px;background:#181a1c;border:1px solid #393e43;border-radius:12px;overflow-wrap:anywhere}.record-target img,.record-target video{width:100%;height:240px;object-fit:contain;background:#101112}.record-target audio{width:100%}.record-target small{display:block;color:#a4a9af}.record-approved{color:#a6d1b7}.record-target h3{margin:0 0 12px}.record-section{margin:36px 0}button{min-height:44px}a:focus-visible,button:focus-visible,input:focus-visible{outline:2px solid #7dcad3;outline-offset:4px}
+</style></head><body><main id="record" aria-busy="true"><p role="status">Loading Approved record…</p></main><script src="/bible.js"></script></body></html>

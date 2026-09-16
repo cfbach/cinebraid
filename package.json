@@ -22,6 +22,8 @@
     "check:public-exposure": "node tests/public-exposure.js",
     "check:public-exposure-negative": "node tests/public-exposure-negative-controls.js",
     "publication:preflight": "node scripts/publication-preflight.js",
+    "check:ev2-4-audience": "node tests/ev2-4-bible-audience.js",
+    "check:ev2-4-browser": "node tests/run-python-check.js tests/ev2-4-bible-real-browser.py",
     "check:syntax": "node scripts/check-syntax.js",
     "check:render": "node tests/render-harness.js",
     "check:behavior": "node tests/current-behavior.js",

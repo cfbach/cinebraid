@@ -143,6 +143,7 @@
     const view = parts[1] || "";
     const id = parts[2] || "";
     const project = activeProject();
+    if (view === "bible" && window.CineBraidWorkingBible) return window.CineBraidWorkingBible.braidyTarget();
     if (view === "shot" && id) return { kind: "shot", id, label: id };
     if (view === "scene" && id) return { kind: "scene", id, label: id };
     return { kind: "project", id: "", label: project?.meta?.title || "This production" };
@@ -180,7 +181,11 @@
      handoff carries a conversation. */
   function activeHandoff() {
     const seed = routeSeed();
-    if (HANDOFF && HANDOFF.target.kind === seed.kind && HANDOFF.target.id === seed.id) return HANDOFF;
+    if (HANDOFF && HANDOFF.target.kind === seed.kind && HANDOFF.target.id === seed.id) {
+      if (HANDOFF.origin.surface === "project-bible" && window.CineBraidWorkingBible)
+        return contract().braidyHandoff({...HANDOFF, facts:window.CineBraidWorkingBible.braidyFacts()});
+      return HANDOFF;
+    }
     return seedHandoff();
   }
 

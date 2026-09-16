@@ -531,6 +531,7 @@ function projectRestoreIdentity() {
   return { slug: activeProjectSlug(), revision: PROJECT_REVISION };
 }
 window.restoreProjectBackup = async (name) => {
+  if (window.CineBraidWorkingBible?.blocked()) return toast(window.CineBraidWorkingBible.refuse());
   const { slug, revision } = projectRestoreIdentity();
   if (!slug || !name) return toast("No active project to restore into");
   /* Without the exact revision of the document being replaced the server answers
@@ -556,6 +557,7 @@ window.restoreProjectBackup = async (name) => {
       ? "<ul>" + delta.map((row) => "<li><b>" + esc(row.targetKey) + "</b> · " + (row.beforeCurrent ? "current" : "non-Canon") + " → " + (row.afterCurrent ? "current" : "non-Canon") + "</li>").join("") + "</ul>"
       : "<p>No resolved production-authority target changes.</p>";
     const perform = async (resurrectionConfirmed) => {
+      if (window.CineBraidWorkingBible?.blocked()) return toast(window.CineBraidWorkingBible.refuse());
       const response = await fetch("/api/projects/" + encodeURIComponent(slug) + "/restore", {
         method: "POST", headers,
         body: JSON.stringify({ name, confirm: true, previewHash: preview.previewHash, resurrectionConfirmed }),

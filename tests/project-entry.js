@@ -400,9 +400,9 @@ async function sectionGlobalStyleDeferred() {
   const settings = await render("#/settings", buildFixture(), {
     storage: { "cinebraid-focused:fixture:settings-task:settings": "project" },
   });
-  assert(settings.html.includes('id="cfg-global-visual-style"'), "G. Settings → Project still edits the global visual style");
+  assert(settings.html.includes('href="#/bible/project"'), "G. Settings links to the single creative-intent editor in Project Bible");
   assert(settings.html.includes('list="cinebraid-format-presets"'), "G/F. and offers the same typed format suggestions the create screen does");
-  note("G. the global look is absent from the create modal and from the create screen — where it edited the open project — and remains fully editable in Settings → Project");
+  note("G. the global look is absent from the create modal and from the create screen — where it edited the open project — and is reached from Settings through the Project Bible editor");
 }
 
 /* =========================================================================
@@ -1664,8 +1664,8 @@ async function sectionManualStartIsNotAChecklist() {
     "U9. and the screen says where those tools live once the project exists");
   /* The capability is still in the product, in the surface that owns it. */
   const settingsSource = fs.readFileSync(path.join(ROOT, "public", "views.js"), "utf8");
-  assert(settingsSource.includes("setGlobalCreationField('globalStylePrompt'"),
-    "U9. Settings → Project still owns the global style, so retiring it from the create screen removed no capability");
+  assert(settingsSource.includes('href="#/bible/project"'),
+    "U9. Settings points to the current creative-intent owner without a competing writer");
 
   /* AND IT SOUNDS LIKE STARTING A PROJECT. The structure was already light after the
      first correction; the copy still read as product documentation explaining what

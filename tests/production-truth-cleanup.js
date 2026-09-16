@@ -602,24 +602,15 @@ async function checkUnknownSurvivesImportAndReload() {
       "PT3-C1: the mixed-timing shot is stored with one length and one explicit unknown");
     checks += 1;
 
-    const bible = await (await fetch(`${base}/api/bible/export?preset=canon`)).text();
-    /* The heading is the line after the shot's own `### id — title`, taken by
-       position rather than by guessing the scene label the projection resolves to. */
-    const bibleLines = bible.split(/\r?\n/);
-    const headingIndex = bibleLines.findIndex((line) => line.startsWith("### S-03 "));
-    const heading = headingIndex >= 0 ? bibleLines[headingIndex + 1] : "";
-    ok(heading, `PT3-C1: the locked shot must reach the Bible export: ${bible.slice(0, 300)}`);
-    /* The heading is a `·`-joined list of facts, so the claim under test is that
-       the TIMING FACT is not the bare number — `6s known · 1 unit untimed` passes,
-       `6s` does not. Substring matching would not tell those apart. */
-    const headingFacts = heading.split(" · ").map((part) => part.trim());
-    ok(!headingFacts.includes("6s"),
-      `PT3-C1: the export published a partly timed shot as a complete 6s: ${heading}`);
-    ok(/6s/.test(heading), `PT3-C1: the known subtotal survives the export: ${heading}`);
-    ok(/1 unit untimed/.test(heading), `PT3-C1: and so does what it could not time: ${heading}`);
-
+    const working=await (await fetch(`${base}/api/bible/export?preset=supporting`)).json();
+    const bible=BibleCanon.bibleCanonMarkdown(BibleCanon.bibleCanonProjection(working.project),{preset:"canon"});
+    const bibleLines=bible.split(/\r?\n/),headingIndex=bibleLines.findIndex(line=>line.startsWith("### S-03 "));
+    const heading=headingIndex>=0?bibleLines[headingIndex+1]:"";
+    ok(/6s/.test(heading)&&/1 unit untimed/.test(heading),"editor export preserves declared and unknown timing without inventing completion");
+    const viewer=await (await fetch(`${base}/api/bible/export?preset=approved`)).text();
+    ok(!viewer.includes("1 unit untimed"),"viewer does not publish unapproved motion planning");
     note(`PT3b: through the real import routes, ${commit.slug}/project.json holds 4 for the authored shot and null for the unplanned one, and both survive the reload unchanged`);
-    note(`PT3-C1: the Bible file the real export route serves reads "${heading}" — no false complete duration survives import, disk and reload`);
+    note(`PT3-C1: the retained internal timing projection of the editor working export reads "${heading}" — no false complete duration survives import, disk and reload`);
   } finally {
     child.kill();
   }
@@ -705,7 +696,7 @@ async function checkSurfacesDoNotCountUnknownAsZero() {
   ok(!/0s/.test(motionLines[1]), `PT3c: an untimed unit was exported as a zero-second one: ${motionLines[1]}`);
   ok(/duration not planned$/.test(motionLines[1]), `PT3c: it says the duration was never planned: ${motionLines[1]}`);
 
-  note("PT3c: the runtime totals name the shots they could not count, a fully timed production is told nothing is missing, and the Bible export prints `duration not planned` for an untimed motion unit instead of `0s`");
+  note("PT3c: the runtime totals name the shots they could not count, a fully timed production is told nothing is missing, and the internal timing serializer prints `duration not planned` for an untimed motion unit instead of `0s`");
 }
 
 /* ==========================================================================
@@ -797,14 +788,6 @@ function checkBibleAggregateNeverCompletesIncompleteTiming() {
   eq(zeroSentinel.shots[0].durComplete, false,
     "PT3-C1: a stored 0 on a shot with no units is the not-declared sentinel, not a zero-second shot");
   ok(!/0s/.test(pt3c1Heading(zeroSentinel)), "PT3-C1: and is never printed as one");
-
-  /* THE PAGE AND THE EXPORT SAY THE SAME THING. `durWords` is built once, which is
-     why they cannot drift — the HTML heading reads the same field. */
-  const bibleSource = fs.readFileSync(path.join(PUBLIC, "bible.js"), "utf8");
-  ok(/durWords/.test(bibleSource),
-    "PT3-C1: the Bible page must print the same timing sentence the export does");
-  ok(!/s\.dur \? esc\(s\.dur\)/.test(bibleSource),
-    "PT3-C1: and must not re-derive a heading from the subtotal");
 
   note("PT3-C1: the Bible aggregate keeps the known subtotal AND how many units are untimed; [6, null] publishes `6s known · 1 unit untimed` instead of `6s`, [6, 4] still publishes `10s`, and [null, null] is untimed rather than 0s");
 }

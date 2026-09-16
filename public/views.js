@@ -24,6 +24,7 @@ async function projectBackupList() {
   }
 }
 const ROUTES = {
+  bible() { return CineBraidWorkingBible.view(); },
   production() { return productionHomeView(); },
   create() { return creationStudioView(); },
   shots(tab) { return productionView(tab || "board"); },
@@ -267,9 +268,7 @@ const ROUTES = {
       ${field("Default aspect ratio", `<input list="cinebraid-aspect-presets" value="${attr(P.meta.aspectRatio || "")}" placeholder="2.39:1" onchange="setGlobalCreationField('aspectRatio',this.value)"><datalist id="cinebraid-aspect-presets">${CINEBRAID_ASPECT_PRESETS.map(([value, label]) => `<option value="${attr(value)}">${esc(label)}</option>`).join("")}</datalist><span class="hint">The format every shot is judged and generated in unless a shot overrides it. Any width:height is accepted.</span>`)}
       ${field("Workspace emphasis", `<select onchange="setProjectWorkflowEmphasis(this.value)"><option value="manual" ${projectWorkflowEmphasis() === "manual" ? "selected" : ""}>Manual-first production</option><option value="assisted" ${projectWorkflowEmphasis() === "assisted" ? "selected" : ""}>Assisted generation</option></select><span class="hint">This changes hierarchy and defaults, not project data.</span>`)}
       ${field("Prompt versions kept per shot", `<input type="number" min="1" max="100" value="${attr(P.meta.promptBuildRetention || 12)}" onchange="P.meta.promptBuildRetention=Math.max(1,Math.round(Number(this.value)||12));applyPromptBuildRetention(P);dirty();route()"><span class="hint">Older prompt versions are trimmed past this number. Approved and linked prompts are never trimmed.</span>`)}
-      ${field("World / setting", `<textarea onchange="setGlobalCreationField('worldSetting',this.value)">${esc(P.meta.world?.setting || "")}</textarea>`)}
-      ${field("Global visual style", `<textarea id="cfg-global-visual-style" aria-label="Global visual style" onchange="setGlobalCreationField('globalStylePrompt',this.value)">${esc(P.meta.globalStylePrompt || "")}</textarea>`)}
-      ${field("Global exclusions", `<textarea onchange="setGlobalCreationField('globalNegativePrompt',this.value)">${esc(P.meta.globalNegativePrompt || P.meta.world?.reject || "")}</textarea>`)}
+      <div class="setting"><h3>Creative foundation</h3><p>World, visual language and exclusions are edited in the Project Bible.</p><a href="#/bible/project">Open creative intent in Project Bible</a></div>
     </div><div class="settings-save-line"><span class="settings-save-state" data-mirror-save-state="1" data-state="saved" role="status">Saved automatically</span><small class="settings-save-model">Project details save themselves; the two buttons below only produce copies.</small></div><div class="settings-actions"><button class="add-btn" onclick="doExport()">Export project</button><button class="ghost-btn" onclick="downloadJSON()">Download JSON backup</button><span id="export-note" class="hint"></span></div></section>`;
     /* U1 - A PROVIDER IS NAMED FOR THE SERVER IT ACTUALLY TALKS TO.
      *

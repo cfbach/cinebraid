@@ -162,6 +162,11 @@
     RESULTS_TABS,
     RESULTS_KIND_FILTERS,
     resultsView,
+    openRelated(related) {
+      const key=ACTIVE_PROJECT_SLUG+':'+PROJECT_OPEN_EPOCH;
+      discoveryStates.set(key,{...CineBraidMediaDiscovery.defaults(),related,decision:'all'});
+      location.hash='#/results';
+    },
     orderRecords,
     tabRecords,
     cardMarkup,

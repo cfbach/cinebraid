@@ -182,6 +182,7 @@
      shell by being named, never by being unrecognised. */
   const CREATOR_SHELL_VIEWS = deepFreeze([
     "production",
+    "bible",
     "shots",
     "shot",
     "scene",

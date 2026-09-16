@@ -1,3 +1,6 @@
+/* EV2-4: historical projection/serializer tests remain for provenance semantics.
+   The audience correction supersedes the old viewer renderer and its prose export.
+   Current viewer/privacy/workflow proofs live in ev2-4-bible-* suites. */
 /* CineBraid — Public Alpha UX Slice 2: CANON-SAFE PROJECT BIBLE + EXPORT V1.
  *
  * THE QUESTION THIS SUITE GOVERNS, and there is exactly one:
@@ -116,18 +119,8 @@ const BibleCanon = loadBibleCanon();
    A test that compared two things this suite wrote itself would prove they agree
    with each other and nothing about the product.
    =========================================================================== */
-function loadBiblePage(mutate) {
-  let source = readLF("public/bible.js");
-  if (mutate) source = mutate(source);
-  const boundary = source.indexOf("(async () => {");
-  assert(boundary > 0, "public/bible.js no longer ends in the async bootstrap this loader slices off");
-  const pure = source.slice(0, boundary);
-  const factory = new Function(
-    `${pure}\nreturn { entityCard, shotCard, appendixRow, strip, block, approvedPromptBlock, provenanceNote, esc };`,
-  );
-  return factory();
-}
-const BiblePage = loadBiblePage();
+
+
 
 /* Strips tags and unescapes, so an assertion reads what a person would read rather
    than what the markup happens to look like. */
@@ -1222,100 +1215,7 @@ function provenanceCopyCases() {
    missing from the other.
    =========================================================================== */
 
-function equivalenceCases() {
-  /* One project carrying every canon-bearing shape at once. */
-  const P = baseProject();
-  addBuild(P, "b-f1", "S-01-A-R01", P1);
-  addBuild(P, "b-m1", "S-01-A-MOTION-R01", MOTION_P1, { kind: "guided-motion" });
-  addBuild(P, "b-d1", "S-01-DELIVERY-R01", "Final grade and conform of the approved motion.", { kind: "delivery" });
-  P.shots.push({
-    id: "S-01", scene: "SC-01", title: "Hull check", status: "LOCKED", workflowStatus: "APPROVED", dur: 5,
-    keyframes: [{ id: "frame-a", label: "A", title: "Opening frame", required: true, winner: "R1.png", generationPackages: [] }],
-    clips: [{ id: "seg-a", suffix: "a", label: "A", title: "Primary motion", dur: 5, videoWinner: "M1.mp4", motionPrompt: CLIP_DRAFT, note: CLIP_DRAFT }],
-    creationBrief: { approvedMotionFile: "D1.mp4" },
-    motionPrompt: SHOT_DRAFT,
-    candidateFiles: [
-      { stored: "R1.png", sourceBuildId: "b-f1" },
-      { stored: "M1.mp4", sourceBuildId: "b-m1" },
-      { stored: "D1.mp4", sourceBuildId: "b-d1" },
-    ],
-    promptBuilds: [], generationPackages: [],
-  });
-  approve(P, { kind: "shot-frame", shotId: "S-01", frameId: "frame-a" }, "R1.png");
-  approve(P, { kind: "shot-motion", shotId: "S-01", unitKey: "seg-a" }, "M1.mp4");
-  approve(P, { kind: "shot-delivery", shotId: "S-01" }, "D1.mp4");
-  P.characters.push({
-    id: "CHAR-KAI", name: "Kai", block: "KAI — 34.",
-    continuityStates: [{ id: "state-default", name: "Work coat", isDefault: true, approvedFile: "KAI_DEFAULT.png" }],
-    candidateFiles: [{ stored: "KAI_DEFAULT.png", prompt: "Kai in a clean work coat, three-quarter portrait, neutral studio light." }],
-    made: [{ model: "m-img", files: "KAI_DEFAULT.png", prompt: "CONFLICTING hand-written note." }],
-  });
-  approve(P, { kind: "entity-state", list: "characters", entityId: "CHAR-KAI", stateId: "state-default" }, "KAI_DEFAULT.png");
-  P.audio.push({
-    id: "AUD-RAIN", name: "Rain on hull", approvedFile: "RAIN_BED.wav",
-    continuityStates: [{ id: "state-default", name: "Default", isDefault: true, approvedFile: "RAIN_BED.wav" }],
-    candidateFiles: [{ stored: "RAIN_BED.wav", prompt: AUDIO_PROMPT }],
-  });
-  approve(P, { kind: "entity-state", list: "audio", entityId: "AUD-RAIN", stateId: "state-default" }, "RAIN_BED.wav");
-  /* A second character whose approved image has no recorded prompt, so the absence
-     sentence is one of the facts under comparison rather than a special case. */
-  P.characters.push({
-    id: "CHAR-VESS", name: "Vess", block: "VESS — 28.",
-    continuityStates: [{ id: "state-default", name: "Dispatch", isDefault: true, approvedFile: "VESS_V1.png" }],
-    candidateFiles: [],
-  });
-  approve(P, { kind: "entity-state", list: "characters", entityId: "CHAR-VESS", stateId: "state-default" }, "VESS_V1.png");
 
-  const doc = project(P, {
-    media: {
-      characters: [{ name: "KAI_DEFAULT.png", url: "/assets/anchors/KAI_DEFAULT.png" }, { name: "VESS_V1.png", url: "/assets/anchors/VESS_V1.png" }],
-      audio: [{ name: "RAIN_BED.wav", url: "/assets/audio/RAIN_BED.wav" }],
-    },
-    shotMedia: SHOT_MEDIA(["R1.png", "M1.mp4", "D1.mp4"]),
-  });
-  const exported = BibleCanon.bibleCanonMarkdown(doc, { preset: "canon" });
-  const shots = shotScreenText(BiblePage, doc);
-  const entities = entityScreenText(BiblePage, doc);
-
-  /* THE FACTS, one row per canonical claim, each named by the surface it belongs
-     to so a failure says which of the five diverged. */
-  const FACTS = [
-    ["frame", "approved image", "R1.png", shots],
-    ["frame", "producing prompt", P1, shots],
-    ["motion", "approved output", "M1.mp4", shots],
-    ["motion", "producing prompt", MOTION_P1, shots],
-    ["delivery", "approved deliverable", "D1.mp4", shots],
-    ["delivery", "producing prompt", "Final grade and conform of the approved motion.", shots],
-    ["entity", "approved image", "KAI_DEFAULT.png", entities],
-    ["entity", "producing prompt", "Kai in a clean work coat", entities],
-    ["entity", "missing-provenance sentence", "The prompt behind this approved image was not recorded.", entities],
-    ["audio", "approved media", "RAIN_BED.wav", entities],
-    ["audio", "producing prompt", AUDIO_PROMPT, entities],
-  ];
-  for (const [surface, what, fact, screen] of FACTS) {
-    ok(screen.includes(fact), `equivalence: the screen represents the ${surface} ${what}`);
-    ok(exported.includes(fact), `equivalence: CANON ONLY represents the ${surface} ${what}`);
-  }
-
-  /* AND THE SAME IN THE NEGATIVE. A fact absent from canon must be absent from
-     BOTH, or one surface is publishing something the other refuses to. */
-  const NON_FACTS = [
-    ["the raw clip motion draft", CLIP_DRAFT],
-    ["the raw shot motion draft", SHOT_DRAFT],
-    ["a conflicting hand-written record", "CONFLICTING hand-written note."],
-  ];
-  for (const [what, fact] of NON_FACTS) {
-    ok(!shots.includes(fact) && !entities.includes(fact), `equivalence: the screen publishes no ${what}`);
-    ok(!exported.includes(fact), `equivalence: and neither does CANON ONLY`);
-  }
-
-  /* The supporting section keeps all three, so nothing was destroyed to get here. */
-  const supporting = screenText(doc.appendix.map(BiblePage.appendixRow).join("\n"));
-  for (const [what, fact] of NON_FACTS) {
-    ok(supporting.includes(fact), `equivalence: supporting material still carries ${what}`);
-  }
-  note(`equivalence: ${FACTS.length} canonical facts represented on screen and in CANON ONLY, across frame, motion, deliverable, entity and audio`);
-}
 
 function exportCases() {
   const markdown = (P, preset, options) => BibleCanon.bibleCanonMarkdown(project(P, options), { preset });
@@ -1514,94 +1414,7 @@ function writeRouteFixture(dir) {
   return P;
 }
 
-async function routeCases() {
-  const TEMP = fs.mkdtempSync(path.join(os.tmpdir(), "cinebraid-bible-canon-"));
-  const CONFIG_PATH = path.join(TEMP, "config.json");
-  const PROJECTS_ROOT = path.join(TEMP, "projects");
-  const PROJECT_DIR = path.join(PROJECTS_ROOT, "canon-project");
-  fs.mkdirSync(PROJECT_DIR, { recursive: true });
-  writeRouteFixture(PROJECT_DIR);
-  fs.writeFileSync(CONFIG_PATH, JSON.stringify({ activeProject: "canon-project", providers: {}, agents: {} }, null, 2));
 
-  const port = await freePort();
-  const child = spawn(process.execPath, [path.join(ROOT, "server.js")], {
-    cwd: ROOT,
-    env: { ...process.env, PORT: String(port), CINEBRAID_CONFIG_PATH: CONFIG_PATH, CINEBRAID_PROJECTS_ROOT: PROJECTS_ROOT },
-    stdio: ["ignore", "pipe", "pipe"],
-  });
-  const stderr = [];
-  child.stdout.on("data", () => {});
-  child.stderr.on("data", (chunk) => stderr.push(String(chunk)));
-  const base = `http://127.0.0.1:${port}`;
-  try {
-    let up = false;
-    for (let attempt = 0; attempt < 150 && !up; attempt++) {
-      try { up = (await fetch(base + "/api/scan")).ok; } catch { /* not listening yet */ }
-      if (!up) await new Promise((resolve) => setTimeout(resolve, 100));
-    }
-    assert(up, `the disposable server never came up. stderr:\n${stderr.join("")}`);
-
-    const screen = await (await fetch(base + "/api/bible")).json();
-
-    /* The P0, at the route the browser actually calls. */
-    equal(screen.shots[0].keyframes[0].winner.name, "R1.png", "route: the screen shows the approved image");
-    equal(screen.shots[0].keyframes[0].package.prompt, P1, "route: and the prompt that produced it");
-    absent(JSON.stringify(screen.shots), "oxide red", "route: the repair draft is absent from shot canon");
-    absent(JSON.stringify(screen.characters), "KAI_REJECTED.png", "route: an unapproved state pointer is absent from entity canon");
-    ok(screen.appendix.some((row) => row.label === "Wet coat"), "route: it is in supporting material instead");
-    /* The four review findings, at the route the browser actually calls. */
-    absent(JSON.stringify(screen.shots), CLIP_DRAFT, "route: the raw clip motion draft is absent from shot canon");
-    absent(JSON.stringify(screen.shots), SHOT_DRAFT, "route: and so is the raw shot motion draft");
-    equal(screen.shots[0].motions[0].package.prompt, MOTION_P1, "route: the approved motion publishes its own prompt");
-    equal(screen.shots[0].delivery.winner.name, "D1.mp4", "route: the approved deliverable survives a frame headline");
-    equal(screen.shots[0].winner.name, "R1.png", "route: which the headline still shows");
-    equal(screen.audio[0].continuityStates[0].package.prompt, AUDIO_PROMPT, "route: approved audio carries its producing prompt");
-    absent(JSON.stringify(screen.characters), "CONFLICTING", "route: a conflicting made[] record is not entity canon");
-    ok(screen.appendix.some((row) => row.material === "motion-draft"), "route: motion drafts are supporting material");
-    ok(screen.appendix.some((row) => row.material === "generation-record"), "route: as are hand-written generation records");
-
-    /* ---- EXP6. The exported canon is not "equivalent to" the screen's canon —
-       it is the screen's own payload, serialised. Any second export-side truth
-       implementation would break this exactly. */
-    const canonResponse = await fetch(base + "/api/bible/export?preset=canon");
-    equal(canonResponse.status, 200, "EXP6: the export route answers");
-    equal(canonResponse.headers.get("content-type"), "text/markdown; charset=utf-8", "EXP6: as markdown");
-    equal(canonResponse.headers.get("content-disposition"), 'attachment; filename="canon-test-project-bible.md"',
-      "EXP6: with a deterministic project-based filename the filmmaker never types");
-    const canonBody = await canonResponse.text();
-    equal(canonBody, BibleCanon.bibleCanonMarkdown(screen, { preset: "canon" }),
-      "EXP6: the exported canon is the on-screen projection serialised, byte for byte");
-
-    const appendixResponse = await fetch(base + "/api/bible/export?preset=canon-appendix");
-    const appendixBody = await appendixResponse.text();
-    equal(appendixResponse.headers.get("content-disposition"), 'attachment; filename="canon-test-project-bible-with-appendix.md"',
-      "EXP6: and the second preset has its own deterministic name");
-    equal(appendixBody, BibleCanon.bibleCanonMarkdown(screen, { preset: "canon-appendix" }),
-      "EXP6: as is Canon + Appendix");
-    ok(appendixBody.startsWith(canonBody), "EXP6: the two presets share one canonical body at the route too");
-    present(canonBody, P1, "EXP6: the exported canon carries the approved prompt");
-    absent(canonBody, "oxide red", "EXP6: and never the repair draft");
-    present(appendixBody, "Wet coat", "EXP6: the appendix carries the unapproved state");
-    absent(canonBody, "Wet coat", "EXP6: which the canonical body does not");
-
-    /* EXP7 at the route: two identical requests, identical bytes. */
-    const again = await (await fetch(base + "/api/bible/export?preset=canon")).text();
-    equal(again, canonBody, "EXP7: the route is deterministic across requests");
-
-    const bad = await fetch(base + "/api/bible/export?preset=everything");
-    equal(bad.status, 400, "route: an unknown preset is refused rather than guessed");
-    present((await bad.json()).error, "canon, canon-appendix", "route: and the refusal names the presets that exist");
-
-    /* No provider was configured and nothing tried to reach one. */
-    absent(stderr.join(""), "fal.ai", "EXP8: the server reached no provider while serving the Bible");
-    absent(stderr.join(""), "api.openai.com", "EXP8: nor any model host");
-    note("EXP6  screen and export are one projection: the export is the /api/bible payload serialised");
-  } finally {
-    child.kill();
-    await new Promise((resolve) => setTimeout(resolve, 120));
-    try { fs.rmSync(TEMP, { recursive: true, force: true, maxRetries: 5 }); } catch { /* Windows may still hold a handle */ }
-  }
-}
 
 /* ===========================================================================
    THE SEPARATION, ASSERTED AGAINST THE SHIPPED SOURCE.
@@ -1623,66 +1436,14 @@ function architectureCases() {
   ok(!/function currentHumanAuthority|function entityProductionTruth/.test(codeOnly),
     "architecture: and must not define its own");
 
-  const serverSource = readLF("src/server/server.js");
-  const route = serverSource.slice(serverSource.indexOf("function bibleProjection"), serverSource.indexOf("/* ---- project management ----"));
-  ok(route.length > 200, "architecture: the Bible routes were located in server.js");
-  equal((route.match(/BibleCanon\.bibleCanonProjection\(/g) || []).length, 1,
-    "architecture: exactly one place derives the Bible's canon");
-  ok(!/resolvePromptBuildList|\.reverse\(\)|generationPackages/.test(route),
-    "architecture: the routes no longer walk package lists");
-  ok(/app\.get\("\/api\/bible"[\s\S]*bibleProjection\(/.test(route) && /app\.get\("\/api\/bible\/export"[\s\S]*bibleProjection\(/.test(route),
-    "architecture: both the screen route and the export route read the same projection");
-  ok(!/\bfetch\(|https\.request|http\.request/.test(route),
-    "EXP8: neither Bible route makes an outbound call");
-
-  /* EVERY ENTITY LIST GETS A MEDIA POOL. Rewriting the route's media object from
-     folder keys to list keys is exactly the edit that drops one silently — the
-     projection would then publish an approved vehicle with no image and nothing
-     would say why. Both halves are pinned: the route supplies all five, and the
-     module's own list of five is the thing being supplied. */
-  const mediaMap = route.slice(route.indexOf("const media = {"), route.indexOf("const ownerIndexes"));
-  for (const listName of BibleCanon.BIBLE_ENTITY_LISTS) {
-    ok(new RegExp(`\\b${listName}:\\s*listMedia\\(`).test(mediaMap),
-      `architecture: the route must supply a media pool for ${listName} — a missing one publishes approved canon with no image`);
-  }
-  deepEqual(BibleCanon.BIBLE_ENTITY_LISTS, ["characters", "locations", "props", "vehicles", "audio"],
-    "architecture: the five entity lists the Bible publishes are declared once, by the module");
-
-  /* The page renders what it is handed and decides nothing. */
-  const page = readLF("public/bible.js");
-  ok(!/resolvePromptBuild|productionAuthority|currentHumanAuthority|\.reverse\(\)/.test(page),
-    "architecture: the Bible page must not re-derive canon in the browser");
-  ok(/B\.appendix/.test(page), "architecture: the page renders the projection's appendix rather than inventing a category");
-  ok(!/Latest approved canon/.test(page) && !/Latest approved material/.test(readLF("public/bible.html")),
-    "copy: 'Latest approved' is gone — 'latest' is the word that invited newest-wins");
-  ok(/Current approved canon/.test(page), "copy: the page says CURRENT approved canon");
-
-  /* ONE PLACE COMPOSES A PROMPT HEADING, AND ONE PLACE PRINTS THE ABSENCE.
-
-     Every surface that can publish a prompt — frame, motion, deliverable, entity
-     state — calls approvedPromptBlock(), which either heads the prompt with the
-     bytes it produced or prints the projection's own missing-provenance sentence.
-     Four surfaces used to answer this question separately and two of them answered
-     "say nothing", which is how an approved image with no recorded prompt looked
-     identical to an approved image with no prompt worth mentioning. */
-  equal((page.match(/function approvedPromptBlock\(/g) || []).length, 1,
-    "copy: exactly one function composes an approved-prompt heading");
-  equal((page.match(/"APPROVED PROMPT FOR "/g) || []).length, 1,
-    "copy: and the heading text is written once");
-  const promptSurfaces = [...page.matchAll(/approvedPromptBlock\((?!item)([\w.]+)\)/g)].map((match) => match[1]);
-  deepEqual(promptSurfaces.sort(), ["f", "m", "s.delivery", "st"],
-    "copy: frame, motion, deliverable and entity state all publish through it");
-  /* Comments stripped: the note explaining this rule NAMES the field the rule
-     forbids, which is what a reader needs and exactly what an absence check must
-     not trip over. */
-  const pageCode = page.replace(/\/\*[\s\S]*?\*\//g, "").replace(/(^|[^:'"\\])\/\/[^\n]*/g, "$1");
-  ok(/item\.representationNote/.test(pageCode) && !/representationAbsence/.test(pageCode),
-    "copy: the page prints the projection's sentence and never reads a diagnostic code");
-  for (const code of BibleCanon.BIBLE_REPRESENTATION_ABSENCES) {
-    ok(!pageCode.includes(code), `copy: "${code}" is a diagnostic code and must never reach the page`);
-  }
-  note("architecture: one projection, two routes, a page that only renders");
-  note("copy: one formatter heads every published prompt and speaks every absence, on screen and in the file");
+  const serverSource=readLF("src/server/server.js");
+  const route=serverSource.slice(serverSource.indexOf("function approvedRecordProjection"),serverSource.indexOf("/* ---- project management ----"));
+  ok(/ApprovedRecord.markdown\(approvedRecordProjection\(project\)\)/.test(route), "audience: record export uses the same strict projection");
+  ok(!/\bfetch\(|https\.request|http\.request/.test(route), "audience: viewer/export make no external calls");
+  const page=readLF("public/bible.js");
+  ok(!/productionAuthority|currentHumanAuthority/.test(page), "audience: viewer renders server authority without re-deriving it");
+  ok(!/appendix|package\.prompt/.test(page), "audience: viewer has no working-material renderer");
+  note("EV2-4: legacy provenance regressions retained; viewer audience and export equivalence validated by the strict audience suite");
 }
 
 /* ===========================================================================
@@ -1692,7 +1453,7 @@ function architectureCases() {
 function bureaucracyCases() {
   const projectionSource = readLF("public/shared-bible-canon.js");
   const serverSource = readLF("src/server/server.js");
-  const route = serverSource.slice(serverSource.indexOf("function bibleProjection"), serverSource.indexOf("/* ---- project management ----"));
+  const route = serverSource.slice(serverSource.indexOf("function approvedRecordProjection"), serverSource.indexOf("/* ---- project management ----"));
   ok(!/approveBible|bibleApproval|bibleAuthority|bibleLedger/i.test(projectionSource + route),
     "bureaucracy: the Bible gains no approval step and no ledger of its own");
   ok(!/app\.(post|put|delete)\("\/api\/bible/.test(serverSource),
@@ -1700,9 +1461,8 @@ function bureaucracyCases() {
   const html = readLF("public/bible.html");
   ok(!/<input(?![^>]*id="bible-search")/.test(html.replace(/<input id="bible-search"[^>]*>/, "")),
     "bureaucracy: the export asks for no configuration and no filename");
-  ok(/preset=canon"/.test(html) && /preset=canon-appendix"/.test(html),
-    "bureaucracy: both presets are one click, with no dialog between");
-  note("bureaucracy: no Bible approval step, no Bible ledger, no export configuration");
+  ok(!/preset=canon-appendix|supporting/.test(html), "audience: viewer HTML offers no supporting export");
+  note("No Bible ledger or write endpoint; editor writers remain in their existing owners.");
 }
 
 /* =========================================================================== */
@@ -1714,17 +1474,16 @@ async function main() {
   deliveryCases();
   audioCases();
   provenanceCopyCases();
-  equivalenceCases();
   exportCases();
   architectureCases();
   bureaucracyCases();
-  await routeCases();
+  await require("./ev2-4-bible-audience").run();
   for (const line of notes) console.log("  " + line);
-  console.log(`Bible canon + export suite passed ${checks} checks: BIBLE1-BIBLE10, prompt/package coherence with named absences, EXP1-EXP8, and the screen/export equivalence that makes them one projection.`);
+  console.log(`Bible canon + export suite passed ${checks} checks: internal provenance/authority cases plus EV2-4 strict audience route proofs.`);
 }
 
 module.exports = {
-  loadBibleCanon, loadBiblePage, screenText, shotScreenText, entityScreenText,
+  loadBibleCanon, screenText, shotScreenText, entityScreenText,
   approve, baseProject, addBuild, frameShot, entityProject, project, frameOf,
   motionShot, motionOf, MOTION_MEDIA, CLIP_DRAFT, SHOT_DRAFT, MOTION_P1, MOTION_P2,
   audioProject, audioDoc, AUDIO_POOL, AUDIO_PROMPT,

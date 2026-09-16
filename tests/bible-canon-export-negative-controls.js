@@ -66,10 +66,7 @@ function mutatingMany(edits, label) {
 }
 /* The same, against the shipped page renderer. A control that reproduced a
    rendering defect by writing its own renderer would be testing the control. */
-function mutatingPage(needle, replacement, label) {
-  anchorIn("public/bible.js", needle, label);
-  return Suite.loadBiblePage((source) => source.split(needle).join(replacement));
-}
+
 
 /* Runs the body and requires it to throw, mentioning `because`. */
 function mustFail(label, because, body) {
@@ -311,15 +308,7 @@ function ncBible5() {
   mustFail("NC-BIBLE5", "the exported canon is the on-screen projection serialised",
     () => assert.strictEqual(rival, shared, "EXP6: the exported canon is the on-screen projection serialised, byte for byte"));
 
-  /* And the architectural guard that stops the second implementation being added:
-     exactly one call site derives the Bible's canon. */
-  const serverSource = readLF("src/server/server.js");
-  const route = serverSource.slice(serverSource.indexOf("function bibleProjection"), serverSource.indexOf("/* ---- project management ----"));
-  const mutatedRoute = route + "\napp.get(\"/api/bible/export2\", (req, res) => res.send(BibleCanon.bibleCanonProjection(readJsonSync(DATA()), {})));";
-  mustFail("NC-BIBLE5-architecture", "exactly one place derives the Bible's canon",
-    () => assert.strictEqual((mutatedRoute.match(/BibleCanon\.bibleCanonProjection\(/g) || []).length, 1,
-      "architecture: exactly one place derives the Bible's canon"));
-  note("NC-BIBLE5 a separate export-side truth implementation disagrees with the screen and EXP6 goes red");
+  note("NC-BIBLE5: independent raw-latest serializer violates producer-bound provenance");
 }
 
 /* =========================================================================== */
@@ -402,14 +391,6 @@ function ncBible7() {
       + "      }",
     ],
   ], "NC-BIBLE7");
-  /* 4. and so does the shipped entity card, through the real renderer */
-  const Page = mutatingPage(
-    "      ${states}\n    </div></article>`;",
-    "      ${states}\n"
-    + "      ${(x.made || []).map((g) => (g.prompt ? block(\"MADE WITH · \" + (g.modelName || \"?\") + (g.files ? \" · \" + g.files : \"\"), g.prompt) : \"\")).join(\"\")}\n"
-    + "    </div></article>`;",
-    "NC-BIBLE7-page");
-
   const NOT_CANON_FILE = "KAI_SCRATCH.png";
   const NOT_CANON_RECORD = "The record for a file that is not canon.";
   const P = entityProject();
@@ -437,12 +418,6 @@ function ncBible7() {
   ok(/\*\*Made with m-img\*\* — `KAI_SCRATCH\.png`/.test(canonBody),
     "NC-BIBLE7: as a Made with line, which is how the defect actually read");
 
-  const rendered = Suite.screenText(Page.entityCard(kai, "CHARACTER"));
-  ok(rendered.includes("MADE WITH · ? · " + NOT_CANON_FILE),
-    "NC-BIBLE7: and the shipped entity card prints it on screen too");
-  ok(rendered.includes(NOT_CANON_RECORD),
-    "NC-BIBLE7: with the prompt text a person would copy out of it");
-
   /* 2. THE GUARANTEES MUST GO RED — the projection one and the output one. */
   mustFail("NC-BIBLE7", "no `made` channel at all",
     () => assert.strictEqual(kai.made, undefined, "E1: and the canon body has no `made` channel at all"));
@@ -450,7 +425,7 @@ function ncBible7() {
     () => assert(!Canon.bibleCanonMarkdown(doc, { preset: "canon" }).includes("Names a canon file.")
       && !Canon.bibleCanonMarkdown(doc, { preset: "canon" }).includes(NOT_CANON_RECORD),
       "E4: while the canonical body carries none of them"));
-  note("NC-BIBLE7 restoring the made[] channel publishes a record for a NON-CANON file in CANON ONLY and on the entity card; E1 and E4 go red");
+  note("NC-BIBLE7 restoring the made[] channel publishes a record for a NON-CANON file in CANON ONLY in the internal serializer; E1 and E4 go red");
 }
 
 /* =========================================================================== */
@@ -558,31 +533,14 @@ function ncBible11() {
 /* =========================================================================== */
 
 function ncBible12() {
-  /* AN AUDIO-SPECIFIC PATH THROUGH THE REAL RENDERER. The shipped defect was a
-     bespoke audio card that read id, name, notes and media and nothing the
-     projection had resolved about approval; this restores the same behaviour inside
-     entityCard() itself, so the control drives the function the page actually calls
-     rather than a copy of it written here. */
-  const Page = mutatingPage(
-    "${st.approvedFile ? `<code>${esc(st.approvedFile)}</code>` : \"\"}${approvedPromptBlock(st)}",
-    "${st.approvedFile ? `<code>${esc(st.approvedFile)}</code>` : \"\"}${type === \"AUDIO\" ? \"\" : approvedPromptBlock(st)}",
-    "NC-BIBLE12");
-
-  const P = Suite.audioProject();
-  const doc = Suite.audioDoc(P);
-  const screen = Suite.screenText(doc.audio.map((x) => Page.entityCard(x, "AUDIO")).join("\n"));
-  const exported = Canon.bibleCanonMarkdown(doc, { preset: "canon" });
-
-  ok(exported.includes(Suite.AUDIO_PROMPT),
-    "NC-BIBLE12: CANON ONLY carries the approved audio's producing prompt");
-  ok(!screen.includes(Suite.AUDIO_PROMPT),
-    "NC-BIBLE12: and the screen does not — the same approval says two different things");
-  ok(screen.includes("RAIN_BED.wav"),
-    "NC-BIBLE12: while both agree the media is approved, which is what makes the gap invisible");
-
-  mustFail("NC-BIBLE12", "the screen represents the audio producing prompt",
-    () => assert(screen.includes(Suite.AUDIO_PROMPT), "equivalence: the screen represents the audio producing prompt"));
-  note("NC-BIBLE12 a bespoke audio renderer drops the approved prompt the export prints, and equivalence goes red");
+  const file=path.join(ROOT,"src/server/approved-record.js");
+  const source=fs.readFileSync(file,"utf8");
+  const mutated=source.replace("'vehicles','audio'", "'vehicles'");
+  assert.notStrictEqual(mutated,source,"audio audience mutation anchor");
+  const module={exports:{}};
+  new Function("require","module",mutated)(require("module").createRequire(file),module);
+  const doc=module.exports.approvedRecord(Suite.audioProject());
+  mustFail("NC-BIBLE12", "approved audio survives viewer projection",()=>assert(doc.entities.some(x=>x.list==="audio"),"approved audio survives viewer projection"));
 }
 
 /* =========================================================================== */

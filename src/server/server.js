@@ -48,7 +48,7 @@ const ProductionAuthority = require("../../public/shared-production-authority");
 const AuthorityKernel = require("../../public/shared-authority-kernel");
 const { WRITE_CLASSES, isCreateOnlyWriteClass, createAuthorityWriteSeam, canonComparison } = require("../authority/authority-write-seam");
 const ShotReadiness = require("../../public/shared-shot-readiness");
-const BibleCanon = require("../../public/shared-bible-canon");
+const ApprovedRecord = require("./approved-record");
 /* There is nothing to wire. The Canon kernel depends on
    public/shared-entity-ownership.js directly — by `require` in Node, by name in
    the browser's shared scope — so the ownership veto cannot be handed over,
@@ -2079,12 +2079,26 @@ app.get("/assets/*", (req, res) => {
     /^(anchors|plates|props|vehicles|audio|media)\/[^/]+$/.test(rel) ||
     /^shots\/[\w.-]+\/(takes|locked|blocking)\/[^/]+$/.test(rel);
   const ext = path.extname(rel).toLowerCase();
-  if (!allowedRoot || !MEDIA_EXT.has(ext))
+  let permitted;
+  const approvedPath = () => {
+    if(permitted !== undefined)return permitted;
+    try {
+      const doc=approvedRecordProjection(readJsonSync(DATA()));
+      permitted=[...doc.entities,...doc.shots].some(row=>row.targets.some(t=>{
+        try{return t.media.available && decodeURIComponent(t.media.url.slice("/assets/".length))===rel;}catch{return false;}
+      }));
+    } catch { permitted=false; }
+    return permitted;
+  };
+  // Existing editor media paths stay unchanged. Additional reference-resolver
+  // formats require an exact approved path for every role; path scope stays fixed.
+  if (!allowedRoot || (!MEDIA_EXT.has(ext) && !([".avif",".bmp"].includes(ext) && approvedPath())))
     return res.status(404).send("Not found");
-  const root = path.resolve(PROJECT_DIR());
-  const file = path.resolve(root, rel);
-  if (!file.startsWith(root + path.sep) || !fs.existsSync(file))
-    return res.status(404).send("Not found");
+  if(req.role!=="editor" && !approvedPath())return res.status(404).send("Not found");
+  const located=LocalFileAffordance.localFileAffordance({projectsRoot:projectsRoot(),slug:activeSlug(),key:"path:"+rel});
+  if(located.state!=="available")return res.status(404).send("Not found");
+  const file=located.path;
+  res.setHeader("Cache-Control", "private, no-store");
   res.sendFile(file);
 });
 
@@ -9977,77 +9991,62 @@ app.post("/api/search", async (req, res) => {
   }
 });
 
-/* ---- the Bible: only approved / locked canon ----
-
-   ONE PROJECTION, TWO ROUTES. `bibleProjection()` is the only thing in this file
-   that decides what the Bible may call current canon, and both the screen
-   (GET /api/bible) and the file (GET /api/bible/export) read its answer. The rules
-   themselves live in public/shared-bible-canon.js, which consumes the authority
-   kernel and defines no authority of its own.
-
-   WHAT WAS DELETED HERE, because it was the P0. Media was gated on the ledger and
-   prompts were chosen by recency —
-
-       resolvePromptBuildList(P, f.generationPackages).reverse().find(g => g.prompt)
-
-   — and openCandidateCorrection() registers a targeted-repair draft into
-   `frame.generationPackages` the moment the repair modal opens. So merely LOOKING
-   at a repair published its instructions ("Edit #image1 rather than creating a new
-   composition") under FRAME PACKAGE, beneath an image approved for the previous
-   revision. A prompt now reaches the Bible only through the approved bytes it
-   produced. */
-function bibleProjection(P) {
-  /* KEYED BY ENTITY LIST, not by disk folder. server.js already states the
-     list-to-folder map, and a suite requires every copy of it to agree; a fourth
-     copy here would be a fourth place for it to drift. */
-  const media = {
-    characters: listMedia("anchors"),
-    locations: listMedia("plates"),
-    props: listMedia("props"),
-    vehicles: listMedia("vehicles"),
-    audio: listMedia("audio"),
+/* Audience correction: all record reads are strict even for an editor. Query
+   flags cannot broaden them. The only supporting export is server-role gated. */
+function approvedRecordProjection(project) {
+  const resolver = ReferenceMedia.resolver({projectsRoot:projectsRoot(),slug:activeSlug(),project});
+  let assets=[];
+  try { const ledger=MediaAssetService.readAssets(projectsRoot(),activeSlug()); if(!ledger.readOnly)assets=ledger.assets||[]; } catch { /* Availability stays unknown; no registry repair on read. */ }
+  const observed = (receipt, paths) => {
+    // Receipt identity wins over a matching basename. A missing/stale original
+    // remains an approval with unavailable media; never substitute another file.
+    if (receipt.assetId) {
+      const asset=assets.find(row=>row.assetId===receipt.assetId), relative=asset?.storage?.path;
+      if(!asset || asset.storage?.missing || !paths.includes(relative))return null;
+      const located=LocalFileAffordance.localFileAffordance({projectsRoot:projectsRoot(),slug:activeSlug(),key:"path:"+relative});
+      if(located.state!=="available")return null;
+      const stat=fs.statSync(located.path);
+      if((Number.isFinite(asset.storage.bytes)&&asset.storage.bytes!==stat.size)||(Number.isFinite(asset.storage.mtimeMs)&&Math.abs(asset.storage.mtimeMs-stat.mtimeMs)>1))return null;
+      return {available:true,url:"/assets/"+relative.split("/").map(encodeURIComponent).join("/"),sourceName:receipt.value};
+    }
+    // Read-only compatibility for pre-identity receipts, with the existing
+    // contained local-file reader. This mints no identity on a viewer read.
+    for (const relative of paths) {
+      const located=LocalFileAffordance.localFileAffordance({projectsRoot:projectsRoot(),slug:activeSlug(),key:"path:"+relative});
+      if(located.state==="available") return {available:true,url:"/assets/"+relative.split("/").map(encodeURIComponent).join("/"),sourceName:receipt.value};
+    }
+    return null;
   };
-  const ownerIndexes = {};
-  return BibleCanon.bibleCanonProjection(P, {
-    media,
-    shotMedia: (shotId) => {
-      const takes = listMedia(path.join("shots", shotId, "takes"));
-      const locked = listMedia(path.join("shots", shotId, "locked"));
-      return [...takes, ...locked.filter((x) => !takes.some((t) => t.name === x.name))];
+  return ApprovedRecord.approvedRecord(project, {
+    entityMedia: (list,entity,receipt) => {
+      if(list==="audio") {
+        if(!EntityOwnership.entityOwnsMedia(EntityOwnership.buildEntityOwnerIndex(project,list),entity.id,receipt.value))return null;
+        return observed(receipt,["audio/"+receipt.value]);
+      }
+      const found=resolver.resolve(list,entity,receipt.value,receipt.assetId);
+      return {available:found.available,sourceName:found.sourceName,
+        url:found.available ? "/assets/"+found.storagePath.split("/").map(encodeURIComponent).join("/") : ""};
     },
-    /* Same exact-ownership rule as the review pool and the entity workspace. A
-       Bible that still matched by prefix would publish a child entity's reference
-       under its parent's name. */
-    ownedMedia: (listName, entityId) => {
-      if (!ownerIndexes[listName]) ownerIndexes[listName] = EntityOwnership.buildEntityOwnerIndex(P, listName);
-      const pool = media[listName] || [];
-      return new Set(EntityOwnership.filterEntityMedia(ownerIndexes[listName], entityId, pool).map((row) => row.name));
-    },
-    modelName: (id) => (P.meta.models || []).find((m) => m.id === id)?.name || "",
+    shotMedia: (shot,receipt) => observed(receipt,["shots/"+shot.id+"/takes/"+receipt.value,"shots/"+shot.id+"/locked/"+receipt.value]),
   });
 }
 app.get("/api/bible", (req, res) => {
-  try {
-    res.json(bibleProjection(readJsonSync(DATA())));
-  } catch (e) {
-    res.status(500).json({ error: e.message });
-  }
+  res.setHeader("Cache-Control", "private, no-store");
+  try { res.setHeader("X-CineBraid-Project",activeSlug()); res.json(approvedRecordProjection(readJsonSync(DATA()))); }
+  catch { res.status(500).json({error:"The Approved record could not be read. Try again."}); }
 });
-/* The filmmaker-facing export. Same convention as every other export in this
-   product — GET, a preset, `text/markdown`, and a filename the person never has to
-   type. Local only: it reads the project already on this disk and calls nothing. */
 app.get("/api/bible/export", (req, res) => {
+  res.setHeader("Cache-Control", "private, no-store");
+  const requested=String(req.query?.preset || "canon").toLowerCase();
+  const supporting=["supporting","canon-appendix"].includes(requested);
+  if(supporting && req.role!=="editor") return res.status(403).json({error:"Working material export is editor only."});
+  if(!supporting && !["canon","approved"].includes(requested)) return res.status(400).json({error:"Unknown export. Use approved or supporting."});
   try {
-    const requested = String(req.query?.preset || "canon").toLowerCase();
-    if (!BibleCanon.BIBLE_EXPORT_PRESETS.includes(requested))
-      return res.status(400).json({ error: `Unknown Bible export preset. Accepted values: ${BibleCanon.BIBLE_EXPORT_PRESETS.join(", ")}` });
-    const doc = bibleProjection(readJsonSync(DATA()));
-    res.setHeader("Content-Type", "text/markdown; charset=utf-8");
-    res.setHeader("Content-Disposition", `attachment; filename="${BibleCanon.bibleExportFilename(doc, requested)}"`);
-    res.send(BibleCanon.bibleCanonMarkdown(doc, { preset: requested }));
-  } catch (e) {
-    res.status(500).json({ error: e.message });
-  }
+    const project=readJsonSync(DATA());
+    res.setHeader("Content-Type", supporting ? "application/json; charset=utf-8" : "text/markdown; charset=utf-8");
+    res.setHeader("Content-Disposition", `attachment; filename="${supporting?'working-material.json':'approved-record.md'}"`);
+    res.send(supporting ? ApprovedRecord.supportingExport(project) : ApprovedRecord.markdown(approvedRecordProjection(project)));
+  } catch { res.status(500).json({error:"The export could not be read. Try again."}); }
 });
 /* ---- project management ---- */
 app.get("/api/projects", (req, res) => {
