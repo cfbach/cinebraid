@@ -1022,7 +1022,7 @@ window.showPendingApprovalSurface = () => {
   const preview = meta.url
     ? `<figure><div id="entity-approval-preview">${isVideo(meta.fileName)?`<video controls preload="metadata" src="${attr(meta.url)}"></video>`:`<img src="${attr(meta.url)}" alt="The exact result this approval was taken on">`}</div><figcaption>${esc(meta.fileName || "")}</figcaption></figure>`
     : "";
-  const ordinary = !!(meta.finishJob || meta.finishDelete || meta.candidateDecision);
+  const ordinary = !!(meta.finishJob || meta.finishDelete || meta.candidateDecision || meta.entityDecision);
   const target = `<div class="entity-approval-target-summary"><span>${ordinary?"DECISION TARGET":"APPROVAL TARGET"}</span><b>${esc(meta.entityName || meta.entityId || "")} · ${esc(meta.stateName || "Default")}</b><small>${esc(meta.fileName || "")}</small></div>`;
   const headline = ordinary ? (outcome === "saving" ? "Saving decision…" : "This decision needs recovery") : {
     saving: "Saving approval…",
@@ -1077,6 +1077,7 @@ window.resolvePendingApprovalOutcome = async () => {
   const receipt = typeof currentHumanAuthority === "function"
     ? currentHumanAuthority(stored.project, pendingApprovalAuthorityTarget(record)) : null;
   const meta = record.meta || {};
+  if(meta.entityDecision){const d=meta.entityDecision,row=stored.project[d.list]?.find(e=>e.id===d.id)?.candidateFiles?.find(r=>(r.stored||r.name)===d.name);if(row?.decision===d.decision&&row?.decidedAt===d.decidedAt)return completePendingApproval(record,stored);}
   if(meta.candidateDecision){const d=meta.candidateDecision,row=stored.project.shots?.find(s=>s.id===d.shotId)?.candidateFiles?.find(r=>(r.stored||r.name)===d.name);if(row?.decision===d.decision&&row?.reviewedAt===d.reviewedAt)return completePendingApproval(record,stored);}
   if (meta.finishDelete && !(stored.project.finishJobs||[]).some(j=>j.id===meta.finishDelete)) return completePendingApproval(record,stored);
   if (meta.finishJob && JSON.stringify((stored.project.finishJobs||[]).find(j=>j.id===meta.finishJob.id))===JSON.stringify(meta.finishJob)) return completePendingApproval(record,stored);

@@ -1333,12 +1333,13 @@ window.requestHumanEntityCandidateApproval = (list, id, fileName, stateId = "sta
   return approveEntityFile(list, id, fileName, stateId, "primary-authority");
 };
 
-window.setEntityCandidateDecision = (list, id, fileName, decision) => {
+window.setEntityCandidateDecision = (list, id, fileName, decision, options = {}) => {
   const entity = P[list]?.find((item) => item.id === id);
   if (!entity) return;
   const row = entityCandidateRow(entity, fileName, true);
   row.decision = decision || "unreviewed";
   row.decidedAt = new Date().toISOString();
+  if (options.deferSave) return row;
   dirty();
   route();
   toast(decision === "rejected" ? "Candidate moved to Rejected" : "Candidate restored");
