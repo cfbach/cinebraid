@@ -37,9 +37,9 @@
     return '<h3>Reference intention</h3><p>'+e(desc || 'No reference description recorded.')+'</p><details><summary>Provenance &amp; identity</summary><dl><dt>Reference</dt><dd>'+e(m.id)+'</dd><dt>Asset identity</dt><dd>'+e(m.selected?.assetId||'No asset selected')+'</dd><dt>Candidate binding</dt><dd>'+e(m.row?.referenceBinding?.id||'Existing folder reference')+'</dd><dt>Original file</dt><dd>'+e(m.selected?.sourceName||m.row?.original||'—')+'</dd><dt>Availability</dt><dd>'+e(m.selected?.reason||'Available')+'</dd></dl></details>'+button('details','Notes &amp; history')+'<p><a class="rd-tool-link" href="'+routeFor(m.list,m.id)+'/tools">Continuity &amp; creation tools</a></p>';
   }
   function context(m) {
-    const shot=origin?.project===ACTIVE_PROJECT_SLUG?shotById(origin.shotId):null,scene=shot?sceneById(shot.scene):null;
-    return '<nav class="rd-crumb" aria-label="Production context"><a href="#/production">Production</a><span>/</span><a href="#/library/'+m.list+'">References</a><span>/ '+e(types[m.list])+'</span></nav>'+(shot?'<div class="rd-origin"><span>'+e([scene?.title||scene?.id,shot.id,shot.title,origin.frameLabel].filter(Boolean).join(' · '))+'</span>'+button('return','Return to shot')+'</div>':'');
+    return '<nav class="rd-crumb" aria-label="Production context"><a href="#/production">Production</a><span>/</span><a href="#/library/'+m.list+'">References</a><span>/ '+e(types[m.list])+'</span></nav>';
   }
+
   function view(list,id) {
     if(location.hash.endsWith('/tools'))return null;
     const m=model(list,id);if(!m)return null;
@@ -187,7 +187,7 @@
     if(id==='restore'&&m.selected?.available&&m.row?.decision==='rejected'){setEntityCandidateDecision(m.list,m.id,m.selected.name,'unreviewed');return;}
     if(id==='approve')return approval(m);
     if(id==='refresh')return load({intent:'refresh'}).then(()=>repaint('rd-status'));
-    if(id==='return'&&origin){returning=origin;origin=null;location.hash=returning.route;return;}
+    if(id==='return')return CineBraidMediaReturn.back();
     if(id==='details'){openModal('<div data-reference-details-dialog><h3>Notes &amp; history</h3>'+entityDetailsHistoryMarkup(m.list,m.entity,()=>'<p>'+e(m.entity.notes||'No additional notes.')+'</p>')+'<button class="cancel" onclick="closeModal()">Close</button></div>');return;}
     if(id==='inspect'){
       if(!matchMedia('(min-width:1360px)').matches){

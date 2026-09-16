@@ -3,6 +3,7 @@ const fs = require("fs");
 const path = require("path");
 
 const nodeSuites = [
+  "check:ev2-7-navigation",
   "check:reference-enrollment",
   "check:ev2-4-audience",
   "check:ev2-5-writers",

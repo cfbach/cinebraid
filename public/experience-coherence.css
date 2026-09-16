@@ -1,0 +1,33 @@
+/* EV2-7 shared geometry. Domain layouts keep their own task-appropriate forms. */
+:root { --cb-control-height:48px; --cb-control-radius:8px; --cb-action-warm:#e5bd8e; --cb-focus:#86dfdc; }
+#topbar .topbar-actions { display:flex; align-items:center; gap:8px; flex:1; min-width:0; }
+#topbar .topbar-context { flex:0 1 240px; min-width:110px; }
+#topbar #global-add,#topbar #automation-activity-toggle,#topbar #creator-rail-toggle,#topbar #save-state,#topbar .topbar-search {
+  height:var(--cb-control-height); min-height:var(--cb-control-height); border-radius:var(--cb-control-radius); box-sizing:border-box;
+  display:flex; align-items:center; justify-content:center; gap:8px; padding:0 14px; font:500 13px/1.35 var(--body); letter-spacing:normal;
+}
+#topbar #global-add { background:var(--cb-action-warm); color:#241e17; border:1px solid var(--cb-action-warm); box-shadow:none; font-weight:700; white-space:nowrap; }
+#topbar #automation-activity-toggle,#topbar #creator-rail-toggle,#topbar #save-state { background:transparent; border:1px solid var(--line-2); color:var(--muted); }
+#topbar #automation-activity-toggle b,#topbar #creator-rail-toggle b { font:inherit; }
+#topbar #automation-activity-toggle small { display:none; }
+#topbar #save-state { flex:none; }
+#topbar .topbar-search { flex:1; min-width:130px; width:auto; justify-content:flex-start; }
+#topbar .topbar-search input { font:14px var(--body); width:100%; min-width:0; }
+#topbar #creator-rail-toggle[hidden] { display:none!important; }
+.md-return { min-height:44px; max-width:100%; margin:0 0 20px; padding:10px 14px; white-space:normal; overflow-wrap:anywhere; text-align:left; border-radius:8px; }
+#main :is(button,a,input,select,textarea,summary):focus-visible,#topbar :is(button,input):focus-visible { outline:3px solid var(--cb-focus); outline-offset:3px; }
+@media(max-width:1100px) {
+  #topbar { flex-wrap:wrap; }
+  #topbar .topbar-actions { flex-basis:100%; }
+}
+@media(max-width:600px) {
+  #topbar { gap:10px; padding:12px; }
+  #topbar .topbar-context { flex:1; }
+  #topbar .topbar-actions { display:grid; grid-template-columns:auto minmax(0,1fr) minmax(0,1fr) auto; gap:6px; width:100%; }
+  #topbar #global-add,#topbar #automation-activity-toggle,#topbar #creator-rail-toggle,#topbar #save-state { padding:0 9px; min-width:0; font-size:12px; }
+  #topbar .topbar-search { grid-column:1/-1; width:100%; min-width:0; position:static; padding:0 12px; }
+  #topbar .topbar-search input,#topbar .topbar-search:focus-within input { position:static; opacity:1; pointer-events:auto; width:100%; }
+  #topbar .topbar-search:focus-within { position:static; width:100%; }
+  #topbar .topbar-search kbd { display:none; }
+  #topbar #save-state { display:flex; white-space:normal; }
+}

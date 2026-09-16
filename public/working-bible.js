@@ -67,14 +67,14 @@
     catch(error){if(draft===d)d.error='Not saved. '+(error.message||'Could not reach CineBraid. Retry when it is available.');}
     finally{d.saving=false;if(draft===d||!draft){route();}}
   }
-  function remember(){if(!location.hash.startsWith('#/bible'))return;const saved={scope:scope(),hash:location.hash,view:captureRouteViewState(),browserTop:document.querySelector('.wb-rows')?.scrollTop||0};snapshots.set(saved.hash,saved);origin=saved;}
+  function remember(){if(!location.hash.startsWith('#/bible'))return;const saved={scope:scope(),hash:location.hash,view:captureRouteViewState(),browserTop:document.querySelector('.wb-rows')?.scrollTop||0};snapshots.set(saved.hash,saved);origin=saved;CineBraidMediaReturn.prepare(CineBraidMediaReturn.capture({label:'Return to Working Bible',resume:()=>{restoreRouteViewState(saved.view);const rows=document.querySelector('.wb-rows');if(rows)rows.scrollTop=saved.browserTop;}}));}
   function back(){if(!origin||origin.scope!==scope())return;pendingReturn=origin;CineBraidMediaReturn.cancel();closeModal({restoreFocus:false});location.hash=origin.hash;}
   function braidyFacts(){const t=here(),x=entityOf(t);return {entityList:t.list,entityId:t.id,visualDescription:x?entityVisualDescription(x,t.list):'',creativeIntentIsApproval:false};}
   function braidyTarget(){const t=here(),x=entityOf(t);return x?{kind:'entity',id:t.list+':'+t.id,label:lists[t.list]+' · '+(x.name||x.id)}:{kind:'project',id:'',label:P?.meta?.title||'This production'};}
   document.addEventListener('input',ev=>{if(ev.target.id==='wb-search'){query=ev.target.value;page=0;document.getElementById('wb-browser-rows').innerHTML=browserRows();}if(ev.target.id==='wb-text'&&draft&&!draft.saving)draft.value=ev.target.value;});
   document.addEventListener('change',ev=>{if(ev.target.id==='wb-kind'){filter=ev.target.value;page=0;document.getElementById('wb-browser-rows').innerHTML=browserRows();}});
   document.addEventListener('click',async ev=>{
-    const control=ev.target.closest('[data-wb]');const navigation=ev.target.closest('a[href^="#/"],button[data-view]');if(navigation)remember();if(!control)return;
+    const control=ev.target.closest('[data-wb]');const navigation=ev.target.closest('a[href^="#/"],button[data-view]');if(navigation&&!navigation.closest('#nav,#project-menu'))remember();if(!control)return;
     const action=control.dataset.wb,t=here();
     if(action==='read'){const el=document.getElementById('wb-document');el?.scrollIntoView({block:'start'});el?.focus({preventScroll:true});}
     if(action==='find'){document.getElementById('wb-browser')?.scrollIntoView({block:'start'});document.getElementById('wb-search')?.focus({preventScroll:true});}
@@ -95,7 +95,7 @@
   window.addEventListener('beforeunload',ev=>{if(draft){ev.preventDefault();ev.returnValue='';}});
   window.addEventListener('cinebraid:route-rendered',()=>{
     sync();paintProjectSaveState();const isBible=location.hash.startsWith('#/bible');document.body.classList.toggle('working-bible-active',isBible);
-    if(!isBible&&origin?.scope===scope()){const main=document.getElementById('main');if(main&&!main.querySelector('.wb-return'))main.insertAdjacentHTML('afterbegin','<nav class="wb-return" aria-label="Bible return">'+btn('back','Return to Bible')+'</nav>');}
+    // Contextual return is presented once by CineBraidMediaReturn.
     if(isBible&&(pendingReturn||lastHash!==location.hash)){const s=pendingReturn||snapshots.get(location.hash);pendingReturn=loading?s:null;if(s?.scope===scope()&&s.hash===location.hash){restoreRouteViewState(s.view);requestAnimationFrame(()=>{const rows=document.querySelector('.wb-rows');if(rows)rows.scrollTop=s.browserTop;});}}
     lastHash=location.hash;
     document.querySelectorAll('.wb-approved img').forEach(img=>img.addEventListener('error',()=>{const p=document.createElement('p');p.className='wb-missing';p.textContent='Approved media could not be loaded. The receipt remains recorded.';img.replaceWith(p);},{once:true}));
