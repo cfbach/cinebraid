@@ -32,7 +32,7 @@ VIEWPORTS = [(1920, 1080), (1440, 900), (1280, 720)]
 # Where the mark appears, and the element whose box must contain it.
 PLACES = [
     ("/#/production", ".brand-logo", "#rail", "workspace rail"),
-    ("/bible.html", ".bible-brand img", ".bible-sidebar", "Project Bible sidebar"),
+    ("/bible.html", ".record-brand img", ".record-brand", "Approved record header"),
     ("/login.html", ".login-brand img", ".login-box", "passcode screen"),
 ]
 

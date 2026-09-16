@@ -235,8 +235,8 @@ ok(!/f\.toUpperCase\(\)\.startsWith\(prefix\)/.test(server), "and no longer filt
    supplies ownership through a callback and its locals are named for a list rather
    than for one entity. Still exactly one call, still pinned exactly, and the line
    below still forbids the prefix match this guard exists for. */
-ok(/EntityOwnership\.filterEntityMedia\(ownerIndexes\[listName\], entityId, pool\)/.test(server),
-  "and the Bible export, which held a third copy");
+ok(/ApprovedRecord\.approvedRecord\(project, /.test(server),
+  "and Approved record is built by its receipt/identity projection owner (foreign-media isolation covered by ev2-4-audience)");
 ok(!/\.startsWith\(\s*\(\(e\.prefix \|\| e\.anchorPrefix \|\| e\.id\)/.test(server), "with its prefix match removed");
 
 /* No special-case filename checks anywhere in the repair — the audit forbids

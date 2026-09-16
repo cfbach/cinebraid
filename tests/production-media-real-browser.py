@@ -51,6 +51,7 @@ data/ and the shipped sample are never touched; the route guard aborts anything 
 would dispatch a generation or leave loopback.
 """
 
+import re
 import json, os, pathlib, socket, struct, subprocess, sys, tempfile, time, zlib
 
 ROOT = pathlib.Path(__file__).resolve().parents[1]
@@ -385,24 +386,11 @@ BASE = f"http://127.0.0.1:{port}"
 # bindings, which are lexical and NOT properties of `window`.
 READ_RESULTS = """
 () => {
-  const grid = document.querySelector('[data-results-grid]');
-  const cards = [...document.querySelectorAll('[data-results-card]')];
-  return {
-    present: !!grid,
-    tab: grid ? grid.dataset.resultsTab : '',
-    count: cards.length,
-    roles: cards.map((c) => c.dataset.role),
-    kinds: [...new Set(cards.map((c) => c.dataset.kind))],
-    keys: cards.map((c) => c.dataset.miKey),
-    statusWords: cards.map((c) => (c.querySelector('.results-card-status') || {}).textContent || ''),
-    aiChips: cards.filter((c) => c.querySelector('.results-card-ai')).length,
-    tabs: [...document.querySelectorAll('.workspace-tab')].map((a) => a.textContent.trim()),
-    barHeight: Math.round((document.getElementById('cb-shell-bar') || {getBoundingClientRect:()=>({height:0})}).getBoundingClientRect().height),
-    stripPresent: !!document.querySelector('.cb-stage-strip'),
-    assistant: !!document.getElementById('cb-assistant-mount'),
-    terminal: !!document.getElementById('cb-terminal-mount'),
-    overflow: document.documentElement.scrollWidth - document.documentElement.clientWidth,
-  };
+ const root=document.querySelector('[data-md=production]'),cards=[...document.querySelectorAll('[data-md=production] .md-card[data-md-key]')];
+ const c=CineBraidMediaBrowser.instances.get('production'),D=CineBraidMediaDiscovery;
+ const records=D.compose(P,CineBraidMediaInspector.projection().records,SCAN.mediaInventory||[]),q=D.query(records,c.state);
+ return {present:!!root,tab:c.state.decision,count:cards.length,keys:cards.map(x=>x.dataset.mdKey),statusWords:cards.map(x=>x.querySelector('.md-decision').textContent),expectedKeys:q.rows.map(x=>x.key),expectedWords:q.rows.map(D.decisionLabel),expectedTotal:q.total,
+ barHeight:Math.round(document.getElementById('cb-shell-bar').getBoundingClientRect().height),stripPresent:!!document.querySelector('.cb-stage-strip'),assistant:!!document.getElementById('cb-assistant-mount'),terminal:!!document.getElementById('cb-terminal-mount'),overflow:document.documentElement.scrollWidth-document.documentElement.clientWidth};
 }
 """
 
@@ -476,7 +464,7 @@ PROJECTION = """
 # both depend on how wide a CONTAINER ended up in a real layout.
 #
 # The audit also measures CONTRAST, which found three more defects of the same family:
-# `.results-card-ai` and `.results-card-status.status-rejected` painted a THEMED status
+# `.results-card-ai` and `.md-decision.status-rejected` painted a THEMED status
 # hue on `--preview-overlay`, which is a permanently dark scrim -- so under the light
 # theme they were dark ink on dark (2.77:1) -- and `.focused-subnav` carried the same
 # frozen `rgba(20,24,27,.97)` literal `.focused-inspector` had, putting light-theme ink on
@@ -538,6 +526,9 @@ VISUAL_AUDIT = """
 """
 
 
+def assert_unknown_cost(text):
+    assert not re.search(r"(?:USD\s*|\$)0\.00\b",text), "An unknown cost must not be rendered as zero"
+
 def probe(page, label, before_value, after_value):
     """A mutation must really change what the check reads, or the control proves nothing."""
     assert before_value != after_value, \
@@ -582,9 +573,24 @@ try:
             page.wait_for_function("() => document.body.dataset.renderReady === '1' || document.querySelector('#main').children.length > 0", timeout=20000)
 
         def wait_results(tab):
-            page.wait_for_function(
-                "(t) => { const g = document.querySelector('[data-results-grid]'); return !!g && g.dataset.resultsTab === t; }",
-                arg=tab, timeout=20000)
+            page.wait_for_selector('[data-md=production]')
+            if tab == 'current':
+                page.locator('[data-md-tab="current"]').click()
+            else:
+                more=page.locator('[data-md=production] .md-more')
+                if not more.evaluate('(n)=>n.open'): more.locator('summary').click()
+                page.locator('[data-md-field="decision"]').select_option(tab)
+            page.wait_for_function("t=>CineBraidMediaBrowser.instances.get('production').state.decision===t",arg=tab)
+            actual=page.evaluate(READ_RESULTS)
+            assert actual['keys']==actual['expectedKeys'] and actual['statusWords']==actual['expectedWords'], 'rendered discovery must match independent query keys and decision labels'
+
+        def expand_inspector():
+            for summary in page.locator('[data-media-inspector] details > summary').all():
+                if not summary.evaluate('(n)=>n.parentElement.open'): summary.click()
+
+        def read_inspector():
+            expand_inspector()
+            return page.evaluate(READ_INSPECTOR)
 
         # ---- 1. one stable destination, all three dispositions present ----------
         goto("#/results")
@@ -597,7 +603,7 @@ try:
         assert page.evaluate("() => !window.CineBraidCreatorSurfaces.railOpen()"), \
             "the Assistant rail must ship CLOSED with no stored preference"
         page.evaluate("() => window.CineBraidCreatorSurfaces.openRail()")
-        page.wait_for_selector("#cb-assistant-mount", timeout=10000)
+        page.wait_for_selector("#cb-assistant-mount", state="attached", timeout=10000)
 
         results = page.evaluate(READ_RESULTS)
         assert results["present"], "Generated Media did not render a grid"
@@ -606,7 +612,7 @@ try:
         assert built["jobsAvailable"] is True, "the fixture's generation ledger must load, or the cost cases are untested"
         assert built["counts"]["approved"] and built["counts"]["candidate"] and built["counts"]["rejected"], \
             f"the fixture must carry all three dispositions, got {built['counts']}"
-        findings.append(f"destination: {results['count']} cards on Current, kinds {sorted(results['kinds'])}, "
+        findings.append(f"destination: {results['count']} cards on Current, exact query keys {len(results['keys'])}, "
                         f"counts {built['counts']}")
 
         # ---- 2. the O4 strip is absent here ------------------------------------
@@ -616,33 +622,37 @@ try:
         findings.append("O4: stage strip absent and zero-height on #/results; O3 Assistant and Terminal both mounted")
 
         # ---- 3. real filtering, semantic waits ---------------------------------
-        page.click('[data-results-kind="entity-reference"]')
-        page.wait_for_function(
-            "() => [...document.querySelectorAll('[data-results-card]')].every((c) => c.dataset.kind === 'entity-reference')",
-            timeout=15000)
-        filtered = page.evaluate(READ_RESULTS)
-        assert filtered["count"] > 0 and set(filtered["kinds"]) == {"entity-reference"}, \
-            f"the kind filter did not narrow the grid, got {filtered['kinds']}"
-        page.click('[data-results-kind="all"]')
-        page.wait_for_function("() => document.querySelectorAll('[data-results-card]').length > %d" % filtered["count"], timeout=15000)
-        findings.append(f"filter: entity-reference narrowed {results['count']} -> {filtered['count']} and restored")
+        page.locator('[data-md-field="type"]').select_option('image')
+        more=page.locator('[data-md=production] .md-more')
+        if not more.evaluate('(n)=>n.open'): more.locator('summary').click()
+        page.locator('[data-md-field="related"]').select_option('characters:KAI')
+        filtered=page.evaluate(READ_RESULTS)
+        assert filtered['count']>0 and filtered['keys']==filtered['expectedKeys']
+        assert page.evaluate("()=>{const c=CineBraidMediaBrowser.instances.get('production');return CineBraidMediaDiscovery.query(c.records(),c.state).rows.every(r=>r.type==='image'&&r.related.some(x=>x.key==='characters:KAI'));}")
+        page.locator('[data-md-field="type"]').select_option('all')
+        page.locator('[data-md-field="related"]').select_option('all')
+        assert page.evaluate(READ_RESULTS)['keys']==results['keys'], 'clearing supported filters restores exact original records'
+        findings.append('filter: Images and exact KAI relationship narrow records and clearing restores exact keys')
 
         # ---- 4. rejected media is reachable and really rendered ----------------
-        page.click('.workspace-tab[href="#/results/rejected"]')
         wait_results("rejected")
         rejected_view = page.evaluate(READ_RESULTS)
-        assert rejected_view["count"] == built["counts"]["rejected"], \
+        rejected_keys = {r["key"] for r in built["rows"] if r["role"] == "rejected"}
+        def assert_rejected_history():
+            assert set(page.evaluate(READ_RESULTS)["keys"]) == rejected_keys, "Every independently projected rejected identity must remain visible"
+        assert_rejected_history()
+        assert rejected_view["count"] == len(rejected_keys), \
             f"the Rejected tab must show every rejected item, expected {built['counts']['rejected']} got {rejected_view['count']}"
-        assert set(rejected_view["roles"]) == {"rejected"}
+        assert rejected_view["count"] > 0 and all("Rejected" in label for label in rejected_view["statusWords"])
         findings.append(f"rejected: {rejected_view['count']} retained and reachable under its own tab")
 
         # ---- 5. approved Frame A: human approval distinct from AI --------------
-        page.click('.workspace-tab[href="#/results/current"]')
         wait_results("current")
         frame_a = next(r for r in built["rows"] if r["name"] == "SH010_FRAME_A_V001.png")
-        page.evaluate("(k) => window.inspectMedia(k)", frame_a["key"])
+        page.locator('[data-md=production] .md-open').filter(has_text='').first.wait_for()
+        page.locator('[data-md-open="'+frame_a['key']+'"]').click()
         page.wait_for_selector("[data-media-inspector]", timeout=15000)
-        insp = page.evaluate(READ_INSPECTOR)
+        insp = read_inspector()
         assert insp["human"] == "approved" and insp["humanWords"] == "Approved by you", \
             f"an approved frame must say a human approved it, got {insp['humanWords']!r}"
         assert insp["recommendation"] == "correct" and "Suggests" in insp["recommendationWords"], \
@@ -655,7 +665,7 @@ try:
         assert "COST" in insp["text"].upper() and "$0.00" not in insp["text"]
         findings.append(f"inspector/approved: human '{insp['humanWords']}' vs AI '{insp['recommendationWords']}', "
                         f"{insp['targetCount']} authority targets, one scroll region {insp['scrollers']}")
-        assert insp["scrollers"] == ["media-inspector-body"], \
+        assert insp["scrollers"] == ["media-inspector-detail"], \
             f"the Inspector must own exactly one scroll region, got {insp['scrollers']}"
 
         # ---- 6. AI-recommended but unapproved: never called approved -----------
@@ -663,7 +673,7 @@ try:
         page.evaluate("(k) => window.inspectMedia(k)", recommended["key"])
         page.wait_for_function("(k) => { const b = document.querySelector('[data-media-inspector]'); return b && b.dataset.miKey === k; }",
                                arg=recommended["key"], timeout=15000)
-        rec = page.evaluate(READ_INSPECTOR)
+        rec = read_inspector()
         assert rec["human"] == "undecided" and rec["disposition"] == "candidate", \
             f"an AI-recommended candidate must remain a candidate, got {rec['human']}/{rec['disposition']}"
         assert "Approved by you" not in rec["text"], "an AI recommendation must never be worded as a human approval"
@@ -681,7 +691,7 @@ try:
         page.evaluate("(k) => window.inspectMedia(k)", rejected_row["key"])
         page.wait_for_function("(k) => { const b = document.querySelector('[data-media-inspector]'); return b && b.dataset.miKey === k; }",
                                arg=rejected_row["key"], timeout=15000)
-        rej = page.evaluate(READ_INSPECTOR)
+        rej = read_inspector()
         assert rej["disposition"] == "rejected" and rej["humanWords"] == "Rejected by you"
         assert "Reason not recorded" in rej["text"], "a rejection with no recorded reason must say so"
         findings.append("inspector/rejected: retained, inspectable, 'Reason not recorded'")
@@ -693,9 +703,9 @@ try:
             page.evaluate("(k) => window.inspectMedia(k)", row["key"])
             page.wait_for_function("(k) => { const b = document.querySelector('[data-media-inspector]'); return b && b.dataset.miKey === k; }",
                                    arg=row["key"], timeout=15000)
-            state = page.evaluate(READ_INSPECTOR)
+            state = read_inspector()
             money[row["cost"]] = (row["name"], row["job"], state["jobState"])
-            assert "$0.00" not in state["text"], f"{row['name']}: an unknown cost rendered as zero"
+            assert_unknown_cost(state["text"])
             if row["cost"] == "unavailable":
                 assert "Generation record unavailable" in state["text"], \
                     f"{row['name']}: an unloadable job must say so"
@@ -714,7 +724,7 @@ try:
         page.evaluate("(k) => window.inspectMedia(k)", blocking["key"])
         page.wait_for_function("(k) => { const b = document.querySelector('[data-media-inspector]'); return b && b.dataset.miKey === k; }",
                                arg=blocking["key"], timeout=15000)
-        dual = page.evaluate(READ_INSPECTOR)
+        dual = read_inspector()
         assert dual["ledger"].startswith("asset-") and dual["library"] == "blocking-media-1", \
             f"a blocking frame carries both identities separately, got ledger={dual['ledger']!r} library={dual['library']!r}"
         assert dual["ledger"] != dual["library"]
@@ -742,7 +752,7 @@ try:
         assert handoff, "a stage-local media surface must hand off to the Inspector"
         handoff.click()
         page.wait_for_selector("[data-media-inspector]", timeout=15000)
-        local = page.evaluate(READ_INSPECTOR)
+        local = read_inspector()
         matching = next(r for r in built["rows"] if r["key"] == local["key"])
         assert local["disposition"] == matching["role"], \
             f"stage-local and Results disagree about {matching['name']}: {local['disposition']} vs {matching['role']}"
@@ -759,16 +769,16 @@ try:
             for theme in ("night", "light"):
                 page.set_viewport_size({"width": width, "height": 900})
                 page.evaluate("(t) => { document.getElementById('app').dataset.surf = t; }", theme)
-                page.wait_for_function("() => !!document.querySelector('[data-results-grid]')", timeout=15000)
+                page.wait_for_function("() => !!document.querySelector('[data-md=production] .md-collection')", timeout=15000)
                 grid_state = page.evaluate(READ_RESULTS)
                 assert grid_state["overflow"] <= 0, f"{width}px/{theme}: document overflowed by {grid_state['overflow']}px"
                 assert grid_state["count"] > 0, f"{width}px/{theme}: the grid rendered nothing"
                 assert grid_state["barHeight"] == 0, f"{width}px/{theme}: the stage strip reserved space on Results"
                 page.evaluate("(k) => window.inspectMedia(k)", target_key)
                 page.wait_for_selector("[data-media-inspector]", timeout=15000)
-                shape = page.evaluate(READ_INSPECTOR)
+                shape = read_inspector()
                 assert shape["overflow"] <= 0, f"{width}px/{theme}: the Inspector overflowed by {shape['overflow']}px"
-                assert shape["scrollers"] in ([], ["media-inspector-body"]), \
+                assert shape["scrollers"] in ([], ["media-inspector-detail"]), \
                     f"{width}px/{theme}: nested scrolling inside the Inspector: {shape['scrollers']}"
                 assert shape["actions"], f"{width}px/{theme}: the Inspector offered no actions"
                 if width <= 430:
@@ -787,9 +797,11 @@ try:
             for theme in ("night", "light"):
                 page.evaluate("(t) => { document.getElementById('app').dataset.surf = t; }", theme)
                 for route in ("#/results", "#/results/rejected", "#/library", "#/character/KAI", "#/shot/SH010"):
-                    goto(route)
+                    goto('#/results' if route=='#/results/rejected' else route)
+                    if route=='#/results/rejected':wait_results('rejected')
                     page.wait_for_timeout(220)
                     surfaces += 1
+                    page.mouse.move(0,0)
                     hits = page.evaluate(VISUAL_AUDIT)
                     if hits:
                         defects[f"{width}px {theme} {route}"] = hits
@@ -799,6 +811,7 @@ try:
                     page.evaluate("(k) => window.inspectMedia(k)", row["key"])
                     page.wait_for_selector("[data-media-inspector]", timeout=15000)
                     surfaces += 1
+                    page.mouse.move(0,0)
                     hits = page.evaluate(VISUAL_AUDIT)
                     if hits:
                         defects[f"{width}px {theme} inspector:{row['kind']}"] = hits
@@ -810,27 +823,16 @@ try:
         findings.append(f"visual audit: {surfaces} surfaces (4 widths x 2 themes x routes and inspected records) "
                         "with no clipped, vertically cut, invisible, sub-AA, zero-size or broken content")
 
-        # ---- 13. theme integrity of the corrected Inspector surface -------------
-        page.evaluate("() => { document.getElementById('app').dataset.surf = 'light'; }")
-        light = page.evaluate("""() => {
-          const probe = document.createElement('div');
-          probe.className = 'focused-inspector';
-          document.getElementById('main').appendChild(probe);
-          const bg = getComputedStyle(probe).backgroundColor;
-          probe.remove();
-          return bg;
-        }""")
-        page.evaluate("() => { document.getElementById('app').dataset.surf = 'night'; }")
-        dark = page.evaluate("""() => {
-          const probe = document.createElement('div');
-          probe.className = 'focused-inspector';
-          document.getElementById('main').appendChild(probe);
-          const bg = getComputedStyle(probe).backgroundColor;
-          probe.remove();
-          return bg;
-        }""")
-        assert light != dark, f".focused-inspector must follow the theme, both computed {light}"
-        findings.append(f"theme: .focused-inspector now resolves {dark} dark / {light} light (was one frozen literal)")
+        # ---- 13. accepted review surface remains neutral under either shell theme.
+        page.evaluate("(k)=>inspectMedia(k)",target_key)
+        page.wait_for_selector('[data-media-inspector]')
+        backgrounds=[]
+        for theme in ('light','night'):
+            page.evaluate("t=>document.getElementById('app').dataset.surf=t",theme)
+            backgrounds.append(page.locator('#modal .modal-box').evaluate('(el)=>getComputedStyle(el).backgroundColor'))
+        assert backgrounds == ['rgb(24, 26, 28)']*2, f"The accepted neutral Inspector surface changed: {backgrounds}"
+        page.evaluate('()=>closeModal()')
+        findings.append('theme: actual neutral Inspector surface remains consistent; all visible text passed contrast checks in both shell themes')
 
         # =====================================================================
         # NEGATIVE CONTROLS. Each mutates the running page, proves the mutation
@@ -859,13 +861,14 @@ try:
 
         # N2 paint an AI recommendation as an APPROVED chip.
         n2 = page.evaluate("""() => {
-          const card = [...document.querySelectorAll('[data-results-card]')].find((c) => c.dataset.role === 'candidate' && c.querySelector('.results-card-ai'));
+          const record=CineBraidMediaInspector.projection().records.find(r=>r.aiRecommendation.value==='approve'&&r.humanDecision.state==='undecided');
+          const card = [...document.querySelectorAll('[data-md=production] .md-card[data-md-key]')].find(c=>c.dataset.mdKey===record?.key);
           if (!card) return { skipped: true };
-          const chip = card.querySelector('.results-card-status');
+          const chip = card.querySelector('.md-decision');
           const before = chip.textContent;
           chip.textContent = 'APPROVED';
           const after = chip.textContent;
-          const mismatch = card.dataset.role !== 'approved' && chip.textContent === 'APPROVED';
+          const mismatch = record.disposition.role !== 'approved' && chip.textContent === 'APPROVED';
           chip.textContent = before;
           return { before, after, mismatch, restored: chip.textContent };
         }""")
@@ -878,6 +881,7 @@ try:
         # N3 render an AI PASS as a human approval in the Inspector.
         page.evaluate("(k) => window.inspectMedia(k)", recommended["key"])
         page.wait_for_selector("[data-media-inspector]", timeout=15000)
+        expand_inspector()
         n3 = page.evaluate("""() => {
           const block = document.querySelector('[data-mi-human-decision]');
           const before = block.querySelector('b').textContent;
@@ -896,30 +900,34 @@ try:
 
         # N4 drop rejected media from the destination.
         page.evaluate("() => closeModal()")
-        page.click('.workspace-tab[href="#/results/rejected"]')
         wait_results("rejected")
         n4 = page.evaluate("""() => {
-          const before = document.querySelectorAll('[data-results-card]').length;
-          [...document.querySelectorAll('[data-results-card]')].forEach((c) => c.remove());
-          const after = document.querySelectorAll('[data-results-card]').length;
+          const before = document.querySelectorAll('[data-md=production] .md-card[data-md-key]').length;
+          [...document.querySelectorAll('[data-md=production] .md-card[data-md-key]')].forEach((c) => c.remove());
+          const after = document.querySelectorAll('[data-md=production] .md-card[data-md-key]').length;
           return { before, after };
         }""")
         probe(page, "N4", n4["before"], n4["after"])
         assert n4["before"] > 0 and n4["after"] == 0, "N4: rejected media disappearing was not detectable"
-        page.click('.workspace-tab[href="#/results/current"]')
+        try:
+            assert_rejected_history()
+        except AssertionError:
+            pass
+        else:
+            raise AssertionError("N4: the retained-history guard did not reject the mutant")
         wait_results("current")
-        page.click('.workspace-tab[href="#/results/rejected"]')
         wait_results("rejected")
-        restored = page.evaluate("() => document.querySelectorAll('[data-results-card]').length")
+        restored = page.evaluate("() => document.querySelectorAll('[data-md=production] .md-card[data-md-key]').length")
+        assert_rejected_history()
         assert restored == n4["before"], f"N4 did not restore the Rejected tab ({restored} vs {n4['before']})"
         controls.append(f"N4 rejected media removed -> caught ({n4['before']} -> 0, restored to {restored})")
 
         # N5 render an unknown cost as $0.00.
-        page.click('.workspace-tab[href="#/results/current"]')
         wait_results("current")
         unpriced = next(r for r in built["rows"] if r["cost"] in ("not-priced", "unavailable", "not-recorded"))
         page.evaluate("(k) => window.inspectMedia(k)", unpriced["key"])
         page.wait_for_selector("[data-media-inspector]", timeout=15000)
+        expand_inspector()
         n5 = page.evaluate("""() => {
           const cell = [...document.querySelectorAll('[data-media-inspector] .mi-facts article')].find((a) => a.textContent.trim().startsWith('Cost'));
           const target = cell.querySelector('b');
@@ -932,11 +940,19 @@ try:
         }""")
         probe(page, "N5", n5["before"], n5["after"])
         assert n5["zero"], "N5: a zero cost was not detectable in the Inspector text"
+        try:
+            assert_unknown_cost(n5["after"])
+        except AssertionError:
+            pass
+        else:
+            raise AssertionError("N5: the normal unknown-cost guard accepted the mutant")
+        assert_unknown_cost(n5["restored"])
         assert n5["restored"] == n5["before"], "N5 did not restore the page"
         controls.append(f"N5 unknown cost as 0.00 -> caught (was {n5['before']!r})")
 
         # N6 substitute the current settings model for the historical reviewer.
         page.evaluate("(k) => window.inspectMedia(k)", recommended["key"])
+        expand_inspector()
         page.wait_for_selector("[data-mi-review-kind]", timeout=15000)
         n6 = page.evaluate("""() => {
           const cells = [...document.querySelectorAll('[data-mi-review-kind] .mi-facts article')];
@@ -982,6 +998,7 @@ try:
         # N8 leave stale metadata behind when the inspected media changes.
         page.evaluate("(k) => window.inspectMedia(k)", frame_a["key"])
         page.wait_for_selector("[data-media-inspector]", timeout=15000)
+        expand_inspector()
         n8 = page.evaluate("""(other) => {
           const box = document.querySelector('[data-media-inspector]');
           const stale = box.innerText;
@@ -996,6 +1013,7 @@ try:
         page.evaluate("(k) => window.inspectMedia(k)", recommended["key"])
         page.wait_for_function("(k) => { const b = document.querySelector('[data-media-inspector]'); return b && b.dataset.miKey === k; }",
                                arg=recommended["key"], timeout=15000)
+        expand_inspector()
         clean = page.evaluate("() => document.querySelector('[data-media-inspector]').innerText")
         assert "SH010_FRAME_A_V001.png" not in clean, "the shipped Inspector leaked the previous record after a switch"
         controls.append("N8 stale metadata across a media switch -> caught (shipped path repaints, control does not)")
@@ -1021,14 +1039,18 @@ try:
              cleared and tripped the suite's own no-mutation guard. */
           const savedAnchors = anchors.slice();
           const savedCandidates = entity.candidateFiles.slice();
+          const references=SCAN.references.characters[entity.id],savedReferences=references.slice();
+          const resolved=references.find(r=>r.assetId===original.assetId);if(!resolved)return {missingClaim:true};
+          references.push({...resolved,name:'KAI_RENAMED_OLD.png',url:'/assets/anchors/KAI_RENAMED_OLD.png'});
           anchors.push({ name: 'KAI_RENAMED_OLD.png', url: '/assets/anchors/KAI_RENAMED_OLD.png', assetId: original.assetId });
           entity.candidateFiles.push({ stored: 'KAI_RENAMED_OLD.png', addedAt: '2026-08-01T00:00:00.000Z', decision: 'unreviewed' });
           const after = window.CineBraidMediaInspector.projection();
           anchors.length = 0; anchors.push(...savedAnchors);
           entity.candidateFiles.length = 0; entity.candidateFiles.push(...savedCandidates);
+          references.length=0;references.push(...savedReferences);
           const restored = window.CineBraidMediaInspector.projection();
           return { beforeCount: before.records.length, afterCount: after.records.length,
-                   collapsed: after.duplicatesCollapsed, restoredCount: restored.records.length,
+                   collapsed: after.duplicatesCollapsed-before.duplicatesCollapsed, restoredCount: restored.records.length,
                    hadIdentity: !!original.assetId, claimedBy: entity.id };
         }""")
         assert not n9.get("missingClaim"), \

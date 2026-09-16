@@ -3,6 +3,7 @@
 import json, os, pathlib, socket, struct, subprocess, sys, time, zlib, urllib.request, tempfile
 ROOT=pathlib.Path(__file__).resolve().parents[1]
 sys.path.insert(0,str(ROOT/'tests'))
+from media_browser_contract import assert_media_image
 from browser_runtime import require_browser, launch_chromium, disposable_workspace, canon_receipts
 def free_port():
     sock = socket.socket(); sock.bind(("127.0.0.1", 0)); port = sock.getsockname()[1]; sock.close(); return port
@@ -353,8 +354,8 @@ try:
         check('Full preview retains selector return',page.locator('[data-media-inspector] .cancel').inner_text()=='Back to selection')
         page.locator('[data-mi-action="open-owner"]').first.click()
         page.locator('[data-media-return]').wait_for()
-        check('Reference owner receives exact candidate',page.locator('[data-rd-candidate="KAI_FAL_CANDIDATE_2.png"]').get_attribute('aria-pressed')=='true')
-        check('Reference handoff selects exact nondefault continuity state',page.locator('#rd-state').input_value()=='state-night')
+        assert_media_image(page,project_root,'#rx-primary','anchors/KAI_FAL_CANDIDATE_2.png',owner=('characters','KAI'))
+        check('Reference handoff selects exact nondefault continuity state',page.evaluate('CineBraidResults.parse(location.hash).scope.stateId')=='state-night')
         page.locator('[data-media-return]').click()
         page.locator('[data-md="reference-picker"]').wait_for()
         check('Owner round trip reopens unfinished selector',page.locator('#modal [data-md-field="query"]').input_value()=='KAI_FAL_CANDIDATE_2')
@@ -368,8 +369,11 @@ try:
         check('Revealed rejected result cannot be added',page.locator('#rd-add-candidate').is_disabled())
         page.locator('#modal [data-md-inspect]').first.click()
         page.locator('[data-mi-action="open-owner"]').first.click()
+        page.locator('[data-reference-desk]').wait_for()
+        check('Legacy rejected owner retains exact default-state candidate',page.locator('#rd-state').input_value()=='state-default' and page.locator('[data-rd-candidate="KAI_FAL_CANDIDATE_3.png"]').get_attribute('aria-pressed')=='true')
         check('Rejected owner offers restore before approval',page.locator('[data-rd-action="restore"]').count()==1 and page.locator('[data-rd-action="approve"]').count()==0)
         page.locator('[data-rd-action="restore"]').click()
+        page.wait_for_function('()=>!approvalSubmissionPending()&&projectSaveSettled().settled')
         page.locator('[data-media-return]').click()
         page.locator('[data-md="reference-picker"]').wait_for()
         page.wait_for_function('!document.getElementById("rd-add-candidate").disabled')

@@ -102,6 +102,12 @@ try:
   (w.projects_root/slug/'anchors'/'KAI_DEFAULT_V001.png').unlink();page.locator('[data-wb="reload-authority"]').click();page.locator('.wb-missing').wait_for();capture(page,'missing-approved-1440')
   check('Missing original retains receipt wording','receipt remains recorded' in page.locator('.wb-authority').inner_text())
   page.set_viewport_size({'width':390,'height':844});page.locator('.wb-missing').scroll_into_view_if_needed();capture(page,'missing-approved-390')
+  page.evaluate('()=>{window.__savedBraidy=CineBraidBraidy;window.CineBraidBraidy=undefined;}')
+  page.locator('[data-wb="braidy"]').click();page.get_by_text('Braidy is unavailable. You can continue editing and saving this Bible.',exact=True).wait_for()
+  check('Missing optional assistant leaves Bible available',page.locator('[data-field="creationDescription"]').count()>0)
+  page.evaluate("()=>{window.CineBraidBraidy={braidyWith(){throw Error('synthetic unavailable')}};}")
+  page.locator('[data-wb="braidy"]').click();check('Throwing optional assistant changes no authority',page.evaluate('JSON.stringify(P.productionAuthority)')==baseline)
+  page.evaluate('()=>{window.CineBraidBraidy=window.__savedBraidy;delete window.__savedBraidy;}')
   page.set_viewport_size({'width':1440,'height':900});page.locator('[data-wb="braidy"]').click();check('Opening Braidy is advisory only',page.evaluate('JSON.stringify(P.productionAuthority)')==baseline)
   check('No assistant request made on opening',not any('/ask' in r['url'] for r in mutations))
   # Disposable in-browser capability fixture; never configures or contacts a provider.

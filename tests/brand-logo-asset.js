@@ -86,7 +86,7 @@ function ruleFor(source, selector) {
 
 for (const [label, body] of [
   ["public/styles.css .brand-logo", ruleFor(css, ".brand-logo")],
-  ["public/styles.css .bible-brand img", ruleFor(css, ".bible-brand img")],
+  ["public/bible.html .record-brand img", ruleFor(read("public/bible.html"), ".record-brand img")],
   ["public/login.html .login-brand img", ruleFor(login, ".login-brand img")],
 ]) {
   assert(/height:\s*\d+px/.test(body), `${label} must fix the logo's height`);

@@ -163,6 +163,9 @@ def open_finish_panel(page):
         if (panel) panel.open = true;
     }""")
     page.wait_for_selector('details[data-guided-panel="finish"][open]', timeout=15000)
+    page.wait_for_timeout(80)  # allow the disclosure's toggle event to record its preference
+    page.evaluate('async()=>await flushPendingProjectSave()')
+    page.wait_for_function('()=>projectSaveSettled().settled')
 
 
 def finish_controls(page):
@@ -262,6 +265,10 @@ try:
         page.evaluate("() => { window.__langMarker = 'in-place'; }")
         open_finish_panel(page)
         page.locator('details[data-guided-panel="finish"] button', has_text="Mark shot final").first.click()
+        page.wait_for_function("()=>document.getElementById('rx-confirm')&&!document.getElementById('rx-confirm').disabled")
+        check(not delivery_truth(page, APPROVED)['receipt'], 'C: opening confirmation creates no delivery receipt')
+        page.locator('#rx-confirm').click()
+        page.wait_for_function('()=>!approvalSubmissionPending()')
         page.wait_for_function("id => shotDeliveryAuthority(P, P.shots.find((row) => row.id === id)).final === true",
                                arg=APPROVED, timeout=15000)
         check(page.evaluate("() => window.__langMarker") == "in-place",

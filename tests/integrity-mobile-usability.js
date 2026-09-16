@@ -84,9 +84,10 @@ async function main() {
   assert(chip.innerHTML.includes("Idle"), "the completed activity chip must return to idle");
 
   const settings = await render("#/settings", buildFixture(), { storage: { "cinebraid-focused:fixture:settings-task:settings": "project" } });
-  const globalStyle = settings.html.match(/<textarea[^>]*onchange="setGlobalCreationField\('globalStylePrompt',this\.value\)"[^>]*>/)?.[0] || "";
-  assert(globalStyle, "Settings must render the global visual style textarea");
-  assert(/aria-label="Global visual style"|id="[^"]+"/.test(globalStyle), "global visual style textarea must have an accessible name");
+  assert(settings.html.includes('#/bible/project'), "Settings hands creative fields to Working Bible");
+  const bible=read('public/working-bible.js');
+  assert(bible.includes("key:'globalStylePrompt',label:'Visual language'") && bible.includes('setGlobalCreationField(key,value)'), "Bible retains the existing global style writer");
+  assert(bible.includes('<label for="wb-text">') && bible.includes('<textarea id="wb-text"'), "Bible edit has an explicitly associated accessible label");
 
   const shotNav = await render("#/shot/L1-01", {
     ...buildFixture(),

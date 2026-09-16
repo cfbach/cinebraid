@@ -476,7 +476,8 @@ function n12StripAheadOfRenderIsCaught() {
   /* The mechanism that made it visible: the shot route awaits the network before it
      writes #main, so a hash-driven paint is always ahead of it. */
   const views = read("public/views.js");
-  assert(/async shot\(id\)[\s\S]{0,400}await fetch\("\/api\/shots\/"/.test(views),
+  const shotBody = views.slice(views.indexOf("async shot(id)"), views.indexOf("\n  async ", views.indexOf("async shot(id)")+1));
+  assert(/await fetch\("\/api\/shots\/"/.test(shotBody),
     "N12. the shot route still awaits the server before rendering — the window this correction closes");
   note("N12. reverting the strip's context to the hash alone is caught, and the shot route still awaits the network before writing #main, which is the window that made it visible");
 }

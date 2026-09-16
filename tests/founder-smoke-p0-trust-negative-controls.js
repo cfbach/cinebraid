@@ -118,12 +118,12 @@ function compileModule(source, filename) {
              control `run()` returns the compiled module. */
 
 const BLANK_MEDIA_RUN = `
-  AUTOMATION_RUNS=[{id:'run-blank',revision:1,type:'entity-chain',targetId:'characters:KAI',entityList:'characters',entityId:'KAI',
-    config:{list:'characters',entityId:'KAI',maxImages:9},label:'Kai default',status:'awaiting-review',stage:'Candidate approval required',
-    createdAt:'2026-08-17T10:00:00Z',updatedAt:'2026-08-17T10:01:00Z',current:{stepKey:'entity:state-default:review'},usage:{imagesGenerated:3},
-    steps:{'entity:state-default:review':{key:'entity:state-default:review',kind:'entity-review',status:'needs-review',label:'Approve a candidate',
-      stateId:'state-default',winner:'KAI-GONE.png',score:90,attempt:1,maxAttempts:3,
-      review:{candidates:[{file:'KAI-GONE.png',review:{score:90,pass:true,summary:'Identity preserved.'}}]}}},logs:[]}];`;
+  AUTOMATION_RUNS=[{id:'run-blank',revision:1,type:'shot-chain',targetId:'L1-01',
+    config:{maxImages:9},label:'Kai default',status:'awaiting-review',stage:'Candidate approval required',
+    createdAt:'2026-08-17T10:00:00Z',updatedAt:'2026-08-17T10:01:00Z',current:{stepKey:'frame:frame-a:review'},usage:{imagesGenerated:3},
+    steps:{'frame:frame-a:review':{key:'frame:frame-a:review',kind:'frame-review',status:'needs-review',label:'Approve a candidate',
+      frameId:'frame-a',winner:'KAI-GONE.png',score:90,attempt:1,maxAttempts:3,
+      files:['KAI-GONE.png'],review:{reviews:[{n:1,score:90,pass:true,notes:'Identity preserved.'}]}}},logs:[]}];`;
 
 const REGRESSION_RUN = `
   SCAN.shots['L1-01'] = { ...(SCAN.shots['L1-01']||{}), takes: [ ...((SCAN.shots['L1-01']||{}).takes||[]), { name: 'L1-01_correction.png', url: '/x/L1-01_correction.png' } ] };

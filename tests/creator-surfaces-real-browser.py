@@ -301,6 +301,8 @@ try:
         def guard(route):
             """No request leaves this machine, and the paid route is never called."""
             url = route.request.url
+            if url == base + '/api/generation/fal/jobs/job-live/refresh' and route.request.method == 'POST':
+                return route.fulfill(status=200,content_type='application/json',body=json.dumps({'ok':True,'job':{'id':'job-live','status':'IN_QUEUE'}}))
             if PAID_ROUTE in url and route.request.method == "POST":
                 paid_calls.append(f"{route.request.method} {url}")
                 return route.abort("failed")

@@ -975,7 +975,7 @@ async function main() {
     ["#/prop/PR-TOOL", fixture, ["Panel tool", "UPLOAD & ORGANIZE", "Map imported references"]],
     ["#/vehicle/VEH-CART", fixture, ["Maintenance cart", "UPLOAD & ORGANIZE", "Upload reference files"]],
     ["#/reports", fixture, ["Reports", "RUN HISTORY"]],
-    ["#/settings", fixture, ["Settings", "Project", "Recovery & advanced"]],
+    ["#/settings", fixture, ["Settings", "Project", "Recovery &amp; advanced"]],
     ["#/production", emptyFixture(), ["Production", "This project has no shots"]],
     ["#/shots/board", emptyFixture(), ["Shots"]],
   ];

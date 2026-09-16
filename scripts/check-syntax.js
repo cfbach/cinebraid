@@ -3,6 +3,15 @@ const { spawnSync } = require("child_process");
 const path = require("path");
 const ROOT = path.resolve(__dirname, "..");
 const SOURCES = [
+  "tests/media-discovery.js",
+  "tests/ev2-5-settings-writers.js",
+  "tests/ev2-5-check-targets.js",
+  "tests/ev2-5-settings-real-browser.js",
+  "tests/ev2-5-settings-mobile.js",
+  "tests/helpers/result-confirmation.js",
+  "tests/helpers/reference-fixture.js",
+  "tests/helpers/identity-fixture.js",
+
   "src/server/approved-record.js",
   "public/working-bible.js",
   "tests/ev2-4-bible-audience.js",

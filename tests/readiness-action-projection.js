@@ -271,7 +271,14 @@ async function ux1_1_approveToFinalHandoff() {
 
 async function ux1_2_markFinal() {
   const project = projectOf([{ id: "L1-01", winner: "FRAME_A.png" }]);
-  const page = await render("#/shot/L1-01", project, { scan: scanWith(project, { "L1-01": ["FRAME_A.png"] }) });
+  const {memoryStore,confirmationDOM,confirmDecision}=require('./helpers/result-confirmation');
+  const assetId=require('./render-harness').harnessAssetId('shots/L1-01/takes/FRAME_A.png');
+  project.shots[0].keyframes[0].winnerAssetId=assetId;
+  project.productionAuthority.receipts.find(r=>r.kind==='shot-frame').assetId=assetId;
+  const scan=scanWith(project, {'L1-01':['FRAME_A.png']});scan.shots['L1-01'].takes[0].assetId=assetId;
+  for(const list of ['characters','locations','props'])for(const entity of project[list]||[])if(!entity.continuityStates?.length)entity.continuityStates=[{id:'state-default',name:'Default',isDefault:true,approvedFile:entity.approvedFile||'',notes:''}];
+  const store=memoryStore(project);
+  const page=await render('#/shot/L1-01',project,{scan,fetch:store.fetch});const dom=confirmationDOM(page);
 
   const before = evaluate(page.context, `
     const readiness = shotReadinessFor(P.shots[0]);
@@ -280,7 +287,9 @@ async function ux1_2_markFinal() {
   equal(before.code, "mark-shot-final", "precondition: the approved shot is waiting on the delivery decision");
   equal(before.decisions, 1, "precondition: and it is the project's one decision");
 
-  page.gesture.act(() => page.context.markGuidedStillFinal("L1-01", "FRAME_A.png"));
+  ok(!store.stored().productionAuthority.receipts.some(r=>r.kind==='shot-delivery'),'opening final confirmation changes no stored authority');
+  await confirmDecision(page,dom,['L1-01','FRAME_A.png','delivery'],store,()=>page.context.markGuidedStillFinal('L1-01','FRAME_A.png'));
+  ok(store.stored().productionAuthority.receipts.some(r=>r.kind==='shot-delivery'),'delivery is acknowledged by the authority write seam');
   const after = await evaluateAsync(page.context, `
     const shot = P.shots[0];
     const readiness = shotReadinessFor(shot);

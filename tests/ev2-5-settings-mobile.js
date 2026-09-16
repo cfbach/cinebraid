@@ -40,6 +40,7 @@ function geometry() {
   server=spawn(process.execPath,['-r','./tests/helpers/ev2-5-no-network.js','server.js'],{cwd:ROOT,env:w.serverEnv(port),stdio:['ignore',log,log]});
   for(let i=0;i<120;i++){try{if((await fetch(base+'/api/project')).ok)break;}catch{}await new Promise(r=>setTimeout(r,100));}
   browser=await playwright.chromium.launch({headless:true,...(process.env.CINEBRAID_BROWSER_EXECUTABLE?{executablePath:process.env.CINEBRAID_BROWSER_EXECUTABLE}:{})});
+ console.log('[browser-runtime] ev2-5-settings-mobile: launched Chromium '+browser.version()+' (Node Playwright)');
   const context=await browser.newContext({reducedMotion:'reduce'});
   let baseline = true;
   await context.route('**/*',r=>{

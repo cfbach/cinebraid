@@ -392,8 +392,8 @@ async function main() {
     const lowered = html.toLowerCase();
     for (const term of JARGON)
       assert(!lowered.includes(term.toLowerCase()), `${label} exposes implementation vocabulary: ${term}`);
-    for (const term of ["buzz", "balance"])
-      assert(!lowered.includes(term), `${label} must not mention ${term} — Phase 3 has no balance feature`);
+    assert(!/balance[^<]{0,30}\d+|\d+\s*buzz/i.test(html), `${label} must never fabricate a balance amount`);
+    assert(lowered.includes("does not read your buzz balance"), `${label} must state the balance is unknown`);
     assert(!lowered.includes("credential\""), `${label} must not render a credential object`);
   };
 
@@ -407,7 +407,7 @@ async function main() {
   /* ---- C2. connected: who, and how to undo it ---- */
   const connectedHtml = await settingsPanel({ accounts: [connectedRow], providers: [CIVITAI_PROVIDER], localMachine: true });
   assert(connectedHtml.includes("@ada"), "a connected account is identified by the person it belongs to");
-  assert(connectedHtml.includes("Connected"));
+  assert(connectedHtml.includes("Identity verified — not a live availability check"));
   assert(connectedHtml.includes("Disconnect"));
   assert(connectedHtml.includes(connectedRow.connectionId), "actions address the connection by its own id");
   assertNoJargon(connectedHtml, "the connected Accounts panel");
@@ -417,7 +417,7 @@ async function main() {
     accounts: [{ ...connectedRow, stale: true, lastError: { code: "PROVIDER_UNREACHABLE", message: "Civitai could not be reached." } }],
     providers: [CIVITAI_PROVIDER], localMachine: true,
   });
-  assert(/not checked recently/i.test(staleHtml), "an unverified-but-connected account says so rather than looking broken");
+  assert(/recheck needed/i.test(staleHtml), "an unverified-but-connected account says so rather than looking broken");
   assert(staleHtml.includes("Civitai could not be reached."));
   assert(!/expired/i.test(staleHtml), "an outage must not be presented as an expiry");
   const expiredHtml = await settingsPanel({

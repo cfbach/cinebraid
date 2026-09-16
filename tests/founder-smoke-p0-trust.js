@@ -493,12 +493,12 @@ async function testLineageRuntimeSurfaces() {
 async function testUnrenderableMediaCannotBeApproved() {
   const app = await render("#/shot/L1-01", buildFixture());
   vm.runInContext(`
-    AUTOMATION_RUNS=[{id:'run-blank',revision:1,type:'entity-chain',targetId:'characters:KAI',entityList:'characters',entityId:'KAI',
-      config:{list:'characters',entityId:'KAI',maxImages:9},label:'Kai default',status:'awaiting-review',stage:'Candidate approval required',
-      createdAt:'2026-08-17T10:00:00Z',updatedAt:'2026-08-17T10:01:00Z',current:{stepKey:'entity:state-default:review'},usage:{imagesGenerated:3},
-      steps:{'entity:state-default:review':{key:'entity:state-default:review',kind:'entity-review',status:'needs-review',label:'Approve a candidate',
-        stateId:'state-default',winner:'KAI-GONE.png',score:90,attempt:1,maxAttempts:3,
-        review:{candidates:[{file:'KAI-GONE.png',review:{score:90,pass:true,summary:'Identity preserved; lighting matches canon.'}}]}}},logs:[]}];
+    AUTOMATION_RUNS=[{id:'run-blank',revision:1,type:'shot-chain',targetId:'L1-01',
+      config:{maxImages:9},label:'Kai default',status:'awaiting-review',stage:'Candidate approval required',
+      createdAt:'2026-08-17T10:00:00Z',updatedAt:'2026-08-17T10:01:00Z',current:{stepKey:'frame:frame-a:review'},usage:{imagesGenerated:3},
+      steps:{'frame:frame-a:review':{key:'frame:frame-a:review',kind:'frame-review',status:'needs-review',label:'Approve a candidate',
+        frameId:'frame-a',winner:'KAI-GONE.png',score:90,attempt:1,maxAttempts:3,
+        files:['KAI-GONE.png'],review:{reviews:[{n:1,score:90,pass:true,notes:'Identity preserved; lighting matches canon.'}]}}},logs:[]}];
   `, app.context);
   const html = vm.runInContext("v627HumanReviewMarkup(v626Runs()[0])", app.context);
 
@@ -516,19 +516,19 @@ async function testUnrenderableMediaCannotBeApproved() {
   let toasted = "";
   app.context.toast = (message) => { toasted = message; };
   const receiptsBefore = JSON.stringify(vm.runInContext("(P.productionAuthority && P.productionAuthority.receipts) || []", app.context));
-  await vm.runInContext(`approveAutomationCandidate('run-blank','entity:state-default:review','KAI-GONE.png')`, app.context);
+  await vm.runInContext(`approveAutomationCandidate('run-blank','frame:frame-a:review','KAI-GONE.png')`, app.context);
   assert(/cannot be displayed for inspection/.test(toasted), `the approval command must refuse: ${toasted}`);
   assert.strictEqual(JSON.stringify(vm.runInContext("(P.productionAuthority && P.productionAuthority.receipts) || []", app.context)), receiptsBefore,
     "no authority receipt may be written for media nobody could see");
 
   /* And a candidate whose media DOES resolve is still approvable — the guard must
      not have made the gate unusable. */
-  const owned = vm.runInContext(`entityMedia("characters", P.characters[0])[0].name`, app.context);
+  const owned = vm.runInContext(`takesFor("L1-01")[0].name`, app.context);
   assert(owned, "the fixture must own at least one resolvable media file for the control case");
   vm.runInContext(`
-    const step = v626Runs()[0].steps['entity:state-default:review'];
+    const step = v626Runs()[0].steps['frame:frame-a:review'];
     step.winner = ${JSON.stringify(owned)};
-    step.review.candidates = [{ file: ${JSON.stringify(owned)}, review: { score: 91, pass: true, summary: 'Good.' } }];
+    step.files=[${JSON.stringify(owned)}];step.review.reviews = [{n:1, score:91,pass:true,notes:'Good.'}];
   `, app.context);
   const usable = vm.runInContext("v627HumanReviewMarkup(v626Runs()[0])", app.context);
   assert(/APPROVE SUGGESTED/.test(usable), "a candidate whose media resolves must still be approvable");

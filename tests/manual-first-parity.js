@@ -226,7 +226,9 @@ async function main() {
   }
 
   const manualSettings = await render("#/settings", { ...structuredClone(SAMPLE), meta: { ...SAMPLE.meta, workflowEmphasis: "manual" } }, { agentStatus: disabledAgents() });
-  assert(manualSettings.html.includes("OPTIONAL ASSISTED SERVICES"), "manual settings must group Assistant and Generation as optional services");
+  assert(manualSettings.html.includes("Connections") && manualSettings.html.includes("Braidy &amp; assistance"), "manual settings retain optional connection and assistance destinations");
+  const manualSetup = await render("#/settings/setup", structuredClone(SAMPLE), { agentStatus: disabledAgents() });
+  assert(manualSetup.html.includes("Manual workflows need no cloud account") && /skip/i.test(manualSettings.html), "manual setup permits working without services and skipping setup");
   const manualBoard = await render("#/shots/board", { ...structuredClone(SAMPLE), meta: { ...SAMPLE.meta, workflowEmphasis: "manual" } }, { agentStatus: disabledAgents() });
   assert(manualBoard.html.includes("Ready for media"), "manual shot board vocabulary must describe media intake");
   const assistedBoard = await render("#/shots/board", { ...structuredClone(SAMPLE), meta: { ...SAMPLE.meta, workflowEmphasis: "assisted" } }, { agentStatus: disabledAgents() });

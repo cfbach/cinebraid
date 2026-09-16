@@ -1,3 +1,4 @@
+import base64
 #!/usr/bin/env python3
 """Manual-only Chromium persona audit. Self-skips without Playwright/Chromium."""
 import copy, json, os, pathlib, shutil, socket, subprocess, time, urllib.request, urllib.error, re
@@ -57,7 +58,7 @@ try:
     scan = {
         "anchors": [{"name":"CHAR-MANUAL-PRIMARY.png","url":tiny},{"name":"CHAR-MANUAL-FRONT.png","url":tiny},{"name":"CHAR-MANUAL-PROFILE.png","url":tiny}],
         "plates": [], "props": [], "vehicles": [], "audio": [], "media": [],
-        "shots": {shot_id: {"takes":[{"name":"MANUAL-FRAME-A.png","url":tiny},{"name":"MANUAL-FINISHED-VIDEO.mp4","url":tiny}],"locked":[]}},
+        "shots": {shot_id: {"takes":[{"name":"MANUAL-FRAME-A.png","url":tiny},{"name":"MANUAL-FINISHED-VIDEO.mp4","assetId":"asset-11111111111111111111111111111111","url":"data:video/mp4;base64,"+base64.b64encode((ROOT / "tests/fixtures/ev2-6/motion-0.mp4").read_bytes()).decode()}],"locked":[]}},
     }
     disabled = {"ready":False,"label":"Disabled","provider":"none","model":"","message":"Disabled for manual-only audit.","action":""}
     agents = {"enabled":False,"manualMode":True,"active":0,"queued":0,"maxConcurrent":1,"capabilities":{k:disabled for k in ["text","verifier","vision","embedding","technical"]},"agents":[],"runs":[],"index":{"ready":False,"stale":True}}
@@ -174,6 +175,8 @@ try:
         if coverage_section.count():
             coverage_section.first.evaluate("node => node.open = true")
             page.wait_for_timeout(80)
+        page.evaluate("async()=>await flushPendingProjectSave()")
+        page.wait_for_function("()=>projectSaveSettled().settled")
         page.locator(".manual-coverage-actions button", has_text="Map imported references").click()
         page.wait_for_selector("#import-reference-file")
         page.locator("#import-reference-file").select_option("CHAR-MANUAL-PROFILE.png")
@@ -234,8 +237,13 @@ try:
         if motion_panel.count():
             motion_panel.first.evaluate("node => node.open = true")
             page.wait_for_timeout(80)
+        page.evaluate("async()=>await flushPendingProjectSave()")
+        page.wait_for_function("()=>projectSaveSettled().settled")
         assert page.get_by_text("Imported video", exact=True).count() >= 1
         page.get_by_role("button", name="APPROVE VIDEO").click()
+        page.wait_for_function("()=>document.getElementById('rx-confirm')&&!document.getElementById('rx-confirm').disabled")
+        page.locator('#rx-confirm').click()
+        page.wait_for_function('()=>!approvalSubmissionPending()')
         page.wait_for_timeout(250)
         deliver_task = page.locator(".focused-task-button").filter(has=page.get_by_text("Deliver", exact=True))
         deliver_task.click()
@@ -244,22 +252,23 @@ try:
         if finish_panel.count():
             finish_panel.first.evaluate("node => node.open = true")
             page.wait_for_timeout(80)
+        page.evaluate("async()=>await flushPendingProjectSave()")
+        page.wait_for_function("()=>projectSaveSettled().settled")
         # Slice 4 named this control for the decision it takes. It is the same control,
         # the same handler and the same receipt; only the word changed, and a generic
         # "Finalize" beside an equally generic "Finish" was the defect that slice removed.
         page.get_by_role("button", name="Mark shot final", exact=True).click()
+        page.wait_for_function("()=>document.getElementById('rx-confirm')&&!document.getElementById('rx-confirm').disabled")
+        page.locator('#rx-confirm').click()
+        page.wait_for_function('()=>!approvalSubmissionPending()')
         page.wait_for_timeout(250)
         assert page.evaluate("id => P.shots.find(x=>x.id===id).finalVideoFile", shot_id) == "MANUAL-FINISHED-VIDEO.mp4"
         if SCREENSHOT_DIR:
             page.screenshot(path=str(SCREENSHOT_DIR / "manual-shot-delivered.png"), full_page=True)
 
-        open_hash("#/settings")
-        project_tab = page.get_by_role("button", name="Project Project metadata and export defaults")
-        if project_tab.count() == 0:
-            project_tab = page.locator('.settings-tabs button').filter(has=page.get_by_text("Project", exact=True))
-        project_tab.first.click()
-        page.wait_for_timeout(120)
-        select = page.locator('select[onchange*="setProjectWorkflowEmphasis"]')
+        open_hash("#/settings/project")
+        page.wait_for_selector('[data-settings-tab="project"]')
+        select = page.locator('#cfg-project-emphasis')
         assert select.count() == 1 and select.input_value() == "manual"
         assert page.evaluate("document.documentElement.scrollWidth - document.documentElement.clientWidth") <= 2
         browser.close()

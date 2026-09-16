@@ -92,22 +92,22 @@ function shotFixture({ route = "t2i", frame = FRAME, final = false, motion = fal
   if (route === null) delete shot.deliveryRoute;
   else shot.deliveryRoute = route;
   shot.creationBrief = { ...(shot.creationBrief || {}), deliveryIntent: motion ? "motion" : "still" };
-  shot.keyframes = [{ ...shot.keyframes[0], id: "frame-a", label: "A", winner: frame, required: true }];
+  shot.keyframes = [{ ...shot.keyframes[0], id: "frame-a", label: "A", winner: frame, winnerAssetId: frame?identity(frame):"", required: true }];
   /* A second, unapproved frame, for the dialog that only exists on one. Frame A opens
      the shot-still dialog; every later frame opens the frame dialog, and both used to
      carry the filename question. */
   if (secondFrame) shot.keyframes.push({ ...shot.keyframes[0], id: "frame-b", label: "B", title: "Ending frame", winner: "", required: false });
   const rows = [...CAST_CANON];
-  if (frame) rows.push({ kind: "shot-frame", shotId: "L1-01", frameId: "frame-a", value: frame });
+  if (frame) rows.push({ kind: "shot-frame", shotId: "L1-01", frameId: "frame-a", value: frame, assetId:identity(frame) });
   /* A POINTER IS NOT AN APPROVAL, and a receipt without its edge is not authority: the
      kernel reads a motion approval off `clips[].videoWinner` and fails closed when no
      clip carries it. So a fixture claiming an approved motion take writes the clip, its
      winner and the receipt — otherwise it is testing the orphan case by accident and
      calling it "approved". */
   if (motion) {
-    shot.clips = [{ id: "motion-a", label: "A", suffix: "a", title: "Move", kind: "i2v", fromFrame: "frame-a", toFrame: "", dur: 5, motionPrompt: "He moves.", videoWinner: TAKE, generationPackages: [] }];
+    shot.clips = [{ id: "motion-a", label: "A", suffix: "a", title: "Move", kind: "i2v", fromFrame: "frame-a", toFrame: "", dur: 5, motionPrompt: "He moves.", videoWinner: TAKE, videoWinnerAssetId:identity(TAKE), generationPackages: [] }];
     shot.creationBrief.approvedMotionFile = TAKE;
-    rows.push({ kind: "shot-motion", shotId: "L1-01", unitKey: "motion-a", value: TAKE });
+    rows.push({ kind: "shot-motion", shotId: "L1-01", unitKey: "motion-a", value: TAKE, assetId:identity(TAKE) });
   }
   if (final) {
     const value = deliveredForm === "video" ? TAKE : frame;
@@ -127,10 +127,11 @@ function scanWith(project, takes) {
     vehicles: [],
     audio: [],
     media: [],
-    shots: { "L1-01": { takes: takes.map((name) => ({ name, url: `/assets/shots/L1-01/takes/${name}` })), locked: [] } },
+    shots: { "L1-01": { takes: takes.map((name) => ({ name, assetId:identity(name), url: `/assets/shots/L1-01/takes/${name}` })), locked: [] } },
   };
 }
 
+function identity(name,shotId="L1-01"){return require("./render-harness").harnessAssetId(`shots/${shotId}/takes/${name}`);}
 const evaluate = (context, expression) =>
   JSON.parse(vm.runInContext(`JSON.stringify((() => { ${expression} })())`, context));
 const evaluateAsync = async (context, expression) =>
@@ -686,11 +687,11 @@ function writeBrowserFixture(dir) {
   const shots = [BROWSER_FIXTURE.approved, BROWSER_FIXTURE.delivered, BROWSER_FIXTURE.reference, BROWSER_FIXTURE.candidate];
   for (const folder of ["anchors", "plates", "props", "media", "docs", ...shots.map((id) => path.join("shots", id, "takes"))])
     fs.mkdirSync(path.join(dir, folder), { recursive: true });
-  fs.writeFileSync(path.join(dir, "anchors", "KAI-ANCHOR.png"), "kai");
-  fs.writeFileSync(path.join(dir, "plates", "LOC-HULL-PLATE.png"), "hull");
-  fs.writeFileSync(path.join(dir, "props", "PR-TOOL-PLATE.png"), "tool");
-  for (const id of shots.slice(0, 3)) fs.writeFileSync(path.join(dir, "shots", id, "takes", FRAME), "frame");
-  fs.writeFileSync(path.join(dir, "shots", BROWSER_FIXTURE.candidate, "takes", BROWSER_FIXTURE.returned), "returned");
+  fs.copyFileSync(path.join(__dirname,"fixtures/ev2-6/frame-0.png"), path.join(dir, "anchors", "KAI-ANCHOR.png"));
+  fs.copyFileSync(path.join(__dirname,"fixtures/ev2-6/frame-0.png"), path.join(dir, "plates", "LOC-HULL-PLATE.png"));
+  fs.copyFileSync(path.join(__dirname,"fixtures/ev2-6/frame-0.png"), path.join(dir, "props", "PR-TOOL-PLATE.png"));
+  for (const id of shots.slice(0, 3)) fs.copyFileSync(path.join(__dirname,"fixtures/ev2-6/frame-0.png"), path.join(dir, "shots", id, "takes", FRAME));
+  fs.copyFileSync(path.join(__dirname,"fixtures/ev2-6/frame-0.png"), path.join(dir, "shots", BROWSER_FIXTURE.candidate, "takes", BROWSER_FIXTURE.returned));
 
   const base = shotFixture({});
   const template = base.shots[0];
@@ -754,7 +755,7 @@ function writeBrowserFixture(dir) {
         id: "state-default", name: "Default", appliesTo: "", approvedFile: entity.approvedFile || file,
         approvedAssetId: "", notes: "Primary approved reference.", isDefault: true,
       }];
-  const written = withCanon(project, rows);
+  const written = require("./helpers/identity-fixture").seed(dir,withCanon(project, rows));
   fs.writeFileSync(path.join(dir, "project.json"), JSON.stringify(written, null, 2));
   return written;
 }

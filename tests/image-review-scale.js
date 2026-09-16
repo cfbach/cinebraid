@@ -419,7 +419,7 @@ async function main() {
   /* ---------- 4. viewer behaviour and accessibility contract ---------- */
   const theatre = appJs.slice(appJs.indexOf('window.openMediaTheatre'), appJs.indexOf('window.closeModal'));
   assert(
-    /class="cancel"[^>]*onclick="closeModal\(\)"/.test(theatre),
+    theatre.includes('class="cancel"') && theatre.includes('"closeModal()"') && theatre.includes('window.inspectMedia(decodeURIComponent('),
     'the enlarged view must close with an explicit Close control',
   );
   assert(

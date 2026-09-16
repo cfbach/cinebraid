@@ -532,3 +532,13 @@ def shot_desk_ready(page, timeout=30000):
     viewer.get_by_role("img", name="Selected for review", exact=True).wait_for(state="visible", timeout=timeout)
     viewer.get_by_role("button", name="Provenance", exact=True).wait_for(state="visible", timeout=timeout)
     return desk
+
+
+def install_reference_projection(page):
+    """Resolve synthetic injected project/scan together through the real server owner."""
+    import json, pathlib, subprocess
+    root = pathlib.Path(__file__).resolve().parent.parent
+    payload = page.evaluate('({project:P,scan:SCAN,slug:ACTIVE_PROJECT_SLUG,epoch:PROJECT_OPEN_EPOCH})')
+    result = subprocess.run(['node', str(root / 'tests/helpers/reference-fixture.js')], input=json.dumps(payload), text=True, capture_output=True, cwd=str(root), check=True)
+    assert page.evaluate('([slug,epoch])=>ACTIVE_PROJECT_SLUG===slug&&PROJECT_OPEN_EPOCH===epoch',[payload['slug'],payload['epoch']]), 'reference fixture must not cross project opens'
+    page.evaluate('(references)=>{SCAN.references=references}', json.loads(result.stdout))

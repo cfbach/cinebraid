@@ -26,7 +26,7 @@ const evaluate = (rendered, expression) => vm.runInContext(expression, rendered.
 /* settings() renders only the selected tab, so the recovery panel has to be chosen through
    the app's own tab mechanism rather than by hardcoding its localStorage key. */
 const SELECT_RECOVERY_TAB =
-  'selectBoundedTask("settings-task", "settings", "recovery"); ROUTES.settings();';
+  'selectBoundedTask("settings-task", "settings", "project-recovery"); ROUTES.settings();';
 
 /* Records every project PUT the client issues, and applies it to a temp file the way the
    real server would, so the file can be byte-compared afterwards. */

@@ -1154,7 +1154,7 @@ function browserLedgerOwnership() {
      The loader was renamed when Civitai reproduced the same defect — a function that also
      reads a hosted paid provider's ledger is not a "local" one — but the property is
      unchanged and is what is asserted. */
-  assert(/if \(!\(falConfig\.enabled && falConfig\.keySource !== "none"\)\) return prepareBackendGenerationLedgers\(prepared\);/.test(app),
+  assert(app.includes('fetch("/api/generation/fal/jobs"') && app.includes('await prepareBackendGenerationLedgers(prepared)'),
     "a keyless fal must still read the other backends' generation ledger");
   assert(!/keySource !== "none"\)\) return prepared;/.test(app),
     "the early return that skipped the other backends' ledger must be gone, not merely bypassed");

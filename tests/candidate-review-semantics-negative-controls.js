@@ -80,6 +80,7 @@ async function control({ id, label, guards, defect, guarded }) {
     detected = error;
   }
   assert(detected, `NEGATIVE CONTROL ${id} FAILED: with "${label}" reintroduced, "${guards}" still passed. That test cannot detect the defect it exists for.`);
+  if (id === "NC-E") assert.match(detected.message, /a review with no recorded reviewer must say so|attribution|provider and model/, "NC-E must fail its attribution guard, not an unrelated assertion");
   results.push({ id, label, guards, outcome: String(detected.message).split("\n")[0].slice(0, 120) });
 }
 

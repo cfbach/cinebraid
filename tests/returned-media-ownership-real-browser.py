@@ -404,24 +404,25 @@ try:
               "E. the route round-trips the identity it carries")
         # Following the link a filmmaker would actually click.
         page.click('.production-next a.assemble-btn')
-        shot_desk_ready(page)
-        check(page.evaluate("() => routeReviewClaim()") == claim['reviewKey'],
+        page.wait_for_selector("[data-results-desk]")
+        check(page.evaluate("() => CineBraidResults.parse().key") == claim['reviewKey'],
               'E. Shot Desk keeps the exact review identity carried by Production')
-        assert_media_image(page, project_dir, '#sd-primary-image', f'shots/{SHOT_A}/takes/{CANDIDATE_A}')
+        assert_media_image(page, project_dir, '#rx-primary', f'shots/{SHOT_A}/takes/{CANDIDATE_A}')
         findings.append(f'E. Production opened the accepted Shot Desk on {CANDIDATE_A}')
 
         # The accepted desk keeps the exact rejected image visible with its decision.
         # It must never silently replace it with the other pending frame.
         stale_href = claim['href']
-        page.locator('#sd-reject').click()
-        page.wait_for_function("() => document.querySelector('.sd-decision')?.textContent.includes('Rejected')")
-        check(page.evaluate("() => routeReviewClaim()") == claim['reviewKey'], 'F. rejection retains the exact route identity')
-        assert_media_image(page, project_dir, '#sd-primary-image', f'shots/{SHOT_A}/takes/{CANDIDATE_A}')
+        page.locator('#rx-reject').click()
+        page.wait_for_function('()=>!approvalSubmissionPending()')
+        page.wait_for_function("() => document.querySelector('.rx-decision')?.textContent.includes('Rejected')")
+        check(page.evaluate("() => CineBraidResults.parse().key") == claim['reviewKey'], 'F. rejection retains the exact route identity')
+        assert_media_image(page, project_dir, '#rx-primary', f'shots/{SHOT_A}/takes/{CANDIDATE_A}')
         # Inspection of rejected history inherits the existing media action contract:
         # approve is 'not-approved'; reject is 'undecided'. Leaving the pending
         # queue does not remove the deliberate approval option from this image.
-        check(page.locator('#sd-approve').count() == 1 and page.locator('#sd-reject').count() == 0,
-              'F. rejected history keeps deliberate approval and drops repeated rejection')
+        check(page.locator('#rx-restore').count() == 1 and page.locator('#rx-reject').count() == 0,
+              'F. rejected history offers explicit restoration before approval and drops repeated rejection')
         decided = page.evaluate("""() => {
             const projection = returnedReviewProjectionForBrowser();
             const shot = P.shots.find((row) => row.id === 'SH-A');
@@ -443,20 +444,20 @@ try:
               f"F. precondition — the claimed candidate is decided and another is pending: {decided['pending']}")
         # A bookmark to that decision still names the same reviewed image.
         page.goto(f"{base}/{stale_href}", wait_until="domcontentloaded", timeout=30000)
-        shot_desk_ready(page)
-        page.wait_for_function("() => document.querySelector('.sd-decision')?.textContent.includes('Rejected')")
-        assert_media_image(page, project_dir, '#sd-primary-image', f'shots/{SHOT_A}/takes/{CANDIDATE_A}')
-        check(page.locator('#sd-approve').count() == 1 and page.locator('#sd-reject').count() == 0, 'F. bookmarked rejected history keeps the same permitted actions')
+        page.wait_for_selector("[data-results-desk]")
+        page.wait_for_function("() => document.querySelector('.rx-decision')?.textContent.includes('Rejected')")
+        assert_media_image(page, project_dir, '#rx-primary', f'shots/{SHOT_A}/takes/{CANDIDATE_A}')
+        check(page.locator('#rx-restore').count() == 1 and page.locator('#rx-reject').count() == 0, 'F. bookmarked rejected history keeps explicit restoration and no direct approval')
         findings.append(f'F. the reviewed link remains on rejected {CANDIDATE_A}, without substituting {CANDIDATE_A2}')
 
         # Continuing to another frame remains explicit through Shot preparation.
-        page.locator('.sd-heading .sd-back').click()
+        page.locator('#rx-origin').click()
         page.wait_for_selector('[data-returned-review="1"]', timeout=30000)
         check(card_state(page)['file'] == CANDIDATE_A2, 'G. preparation names the still-pending image')
         page.locator('.shot-primary-action').click()
-        shot_desk_ready(page)
-        assert_media_image(page, project_dir, '#sd-primary-image', f'shots/{SHOT_A}/takes/{CANDIDATE_A2}')
-        check(page.evaluate("() => routeReviewClaim()") == production['secondKey'], 'G. the new route carries that image identity')
+        page.wait_for_selector("[data-results-desk]")
+        assert_media_image(page, project_dir, '#rx-primary', f'shots/{SHOT_A}/takes/{CANDIDATE_A2}')
+        check(page.evaluate("() => CineBraidResults.parse().key") == production['secondKey'], 'G. the new route carries that image identity')
         findings.append(f'G. explicit preparation-to-review navigation reached {CANDIDATE_A2}')
 
         # ---- H. A RECORDED RESULT WITH NO BYTES ---------------------------------

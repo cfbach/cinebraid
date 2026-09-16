@@ -52,12 +52,13 @@ assert(creation.includes("shot-stage-automation"), "automation belongs inside Fr
 assert(creation.includes("OPEN SHOTS"), "Create must hand the complete shot list to Production");
 assert(!creation.includes('class="creation-scene-list"'), "Create must not render every scene description");
 
-for (const label of ["Project", "Assistant", "Generation", "Recovery & advanced"])
-  assert(views.includes(label), `missing ${label} settings tab`);
+const studioSettings = fs.readFileSync(path.join(root, "public/settings-studio.js"), "utf8");
+for (const label of ["Project", "Braidy & assistance", "Generation defaults", "Recovery & advanced"])
+  assert(studioSettings.includes(label), `missing ${label} settings destination`);
 assert(views.includes('provider === "ollama"'));
-assert(views.includes('provider === "anthropic"'));
-assert(settings.includes('CONFIG.anthropicKey || ""'), "hidden provider values must be preserved");
-assert(views.includes("Open project log & reports"));
+assert(studioSettings.includes('kind === "anthropic"'));
+assert(settings.includes('if (!input || input.disabled) continue;') && settings.includes('const patch = settingsPresentFields(['), 'hidden provider fields must be omitted from the partial patch; ev2-5 settings writer tests prove preservation');
+assert(views.includes("Open project log & reports") && studioSettings.includes("project-recovery"));
 assert(reports.includes("PROJECT LOG"));
 assert(reports.includes("reportsLegacyCompatibilityUsage"), "Reports must expose read-only compatibility telemetry before adapters are removed");
 

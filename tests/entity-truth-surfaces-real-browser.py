@@ -149,6 +149,8 @@ try:
         request = route.request
         suffix = request.url[len(base):] if request.url.startswith(base) else "/"
         path = suffix.split("?")[0]
+        if path == PAID_ROUTE and request.method == "GET":
+            route.fulfill(status=200,content_type="application/json",body=json.dumps({"jobs":[]})); return
         if path.startswith(PAID_ROUTE):
             paid_calls.append(suffix)
             route.fulfill(status=200, content_type="application/json", body=json.dumps({"jobs": []})); return

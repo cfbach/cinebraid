@@ -383,8 +383,8 @@ try:
         assert page.evaluate("() => window.P && window.P !== P"), 'NC-C must expose a second mutable project'
         expect_red("NC-C", "a second project object is reachable as window.P", check_authority)
 
-        arm("NC-D", ("window.CineBraidReferenceDesk={view,library};",
-            "window.CineBraidReferenceDesk={view:()=>null,library:()=>null};"))
+        arm("NC-D", ("window.CineBraidReferenceDesk={view,library,selectContext,",
+            "window.CineBraidReferenceDesk={view:()=>null,library:()=>null,selectContext,"))
         settle(f"#/character/{character_id}")
         assert module_loaded(), 'NC-D keeps the renderer script loaded'
         expect_red("NC-D", "a loaded renderer that never produces its surface", check_execution)

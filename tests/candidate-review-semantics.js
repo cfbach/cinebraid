@@ -734,7 +734,7 @@ async function uiSection(mutateSource = null) {
   assert(html.includes("HUMAN DECISION"), "the human decision must remain its own panel");
   assert(html.includes("NO HUMAN DECISION YET"));
   assert(html.includes("The AI result is advisory."));
-  assert(!failing.some((call) => /\/api\/generation\/fal\/jobs/.test(call)), "opening a review must not reach a paid route");
+  assert(!failing.some((call) => /\/api\/generation\/fal\/jobs/.test(call) && call !== "GET /api/generation/fal/jobs"), "opening a review must not reach a paid route");
 
   /* Provenance: what served THIS review, from the record. */
   assert(html.includes("REVIEWED BY"));

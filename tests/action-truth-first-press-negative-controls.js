@@ -473,9 +473,9 @@ function r_retirementAssertions() {
      those three fields, which is why removing this one loses no capability. */
   ok(!/function creationOptionalStyleCard\s*\(/.test(studio),
     "R-AT1-1b RETIRED: the create screen's Project Look card is removed, not just unreferenced");
-  const views = codeOnly(readLF("public/views.js"));
-  ok(/setGlobalCreationField\('globalStylePrompt'/.test(views),
-    "R-AT1-1b: and Settings → Project still owns the global style, so nothing was lost");
+  const views = codeOnly(readLF("public/working-bible.js"));
+  ok(views.includes("globalStylePrompt") && views.includes("setGlobalCreationField"),
+    "R-AT1-1b: and Working Bible owns the global style, so nothing was lost");
 
   /* R-AT1-2 — the ownership-only preflight owner.
    *

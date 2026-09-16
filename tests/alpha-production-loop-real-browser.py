@@ -527,9 +527,8 @@ try:
         returned_name = "PAID-RETURN.mp4"
         returned_file = projects_root / "dogfood-sample" / "shots" / SHOT / "takes" / returned_name
         returned_file.parent.mkdir(parents=True, exist_ok=True)
-        # The media browser needs a returned file identity, not a decodable production
-        # asset. A tiny local ftyp marker is sufficient for DOM/review-path validation.
-        returned_file.write_bytes(b"\x00\x00\x00\x18ftypmp42cinebraid-runtime-fixture")
+        # The approval guard needs the exact decodable synthetic media and its activated identity.
+        returned_file.write_bytes((ROOT / "tests/fixtures/ev2-6/motion-0.mp4").read_bytes())
         page.evaluate("""() => {
             document.getElementById('alpha-loop-revoke-entity-canon')?.remove();
             window.__alphaLoopAuthorityError = null;
@@ -613,7 +612,13 @@ try:
         page.locator('[data-generation-readiness="blocked"] .media-enlarge-btn').first.click()
         page.wait_for_selector(".media-theatre-modal", timeout=10000)
         page.keyboard.press("Escape")
+        page.evaluate('''async()=>{for(let i=0;i<40;i++){SCAN=await(await fetch('/api/scan')).json();if(SCAN.shots?.['SAMPLE-01']?.takes?.find(t=>t.name==='PAID-RETURN.mp4')?.assetId){await route();await flushPendingProjectSave();return;}await new Promise(r=>setTimeout(r,500));}throw Error('Synthetic returned media identity did not activate');}''')
+        page.wait_for_function('()=>projectSaveSettled().settled')
         page.locator('[data-generation-readiness="blocked"] button.approve-btn', has_text="APPROVE VIDEO").first.click()
+        page.wait_for_function("()=>document.getElementById('rx-confirm')&&!document.getElementById('rx-confirm').disabled")
+        assert not page.evaluate("()=>P.productionAuthority.receipts.some(r=>r.kind==='shot-motion'&&r.value==='PAID-RETURN.mp4'&&r.status==='current')"), 'opening confirmation cannot approve motion'
+        page.locator('#rx-confirm').click()
+        page.wait_for_function('()=>!approvalSubmissionPending()')
         page.wait_for_timeout(1000)
         b2_after = page.evaluate("""() => {
             const shot = P.shots.find((row) => row.id === 'SAMPLE-01');

@@ -254,6 +254,8 @@ try:
 
         def guard(route):
             url = route.request.url
+            if url.split('?')[0] == base + '/api/generation/fal/jobs' and route.request.method == 'GET':
+                return route.fulfill(status=200,content_type='application/json',body='{"jobs":[]}')
             if PAID_ROUTE in url:
                 paid_calls.append(url)
                 return route.abort()

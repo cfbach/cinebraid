@@ -426,6 +426,17 @@ async function main() {
     "entity-derivation-authority.js",
     "entity-media-ownership.js",
     "entity-truth-surfaces-real-browser.py",
+    "ev2-3-media-real-browser.py",
+    "ev2-3-selector-failure-real-browser.py",
+    "ev2-4-bible-audience.js",
+    "ev2-4-bible-real-browser.py",
+    "ev2-4-visual-truth-real-browser.py",
+    "ev2-5-check-targets.js",
+    "ev2-5-settings-mobile.js",
+    "ev2-5-settings-real-browser.js",
+    "ev2-5-settings-writers.js",
+    "ev2-6-results.js",
+    "ev2-6-review-real-browser.js",
     "external-test-readiness.js",
     "fal-generation.js",
     "fixtures",
@@ -498,6 +509,7 @@ async function main() {
     "media-asset-store.js",
     "media-asset-sync-safety.js",
     "media-asset-verify.js",
+    "media-discovery.js",
     "media-disposition-semantics-negative-controls.js",
     "media-disposition-semantics.js",
     "media-hash-extraction.js",
@@ -772,7 +784,10 @@ async function main() {
   assert(app.includes("flushPendingProjectSave"));
   assert(app.includes('"/api/projects/" + encodeURIComponent(job.slug) + "/project"'));
   assert(app.includes('"/api/projects/" + encodeURIComponent(job.slug) + "/canon-transition"'), "authority changes must use the explicit Canon transition route");
-  assert(app.includes('falConfig.enabled && falConfig.keySource !== "none"'), "FAL job history must load only when the optional integration is configured");
+  const ledgerRead=app.slice(app.indexOf('async function prepareGenerationLedger'),app.indexOf('async function prepareBackendGenerationLedgers'));
+  assert(ledgerRead.includes('await fetch("/api/generation/fal/jobs"') && !ledgerRead.includes('falConfig.enabled'), 'local history remains readable after a provider is disabled');
+  assert(ledgerRead.includes('if (!r.ok) throw') && ledgerRead.includes('falLedgerLoaded = false') && ledgerRead.includes('claimRecovery ?'), 'unavailable history remains unknown and recovery claiming stays explicit');
+  assert(!/method:\s*["']POST["']/.test(ledgerRead),'reading history never submits provider work');
   assert(!settings.includes("commitImport"));
   assert(!settings.includes("doImport"));
   assert(!server.includes('app.post("/api/import"'));

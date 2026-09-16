@@ -206,7 +206,8 @@ try:
             dirty();
             if (typeof flushPendingProjectSave === "function") await flushPendingProjectSave();
         }""", [ENTITY, DELTA, CANDIDATE])
-        page.wait_for_timeout(400)
+        page.evaluate("async()=>{SCAN=await (await fetch('/api/scan')).json();}")
+        assert page.evaluate("([id,name])=>entityMedia('props',P.props.find(e=>e.id===id)).some(r=>r.name===name)",[ENTITY,CANDIDATE]), 'exact declared candidate must be in authoritative scan'
 
         def run_review():
             """Drive the real review action, then reopen the real modal and read it."""

@@ -205,7 +205,7 @@ function checkMenuDeclaration(sources) {
   assert(/id="project-title"[^>]*aria-expanded="false"/.test(markup), "the project menu must ship closed");
   assert(/id="project-menu"[^>]*\bhidden\b/.test(markup), "the project menu must ship hidden");
   assert(/data-view="settings"/.test(markup), "Project settings must lead to a declared navigation view");
-  assert(/location\.hash = "#\/settings"/.test(codeOnly(sources.app)), "Project settings must route to #/settings");
+  assert(/location\.hash = "#\/settings\/project"/.test(codeOnly(sources.app)), "Project settings must route to #/settings/project");
 }
 
 /* I7 — the rule that makes the compact-viewport measurements pass. The pixels

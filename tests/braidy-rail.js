@@ -1506,8 +1506,11 @@ function checkBraidyIsNotAGate(sources = SOURCES) {
      Braidy exists, so none of them can come to depend on it. The rail owner and the
      markup that loads the two files are the entire surface. */
   const REACH = /\b(CineBraidBraidy|braidy(?:Plan|Improve|Review|Fix|Ask|With|Block|Signal|StageAction|Handoff|Capability|Presentation))\b|braidy-rail|shared-braidy/;
-  const ALLOWED = new Set(["braidy-rail.js", "shared-braidy.js", "creator-surfaces.js", "index.html"]);
+  const ALLOWED = new Set(["braidy-rail.js", "shared-braidy.js", "creator-surfaces.js", "index.html", "working-bible.js"]);
   const files = sources.clientFiles || readClientFiles();
+  const bible = codeOnly(files["working-bible.js"] || "");
+  assert.strictEqual((bible.match(/CineBraidBraidy\.braidyWith\(/g) || []).length, 1, "Bible has only its explicit advisory handoff");
+  assert(bible.includes("if(action==='braidy'){try{") && bible.includes("catch{notice='Braidy is unavailable."), "optional handoff failure cannot gate Bible work");
   const reached = Object.keys(files).filter((name) => !ALLOWED.has(name) && REACH.test(codeOnly(files[name]))).sort();
   assert.deepStrictEqual(reached, [],
     `Braidy is reachable from ${reached.join(", ")}. A production path that knows Braidy exists is a production path that can come to need it.`);
@@ -1860,7 +1863,10 @@ async function serveRouteStack(source) {
   const staticMount = serverRegistration(source, STATIC_MOUNT, "the static public/ mount");
   const mediaRoute = serverRegistration(source, MEDIA_ROUTE, "the project-media /assets/* route");
   const app = express();
+  app.use((req,res,next)=>{req.role="editor";next();});
   const sandbox = {
+    LocalFileAffordance: require("../src/media/local-file-affordance"),
+    projectsRoot: () => path.dirname(fixture.root), activeSlug: () => path.basename(fixture.root),
     app,
     express,
     path,

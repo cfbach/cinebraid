@@ -1,3 +1,4 @@
+from browser_runtime import install_reference_projection
 #!/usr/bin/env python3
 """Public Alpha UX Slice 5 — REFERENCE DEMAND + REVERSIBLE STRUCTURE, in a real Chromium.
 
@@ -285,6 +286,8 @@ try:
                  "vehicleMedia": [{"name": "VEH-DOCK-PLATE.png", "url": TINY}],
                  "propMedia": [{"name": "PROP-CRATE-PLATE.png", "url": TINY}],
                  "shotMedia": {SHOT: {"takes": [{"name": f"{SHOT}-FRAME_A.png", "url": TINY}], "locked": []}}})
+
+            install_reference_projection(page)
 
         def open_reference(entity_id, kind="character", task=None):
             """Navigate to a reference and, when asked, click through to one of its

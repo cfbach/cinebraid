@@ -1,3 +1,4 @@
+from browser_runtime import install_reference_projection
 #!/usr/bin/env python3
 """Batch 2, Slice 3 — THE REFERENCE REFRAME, read off a real Chromium.
 
@@ -183,6 +184,7 @@ try:
                     location.hash = '#/character/' + payload.id;
                 }""",
                 {"character": character, "receipt": RECEIPT, "anchors": ANCHORS, "id": ENTITY})
+            install_reference_projection(page)
             page.evaluate("() => route()")
             open_reference_tools(page)
             page.wait_for_selector(f'.bounded-entity-page[data-selected-task]', timeout=15000)

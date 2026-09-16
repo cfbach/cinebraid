@@ -20,6 +20,7 @@ async function go(section){await page.evaluate(section=>location.hash='#/setting
  const log=fs.openSync(path.join(OUT,'fixture-server.log'),'w');server=spawn(process.execPath,['-r','./tests/helpers/ev2-5-no-network.js','server.js'],{cwd:ROOT,env:w.serverEnv(port),stdio:['ignore',log,log]});
  for(let i=0;i<120;i++){try{if((await fetch(base+'/api/project')).ok)break;}catch{}await new Promise(r=>setTimeout(r,100));}
  browser=await playwright.chromium.launch({headless:true,...(process.env.CINEBRAID_BROWSER_EXECUTABLE?{executablePath:process.env.CINEBRAID_BROWSER_EXECUTABLE}:{})});
+ console.log('[browser-runtime] ev2-5-settings-real-browser: launched Chromium '+browser.version()+' (Node Playwright)');
  const context=await browser.newContext({viewport:{width:1440,height:900},reducedMotion:'reduce'});
  await context.route('**/*',async route=>{const r=route.request(),url=r.url();if(!url.startsWith(base+'/')){if(url.includes('fonts.google'))return route.fulfill({body:''});blocked.push('non-fixture browser request');return route.abort();}const uri=new URL(url).pathname;
  if(r.method()!=='GET')requests.push({uri,method:r.method()});

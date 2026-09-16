@@ -182,7 +182,7 @@ function disabledAgentStatus() {
 
 function sampleScan(project) {
   const dataUrl = "data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='64' height='36'%3E%3Crect width='64' height='36' fill='%23414b55'/%3E%3C/svg%3E";
-  const named = (name) => ({ name, url: dataUrl });
+  const named = (name) => ({ name, url: dataUrl,assetId:require("./render-harness").harnessAssetId(name) });
   return {
     anchors: [named("CHAR-COURIER-FRONT.png"), named("CHAR-COURIER-PROFILE.png")],
     plates: [named("LOC-PLATFORM-MASTER.png"), named("LOC-PLATFORM-REVERSE.png")],
@@ -214,26 +214,18 @@ async function testSampleCompletesProviderFree() {
     .filter((secret) => secret.path.split(".").reduce((node, key) => (node == null ? node : node[key]), config));
   assert.deepStrictEqual(populated.map((secret) => secret.path), [], "a fresh install carries no credentials");
 
-  const requested = [];
-  const rendered = await render("#/shot/SAMPLE-03", sample, {
-    scan: sampleScan(sample),
-    agentStatus: disabledAgentStatus(),
-    fetch: async (url) => { requested.push(String(url)); return null; },
-  });
-  const context = rendered.context;
-  for (const [shotId, file] of [["SAMPLE-01", "SAMPLE-01-ARRIVAL.png"], ["SAMPLE-02", "SAMPLE-02-BENCH.png"]]) {
-    rendered.gesture.act(() => context.markGuidedStillFinal(shotId, file));
+  const {memoryStore,confirmationDOM,confirmDecision}=require('./helpers/result-confirmation');
+  const store=memoryStore(sample),requested=[];
+  const rendered=await render('#/shot/SAMPLE-03',sample,{scan:sampleScan(sample),agentStatus:disabledAgentStatus(),fetch:async(url,options,respond)=>{requested.push(`${options.method||'GET'} ${url}`);return store.fetch(url,options,respond);}});
+  const dom=confirmationDOM(rendered);
+  for(const [id,file] of [['SAMPLE-01','SAMPLE-01-ARRIVAL.png'],['SAMPLE-02','SAMPLE-02-BENCH.png'],['SAMPLE-03','SAMPLE-03-OPEN.png']]){
+    await confirmDecision(rendered,dom,[id,file,'frame','frame-a'],store);
+    assert(!store.stored().shots.find(s=>s.id===id).finalStillFile,'frame approval does not deliver');
+    await confirmDecision(rendered,dom,[id,file,'delivery'],store);
   }
-  context.approveTake("SAMPLE-03", "SAMPLE-03-OPEN.png");
-  context.document.getElementById("approve-target").value = "frame:frame-a";
-  context.document.getElementById("approve-name").value = "SAMPLE-03-OPEN.png";
-  await rendered.gesture.act(() => context.confirmApproveTake());
-  rendered.gesture.act(() => context.markGuidedStillFinal("SAMPLE-03", "SAMPLE-03-OPEN.png"));
-
-  assert(vm.runInContext("P.shots.every((shot) => !!shot.finalStillFile)", context), "every sample shot must be finalizable with existing media");
-  assert(vm.runInContext("P.shots.every((shot) => [\"APPROVED\", \"LOCKED\"].includes(shot.workflowStatus))", context), "sample completion must record approved workflow status");
-  const assistedCalls = requested.filter((url) => /\/api\/(?:prompt\/(?:compile|asset-compile)|generation|assistant|agents\/run|automation\/runs\/start)/.test(url));
-  assert.deepStrictEqual(assistedCalls, [], `provider-free completion made assisted calls: ${assistedCalls.join(", ")}`);
+  assert(store.stored().shots.every(s=>s.finalStillFile && s.workflowStatus==='APPROVED'),'every sample shot has confirmed stored delivery');
+  const assistedCalls=requested.filter(call=>/\/api\/(?:prompt\/(?:compile|asset-compile)|generation|assistant|agents\/run|automation\/runs\/start)/.test(call)&&call!=='GET /api/generation/fal/jobs');
+  assert.deepStrictEqual(assistedCalls,[],'provider-free completion cannot submit generation or AI work');
 }
 
 function testSanitizedContents() {

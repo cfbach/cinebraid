@@ -91,19 +91,9 @@ try:
             already loaded only by its fragment, so goto() alone would be an in-page
             hash change and the panel under test could be a stale render from before
             the previous save."""
-            page.goto(f"{base}/#/settings", wait_until="domcontentloaded")
+            page.goto(f"{base}/#/settings/access", wait_until="domcontentloaded")
             page.reload(wait_until="domcontentloaded")
-            page.wait_for_selector("nav.settings-nav-shell", timeout=15000)
-            # Which subsection is open is remembered per browser, so on the second
-            # visit Access & security is already showing and #cfg-epass resolves
-            # against the render that is about to be replaced. Landing on another
-            # subsection first makes the panel under test the product of the click
-            # that was waited on, which is also how a person moves through Settings.
-            page.locator("nav.settings-nav-shell button", has_text="Appearance").first.click()
-            page.wait_for_selector("#cfg-theme-accent", timeout=15000)
-            tab = page.locator("nav.settings-nav-shell button", has_text="Access & security").first
-            assert tab.count(), "Settings offers no Access & security section to click"
-            tab.click()
+            page.wait_for_selector('[data-settings-tab="access"]', timeout=15000)
             page.wait_for_selector("#cfg-epass", timeout=15000)
             page.wait_for_timeout(250)
 

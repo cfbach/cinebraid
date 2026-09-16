@@ -143,9 +143,10 @@ assert.deepStrictEqual(activationCallers, ["open", "rename", "scan", "switch"],
   "activation is entered on project open, media re-enumeration, project switch and the one route that renames media — and nowhere else");
 /* The whole surface server.js is allowed to use, listed rather than counted, so a
    fifth entry point has to be argued for in a diff. */
+assert.strictEqual((serverNoComments.match(/MediaAssetService\.readAssets\(/g) || []).length, 1, "only Approved record reads existing assets; it cannot activate or mint identities");
 const serviceCalls = [...new Set([...serverNoComments.matchAll(/MediaAssetService\.(\w+)\(/g)].map((m) => m[1]))].sort();
-assert.deepStrictEqual(serviceCalls, ["activateProject", "anchorBeforeRename", "identityIndex", "prepareAssetIdentity"],
-  "server.js uses exactly four service entry points: schedule a pass, anchor one file before renaming it, read the identity projection, and prepare one named file for approval");
+assert.deepStrictEqual(serviceCalls, ["activateProject", "anchorBeforeRename", "identityIndex", "prepareAssetIdentity", "readAssets"],
+  "server.js uses exactly five service entry points (including the read-only Approved record projection): schedule a pass, anchor one file before renaming it, read the identity projection, and prepare one named file for approval");
 /* identityIndex joined the list in P4-SEM-C2, deliberately and with the argument
    the boundary exists to force. It is the only way a durable assetId reaches the
    browser, which C2 needs because an approval cannot record the identity of what

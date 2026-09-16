@@ -3,6 +3,11 @@ const fs = require("fs");
 const path = require("path");
 
 const nodeSuites = [
+  "check:reference-enrollment",
+  "check:ev2-4-audience",
+  "check:ev2-5-writers",
+  "check:ev2-5-targets",
+
   "check:shot-desk",
   "check:ev2-6",
   "check:syntax",
@@ -311,6 +316,12 @@ const serialSuites = ["check:windows-shutdown"];
    that refuses to accept a skip is `npm run check:browser-gate`, which every one of
    these also belongs to. See docs/qa/BROWSER_TESTS.md. */
 const browserSuites = [
+  "check:ev2-3-browser",
+  "check:ev2-3-selector-browser",
+  "check:ev2-4-visual-browser",
+  "check:ev2-5-browser",
+  "check:ev2-5-mobile-browser",
+
   /* The only browser suite that needs no Playwright: it drives the Chrome already on the
      machine over the DevTools Protocol, so the keyed-reconciliation proofs — which are
      about DOM node identity and cannot be made in Node — actually run here. */

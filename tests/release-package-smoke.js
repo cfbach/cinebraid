@@ -29,7 +29,14 @@ const NOT_SHIPPED = new Set(["node_modules", ".venv-browser", ".git", "dist"]);
    These six are also the release's proof that Braidy is not broken art in a shipped
    build: the loop below requires every allowlisted file to be present, so dropping one
    fails here rather than rendering an empty box on somebody's first run. */
+const SYNTHETIC_FIXTURE_HASHES = {
+  "tests/fixtures/ev2-6/frame-0.png": "f80b3162a8a6c52d49fc1ba42de5428540f36bbebdc2faefe46548b378671ebc",
+  "tests/fixtures/ev2-6/frame-1.png": "f56d6a74d482b96be88093e15c2cd3f737d9c0ae34dde0e837310ddd95a390cd",
+  "tests/fixtures/ev2-6/motion-0.mp4": "0220f48e35aefc9815e171f0f3ff65a8da08fcfa7dee7c3685eddd586a983cf6",
+  "tests/fixtures/ev2-6/motion-1.mp4": "9ef035fb3313a05e21c131a1be6e51c8ed3f6ce02e81376c5f29cd174653b0cd"
+};
 const SHIPPED_MEDIA = new Set([
+  ...Object.keys(SYNTHETIC_FIXTURE_HASHES),
   "public/cinebraid-logo-xs.png",
   "public/assets/assistant-character/braidy-idle-soft-v32.png",
   "public/assets/assistant-character/braidy-listening-v32.png",
@@ -82,6 +89,8 @@ function sanitizedProjectCheck(root, repositoryTree = false) {
   const sample = JSON.parse(fs.readFileSync(sampleFile, "utf8"));
   assert.strictEqual(sample.meta?.workflowEmphasis, "manual", "sample project must open in manual-first mode");
   const files = walkFiles(root);
+  for (const [file, digest] of Object.entries(SYNTHETIC_FIXTURE_HASHES))
+    assert.strictEqual(require("crypto").createHash("sha256").update(fs.readFileSync(path.join(root,file))).digest("hex"), digest, `${file} must remain the reviewed synthetic bytes`);
   const strayMedia = files.filter((file) => MEDIA_EXTENSIONS.has(path.extname(file).toLowerCase())
     && !file.startsWith(`projects/${SAMPLE_PROJECT}/`)
     && !SHIPPED_MEDIA.has(file)

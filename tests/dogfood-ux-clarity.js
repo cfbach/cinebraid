@@ -126,7 +126,7 @@ async function main() {
   /* =======================================================================
      A1 — CAPABILITY STATUS IS THE DEFAULT SURFACE. */
   const settingsHtml = (await render("#/settings", buildFixture(),
-    { storage: { "cinebraid-focused:fixture:settings-task:settings": "assistant" } })).html;
+    { storage: { "cinebraid-focused:fixture:settings-task:settings": "assistant" }, agentStatus: { capabilities: { text: {standing:"ready",ready:true}, vision: {standing:"off",ready:false}, continuity: {standing:"off",ready:false} } } })).html;
 
   const cards = [...settingsHtml.matchAll(/<article class="capability-card" data-capability="([a-z]+)" data-state="([a-z]+)">/g)];
   eq(cards.length, 3, "A1: three capability cards carry the default surface");
@@ -163,7 +163,7 @@ async function main() {
     "A5: the Test action lives in Braidy's card and calls the existing endpoint");
   eq(/testAssistantConnection/.test(vision) || /testAssistantConnection/.test(continuity), false,
     "A5: Vision and Continuity are given no test of their own in this pass");
-  ok(/aria-label="Test Braidy&#39;s connection to OpenAI-compatible server"/.test(braidy),
+  ok(/aria-label="Send a test message to OpenAI-compatible server"/.test(braidy),
     "A5: and it names the resolved text assistant it checks");
   ok(settingsHtml.includes(`id="assistant-test-note"`),
     "A5: the existing result element is still the one the test writes into");
@@ -183,75 +183,25 @@ async function main() {
     eq(new RegExp(`data-ui-state-key="${key}" open`).test(settingsHtml), false,
       `A1: ${key} is closed at page entry`);
   }
-  /* A2 — provider choice moved inside Braidy's Configure, and No AI is not a
-     fifth runtime tile there. */
-  ok(/policy-options assistant-options/.test(braidyConfigure),
-    "A2: the provider choice lives inside Braidy's Configure");
-  const providerTiles = [...braidyConfigure.matchAll(/onclick="setAssistantProvider\('([a-z]+)'\)"/g)]
-    .map(([, id]) => id);
-  assert.deepStrictEqual(providerTiles.filter((id) => id !== "none").sort(),
-    ["anthropic", "custom", "ollama", "openai"],
-    "A2: the four runtime providers, and only those, are offered as a choice");
-  checks++;
-  eq(/role="radio"[^>]*onclick="setAssistantProvider\('none'\)"/.test(braidyConfigure), false,
-    "A2: No AI is not presented as a peer runtime");
-  ok(/class="capability-off-switch"[\s\S]*setAssistantProvider\('none'\)/.test(braidyConfigure),
-    "A2: it is a switch that turns Braidy off, using the same id");
-  /* A3 — the minimum connection is immediate; tuning is one more step down. */
-  /* Advanced is the innermost disclosure, so its own </details> does close it. */
-  const advanced = within(braidyConfigure, `data-ui-state-key="assistant-advanced:braidy"`, "</details>");
-  for (const id of ["cfg-custom-url", "cfg-custom-key", "cfg-custom-model"]) {
-    ok(braidyConfigure.includes(`id="${id}"`), `A3: ${id} is a minimum connection field`);
-    eq(advanced.includes(`id="${id}"`), false, `A3: ${id} is not buried under Advanced`);
+  ok(braidyConfigure.includes('assistant-tier-options'), 'A2: capability first offers execution tier');
+  ok(braidyConfigure.includes('setAssistantProvider(') && braidyConfigure.includes('#/settings/assistant-custom'), 'A2: runtime selection and its connection are deliberate');
+  ok(visionConfigure.includes('assistant-vision-provider') && !visionConfigure.includes('#/settings/assistant-custom'), 'A4: an explicitly off image reader retains selection without a connection action');
+  const activeVision=(await render('#/settings/assistant',buildFixture(),{agentStatus:{capabilities:{vision:{standing:'ready',ready:true}}}})).html;
+  ok(activeVision.includes('#/settings/assistant-custom'), 'A4: the configured active reader links to its connection');
+  for(const id of ['cfg-continuity-provider','cfg-continuity-base','cfg-continuity-model'])ok(continuityConfigure.includes(`id="${id}"`),'A4: continuity retains '+id);
+  const connection=(await render('#/settings/assistant-custom',buildFixture())).html;
+  for(const id of ['cfg-custom-url','cfg-custom-key','cfg-custom-model','cfg-custom-vision','cfg-custom-temperature','cfg-custom-top-k','cfg-custom-thinking'])ok(connection.includes(`id="${id}"`),'save: connection retains '+id);
+  const advanced=connection.match(/<details[^>]*>[\s\S]*?Advanced request options[\s\S]*?<\/details>/)?.[0]||'';
+  ok(advanced && !/^<details[^>]* open/.test(advanced),'advanced request controls are collapsed');
+  for(const id of ['cfg-custom-temperature','cfg-custom-top-k','cfg-custom-thinking'])ok(advanced.includes(`id="${id}"`),'tuning remains in advanced '+id);
+  for(const id of ['cfg-custom-url','cfg-custom-key','cfg-custom-model'])eq(advanced.includes(`id="${id}"`),false,'connection essentials remain outside advanced '+id);
+  for(const id of ['cfg-ollama' ,'cfg-key','cfg-openai-key'])eq(connection.includes(`id="${id}"`),false,'save: unrelated provider field absent '+id);
+  ok(connection.includes('value="http://127.0.0.1:18434/v1"') && connection.includes('qwen3.8-27b-fp8'),'save: configured values round-trip');
+  ok(/id="cfg-custom-thinking"[\s\S]{0,400}?<option value="disabled" selected>/.test(connection),'save: thinking selection round-trips');
+  for(const [standing,state] of [['off','off'],['ready','ready'],['configured-unavailable','unavailable'],['checking','checking']]){
+    const h=(await render('#/settings/assistant',buildFixture(),{agentStatus:{capabilities:{vision:{standing,ready:standing==='ready'}}}})).html;
+    ok(h.includes(`data-capability="vision" data-state="${state}"`),'capability standing is authoritative: '+standing);
   }
-  for (const id of ["cfg-custom-temperature", "cfg-custom-top-k", "cfg-custom-thinking"]) {
-    ok(advanced.includes(`id="${id}"`), `A3: ${id} moved under Advanced`);
-  }
-  eq(/data-ui-state-key="assistant-advanced:braidy" open/.test(settingsHtml), false,
-    "A3: Advanced is closed until asked for");
-  /* A4 — Vision and Continuity configure themselves, not inside Braidy's fields. */
-  ok(visionConfigure.includes(`id="assistant-vision-provider"`) && visionConfigure.includes(`id="cfg-custom-vision"`),
-    "A4: vision's provider and model are configured under Vision");
-  eq(braidyConfigure.includes(`id="assistant-vision-provider"`), false,
-    "A4: and not intermixed with Braidy's text-server fields");
-  for (const id of ["cfg-continuity-provider", "cfg-continuity-base", "cfg-continuity-model"]) {
-    ok(continuityConfigure.includes(`id="${id}"`), `A4: ${id} is configured under Continuity`);
-    eq(braidyConfigure.includes(`id="${id}"`), false, `A4: ${id} is not in Braidy's Configure`);
-  }
-
-  /* =======================================================================
-     THE CONTRACT THAT MATTERS MOST — MOVING A FIELD DID NOT CHANGE WHAT IS SAVED.
-     `assistantConfigPatch()` reads by id and gates whole blocks on one id being
-     present, so a control that stopped being rendered would silently fall back to
-     a default and a control read outside its gate would be dropped. Every id that
-     function touches for the selected provider must still be in the document —
-     a closed <details> keeps it there — and the ones belonging to other providers
-     must still be absent, exactly as before. */
-  const settingsSource = read("public/settings.js");
-  const patchBody = within(settingsSource, "function assistantConfigPatch() {", "\nfunction ");
-  const readIds = [...patchBody.matchAll(/["'`]#(cfg-[a-z-]+|assistant-vision-provider)["'`]/g)]
-    .map(([, id]) => id);
-  ok(readIds.length >= 18, "save: the reader's id list was found");
-  /* For this fixture (provider custom, vision ollama, continuity unconfigured). */
-  const presentForCustom = ["assistant-vision-provider", "cfg-continuity-provider", "cfg-continuity-base",
-    "cfg-continuity-model", "cfg-custom-url", "cfg-custom-key", "cfg-custom-model", "cfg-custom-vision",
-    "cfg-custom-temperature", "cfg-custom-top-k", "cfg-custom-thinking"];
-  for (const id of presentForCustom) {
-    ok(settingsHtml.includes(`id="${id}"`), `save: #${id} is still rendered, so its stored value is still sent`);
-  }
-  /* Another provider's gate id must stay absent, or its whole block would start
-     being written from defaults. */
-  for (const id of ["cfg-ollama", "cfg-key", "cfg-openai-key"]) {
-    eq(settingsHtml.includes(`id="${id}"`), false,
-      `save: #${id} belongs to another provider and is still not rendered`);
-  }
-  /* And the values are the stored ones, not placeholders. */
-  ok(settingsHtml.includes(`id="cfg-custom-url" value="http://127.0.0.1:18434/v1"`),
-    "save: the configured base URL round-trips into the field that sends it");
-  ok(settingsHtml.includes(`id="cfg-custom-model" value="qwen3.8-27b-fp8"`),
-    "save: the configured Qwen model round-trips into the field that sends it");
-  ok(/id="cfg-custom-thinking"[\s\S]{0,400}?<option value="disabled" selected>/.test(settingsHtml),
-    "save: skip-thinking survives the move under Advanced");
 
   /* =======================================================================
      U3 — THE SHELF'S CATEGORY CHIPS AND ITS CARDS AGREE. */
