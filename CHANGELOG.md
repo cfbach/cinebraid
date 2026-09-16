@@ -1,3 +1,11 @@
+# CineBraid 6.9.0-alpha.1 — Experience V2 dogfood candidate
+
+- Identifies the accepted EV2-1–6 integration for final manual review, with Results, integrated Screening, explicit durable approval and separate finishing/delivery.
+- Qualified integration parent: `b519b8aa613f39425f5b9c0d1f8ace0cd261c6b2`. Its local complete CI, 285-suite full runner, 46/46 required browser suites and separate authority gate passed. The version child receives focused mechanical checks only; see the [verification basis](docs/releases/v6.9.0-alpha.1/CINEBRAID_v6.9.0-alpha.1_VERIFICATION_REPORT.md).
+- Final human dogfood acceptance and publication remain pending. No new tag, release or published main update is claimed. The published v6.8.0-alpha.1 remains unchanged.
+- Application identity and required packaging documents only; no behavior, schema, storage, credential or provider change. The oversized Approved treatment and mobile toast overlap remain non-blocking polish.
+- [Candidate notes](docs/releases/v6.9.0-alpha.1/CINEBRAID_v6.9.0-alpha.1_RELEASE_NOTES.md) and [manual review guide](docs/releases/v6.9.0-alpha.1/CINEBRAID_v6.9.0-alpha.1_PATCH_INSTALL.md).
+
 # CineBraid 6.7.0-alpha.1 — Public Alpha
 
 - The identity CineBraid is first shared publicly under. The pre-release channel moved from `dev` to `alpha`; `release-identity.js` is unchanged and gives an unlisted channel its raw version, so the display name is `CineBraid 6.7.0-alpha.1` and no label was added. `npm run sync:version` stamped the window title, the asset cache stamps and the lockfile; no version literal was edited by hand.
