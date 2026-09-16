@@ -565,10 +565,10 @@ async function returnedMediaOutlivesGenerationReadiness() {
     };
   })()`, page.context);
 
-  equal(after.approvedFile, "PAID-RETURN.mp4", "the existing motion approval owner accepts the returned asset");
-  equal(after.receipt, true, "approval establishes receipt-backed motion Canon");
+  equal(after.approvedFile, "", "opening motion approval cannot itself establish authority; confirmation and durable save are exercised in EV2-6 browser acceptance");
+  equal(after.receipt, false, "opening motion review creates no receipt");
   ok(["BLOCKED", "NEEDS_DECISION"].includes(after.generationStatus), "approval does not erase the unmet prerequisite for additional generation");
-  ok(after.panel.includes("PAID-RETURN.mp4") && after.panel.includes("APPROVED"), "approved returned media remains reachable");
+  ok(after.panel.includes("PAID-RETURN.mp4") && after.panel.includes("APPROVE VIDEO"), "unapproved returned media remains reachable until explicit confirmation");
   ok(after.panel.includes('data-generation-readiness="blocked"'), "new generation remains blocked after reviewing and approving returned media");
 }
 

@@ -3078,6 +3078,8 @@ function entityDetailsHistoryMarkup(list, entity, extra) {
   return `<section class="entity-subworkspace"><nav class="entity-subworkspace-tabs" aria-label="Details and history"><button type="button" class="${selected.id==="details"?"selected":""}" onclick="selectBoundedItem('entity-detail-view','${attr(context)}','details')">Details</button><button type="button" class="${selected.id==="history"?"selected":""}" onclick="selectBoundedItem('entity-detail-view','${attr(context)}','history')">History</button></nav>${selected.render()}${dangerZone}</section>`;
 }
 function entityPage(list, id, extra) {
+  const results = window.CineBraidResults?.view?.();
+  if (results) return results;
   if (window.CineBraidReferenceDesk && CineBraidReferenceMedia.dirs[list]) {
     const desk=window.CineBraidReferenceDesk.view(list,id);
     if(desk) return desk;

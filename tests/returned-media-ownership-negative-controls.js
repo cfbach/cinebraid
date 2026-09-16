@@ -402,11 +402,11 @@ function deepEqualLoose(actual, expected, message) {
    =========================================================================== */
 
 const DECISION_FILE = "public/review-provenance.js";
-const NC6_ANCHOR = `window.setCandidateDecision = (id, name, decision) => {
+const NC6_ANCHOR = `window.setCandidateDecision = (id, name, decision, options = {}) => {
   const s = shotById(id),
     row = candidateRecord(s, name);
   row.decision = row.decision === decision ? "unreviewed" : decision;`;
-const NC6_BREAK = `window.setCandidateDecision = (id, name, decision) => {
+const NC6_BREAK = `window.setCandidateDecision = (id, name, decision, options = {}) => {
   const s = shotById(id),
     row = candidateRecord(s, name);
   if (row.correctionOf) {

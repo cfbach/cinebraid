@@ -370,7 +370,7 @@
   function discovery(row){return window.CineBraidMediaDiscovery?.compose(activeProject(),[row],typeof SCAN==='undefined'?[]:SCAN.mediaInventory||[]).find(r=>r.key===row.key);}
   function encodedKey(key){return encodeURIComponent(key).replace(/'/g,'%27');}
   function ownerToken(use){const c=use.context;return encodeURIComponent(JSON.stringify([use.kind,c.shotId.value,c.entityList.value,c.entityId.value,c.stateId.value,c.frameId.value,c.coverageSlotId.value,use.file.name])).replace(/'/g,"%27");}
-  function ownerLabel(use){return use.kind==='shot-blocking'?'Open shot':use.context.shotId.value?'Review in '+(use.kind==='shot-motion'?'motion workflow':'Shot Desk'):use.context.entityList.value==='audio'?'Review in audio workflow':use.context.entityId.value?'Review in Reference Desk':'';}
+  function ownerLabel(use){return use.kind==='shot-blocking'?'Open shot':use.context.shotId.value?'Review in '+(use.kind==='shot-motion'?'Motion Results':'Frame Results'):use.context.entityList.value==='audio'?'Review in audio workflow':use.context.entityId.value?'Review in Reference Desk':'';}
   function inspectorMarkup(row) {
     const d=discovery(row),uses=row.relationships?.length?row.relationships:[row];
     const actions=uses.map((use,i)=>ownerLabel(use)?`<button class="rd-button rd-primary" data-mi-action="open-owner" onclick="CineBraidMediaInspector.owner(decodeURIComponent('${attr(encodedKey(row.key))}'),'${attr(ownerToken(use))}')">${esc(ownerLabel(use))}${uses.length>1?' · '+esc(d.relationships[i].label):''}</button>`:'').join('');
@@ -390,7 +390,7 @@
     const c=use.context,shot=c.shotId.value,list=c.entityList.value,id=c.entityId.value;let hash='';
     if(shot){hash=use.kind==='shot-blocking'?'#/shot/'+encodeURIComponent(shot):typeof shotReviewHref==='function'?shotReviewHref(shot,use.key):'#/shot/'+encodeURIComponent(shot);}
     else if(list==='audio'&&id){hash='#/sound/'+encodeURIComponent(id);}
-    else if(id&&list){if(!window.CineBraidReferenceDesk?.selectContext({list,id,stateId:c.stateId.value||'',candidateName:use.file.name,assetId:use.identity.ledger.value||''}))return toast('This reference use changed. Return and refresh the project.');hash='#/'+({characters:'character',locations:'location',props:'prop',vehicles:'vehicle',audio:'sound'}[list]||'library')+'/'+encodeURIComponent(id);}
+    else if(id&&list){if(!window.CineBraidReferenceDesk?.selectContext({list,id,stateId:c.stateId.value||'',candidateName:use.file.name,assetId:use.identity.ledger.value||''}))return toast('This reference use changed. Return and refresh the project.');hash=window.CineBraidResults&&c.stateId.value?CineBraidResults.href({list,id,stateId:c.stateId.value,slotId:c.coverageSlotId.value||''},use.key+'|'+use.file.name):'#/'+({characters:'character',locations:'location',props:'prop',vehicles:'vehicle',audio:'sound'}[list]||'library')+'/'+encodeURIComponent(id);}
     if(!hash)return false;
     return CineBraidMediaReturn.go(hash,inspectionSession?.origin||CineBraidMediaReturn.capture());
   }

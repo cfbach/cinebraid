@@ -3,6 +3,8 @@ const fs = require("fs");
 const path = require("path");
 
 const nodeSuites = [
+  "check:shot-desk",
+  "check:ev2-6",
   "check:syntax",
   "check:render",
   "check:behavior",
@@ -321,7 +323,7 @@ const browserSuites = [
   "check:project-entry-browser", "check:reference-reframe-browser", "check:simple-advanced-browser",
   "check:shot-intent-browser", "check:authority-browser", "check:shot-canon-removal-browser",
   "check:save-truth-browser",
-  "check:bible-canon-browser", "check:returned-review-browser", "check:launch-language-browser",
+  "check:ev2-6-browser", "check:bible-canon-browser", "check:returned-review-browser", "check:launch-language-browser",
   "check:reference-demand-browser", "check:shot-intent-front-browser",
   "check:references-alpha-browser"];
 const releaseSuites = ["check:environment", "check:package"];

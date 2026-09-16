@@ -1784,13 +1784,8 @@ async function prepareProjectSnapshot({ claimRecovery = false, slug = "" } = {})
    It reads `prepared.config`, so it is a second await rather than a seventh
    entry in the Promise.all above. It is still entirely inside PREPARE. */
 async function prepareGenerationLedger(prepared, { claimRecovery = false } = {}) {
-  const falConfig = prepared.config.generation?.fal || {};
-  /* A keyless fal has nothing to read, and the other backends still do — so the early
-     return goes THROUGH their read rather than past it. Returning straight out here is
-     what left a delivered ComfyUI candidate, and later a paid Civitai one, beside
-     "Generation records are not loaded in this session" on an installation that had never
-     configured fal at all. */
-  if (!(falConfig.enabled && falConfig.keySource !== "none")) return prepareBackendGenerationLedgers(prepared);
+  /* Read the project's local ledger without contacting a provider. Keep its
+     history available after credentials expire or an adapter is disabled. */
   /* What the server collected through its own background recovery rather than
      through a refresh from here — which is all the server can know, and all it
      says. The header marks THIS request as the one that takes delivery of the
@@ -1807,7 +1802,7 @@ async function prepareGenerationLedger(prepared, { claimRecovery = false } = {})
      — that is watchProjectRevision()'s job, and it asks the server rather than
      waiting to be told. */
   await fetch("/api/generation/fal/jobs", claimRecovery ? { headers: { "x-cinebraid-claim-recovery": "1" } } : {})
-    .then((r) => (r.ok ? r.json() : { jobs: [] }))
+    .then((r) => { if (!r.ok) throw Error("Generation ledger unavailable"); return r.json(); })
     .then((data) => {
       /* Loaded means the request was made AND answered. A refused or failed
          fetch leaves the flag false, so a surface reading provenance says the
@@ -1855,10 +1850,9 @@ async function prepareGenerationLedger(prepared, { claimRecovery = false } = {})
  * shape is now per-backend rather than a second special case.
  *
  * EACH BACKEND ANSWERS ON ITS OWN CONDITION, never on fal's and never on each other's.
- * The early return above is correct for fal — a keyless fal has nothing to read — and it
- * would be wrong here, because a local ComfyUI has a history whether or not this
- * installation has ever paid for a render, and a Civitai account has one whether or not
- * ComfyUI is installed.
+ * The primary route above always reads local history. Enabled backend readers
+ * may contribute their records without making availability of one adapter a
+ * prerequisite for reading another adapter's history.
  *
  * MERGED, NOT KEPT APART, because there is one generation ledger and every reader of it
  * joins on `generationJobId`. What must not merge is the ROUTING: falGenerationJob()

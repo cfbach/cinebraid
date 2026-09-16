@@ -1258,7 +1258,7 @@ function v642InstallUniversalActivityFetch() {
         if (!ok) {
           try {
             const data = await response.clone().json();
-            if (data?.error) detail = `${data.error}${String(url).includes("/api/generation/fal/jobs") ? " No paid request was accepted." : ""}`;
+            if (data?.error) detail = `${data.error}${String(url).includes("/api/generation/fal/jobs") ? " Check the request record before retrying; acceptance may be uncertain." : ""}`;
           } catch {}
         }
         v641FinishManualActivity(activityId, ok ? "completed" : "failed", detail);

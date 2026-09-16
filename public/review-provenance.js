@@ -345,11 +345,12 @@ window.clearCandidateCompare = (id) => {
     .forEach((x) => CANDIDATE_COMPARE.delete(x));
   route();
 };
-window.setCandidateDecision = (id, name, decision) => {
+window.setCandidateDecision = (id, name, decision, options = {}) => {
   const s = shotById(id),
     row = candidateRecord(s, name);
   row.decision = row.decision === decision ? "unreviewed" : decision;
   row.reviewedAt = new Date().toISOString();
+  if (options.deferSave) return row;
   dirty();
   route();
 };
@@ -424,19 +425,21 @@ function finishJobById(id) {
 }
 window.markCandidateForFinish = (shotId, name) => {
   const s = shotById(shotId),
-    row = candidateRecord(s, name);
-  if (!row.approvedAt) return toast("Approve the image first");
+    authority = window.CineBraidResultDecisions?.durableTarget(shotId,name),
+    target = authority?.kind === "shot-frame" ? "frame:"+authority.frameId : authority?.kind === "shot-motion" ? "segment:"+authority.unitKey : "delivery";
+  if (!authority) return toast("Approve this exact result and wait for its save before finishing.");
   const existing = shotFinishJobs(shotId).find(
-    (job) => job.sourceFile === name && job.approvedTarget === (row.approvedTarget || "shot"),
+    (job) => job.sourceFile === name && job.approvedTarget === target,
   );
   if (existing) return editFinishJob(existing.id);
-  window._finishDraft = { shotId, name, approvedTarget: row.approvedTarget || "shot" };
+  window._finishDraft = { shotId, name, approvedTarget: target, assetId: takesFor(shotId).find(x=>x.name===name)?.assetId, slug: ACTIVE_PROJECT_SLUG, epoch: PROJECT_OPEN_EPOCH };
   const video = isVideo(name);
   openModal(`<h3>Send to finishing — ${esc(name)}</h3><div class="modal-sub">OPTIONAL. QUEUES A QC-TRACKED ${video ? "VIDEO" : "STILL"} FINISH PASS, REPLACES NOTHING, AND DOES NOT MARK THE SHOT FINAL</div><label>Finish type<select id="finish-type">${video ? `<option value="video-upscale">Video upscale</option><option value="interpolation">Frame interpolation</option><option value="video-cleanup">Artifact cleanup</option><option value="video-repair">Repair / retake</option><option value="post">Color / post</option>` : `<option value="upscale">Upscale</option><option value="cleanup">Cleanup</option><option value="text-fix">Text fix</option><option value="repair">Repair / retouch</option><option value="post">Color / post</option>`}</select></label><label>Target resolution / notes<input id="finish-resolution" placeholder="${video ? "e.g. 4K, 24fps delivery" : "e.g. 4K landscape"}"></label><label>Instructions<textarea id="finish-notes" placeholder="Preserve timing, composition, identity, and crop. Describe only the finish operation."></textarea></label><div class="modal-actions"><button class="cancel" onclick="closeModal()">Cancel</button><button class="approve-btn" onclick="createFinishJob()">SEND TO FINISHING</button></div>`);
 };
-window.createFinishJob = () => {
+window.createFinishJob = async () => {
   const draft = window._finishDraft || {};
-  if (!draft.shotId) return;
+  if (!draft.shotId || approvalSubmissionPending()) return;
+  if (draft.slug!==ACTIVE_PROJECT_SLUG || draft.epoch!==PROJECT_OPEN_EPOCH || !CineBraidResultDecisions.durableTarget(draft.shotId,draft.name) || takesFor(draft.shotId).find(x=>x.name===draft.name)?.assetId!==draft.assetId) return toast("The Approved source changed. Close this form and review the exact result again.");
   P.finishJobs = Array.isArray(P.finishJobs) ? P.finishJobs : [];
   P.finishJobs.push({
     id: `finish-${Date.now().toString(36)}`,
@@ -451,10 +454,7 @@ window.createFinishJob = () => {
     createdAt: new Date().toISOString(),
     updatedAt: new Date().toISOString(),
   });
-  dirty();
-  closeModal();
-  route();
-  toast("Finish job added to the shot");
+  return CineBraidResultDecisions.saveFinish(P.finishJobs[P.finishJobs.length-1]);
 };
 window.setFinishJobField = (jobId, field, value) => {
   const job = finishJobById(jobId);
@@ -468,70 +468,33 @@ window.editFinishJob = (jobId) => {
   if (!job) return;
   const s = shotById(job.shotId),
     takeOptions = takesFor(job.shotId).map((t) => `<option value="${attr(t.name)}" ${job.resultFile === t.name ? "selected" : ""}>${esc(t.name)}</option>`).join("");
-  openModal(`<div class="candidate-detail-modal"><h3>Finish job — ${esc(job.sourceFile || job.id)}</h3><div class="modal-sub">TRACK RESULT IMPORT, QC, AND OPTIONAL PROMOTION</div><label>Status<select id="finish-status"><option value="ready" ${job.status === "ready" ? "selected" : ""}>Ready for finishing</option><option value="in-progress" ${job.status === "in-progress" ? "selected" : ""}>In progress</option><option value="result-received" ${job.status === "result-received" ? "selected" : ""}>Result received</option><option value="qc-approved" ${job.status === "qc-approved" ? "selected" : ""}>QC approved</option><option value="changes-requested" ${job.status === "changes-requested" ? "selected" : ""}>Changes requested</option><option value="promoted" ${job.status === "promoted" ? "selected" : ""}>Promoted active</option></select></label><label>Result file<select id="finish-result"><option value="">Not imported yet</option>${takeOptions}</select><span class="hint">Import the upscaled or retouched file into this shot's takes folder, then select it here.</span></label><label>QC / notes<textarea id="finish-job-notes">${esc(job.notes || "")}</textarea></label><div class="modal-actions"><button class="changes-btn" onclick="deleteFinishJob('${job.id}')">Delete job</button><button class="cancel" onclick="closeModal()">Cancel</button><button class="ghost-btn" onclick="saveFinishJob('${job.id}')">Save</button>${job.resultFile ? `<button class="approve-btn" onclick="saveFinishJob('${job.id}',true)">SAVE + PROMOTE RESULT</button>` : ""}</div></div>`);
+  openModal(`<div class="candidate-detail-modal"><h3>Finish job — ${esc(job.sourceFile || job.id)}</h3><div class="modal-sub">TRACK RESULT IMPORT, QC, AND OPTIONAL PROMOTION</div><label>Status<select id="finish-status"><option value="ready" ${job.status === "ready" ? "selected" : ""}>Ready for finishing</option><option value="in-progress" ${job.status === "in-progress" ? "selected" : ""}>In progress</option><option value="result-received" ${job.status === "result-received" ? "selected" : ""}>Result received</option><option value="qc-approved" ${job.status === "qc-approved" ? "selected" : ""}>QC approved</option><option value="changes-requested" ${job.status === "changes-requested" ? "selected" : ""}>Changes requested</option>${job.status === "promoted" ? '<option value="promoted" selected>Promoted through approval</option>' : ""}</select></label><label>Result file<select id="finish-result"><option value="">Not imported yet</option>${takeOptions}</select><span class="hint">Import the upscaled or retouched file into this shot's takes folder, then select it here.</span></label><label>QC / notes<textarea id="finish-job-notes">${esc(job.notes || "")}</textarea></label><div class="modal-actions"><button class="changes-btn" onclick="deleteFinishJob('${job.id}')">Delete job</button><button class="cancel" onclick="closeModal()">Cancel</button><button class="ghost-btn" onclick="saveFinishJob('${job.id}')">Save</button>${job.resultFile ? `<button class="approve-btn" onclick="saveFinishJob('${job.id}',true)">SAVE + PROMOTE RESULT</button>` : ""}</div></div>`);
 };
-window.saveFinishJob = (jobId, promote = false) => {
-  const job = finishJobById(jobId);
-  if (!job) return;
-  job.status = document.getElementById("finish-status")?.value || job.status || "ready";
-  job.resultFile = document.getElementById("finish-result")?.value || "";
-  job.notes = document.getElementById("finish-job-notes")?.value.trim() || "";
-  job.updatedAt = new Date().toISOString();
-  dirty();
-  closeModal();
-  if (promote) return promoteFinishJob(jobId);
-  route();
-  toast("Finish job saved");
+window.saveFinishJob = async (jobId, promote = false) => {
+  if(approvalSubmissionPending())return showPendingApprovalSurface();
+  const slug=ACTIVE_PROJECT_SLUG,epoch=PROJECT_OPEN_EPOCH;
+  const fields={status:document.getElementById("finish-status")?.value||"ready",resultFile:document.getElementById("finish-result")?.value||"",notes:document.getElementById("finish-job-notes")?.value.trim()||""};
+  await flushPendingProjectSave();
+  if(slug!==ACTIVE_PROJECT_SLUG||epoch!==PROJECT_OPEN_EPOCH||!projectSaveSettled().settled)return toast("Resolve the current project save before updating this finishing task.");
+  const job=finishJobById(jobId);if(!job)return;
+  Object.assign(job,fields,{updatedAt:new Date().toISOString()});
+  return CineBraidResultDecisions.saveFinish(job,{promoteAfterSave:promote});
 };
-window.deleteFinishJob = (jobId) => {
-  P.finishJobs = (P.finishJobs || []).filter((job) => job.id !== jobId);
-  dirty();
-  closeModal();
-  route();
-  toast("Finish job removed");
+window.deleteFinishJob = async (jobId) => {
+  if(approvalSubmissionPending())return showPendingApprovalSurface();
+  const slug=ACTIVE_PROJECT_SLUG,epoch=PROJECT_OPEN_EPOCH;await flushPendingProjectSave();
+  if(slug!==ACTIVE_PROJECT_SLUG||epoch!==PROJECT_OPEN_EPOCH||!projectSaveSettled().settled)return toast("Resolve the current project save before removing this finishing task.");
+  const job=finishJobById(jobId);if(!job)return;
+  P.finishJobs = (P.finishJobs || []).filter((item) => item.id !== jobId);
+  return CineBraidResultDecisions.saveFinish(job,{deleted:true});
 };
 window.promoteFinishJob = (jobId) => {
-  const job = finishJobById(jobId);
-  if (!job || !job.resultFile) return toast("Choose the imported result file first");
-  const s = shotById(job.shotId),
-    target = String(job.approvedTarget || "shot");
-  /* P4-SEM-C3: a promoted finish job produces the same kind of authoritative edge
-     as a manual approval, so it records identity the same way. */
-  const approvedAssetId = (takesFor(job.shotId).find((item) => item.name === job.resultFile) || {}).assetId || "";
-  /* BATCH 1B: promoting a finish job is a human approval command and routes
-     through the one authority boundary, so the receipt it leaves is
-     indistinguishable from any other approval of the same frame. */
-  /* Promotion runs synchronously inside the click that pressed SAVE + PROMOTE,
-     on the result file the modal is showing, so the Canon write names exactly
-     the bytes the creator chose. Both delivery arms route: with an opening frame
-     it is frame Canon, without one it is the shot's delivery pointer. */
-  const at = new Date().toISOString();
-  try {
-    if (target === "shot") {
-      const opening = (s.keyframes || [])[0];
-      if (opening) approveFrameCanon(P, { shotId: job.shotId, frameId: opening.id, value: job.resultFile, assetId: approvedAssetId, at, via: "finish-job-promotion" });
-      else approveDeliveryCanon(P, { shotId: job.shotId, value: job.resultFile, assetId: approvedAssetId, at, via: "finish-job-promotion" });
-    } else if (target.startsWith("frame:")) {
-      const f = frameById(s, target.slice(6));
-      if (f) approveFrameCanon(P, { shotId: job.shotId, frameId: f.id, value: job.resultFile, assetId: approvedAssetId, at, via: "finish-job-promotion" });
-    } else if (target.startsWith("segment:")) {
-      const seg = (s.clips || []).find((x) => unitKey(x) === target.slice(8));
-      if (seg) approveMotionCanon(P, { shotId: job.shotId, unitKey: seg.id || unitKey(seg), value: job.resultFile, assetId: approvedAssetId, at, via: "finish-job-promotion" });
-    }
-  } catch (error) {
-    return toast(error.message || "That result could not be promoted");
-  }
-  const row = candidateRecord(s, job.resultFile, true);
-  row.approvedAt = new Date().toISOString();
-  row.approvedTarget = target;
-  row.decision = "shortlist";
-  row.finishedFrom = job.sourceFile || "";
-  job.promotedAt = new Date().toISOString();
-  job.status = "promoted";
-  job.updatedAt = job.promotedAt;
-  dirty();
-  route();
-  toast("Finished result promoted to the active approved asset");
+  const job=finishJobById(jobId);if(!job?.resultFile)return toast('Choose and save the imported result first.');
+  const target=String(job.approvedTarget||'shot'),shot=shotById(job.shotId);
+  if(target.startsWith('segment:'))return CineBraidResultDecisions.open(job.shotId,job.resultFile,'motion','',target.slice(8),job.id);
+  if(target.startsWith('frame:'))return CineBraidResultDecisions.open(job.shotId,job.resultFile,'frame',target.slice(6),'',job.id);
+  if(target==='shot'&&!isVideo(job.resultFile)&&(shot.keyframes||[])[0])return CineBraidResultDecisions.open(job.shotId,job.resultFile,'frame',shot.keyframes[0].id,'',job.id);
+  return CineBraidResultDecisions.open(job.shotId,job.resultFile,'delivery','','',job.id);
 };
 window.restorePackageRevision = (shotId, scope, packageId) => {
   const s = shotById(shotId);

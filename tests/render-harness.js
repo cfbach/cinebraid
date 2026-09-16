@@ -100,6 +100,7 @@ const SCRIPT_ORDER = [
      to load them to exercise either. */
   "media-inspector.js",
   "media-results.js",
+  "result-decisions.js",
   "bootstrap.js",
 ];
 

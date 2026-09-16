@@ -93,6 +93,8 @@ const ROUTES = {
   async shot(id) {
     const s = shotById(id);
     if (!s) return sharedNotFoundView("Shot", id, "#/shots/board", "Shots", (P.shots || []).map((row) => row.id), "#/shot");
+    const results = window.CineBraidResults?.view?.();
+    if (results) return results;
     const reviewKey = routeReviewClaim();
     if (reviewKey && window.CineBraidShotDesk?.handles(s, reviewKey)) return window.CineBraidShotDesk.view(s, reviewKey);
     await fetch("/api/shots/" + id + "/folder", { method: "POST" });

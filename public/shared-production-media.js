@@ -956,6 +956,7 @@
       selectedOptionId: known(job.selectedOptionId),
       selectedModelId: known(job.selectedModelId),
       prompt: promptOf(row, libraryRow),
+      submittedPrompt: known(job.prompt),
       cost: costOf(resolved.job, resolved.state),
       lineage: lineageOf(row, libraryRow),
       /* The ledger identity the JOB recorded for its own output, which is a different

@@ -1011,7 +1011,7 @@ function entityApprovalPreparationMessage(prepared) {
    decision: retry replays the receipt that was already created inside the click,
    and every path that cannot prove what happened asks storage first. */
 function pendingApprovalAuthorityTarget(record) {
-  return { kind: "entity-state", list: record.meta.list, entityId: record.meta.entityId, stateId: record.meta.stateId };
+  return record.meta.authorityTarget || { kind: "entity-state", list: record.meta.list, entityId: record.meta.entityId, stateId: record.meta.stateId };
 }
 
 window.showPendingApprovalSurface = () => {
@@ -1020,19 +1020,20 @@ window.showPendingApprovalSurface = () => {
   const meta = record.meta || {};
   const outcome = record.outcome || "saving";
   const preview = meta.url
-    ? `<figure><div id="entity-approval-preview"><img src="${attr(meta.url)}" alt="The image this approval was taken on"></div><figcaption>${esc(meta.fileName || "")}</figcaption></figure>`
+    ? `<figure><div id="entity-approval-preview">${isVideo(meta.fileName)?`<video controls preload="metadata" src="${attr(meta.url)}"></video>`:`<img src="${attr(meta.url)}" alt="The exact result this approval was taken on">`}</div><figcaption>${esc(meta.fileName || "")}</figcaption></figure>`
     : "";
-  const target = `<div class="entity-approval-target-summary"><span>APPROVAL TARGET</span><b>${esc(meta.entityName || meta.entityId || "")} · ${esc(meta.stateName || "Default")}</b><small>${esc(meta.fileName || "")}</small></div>`;
-  const headline = {
+  const ordinary = !!(meta.finishJob || meta.finishDelete || meta.candidateDecision);
+  const target = `<div class="entity-approval-target-summary"><span>${ordinary?"DECISION TARGET":"APPROVAL TARGET"}</span><b>${esc(meta.entityName || meta.entityId || "")} · ${esc(meta.stateName || "Default")}</b><small>${esc(meta.fileName || "")}</small></div>`;
+  const headline = ordinary ? (outcome === "saving" ? "Saving decision…" : "This decision needs recovery") : {
     saving: "Saving approval…",
     unknown: "Checking whether approval was saved…",
     changed: "This project changed while the approval was being saved",
     refused: "Your approval has not been saved",
     uncommitted: "Your approval has not been saved",
   }[outcome] || "Saving approval…";
-  const explanation = {
+  const explanation = ordinary ? (record.reason || "No approval or delivery authority changes. Keep this exact result here until storage confirms the decision.") : {
     saving: "CineBraid is writing this approval. It is not approved until storage accepts it.",
-    unknown: "CineBraid is asking storage what it actually holds for this reference. Nothing else is written until that is known.",
+    unknown: "CineBraid is asking storage what it actually holds for this exact target. Nothing else is written until that is known.",
     changed: record.reason || "Nothing was written. Review the current state of this reference and approve again if it is still what you want.",
     refused: record.reason || "Nothing was written, and this reference is unchanged.",
     uncommitted: record.reason || "Nothing was written, and this reference is unchanged.",
@@ -1044,17 +1045,17 @@ window.showPendingApprovalSurface = () => {
   const actions = outcome === "saving" || outcome === "unknown"
     ? `<button class="cancel" onclick="resolvePendingApprovalOutcome()">CHECK AGAIN</button>`
     : outcome === "uncommitted"
-      ? `<button class="cancel" onclick="leavePendingApprovalUnapproved()">LEAVE UNAPPROVED</button><button class="approve-btn large" onclick="retryPendingApproval()">RETRY SAVING APPROVAL</button>`
+      ? `<button class="cancel" onclick="leavePendingApprovalUnapproved()">${ordinary?"RETURN TO SAVED STATE":"LEAVE UNAPPROVED"}</button><button class="approve-btn large" onclick="retryPendingApproval()">${ordinary?"RETRY SAVING DECISION":"RETRY SAVING APPROVAL"}</button>`
       : `<button class="approve-btn large" onclick="reviewCurrentApprovalState()">REVIEW CURRENT STATE</button>`;
   /* THE NOTE SAYS WHAT THE BUTTON BESIDE IT ACTUALLY DOES. Both actions reopen
      the project as it is stored; only one of them is called "leave unapproved". */
-  const note = outcome === "uncommitted" || outcome === "changed" || outcome === "refused"
+  const note = !ordinary && (outcome === "uncommitted" || outcome === "changed" || outcome === "refused")
     ? `<p class="hint">${outcome === "uncommitted" ? "Leaving this unapproved" : "Reviewing the current state"} reopens this project as it is stored. This candidate, what it is, and the state it was for were all saved before you approved it, so the image stays exactly where it is and you can review it again.</p>`
     : "";
   /* HELD, NOT MERELY SHOWN. This dialog is the only place the decision behind it
      can be resolved, so Escape, the backdrop and every generic close are refused
      until one of its own actions releases it — see the modal lock in app.js. */
-  openModal(`<div class="entity-approval-modal entity-approval-pending" data-approval-outcome="${attr(outcome)}"><h3>${esc(headline)}</h3><div class="modal-sub">THIS REFERENCE IS APPROVED ONLY WHEN STORAGE HAS ACCEPTED IT</div><div class="entity-approval-modal-layout">${preview}<div class="entity-approval-fields">${target}<p>${esc(explanation)}</p>${note}</div></div><div class="modal-actions entity-approval-actions">${actions}</div></div>`,
+  openModal(`<div class="entity-approval-modal entity-approval-pending" data-approval-outcome="${attr(outcome)}"><h3>${esc(headline)}</h3><div class="modal-sub">THIS DECISION TAKES EFFECT ONLY WHEN STORAGE HAS ACCEPTED IT</div><div class="entity-approval-modal-layout">${preview}<div class="entity-approval-fields">${target}<p>${esc(explanation)}</p>${note}</div></div><div class="modal-actions entity-approval-actions">${actions}</div></div>`,
     { lock: APPROVAL_RECOVERY_LOCK, lockMessage: approvalRecoveryMessage() });
 };
 
@@ -1076,13 +1077,16 @@ window.resolvePendingApprovalOutcome = async () => {
   const receipt = typeof currentHumanAuthority === "function"
     ? currentHumanAuthority(stored.project, pendingApprovalAuthorityTarget(record)) : null;
   const meta = record.meta || {};
-  if (receipt && String(receipt.value || "") === meta.fileName && String(receipt.assetId || "") === String(meta.assetId || "")) {
+  if(meta.candidateDecision){const d=meta.candidateDecision,row=stored.project.shots?.find(s=>s.id===d.shotId)?.candidateFiles?.find(r=>(r.stored||r.name)===d.name);if(row?.decision===d.decision&&row?.reviewedAt===d.reviewedAt)return completePendingApproval(record,stored);}
+  if (meta.finishDelete && !(stored.project.finishJobs||[]).some(j=>j.id===meta.finishDelete)) return completePendingApproval(record,stored);
+  if (meta.finishJob && JSON.stringify((stored.project.finishJobs||[]).find(j=>j.id===meta.finishJob.id))===JSON.stringify(meta.finishJob)) return completePendingApproval(record,stored);
+  if (receipt && (!meta.receiptId || receipt.id === meta.receiptId) && String(receipt.value || "") === meta.fileName && String(receipt.assetId || "") === String(meta.assetId || "")) {
     /* THE EXACT DECISION IS ALREADY DURABLE. A lost response is not a lost
        approval, and a second receipt for the same decision is the one thing a
        retry must never produce. */
     return completePendingApproval(record, stored);
   }
-  if (receipt) {
+  if (receipt && stored.revision !== record.baselineRevision) {
     /* Committed once, and something else is current now. Historic stays historic. */
     record.outcome = "changed";
     record.reason = `${String(receipt.value || "Another image")} is currently approved for this state, so this approval was not applied.`;
@@ -1094,7 +1098,7 @@ window.resolvePendingApprovalOutcome = async () => {
     return showPendingApprovalSurface();
   }
   record.outcome = "uncommitted";
-  record.reason = "Storage does not hold this approval, and the project is otherwise unchanged.";
+  record.reason = "Storage does not hold this decision, and the project is otherwise unchanged.";
   showPendingApprovalSurface();
 };
 
@@ -1493,9 +1497,21 @@ async function finishEntityApprovalCeremony(meta) {
    the response to the write — a lost response is still a durable approval, and
    this is where the window catches up with it. */
 async function completePendingApproval(record, stored = null) {
-  if (stored && typeof adoptDurableApprovalOutcome === "function") adoptDurableApprovalOutcome(record, stored);
+  if (stored) {
+    // A matching receipt proves the decision, not that the rest of this draft is
+    // current. Never adopt a newer revision over unrelated edits from another tab.
+    let submitted;
+    try { submitted = JSON.parse(record.job?.body || 'null'); } catch (_) {}
+    if (!submitted || authorityStableJson(submitted) !== authorityStableJson(stored.project)) {
+      record.outcome = "changed";
+      record.reason = "Your decision is stored, but the project has changed since this submission. Review current state before continuing; nothing will be resubmitted.";
+      return showPendingApprovalSurface();
+    }
+    if (typeof adoptDurableApprovalOutcome === "function" && !adoptDurableApprovalOutcome(record, stored)) return;
+  }
   endApprovalSubmission(record.id);
-  await finishEntityApprovalCeremony(record.meta);
+  if (record.meta.resultDecision) await CineBraidResultDecisions.complete(record.meta);
+  else await finishEntityApprovalCeremony(record.meta);
 }
 
 window.confirmEntityApproval = async (continueToNext = false) => {

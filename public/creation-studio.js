@@ -2945,6 +2945,7 @@ window.openReturnedResultReview = (shotId, key) => {
     route();
     return toast("That returned result is no longer waiting for review");
   }
+  if (window.CineBraidResults?.open) return CineBraidResults.open({shotId,kind:item.owner.kind === "shot-motion"?"motion":"frame",frameId:item.owner.frameId||""},item.key);
   if (item.owner.kind === "shot-motion") return openGuidedPanel(shotId, "motion");
   if (window.CineBraidShotDesk) {
     const href = shotReviewHref(shotId, item.key);
@@ -5388,7 +5389,7 @@ function guidedShotWorkspaceView(s, takes, sc, state, refs, planningMedia, neigh
       : !routeDeclared ? "not declared yet"
         : motionStage?.blockedReason || "readiness unavailable";
   const commandSummary = `<section class="shot-command-summary" data-shot-route-declared="${routeDeclared ? "1" : "0"}"><article><span>References</span><b>${referenceCount}</b><small>${referenceCount ? "linked and available" : "none linked yet"}</small></article><article><span>Required frames</span><b>${approvedFrames}/${requiredFrames}</b><small>${esc(frameNote)}</small></article><article><span>Motion</span><b>${videos || "-"}</b><small>${esc(motionNote)}</small></article><article><span>Open stage</span><b>${esc(String(selectedTask).replace(/^./, (c) => c.toUpperCase()))}</b><small>Shot status: ${esc(state?.label || life.label || "In progress")}</small></article></section>`;
-  return `<div class="shot-shell guided-shot-shell focused-workspace-shell bounded-shot-workspace clarity-shot-workspace" data-bounded="1" data-selected-task="${attr(selectedTask)}">${projectNavigator(s)}<div class="shot-main">${typeof actionRefusalMarkup === "function" ? actionRefusalMarkup(`shot-delete:${s.id}`) : ""}<div class="crumb"><a href="#/shots/board">Shots</a> / <a href="#/scene/${s.scene}">${esc(sc ? sc.title : s.scene)}</a> / ${esc(s.id)}</div><header class="shot-workspace-head guided-shot-head"><div class="shot-head-nav">${neighbors.prev ? `<a href="#/shot/${neighbors.prev.id}" title="Previous shot" aria-label="Previous shot: ${attr(neighbors.prev.title || neighbors.prev.id)}">‹</a>` : '<span aria-hidden="true">‹</span>'}${neighbors.next ? `<a href="#/shot/${neighbors.next.id}" title="Next shot" aria-label="Next shot: ${attr(neighbors.next.title || neighbors.next.id)}">›</a>` : '<span aria-hidden="true">›</span>'}</div><div class="shot-head-main"><h1 class="shot-title-display">${esc(s.title || "Untitled shot")}</h1><div class="record-meta">${esc(s.id)} · ${takes.length} returned file${takes.length === 1 ? "" : "s"}</div></div><div class="shot-head-controls"><details class="guided-inline-actions"><summary>Shot actions</summary><button class="ghost-btn" onclick="openRenameShotModal('${s.id}')">Rename shot</button><button class="ghost-btn" onclick="duplicateShot('${s.id}')">Duplicate shot</button><button class="ghost-btn" onclick="clickGuidedUpload('${s.id}','${life.key.includes("motion") || life.key === "final" ? "video" : "still"}')">Import existing ${life.key.includes("motion") || life.key === "final" ? "video" : "still"}</button><button class="danger-btn" onclick="delShot('${s.id}')">Delete shot</button></details></div></header>${commandSummary}${intentControl}${guidedShotStatusCard(s,takes,neighbors)}${typeof v642RelatedShotActivityMarkup === "function" ? v642RelatedShotActivityMarkup(s.id) : ""}<div class="guided-work-stack bounded-selected-task" data-bounded-task="${attr(selectedTask)}">${selectedMarkup}</div></div></div>`;
+  return `<div class="shot-shell guided-shot-shell focused-workspace-shell bounded-shot-workspace clarity-shot-workspace" data-bounded="1" data-selected-task="${attr(selectedTask)}">${projectNavigator(s)}<div class="shot-main">${typeof actionRefusalMarkup === "function" ? actionRefusalMarkup(`shot-delete:${s.id}`) : ""}<div class="crumb"><a href="#/shots/board">Shots</a> / <a href="#/scene/${s.scene}">${esc(sc ? sc.title : s.scene)}</a> / ${esc(s.id)}</div><header class="shot-workspace-head guided-shot-head"><div class="shot-head-nav">${neighbors.prev ? `<a href="#/shot/${neighbors.prev.id}" title="Previous shot" aria-label="Previous shot: ${attr(neighbors.prev.title || neighbors.prev.id)}">‹</a>` : '<span aria-hidden="true">‹</span>'}${neighbors.next ? `<a href="#/shot/${neighbors.next.id}" title="Next shot" aria-label="Next shot: ${attr(neighbors.next.title || neighbors.next.id)}">›</a>` : '<span aria-hidden="true">›</span>'}</div><div class="shot-head-main"><h1 class="shot-title-display">${esc(s.title || "Untitled shot")}</h1><div class="record-meta">${esc(s.id)} · ${takes.length} returned file${takes.length === 1 ? "" : "s"}</div></div><div class="shot-head-controls"><details class="guided-inline-actions"><summary>Shot actions</summary><button class="ghost-btn" onclick="openRenameShotModal('${s.id}')">Rename shot</button><button class="ghost-btn" onclick="duplicateShot('${s.id}')">Duplicate shot</button><button class="ghost-btn" onclick="clickGuidedUpload('${s.id}','${life.key.includes("motion") || life.key === "final" ? "video" : "still"}')">Import existing ${life.key.includes("motion") || life.key === "final" ? "video" : "still"}</button><button class="danger-btn" onclick="delShot('${s.id}')">Delete shot</button></details></div></header>${window.CineBraidResults?.shotEntries?.(s)||""}${commandSummary}${intentControl}${guidedShotStatusCard(s,takes,neighbors)}${typeof v642RelatedShotActivityMarkup === "function" ? v642RelatedShotActivityMarkup(s.id) : ""}<div class="guided-work-stack bounded-selected-task" data-bounded-task="${attr(selectedTask)}">${selectedMarkup}</div></div></div>`;
 }
 
 window.setComposerConstraint = (id, key, value) => {
@@ -5857,113 +5858,13 @@ window.downloadGuidedMotionPrompt = (id, buildId) => {
   if (!build) return;
   downloadCreationText(`${build.packageId || id}_${build.profileId.replace(/\//g, "-")}_motion-prompt.txt`, build.prompt || "");
 };
-window.markGuidedStillFinal = (id, name) => {
-  const s = shotById(id), c = ensureShotCreation(s);
-  if (!name) return toast("Approve a still first");
-  const stillOpening = (s.keyframes || [])[0];
-  /* WORKFLOW BOOKKEEPING ONLY. Every pointer this used to write —
-     `s.winner`, its identity stamp, `finalStillFile` on both records — IS a
-     canon edge, and the kernel owns all of them. Writing them here produced a
-     second, unreceipted copy of the same decision, and on the no-frame arm it
-     produced a `s.winner` with no frame receipt behind it at all. */
-  const markStillFinal = () => {
-    c.deliveryIntent = "still";
-    s.workflowStatus = "APPROVED";
-    s.status = "APPROVED";
-  };
-  /* BATCH 1B: marking a still final IS a shot-winner write, so it goes through
-     the authority command. The receipt is what makes a later gate read agree
-     with what this screen just did. */
-  /* K1C — BOTH ARMS ROUTE. The fallback used to write `s.winner` directly when
-     a shot had no opening frame, which is a canonical selection with no receipt
-     behind it. There is no un-routed arm now: with a frame it is frame
-     authority, without one it is the shot's delivery pointer. */
-  const stillAt = new Date().toISOString();
-  const stillAssetId = (takesFor(s.id).find((item) => item.name === name) || {}).assetId || "";
-  /* MARKING A STILL FINAL IS A DELIVERY DECISION, and when the shot has an
-     opening frame it is also a frame decision. Both are canon, both are made in
-     this one click, and both go through the kernel — which is what stops the
-     delivery half from being a raw pointer nobody approved. */
-  try {
-    if (stillOpening) approveFrameCanon(P, { shotId: s.id, frameId: stillOpening.id, value: name, assetId: stillAssetId, at: stillAt, via: "guided-final-still" });
-    approveDeliveryCanon(P, { shotId: s.id, value: name, assetId: stillAssetId, at: stillAt, via: "guided-final-still" });
-  } catch (error) {
-    return toast(error.message || "That still could not be approved");
-  }
-  markStillFinal();
-  const row = candidateRecord(s, name, true);
-  row.approvedAt = row.approvedAt || new Date().toISOString();
-  row.finalAt = new Date().toISOString();
-  row.decision = "shortlist";
-  dirty();
-  route();
-  stampCeremony("FINAL STILL");
-  toast("Still marked as the final shot delivery");
+window.markGuidedStillFinal = (id,name) => CineBraidResultDecisions.open(id,name,'delivery');
+window.approveGuidedMotion = (id,name) => CineBraidResultDecisions.open(id,name,'motion');
+window.queueGuidedVideoFinish = (id,name) => {
+  if (!CineBraidResultDecisions.durableTarget(id,name)) return toast('Approve this exact motion result and wait for its save before sending it to finishing.');
+  return markCandidateForFinish(id,name);
 };
-window.approveGuidedMotion = (id, name) => {
-  const s = shotById(id), c = ensureShotCreation(s), current = guidedCurrentShotStill(s);
-  const profile = guidedVideoProfiles().find((item) => item.id === c.motionProfileId);
-  const unit = ensureGuidedMotionUnit(s, current?.name || "", profile);
-  /* K1C — A MOTION WINNER IS CANON, so it goes through the kernel like every
-     other canonical selection. This wrote videoWinner and approvedMotionFile
-     directly, outside the receipt model. */
-  const motionAssetId = (takesFor(s.id).find((item) => item.name === name) || {}).assetId || "";
-  const motionUnitKey = unit.id || unitKey(unit);
-  try {
-    approveMotionCanon(P, { shotId: s.id, unitKey: motionUnitKey, value: name, assetId: motionAssetId, at: new Date().toISOString(), via: "guided-motion-approval" });
-  } catch (error) {
-    return toast(error.message || "That video could not be approved");
-  }
-  const row = candidateRecord(s, name, true);
-  row.approvedAt = new Date().toISOString();
-  row.approvedTarget = `segment:${unitKey(unit)}`;
-  row.decision = "shortlist";
-  dirty();
-  route();
-  stampCeremony("MOTION APPROVED");
-  toast("Video approved as the current motion take");
-};
-window.queueGuidedVideoFinish = (id, name) => {
-  const s = shotById(id), c = ensureShotCreation(s);
-  if (c.approvedMotionFile !== name) {
-    const current = guidedCurrentShotStill(s), profile = guidedVideoProfiles().find((item) => item.id === c.motionProfileId), unit = ensureGuidedMotionUnit(s, current?.name || "", profile);
-    /* K1C: queueing for finish establishes the motion winner, so it routes. */
-    const queueAssetId = (takesFor(s.id).find((item) => item.name === name) || {}).assetId || "";
-    const queueUnitKey = unit.id || unitKey(unit);
-    try {
-      approveMotionCanon(P, { shotId: s.id, unitKey: queueUnitKey, value: name, assetId: queueAssetId, at: new Date().toISOString(), via: "guided-motion-finish-queue" });
-    } catch (error) {
-      return toast(error.message || "That video could not be approved");
-    }
-    markCandidateApproved(s, name, `segment:${unitKey(unit)}`);
-    dirty();
-  }
-  markCandidateForFinish(id, name);
-};
-window.markGuidedVideoFinal = (id, name) => {
-  const s = shotById(id), c = ensureShotCreation(s);
-  /* K1C: the shot's final video IS its delivery Canon. */
-  try {
-    approveDeliveryCanon(P, {
-      shotId: s.id, value: name,
-      assetId: (takesFor(s.id).find((item) => item.name === name) || {}).assetId || "",
-      at: new Date().toISOString(), via: "guided-final-video",
-    });
-  } catch (error) {
-    return toast(error.message || "That video could not be approved as the final delivery");
-  }
-  /* `approvedMotionFile` is the delivery edge and the kernel just wrote it. */
-  c.finalVideoFile = name;
-  s.finalVideoFile = name;
-  const row = candidateRecord(s, name, true);
-  row.approvedAt = row.approvedAt || new Date().toISOString();
-  row.finalAt = new Date().toISOString();
-  row.decision = "shortlist";
-  dirty();
-  route();
-  stampCeremony("FINAL");
-  toast("Video marked as the final shot delivery");
-};
+window.markGuidedVideoFinal = (id,name) => CineBraidResultDecisions.open(id,name,'delivery');
 window.setGuidedFrameField = (id, frameId, key, value, mirror = false) => {
   const s = shotById(id), frames = guidedFrames(s), index = frames.findIndex((frame) => frame.id === frameId);
   if (index < 0) return;
@@ -6060,7 +5961,7 @@ function guidedClearApprovalTarget(s, target, exceptName = "") {
     delete row.finalAt;
   }
 }
-function guidedInvalidateMotionAfterFrameChange(s, previousName = "", nextName = "") {
+function guidedInvalidateMotionAfterFrameChange(s, previousName = "", nextName = "", quiet = false) {
   const c = ensureShotCreation(s);
   c.frameSequenceReview = null;
   const activeMotion = c.approvedMotionFile || c.finalVideoFile || (s.clips || []).some((clip) => clip.videoWinner);
@@ -6100,9 +6001,9 @@ function guidedInvalidateMotionAfterFrameChange(s, previousName = "", nextName =
        has just been reopened away from. */
     clearShotApprovalIdentity(clip, "videoWinner");
   }
-  if (activeMotion) toast("Frame changed; the previous motion approval was reopened because it used the old frame.");
+  if (activeMotion && !quiet) toast("Frame changed; the previous motion approval was reopened because it used the old frame.");
 }
-window.guidedFrameApprovalChanged = (id, target, previousName, nextName) => {
+window.guidedFrameApprovalChanged = (id, target, previousName, nextName, options = {}) => {
   if (previousName === nextName) return;
   const s = shotById(id);
   if (!s) return;
@@ -6110,11 +6011,11 @@ window.guidedFrameApprovalChanged = (id, target, previousName, nextName) => {
   const shouldAutoReview = !!(c.frameSequenceCorrection?.autoReviewOnApproval && nextName);
   c.frameSequenceReview = null;
   if (previousName) {
-    guidedInvalidateMotionAfterFrameChange(s, previousName, nextName);
+    guidedInvalidateMotionAfterFrameChange(s, previousName, nextName, options.quiet);
     if (c.finalStillFile === previousName) c.finalStillFile = "";
     if (s.finalStillFile === previousName) s.finalStillFile = "";
   }
-  if (shouldAutoReview) {
+  if (shouldAutoReview && !options.deferReview) {
     c.frameSequenceCorrection.lastApprovedFile = nextName;
     c.frameSequenceCorrection.updatedAt = new Date().toISOString();
     setTimeout(() => {
@@ -6180,6 +6081,7 @@ window.selectGuidedFrameCandidate = (id, frameId, name) => {
   route();
 };
 window.approveGuidedFrame = (id, frameId, name) => {
+  if (window.CineBraidResults?.parse?.()) return CineBraidResultDecisions.open(id,name,"frame",frameId);
   const s = shotById(id), frames = guidedFrames(s), index = frames.findIndex((frame) => frame.id === frameId);
   if (index < 0) return;
   if (index === 0) return approveGuidedStill(id, name);
