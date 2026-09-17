@@ -317,7 +317,9 @@ async function ux1_2_markFinal() {
   ok(after.message.includes("marked final"), "and a message that says why it is complete");
   equal(after.category, "complete", "the shot board files it as final through the same projection");
   equal(after.cardPromotesWork, false, "no primary card promotes ordinary unfinished work on a final shot");
-  ok(after.cardKicker.includes("SHOT COMPLETE"), "the shot card states completion instead: " + after.cardKicker);
+  /* EV2-7 dogfood correction: the Desk's kickers are sentence-case labels now. The claim is the one this
+     check was written for — the card states completion rather than promoting work — so it is read without case. */
+  ok(/shot complete/i.test(after.cardKicker), "the shot card states completion instead: " + after.cardKicker);
   equal(after.decisions, 0, "the project's decision count drops to zero");
   deepEqual(after.delivered, ["L1-01"], "and the shot is reported as delivered by the one projection");
   equal(after.next, null, "the project has no next production action");

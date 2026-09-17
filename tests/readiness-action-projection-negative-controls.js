@@ -179,7 +179,9 @@ async function nc1() {
   equal(seen.workflow, "In progress", "NC-UX1-1 precondition: the shot's workflow status reads In progress");
   equal(seen.status, "COMPLETE", "NC-UX1-1 reproduces the false completion");
   equal(seen.code, "nothing-outstanding", "with the false action code");
-  ok(seen.cardEyebrow.includes("COMPLETE"), "the shot card is headed COMPLETE: " + seen.cardEyebrow);
+  /* EV2-7 dogfood correction: sentence-case kickers; the control still requires the card to carry the false
+     completion it reproduces. */
+  ok(/complete/i.test(seen.cardEyebrow), "the shot card is headed COMPLETE: " + seen.cardEyebrow);
   equal(seen.cardHeadline, "Nothing outstanding", "and says Nothing outstanding beside a Deliver stage reading Not started");
   ok(seen.cardBody.includes("already holds approved authority"),
     "with the exact sentence the audit quoted: " + seen.cardBody);
