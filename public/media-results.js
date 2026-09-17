@@ -146,6 +146,8 @@
   /* ==========================================================================
      THE VIEW. */
   const discoveryStates=new Map();
+  /* The recorded name for a Related-to key that no media carries yet (openRelated from the Bible). Display only; routing still uses the key. */
+  function relatedLabel(key){const [list,...rest]=String(key).split(':'),id=rest.join(':');if(!['characters','locations','props','vehicles'].includes(list)||typeof P==='undefined')return '';const found=(Array.isArray(P?.[list])?P[list]:[]).find(x=>String(x?.id)===id);return found?.name||'';}
   function resultsView() {
     const built=window.CineBraidMediaInspector?.projection?.();
     if(!built)return '<div class="empty-state"><h2>Production media is unavailable</h2><p>Reload the project to try again.</p></div>';
@@ -153,7 +155,7 @@
     if(!discoveryStates.has(key))discoveryStates.set(key,CineBraidMediaDiscovery.defaults());
     const state=discoveryStates.get(key);
     const records=()=>CineBraidMediaDiscovery.compose(P,window.CineBraidMediaInspector.projection()?.records||[],SCAN.mediaInventory||[]);
-    return '<section class="production-contact-sheet"><header class="md-heading"><p>Production</p><h1>Production media</h1><p>Find your media. See where it belongs. Return to the work.</p></header>'+CineBraidMediaBrowser.mount('production',{state,records,select:row=>window.inspectMedia(row.key)})+(built.unresolvedReferences?.length?'<details class="md-unresolved"><summary>'+built.unresolvedReferences.length+' references need identity or availability attention</summary><p>These records have no resolvable media identity. Open their owning reference to inspect the recorded assignment.</p>'+built.unresolvedReferences.map(r=>'<p>'+esc(r.context.entityName.value||'Reference')+' · '+esc(r.file.name)+'</p>').join('')+'</details>':'')+'</section>';
+    return '<section class="production-contact-sheet"><header class="md-heading"><p>Production</p><h1>Production media</h1><p>Find your media. See where it belongs. Return to the work.</p></header>'+CineBraidMediaBrowser.mount('production',{state,records,select:row=>window.inspectMedia(row.key),relatedLabel})+(built.unresolvedReferences?.length?'<details class="md-unresolved"><summary>'+built.unresolvedReferences.length+' references need identity or availability attention</summary><p>These records have no resolvable media identity. Open their owning reference to inspect the recorded assignment.</p>'+built.unresolvedReferences.map(r=>'<p>'+esc(r.context.entityName.value||'Reference')+' · '+esc(r.file.name)+'</p>').join('')+'</details>':'')+'</section>';
   }
 
   window.addEventListener?.('cinebraid:route-rendered',()=>document.body.classList.toggle('production-media-active',!!document.querySelector('.production-contact-sheet')));

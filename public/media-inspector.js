@@ -106,7 +106,7 @@
        rather than inferring one from a review that may have had nothing to do with the
        decision. */
     if (decision.state === "rejected") return { tone: "rejected", label: "Rejected by you", detail: "A person rejected this. It is kept as evidence.", note: "Reason not recorded" };
-    return { tone: "candidate", label: "No human decision yet", detail: "Nobody has approved or rejected this." };
+    return { tone: "candidate", label: "No decision yet", detail: "Nobody has approved or rejected this." };
   }
 
   /* AI RECOMMENDATION WORDS. Reads aiRecommendation and nothing else. Note that no
@@ -240,19 +240,23 @@
     const decision = decisionWords(row);
     const recommendation = recommendationWords(row);
     const reviewed = row.reviews.length;
+    const slotViews = window.CineBraidMediaDiscovery?.slotSelection?.(row) || null;
     return `<section class="mi-section mi-status" data-mi-section="status">
       <h4>Production status</h4>
       <div class="mi-status-grid">
         <article class="mi-decision tone-${attr(decision.tone)}" data-mi-human-decision="${attr(row.humanDecision.state)}">
-          <span>Human decision</span><b>${esc(decision.label)}</b><small>${esc(decision.detail)}</small>
+          <span>Decision</span><b>${esc(decision.label)}</b><small>${esc(decision.detail)}</small>
           ${row.humanDecision.decidedAt.state === "known" ? `<em>${esc(timeWords(row.humanDecision.decidedAt.value))}</em>` : ""}
           ${decision.note ? `<em data-mi-rejection-reason="not-recorded">${esc(decision.note)}</em>` : ""}
           ${row.humanDecision.approvedWithoutAI.state === "known" ? `<i>Approved without a current AI check.</i>` : ""}
         </article>
         <article class="mi-disposition tone-${attr(row.disposition.role)}" data-mi-disposition="${attr(row.disposition.role)}">
-          <span>Disposition</span><b>${esc({ approved: "Approved", historic: "Historic selection", candidate: "Candidate", rejected: "Rejected" }[row.disposition.role] || row.disposition.role)}</b>
+          <span>Disposition</span><b>${esc(slotViews ? "Selected for " + slotViews.join(" · ") : { approved: "Approved", historic: "Historic selection", candidate: "Candidate", rejected: "Rejected" }[row.disposition.role] || row.disposition.role)}</b>
           <small>${esc(row.disposition.role === "approved"
             ? "This media is the authority for at least one target."
+            /* EV2-7: a coverage or expression view selection is a current supporting selection. The disposition stays historic; only the words say what is recorded. */
+            : slotViews
+              ? "Selected as a supporting view. A view selection is not an approval, and it is not production canon."
             /* 1D-04: an edge points here, but no human approval receipt stands
                behind it. The Inspector is the surface built to be exact about
                production canon, so it says which of the two it is looking at. */
@@ -371,16 +375,31 @@
   function encodedKey(key){return encodeURIComponent(key).replace(/'/g,'%27');}
   function ownerToken(use){const c=use.context;return encodeURIComponent(JSON.stringify([use.kind,c.shotId.value,c.entityList.value,c.entityId.value,c.stateId.value,c.frameId.value,c.coverageSlotId.value,use.file.name])).replace(/'/g,"%27");}
   function ownerLabel(use){return use.kind==='shot-blocking'?'Open shot':use.context.shotId.value?'Review in '+(use.kind==='shot-motion'?'Motion Results':'Frame Results'):use.context.entityList.value==='audio'?'Review in audio workflow':use.context.entityId.value?'Review in Reference Desk':'';}
+  /* EV2-7: labelled, separate facts. Category, decision, AI recommendation, media type and source are five different questions; none is printed inside another. */
+  const AVAILABILITY_WORDS={available:'Available',missing:'Missing',unavailable:'Unavailable',unknown:'Not checked'};
+  const ARTIFACT_WORDS={'reference-sheet':'Reference sheet','coverage-view':'Coverage view','primary-state':'Reference image'};
+  const factItem=(key,label,value,note='')=>`<div data-md-fact="${attr(key)}"><dt>${esc(label)}</dt><dd>${esc(value)}${note?`<small>${esc(note)}</small>`:''}</dd></div>`;
+  function summaryMarkup(d,uses){
+    const D=CineBraidMediaDiscovery,also=(d.categories||[]).filter(c=>c!==d.category),single=uses.length===1?recommendationWords(uses[0]):null;
+    return `<section class="mi-section md-summary"><dl class="md-facts">${factItem('category','Category',D.categoryLabel(d.category),also.length?'Also: '+also.map(D.categoryLabel).join(' · '):'')}${factItem('decision','Decision',D.decisionLabel(d))}${factItem('ai','AI recommendation',single?single.label:'Shown for each use below','Advisory only. An AI recommendation is not an approval.')}${factItem('type','Media type',D.typeLabel(d.type))}${factItem('source','Source',D.sources[d.source]||'Not recorded')}${factItem('availability','Original availability',AVAILABILITY_WORDS[d.availability]||d.availability)}</dl><p>Rights not recorded</p><small>Rights knowledge does not establish clearance or prohibit use.</small></section>`;
+  }
+  function useFactsMarkup(use,rel){
+    const used=(rel.usedIn||[]).map(u=>u.label+(u.inherited?' (via shot)':'')).join(' · '),artifact=use.kind==='entity-reference'&&ARTIFACT_WORDS[use.context.workflow?.value]||'';
+    return `<dl class="md-facts md-use-facts">${factItem('belongs','Belongs to',(rel.belongsTo||[]).map(b=>b.label).join(' · ')||'Project library')}${factItem('used','Used in',used||'No recorded production use')}${artifact?factItem('artifact','Artifact',artifact):''}${rel.decision==='selected'?factItem('use-decision','Decision','Selected for '+rel.selectedFor.join(' · '),'A view selection is not an approval.'):factItem('use-decision','Decision',decisionWords(use).label)}${factItem('use-ai','AI recommendation',recommendationWords(use).label)}</dl>`;
+  }
   function inspectorMarkup(row) {
     const d=discovery(row),uses=row.relationships?.length?row.relationships:[row];
     const actions=uses.map((use,i)=>ownerLabel(use)?`<button class="rd-button rd-primary" data-mi-action="open-owner" onclick="CineBraidMediaInspector.owner(decodeURIComponent('${attr(encodedKey(row.key))}'),'${attr(ownerToken(use))}')">${esc(ownerLabel(use))}${uses.length>1?' · '+esc(d.relationships[i].label):''}</button>`:'').join('');
-    return `<div class="media-inspector-modal md-inspector" data-media-inspector="1" data-mi-key="${attr(row.key)}" data-mi-kind="${attr(row.kind)}" data-mi-scope="${attr(row.scope)}"><header><div><span>Media Inspector</span><h3>${esc(d.title)}</h3><p>${esc(d.related.map(r=>r.label).join(' · ')||'Project media')}</p></div><button class="cancel" onclick="CineBraidMediaInspector.dismiss()">${inspectionSession?.resume?'Back to selection':'Close'}</button></header><div class="media-inspector-body"><div class="media-inspector-stage">${previewMarkup({...row,file:{...row.file,url:d.url,mediaType:d.type}})}</div><div class="media-inspector-detail"><section class="mi-section md-summary"><h4>${esc(CineBraidMediaDiscovery.decisionLabel(d))}</h4><p>Original availability · <b>${esc(d.availability)}</b></p><p>Source · <b>${esc(CineBraidMediaDiscovery.sources[d.source]||'Not recorded')}</b></p><p>Rights not recorded</p><small>Rights knowledge does not establish clearance or prohibit use.</small></section><section class="mi-section"><h4>Recorded uses</h4>${uses.map((use,i)=>`<article class="md-use"><b>${esc(d.relationships[i].label)}</b><p>${esc(decisionWords(use).label)}</p>${use.availability?.state&&use.availability.state!=='available'?`<p>This recorded use is ${esc(use.availability.state)}. Review its binding in the owning workflow.</p>`:''}${authorityMarkup(use)}</article>`).join('')}</section><details><summary>Review &amp; recommendation</summary>${uses.map(use=>statusMarkup(use)+reviewMarkup(use)).join('')}</details><details><summary>Origin, generation &amp; cost</summary>${uses.map(use=>provenanceMarkup(use)).join('')}</details><details><summary>File details &amp; identifiers</summary>${identityMarkup(row)}</details></div></div><footer class="modal-actions mi-actions">${actions||'<span>No decision workflow is recorded for this asset.</span>'}${row.file.url&&['image','video','audio'].includes(row.file.mediaType)?`<button class="ghost-btn" data-mi-action="open-full-preview" onclick="CineBraidMediaInspector.invoke(decodeURIComponent('${attr(encodedKey(row.key))}'),'open-full-preview')">Open full preview</button>`:''}</footer></div>`;
+    return `<div class="media-inspector-modal md-inspector" data-media-inspector="1" data-mi-key="${attr(row.key)}" data-mi-kind="${attr(row.kind)}" data-mi-scope="${attr(row.scope)}"><header><div><span>Media Inspector</span><h3>${esc(d.title)}</h3><p>${esc(d.related.map(r=>r.label).join(' · ')||'Project media')}</p></div><button class="cancel" onclick="CineBraidMediaInspector.dismiss()">${inspectionSession?.resume?'Back to selection':'Close'}</button></header><div class="media-inspector-body"><div class="media-inspector-stage">${previewMarkup({...row,file:{...row.file,url:d.url,mediaType:d.type}})}</div><div class="media-inspector-detail">${summaryMarkup(d,uses)}<section class="mi-section"><h4>Recorded uses</h4>${uses.map((use,i)=>`<article class="md-use"><b>${esc(d.relationships[i].label)}</b>${useFactsMarkup(use,d.relationships[i])}${use.availability?.state&&use.availability.state!=='available'?`<p>This recorded use is ${esc(use.availability.state)}. Review its binding in the owning workflow.</p>`:''}${authorityMarkup(use)}</article>`).join('')}</section><details><summary>Review &amp; recommendation</summary>${uses.map(use=>statusMarkup(use)+reviewMarkup(use)).join('')}</details><details><summary>Origin, generation &amp; cost</summary>${uses.map(use=>provenanceMarkup(use)).join('')}</details><details><summary>File details &amp; identifiers</summary>${identityMarkup(row)}</details></div></div><footer class="modal-actions mi-actions">${actions||'<span>No decision workflow is recorded for this asset.</span>'}${row.file.url&&['image','video','audio'].includes(row.file.mediaType)?`<button class="ghost-btn" data-mi-action="open-full-preview" onclick="CineBraidMediaInspector.invoke(decodeURIComponent('${attr(encodedKey(row.key))}'),'open-full-preview')">Open full preview</button>`:''}</footer></div>`;
   }
+  /* A card repainted while the Inspector was open is found again by its durable key, so Close returns to the same identity. */
+  function returnTarget(key){return document.querySelector('[data-md] [data-md-open="'+CSS.escape(key)+'"]');}
   function inspectInventory(row,options={}){
     inspectionSession={...options,origin:CineBraidMediaReturn.capture({resume:options.resume})};INSPECTED_KEY=row.key;
     const visual=row.availability==='available'?(row.type==='image'?`<img src="${attr(row.url)}" alt="${attr(row.title)}">`:row.type==='video'?`<video controls preload="metadata" src="${attr(row.url)}"></video>`:row.type==='audio'?`<audio controls preload="metadata" src="${attr(row.url)}"></audio>`:'<p>No preview for this media type.</p>'):`<p>Original ${esc(row.availability)}. The asset record is retained.</p>`;
-    const show=options.resume?updateOpenModal:openModal;
-    show(`<div class="md-inspector media-inspector-modal" data-media-inspector><header><h3>${esc(row.title)}</h3><button class="cancel" onclick="CineBraidMediaInspector.dismiss()">${options.resume?'Back to selection':'Close'}</button></header><div class="media-inspector-body"><div class="media-inspector-stage mi-preview">${visual}</div><div class="media-inspector-detail"><h4>Production media</h4><p>Original availability · ${esc(row.availability)}</p><p>Source · ${esc(CineBraidMediaDiscovery.sources[row.source]||'Not recorded')}</p><p>Rights not recorded</p><p>No target-specific decision is recorded. Adding a reference candidate does not approve it.</p><details><summary>File details &amp; identifiers</summary><p>${esc(row.assetId)}</p><p>${esc(row.fileName)}</p>${row.availability==='available'?`<a href="${attr(row.url)}" target="_blank" rel="noopener">Open original</a>`:''}</details></div></div></div>`);
+    const D=CineBraidMediaDiscovery,also=(row.categories||[]).filter(c=>c!==row.category);
+    const markup=`<div class="md-inspector media-inspector-modal" data-media-inspector><header><h3>${esc(row.title)}</h3><button class="cancel" onclick="CineBraidMediaInspector.dismiss()">${options.resume?'Back to selection':'Close'}</button></header><div class="media-inspector-body"><div class="media-inspector-stage mi-preview">${visual}</div><div class="media-inspector-detail"><h4>Production media</h4><dl class="md-facts">${factItem('category','Category',D.categoryLabel(row.category),also.length?'Also: '+also.map(D.categoryLabel).join(' · '):'')}${factItem('decision','Decision',D.decisionLabel(row),'No target-specific decision is recorded.')}${factItem('type','Media type',D.typeLabel(row.type))}${factItem('source','Source',D.sources[row.source]||'Not recorded')}${factItem('availability','Original availability',AVAILABILITY_WORDS[row.availability]||row.availability)}</dl><p>Rights not recorded</p><p>Adding a reference candidate does not approve it.</p><details><summary>File details &amp; identifiers</summary><p>${esc(row.assetId)}</p><p>${esc(row.fileName)}</p>${row.availability==='available'?`<a href="${attr(row.url)}" target="_blank" rel="noopener">Open original</a>`:''}</details></div></div></div>`;
+    if(options.resume)updateOpenModal(markup);else openModal(markup,{resolveReturnFocus:()=>returnTarget(row.key)});
     document.querySelector("[data-media-inspector] .cancel")?.focus({preventScroll:true});
   }
   document.addEventListener?.('keydown',event=>{if(event.key==='Escape'&&theatreKey&&document.querySelector('.media-theatre-modal')){event.preventDefault();event.stopImmediatePropagation();inspect(theatreKey);return;}if(event.key==='Escape'&&inspectionSession?.resume&&document.querySelector('[data-media-inspector]')){event.preventDefault();event.stopImmediatePropagation();dismiss();}},true);
@@ -417,7 +436,7 @@
     const already=!!document.querySelector("#modal:not(.hidden) [data-media-inspector]");
     if(!already&&theatreKey!==wanted)inspectionSession={...options,origin:options.origin||CineBraidMediaReturn.capture({resume:options.resume})};
     INSPECTED_KEY = row.key;
-    if(options.resume||already||theatreKey===wanted)updateOpenModal(inspectorMarkup(row));else openModal(inspectorMarkup(row));
+    if(options.resume||already||theatreKey===wanted)updateOpenModal(inspectorMarkup(row));else openModal(inspectorMarkup(row),{resolveReturnFocus:()=>returnTarget(row.key)});
     theatreKey="";
     document.querySelector("[data-media-inspector] .cancel")?.focus({preventScroll:true});
     hydrateLocalFile();

@@ -73,7 +73,7 @@ function resolver({projectsRoot, slug, project}) {
       const found = asset(a.assetId), rel = a.storage?.path;
       const library = libraryByPath.get(rel);
       const {path:disk,...row} = found;
-      return {...row,mediaType:a.mediaType,source:a.source,storagePath:rel,sourceName:found.sourceName || path.basename(rel || ""),title:library?.title || found.sourceName || path.basename(rel || ""),addedAt:library?.createdAt || "",links:library?.links || []};
+      return {...row,mediaType:a.mediaType,source:a.source,storagePath:rel,sourceName:found.sourceName || path.basename(rel || ""),title:library?.title || found.sourceName || path.basename(rel || ""),libraryOriginalName:String(library?.originalName || ""),addedAt:library?.createdAt || "",links:library?.links || []};
     });
   }
   // Read-only inventory: retain ledger identity and verify the recorded local original. No hydration or writes.
@@ -82,10 +82,13 @@ function resolver({projectsRoot, slug, project}) {
       const rel=a.storage?.path || "", library=libraryByPath.get(rel);
       const located=a.storage?.missing===true?{state:'missing'}:localFileAffordance({projectsRoot,slug,key:'path:'+rel});
       if(located.state==='available'){const stat=fs.statSync(located.path);if((Number.isFinite(a.storage.bytes)&&a.storage.bytes!==stat.size)||(Number.isFinite(a.storage.mtimeMs)&&Math.abs(a.storage.mtimeMs-stat.mtimeMs)>1)){located.state='unavailable';located.reason='identity-observation-stale';}}
-      return {assetId:a.assetId,storagePath:rel,source:a.source,mediaType:a.mediaType,scope:a.scope,
+      // ledgerRole: the ledger's directory-proven role, read for Production Media category only; never decision or lifecycle.
+      // Named apart from `role` because scan rows are enriched with these fields and `role` already means disposition there.
+      return {assetId:a.assetId,storagePath:rel,source:a.source,mediaType:a.mediaType,scope:a.scope,ledgerRole:String(a.role||''),
         missing:located.state==='missing'||a.storage?.missing===true,available:located.state==='available',reason:located.reason||located.state,
         url:located.state==='available'?'/assets/'+rel.split('/').map(encodeURIComponent).join('/'):'',
-        sourceName:path.basename(rel),title:library?.title||path.basename(rel),addedAt:library?.createdAt||'',links:library?.links||[]};
+        // libraryOriginalName: the uploaded file's recorded name, read so Production Media never promotes an upload-stem title to a headline.
+        sourceName:path.basename(rel),title:library?.title||path.basename(rel),libraryOriginalName:String(library?.originalName||''),addedAt:library?.createdAt||'',links:library?.links||[]};
     });
   }
   return {asset,resolve,listing,projection,productionImages,inventory};

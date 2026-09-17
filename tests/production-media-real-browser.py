@@ -574,12 +574,8 @@ try:
 
         def wait_results(tab):
             page.wait_for_selector('[data-md=production]')
-            if tab == 'current':
-                page.locator('[data-md-tab="current"]').click()
-            else:
-                more=page.locator('[data-md=production] .md-more')
-                if not more.evaluate('(n)=>n.open'): more.locator('summary').click()
-                page.locator('[data-md-field="decision"]').select_option(tab)
+            # EV2-7: category chips lead; Decision is a visible, separately labelled filter.
+            page.locator('[data-md=production] [data-md-field="decision"]').select_option(tab)
             page.wait_for_function("t=>CineBraidMediaBrowser.instances.get('production').state.decision===t",arg=tab)
             actual=page.evaluate(READ_RESULTS)
             assert actual['keys']==actual['expectedKeys'] and actual['statusWords']==actual['expectedWords'], 'rendered discovery must match independent query keys and decision labels'

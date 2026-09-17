@@ -90,6 +90,22 @@ function contractSection() {
   }
 
   {
+    /* EV2-7: A FILENAME TOKEN IS NOT AN APPROVAL EDGE. Production Media derives its
+       categories and badges from recorded disposition, so a candidate stored under a
+       name containing APPROVED must read exactly like any other unreviewed candidate. */
+    const entity = rooftops();
+    entity.candidateFiles.push({ stored: "LOC-HULL-APPROVED-FINAL.png", decision: "unreviewed" });
+    const seen = Disposition.mediaDisposition(entity, "LOC-HULL-APPROVED-FINAL.png");
+    assert.strictEqual(seen.role, "candidate", "an entity candidate named *APPROVED* with no edge stays a candidate");
+    assert.deepStrictEqual(seen.targets, [], "and is authority for nothing");
+    const shot = { id: "SH-APPROVED", keyframes: [{ id: "kf-a", label: "A", winner: "" }], clips: [],
+      candidateFiles: [{ stored: "SH-APPROVED.png", decision: "unreviewed", frameId: "kf-a" }] };
+    const take = Disposition.shotMediaDisposition(shot, "SH-APPROVED.png");
+    assert.strictEqual(take.role, "candidate", "a shot take named *APPROVED* with no winner stays a candidate");
+    assert.deepStrictEqual(take.targets, []);
+  }
+
+  {
     /* Absence of identity is legal and is the state of every pre-C2 project. */
     const seen = Disposition.partitionEntityMedia(rooftops(), ROOFTOP_MEDIA);
     assert.strictEqual(seen.approved[0].assetId, "", "a project with no ledger reports no identity, and that is not a defect");

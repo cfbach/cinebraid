@@ -58,6 +58,7 @@ const readSource = (file) => fs.readFileSync(file, "utf8").replace(/\r\n/g, "\n"
 const SOURCES = {
   projection: readSource(path.join(PUBLIC, "shared-production-media.js")),
   inspector: readSource(path.join(PUBLIC, "media-inspector.js")),
+  browser: readSource(path.join(PUBLIC, "media-browser.js")),
   results: readSource(path.join(PUBLIC, "media-results.js")),
   disposition: readSource(path.join(PUBLIC, "shared-media-disposition.js")),
   stageSurfaces: readSource(path.join(PUBLIC, "stage-surfaces.js")),
@@ -126,9 +127,32 @@ function loadInspector(sources, PM) {
   return context.window.CineBraidMediaInspector;
 }
 
+/* EV2-7: the shared discovery presentation, with the listeners it registers at load stubbed. markup() is a pure function of the mount config. */
+function loadBrowser(sources) {
+  const context = vm.createContext({ console, esc, attr, CSS: { escape: (v) => String(v) }, document: { addEventListener: () => {}, querySelector: () => null } });
+  context.window = context;
+  context.globalThis = context;
+  context.CineBraidMediaDiscovery = require("../public/shared-media-discovery");
+  vm.runInContext(sources.browser, context, { filename: "media-browser.js" });
+  return context.window.CineBraidMediaBrowser;
+}
+
+/* The inventory-only Inspector opens a modal; the realm captures the markup instead. */
+function loadInventoryInspector(sources, PM) {
+  const opened = [];
+  const context = vm.createContext({ console, esc, attr, document: { querySelector: () => null, getElementById: () => null },
+    openModal: (html) => opened.push(html), updateOpenModal: (html) => opened.push(html), CineBraidMediaReturn: { capture: () => ({}) } });
+  context.window = context;
+  context.globalThis = context;
+  Object.assign(context, PM);
+  context.CineBraidMediaDiscovery = require("../public/shared-media-discovery");
+  vm.runInContext(sources.inspector, context, { filename: "media-inspector.js" });
+  return { Inspector: context.window.CineBraidMediaInspector, opened };
+}
+
 function build(sources = SOURCES) {
   const PM = loadProjection(sources.projection);
-  return { sources, PM, Results: loadResults(sources, PM), Inspector: loadInspector(sources, PM) };
+  return { sources, PM, Results: loadResults(sources, PM), Inspector: loadInspector(sources, PM), Browser: loadBrowser(sources) };
 }
 
 /* =========================================================================
@@ -970,7 +994,7 @@ function loadShell(source) {
 
 /* =========================================================================
    12. RENDERING RULES -- the destination and the Inspector print truth. */
-function checkRendering({ PM, Results, Inspector }) {
+function checkRendering({ PM, Results, Inspector, Browser, sources }) {
   const built = project(PM);
 
   /* CURRENT PINS APPROVED FIRST and never hides rejected behind a wall. */
@@ -1014,8 +1038,21 @@ function checkRendering({ PM, Results, Inspector }) {
   /* THE INSPECTOR'S WORDS. */
   const recommendedHtml = Inspector.inspectorMarkup(byName(built, "KAI_ALT_V002.png"));
   assert(recommendedHtml.includes('data-mi-human-decision="undecided"'));
-  assert(recommendedHtml.includes("No human decision yet"));
+  assert(recommendedHtml.includes("No decision yet"));
+  /* EV2-7: the label is "Decision"; the AI reviewer is labelled "Reviewer" in the same panel. */
+  assert(!recommendedHtml.includes("Human decision") && recommendedHtml.includes("<span>Decision</span>"),
+    "the Inspector labels the recorded decision 'Decision', never 'Human decision'");
   assert(recommendedHtml.includes("Suggests approving"), "a suggestion is worded as a suggestion");
+  /* EV2-7: category, decision and AI recommendation are separate labelled facts. */
+  for (const fact of ["category", "decision", "ai", "type", "source", "availability"])
+    assert(recommendedHtml.includes(`data-md-fact="${fact}"`), `the Inspector summary states the ${fact} fact on its own`);
+  const decisionFact = /<div data-md-fact="decision">([\s\S]*?)<\/div>/.exec(recommendedHtml);
+  assert(decisionFact && !decisionFact[1].includes("Suggests") && !decisionFact[1].includes("AI"),
+    "the Decision fact never carries an AI recommendation");
+  assert(/<div data-md-fact="category"><dt>Category<\/dt><dd>Characters/.test(recommendedHtml),
+    "a character reference is categorised from its recorded owning list");
+  assert(/<div data-md-fact="ai"><dt>AI recommendation<\/dt><dd>Suggests approving<small>Advisory only\. An AI recommendation is not an approval\.<\/small>/.test(recommendedHtml),
+    "the AI recommendation is its own fact and says it is advisory");
   assert(!recommendedHtml.includes("Approved by you"), "...and never as a human approval");
   assert(recommendedHtml.includes("Advisory only"), "...and says so explicitly");
 
@@ -1054,6 +1091,76 @@ function checkRendering({ PM, Results, Inspector }) {
     for (const section of ["identity", "status", "authority", "review", "provenance"])
       assert(html.includes(`data-mi-section="${section}"`), `${kind}: the Inspector must render the ${section} section`);
   }
+
+  /* EV2-7 — THE DISCOVERY MARKUP. Category chips lead the page with the shared query's counts; exactly one Decision field per mount; the
+     reference picker has no chips; each card's accessible name carries decision and file; the filename is a small caption. */
+  const D = require("../public/shared-media-discovery");
+  const source = fixture(), composed = D.compose(source.project, PM.productionMediaRecords({ project: withAuthority(source.project), scan: source.scan, jobs: source.jobs }).records);
+  const pageState = D.defaults(), page = Browser.mount("ev2-7-page", { state: pageState, records: () => composed });
+  const chips = [...page.matchAll(/<button data-md-category="([^"]+)" aria-pressed="(true|false)">[^<]*<small>(\d+)<\/small><\/button>/g)];
+  const counts = D.categoryCounts(composed, pageState, {});
+  assert.deepStrictEqual(chips.map((m) => m[1]), D.CATEGORIES.map((c) => c[0]), "nine category chips lead the page, in production order");
+  for (const [, token, pressed, count] of chips) {
+    assert.strictEqual(Number(count), counts[token], `the ${token} chip count equals the shared query count`);
+    assert.strictEqual(pressed, String(token === "all"), "only All is pressed by default");
+  }
+  assert(counts.all > 0 && chips.some((m) => m[1] !== "all" && Number(m[3]) > 0), "the fixture must put media under a real category, or the counts prove nothing");
+  const picker = Browser.mount("ev2-7-picker", { state: D.defaults(true), selector: true, target: { list: "characters", id: "KAI" }, records: () => composed });
+  for (const [label, html] of [["page", page], ["picker", picker]])
+    assert.strictEqual((html.match(/data-md-field="decision"/g) || []).length, 1, `the ${label} mount has exactly one Decision field`);
+  assert(!/data-md-category="/.test(picker), "the reference picker mount has no category chips");
+  const captions = [...page.matchAll(/<small class="md-file" title="([^"]+)">File · ([^<]+)<\/small>/g)];
+  assert(captions.length > 0 && captions.every((m) => m[1] === m[2] && composed.some((r) => r.fileName === m[1] && r.title !== m[1])), "the filename is a small caption carrying its title attribute, never the headline");
+  const names = [...page.matchAll(/aria-label="(Inspect [^"]*)"/g)].map((m) => m[1]);
+  assert(names.includes("Inspect Kai · Candidate · KAI_ALT_V002.png"), "a card's accessible name carries its decision and file");
+  assert.strictEqual(new Set(names).size, names.length, "candidates sharing an owner title still have distinct accessible names");
+  assert(names.every((name) => !/ · Frame( ·|$)/.test(name)), "no accessible name carries a dangling Frame word");
+
+  /* EV2-7 — FILTERS BEHIND THE CLOSED MORE FILTERS DISCLOSURE ARE NAMED BESIDE THE CATEGORIES. openRelated sets Related to with More closed; the page must
+     say why every other category reads 0, offer a Clear per filter, and keep the counts on the same query. Defaults render no summary. */
+  assert(!/data-md-active/.test(page) && !/data-md-clear=/.test(page), "the default page renders no active-filter summary");
+  const relatedState = { ...D.defaults(), related: "characters:KAI", decision: "all" };
+  const relatedHtml = Browser.mount("ev2-7-related", { state: relatedState, records: () => composed });
+  assert(!/<details class="md-more" open/.test(relatedHtml), "the fixture keeps More filters closed, as openRelated leaves it");
+  const summary = /<div class="md-active" role="group" aria-label="Filters from More filters" data-md-active>(.*?)<\/div>/.exec(relatedHtml);
+  assert(summary, "an active Related-to filter renders the summary row");
+  assert(relatedHtml.indexOf("data-md-active") > relatedHtml.indexOf('aria-label="Production category"') && relatedHtml.indexOf("data-md-active") < relatedHtml.indexOf('class="md-tools"'),
+    "the summary sits directly after the category buttons, before the tools");
+  assert(summary[1].includes('<span class="md-active-lead">Showing media</span>') && summary[1].includes("related to <b>Kai</b>"), `the summary names the related target (${summary[1]})`);
+  assert(/<button type="button" data-md-clear="related" aria-label="Clear filter: related to Kai">Clear<\/button>/.test(summary[1]), "the related filter has its own labelled Clear button");
+  const relatedChips = Object.fromEntries([...relatedHtml.matchAll(/<button data-md-category="([^"]+)" aria-pressed="(?:true|false)">[^<]*<small>(\d+)<\/small><\/button>/g)].map((m) => [m[1], Number(m[2])]));
+  const relatedCounts = D.categoryCounts(composed, relatedState, {});
+  assert.deepStrictEqual(relatedChips, relatedCounts, "category counts still follow the one query with the hidden filter applied");
+  assert(relatedCounts.all < D.categoryCounts(composed, { ...relatedState, related: "all" }, {}).all, "the related filter really narrows, or the summary proves nothing");
+  const many = Browser.mount("ev2-7-many", { state: { ...D.defaults(), related: "unlinked", availability: "missing", source: "generated" }, records: () => composed });
+  assert.deepStrictEqual([...many.matchAll(/data-md-clear="([^"]+)"/g)].map((m) => m[1]), ["related", "availability", "source"], "every hidden filter gets one Clear, in disclosure order");
+  assert(many.includes("with <b>no recorded relationship</b>") && many.includes("with the original missing") && many.includes("from a generation"), "each hidden filter is worded");
+  assert(!/data-md-clear="(type|decision|category|query)"/.test(many), "filters already visible on the page are not repeated in the summary");
+  const unseen = Browser.mount("ev2-7-unseen", { state: { ...D.defaults(), related: "characters:NOBODY" }, records: () => composed, relatedLabel: (key) => key === "characters:NOBODY" ? "Nobody Yet" : "" });
+  assert(unseen.includes("related to <b>Nobody Yet</b>") && /<option value="characters:NOBODY" selected>Nobody Yet<\/option>/.test(unseen),
+    "a related target with no media still names itself and keeps the select in agreement with the filter");
+  const pickerFiltered = Browser.mount("ev2-7-picker-filtered", { state: { ...D.defaults(true), decision: "approved" }, selector: true, target: { list: "characters", id: "KAI" }, records: () => composed });
+  assert(/data-md-clear="decision"/.test(pickerFiltered) && !/data-md-clear="decision"/.test(picker), "on the picker, where Decision lives in More filters, a non-default Decision is summarised too");
+
+  /* EV2-7 — AN INVENTORY-ONLY ASSET READS ONE DECISION on the card and in the Inspector. */
+  const inventoryRow = D.compose({}, [], [{ assetId: LEDGER("d"), mediaType: "image", available: true, url: "/assets/media/x.png", sourceName: "MEDIA-KAI-1.png", title: "MEDIA-KAI-1", ledgerRole: "entity-reference", links: [] }])[0];
+  const cardWords = /<span class="md-decision">([^<]*)<\/span>/.exec(Browser.mount("ev2-7-inventory", { state: { ...D.defaults(), decision: "all" }, records: () => [inventoryRow] }))[1];
+  const { Inspector: InventoryInspector, opened } = loadInventoryInspector(sources, PM);
+  InventoryInspector.inspectInventory(inventoryRow);
+  const factWords = /<div data-md-fact="decision"><dt>Decision<\/dt><dd>([^<]*)<small>([^<]*)<\/small>/.exec(opened[0] || "");
+  assert(factWords && factWords[1] === cardWords && cardWords === "Candidate", `the Inspector Decision fact reads the card's word (card ${cardWords}, Inspector ${factWords && factWords[1]})`);
+  assert.strictEqual(factWords[2], "No target-specific decision is recorded.", "...with the target-specific note");
+
+  /* EV2-7 — A SLOT-ONLY SELECTION is worded as the current view selection it is, while its disposition stays historic. */
+  const slotSource = fixture();
+  slotSource.project.characters[0].coverageSlots.push({ id: "side", label: "Side", selectedFile: "KAI_ALT_V002.png", status: "selected" });
+  const slotRow = byName(PM.productionMediaRecords({ project: withAuthority(slotSource.project), scan: slotSource.scan, jobs: slotSource.jobs }), "KAI_ALT_V002.png");
+  assert.strictEqual(slotRow.disposition.role, "historic", "the projection's disposition is unchanged");
+  const slotHtml = Inspector.inspectorMarkup(slotRow);
+  assert(slotHtml.includes('data-mi-disposition="historic"') && slotHtml.includes("<b>Selected for Side</b>") && !slotHtml.includes("Historic selection"),
+    "the Inspector words a slot-only selection as Selected for its view and keeps the historic disposition token");
+  assert(/<div data-md-fact="decision"><dt>Decision<\/dt><dd>Selected for Side</.test(slotHtml), "the summary Decision fact agrees");
+  assert(!slotHtml.includes("Approved by you"), "a view selection is never an approval");
   return "rendering: Current uses recency without approval pinning, rejected reachable, recommendation never painted as approval, unknowns printed";
 }
 

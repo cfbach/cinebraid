@@ -158,6 +158,13 @@ control("C10 rejected media is dropped from the destination", "checkRendering",
       "C10") },
   "Rejected media is evidence of a decision. This control leaves Current looking entirely correct and silently empties the Rejected tab, which is exactly how history disappears without anybody noticing.");
 
+control("C28 a filter hidden in the closed More filters disclosure narrows the page silently", "checkRendering",
+  { browser: mutate(SOURCES.browser,
+      "    const list=activeFilters(c,s,related);if(!list.length)return '';",
+      "    const list=s.more?activeFilters(c,s,related):[];if(!list.length)return '';",
+      "C28") },
+  "Opening related media from the Working Bible sets Related to while More filters stays closed. Naming the filter only once the disclosure is open leaves every other category reading 0 with no visible reason.");
+
 /* ===========================================================================
    PROVENANCE AND MONEY -- answering a question that was not asked.
    =========================================================================== */

@@ -157,10 +157,13 @@
   const authority = nodeModule
     ? require("./shared-production-authority.js")
     : (root && root.CineBraidAuthorityKernel ? root : null);
-  const api = factory(disposition, ownership, authority);
+  /* EV2-7 MD-2: the one artifact-structure reader, so a single expression view is not
+     called a sheet by a local shortcut. Dependency-free; loaded before this file. */
+  const coverage = nodeModule ? require("./shared-coverage.js") : root;
+  const api = factory(disposition, ownership, authority, coverage);
   if (nodeModule) module.exports = api;
   if (root) Object.assign(root, api);
-})(typeof window !== "undefined" ? window : globalThis, function (P4, OWNERSHIP, AUTHORITY) {
+})(typeof window !== "undefined" ? window : globalThis, function (P4, OWNERSHIP, AUTHORITY, COVERAGE) {
   function deepFreeze(value) {
     if (value && typeof value === "object" && !Object.isFrozen(value)) {
       Object.freeze(value);
@@ -1245,6 +1248,10 @@
     return list(ownership.filter(ownership.build(project, listName), text(record(entity).id), rows));
   }
 
+  function artifactStructureOf(row) {
+    return typeof COVERAGE?.referenceArtifactStructure === "function" ? COVERAGE.referenceArtifactStructure(row) : "undeclared";
+  }
+
   function entityRecords(options) {
     const { project, scan, jobs, jobsAvailable, libraries } = options;
     const rows = [];
@@ -1279,7 +1286,9 @@
                 frameLabel: known(""),
                 stateId: known(row.targetStateId),
                 coverageSlotId: known(row.targetCoverageSlotId),
-                workflow: known(row.coverageJobType === "sheet" || text(row.coverageSheetType)
+                /* Display-only. Fails closed to "undeclared" when the reader is absent,
+                   and never feeds category, disposition or authority. */
+                workflow: known(artifactStructureOf(row) === "sheet"
                   ? "reference-sheet"
                   : text(row.targetCoverageSlotId) ? "coverage-view" : "primary-state"),
               },
