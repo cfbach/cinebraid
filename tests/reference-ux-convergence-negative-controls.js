@@ -32,6 +32,12 @@
  * an occupied view through the key the writer deletes (N17). A per-surface fix is
  * what let both survive a merged pass, so both are pinned per surface here.
  *
+ * N26, N27 AND N28 ARE THE POST-DEMO CLOSEOUT. A real-project dogfood saved a crop, saved the
+ * assignment, and was told CineBraid could not confirm the assignment had been saved. N26 pins what a
+ * confirmation may conclude from a refresh that did not commit, N27 pins the declaration that keeps a
+ * refresh prepared before the write from committing over it, and N28 pins the retry to the exact saved
+ * crop it was made from.
+ *
  * IN MEMORY, ALWAYS. Nothing in the working tree is written, so no control can be
  * "restored" by a checkout that would also discard real work.
  *
@@ -1021,8 +1027,12 @@ function ev27Fixture() {
   return project;
 }
 /* The in-memory "server" the suite's own guided harness uses, reduced to what these four probes read. */
-async function ev27Draw(mutateSource, { enroll = [], scanMisses = 0 } = {}) {
-  const project = ev27Fixture(), uploaded = [], enrolls = [], jobs = [], plan = { enroll: [...enroll], scanMisses };
+async function ev27Draw(mutateSource, { enroll = [], scanMisses = 0, advanceDuringRefresh = 0 } = {}) {
+  const project = ev27Fixture(), uploaded = [], enrolls = [], jobs = [], plan = { enroll: [...enroll], scanMisses, advanceDuringRefresh };
+  /* Read back out of the running page: the one integer every writer moves to say the durable record
+     advanced independently of a refresh commit, and the counter of reads about the exact image. */
+  const live = {}, projectReadsAfterEnroll = [], inventoryReads = { count: 0 };
+  const generation = () => (live.context ? vm.runInContext("PROJECT_SAVE_GENERATION", live.context) : -1);
   let server = structuredClone(project), revision = 1;
   const rev = () => `"ev27-control-${revision}"`, entity = () => server.characters.find((row) => row.id === "CHAR-NC");
   const rendered = await render("#/character/CHAR-NC", project, {
@@ -1032,17 +1042,23 @@ async function ev27Draw(mutateSource, { enroll = [], scanMisses = 0 } = {}) {
       if (target.startsWith("/api/media/upload")) { const name = decodeURIComponent((/name=([^&]+)/.exec(target) || [])[1] || ""); uploaded.push(name); return respond({ name }); }
       if (target === "/api/media/prepare-identity") { const { name } = JSON.parse(options.body); return respond({ status: uploaded.includes(name) ? "ready" : "unavailable", assetId: "asset-crop-" + uploaded.indexOf(name) }); }
       if (target.startsWith("/api/projects/") && options.method === "PUT") { server = JSON.parse(options.body); revision++; return respond({ ok: true, revision: rev() }); }
-      if (target === "/api/project") return respond(server, 200, { "x-cinebraid-project-slug": "fixture", "x-cinebraid-project-revision": rev(), etag: rev() });
+      if (target === "/api/project") {
+        if (enrolls.length) projectReadsAfterEnroll.push(generation());
+        /* A concurrent writer, declared the only way any of them is declared, in the one window where a
+           refresh can be overtaken: after its ticket is taken and before its refusal is read. */
+        if (plan.advanceDuringRefresh > 0 && live.context) { plan.advanceDuringRefresh--; vm.runInContext("noteCurrentProjectDurableAdvance(ACTIVE_PROJECT_SLUG)", live.context); }
+        return respond(server, 200, { "x-cinebraid-project-slug": "fixture", "x-cinebraid-project-revision": rev(), etag: rev() });
+      }
       if (target === "/api/scan") {
         const miss = plan.scanMisses > 0 && uploaded.length > 0; if (miss) plan.scanMisses--;
         return respond({ ...uxScan(), references: { characters: { "CHAR-NC": (entity().candidateFiles || []).filter((row) => !(miss && uploaded.includes(row.stored))).map((row) => row.referenceBinding
           ? { name: row.stored, assetId: row.referenceBinding.assetId, bindingId: row.referenceBinding.id, stateId: row.referenceBinding.stateId, slotId: row.referenceBinding.slotId, available: true, url: "/fixture/ref/" + row.stored }
           : { name: row.stored, assetId: row.assetId || "", available: true, url: "/assets/anchors/" + row.stored }) } } });
       }
-      if (target.startsWith("/api/references/media")) return respond({ images: (entity().candidateFiles || []).filter((row) => row.assetId).map((row) => ({ assetId: row.assetId, available: true, identity: EV27_IDENTITY, url: "/fixture/media/" + row.assetId })) });
+      if (target.startsWith("/api/references/media")) return inventoryReads.count++, respond({ images: (entity().candidateFiles || []).filter((row) => row.assetId).map((row) => ({ assetId: row.assetId, available: true, identity: EV27_IDENTITY, url: "/fixture/media/" + row.assetId })) });
       if (target === "/api/references/enroll") {
         const body = JSON.parse(options.body), step = plan.enroll.shift() || "ok";
-        enrolls.push({ ...body, ifMatch: options.headers["If-Match"] });
+        enrolls.push({ ...body, ifMatch: options.headers["If-Match"], generation: generation() });
         /* The seam's refusal after a background write moved the stored revision. */
         if (step === "conflict") { revision++; return respond({ ok: false, error: "The project changed before this write, so the entire operation was refused.", code: "PROJECT_REVISION_CONFLICT", action: "reload", revision: rev() }, 409); }
         const owner = server.characters.find((row) => row.id === body.entityId), slot = owner.coverageSlots.find((row) => row.id === body.slotId);
@@ -1058,6 +1074,7 @@ async function ev27Draw(mutateSource, { enroll = [], scanMisses = 0 } = {}) {
       return null;
     },
   });
+  live.context = rendered.context;
   vm.runInContext("globalThis.matchMedia = () => ({ matches: false, addEventListener() {} }); globalThis.requestAnimationFrame = (fn) => setTimeout(fn, 0); pollFalGeneration = () => {};", rendered.context);
   for (const file of EV27_RUNTIME) {
     const source = fs.readFileSync(path.join(ROOT, "public", file), "utf8");
@@ -1065,7 +1082,7 @@ async function ev27Draw(mutateSource, { enroll = [], scanMisses = 0 } = {}) {
     vm.runInContext(mutateSource ? String(mutateSource(file, source) ?? source) : source, rendered.context, { filename: file });
     if (file === "reference-coverage-build.js") vm.runInContext("document.addEventListener = globalThis.__ev27Add;", rendered.context);
   }
-  return { rendered, uploaded, enrolls, jobs, server: () => server };
+  return { rendered, uploaded, enrolls, jobs, projectReadsAfterEnroll, inventoryReads, server: () => server };
 }
 const EV27_CROP = (assign) => `(async () => {
   const realCreate = document.createElement.bind(document);
@@ -1281,6 +1298,81 @@ controlAsync({
   },
   reason: "paid-request-sent-on-the-first-press",
   explain: "The press that names the work must never also be the press that pays for it.",
+});
+
+/* ===========================================================================
+   EV2-7 POST-DEMO CLOSEOUT — THE COVERAGE-ASSIGNMENT RECOVERY DEFECT, BROKEN IN MEMORY.
+
+   The observed defect: a crop of Linda Miller's Front view was saved, the assignment WAS
+   saved, and the flow reported "could not confirm whether the assignment was saved" with the
+   coverage table still showing Front missing. N26 and N27 are the two halves of the fix — what
+   the confirmation is allowed to conclude, and what the enrollment must declare before it goes
+   to look. N28 guards the retry's promise to reuse the EXACT saved crop or assign nothing.
+   =========================================================================== */
+controlAsync({
+  label: "N26 a confirmation refresh that did not commit is not read as a missing binding",
+  mutateSource: only("reference-desk.js", (text) => mutate(
+    text,
+    "    const confirmed=await confirmSavedProject();",
+    "    const confirmed={committed:true,reason:''};await load({intent:'refresh'});",
+    "N26")),
+  probe: async (mutateSource) => {
+    const drawn = await ev27Draw(mutateSource, { advanceDuringRefresh: 1 });
+    const state = await vm.runInContext(EV27_CROP(true), drawn.rendered.context);
+    if (!state || drawn.enrolls.length !== 1) return { reached: false, held: false, reason: `enrollments(${drawn.enrolls.length})` };
+    const done = state.assign.status === "done";
+    return { reached: true, held: done,
+      reason: done ? "the-saved-assignment-was-confirmed" : "a-refused-refresh-was-read-as-a-missing-binding" };
+  },
+  reason: "a-refused-refresh-was-read-as-a-missing-binding",
+  explain: "A refresh overtaken mid-flight leaves P untouched, so reading that P reports a write that succeeded as one that might not have.",
+});
+
+controlAsync({
+  label: "N27 an enrollment declares the durable write it caused before it goes to look",
+  mutateSource: only("reference-desk.js", (text) => mutate(
+    text,
+    "    if(typeof noteCurrentProjectDurableAdvance==='function')noteCurrentProjectDurableAdvance(slug);\n",
+    "",
+    "N27")),
+  probe: async (mutateSource) => {
+    const drawn = await ev27Draw(mutateSource);
+    const state = await vm.runInContext(EV27_CROP(true), drawn.rendered.context);
+    if (!state || drawn.enrolls.length !== 1 || !drawn.projectReadsAfterEnroll.length)
+      return { reached: false, held: false, reason: `enrollments(${drawn.enrolls.length}) reads(${drawn.projectReadsAfterEnroll.length})` };
+    const declared = drawn.projectReadsAfterEnroll[0] > drawn.enrolls[0].generation;
+    return { reached: true, held: declared,
+      reason: declared ? "the-durable-advance-was-declared" : "the-enrollment-went-to-look-without-declaring-its-own-write" };
+  },
+  reason: "the-enrollment-went-to-look-without-declaring-its-own-write",
+  explain: "Undeclared, a refresh prepared before the enrollment can still commit over it, and the revision watch reads this window's own write as a foreign change.",
+});
+
+controlAsync({
+  label: "N28 Check and retry reuses the exact saved crop, or assigns nothing",
+  mutateSource: only("reference-coverage-build.js", (text) => mutate(
+    text,
+    "        if(b.pendingCrop&&!(entityOf(b)?.candidateFiles||[]).some(r=>(r.stored||r.name)===b.pendingCrop.stored)){b.assign={status:'failed',error:'The saved crop is no longer on this reference.',code:'scope',bindingId:''};return;}\n",
+    "",
+    "N28")),
+  probe: async (mutateSource) => {
+    const drawn = await ev27Draw(mutateSource, { enroll: ["lost"] });
+    const first = await vm.runInContext(EV27_CROP(true), drawn.rendered.context);
+    if (!first || first.assign.status !== "unknown" || !first.pendingCrop)
+      return { reached: false, held: false, reason: `first-outcome(${first && first.assign.status})` };
+    /* The exact crop leaves the reference while the recovery is on screen, binding and all. */
+    const owner = drawn.server().characters.find((row) => row.id === "CHAR-NC");
+    owner.candidateFiles = owner.candidateFiles.filter((row) => row.stored !== first.pendingCrop.stored && row.referenceBinding?.assetId !== first.pendingCrop.assetId);
+    const slot = owner.coverageSlots.find((row) => row.id === "profile");
+    if (slot.referenceBindings) delete slot.referenceBindings["state-alternate"];
+    const before = drawn.inventoryReads.count;
+    await ev27Click(drawn.rendered, { bcAction: "assign-retry" });
+    const stopped = drawn.inventoryReads.count === before && drawn.enrolls.length === 1;
+    return { reached: true, held: stopped,
+      reason: stopped ? "the-retry-stopped-at-the-crop-it-was-made-from" : "retry-went-on-about-a-crop-the-reference-no-longer-holds" };
+  },
+  reason: "retry-went-on-about-a-crop-the-reference-no-longer-holds",
+  explain: "A retry that does not re-check its own crop is a retry that can assign against something other than the image the filmmaker saved.",
 });
 
 /* ---------------------------------------------------------------------------
