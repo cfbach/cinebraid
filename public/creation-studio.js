@@ -2707,11 +2707,13 @@ const RETURNED_MEDIA_MOVE_ON_ACTIONS = ["produce-frame", "produce-motion", "mark
  * A route that claims NOTHING is ordinary navigation and keeps the ordinary behaviour:
  * the shot's currently pending review. The stale contract applies only when navigation
  * claimed a candidate identity. */
-function shotReturnedReview(s, claim = typeof routeReviewClaim === "function" ? routeReviewClaim() : "") {
+function shotReturnedReview(s, claim = typeof routeReviewClaim === "function" ? routeReviewClaim() : "", supplied = null) {
   if (!s) return null;
   if (typeof returnedReviewProjectionForBrowser !== "function") return null;
   if (typeof pendingReturnedReview !== "function") return null;
-  const projection = returnedReviewProjectionForBrowser();
+  /* A caller painting many shots derives the projection ONCE and hands it in; the
+     projection is uncached, so asking for it per shot would re-derive the project. */
+  const projection = supplied || returnedReviewProjectionForBrowser();
   if (!projection || !projection.available) return null;
   const waiting = projection.queue.filter((row) => row.shotId === s.id).length;
   const next = pendingReturnedReview(projection, s.id);
@@ -2729,6 +2731,100 @@ function shotReturnedReview(s, claim = typeof routeReviewClaim === "function" ? 
   if (blockers.length) return { kind: "unavailable", projection, item: blockers[0], blockers, waiting, next: null };
   return null;
 }
+/* EV2-7 — ONE LEADING ACTION, READ BY THE SHOT BOARD AND THE SHOT DESK.
+ *
+ * The Board used to print canonical readiness while the Desk hero led with a returned
+ * result for the same facts, so a card reading "Produce the frame" opened on "Review this
+ * returned result". This is the Desk's own precedence, moved here unchanged so both
+ * surfaces read one answer. It is a PRESENTATION projection over two owners that are not
+ * modified: canonical readiness (shared-shot-readiness.js) and the returned-review
+ * projection (shared-returned-review.js).
+ *
+ * It persists nothing, selects no stage, writes no candidate selection and invents no
+ * status. `source` says which owner leads:
+ *
+ *   returned-review       a candidate is waiting; `key` and `scope` name it exactly
+ *   returned-stale        the ROUTE claimed a candidate that no longer owns a review
+ *                         (a surface that passes claim "" never sees this)
+ *   returned-unavailable  an undecided result's file is gone AND readiness says move on
+ *   readiness             canonical readiness leads (`review` may still be an
+ *                         `unavailable` answer the caller states as a note)
+ *   unavailable           readiness could not be derived
+ *
+ * `production` is always the canonical shotProductionNextAction(), so a surface can keep
+ * the readiness row readable beside a returned review. */
+function shotLeadingAction(s, readiness = typeof shotReadinessFor === "function" ? shotReadinessFor(s) : null, options = {}) {
+  const claim = options.claim === undefined
+    ? (typeof routeReviewClaim === "function" ? routeReviewClaim() : "")
+    : String(options.claim || "");
+  const production = shotProductionNextAction(s, readiness);
+  const fallback = readiness ? "readiness" : "unavailable";
+  /* AN INTEGRITY BLOCKER STILL WINS: a review recorded against a ledger nobody can read
+     could not be trusted afterwards. tests/returned-media-ownership-negative-controls.js
+     NC-RM1 anchors on the two lines below. */
+  const returnedReview = shotReturnedReview(s, claim, options.projection || null);
+  if (returnedReview && !RETURNED_REVIEW_INTEGRITY_BLOCKERS.includes(readiness?.nextAction?.code || "")) {
+    if (returnedReview.kind === "stale")
+      return { source: "returned-stale", production, review: returnedReview, key: "", scope: null };
+    if (returnedReview.kind === "review") {
+      const owner = returnedReview.item.owner;
+      return {
+        source: "returned-review", production, review: returnedReview, key: returnedReview.item.key,
+        scope: { shotId: s.id, kind: owner.kind === "shot-motion" ? "motion" : "frame", frameId: owner.kind === "shot-motion" ? "" : (owner.frameId || "") },
+      };
+    }
+    /* AN UNACCOUNTED-FOR RESULT DISPLACES A MOVE-ON ACTION AND NOTHING ELSE. */
+    if (returnedReview.kind === "unavailable" && RETURNED_MEDIA_MOVE_ON_ACTIONS.includes(readiness?.nextAction?.code || ""))
+      return { source: "returned-unavailable", production, review: returnedReview, key: returnedReview.item?.key || "", scope: null };
+  }
+  return { source: fallback, production, review: returnedReview, key: "", scope: null };
+}
+/* The compact words a list surface prints for that answer. The UI layer owns words, as it
+   does for RETURNED_REVIEW_ACTION_WORDS; the readiness source keeps its canonical words. */
+function shotLeadingActionWords(leading) {
+  const production = leading?.production || { key: "unavailable", label: "Readiness unavailable", detail: "Open Production for details" };
+  const item = leading?.review?.item;
+  if (leading?.source === "returned-review" && item) {
+    const unit = item.owner.kind === "shot-motion" ? "motion" : `Frame ${item.owner.frameLabel || item.owner.frameId || "A"}`;
+    return { key: "returned-review", label: `Review ${unit} result`, detail: `${item.candidate.name} came back and needs your decision.` };
+  }
+  if (leading?.source === "returned-unavailable" && item)
+    return { key: "returned-unavailable", label: "Returned result missing", detail: `${item.candidate.name} is recorded, but its file is no longer in this project.` };
+  return { key: production.key, label: production.label, detail: production.detail };
+}
+/* THE EXACT RESULTS HANDOFF for one frame or the shot's motion. Read-only.
+ *
+ *   1. the first candidate in that scope still waiting for review (projection order);
+ *   2. otherwise the legacy tray's remembered `selectedCandidate`, READ and never written
+ *      or cleared, so the "show this one first" hint survives without becoming state;
+ *   3. otherwise no key — Results opens on its own first row.
+ *
+ * It never calls guidedFrameState() or ensureShotCreation(): both normalise the record. */
+function shotResultsHandoff(s, kind, frameId = "", supplied = null) {
+  if (!s || !["frame", "motion"].includes(kind)) return null;
+  const scope = { shotId: s.id, kind, frameId: kind === "frame" ? String(frameId || "") : "" };
+  if (kind === "frame" && !(s.keyframes || []).some((frame) => frame.id === scope.frameId)) return null;
+  const projection = supplied || (typeof returnedReviewProjectionForBrowser === "function" ? returnedReviewProjectionForBrowser() : null);
+  const readable = !!(projection && projection.available);
+  const ownerKind = kind === "motion" ? "shot-motion" : "shot-frame";
+  const inScope = (row) => row && row.shotId === s.id && row.owner?.kind === ownerKind
+    && (kind === "motion" || String(row.owner.frameId || "") === scope.frameId);
+  const pending = readable ? (projection.queue || []).find(inScope) : null;
+  if (pending) return { scope, key: pending.key, source: "pending" };
+  const hint = kind === "frame" ? String(s.creationBrief?.frameWorkflows?.[scope.frameId]?.selectedCandidate || "") : "";
+  const hinted = hint && readable ? (projection.items || []).find((row) => inScope(row) && row.candidate?.name === hint) : null;
+  if (hinted) return { scope, key: hinted.key, source: "selected-hint" };
+  return { scope, key: "", source: "none" };
+}
+window.openShotResults = (shotId, kind, frameId = "") => {
+  const s = typeof shotById === "function" ? shotById(shotId) : null;
+  const handoff = shotResultsHandoff(s, kind, frameId);
+  if (!handoff) return toast("Those results are no longer part of this shot");
+  /* No fallback that navigates: openGuidedPanel() writes creationBrief.openPanels for
+     non-frame panels, and this handoff promises no project write. */
+  if (!window.CineBraidResults?.open) return toast("Results are not available in this window");
+  return CineBraidResults.open(handoff.scope, handoff.key);
+};
 /* The words for one returned-review action. They are the shipped ones: "Use this take"
    and "Keep looking" are what the product already calls accepting and passing on a
    candidate, and "Revise this take" is what the correction flow is called. */
@@ -3053,27 +3149,16 @@ function guidedShotStatusCard(s, takes, neighbors) {
    * review recorded against a ledger nobody can read could not be trusted afterwards.
    * And a candidate whose media cannot be resolved never reaches here at all — the
    * projection excludes it and says why, so there is no card pointing at nothing. */
-  const returnedReview = shotReturnedReview(s);
-  if (returnedReview && !RETURNED_REVIEW_INTEGRITY_BLOCKERS.includes(readiness?.nextAction?.code || "")) {
-    const projected = shotProductionNextAction(s, readiness);
-    /* Three answers, one card slot. `stale` and `unavailable` are not reviews and offer
-       no candidate decision; what they share with `review` is that none of them lets a
-       generation promotion take the first line of a shot that has returned media
-       outstanding. */
-    if (returnedReview.kind === "stale") return returnedReviewStaleCardMarkup(s, neighbors, returnedReview, readiness, projected);
-    /* AN UNACCOUNTED-FOR RESULT DISPLACES A MOVE-ON ACTION AND NOTHING ELSE.
-     *
-     * The harm the independent review named is precise: PRODUCE THE FRAME promoted
-     * because the media vanished. `mark-shot-final` and `nothing outstanding` are the
-     * same claim in different words — this shot can move on — and are refused for the
-     * same reason. Every other readiness action is REAL outstanding work, and burying
-     * it behind an integrity notice would be the identical defect pointing the other
-     * way, so it keeps the card and the integrity condition is stated on it. */
-    if (returnedReview.kind === "unavailable") {
-      if (RETURNED_MEDIA_MOVE_ON_ACTIONS.includes(readiness?.nextAction?.code || ""))
-        return returnedMediaUnavailableCardMarkup(s, neighbors, returnedReview, readiness, projected);
-    } else return returnedReviewCardMarkup(s, neighbors, returnedReview, readiness, projected);
-  }
+  /* The precedence itself lives in shotLeadingAction(), which the Shot Board reads too, so
+     the card a filmmaker opens leads with the same action the board card named. Each
+     branch still hands the same arguments to the same renderer, and `returnedReview` is
+     still whatever shotReturnedReview() answered, because the note below reads it on
+     every card that falls through (including over an integrity blocker). */
+  const leading = shotLeadingAction(s, readiness);
+  const returnedReview = leading.review;
+  if (leading.source === "returned-stale") return returnedReviewStaleCardMarkup(s, neighbors, returnedReview, readiness, leading.production);
+  if (leading.source === "returned-unavailable") return returnedMediaUnavailableCardMarkup(s, neighbors, returnedReview, readiness, leading.production);
+  if (leading.source === "returned-review") return returnedReviewCardMarkup(s, neighbors, returnedReview, readiness, leading.production);
   /* The note the readiness card carries when it keeps the card over a blocker. */
   const unavailableNote = returnedReview && returnedReview.kind === "unavailable"
     ? `<span class="returned-review-more" data-returned-review-blocked="${attr(String(returnedReview.blockers.length))}">${esc(`${plural(returnedReview.blockers.length, "returned result")} in this shot cannot be shown`)}</span>`

@@ -6020,7 +6020,7 @@ window.continueProduction = () => {
   if (primary.kind === "nothing-outstanding") return toast("Every shot has been delivered");
   location.hash = primary.next.href;
 };
-function slate(s, sceneId, readiness = null) {
+function slate(s, sceneId, readiness = null, returnedProjection = null) {
   const takes = takesFor(s.id);
   const last = takes[takes.length - 1];
   const winner = anyWinnerTake(s, takes);
@@ -6038,7 +6038,16 @@ function slate(s, sceneId, readiness = null) {
         ? '<span class="slate-alert changes">Changes requested</span>'
         : "";
   const refs = referenceRecordsForShot(s);
-  const next = shotProductionNextAction(s, readiness || shotReadinessFor(s));
+  /* EV2-7: the card names the SAME leading action the shot's own hero leads with — a
+     returned result waiting for a decision outranks non-integrity readiness — through the
+     one shared read-only precedence. claim "" because a board card is ordinary
+     navigation, never a route claim. The canonical readiness code stays on the chip as
+     data-readiness-code, and the board filters below still count readiness alone. */
+  const cardReadiness = readiness || shotReadinessFor(s);
+  const leading = typeof shotLeadingAction === "function"
+    ? shotLeadingAction(s, cardReadiness, { claim: "", projection: returnedProjection })
+    : { source: cardReadiness ? "readiness" : "unavailable", production: shotProductionNextAction(s, cardReadiness), review: null, key: "" };
+  const next = typeof shotLeadingActionWords === "function" ? shotLeadingActionWords(leading) : leading.production;
   /* The card itself is a link to the shot, so inspection needs its own control:
      enlarging must never navigate away from the board. */
   /* O5: INSPECT, NOT MERELY ENLARGE. The board's thumbnail is the shot's approved
@@ -6056,7 +6065,7 @@ function slate(s, sceneId, readiness = null) {
     <div class="slate-thumb-shell"><a class="slate-thumb take-tile" href="#/shot/${s.id}" style="display:block;${attr(shotWellStyle(s))}">${thumb}${winner ? shotWinnerBadgeMarkup(s, winner) : ""}</a>${enlarge}</div>
     <a class="slate-body" href="#/shot/${s.id}">
       <div class="slate-title">${esc(s.title)}</div>
-      <div class="state-pair"><span class="shot-next-chip next-${next.key}" title="Next action for this shot">${esc(next.label)}</span><small>${esc(next.detail)}</small></div>
+      <div class="state-pair"><span class="shot-next-chip next-${attr(next.key)}" data-leading-source="${attr(leading.source)}" data-leading-key="${attr(leading.key || "")}" data-readiness-code="${attr(leading.production.action?.code || "")}" title="Next action for this shot">${esc(next.label)}</span><small>${esc(next.detail)}</small></div>
       <div class="slate-relations">${shotRelationshipChips(s)}${warning}</div>
       <div class="slate-footer"><span>${plural(takes.length, "version")} · ${plural(refs.length, "reference")}</span><span>${s.submittedAt ? "submitted " + esc(s.submittedAt.slice(0, 10)) : s.audio?.line || (s.clips || []).some((c) => c.line) ? "Dialogue linked" : ""}</span></div>
     </a>
@@ -7348,11 +7357,14 @@ function productionView(tab = "board") {
   });
   const boardPageKey = `board:${FILTER.status}:${FILTER.route}:${FILTER.char}:${FILTER.action}`;
   const shotPage = boundedPage(filteredPairs, "shots", boardPageKey, 5);
+  /* Derived ONCE for the page and handed to every card: returnedReviewProjectionForBrowser()
+     is uncached, and each slate asking for it would re-derive the whole project. */
+  const returnedProjection = typeof returnedReviewProjectionForBrowser === "function" ? returnedReviewProjectionForBrowser() : null;
   const grouped = new Map();
   shotPage.rows.forEach(({ sc, shot }) => { if (!grouped.has(sc.id)) grouped.set(sc.id, { sc, shots: [] }); grouped.get(sc.id).shots.push(shot); });
   const body = [...grouped.values()].map(({ sc, shots }) => {
     const all = P.shots.filter((shot) => shot.scene === sc.id), collapsed = COLLAPSED_SCENES.has(sc.id), pending = all.filter((shot) => workflowState(shot).key === "READY FOR REVIEW").length, approvedCount = all.filter(shotIsApproved).length;
-    return `<section class="log-strip ${collapsed ? "collapsed" : ""}"><div class="log-head"><button class="collapse-btn" onclick="toggleSceneCollapse('${sc.id}')" aria-label="${collapsed ? "Expand" : "Collapse"} ${attr(sc.title || sc.id)}" aria-expanded="${collapsed ? "false" : "true"}">${collapsed ? "▸" : "▾"}</button><a class="log-title" href="#/scene/${sc.id}">${esc(sc.title)}</a><span class="tier-badge ${sc.tier || "B"}">TIER ${sc.tier || "B"}</span>${pending ? `<span class="scene-attention">${plural(pending, "shot")} ready for review</span>` : ""}<span class="log-count" title="Shots in this scene whose workflow status has reached Signed off">${approvedCount}/${all.length} ${pluralWord(all.length, "shot")} signed off</span></div>${collapsed ? "" : `<div class="shot-row bounded-shot-page size-${SHOT_BOARD_DENSITY}">${shots.map((shot) => slate(shot, "", readinessByShot.get(shot.id))).join("")}</div>`}</section>`;
+    return `<section class="log-strip ${collapsed ? "collapsed" : ""}"><div class="log-head"><button class="collapse-btn" onclick="toggleSceneCollapse('${sc.id}')" aria-label="${collapsed ? "Expand" : "Collapse"} ${attr(sc.title || sc.id)}" aria-expanded="${collapsed ? "false" : "true"}">${collapsed ? "▸" : "▾"}</button><a class="log-title" href="#/scene/${sc.id}">${esc(sc.title)}</a><span class="tier-badge ${sc.tier || "B"}">TIER ${sc.tier || "B"}</span>${pending ? `<span class="scene-attention">${plural(pending, "shot")} ready for review</span>` : ""}<span class="log-count" title="Shots in this scene whose workflow status has reached Signed off">${approvedCount}/${all.length} ${pluralWord(all.length, "shot")} signed off</span></div>${collapsed ? "" : `<div class="shot-row bounded-shot-page size-${SHOT_BOARD_DENSITY}">${shots.map((shot) => slate(shot, "", readinessByShot.get(shot.id), returnedProjection)).join("")}</div>`}</section>`;
   }).join("") || (P.shots.length
     ? `<div class="empty-state"><h2>No shots match these filters</h2><p>Change a filter to see the other ${plural(P.shots.length, "shot")} in this project.</p></div>`
     : `<div class="empty-state"><h2>This project has no shots yet</h2><p>Add the first shot to start tracking scenes, frames and deliveries.</p><button class="add-btn" onclick="openContextualAdd('shot')">＋ Add shot</button></div>`);

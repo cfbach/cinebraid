@@ -5,6 +5,7 @@ const path = require("path");
 const nodeSuites = [
   "check:ev2-7-navigation",
   "check:ev2-7-bible-export",
+  "check:ev2-7-shot",
   "check:reference-enrollment",
   "check:ev2-4-audience",
   "check:ev2-5-writers",

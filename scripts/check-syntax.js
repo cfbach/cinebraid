@@ -226,6 +226,7 @@ const SOURCES = [
   "public/reference-coverage-build.js",
   "src/server/working-draft-export.js",
   "tests/ev2-7-bible-working-draft.js",
+  "tests/ev2-7-shot-leading-action.js",
 ];
 for (const source of SOURCES) {
   const result = spawnSync(process.execPath, ["--check", source], { cwd: ROOT, stdio: "inherit", windowsHide: true });

@@ -197,9 +197,9 @@ function requireReadinessSurvivesAsSecondary(card, code, label) {
    =========================================================================== */
 
 const CARD_FILE = "public/creation-studio.js";
-const NC1_ANCHOR = `  const returnedReview = shotReturnedReview(s);
+const NC1_ANCHOR = `  const returnedReview = shotReturnedReview(s, claim, options.projection || null);
   if (returnedReview && !RETURNED_REVIEW_INTEGRITY_BLOCKERS.includes(readiness?.nextAction?.code || "")) {`;
-const NC1_BREAK = `  const returnedReview = shotReturnedReview(s);
+const NC1_BREAK = `  const returnedReview = shotReturnedReview(s, claim, options.projection || null);
   if (false && returnedReview) {`;
 
 async function ncRM1() {

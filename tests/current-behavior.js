@@ -440,6 +440,7 @@ async function main() {
     "ev2-7-bible-working-draft.js",
     "ev2-7-navigation.js",
     "ev2-7-reference-coverage-real-browser.py",
+    "ev2-7-shot-leading-action.js",
     "external-test-readiness.js",
     "fal-generation.js",
     "fixtures",
