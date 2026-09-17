@@ -1364,7 +1364,11 @@ async function checkStaleRequestCannotStick(sources = SOURCES) {
 
   /* The rail owner is what calls both, and it is the only thing that knows. */
   const surfaces = codeOnly(sources.surfaces);
-  assert.ok(/if \(!open\) \{ braidySignal\("abort"/.test(surfaces),
+  /* EV2-7 dogfood moved the write behind setUtilities(), which is where the mutual
+     exclusion between the rail and the Activity drawer is enforced. The property is
+     unchanged and so is the owner — the abort fires on the TRANSITION to closed, which
+     is what `railWas && !railNext` says — only the line it is written on moved. */
+  assert.ok(/if \(railWas && !railNext\) \{ braidySignal\("abort"/.test(surfaces),
     "closing the rail must abort Braidy's outstanding question");
   assert.ok(/!context\.hasProject\) \{ braidySignal\("reset"\)/.test(surfaces),
     "a production going away must clear Braidy's session");

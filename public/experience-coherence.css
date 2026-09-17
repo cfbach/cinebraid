@@ -89,12 +89,10 @@
 #topbar .topbar-search:focus-within { outline:3px solid var(--cb-focus); outline-offset:2px; }
 #topbar .topbar-search input:focus,#topbar .topbar-search input:focus-visible { outline:none; box-shadow:none; }
 #topbar #mobile-nav { width:var(--cb-control-height); padding:0; font-size:18px; line-height:46px; text-align:center; }
-.cb-return { display:inline-flex; flex-direction:column; align-items:flex-start; align-self:flex-start; flex:0 0 auto; gap:2px; box-sizing:border-box; min-height:44px; max-width:100%; margin:0 0 20px; padding:10px 14px; border:1px solid var(--line-2); border-radius:8px; background:transparent; color:#8ed9d5; font:500 14px/1.4 var(--body); letter-spacing:normal; text-align:left; white-space:normal; overflow-wrap:anywhere; cursor:pointer; }
-.cb-return:hover { border-color:#8ed9d5; }
-#app[data-surf="light"] .cb-return:not(.results-desk .cb-return) { color:var(--ink); }
-.cb-return small { color:var(--muted); font-size:12px; }
+/* The one contextual return control is styled in the EV2-7 Dogfood section at the foot of this file:
+   it has to out-weigh the desks' own `button` rules to be the same control on every page, so it is
+   written once, there, rather than half here and half in an override. */
 [data-return-slot] { display:contents; }
-[data-return-slot] .cb-return { margin:0; }
 /* Reference tools: the return sits in the page's own row beside the plain "Open reference" target. */
 .rd-tools-nav { display:flex; flex-wrap:wrap; align-items:center; gap:8px 16px; margin:0 0 20px; }
 .rd-tools-nav .rd-tools-back { display:inline-flex; align-items:center; min-height:44px; margin:0; }
@@ -563,3 +561,82 @@
 #main .bounded-shot-workspace .guided-work-stack :is(a.text-link-btn, a.chip, .guided-frame-context-actions a) { display:inline-flex; align-items:center; min-height:44px; }
 #main .bounded-shot-workspace .guided-work-stack label:is(.checkline, .project-media-use) { display:flex; align-items:center; gap:8px; min-height:44px; }
 #main .bounded-shot-workspace .navigator-toggle { min-width:44px; min-height:44px; }
+/* EV2-7 Dogfood — Shell utilities & contextual return */
+/* Two utilities hang off the shared shell: Activity along the bottom (#cb-shell-dock) and Braidy down
+   the side (#cb-shell-rail). They are the shell's own furniture rather than two more products, so they
+   are drawn with the shell's tokens — the header's graphite ground, one line colour, one ink, 44/48px
+   controls at one radius, one focus ring — and their frames carry no second palette and no uppercase
+   monospace kicker. Only the FRAMES are touched: the Activity rows keep their dense operational
+   register (status, provider, cost) and Braidy keeps its thread, because those are page content.
+   Both topbar controls are true open/close toggles, so each says whether its utility is open. */
+/* The frame's own palette, as #rail and #topbar carry it at the top of this file. It is
+   repeated here rather than added to that selector because the two utilities are not the
+   navigation — and because a dark ground with the page's tokens on it is unreadable the
+   moment a filmmaker chooses the light surface: --ink would be #152536 on #141618. With
+   the tokens, both utilities read the same on every surface, exactly as the header does. */
+#cb-shell-dock,#cb-shell-rail { color-scheme:dark; --bg:#111315; --bg-2:#111315; --canvas:#111315; --workspace:#111315; --panel:#181a1c; --panel-2:#1d2023; --surface:#181a1c; --surface-1:#181a1c; --surface-2:#1d2023;
+  --ink:#edeef0; --text:#edeef0; --muted:#a4a9af; --faint:#858c94; --line:#2b2e32; --line-soft:#2b2e32; --line-2:#454b52;
+  --acc:#7dcad3; --accent:#7dcad3; --acc-ink:#7dcad3; --acc-soft:rgba(125,202,211,.09); --accent-wash:rgba(125,202,211,.09);
+  --green:#7fd7b3; --blue:#72b8f2; --amber:#f3b761; --red:#e8846f;
+  background:var(--cb-shell-bg); border-color:var(--line); }
+#cb-shell-dock .cb-terminal-head,#cb-shell-rail .cb-braidy-head { background:var(--cb-shell-bg); }
+/* One header row in each utility: the utility's name, what it is saying right now, its own controls. */
+#cb-shell-dock .cb-terminal-head { gap:12px; min-height:56px; padding:6px 16px; border-bottom:1px solid var(--line); }
+#cb-shell-dock .cb-terminal-title { flex:0 0 auto; margin:0; font:600 14px/1.3 var(--body); letter-spacing:normal; text-transform:none; white-space:nowrap; color:var(--ink); }
+#cb-shell-dock .cb-terminal-head>b { min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; font:400 14px/1.4 var(--body); color:var(--muted); }
+#cb-shell-dock .cb-terminal-head-actions { gap:8px; }
+/* The header's controls, and Braidy's two, are the same control. Scoped to the head so the row actions
+   below it (VIEW REPORT, DISMISS, CHECK) keep the register the operational record is read in. */
+#cb-shell-dock .cb-terminal-head .cb-terminal-action,#cb-shell-rail .cb-utility-close,#cb-shell-rail .cb-utility-link {
+  display:inline-flex; align-items:center; justify-content:center; box-sizing:border-box; min-height:44px; padding:0 14px;
+  border:1px solid var(--line-2); border-radius:var(--cb-control-radius); background:transparent;
+  font:500 14px/1.2 var(--body); letter-spacing:normal; text-transform:none; white-space:nowrap; color:var(--ink); text-decoration:none; cursor:pointer; }
+#cb-shell-dock .cb-terminal-head .cb-terminal-action:hover,#cb-shell-rail .cb-utility-close:hover,#cb-shell-rail .cb-utility-link:hover { border-color:var(--cb-focus); color:var(--ink); }
+#cb-shell-dock .cb-terminal-title:focus-visible,#cb-shell-rail .cb-braidy-head:focus-visible { outline:3px solid var(--cb-focus); outline-offset:2px; }
+#cb-shell-dock :is(button,a,summary):focus-visible,#cb-shell-rail :is(button,a,textarea,summary):focus-visible { outline:3px solid var(--cb-focus); outline-offset:2px; }
+/* Braidy's own head IS the rail's frame head: the presence and the name on one row with Close, and
+   the capability sentence beneath them across the whole rail — at 240px the sentence had four words
+   to a line beside the control. The identity block is transparent to the grid (display:contents) so
+   its two parts can take their own rows without braidy-rail.js having to know the rail's width. */
+#cb-shell-rail .cb-braidy-head { display:grid; grid-template-columns:auto minmax(0,1fr) auto; align-items:center; column-gap:10px; row-gap:6px; padding-bottom:12px; }
+#cb-shell-rail .cb-braidy-id { display:contents; }
+#cb-shell-rail .cb-braidy-id b { grid-column:2; min-width:0; font:600 14px/1.3 var(--body); letter-spacing:normal; color:var(--ink); }
+#cb-shell-rail .cb-braidy-id small { grid-column:1/-1; font:12px/1.45 var(--body); color:var(--muted); }
+#cb-shell-rail .cb-utility-close { grid-column:3; grid-row:1; flex:0 0 auto; }
+/* No assistant configured or reachable: Braidy still opens, states it plainly, and offers the one
+   place that is changed. The link is a 44px target like every other control in the frame. */
+#cb-shell-rail .cb-braidy-state { font-weight:600; color:var(--ink); }
+#cb-shell-rail .cb-utility-link { justify-self:start; width:fit-content; max-width:100%; margin-top:4px; white-space:normal; }
+/* A toggle says what it did, and both say it the same way. */
+#topbar #automation-activity-toggle.open,#topbar #creator-rail-toggle.open { border-color:color-mix(in srgb,var(--acc) 55%,var(--line-2)); background:var(--acc-soft); }
+/* BRAIDY ANSWERS ON EVERY ROUTE THE SHELL IS ON. The Reference Desk, Production media and the EV2-6
+   review page each take the workspace to a fixed 100dvh layout, hide the rail slot outright and pin
+   the centre to one grid track (reference-desk.css, shot-desk.css) — which is why the control looked
+   inert there: it opened a rail nothing could paint. Where one of those layouts is in force the rail
+   opens OVER the work, exactly as it already does at any width with no room to dock it, so the desk's
+   own scroll model is untouched and the work is not squeezed. Results is deliberately not in this
+   list: its own stylesheet no longer hides the slot, so the rail docks there as it does everywhere
+   else, and this rule can be narrowed again as the other two desks follow. */
+body:is(.reference-desk-active,.production-media-active,.shot-desk-active) #workspace[data-creator-shell="1"] #cb-shell-rail[data-occupied] {
+  display:block!important; position:fixed; z-index:44; align-self:auto;
+  top:calc(var(--cb-topbar-stop) + var(--cb-bar-height,0px)); right:0; left:auto;
+  width:min(340px,calc(100vw - var(--cb-nav-width,0px) - 24px));
+  max-height:calc(100dvh - var(--cb-topbar-stop) - var(--cb-bar-height,0px) - var(--cb-dock-reserve,0px));
+  overflow-y:auto; overscroll-behavior:contain;
+  border-left:1px solid var(--line); box-shadow:-14px 0 34px rgba(0,0,0,.34); }
+/* ONE CONTEXTUAL RETURN, and it is the same control on the Shot Desk, in Results and Screening, on the
+   Reference Desk, in Production media and in the Working Bible: one line, 44px, an outline control at
+   the top of the work area above the page's heading. The context is folded into the same line and the
+   line truncates rather than wrapping, so the control is never taller than one row; public/media-return.js
+   keeps the whole sentence in the title and the accessible name. Two classes, because the desks style
+   their own `button` and a single class would lose to them on specificity — this is one control, so it
+   is declared once and it wins everywhere. */
+.md-return.cb-return { display:inline-flex; align-items:center; align-self:flex-start; justify-self:start; flex:0 0 auto;
+  box-sizing:border-box; height:44px; min-height:44px; max-width:min(100%,460px); margin:0 0 16px; padding:0 14px;
+  border:1px solid var(--line-2); border-radius:var(--cb-control-radius); background:transparent; color:inherit;
+  font:500 14px/1.3 var(--body); letter-spacing:normal; text-align:left; white-space:nowrap; overflow:hidden; cursor:pointer; }
+.md-return.cb-return:hover { border-color:var(--cb-focus); }
+.md-return.cb-return .cb-return-line { display:block; min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+.md-return.cb-return small { font:400 14px/1.3 var(--body); color:var(--muted); }
+.md-return.cb-return small::before { content:" · "; }
+[data-return-slot] .md-return.cb-return { margin:0; }

@@ -54,6 +54,13 @@
      explicit stored preference in either direction is honoured exactly as before, and
      everything the two surfaces render is derived from the same projection as always.
 
+   * AND ONLY ONE OF THEM AT A TIME. EV2-7 dogfood: opening either utility closes the
+     other, so the filmmaker's work is never squeezed from the side and the bottom at
+     once. Every door into either surface — the two topbar controls, the drawer's own
+     Collapse, every "Open Activity" control in the product, and Braidy's contextual
+     handoffs — goes through setUtilities(), which is the only thing in CineBraid that
+     writes either preference. See THE TWO UTILITIES below.
+
    * IT NEVER APPROVES. No control here approves media, establishes canon, or triggers
      a paid generation or a paid retry. The Assistant renders no AI review verdict at
      all: an AI PASS causes nothing on its own, so a rail that reported one would be
@@ -103,6 +110,11 @@
      always has. */
   const RAIL_OPEN_KEY = "cinebraid-creator-rail-open";
   const RAIL_TOGGLE_ID = "creator-rail-toggle";
+  /* The topbar's Activity control. public/live-activity.js renders its label and its
+     status — that is activity's business — and this file owns whether it says the drawer
+     is OPEN, because whether the drawer is open is this file's business. One control,
+     two owners, and neither of them holds the other's fact. */
+  const ACTIVITY_TOGGLE_ID = "automation-activity-toggle";
 
   /* The generation ledger holds every job a project has ever dispatched, and the
      Terminal shows at most a couple of dozen settled rows. Scanning the whole ledger
@@ -1055,21 +1067,29 @@
        which is the same reason the drawer had a header at all.
        OPEN ACTIVITY is gone with the surface it opened: this IS the activity owner,
        so a button here pointing somewhere else was the duplication. */
+    /* EV2-7 dogfood: the header's controls are the SHELL's controls, so they are written
+       the way every other control in the shell is — sentence case, body font, 44px. The
+       rows beneath them are the operational record and keep their own dense register. */
     const globalActions = collapsed ? "" : [
       state.counts.waiting
-        ? `<button type="button" class="cb-terminal-action" onclick="recheckAutomationGateStatus()" title="Re-derive every parked approval gate against current project truth">RECHECK STATUS</button>`
+        ? `<button type="button" class="cb-terminal-action cb-utility-control" onclick="recheckAutomationGateStatus()" title="Re-derive every parked approval gate against current project truth">Recheck status</button>`
         : "",
       state.counts.attention
-        ? `<button type="button" class="cb-terminal-action" onclick="archivePreviousAutomationFailures()">DISMISS PREVIOUS ALERTS</button>`
+        ? `<button type="button" class="cb-terminal-action cb-utility-control" onclick="archivePreviousAutomationFailures()">Dismiss previous alerts</button>`
         : "",
     ].join("");
     const foreign = foreignProject
       ? `<div class="cb-terminal-foreign" role="status" data-cb-foreign="1"><b>Activity below is not current.</b><span>${esc(`CineBraid’s active project was switched to ${foreignProject} somewhere else, so this window has stopped taking that project’s activity. Nothing here belongs to it.`)}</span><button type="button" class="cb-terminal-action" onclick="location.reload()">RELOAD THIS WINDOW</button></div>`
       : "";
+    /* THE UTILITY NAMES ITSELF THE WAY ITS CONTROL DOES. The topbar says "Activity", so
+       the drawer says "Activity" — the uppercase monospace "ACTIVITY TERMINAL" was a
+       second visual system for the same thing, standing over every route. The heading is
+       also where focus lands when the drawer is opened from the topbar, which is why it
+       carries the marker and a programmatic tabindex rather than a label somewhere else. */
     return `<div class="cb-terminal" data-cb-terminal="1" data-collapsed="${collapsed ? "1" : "0"}">${foreign}`
-      + `<header class="cb-terminal-head"><span>ACTIVITY TERMINAL</span><b>${esc(summary)}</b>`
+      + `<header class="cb-terminal-head"><h2 class="cb-terminal-title" data-cb-utility-focus="1" tabindex="-1">Activity</h2><b>${esc(summary)}</b>`
       + `<div class="cb-terminal-head-actions">${globalActions}`
-      + `<button type="button" class="cb-terminal-action" onclick="window.CineBraidCreatorSurfaces.toggleTerminal()" aria-expanded="${collapsed ? "false" : "true"}">${collapsed ? "EXPAND" : "COLLAPSE"}</button>`
+      + `<button type="button" class="cb-terminal-action cb-utility-control" onclick="window.CineBraidCreatorSurfaces.toggleTerminal()" aria-expanded="${collapsed ? "false" : "true"}">${collapsed ? "Expand" : "Collapse"}</button>`
       + `</div></header>${body}</div>`;
   }
 
@@ -1180,8 +1200,15 @@
        a Terminal describing a production that is not open is a stale claim, and there
        is no conversation or scroll position worth keeping when there is nothing to
        have been talking about. */
-    if (!context.hasProject) { braidySignal("reset"); unmount(); syncRailToggle(false); STALE = false; return null; }
+    if (!context.hasProject) { braidySignal("reset"); unmount(); syncRailToggle(false); syncActivityToggle(); STALE = false; return null; }
+    /* TWO OPEN UTILITIES IS NOT A STATE THIS SHELL HAS, and a pair of preferences stored
+       before that rule existed is the one way to arrive in it. It is corrected once, here,
+       in favour of the rail: the rail is opened only by its own control or by a contextual
+       Braidy handoff, while the drawer is expanded by every "Open Activity" control in the
+       product, so an old expanded dock is the likelier accident. */
+    if (railOpen() && !terminalCollapsed()) writeTerminalCollapsed(true);
     syncRailToggle(context.shellPresent);
+    syncActivityToggle();
     if (!ensureMounted()) return null;
     /* Retained, subscribed, not painted. See the lifecycle note at the top. */
     if (!context.shellPresent) { STALE = true; return null; }
@@ -1237,9 +1264,131 @@
   function writeTerminalCollapsed(next) {
     try { localStorage.setItem(TERMINAL_COLLAPSED_KEY, next ? "1" : "0"); } catch {}
   }
-  function toggleTerminal() {
-    writeTerminalCollapsed(!terminalCollapsed());
+  function writeRailOpen(next) {
+    try { localStorage.setItem(RAIL_OPEN_KEY, next ? "1" : "0"); } catch {}
+  }
+
+  /* ==========================================================================
+     TWO UTILITIES, ONE WORKSPACE — EV2-7 dogfood.
+
+     Activity is a drawer along the bottom and Braidy is a rail down the side, and the
+     ruling about them is one sentence: opening either closes the other, so the work in
+     the middle is never squeezed from two directions at once.
+
+     THAT IS ENFORCED IN THE WRITER, not asked of the callers. `toggleActivity`,
+     `toggleTerminal`, `expandTerminal`, `toggleRail`, `openRail` and `closeRail` all end
+     up here, which is why "they are never both open" is a property of this function
+     rather than a rule six call sites have to keep. A caller that would open both gets
+     the one it asked to OPEN; the other is the state it was already leaving.
+
+     WHAT IS NOT DECIDED HERE: the preferences themselves. Both keys keep the meaning
+     they shipped with — "1" collapsed for the dock, "1" open for the rail — so a
+     filmmaker who deliberately opened either one still finds it where they left it. */
+  function setUtilities(next = {}, options = {}) {
+    const railWas = railOpen();
+    const activityWas = !terminalCollapsed();
+    let railNext = next.rail === undefined ? railWas : !!next.rail;
+    let activityNext = next.activity === undefined ? activityWas : !!next.activity;
+    if (railNext && activityNext) {
+      if (next.rail === true) activityNext = false;
+      else railNext = false;
+    }
+    if (railNext !== railWas) writeRailOpen(railNext);
+    if (activityNext !== activityWas) writeTerminalCollapsed(!activityNext);
+    /* A closed rail is not a place a question is still waiting; the abort belongs to the
+       transition, so it fires when the rail actually closes and not on every write. */
+    if (railWas && !railNext) { braidySignal("abort", "That question was stopped when the rail was closed."); closeRailMount(); }
     paint();
+    /* Opening either utility changes what the centre gets and what the dock covers, and
+       the shell's own measurement is what the reservation and the bar both read. */
+    remeasureShell();
+    if (options.focus === "rail" && railNext) focusUtility("rail");
+    if (options.focus === "dock" && activityNext) focusUtility("dock");
+    if (options.focusToggle) focusToggle(options.focusToggle);
+    return { rail: railNext, activity: activityNext };
+  }
+
+  /* ==========================================================================
+     KEYBOARD AND FOCUS.
+
+     A utility that opens somewhere a keyboard cannot follow is a utility a keyboard
+     filmmaker does not have. Opening moves focus INTO the surface that just appeared;
+     Escape inside it closes it and hands focus back to the control that opened it.
+
+     The target is named by the utility itself (`data-cb-utility-focus`) rather than
+     guessed from the markup: the drawer's heading and Braidy's own head are the two
+     places a reader should land, and a renderer that moves one says so where it moves
+     it. A utility with no named target falls back to its first control. */
+  function utilityToggleId(name) {
+    return name === "rail" ? RAIL_TOGGLE_ID : ACTIVITY_TOGGLE_ID;
+  }
+
+  function focusUtility(name) {
+    const shell = window.CineBraidShell;
+    const slot = shell && typeof shell.slot === "function" ? shell.slot(name) : null;
+    if (!slot || typeof slot.querySelector !== "function") return false;
+    const target = slot.querySelector("[data-cb-utility-focus]")
+      || slot.querySelector("button, a[href], textarea, input, select");
+    if (!target || typeof target.focus !== "function") return false;
+    try { target.focus({ preventScroll: true }); } catch { target.focus(); }
+    return document.activeElement === target;
+  }
+
+  function focusToggle(name) {
+    const button = document.getElementById(utilityToggleId(name));
+    if (button && !button.hidden && !button.disabled && typeof button.focus === "function") {
+      try { button.focus({ preventScroll: true }); } catch { button.focus(); }
+      return true;
+    }
+    /* THE CONTROL IS NOT ALWAYS THERE. Braidy's toggle is withdrawn at phone widths, so
+       a rail closed by Escape at 390 has no opener to go back to. Focus goes to the work
+       instead of being dropped on the body, which is where a closed surface leaves it. */
+    const main = document.getElementById("main");
+    if (!main || typeof main.focus !== "function") return false;
+    main.tabIndex = -1;
+    try { main.focus({ preventScroll: true }); } catch { main.focus(); }
+    return false;
+  }
+
+  /* CAPTURING, AND IT CONSUMES THE EVENT IT ACTS ON. An Escape pressed inside the
+     Activity drawer belongs to the drawer; letting it continue would also reach the
+     surfaces underneath that listen for Escape — Results leaves Screening on one — and a
+     single press would do two unrelated things. */
+  function utilityEscape(event) {
+    if (!event || event.key !== "Escape" || event.defaultPrevented) return;
+    /* A MODAL IS THE TOP OF THE STACK AND OWNS THE KEY. A confirmation opened FROM the
+       drawer — "Dismiss previous alerts" is one — leaves focus on the control that opened
+       it, so without this the utility would take an Escape aimed at the dialog standing
+       over it and the dialog would stay up with its own surface closing underneath. */
+    const modal = document.getElementById("modal");
+    if (modal && !modal.classList.contains("hidden")) return;
+    const node = event.target;
+    if (!node || typeof node.closest !== "function") return;
+    const slot = node.closest("#cb-shell-rail,#cb-shell-dock");
+    if (!slot) return;
+    const name = slot.id === "cb-shell-rail" ? "rail" : "dock";
+    if (name === "rail" ? !railOpen() : terminalCollapsed()) return;
+    event.preventDefault();
+    event.stopPropagation();
+    if (name === "rail") setUtilities({ rail: false }, { focusToggle: "rail" });
+    else setUtilities({ activity: false }, { focusToggle: "dock" });
+  }
+
+  /* The drawer's OWN control. It flips the drawer and moves no focus: the filmmaker is
+     already standing on it, and it is the same button afterwards with the other word on
+     it. Opening this way still closes Braidy, because that rule has one owner. */
+  function toggleTerminal() {
+    setUtilities({ activity: terminalCollapsed() });
+  }
+
+  /* The TOPBAR control, and the defect this pass exists to correct: it used to open the
+     drawer and have no way of closing it again, so the only way back was the drawer's
+     own Collapse. Press, open; press again, closed. Opening from up here moves focus
+     into the drawer, because the drawer is at the other end of the window. */
+  function toggleActivity() {
+    const opening = terminalCollapsed();
+    setUtilities({ activity: opening }, opening ? { focus: "dock" } : {});
+    return !terminalCollapsed();
   }
   /* EXPAND, NOT TOGGLE. The retired Global Activity drawer had one verb — open — and
      the surfaces that used to call it (the topbar chip, the compact run status, the
@@ -1249,12 +1398,10 @@
      Optionally scrolls one row into view, which is the focus the drawer did by
      rendering with a focusRunId. */
   function expandTerminal(activityKey = "") {
-    let changed = false;
-    if (terminalCollapsed()) {
-      writeTerminalCollapsed(false);
-      changed = true;
-    }
-    if (changed) paint();
+    /* EV2-7 dogfood: still EXPAND and never toggle — and now through the one writer, so
+       an "Open Activity" control closes Braidy exactly as the topbar control does. The
+       workspace is squeezed by one utility at a time whichever door was used. */
+    if (terminalCollapsed() || railOpen()) setUtilities({ activity: true }, { focus: "dock" });
     if (!activityKey) return;
     /* A KEY THAT ALREADY NAMES ITS SOURCE IS USED AS GIVEN.
        Every caller used to pass a bare run id and this prefixed `run:` for them, so a
@@ -1284,13 +1431,27 @@
     button.disabled = !enabled;
     button.setAttribute("aria-expanded", open ? "true" : "false");
     button.classList.toggle("open", open);
-    button.title = open ? "Close the Braidy rail" : "Open the Braidy rail";
+    button.title = open ? "Close Braidy" : "Open Braidy";
     /* THE CONTROL WEARS THE SHIPPED BRAIDY, from the one table that turns a
        Braidy state into a file. The package's own static FRONT view, not frame
        zero of an animation nobody is playing: a toggle sitting in the topbar is
        not an operation, so it is still by construction. Written once - a repaint
        that rewrote it every time would be work for no change. */
     decorateAssistantMarks();
+  }
+
+  /* THE ACTIVITY CONTROL SAYS WHETHER THE DRAWER IS OPEN, and it is this file that
+     knows. public/live-activity.js owns the chip's label and its status tone — that is
+     activity's own derivation, unchanged — and calls back here after every repaint, so
+     an aria-expanded written by the topbar, by the drawer's own Collapse, or by an
+     "Open Activity" control somewhere in a stage body is the same answer every time.
+     Declared in public/index.html like the rail's control; this only reflects state. */
+  function syncActivityToggle() {
+    const button = document.getElementById(ACTIVITY_TOGGLE_ID);
+    if (!button) return;
+    const open = !terminalCollapsed();
+    button.setAttribute("aria-expanded", open ? "true" : "false");
+    button.classList.toggle("open", open);
   }
 
   /* THE ONE PLACE A MARK BECOMES THE SHIPPED BRAIDY.
@@ -1344,19 +1505,20 @@
     });
   }
 
-  function setRail(open) {
-    try { localStorage.setItem(RAIL_OPEN_KEY, open ? "1" : "0"); } catch {}
-    if (!open) { braidySignal("abort", "That question was stopped when the rail was closed."); closeRailMount(); }
-    paint();
-    /* Opening takes width from the centre and closing gives it back, and the shell's
-       own measurement is what the dock reservation and the bar both depend on. Ask it
-       to re-measure rather than leaving that to the next unrelated event. */
-    remeasureShell();
+  /* Opening takes width from the centre (or covers it, where there is no room to dock)
+     and closing gives it back; both go through the one writer, which also collapses the
+     Activity drawer on the way in and re-measures the shell on the way out. */
+  function setRail(open, options = {}) {
+    setUtilities({ rail: !!open }, options);
     return railOpen();
   }
 
+  /* A TRUE TOGGLE, on every route the shell is on. Opening moves focus into the rail so
+     a keyboard reaches what just appeared; closing with this control leaves focus where
+     the press already put it, which is this control. */
   function toggleRail() {
-    return setRail(!railOpen());
+    const opening = !railOpen();
+    return setRail(opening, opening ? { focus: "rail" } : {});
   }
 
   /* ==========================================================================
@@ -1370,6 +1532,7 @@
      rebinding one per group on every repaint — the rebinding being the thing that would
      put us back where we started. */
   document.addEventListener("toggle", rememberDisclosure, true);
+  document.addEventListener("keydown", utilityEscape, true);
   window.addEventListener("hashchange", paint);
   window.addEventListener("cinebraid:route-rendered", paint);
   window.addEventListener("cinebraid:modal-opened", () => decorateAssistantMarks());
@@ -1386,12 +1549,17 @@
   window.CineBraidCreatorSurfaces = {
     paint,
     toggleTerminal,
+    toggleActivity,
     expandTerminal,
     toggleRail,
-    openRail: () => setRail(true),
-    closeRail: () => setRail(false),
+    openRail: (options) => setRail(true, options),
+    closeRail: (options) => setRail(false, options),
     railOpen,
     terminalCollapsed,
+    /* For public/live-activity.js, which repaints the chip and then asks this file what
+       the drawer is doing, and for the suites that read the pair. */
+    syncActivityToggle,
+    focusUtility,
     projection,
     assistantMarkup,
     terminalMarkup,

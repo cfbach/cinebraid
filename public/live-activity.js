@@ -1109,6 +1109,11 @@ function v641UpdateActivityButton() {
   button.innerHTML = `<span aria-hidden="true">${count ? '<i class="spin">◌</i>' : status.tone === "waiting" ? "<i>!</i>" : "◉"}</span><b>Activity</b><small class="activity-state">${esc(status.label.replace("Activity · ", ""))}</small>`;
   button.title = status.label + (detail ? ` · ${detail}` : "");
   button.setAttribute("aria-label", status.label);
+  /* EV2-7 dogfood — THE CHIP IS A TOGGLE, and this repaint must not leave it claiming
+     the drawer is closed while the drawer is open. Whether the Activity drawer is open
+     is public/creator-surfaces.js's fact, so it is asked rather than derived here: this
+     file owns the label and the tone, that file owns aria-expanded. */
+  window.CineBraidCreatorSurfaces?.syncActivityToggle?.();
   v670AnnounceActivityUpdate();
 }
 /* WHAT A SCREEN READER IS TOLD, in the classification vocabulary everything else uses.
@@ -1276,8 +1281,13 @@ function v642InstallUniversalActivityFetch() {
 
 function v641InitActivity() {
   v642InstallUniversalActivityFetch();
+  /* EV2-7 dogfood — A TRUE OPEN/CLOSE TOGGLE. This bound `expandTerminal`, which is the
+     one-verb opener every "Open Activity" control in the product uses, so the topbar
+     control opened the drawer and had no way of closing it again: the only way back was
+     the drawer's own Collapse. The two verbs are now distinct and this control takes the
+     toggle, which is also what its aria-expanded now describes. */
   const toggle = document.getElementById("automation-activity-toggle");
-  if (toggle) toggle.onclick = () => window.CineBraidCreatorSurfaces?.expandTerminal?.();
+  if (toggle) toggle.onclick = () => window.CineBraidCreatorSurfaces?.toggleActivity?.();
   v641UpdateActivityButton();
   if (V641_ACTIVITY_TIMER) clearInterval(V641_ACTIVITY_TIMER);
   /* THE UNIVERSAL REVISION WATCH RIDES THIS TIMER. It is not activity and it is

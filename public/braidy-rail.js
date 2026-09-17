@@ -374,10 +374,17 @@
   function threadMarkup(cap) {
     // Keep past advisory turns in session memory, but never show them as an
     // available assistant response while the current capability is unavailable.
+    /* EV2-7 dogfood — THE RAIL STILL OPENS, AND IT SAYS WHY IT CANNOT ANSWER. Braidy
+       being unreachable is a state, not an error: the rail opens on it, names it in one
+       sentence, repeats CineBraid's own explanation and its own advice verbatim, and
+       offers the one place that state is changed. The link is a destination the product
+       already has; nothing here configures an assistant, a key or a provider. */
     if (!cap.available)
       return `<article class="cb-braidy-turn cb-braidy-muted" data-braidy-role="unavailable">`
+        + `<p class="cb-braidy-state">Braidy is not connected.</p>`
         + `<p>${esc_(cap.message || "No assistant is configured, so Braidy has nothing to think with.")}</p>`
-        + `<p>${esc_(cap.action || "Everything below still works without it.")}</p></article>`;
+        + `<p>${esc_(cap.action || "Everything below still works without it.")}</p>`
+        + `<a class="cb-utility-link" href="#/settings/assistant">Choose an assistant in Settings</a></article>`;
 
     if (FAILURE)
       return `<article class="cb-braidy-turn cb-braidy-trouble" data-braidy-role="trouble"><p>${esc_(FAILURE)}</p></article>`;
@@ -409,9 +416,17 @@
     const busy = cap.available && !!PENDING;
     return `<section class="cb-braidy" data-braidy="1" data-braidy-state="${attr_(pose.state)}" data-braidy-motion="${attr_(pose.motion)}"`
       + ` data-braidy-intent="${attr_(handoff?.intent || "ask")}" data-braidy-qualified="${cap.qualified ? "1" : "0"}">`
-      + `<header class="cb-braidy-head">`
+      /* EV2-7 dogfood — THE RAIL'S OWN HEAD IS THE UTILITY'S FRAME HEAD. It names the
+         utility, it is where focus lands when the rail is opened (data-cb-utility-focus,
+         read by public/creator-surfaces.js), and it carries the one control a utility
+         frame owns: closing itself. The topbar toggle is the usual way out and it is not
+         always there — it is withdrawn at phone widths — so a rail opened on a laptop and
+         carried into a narrow window would otherwise have no way back. What closing MEANS
+         still belongs to the shell; this only asks for it. */
+      + `<header class="cb-braidy-head" data-cb-utility-focus="1" tabindex="-1">`
       + presenceMarkup(pose.state)
       + `<span class="cb-braidy-id"><b>Braidy</b><small>${esc_(cap.label)}</small></span>`
+      + `<button type="button" class="cb-utility-close" data-cb-utility-close="rail" onclick="window.CineBraidCreatorSurfaces.closeRail({ focusToggle: 'rail' })" title="Close Braidy">Close</button>`
       + `</header>`
       + `<div class="cb-braidy-thread" role="log" aria-live="polite" aria-label="Braidy">${threadMarkup(cap)}</div>`
       + `<div class="cb-braidy-compose">`

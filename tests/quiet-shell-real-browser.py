@@ -777,7 +777,11 @@ try:
         # MOTION, clicked from the drawer, with the hash already on the shot.
         page.evaluate("(shot) => { localStorage.setItem(`cinebraid-focused:${ACTIVE_PROJECT_SLUG}:shot-task:${shot}`, 'inputs'); route(); }", SHOT)
         page.wait_for_selector('[data-selected-task="inputs"]', timeout=10000)
-        page.click("#automation-activity-toggle")
+        # EV2-7 dogfood: the topbar chip is a TOGGLE now, so a section that needs the
+        # drawer OPEN asks for it with the shipped one-verb opener rather than pressing a
+        # control whose answer depends on what the drawer was already doing. Section 3
+        # above is where the chip itself is exercised.
+        page.evaluate("() => window.CineBraidCreatorSurfaces.expandTerminal()")
         page.wait_for_selector('.cb-terminal-row[data-activity-key="run:quiet-shell-motion"]', timeout=10000)
         page.locator('.cb-terminal-row[data-activity-key="run:quiet-shell-motion"] button',
                      has_text="OPEN RESULT").click()
@@ -793,7 +797,7 @@ try:
             f"10. the motion hand-off must keep the shot's own route, got {motion_landed['hash']!r}"
 
         # ENTITY, clicked from the drawer, with the hash on a DIFFERENT workspace.
-        page.click("#automation-activity-toggle")
+        page.evaluate("() => window.CineBraidCreatorSurfaces.expandTerminal()")
         page.wait_for_selector('.cb-terminal-row[data-activity-key="run:quiet-shell-entity"]', timeout=10000)
         page.locator('.cb-terminal-row[data-activity-key="run:quiet-shell-entity"] button',
                      has_text="OPEN RESULT").click()

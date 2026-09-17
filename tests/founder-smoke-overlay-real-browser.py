@@ -3,7 +3,7 @@
 
 FOUNDER SMOKE REPRODUCTION
 --------------------------
-With the activity drawer open, DISMISS PREVIOUS ALERTS opened its confirmation
+With the activity drawer open, its dismiss-previous-alerts control opened its confirmation
 UNDERNEATH the drawer and its blurred backdrop. The confirmation was the thing
 waiting for an answer and it was the thing the creator could not read.
 
@@ -54,7 +54,7 @@ SLUG = "overlay-audit"
 scan = {"anchors": [], "plates": [], "props": [], "vehicles": [], "audio": [], "media": [], "shots": {}}
 
 # Two runs the drawer classifies as PREVIOUS FAILURES / NEEDS ATTENTION, so the
-# DISMISS PREVIOUS ALERTS control is offered and its confirmation can be opened.
+# "Dismiss previous alerts" control is offered and its confirmation can be opened.
 runs = [
     {
         "id": "overlay-run-1", "revision": 1, "type": "shot-chain", "targetId": "SAMPLE-01",
@@ -144,8 +144,11 @@ try:
         # ---- expand the Activity Terminal ------------------------------------
         page.evaluate("() => window.CineBraidCreatorSurfaces.expandTerminal()")
         page.wait_for_selector(".cb-terminal-rows", timeout=8000)
-        dismiss = page.locator("button:has-text('DISMISS PREVIOUS ALERTS')")
-        assert dismiss.count() == 1, "the Terminal must offer DISMISS PREVIOUS ALERTS for runs needing attention"
+        # EV2-7 dogfood: the drawer's header controls belong to the shared shell, so they
+        # are written the way every other control in it is — sentence case, body font,
+        # 44px. The capability and its writer are unchanged.
+        dismiss = page.locator("button:has-text('Dismiss previous alerts')")
+        assert dismiss.count() == 1, "the Terminal must offer Dismiss previous alerts for runs needing attention"
 
         # ---- the confirmation this flow opens --------------------------------
         dismiss.click()
@@ -214,20 +217,42 @@ try:
         assert after_first["terminalOpen"], \
             "Escape must not also collapse the Terminal that opened the confirmation"
 
-        # AND A SECOND ESCAPE MUST STILL LEAVE IT ALONE. The drawer was modal, so the
-        # second press closed it; the Terminal is a persistent dock and belongs to the
-        # filmmaker's own collapse control, not to a keystroke aimed at a dialog.
+        # AND THE SECOND ESCAPE BELONGS TO WHATEVER THE FOCUS IS IN. The retired drawer was
+        # modal, so its second press closed it, and the Terminal that replaced it was a
+        # persistent dock a keystroke aimed at a dialog must not touch — which is still the
+        # assertion above, where the dialog is the top of the stack. EV2-7's dogfood ruling
+        # adds the other half: Escape INSIDE an open utility closes that utility and hands
+        # focus back to the control that opened it. Both branches are stated here, because
+        # which one runs depends on where the confirmation put the focus back, and either
+        # way the property this section exists for is the one above: one press, one layer.
+        second = page.evaluate("""() => {
+          const active = document.activeElement;
+          return { inDock: !!(active && active.closest && active.closest('#cb-shell-dock')),
+                   id: active ? active.id : '' };
+        }""")
         page.keyboard.press("Escape")
         page.wait_for_timeout(250)
-        after_second = page.evaluate("() => !!document.querySelector('.cb-terminal-rows')")
-        assert after_second is True, "a second Escape must not collapse the persistent Activity Terminal"
+        after_second = page.evaluate("""() => ({
+          rows: !!document.querySelector('.cb-terminal-rows'),
+          focus: document.activeElement ? document.activeElement.id : '',
+        })""")
+        if second["inDock"]:
+            assert after_second["rows"] is False, \
+                "with the dialog gone and focus back inside the open Terminal, Escape must close the Terminal"
+            assert after_second["focus"] == "automation-activity-toggle", \
+                "and must hand focus back to the control that opens it"
+            print("Escape inside the reopened Terminal closed it and returned focus to the topbar control")
+        else:
+            assert after_second["rows"] is True, \
+                f"an Escape pressed outside the Terminal (focus on {second['id']!r}) must not collapse it"
+            print(f"the confirmation returned focus to {second['id'] or 'the page'}, so the second Escape left the Terminal alone")
 
         overflow = page.evaluate("document.documentElement.scrollWidth-document.documentElement.clientWidth")
         assert overflow <= 2, f"the overlay audit ended with {overflow}px horizontal overflow"
         browser.close()
     print("Founder smoke overlay stacking check passed: confirmation > Activity Terminal > page by paint order "
-          "and by hit test, the confirmation is unblurred, and Escape closes the dialog without collapsing the "
-          "persistent ledger. Provider calls made: 0.")
+          "and by hit test, the confirmation is unblurred, and one Escape closes one layer — the dialog first, "
+          "with the ledger behind it left standing. Provider calls made: 0.")
 finally:
     server.terminate()
     try: server.wait(timeout=5)

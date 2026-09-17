@@ -640,10 +640,13 @@ async function stalenessControls() {
         "C26b") },
     "The guard would read as present in the source and never run once — the exact defect this listener replaced, and the reason it is asserted against the events CineBraid actually emits.");
 
+  /* The abort moved into setUtilities() with EV2-7's mutual exclusion between the rail
+     and the Activity drawer; it still fires on the transition to closed, and this still
+     takes it away. */
   await control("C26 closing the rail stops aborting the outstanding question", "checkStaleRequestCannotStick",
     { surfaces: mutate(SOURCES.surfaces,
-        "    if (!open) { braidySignal(\"abort\", \"That question was stopped when the rail was closed.\"); closeRailMount(); }",
-        "    if (!open) closeRailMount();",
+        "    if (railWas && !railNext) { braidySignal(\"abort\", \"That question was stopped when the rail was closed.\"); closeRailMount(); }",
+        "    if (railWas && !railNext) closeRailMount();",
         "C26") },
     "A request would keep running behind a surface nobody can see and settle onto a rail that is no longer mounted.");
 }

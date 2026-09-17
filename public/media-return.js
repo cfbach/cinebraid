@@ -112,11 +112,17 @@
       else if (!selected) { const heading = main?.querySelector('h1') || main?.querySelector('h2') || main; if (heading) { heading.tabIndex = -1; heading.focus({ preventScroll: true }); } }
     }));
   }
+  // EV2-7 dogfood: ONE placement rule, so the control sits in the same place on every page it
+  // appears on — at the top of the work area, above the page's heading, never inside a heading's
+  // action group. A page that reserves [data-return-slot] decides for itself and puts the slot
+  // first in its own header; every other page is placed from its own shape: after its crumb when
+  // it has one (the Shot Desk's work column, the Reference Desk, the EV2-6 review page), otherwise
+  // at the very top of the work container (Production media, the Working Bible, the library).
   function place(button) {
     const main = document.getElementById('main'); if (!main) return;
     const slot = main.querySelector('[data-return-slot]');
     if (slot) { if (button.parentNode !== slot) slot.appendChild(button); return; }
-    const desk = main.querySelector('.results-desk,.reference-desk,.shot-desk,.rd-library,.rd-existing-tools,.production-contact-sheet,.wb-dossier');
+    const desk = main.querySelector('.results-desk,.reference-desk,.shot-desk,.shot-main,.rd-library,.rd-existing-tools,.production-contact-sheet,.wb-dossier');
     const crumb = desk && [...desk.children].find(el => ['rd-crumb', 'crumb', 'sd-context'].some(name => el.classList.contains(name)));
     if (crumb) { if (crumb.nextSibling !== button) crumb.after(button); return; }
     // A desk #main is a flex or grid row: a direct child would become a column beside the page, so go inside its first child.
@@ -133,10 +139,18 @@
     if (!button) {
       button = document.createElement('button'); button.type = 'button'; button.className = 'md-return cb-return';
       button.dataset.mediaReturn = ''; button.dataset.returnId = String(entry.id); button.dataset.focusKey = 'media-return';
+      const text = entry.saved.label || describe(entry.saved.hash).label;
       const arrow = document.createElement('span'); arrow.setAttribute('aria-hidden', 'true'); arrow.textContent = '← ';
-      const label = document.createElement('span'); label.className = 'cb-return-label'; label.append(arrow, entry.saved.label || describe(entry.saved.hash).label);
-      button.append(label);
-      if (entry.saved.context) { const context = document.createElement('small'); context.textContent = entry.saved.context; button.append(context); }
+      const label = document.createElement('span'); label.className = 'cb-return-label'; label.append(arrow, text);
+      // EV2-7 dogfood: ONE line, at every width and on every page. The context is folded into the
+      // same line rather than stacking a second one, the line truncates with an ellipsis when the
+      // page is narrow, and the whole of it stays available in the title and the accessible name —
+      // so the control is the same height everywhere and nothing it says is lost.
+      const line = document.createElement('span'); line.className = 'cb-return-line'; line.append(label);
+      if (entry.saved.context) { const context = document.createElement('small'); context.textContent = entry.saved.context; line.append(context); }
+      button.append(line);
+      const whole = [text, entry.saved.context].map(part => String(part || '').trim()).filter(Boolean).join(' · ');
+      button.setAttribute('title', whole); button.setAttribute('aria-label', whole);
       button.addEventListener('click', () => back());
     }
     place(button);

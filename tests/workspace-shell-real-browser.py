@@ -264,12 +264,16 @@ try:
             "the topbar must offer the control that opens the rail"
         page.evaluate("() => window.CineBraidCreatorSurfaces.openRail()")
         page.wait_for_selector("#cb-shell-rail[data-occupied]", timeout=10000)
-        # And the Activity Terminal now ships COLLAPSED. Same reasoning: assert the new
-        # default, then give the dock the content the reservation arithmetic measures.
+        # And the Activity Terminal now ships COLLAPSED, which this suite leaves alone.
+        # EV2-7 dogfood: opening the drawer closes the rail — one utility at a time — and
+        # this suite is about the SLOTS rather than about either utility's content. The
+        # dock's mount is present either way (a collapsed Terminal still renders its own
+        # header into it), so the occupancy, display and reservation claims below are
+        # about a dock that is really mounted and really painting, with the rail open
+        # beside it. Section 6 mounts its own fixtures into both slots in any case.
         assert page.evaluate("() => window.CineBraidCreatorSurfaces.terminalCollapsed()"), \
             "the Activity Terminal must ship COLLAPSED with no stored preference"
-        page.evaluate("() => window.CineBraidCreatorSurfaces.toggleTerminal()")
-        page.wait_for_selector('.cb-terminal[data-collapsed="0"]', timeout=10000)
+        page.wait_for_selector('.cb-terminal[data-collapsed="1"]', timeout=10000)
 
         # ---- 1. the shell loads, is present, and ships collapsed ----------------------
         initial = page.evaluate("""() => {

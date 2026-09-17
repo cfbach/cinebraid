@@ -27,6 +27,14 @@ worth nothing:
   N4 makes the Terminal print an unknown cost as $0.00, and requires the money check to
      catch it.
 
+EV2-7 DOGFOOD — ONE UTILITY AT A TIME. The human ruling is that opening either utility
+closes the other, so the filmmaker's work is never squeezed from the side and the bottom
+at once. This suite was written when both could be open together, and its claims are
+unchanged: each half is now read while ITS utility is the open one, through open_rail()
+and open_terminal() below. Nothing between the two reads changes a run, a job or a stage,
+so the merged answer is the answer this suite read before — and "both are mounted" is now
+what it always meant, which is that each surface exists when it is asked for.
+
 THE FIXTURE IS SEEDED ON DISK, not injected into the page: the runs and jobs below are
 written into a disposable project and read back through the real server, so what the
 surfaces classify is a record the writers really persist rather than a shape invented by
@@ -325,8 +333,8 @@ try:
         # below would sit for its full timeout against a panel that is working correctly.
         #
         # The new defaults are asserted here and then set aside: everything after this
-        # point is about the SHELL and the SURFACES, which need both panels open to say
-        # anything at all. tests/quiet-shell-real-browser.py owns the defaults themselves.
+        # point is about the SHELL and the SURFACES, which need the one they are about to
+        # be open. tests/quiet-shell-real-browser.py owns the defaults themselves.
         page.wait_for_selector(".cb-terminal", timeout=20000)
         assert page.evaluate("() => !window.CineBraidCreatorSurfaces.railOpen()"), \
             "the Assistant rail must ship CLOSED with no stored preference"
@@ -336,10 +344,35 @@ try:
             "the topbar must offer the control that opens the rail"
         assert page.evaluate("() => window.CineBraidCreatorSurfaces.terminalCollapsed()"), \
             "the Activity Terminal must ship COLLAPSED with no stored preference"
-        page.evaluate("() => window.CineBraidCreatorSurfaces.openRail()")
-        page.wait_for_selector("#cb-shell-rail[data-occupied]", timeout=10000)
-        page.evaluate("() => window.CineBraidCreatorSurfaces.toggleTerminal()")
-        page.wait_for_selector('.cb-terminal[data-collapsed="0"]', timeout=10000)
+
+        # EV2-7 dogfood: ONE UTILITY AT A TIME, asked for through the shipped verbs. Both
+        # openers close the other surface — that is the shell's rule, enforced in its one
+        # writer — so a section that is about the rail opens the rail, and a section about
+        # the drawer opens the drawer.
+        def open_rail():
+            page.evaluate("() => window.CineBraidCreatorSurfaces.openRail()")
+            page.wait_for_selector("#cb-shell-rail[data-occupied]", timeout=10000)
+            page.wait_for_timeout(150)
+
+        def open_terminal():
+            page.evaluate("() => window.CineBraidCreatorSurfaces.expandTerminal()")
+            page.wait_for_selector('.cb-terminal[data-collapsed="0"]', timeout=10000)
+            page.wait_for_timeout(150)
+
+        def surfaces():
+            """Both halves of the reading, each taken while its own utility is open.
+
+            The two reads describe the same project state: nothing between them starts,
+            settles or reclassifies anything. `mounted` keeps its meaning — the rail's
+            half is read with the rail open, and the dock's mount exists either way."""
+            open_rail()
+            rail_view = page.evaluate(SURFACES)
+            open_terminal()
+            dock_view = page.evaluate(SURFACES)
+            merged = dict(rail_view)
+            for key in ("rows", "terminalText", "terminalHtml"):
+                merged[key] = dock_view[key]
+            return merged
 
         # Runs arrive with load(); GENERATION JOBS DO NOT. public/app.js only fetches the
         # job ledger at boot when fal generation is enabled with a key source, and this
@@ -348,12 +381,13 @@ try:
         # not something O3 changes, so the suite waits for the app's own poll rather than
         # injecting the jobs itself: what the Terminal renders has to be what the shipped
         # load path actually produced.
+        open_terminal()
         page.wait_for_selector('#cb-terminal-mount [data-activity-key^="job:"]', timeout=20000)
         page.wait_for_timeout(400)
         assert not page_errors, f"the shot workspace raised uncaught errors: {page_errors}"
 
         # ---- 1. both surfaces mount and describe the seeded production -----------------
-        view = page.evaluate(SURFACES)
+        view = surfaces()
         assert view["mounted"], "1. the Assistant and the Terminal must both mount into the O2 slots"
         assert page.evaluate("() => typeof window.CineBraidCreatorSurfaces === 'object'"), \
             "1. the creator surfaces contract is not exposed in the browser"
@@ -500,6 +534,11 @@ try:
                 arg="motion", timeout=30000)
             return snapshot
 
+        # EV2-7 dogfood: the sweep runs with the RAIL open, because the rail is the surface
+        # a stage change could rebuild — it is mounted and unmounted, where the dock's
+        # mount is permanent. All four nodes are still stamped and still compared; the
+        # Terminal's history is asked of the drawer afterwards, with the drawer open.
+        open_rail()
         before = page.evaluate(STAMP)
         assert "MISSING" not in before.values(), f"8. a surface was missing before the stage sweep: {before}"
         for stage_id in stages:
@@ -509,14 +548,23 @@ try:
                 assert after[name] == mark, \
                     f"8. switching to '{stage_id}' replaced the {name} node ({after[name]} != {mark}). " \
                     "A stage change must not rebuild either creator surface."
-            live_rows = page.evaluate("() => document.querySelectorAll('.cb-terminal-row').length")
-            assert live_rows == len(rows), \
-                f"8. the Terminal's history was reset by the change to '{stage_id}' ({live_rows} rows, expected {len(rows)})"
         page.evaluate("() => route()")
         page.wait_for_timeout(420)
         after_render = page.evaluate(READ_STAMP)
         for name, mark in before.items():
             assert after_render[name] == mark, f"8. a full re-render replaced the {name} node"
+        # And the Terminal's history, asked of the drawer. Opening it closes the rail, so
+        # it is asked AFTER the identity comparisons above rather than during them; the
+        # stage change below is what a reset would have to survive.
+        open_terminal()
+        live_rows = page.evaluate("() => document.querySelectorAll('.cb-terminal-row').length")
+        assert live_rows == len(rows), \
+            f"8. the Terminal's history did not survive the stage sweep ({live_rows} rows, expected {len(rows)})"
+        select_stage(stages[0])
+        live_rows = page.evaluate("() => document.querySelectorAll('.cb-terminal-row').length")
+        assert live_rows == len(rows), \
+            f"8. a stage change with the drawer open reset the Terminal's history ({live_rows} rows, expected {len(rows)})"
+        open_rail()
         findings.append(f"8. rail, dock, Assistant and Terminal kept node identity across all {len(stages)} stage "
                         f"changes and a full re-render; Terminal history was never reset")
 
@@ -565,8 +613,12 @@ try:
         # surfaces mounted; only the AMOUNT of activity differs.
         page.set_viewport_size({"width": 1600, "height": 1000})
         page.wait_for_timeout(320)
+        # EV2-7 dogfood: this is a claim about the DRAWER's volume, so it is measured with
+        # the drawer open. The rail is closed for the same reason it is open in section 14
+        # — one utility at a time — and it is section 14 that holds the rail's geometry.
+        open_terminal()
         modest = page.evaluate(GEOMETRY)
-        assert modest["dockShown"] and modest["railShown"], "11. both surfaces must be visible at 1600px"
+        assert modest["dockShown"], "11. the Activity Terminal must be visible at 1600px"
         baseline_height = modest["scrollHeight"]
 
         # 400 extra settled runs, written through the real API surface the app reads from.
@@ -578,7 +630,7 @@ try:
         page.evaluate("() => refreshGlobalAutomationActivity(true)")
         page.wait_for_timeout(900)
         flooded = page.evaluate(GEOMETRY)
-        flooded_view = page.evaluate(SURFACES)
+        flooded_view = page.evaluate(SURFACES)   # the drawer is the open utility here; its half is what this reads
         growth = flooded["scrollHeight"] - baseline_height
         assert abs(growth) <= 4, \
             f"11. adding 400 settled runs changed the page height by {growth}px. Terminal volume is escaping into " \
@@ -700,25 +752,28 @@ try:
         findings.append("13. Settings hides both surfaces, reserves nothing, and retains them mounted and marked stale")
 
         page.goto(f"{base}/#/shot/{SHOT}", wait_until="domcontentloaded")
-        # Runs arrive with load(); GENERATION JOBS DO NOT. public/app.js only fetches the
-        # job ledger at boot when fal generation is enabled with a key source, and this
-        # sandbox has neither — so the durable ledger reaches the page on the FIRST
-        # ACTIVITY POLL instead, ~3.5s later. That is existing application behaviour and
-        # not something O3 changes, so the suite waits for the app's own poll rather than
-        # injecting the jobs itself: what the Terminal renders has to be what the shipped
-        # load path actually produced.
-        page.wait_for_selector('#cb-terminal-mount [data-activity-key^="job:"]', timeout=20000)
+        # The rail was the open utility on the way out, so it is what the return is waited
+        # on. The job ledger is waited for below, with the drawer open: a collapsed drawer
+        # renders no rows at all, so waiting for one here would be waiting for a surface
+        # that is working correctly.
+        page.wait_for_selector("#cb-assistant-mount", timeout=20000)
         page.wait_for_timeout(500)
         restored = page.evaluate(READ_STAMP)
-        restored_view = page.evaluate(SURFACES)
         for name, mark in before_settings.items():
             assert restored[name] == mark, \
                 f"13. returning from Settings rebuilt the {name} node ({restored[name]} != {mark})"
         assert not page.evaluate("() => window.CineBraidCreatorSurfaces.isStale()"), \
             "13. returning to a creator surface must clear the stale flag and repaint"
-        assert restored_view["rows"], "13. the Terminal must repaint from current truth on return"
         assert page.evaluate("() => document.querySelectorAll('#cb-assistant-mount').length") == 1, \
             "13. navigating must not accumulate a second Assistant"
+        # The Terminal's own half of the claim, with the drawer open. Read after the
+        # identity comparison above, because opening the drawer closes the rail.
+        open_terminal()
+        page.wait_for_selector('#cb-terminal-mount [data-activity-key^="job:"]', timeout=20000)
+        restored_view = page.evaluate(SURFACES)
+        assert restored_view["rows"], "13. the Terminal must repaint from current truth on return"
+        # Section 14 is about the rail at four widths, so the rail is the open one again.
+        open_rail()
         findings.append("13. returning restores the same nodes, clears the stale flag and repaints from current truth")
 
         # ---- 14. three rail states, a centre floor, and no horizontal overflow ---------
@@ -860,6 +915,9 @@ try:
         page.wait_for_timeout(320)
 
         # ---- 15. the collapse control ---------------------------------------------------
+        # Asked of an OPEN drawer, which is what the collapse control is for. Opening it
+        # closes the rail, and the two sweeps above are already done with it.
+        open_terminal()
         collapsed = page.evaluate("""() => {
             window.CineBraidCreatorSurfaces.toggleTerminal();
             const dock = document.getElementById('cb-shell-dock');
@@ -882,7 +940,8 @@ try:
 
         # ---- NEGATIVE CONTROLS ----------------------------------------------------------
         # N1: rebuild the rail the way a stage-owned Assistant would, and require the
-        # identity check in section 8 to notice.
+        # identity check in section 8 to notice. The rail has to BE there to be rebuilt.
+        open_rail()
         control_before = page.evaluate(STAMP)
         page.evaluate("""() => {
             const region = document.getElementById('cb-shell-main');
@@ -905,11 +964,13 @@ try:
         # not something O3 changes, so the suite waits for the app's own poll rather than
         # injecting the jobs itself: what the Terminal renders has to be what the shipped
         # load path actually produced.
+        open_terminal()
         page.wait_for_selector('#cb-terminal-mount [data-activity-key^="job:"]', timeout=20000)
         page.wait_for_timeout(500)
         findings.append("N1. rebuilding the rail per stage is detected by the identity check")
 
-        # N2: unbind the dock and require the page-growth arithmetic to notice.
+        # N2: unbind the dock and require the page-growth arithmetic to notice. The drawer
+        # is the open utility from here to N5, because N2, N3 and N4 are all about it.
         bounded_height = page.evaluate("() => document.documentElement.scrollHeight")
         page.evaluate("""() => {
             const style = document.createElement('style');
@@ -975,6 +1036,7 @@ try:
         # what keeps it — and the compact band is the whole point of the responsive work.
         page.set_viewport_size({"width": 1440, "height": 900})
         page.wait_for_timeout(340)
+        open_rail()   # the control is about the rail's track, so the rail is the open utility again
         guarded = page.evaluate("""() => ({
             rail: Math.round(document.getElementById('cb-shell-rail').getBoundingClientRect().width),
             centre: Math.round(document.getElementById('main').getBoundingClientRect().width),

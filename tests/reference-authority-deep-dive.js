@@ -134,7 +134,8 @@ async function testActivityDismissControls() {
   /* A1 moved both dismiss affordances to the expanded Terminal — the header action
      and the attention row. The capability is unchanged, and so are its writers. */
   const html = terminalHtml(rendered.context);
-  assert(html.includes("DISMISS PREVIOUS ALERTS"));
+  /* EV2-7 dogfood: the drawer's own header control is sentence case now; the row-level DISMISS below is unchanged. */
+  assert(html.includes("Dismiss previous alerts"));
   assert(html.includes("DISMISS"));
   assert.strictEqual(typeof rendered.context.dismissAutomationActivityRun, "function");
   assert.strictEqual(typeof rendered.context.archivePreviousAutomationFailures, "function");

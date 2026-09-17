@@ -770,9 +770,12 @@ function checkTerminalRendering(sources = SOURCES) {
   /* Collapsed shows the header and nothing else, so the dock can get out of the way
      without being destroyed. */
   const collapsed = surfaces.terminalMarkup(state, true);
-  assert.ok(collapsed.includes("ACTIVITY TERMINAL"), "a collapsed Terminal must keep its header");
+  /* EV2-7 dogfood: the drawer's header belongs to the shared shell and is written like every other
+     control in it — a sentence-case "Activity" heading, not a shouted kicker. The claim is unchanged:
+     a collapsed Terminal still keeps its header. */
+  assert.ok(collapsed.includes("Activity"), "a collapsed Terminal must keep its header");
   assert.ok(!collapsed.includes("cb-terminal-row"), "a collapsed Terminal must render no rows");
-  assert.ok(collapsed.includes("EXPAND") && html.includes("COLLAPSE"), "the collapse control must state which way it goes");
+  assert.ok(collapsed.includes("Expand") && html.includes("Collapse"), "the collapse control must state which way it goes");
 
   /* No narration. The Terminal is operational truth and must not acquire the rail's voice. */
   for (const sentence of ["CineBraid is", "waiting for you", "recommends", "Take me there"]) {

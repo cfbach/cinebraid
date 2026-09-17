@@ -497,6 +497,15 @@ const inspectorOwner = (hash, origin) => api.go(hash, origin || api.capture()); 
     assert.strictEqual(location.hash, '#/character/KAI');
     assert.strictEqual(returnLabel(), 'Return to SH010 · The signal');
     assert.strictEqual(returns()[0].querySelector('small').textContent, 'Scene One · Frame A · Wide');
+    // EV2-7 dogfood: ONE LINE, and nothing it says is lost to it. The context is folded into the same line as
+    // the label (one .cb-return-line, which truncates), and the whole sentence stays in the title and the
+    // accessible name — so the control is the same height on every page it appears on.
+    const line = returns()[0].querySelector('.cb-return-line');
+    assert.ok(line && line.querySelector('.cb-return-label') && line.querySelector('small'),
+      'the label and its context share one line');
+    assert.strictEqual(returns()[0].getAttribute('title'), 'Return to SH010 · The signal · Scene One · Frame A · Wide');
+    assert.strictEqual(returns()[0].getAttribute('aria-label'), returns()[0].getAttribute('title'),
+      'the accessible name carries what the line may have to truncate');
     await click(main.querySelector('#rd-tools'));
     assert.strictEqual(returnLabel(), 'Return to SH010 · The signal', 'the same reference\'s tools keep the return');
     const tools = main.querySelector('[data-reference-tools]'), onTools = returns()[0];
@@ -679,9 +688,20 @@ const inspectorOwner = (hash, origin) => api.go(hash, origin || api.capture()); 
     assert.ok(!shotDesk.includes('>Return to shot<'), 'Shot Desk error state offers a target, not a return');
     assert.ok(!/\.stamp-overlay\{|\.stamp-big\{|--z-stamp:|@keyframes stamp-hit/.test(styles), 'the oversized APPROVED overlay is gone');
     assert.ok(!/\.md-return\{/.test(read('public/production-media.css')), 'no legacy .md-return styling competes with .cb-return');
+    // EV2-7 dogfood: ONE placement rule and ONE geometry, so the oversized Screening return and the small
+    // Shot Desk one cannot come back. The Shot Desk's work column is named in place(), and the control is a
+    // single 44px line wherever it lands.
+    const coordinator = read('public/media-return.js');
+    const placement = coordinator.slice(coordinator.indexOf('function place(button)'), coordinator.indexOf('function paint(entry)'));
+    assert.ok(placement.includes('.shot-main'), "the Shot Desk's work column is one of the placements place() knows");
+    assert.ok(/crumb\.after\(button\)/.test(placement), 'a page with a crumb keeps the return under it and above its heading');
     const app = read('public/app.js'), paintSave = app.slice(app.indexOf('function paintProjectSaveState()'), app.indexOf('function currentAuthorityTransition('));
     assert.ok(/el\.title = label/.test(paintSave), 'the topbar save status mirrors its full label into title');
     const shell = read('public/experience-coherence.css');
+    const returnCss = shell.slice(shell.indexOf('/* EV2-7 Dogfood — Shell utilities & contextual return */')).replace(/\s+/g, ' ');
+    assert.ok(/\.md-return\.cb-return \{[^}]*height:44px/.test(returnCss) && /\.md-return\.cb-return \{[^}]*white-space:nowrap/.test(returnCss),
+      'the return control is one 44px line, declared once for every page');
+    assert.ok(!/\.cb-return \{[^}]*flex-direction:column/.test(shell), 'the stacked two-line return is gone');
     assert.ok(/#topbar \.topbar-actions \{[^}]*min-width:0;/.test(shell) && !/#topbar \.topbar-actions \{[^}]*min-width:auto/.test(shell), 'the actions row may shrink (the 761–820 seam stays fixed)');
     assert.ok(/#topbar #save-state \{[^}]*flex:0 4 auto;[^}]*max-width:/.test(shell) && /#topbar #save-state>span:last-child \{[^}]*text-overflow:ellipsis/.test(shell), 'a long save label gives way instead of pushing the controls');
   });
