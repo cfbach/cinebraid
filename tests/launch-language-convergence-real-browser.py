@@ -37,8 +37,8 @@ WHAT IT ASSERTS, and every one is about the rendered DOM or a real click:
     D. A shot that was already delivered when the page loaded promotes no motion either.
     E. A shot declared r2v names reference-to-video as its method and carries Slice 1's
        own word on the button, never "Image-to-video" and never "CREATE MOTION".
-    F. The approval dialog asks the filmmaker no filename question, and carries the
-       derived name the way it carries the approval target.
+    F. The approval dialog asks the filmmaker no filename question. Since EV2-7 it is
+       reached from the Shot Desk's Results rail and names the exact approval target.
 
 Waits are on the REQUESTED THING — the attribute or element that proves the render
 happened — never on a fixed sleep, which reads a stale DOM on a slow machine and looks
@@ -329,38 +329,43 @@ try:
         findings.append(f"E: the r2v shot named its own method and carried Slice 1's word {slice1_word!r} on the button")
 
         # ---- F. THE APPROVAL DIALOG ASKS NO FILENAME QUESTION ---------------
+        # EV2-7 (Shots ruling B2.10/B2.12): the Shot Desk no longer carries an approval control of
+        # its own. A returned candidate is approved in Results, reached through the Desk's one
+        # Results rail, behind the existing confirmation — and that dialog still asks no filename.
         open_shot(page, base, CANDIDATE)
-        opened = page.evaluate("""() => {
-            const control = [...document.querySelectorAll('button[onclick]')]
-                .find((b) => /approveGuidedStill\\(|approveGuidedFrame\\(|approveTake\\(/.test(b.getAttribute('onclick') || ''));
-            if (!control) return '';
-            control.scrollIntoView();
-            return control.getAttribute('onclick');
-        }""")
-        check(bool(opened), "F: the workspace offers an approval control for the returned candidate")
-        page.locator("button[onclick*='approveGuidedStill('], button[onclick*='approveGuidedFrame('], button[onclick*='approveTake(']").first.click()
-        page.wait_for_selector("#modal .modal-box", timeout=15000)
+        inline = page.evaluate("""() => [...document.querySelectorAll('#main button[onclick]')]
+            .filter((b) => /approveGuidedStill\\(|approveGuidedFrame\\(|approveTake\\(/.test(b.getAttribute('onclick') || '')).length""")
+        check(inline == 0, f"F: the Shot Desk offers no approval control of its own, found {inline}")
+        rail = page.locator("#main [data-shot-results-rail]").get_by_role("button", name="Frame A Results", exact=True)
+        check(rail.count() == 1, f"F: the Results rail offers exactly one Frame A Results, found {rail.count()}")
+        rail.click()
+        page.wait_for_selector("#main [data-results-desk] [data-rx-key]", timeout=15000)
+        page.locator("#main [data-rx-key]").first.click()
+        page.wait_for_function("() => { const b = document.getElementById('rx-approve'); return !!b && !b.disabled; }", timeout=15000)
+        page.locator("#rx-approve").click()
+        page.wait_for_selector("#modal .rx-confirm", timeout=15000)
         approval = page.evaluate("""() => {
-            const box = document.querySelector('#modal .modal-box');
-            const name = box.querySelector('#approve-name');
+            const box = document.querySelector('#modal .rx-confirm');
+            const typed = [...box.querySelectorAll('input:not([type=hidden]), textarea, select')]
+                .filter((field) => field.offsetWidth || field.offsetHeight || field.getClientRects().length);
             return {
                 text: (box.textContent || '').replace(/\\s+/g, ' ').trim(),
                 labels: [...box.querySelectorAll('label')].map((l) => (l.textContent || '').trim()),
-                nameType: name ? (name.getAttribute('type') || '') : '',
-                nameValue: name ? name.value : '',
-                nameVisible: name ? !!(name.offsetWidth || name.offsetHeight || name.getClientRects().length) : false,
+                typed: typed.length,
+                confirm: (document.getElementById('rx-confirm')?.textContent || '').trim(),
             };
         }""")
         check("canonical filename" not in approval["text"].lower(),
               f"F: the approval dialog asks no filename question, got: {approval['text'][:220]}")
         check(not any("filename" in label.lower() for label in approval["labels"]),
               f"F: and no label offers one, got {approval['labels']}")
-        check(approval["nameType"] == "hidden",
-              f"F: the derived name is carried the way the approval target is, got type={approval['nameType']!r}")
-        check(approval["nameVisible"] is False, "F: and it is not something a filmmaker can see or type into")
-        check(approval["nameValue"].endswith(".png") and CANDIDATE in approval["nameValue"],
-              f"F: the carried value is the deterministic one, got {approval['nameValue']!r}")
-        findings.append("F: the approval dialog asked no filename question and carried the derived name in a hidden field")
+        check(approval["typed"] == 0, f"F: and nothing in it can be typed into, found {approval['typed']} field(s)")
+        check(f"{CANDIDATE} · Frame A" in approval["text"],
+              f"F: it names the exact approval target instead, got: {approval['text'][:220]}")
+        check(approval["confirm"] == "Approve result", f"F: with its own confirmation, got {approval['confirm']!r}")
+        page.locator("#modal .rx-confirm .cancel").click()
+        page.wait_for_selector("#modal .rx-confirm", state="hidden", timeout=15000)
+        findings.append("F: approval moved to Results; its confirmation asked no filename question, offered nothing to type and named the exact target")
 
         browser.close()
 finally:

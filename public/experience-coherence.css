@@ -347,7 +347,7 @@
 #main .bounded-shot-workspace .shot-head-nav>span { opacity:.35; }
 #main .bounded-shot-workspace .shot-head-controls>.shot-import-open { width:auto; min-height:44px; padding:0 14px; border:1px solid var(--line-2); border-radius:8px; background:transparent; font:500 15px/1.2 var(--body); letter-spacing:normal; text-transform:none; white-space:nowrap; color:var(--ink); }
 #main .bounded-shot-workspace .shot-import-open:hover { border-color:var(--acc); }
-#main .bounded-shot-workspace .shot-head-controls>.guided-inline-actions { min-width:0; border:0; background:none; }
+#main .bounded-shot-workspace .shot-head-controls>.guided-inline-actions { min-width:0; flex:0 0 auto; border:0; background:none; }
 #main .bounded-shot-workspace .shot-head-controls>.guided-inline-actions>summary { min-height:44px; padding:0 10px; border:1px solid transparent; border-radius:8px; background:transparent; font:500 15px/1.2 var(--body); letter-spacing:normal; text-transform:none; white-space:nowrap; color:var(--ink); }
 #main .bounded-shot-workspace .shot-head-controls>.guided-inline-actions>summary::before { content:"▸"; margin-right:8px; font-size:12px; }
 #main .bounded-shot-workspace .shot-head-controls>.guided-inline-actions[open] { display:grid; gap:6px; min-width:190px; }
