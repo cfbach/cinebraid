@@ -588,17 +588,29 @@ try:
         page.wait_for_selector("#main", timeout=15000)
         page.evaluate(f"() => selectBoundedTask('shot-task', {json.dumps(SHOT)}, 'motion')")
         page.wait_for_selector('[data-generation-readiness="blocked"]', timeout=15000)
+        # The approval guard needs the returned video's activated media identity; the
+        # server indexes it after a scan, so wait for it before reading any surface.
+        page.evaluate('''async()=>{for(let i=0;i<40;i++){SCAN=await(await fetch('/api/scan')).json();if(SCAN.shots?.['SAMPLE-01']?.takes?.find(t=>t.name==='PAID-RETURN.mp4')?.assetId){await route();await flushPendingProjectSave();return;}await new Promise(r=>setTimeout(r,500));}throw Error('Synthetic returned media identity did not activate');}''')
+        page.wait_for_function('()=>projectSaveSettled().settled')
+        page.wait_for_selector('[data-generation-readiness="blocked"]', timeout=15000)
+        # EV2-7 B2.13: the Motion stage keeps video import and the blocked reason; the
+        # returned video is played, compared and approved in Results, reached through the
+        # Shot Desk's Results rail — which is on every stage and is not gated by readiness.
         b2_before = page.evaluate("""() => {
             const shot = P.shots.find((row) => row.id === 'SAMPLE-01');
             const readiness = shotReadinessFor(shot);
             const unit = readiness.units.find((row) => row.id === 'motion:motion-a');
             const panel = document.querySelector('[data-generation-readiness="blocked"]');
+            const target = document.querySelector('#main [data-shot-results-rail] [data-results-target="motion"]');
+            const entries = [...document.querySelectorAll('#main button')].filter((node) => node.textContent.trim() === 'Motion Results');
             return {
                 status: readiness.status, generationStatus: unit?.status || '',
                 stage: shotStageState('motion', shotStageModelFacts(shot, takesFor(shot.id))).availability,
-                returned: !![...panel.querySelectorAll('b')].find((node) => node.textContent.includes('PAID-RETURN.mp4')),
-                inspect: !!panel.querySelector('.media-enlarge-btn'),
-                approve: [...panel.querySelectorAll('button')].some((node) => node.textContent.includes('APPROVE VIDEO')),
+                returned: Number(target?.dataset.resultsCount || 0),
+                results: entries.length === 1 && entries[0].closest('[data-results-target="motion"]') === target
+                    && entries[0].getAttribute('onclick') === "openShotResults('SAMPLE-01','motion','')",
+                players: panel.querySelectorAll('video').length,
+                approve: [...document.querySelectorAll('#main button')].some((node) => node.textContent.includes('APPROVE VIDEO')),
                 importInput: !!panel.querySelector('#motion-file'),
                 buildPrompt: [...panel.querySelectorAll('button')].some((node) => node.textContent.includes('Build prompt')),
                 paidAction: !!panel.querySelector('.h3-generate-btn'),
@@ -606,39 +618,50 @@ try:
         }""")
         assert b2_before["status"] == "BLOCKED" and b2_before["generationStatus"] == "BLOCKED",             f"B2: the explicitly revoked route prerequisite must block fresh generation: {b2_before}"
         assert b2_before["stage"] == "available", f"B2: returned work must keep Motion reachable: {b2_before}"
-        assert all(b2_before[key] for key in ("returned", "inspect", "approve", "importInput")),             f"B2: returned media lost a review/approval/import path: {b2_before}"
+        assert b2_before["returned"] >= 1 and b2_before["results"],             f"B2: the Results rail must count the returned video and offer exactly one Motion Results entry: {b2_before}"
+        assert b2_before["importInput"], f"B2: the blocked Motion stage lost video import: {b2_before}"
+        assert b2_before["players"] == 0 and not b2_before["approve"],             f"B2: the Motion stage must not keep per-candidate players or APPROVE VIDEO: {b2_before}"
         assert not b2_before["buildPrompt"] and not b2_before["paidAction"],             f"B2: fresh or paid generation leaked through the blocked route: {b2_before}"
 
-        page.locator('[data-generation-readiness="blocked"] .media-enlarge-btn').first.click()
-        page.wait_for_selector(".media-theatre-modal", timeout=10000)
-        page.keyboard.press("Escape")
-        page.evaluate('''async()=>{for(let i=0;i<40;i++){SCAN=await(await fetch('/api/scan')).json();if(SCAN.shots?.['SAMPLE-01']?.takes?.find(t=>t.name==='PAID-RETURN.mp4')?.assetId){await route();await flushPendingProjectSave();return;}await new Promise(r=>setTimeout(r,500));}throw Error('Synthetic returned media identity did not activate');}''')
-        page.wait_for_function('()=>projectSaveSettled().settled')
-        page.locator('[data-generation-readiness="blocked"] button.approve-btn', has_text="APPROVE VIDEO").first.click()
+        page.locator('#main [data-shot-results-rail] [data-results-target="motion"]').get_by_role("button", name="Motion Results", exact=True).click()
+        page.wait_for_selector("[data-results-desk]", timeout=15000)
+        page.wait_for_function("() => (document.querySelector('#rx-primary')?.getAttribute('src') || '').includes('PAID-RETURN.mp4')", timeout=15000)
+        page.wait_for_function("() => { const b = document.getElementById('rx-approve'); return !!b && !b.disabled; }", timeout=15000)
+        page.locator('#rx-approve').click()
         page.wait_for_function("()=>document.getElementById('rx-confirm')&&!document.getElementById('rx-confirm').disabled")
         assert not page.evaluate("()=>P.productionAuthority.receipts.some(r=>r.kind==='shot-motion'&&r.value==='PAID-RETURN.mp4'&&r.status==='current')"), 'opening confirmation cannot approve motion'
         page.locator('#rx-confirm').click()
         page.wait_for_function('()=>!approvalSubmissionPending()')
         page.wait_for_timeout(1000)
+        page.goto(f"{base}/#/shot/{SHOT}", wait_until="domcontentloaded")
+        page.wait_for_selector("#main [data-shot-results-rail]", timeout=15000)
+        page.evaluate(f"() => selectBoundedTask('shot-task', {json.dumps(SHOT)}, 'motion')")
+        page.wait_for_selector('[data-generation-readiness="blocked"]', timeout=15000)
         b2_after = page.evaluate("""() => {
             const shot = P.shots.find((row) => row.id === 'SAMPLE-01');
             const readiness = shotReadinessFor(shot);
             const unit = readiness.units.find((row) => row.id === 'motion:motion-a');
+            const target = document.querySelector('#main [data-shot-results-rail] [data-results-target="motion"]');
             return {
                 winner: shot.clips.find((row) => row.id === 'motion-a')?.videoWinner || '',
                 receipt: (P.productionAuthority.receipts || []).some((row) => row.kind === 'shot-motion'
                     && row.unitKey === 'motion-a' && row.value === 'PAID-RETURN.mp4' && row.status === 'current'),
                 generationStatus: unit?.status || '',
                 blocked: !!document.querySelector('[data-generation-readiness="blocked"]'),
-                approved: document.querySelector('[data-guided-panel="motion"]')?.textContent.includes('APPROVED') || false,
+                importInput: !!document.querySelector('[data-generation-readiness="blocked"] #motion-file'),
+                approved: target?.dataset.resultsApproved === 'retained'
+                    && (target.querySelector('.shot-results-name')?.textContent || '') === 'PAID-RETURN.mp4'
+                    && !!target.querySelector('a.shot-results-approved'),
             };
         }""")
         assert b2_after["winner"] == returned_name and b2_after["receipt"],             f"B2: existing approval authority did not accept the returned video: {b2_after}"
         assert b2_after["generationStatus"] in ("BLOCKED", "NEEDS_DECISION") and b2_after["blocked"],             f"B2: approving returned work must not bypass fresh-generation readiness: {b2_after}"
-        assert b2_after["approved"], f"B2: approved returned media stopped being reachable: {b2_after}"
-        findings.append("B2 runtime: with r2v entity Canon explicitly revoked after PAID-RETURN.mp4 arrived, Motion stayed "
-                        "reachable for theatre review, approval and import; approval wrote shot-motion Canon, "
-                        "while prompt creation and paid generation remained blocked")
+        assert b2_after["importInput"], f"B2: video import must stay available after approval: {b2_after}"
+        assert b2_after["approved"], f"B2: approved returned media stopped being reachable from the Results rail: {b2_after}"
+        findings.append("B2 runtime: with r2v entity Canon explicitly revoked after PAID-RETURN.mp4 arrived, the Results rail "
+                        "kept it counted and reachable; Motion Results played and approved it through the shipped "
+                        "confirmation, which wrote shot-motion Canon, while video import stayed and prompt creation "
+                        "and paid generation remained blocked")
 
         assert not page_errors, f"the audit raised uncaught errors: {page_errors}"
         assert not console_errors, f"the audit logged console errors: {console_errors}; Canon: {canon_responses}; HTTP: {http_errors}; failed: {failed_requests}"

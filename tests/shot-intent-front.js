@@ -436,11 +436,15 @@ async function checkUndeclaredFabricatesNothing() {
   const primary = (main.match(/<button class="assemble-btn shot-primary-action"[^>]*>([^<]*)</) || [, ""])[1];
   assert.strictEqual(primary, "Choose how this shot is made",
     "C2: the one primary action is the decision, in the filmmaker's words");
-  const summary = (main.match(/<section class="shot-command-summary"[^]*?<\/section>/) || [""])[0];
-  assert(/<b>0\/0<\/b>/.test(summary), "C2: the command summary counts no required frame");
+  /* EV2-7: the four summary tiles became one quiet facts line. The count it reads is kept
+     on the frames fact for any reader; the words say what is true instead of a 0/0. */
+  const summary = (main.match(/<p class="shot-facts"[^]*?<\/p>/) || [""])[0];
+  const framesFact = (summary.match(/<span data-shot-fact="frames"[^>]*>[^<]*<\/span>/) || [""])[0];
+  assert(/data-required-frames="0\/0"/.test(framesFact), "C2: the command summary counts no required frame");
+  assert(!/>0\/0</.test(summary), "C2: and prints no reassuring 0/0 for it");
   assert(!/not required by this intent/.test(summary),
     "C2: and must not call an undeclared shot's silence an intent");
-  assert(/none until you say how this shot is made/.test(summary),
+  assert(/>No intent declared</.test(framesFact),
     "C2: it says what is actually true instead");
   assert(/data-shot-route-declared="0"/.test(summary), "C2: and states the undeclared reading for any reader");
 
@@ -1100,7 +1104,8 @@ async function checkApprovalBoundary() {
         readinessAction: readiness.nextAction.code,
         /* Every persistent frame-debt sentence the shipped workspace can print. */
         framesDebtOnScreen: /Produce the frame|Produce Frame|Approve required frames|still to approve/i.test(main),
-        requiredFramesTile: (main.match(/Required frames<\\/span><b>([^<]*)<\\/b>/) || [, ""])[1],
+        /* EV2-7: the facts line keeps the exact required-frame count on its frames fact. */
+        requiredFramesTile: (main.match(/<span data-shot-fact="frames" data-required-frames="([^"]*)"/) || [, ""])[1],
       };`);
   }
 
@@ -1734,12 +1739,13 @@ async function shellNextActions(project, shotId, { takes = [], anchorsOnDisk = t
         const s = P.shots.find((row) => row.id === ${JSON.stringify(shotId)});
         return boundedShotTaskStatus(s, takesFor(${JSON.stringify(shotId)}), ${JSON.stringify(stage.id)});`),
     })),
-    /* And what the command summary inside #main says, so the two can be compared. */
+    /* And what the facts line inside #main says, so the two can be compared: the exact
+       count it carries, and the words it prints for it. */
     requiredFramesTile: run(page.context, `
       const summary = (String(document.getElementById("main").innerHTML || "")
-        .match(/<section class="shot-command-summary"[^]*?<\\/section>/) || [""])[0];
-      const card = (summary.match(/<article[^>]*>(?:(?!<\\/article>)[^])*?Required frames(?:(?!<\\/article>)[^])*?<\\/article>/) || [""])[0];
-      return { value: (card.match(/<b>([^<]*)<\\/b>/) || [, ""])[1], note: (card.match(/<small>([^<]*)<\\/small>/) || [, ""])[1] };`),
+        .match(/<p class="shot-facts"[^]*?<\\/p>/) || [""])[0];
+      const fact = summary.match(/<span data-shot-fact="frames" data-required-frames="([^"]*)">([^<]*)<\\/span>/) || [, "", ""];
+      return { value: fact[1], note: fact[2] };`),
   };
 }
 const stageOf = (shell, id) => shell.stages.find((stage) => stage.id === id);

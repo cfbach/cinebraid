@@ -748,7 +748,7 @@ async function renderCheck(payload, options = {}) {
   assert(bible.html.includes("+ Add continuity state"), "state authoring must remain available");
   assert(bible.html.includes("Continuity-state chain"), "state-chain automation must remain available");
   const shot = await render("#/shot/L1-01", project, { storage: FRAMES_STORAGE });
-  for (const text of ["FRAMES", "Import, choose, and approve images", "＋ Add frame"])
+  for (const text of ["FRAMES", "Import or prepare images", "＋ Add frame"])
     assert(shot.html.includes(text), `the Frames stage lost "${text}"`);
   pass("the Project Bible state workflow and the rest of the Frames stage are unchanged");
 }

@@ -20,8 +20,9 @@ AND THE APPROVALS ARE REAL. This file used to write five authority receipts stra
 into P.productionAuthority from page script. Canon is what a person did, and a fixture
 that stamps it is asserting against a state the product would never have produced --
 so the receipts are gone and the approvals are performed the way a filmmaker performs
-them: the reference's own "Approve as primary reference", then each frame's approve
-control. The project is a real disposable one on disk, so the load, the scan, the
+them: the reference's own "Approve as primary reference", then each frame's approval
+in Results, opened from the Shot Desk's Results rail (EV2-7). The project is a real
+disposable one on disk, so the load, the scan, the
 durable asset identity approval prepares, and the write seam it passes through are
 all the shipped ones.
 """
@@ -52,6 +53,8 @@ FRAMES=[{'id':'frame-'+l.lower(),'label':l,'title':'Frame '+l,'winner':'','descr
 # creationBrief.frameWorkflows[frameId]. Seeded there, all four frames start where a
 # filmmaker who has already chosen a candidate would leave them. Selecting is not
 # approving: every approval below is still a real trusted gesture.
+# (EV2-7: frames are now approved in Results, which lists each frame's own candidates,
+# so this seed no longer gates the approval control; it stays as ordinary setup data.)
 FRAME_WORKFLOWS={'frame-'+l.lower(): {'selectedCandidate':'FRAME_'+l+'.png'} for l in FRAME_LABELS}
 H3_PROJECT={
     'productionAuthority':{'version':1,'receipts':[]},
@@ -210,62 +213,58 @@ try:
         # Under r2v the frames are declared NOT REQUIRED, so their workspace ships
         # collapsed; the cards are present and simply not visible until opened.
         page.wait_for_selector('#main .guided-frame-card', state='attached', timeout=20000)
+        # EV2-7 B2.12: A FRAME IS APPROVED IN RESULTS. The Frames stage prepares and
+        # imports; the Shot Desk's Results rail opens each frame's exact Results, where the
+        # shipped Approve result… / confirmation pair writes the receipt. Approval is bound
+        # to a verified media identity, which the server indexes after a scan, so the suite
+        # waits for that identity rather than racing it.
+        page.evaluate("""async () => {
+          for (let i = 0; i < 40; i++) {
+            SCAN = await (await fetch('/api/scan')).json();
+            const takes = (SCAN.shots && SCAN.shots['H3-01'] && SCAN.shots['H3-01'].takes) || [];
+            if (takes.length >= 4 && takes.every((take) => take.assetId)) { await route(); return; }
+            await new Promise((resolve) => setTimeout(resolve, 500));
+          }
+          throw Error('the H3 frame media identity never became ready');
+        }""")
+        def press_real(locator, what):
+            """A REAL click, retried: the Activity Terminal repaints on its own every few
+            seconds and can replace a node between resolving it and pressing it. Never
+            dispatched, because the product refuses a Canon command raised from page script
+            and this suite depends on that refusal holding."""
+            for _ in range(6):
+                try:
+                    locator.first.scroll_into_view_if_needed(timeout=5000)
+                    locator.first.click(timeout=5000)
+                    return
+                except Exception:  # noqa: BLE001 - a repaint stole the node; press again
+                    page.wait_for_timeout(250)
+            raise AssertionError(f"{what} never stayed put long enough to press")
         for frame in FRAME_LABELS:
             frame_id = 'frame-' + frame.lower()
-            # ONE FRAME AT A TIME, through the rail that selects it. Only the selected
-            # frame's card renders its approve control, so the frames are approved the
-            # way they are worked: select, then approve. The disclosures are reopened
-            # each pass because approving re-renders and restores their closed default.
-            page.evaluate("(id) => selectBoundedItem('shot-frame','H3-01',id)", frame_id)
-            # WAIT FOR THIS FRAME'S OWN CONTROL, not for any approve control. Approving
-            # the previous frame re-renders the whole workspace, so a bare
-            # `.guided-approve-selected` can be satisfied by the outgoing card mid-repaint
-            # -- which is what made this loop stop on a different frame each run. The
-            # button carries its frame in approveGuidedFrame(shot, frame, candidate), so
-            # naming it there waits for exactly the right render and clicks exactly the
-            # right frame. The disclosures are reopened first because approving restores
-            # their closed default.
-            approve_selector = f"button.guided-approve-selected[onclick*=\"'{frame_id}'\"]"
-            page.wait_for_selector(approve_selector, state='attached', timeout=20000)
-            # OPENED AFTER THE RENDER THAT MATTERS, and along this button's own ancestry.
-            # Opening every #main <details> up front is undone by the repaint that follows
-            # the previous approval -- the frame workflow shipped closed again and the
-            # control measured 140x40 inside a `<details open=false>`. Walking up from the
-            # button opens exactly the disclosures between it and the page.
-            #
-            # AND RETRIED, because the Terminal repaints on its own every few seconds and
-            # can replace this node between opening its ancestors and pressing it
-            # ("Element is not attached to the DOM"). Each attempt reopens the ancestry
-            # and presses again; it is a REAL click every time, because the product
-            # refuses a Canon command raised from page script and this suite depends on
-            # that refusal holding.
-            open_ancestors = """(sel) => {
-              const button = document.querySelector(sel);
-              for (let node = button; node && node !== document.body; node = node.parentElement) {
-                if (node.tagName === 'DETAILS') node.open = true;
-              }
-              return !!button;
-            }"""
-            for attempt in range(6):
-                page.evaluate(open_ancestors, approve_selector)
-                try:
-                    page.locator(approve_selector).first.click(timeout=5000)
-                    break
-                except Exception:  # noqa: BLE001 - a repaint stole the node; reopen and press again
-                    page.wait_for_timeout(250)
-            else:
-                raise AssertionError(f"Frame {frame}: its approve control never stayed put long enough to press")
-            # Same shape as the reference: the card's control opens the decision, and the
-            # dialog's own button is the gesture that writes canon. Asked for by ACTION,
-            # not by wording -- the first frame is offered as "Use as the current shot
-            # image?" and the rest as "Approve Frame B?", so the label moves while
-            # confirmApproveTake stays the thing being pressed.
-            confirm = '#modal button[onclick^="confirmApproveTake"]'
-            page.wait_for_selector(confirm, timeout=20000)
-            page.locator(confirm).click()
+            rail = page.locator('#main [data-shot-results-rail]')
+            rail.wait_for(state='visible', timeout=20000)
+            # FOUR DECLARED FRAMES ARE MORE THAN THE RAIL LISTS, so it offers a labelled
+            # frame selector beside one Results entry for the chosen frame. Choosing a frame
+            # there changes only what the rail shows; it writes nothing.
+            picker = rail.locator('select[data-shot-results-frame]')
+            assert picker.count() == 1, 'with four declared frames the Results rail offers a labelled frame selector'
+            picker.select_option(frame_id)
+            entry = page.locator('#main [data-shot-results-rail]').get_by_role('button', name=f'Frame {frame} Results', exact=True)
+            entry.wait_for(state='visible', timeout=20000)
+            assert entry.count() == 1, f'Frame {frame}: the rail offers exactly one Results entry for it'
+            press_real(entry, f'Frame {frame} Results')
+            page.wait_for_selector('[data-results-desk]', timeout=20000)
+            page.wait_for_function("() => { const b = document.getElementById('rx-approve'); return !!b && !b.disabled; }", timeout=20000)
+            press_real(page.locator('#rx-approve'), f'Frame {frame}: Approve result…')
+            page.wait_for_function("() => { const b = document.getElementById('rx-confirm'); return !!b && !b.disabled; }", timeout=20000)
+            press_real(page.locator('#rx-confirm'), f'Frame {frame}: the confirmation')
             page.wait_for_function(
                 "(id) => (P.productionAuthority?.receipts || []).some(r => r.kind === 'shot-frame'"
                 " && r.frameId === id && r.status === 'current')", arg=frame_id, timeout=20000)
+            page.wait_for_function("() => !approvalSubmissionPending()", timeout=20000)
+            page.evaluate("(hash) => { location.hash = hash; }", '#/shot/H3-01')
+            page.evaluate('() => route()')
 
         # THE MOTION-READINESS REVIEW, RECORDED AFTER THE APPROVALS AND FROM THEIR RESULT.
         #

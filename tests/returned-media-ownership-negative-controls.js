@@ -177,6 +177,36 @@ function cardOf(html) {
   };
 }
 
+/* THE RESULTS SEAM, AS THE PRODUCT MOUNTS IT (see tests/returned-media-ownership.js).
+   EV2-7 moved every decision about a returned result from the shot hero into Results, so
+   a control about a decision reads the RENDERED Results page the hero's handoff opens:
+   the shipped public/results-desk.js, run into the same (possibly mutated) realm, routed
+   to the exact address the handoff names. Opening records that scope and key. */
+function mountResults(page) {
+  const before = (page.documentListeners.get("click") || []).length;
+  vm.runInContext(readLF("public/results-desk.js"), page.context, { filename: "results-desk.js" });
+  const clicks = page.documentListeners.get("click") || [];
+  const listener = clicks[before];
+  assert.strictEqual(typeof listener, "function", "probe receipt: results-desk.js must register its own click listener");
+  clicks[before] = (event) => (event && event.target ? listener(event) : undefined);
+  const opened = [];
+  page.context.CineBraidResults.open = (scope, key = "") => {
+    opened.push({ scope: { ...scope }, key });
+    page.context.location.hash = page.context.CineBraidResults.href(scope, key);
+    return page.context.route();
+  };
+  return { listener, opened };
+}
+function resultsOf(html) {
+  const control = (id) => (html.match(new RegExp(`<button[^>]*data-rx="${id}"[^>]*>`)) || [""])[0];
+  return {
+    desk: html.includes("data-results-desk"),
+    control,
+    authorityOf: (id) => (control(id).match(/data-rx-authority="([a-z]*)"/) || [])[1] || "",
+    selected: ((html.match(/data-rx-key="([^"]+)" aria-pressed="true"/) || [])[1] || "").replace(/&amp;/g, "&"),
+  };
+}
+
 /* THE POSITIVE GUARANTEES, re-expressed here so a control can require exactly one of
    them to fail. Each is a function of a rendered build, not a copy of the suite. */
 function requireReviewOwnsWorkspace(card, label) {
@@ -740,7 +770,16 @@ async function ncRM12() {
   equal(card.file, "B.png", "NC-RM12: and it is a candidate the route never named");
   equal(card.stale, false, "NC-RM12: with nothing saying the claim was stale");
   ok(!/already been reviewed/i.test(html), "NC-RM12: and no explanation anywhere on the page");
-  ok(/data-returned-review-action="approve"/.test(card.markup),
+  /* EV2-7: the hero decides nothing; its one action opens Results. Followed, it lands on
+     the SUBSTITUTED candidate and Results offers to approve it. */
+  const substituted = "path:shots/L1-01/takes/B.png";
+  equal(card.primary, "Review Frame B result", "NC-RM12: the hero's one action names the substituted frame");
+  const seam = mountResults(broken);
+  await broken.context.openReturnedResultReview("L1-01", card.key);
+  deepEqualLoose(seam.opened.map((row) => row.key), [substituted], "NC-RM12: the handoff hands Results the substituted candidate's key");
+  const results = resultsOf(broken.context.document.getElementById("main").innerHTML);
+  equal(results.selected, substituted, "NC-RM12: Results opens on it");
+  equal(results.authorityOf("approve"), "decision",
     "NC-RM12: while offering to approve the substituted candidate");
 
   await mustFail("NC-RM12", "the workspace does not present a review it was not asked for", () => {
@@ -891,11 +930,16 @@ async function ncRM15() {
 
   ok(!seen.declared.includes("revise"), "NC-RM15: production-media declares no revise action");
   ok(seen.actions.includes("revise"), "NC-RM15: yet the projection claims it as a candidate decision: " + seen.actions.join(", "));
-  ok(card.actionSources.some(([id, source]) => id === "revise" && source === "decision"),
-    "NC-RM15: and the surface presents it as one");
+  /* EV2-7: decisions are presented in Results, so the surface this control reads is the
+     rendered Results page the shot's one review action opens — the real action seam. */
+  mountResults(broken);
+  await broken.context.openReturnedResultReview("L1-01", card.key);
+  const results = resultsOf(broken.context.document.getElementById("main").innerHTML);
+  equal(results.selected, card.key, "NC-RM15: precondition — Results opened on the returned candidate");
+  equal(results.authorityOf("revise"), "decision", "NC-RM15: and the Results revise control presents it as a decision");
 
-  await mustFail("NC-RM15", "two declared decisions", () => {
-    assert.deepStrictEqual(seen.actions, ["approve", "reject"], "a frame candidate declares two declared decisions");
+  await mustFail("NC-RM15", "Results offers revise as a workflow", () => {
+    assert.strictEqual(results.authorityOf("revise"), "workflow", "Results offers revise as a workflow, never as a candidate decision");
   });
 
   note("NC-RM15 restored the synthesised action: view-review became a candidate decision called revise, which production-media never declared");
@@ -1030,7 +1074,7 @@ async function ncRM19() {
     "NC-RM19: and Production reports it as the thing to do next");
   ok(/C1\.png/.test(seen.next.message), "NC-RM19: naming a file that was settled two decisions ago");
   equal(card.unavailable, true, "NC-RM19: while the shot workspace gives it the card");
-  ok(/file is missing/i.test(card.headline), "NC-RM19: reading " + JSON.stringify(card.headline));
+  equal(card.headline, "Returned result missing", "NC-RM19: reading " + JSON.stringify(card.headline));
 
   /* 5. AND THE HISTORICAL-SETTLEMENT INVARIANT GOES RED FOR IT. */
   await mustFail("NC-RM19", "the superseded historical candidate raises no current blocker", () => {
@@ -1054,6 +1098,13 @@ async function shippedBuildIsGreen() {
   requireReadinessSurvivesAsSecondary(card, "confirm-existing-reference", "shipped");
   const named = evaluate(page.context, `return projectNextProductionAction().reviewKey;`);
   equal(card.key, named, "shipped: the route and the card resolve the same candidate");
+  /* NC-RM15's guarantee on the shipped build, at the same Results seam it reads. */
+  mountResults(page);
+  await page.context.openReturnedResultReview("L1-01", card.key);
+  const results = resultsOf(page.context.document.getElementById("main").innerHTML);
+  equal(results.selected, card.key, "shipped: the hero's handoff opens that exact candidate in Results");
+  equal(results.authorityOf("revise"), "workflow", "shipped: Results offers revise as a workflow, never as a candidate decision");
+  equal(results.authorityOf("approve"), "decision", "shipped: and approval as a declared decision");
 
   const repair = repairProject();
   const repairPage = await render("#/shot/L1-01", repair, { scan: scanWith(repair, REPAIR_SCAN) });

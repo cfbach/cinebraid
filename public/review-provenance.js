@@ -649,14 +649,6 @@ function candidateCorrectionActivityMarkup(s, frame, row) {
   return `<section class="candidate-correction-activity ${active ? "active" : job?.status === "COMPLETED" ? "done" : job?.status === "FAILED" ? "failed" : ""}"><div><span>${active ? '<i class="spin">◌</i>' : job?.status === "COMPLETED" ? "✓" : job?.status === "FAILED" ? "!" : "↻"}</span><div><b>${esc(status)}</b><small>${esc(build.packageId || "Correction package")}${job?.error ? ` · ${esc(job.error)}` : ""}</small></div></div><button class="chip" onclick="openCandidateCorrectionModal('${s.id}','${frame?.id || ""}','${attr(row.stored || row.name || "")}','${build.id}')">OPEN CORRECTION</button></section>`;
 }
 
-function candidateReviewBadge(row) {
-  const review = normalizeCandidateStructuredReview(row);
-  if (!review?.reviewedAt && !review?.ai?.reviewedAt) return "";
-  const worst = candidateReviewWorst(review);
-  const label = worst === "pass" ? "REVIEW PASS" : `${worst.toUpperCase()} ISSUE`;
-  return `<span class="candidate-review-badge severity-${attr(worst)}">${esc(label)}</span>`;
-}
-
 function candidateReviewEvidence(s, frame, row, build, guide) {
   const referenceRows = candidateReviewReferenceRows(build, normalizeCandidateStructuredReview(row));
   return `<details class="candidate-review-evidence"><summary>Prompt and numbered-reference evidence <span>${referenceRows.length}</span></summary><div class="candidate-review-evidence-body"><div class="candidate-evidence-facts"><span>Shot ${esc(s.id)}</span><span>Frame ${esc(frame?.label || "A")}</span><span>${esc(build?.profileName || build?.profileId || "Source profile not recorded")}</span><span>${esc(build?.packageId || build?.id || "Build not recorded")}</span>${guide ? `<span>Guide: ${esc(guide.name)}</span>` : ""}</div><div class="candidate-evidence-brief"><b>Visible requirement</b><p>${esc(frame?.description || s.desc || "No frame description recorded.")}</p>${s.positioning ? `<p>${esc(s.positioning)}</p>` : ""}</div>${referenceRows.length ? `<div class="candidate-reference-contracts">${referenceRows.map((ref) => `<article><b>${esc(ref.token)} · ${esc(ref.label)}</b><span>${esc(ref.role)}</span><p>${esc(ref.instruction || "No specific reference instruction recorded.")}</p></article>`).join("")}</div>` : `<div class="guided-empty-inline"><b>No frozen numbered-reference list.</b><span>This candidate can still be reviewed against its shot and guide.</span></div>`}${build?.prompt ? `<details><summary>Original compiled prompt</summary><pre>${esc(build.prompt)}</pre></details>` : ""}</div></details>`;

@@ -270,3 +270,242 @@
 #main .shot-board .empty-state h2 { margin:0; font:650 20px/1.3 var(--body); color:var(--ink); }
 #main .shot-board .empty-state p { margin:8px 0 0; font:14px/1.5 var(--body); color:var(--muted); }
 #main .shot-board .board-no-match button { min-height:44px; margin-top:16px; padding:0 16px; border:1px solid var(--line-2); border-radius:8px; background:transparent; font:500 14px/1 var(--body); color:var(--ink); }
+
+/* EV2-7 Checkpoint 2 — Shot Desk */
+/* B2.8–B2.17. The Shot Desk (creation-studio.js guidedShotWorkspaceView) reads in one order: the breadcrumb; the whole
+   title with ID · duration · recorded state, ONE labelled Previous/Next pair, a visible Import existing… and the
+   secondary Shot actions; the shot intent, visible, whose own summary is its Change control and whose selector is shown
+   directly while nothing is declared; one quiet facts line; (the persistent stage bar, stage-surfaces.js;) one
+   leading-task hero; one Results rail; the selected stage's work; one Shot details disclosure. The header is part of
+   the page rather than a second sticky band under the stage bar. Type floors: body and reasons 14px, operational
+   secondary text 12px; every control at least 44px. Every rule is scoped to the shot workspace, the import chooser or
+   the repair context Results carries. */
+#main .bounded-shot-workspace .shot-main>.crumb { margin:0; font:14px/1.4 var(--body); letter-spacing:normal; color:var(--muted); }
+#main .bounded-shot-workspace .shot-main>.crumb a { display:inline-flex; align-items:center; min-height:44px; color:var(--acc); text-decoration:underline; text-underline-offset:3px; }
+#main .bounded-shot-workspace .shot-workspace-head { position:static; top:auto; z-index:auto; display:flex; flex-wrap:wrap; align-items:flex-start; justify-content:space-between; gap:12px 20px; margin:0; padding:0 0 12px; border:0; border-bottom:1px solid var(--line); border-radius:0; background:none; box-shadow:none; backdrop-filter:none; }
+#main .bounded-shot-workspace .shot-head-main { flex:1 1 320px; min-width:0; }
+#main .bounded-shot-workspace .shot-title-display { margin:0; font:700 30px/1.2 var(--display); letter-spacing:-.01em; white-space:normal; overflow:visible; text-overflow:clip; overflow-wrap:anywhere; color:var(--ink); }
+#main .bounded-shot-workspace .shot-head-main>.record-meta { margin:6px 0 0; font:15px/1.45 var(--body); letter-spacing:normal; color:var(--muted); }
+#main .bounded-shot-workspace .shot-head-controls { display:flex; flex-wrap:wrap; align-items:flex-start; justify-content:flex-end; gap:8px; width:auto; }
+#main .bounded-shot-workspace .shot-head-nav { display:flex; gap:8px; }
+#main .bounded-shot-workspace .shot-head-nav>a,#main .bounded-shot-workspace .shot-head-nav>span { display:grid; place-items:center; width:44px; min-width:44px; height:44px; min-height:44px; border:1px solid var(--line-2); border-radius:8px; font:22px/1 var(--body); color:var(--ink); text-decoration:none; }
+#main .bounded-shot-workspace .shot-head-nav>a:hover { border-color:var(--acc); }
+#main .bounded-shot-workspace .shot-head-nav>span { opacity:.35; }
+#main .bounded-shot-workspace .shot-head-controls>.shot-import-open { width:auto; min-height:44px; padding:0 14px; border:1px solid var(--line-2); border-radius:8px; background:transparent; font:500 15px/1.2 var(--body); letter-spacing:normal; text-transform:none; white-space:nowrap; color:var(--ink); }
+#main .bounded-shot-workspace .shot-import-open:hover { border-color:var(--acc); }
+#main .bounded-shot-workspace .shot-head-controls>.guided-inline-actions { min-width:0; border:0; background:none; }
+#main .bounded-shot-workspace .shot-head-controls>.guided-inline-actions>summary { min-height:44px; padding:0 10px; border:1px solid transparent; border-radius:8px; background:transparent; font:500 15px/1.2 var(--body); letter-spacing:normal; text-transform:none; white-space:nowrap; color:var(--ink); }
+#main .bounded-shot-workspace .shot-head-controls>.guided-inline-actions>summary::before { content:"▸"; margin-right:8px; font-size:12px; }
+#main .bounded-shot-workspace .shot-head-controls>.guided-inline-actions[open] { display:grid; gap:6px; min-width:190px; }
+#main .bounded-shot-workspace .shot-head-controls>.guided-inline-actions[open]>summary { border-color:var(--line-2); }
+#main .bounded-shot-workspace .shot-head-controls>.guided-inline-actions[open]>summary::before { content:"▾"; }
+#main .bounded-shot-workspace .shot-head-controls>.guided-inline-actions>button { width:100%; min-height:44px; margin:0; padding:0 14px; text-align:left; font:500 14px/1.2 var(--body); letter-spacing:normal; text-transform:none; }
+/* 2. The intent line. Its summary is the control that changes it, so it says so; while nothing is declared it opens on
+   its selector and explanation, and says Choose if a filmmaker folds it. */
+#main .bounded-shot-workspace .shot-intent-control { margin:0; border:0; border-bottom:1px solid var(--line); border-radius:0; background:none; }
+#main .bounded-shot-workspace .shot-intent-control[open] { background:none; }
+#main .bounded-shot-workspace .shot-intent-control>summary { display:flex; flex-wrap:wrap; align-items:center; gap:4px 14px; min-height:56px; padding:6px 0; }
+#main .bounded-shot-workspace .shot-intent-control>summary b { font:700 15px/1.3 var(--body); letter-spacing:normal; text-transform:none; color:var(--ink); }
+#main .bounded-shot-workspace .shot-intent-control>summary span { font:15px/1.4 var(--body); color:var(--ink); overflow-wrap:anywhere; }
+#main .bounded-shot-workspace .shot-intent-control>summary::after { content:"Change"; display:inline-flex; align-items:center; min-height:44px; margin-left:0; padding:0 14px; border:1px solid var(--line-2); border-radius:8px; font:500 15px/1.2 var(--body); color:var(--ink); }
+#main .bounded-shot-workspace .shot-intent-control[open]>summary::after { content:"Done"; }
+#main .bounded-shot-workspace .shot-intent-control[data-shot-intent-reading="absent"]:not([open])>summary::after { content:"Choose"; }
+#main .bounded-shot-workspace .shot-intent-control[data-shot-intent-reading="absent"][open]>summary::after { content:none; }
+#main .bounded-shot-workspace .shot-intent-control>summary:hover::after { border-color:var(--acc); }
+#main .bounded-shot-workspace .shot-intent-control .shot-intent-undeclared { margin:0 0 8px; padding:0; font:15px/1.5 var(--body); color:var(--ink); }
+#main .bounded-shot-workspace .shot-intent-fields { gap:8px 16px; padding:0 0 14px; }
+#main .bounded-shot-workspace .shot-intent-fields label { font:600 15px/1.4 var(--body); letter-spacing:normal; text-transform:none; color:var(--ink); }
+#main .bounded-shot-workspace .shot-intent-fields select { min-width:260px; min-height:44px; padding:8px 32px 8px 12px; font:15px/1.3 var(--body); }
+#main .bounded-shot-workspace .shot-intent-fields .hint { font:13px/1.5 var(--body); color:var(--muted); }
+/* 3. One quiet facts line. */
+#main .bounded-shot-workspace .shot-facts { margin:0; padding:10px 0 12px; border-bottom:1px solid var(--line); font:14px/1.5 var(--body); color:var(--muted); overflow-wrap:anywhere; }
+#main .bounded-shot-workspace .shot-facts-sep { color:var(--faint); }
+/* 5. One leading-task hero: a compact contained preview beside the recommendation, its one action, what a repair was
+   asked to fix, and Before/Current as small labelled previews. The previous/next pair is no longer drawn here. */
+#main .bounded-shot-workspace .guided-next-action { grid-template-columns:240px minmax(0,1fr); gap:20px; align-items:start; margin:16px 0; padding:18px 20px; border:1px solid var(--line); border-left:3px solid var(--acc); border-radius:0 10px 10px 0; background:var(--panel); }
+#main .bounded-shot-workspace .guided-next-action.returned-review-card { border-left-color:var(--cb-action-warm); }
+#main .bounded-shot-workspace .guided-next-action .guided-lifecycle-preview { width:240px; height:135px; max-height:none; aspect-ratio:auto; min-height:0; border-radius:6px; overflow:hidden; background:var(--img-well-bg); }
+#main .bounded-shot-workspace .guided-next-action .guided-lifecycle-media { display:grid; place-items:center; width:100%; height:100%; }
+#main .bounded-shot-workspace .guided-next-action .guided-lifecycle-media img,#main .bounded-shot-workspace .guided-next-action .guided-lifecycle-media video { width:auto; height:auto; max-width:240px; max-height:135px; object-fit:contain; }
+#main .bounded-shot-workspace .guided-next-action .guided-lifecycle-media.image>span { font:600 12px/1.2 var(--body); letter-spacing:.02em; }
+/* A video preview keeps its native controls clear: its larger-preview control is a full-size button beneath it. */
+@media(min-width:761px) {
+  #main .bounded-shot-workspace .guided-next-action .guided-lifecycle-preview:has(>.guided-lifecycle-media>.media-enlarge-btn) { height:auto; overflow:visible; background:transparent; }
+  #main .bounded-shot-workspace .guided-next-action .guided-lifecycle-media:has(>.media-enlarge-btn) { height:auto; grid-template-rows:135px auto; gap:8px; overflow:visible; background:transparent; }
+  #main .bounded-shot-workspace .guided-next-action .guided-lifecycle-media:has(>.media-enlarge-btn)>video { border-radius:6px; background:var(--img-well-bg); }
+  #main .bounded-shot-workspace .guided-next-action .guided-lifecycle-media>.media-enlarge-btn { position:static; justify-self:stretch; min-height:44px; padding:0 12px; border:1px solid var(--line-2); border-radius:8px; background:var(--panel-2); color:var(--ink); font:500 14px/1.2 var(--body); letter-spacing:normal; box-shadow:none; opacity:1; }
+}
+#main .bounded-shot-workspace .guided-next-action>div>span { font:600 12px/1.4 var(--body); letter-spacing:.06em; color:var(--muted); }
+#main .bounded-shot-workspace .guided-next-action h2 { margin:4px 0 6px; font:700 23px/1.3 var(--display); color:var(--ink); overflow-wrap:anywhere; }
+#main .bounded-shot-workspace .guided-next-action p { margin:0 0 12px; font:15px/1.5 var(--body); color:var(--ink); overflow-wrap:anywhere; }
+#main .bounded-shot-workspace .guided-next-actions { display:flex; flex-wrap:wrap; align-items:center; gap:8px 14px; }
+#main .bounded-shot-workspace .guided-next-actions .shot-primary-action { min-height:44px; padding:0 18px; font:650 15px/1.2 var(--body); letter-spacing:normal; text-transform:none; }
+#main .bounded-shot-workspace .returned-review-card .shot-primary-action { border-color:var(--cb-action-warm); background:var(--cb-action-warm); color:#241e17; }
+#main .bounded-shot-workspace .returned-review-more { font:13px/1.45 var(--body); color:var(--muted); }
+#main .bounded-shot-workspace .returned-review-fix { margin:14px 0 0; font:15px/1.5 var(--body); font-weight:600; color:var(--ink); }
+#main .bounded-shot-workspace .returned-review-context { display:flex; flex-wrap:wrap; gap:10px 20px; margin:12px 0 0; }
+#main .bounded-shot-workspace .returned-review-compare { flex:0 1 auto; align-items:center; gap:10px; max-width:360px; min-height:44px; padding:0; border:0; background:none; }
+#main .bounded-shot-workspace .returned-review-compare.missing { padding:8px 10px; border:1px dashed var(--line-2); border-radius:8px; }
+#main .bounded-shot-workspace .returned-review-compare-media { width:72px; height:46px; border-radius:6px; }
+#main .bounded-shot-workspace .returned-review-compare-media img,#main .bounded-shot-workspace .returned-review-compare-media video { object-fit:contain; }
+#main .bounded-shot-workspace .returned-review-compare b { font:500 13px/1.35 var(--body); letter-spacing:normal; text-transform:none; color:var(--muted); }
+#main .bounded-shot-workspace .returned-review-compare small { font:12px/1.35 var(--body); color:var(--muted); }
+#main .bounded-shot-workspace .returned-review-compare em { font:12px/1.4 var(--body); color:var(--muted); }
+#main .bounded-shot-workspace .returned-review-secondary { gap:4px; margin-top:14px; padding:12px 14px; }
+#main .bounded-shot-workspace .returned-review-secondary>span { font:600 12px/1.4 var(--body); letter-spacing:.04em; }
+#main .bounded-shot-workspace .returned-review-secondary>b { font:600 14px/1.4 var(--body); }
+#main .bounded-shot-workspace .returned-review-secondary>small { font:13px/1.5 var(--body); }
+#main .bounded-shot-workspace .returned-review-secondary>.chip { min-height:44px; padding:0 14px; font:500 14px/1.2 var(--body); letter-spacing:normal; text-transform:none; }
+#main .bounded-shot-workspace .guided-lifecycle-empty span { font:600 12px/1.4 var(--body); letter-spacing:.06em; }
+/* A failed or unsettled run for this shot, beside the hero on every stage. */
+#main .bounded-shot-workspace .shot-activity-inline { display:flex; flex-wrap:wrap; align-items:center; justify-content:space-between; gap:10px 16px; margin:-4px 0 16px; padding:12px 16px; border:1px solid var(--line); border-left:3px solid var(--blue); border-radius:0 10px 10px 0; background:var(--panel); }
+#main .bounded-shot-workspace .shot-activity-inline.state-active { border-left-color:var(--op-working); }
+#main .bounded-shot-workspace .shot-activity-inline.state-review,#main .bounded-shot-workspace .shot-activity-inline.state-pending { border-left-color:var(--op-waiting); }
+#main .bounded-shot-workspace .shot-activity-inline.state-done { border-left-color:var(--op-done); }
+#main .bounded-shot-workspace .shot-activity-inline.state-failed,#main .bounded-shot-workspace .shot-activity-inline.is-attention { border-left-color:var(--op-attention); }
+#main .bounded-shot-workspace .shot-activity-inline>div { display:grid; gap:2px; min-width:0; flex:1 1 320px; }
+#main .bounded-shot-workspace .shot-activity-inline>.shot-activity-actions { display:flex; flex-wrap:wrap; gap:8px; flex:0 1 auto; }
+#main .bounded-shot-workspace .shot-activity-inline b { font:600 15px/1.4 var(--body); color:var(--ink); overflow-wrap:anywhere; }
+#main .bounded-shot-workspace .shot-activity-inline span { font:14px/1.45 var(--body); color:var(--muted); overflow-wrap:anywhere; }
+#main .bounded-shot-workspace .shot-activity-inline .ghost-btn { width:auto; min-height:44px; padding:0 16px; font:500 14px/1.2 var(--body); color:var(--ink); }
+/* 6. One Results rail: a summary per target, the current Approved preview, exactly one named Results button each. */
+#main .bounded-shot-workspace .shot-results-rail { display:grid; grid-template-columns:repeat(auto-fit,minmax(min(100%,280px),1fr)); gap:12px; margin:0 0 24px; }
+#main .bounded-shot-workspace .shot-results-note { grid-column:1/-1; margin:0; font:14px/1.5 var(--body); color:var(--amber); }
+#main .bounded-shot-workspace .shot-results-target { display:grid; grid-template-columns:72px minmax(0,1fr); gap:12px 14px; align-items:center; min-width:0; padding:14px; border:1px solid var(--line); border-radius:10px; background:var(--panel); }
+#main .bounded-shot-workspace .shot-results-approved { display:grid; place-items:center; width:72px; height:48px; border-radius:6px; overflow:hidden; background:var(--img-well-bg); color:inherit; }
+#main .bounded-shot-workspace .shot-results-approved img,#main .bounded-shot-workspace .shot-results-approved video { width:100%; height:100%; object-fit:contain; }
+#main .bounded-shot-workspace a.shot-results-approved:hover { outline:2px solid var(--acc); }
+#main .bounded-shot-workspace .shot-results-approved.is-empty { border:1px dashed var(--line-2); background:transparent; }
+#main .bounded-shot-workspace .shot-results-approved.is-unavailable { border-color:var(--amber); }
+#main .bounded-shot-workspace .shot-results-copy { display:grid; gap:2px; min-width:0; justify-items:start; }
+#main .bounded-shot-workspace .shot-results-copy>b { font:650 15px/1.35 var(--body); color:var(--ink); overflow-wrap:anywhere; }
+#main .bounded-shot-workspace .shot-results-copy>small { font:13px/1.45 var(--body); color:var(--muted); overflow-wrap:anywhere; }
+#main .bounded-shot-workspace .shot-results-open { width:auto; min-height:44px; margin-top:8px; padding:0 16px; border:1px solid var(--line-2); border-radius:8px; background:var(--panel-2); font:500 15px/1.2 var(--body); letter-spacing:normal; text-transform:none; color:var(--ink); }
+#main .bounded-shot-workspace .shot-results-open:hover { border-color:var(--acc); }
+#main .bounded-shot-workspace .shot-results-picker { display:flex; flex-wrap:wrap; align-items:center; gap:8px; margin:0 0 6px; font:600 14px/1.3 var(--body); color:var(--ink); }
+#main .bounded-shot-workspace .shot-results-picker select { width:auto; min-width:190px; min-height:44px; padding:8px 30px 8px 12px; font:15px/1.3 var(--body); }
+/* 7. The selected stage's own words, at reading size. */
+#main .bounded-shot-workspace .guided-frame-return>header b { font:600 14px/1.45 var(--body); }
+#main .bounded-shot-workspace .guided-frame-return>header span { font:600 12px/1.4 var(--body); letter-spacing:.06em; }
+#main .bounded-shot-workspace .guided-motion-results .motion-section-heading small { font:14px/1.45 var(--body); }
+/* The import targets are controls: pressable at 44px, their words at reading size. */
+#main .bounded-shot-workspace .guided-frame-return .dropzone,
+#main .bounded-shot-workspace .guided-motion-results .dropzone { display:flex; align-items:center; justify-content:center; min-height:44px; padding:10px 14px; font:500 13px/1.4 var(--body); letter-spacing:.02em; color:var(--muted); cursor:pointer; }
+#main .bounded-shot-workspace .guided-frame-return .dropzone.dropzone-lg,
+#main .bounded-shot-workspace .guided-motion-results .dropzone.dropzone-lg { min-height:88px; font-size:14px; }
+#main .bounded-shot-workspace .guided-frame-return .guided-empty-inline { font:14px/1.45 var(--body); }
+#main .bounded-shot-workspace .guided-frame-return .guided-empty-inline b { font-weight:600; color:var(--ink); }
+#main .bounded-shot-workspace .guided-frame-return-actions .guided-inline-actions>summary { display:flex; align-items:center; min-height:44px; font:500 14px/1.2 var(--body); }
+#main .bounded-shot-workspace .guided-motion-results .motion-section-heading>span { font:600 12px/1.4 var(--body); letter-spacing:.06em; }
+#main .bounded-shot-workspace .guided-motion-results .motion-section-heading i { font-size:12px; }
+/* The blocked reason on the Motion stage is read, not skimmed. */
+#main .bounded-shot-workspace .guided-motion-card>summary .guided-motion-blocked-reason { font:14px/1.45 var(--body); color:var(--ink); }
+/* 8. One Shot details disclosure, after the work. */
+#main .bounded-shot-workspace .shot-details { margin:24px 0 8px; border-top:1px solid var(--line); }
+#main .bounded-shot-workspace .shot-details>summary { display:flex; align-items:center; gap:8px; min-height:52px; cursor:pointer; list-style:none; font:500 15px/1.3 var(--body); color:var(--ink); }
+#main .bounded-shot-workspace .shot-details>summary::-webkit-details-marker { display:none; }
+#main .bounded-shot-workspace .shot-details>summary::before { content:"▸"; font-size:12px; }
+#main .bounded-shot-workspace .shot-details[open]>summary::before { content:"▾"; }
+#main .bounded-shot-workspace .shot-details-body { display:grid; grid-template-columns:repeat(auto-fit,minmax(min(100%,300px),1fr)); gap:12px 32px; padding:4px 0 16px; }
+#main .bounded-shot-workspace .shot-details-body dl { display:grid; gap:10px; margin:0; }
+#main .bounded-shot-workspace .shot-details-body dt { font:600 12px/1.4 var(--body); letter-spacing:.04em; color:var(--muted); }
+#main .bounded-shot-workspace .shot-details-body dd { margin:2px 0 0; font:14px/1.5 var(--body); color:var(--ink); overflow-wrap:anywhere; }
+@media(max-width:760px) {
+  #main .bounded-shot-workspace .shot-title-display { font-size:26px; }
+  #main .bounded-shot-workspace .shot-head-controls { justify-content:flex-start; width:100%; }
+  #main .bounded-shot-workspace .shot-intent-fields select { width:100%; min-width:0; }
+  /* The hero keeps its preview: a small contained thumbnail beside the kicker and headline, then the sentence, the
+     action at full width, the reason and Before/Current beneath. */
+  #main .bounded-shot-workspace .guided-next-action { grid-template-columns:96px minmax(0,1fr); gap:10px 12px; padding:14px; }
+  #main .bounded-shot-workspace .guided-next-action>.guided-lifecycle-preview { grid-column:1; grid-row:1 / span 2; display:block; width:96px; height:54px; }
+  #main .bounded-shot-workspace .guided-next-action .guided-lifecycle-media img,#main .bounded-shot-workspace .guided-next-action .guided-lifecycle-media video { max-width:96px; max-height:54px; }
+  #main .bounded-shot-workspace .guided-next-action .guided-lifecycle-media .media-enlarge-btn,#main .bounded-shot-workspace .guided-next-action .guided-lifecycle-media.image>span { display:none; }
+  /* A 96px motion thumbnail is a poster, not a player: native controls would cover the whole frame. Playback is
+     one press away through the hero's review action (Results · Screening). */
+  #main .bounded-shot-workspace .guided-next-action .guided-lifecycle-media video { pointer-events:none; }
+  #main .bounded-shot-workspace .guided-next-action .guided-lifecycle-media video::-webkit-media-controls { display:none!important; }
+  #main .bounded-shot-workspace .guided-next-action>div:not(.guided-lifecycle-preview) { display:contents; }
+  #main .bounded-shot-workspace .guided-next-action>div>span { grid-column:2; grid-row:1; align-self:end; }
+  #main .bounded-shot-workspace .guided-next-action>div>h2 { grid-column:2; grid-row:2; align-self:start; margin:0; font-size:20px; }
+  #main .bounded-shot-workspace .guided-next-action>div>:not(span):not(h2) { grid-column:1 / -1; }
+  #main .bounded-shot-workspace .guided-next-action p { margin:4px 0 0; }
+  #main .bounded-shot-workspace .guided-next-actions .shot-primary-action { flex:1 1 100%; width:100%; }
+  #main .bounded-shot-workspace .returned-review-context { display:grid; grid-template-columns:1fr 1fr; gap:10px; }
+  #main .bounded-shot-workspace .returned-review-compare { flex-direction:column; align-items:flex-start; }
+  #main .bounded-shot-workspace .shot-results-rail { grid-template-columns:minmax(0,1fr); gap:10px; }
+  #main .bounded-shot-workspace .shot-results-target { grid-template-columns:72px minmax(0,1fr); padding:12px; }
+  #main .bounded-shot-workspace .shot-results-approved { width:72px; height:44px; }
+  #main .bounded-shot-workspace .shot-results-open { width:100%; }
+  #main .bounded-shot-workspace .shot-results-picker select { width:100%; min-width:0; }
+}
+/* The Import existing… target chooser (a modal, so it lives outside #main). */
+.shot-import-chooser .shot-import-lede { margin:10px 0 14px; font:14px/1.5 var(--body); color:var(--ink); }
+.shot-import-chooser .shot-import-targets { display:grid; grid-template-columns:repeat(auto-fit,minmax(min(100%,170px),1fr)); gap:8px; }
+.shot-import-chooser .shot-import-target { width:100%; min-height:44px; padding:10px 14px; text-align:left; font:500 15px/1.3 var(--body); letter-spacing:normal; text-transform:none; color:var(--ink); }
+.shot-import-chooser .shot-import-target[aria-pressed="true"] { border-color:var(--acc); background:var(--acc-soft,rgba(125,202,211,.09)); }
+.shot-import-chooser .shot-import-status { min-height:1.5em; margin:14px 0 0; font:14px/1.5 var(--body); color:var(--muted); }
+/* The recorded repair context Results carries beside the selected result, in Screening and in Original request. */
+.results-desk .rx-repair,.rx-request .rx-repair { display:grid; gap:4px; margin:10px 0 12px; padding:10px 12px; border-left:3px solid var(--cb-action-warm); background:rgba(255,255,255,.03); }
+.results-desk .rx-repair p,.rx-request .rx-repair p { margin:0; font:14px/1.5 var(--body); overflow-wrap:anywhere; }
+.results-desk .rx-repair-fix,.rx-request .rx-repair-fix { font-weight:600; color:var(--rx-ink,#eef0f1); }
+.results-desk .rx-repair-parent,.rx-request .rx-repair-parent { color:var(--rx-muted,#acb2b8); }
+
+/* EV2-7 Checkpoint 2 — Shot Desk stage-body type & target floor
+   The selected stage's work (item 7 of the Desk order) is still drawn by the long-standing
+   stage renderers, whose kickers, captions and buttons were sized for a denser desk: 7–11px
+   text and 21–42px controls. Inside the Shot Desk's stage body only, secondary text reads at
+   12px or more, item titles at 13px, reasons and body copy at 14px, and controls reach 44px.
+   Only font-size and target size change: nothing outside .guided-work-stack, and no stage
+   renderer's markup, weight, family or behaviour. Inline links inside a sentence keep the
+   sentence's line. */
+#main .bounded-shot-workspace .guided-work-stack :is(
+  .guided-work-panel > summary > div > span, .guided-work-panel > summary > div > small,
+  .guided-asset-choice small, .guided-asset-choice > span, .guided-asset-picker-section > b,
+  .guided-input-tray small, .guided-input-toggle,
+  .shot-automation-status-grid span, .shot-automation-status-grid small,
+  .guided-shot-state-declarations article span, .guided-shot-state-declarations > header span, .guided-shot-state-declarations small,
+  .continuity-intent-row > header small, .continuity-state-row > header small, .continuity-intent-presence > span, .continuity-intent-note > span,
+  .motion-create-section .field > label, .motion-create-section label > span, .motion-create-section .motion-director summary, .motion-create-section small, .motion-create-section p,
+  .hint, .composer-package-list code, .composer-package-list small, .composer-package-preview > summary > span, .composer-package-preview small,
+  .guided-inline-defaults > summary, .guided-inline-actions > summary, .guided-source-manager > summary,
+  .shot-automation-hub > summary span, .shot-automation-hub > summary small, .automation-run-status b, .automation-persistence-note,
+  .guided-workflow-title > div > span, .guided-workflow-title > span, .guided-workflow-title p,
+  .guided-frame-rail button small, .guided-frame-head span, .guided-frame-head small,
+  .field label, .form-field label, .guided-frame-input-summary span,
+  .motion-workflow-map span, .motion-workflow-map small,
+  .reference-assisted-tools > summary span, .guided-assisted-tools > summary span, .guided-assisted-tools > summary small,
+  .guided-next-note, .frame-presence-row small, .guided-mode-pill,
+  .motion-section-heading > span, .motion-section-heading > i, .motion-section-heading small,
+  .project-media-head span, .project-media-summary small,
+  .shot-aspect-control > summary b, .shot-aspect-control > summary span, .shot-aspect-fields label,
+  .blocking-dropzone span, .blocking-setup .checkline, .blocking-intake small, .guided-assisted-action-note,
+  .blocking-revision-box > header small, .automation-inline-card > div:first-child small,
+  .frame-generation-head span, .frame-generation-head small, .frame-generation-head i, .frame-prompt-missing,
+  .frame-prompt-tools > summary span, .frame-prompt-tools > summary small, .guided-shot-options > summary,
+  .guided-location-choice label > span, .guided-picker-group > span, .guided-motion-controls label > span, .guided-compile-bar label > span,
+  .frame-prompt-tools-note, .shot-continuity-fold > summary, .shot-continuity > header span, .shot-continuity small,
+  .guided-add-frame span, .motion-director-subject header span, .motion-director > summary span,
+  .guided-frame-approved-preview span, .guided-thumb-preview span, .guided-thumb-preview em,
+  .guided-frame-context small, .guided-frame-context a, .media-enlarge-btn, .text-link-btn, .approve-btn,
+  .guided-motion-frame-preview span, .guided-motion-frame-preview em, .frames-to-motion-cta span, .prompt-check,
+  .motion-sound-launcher > summary span, .motion-unit-tabs > summary > span, .motion-unit-tabs button span, .motion-unit-tabs footer span,
+  .guided-audio-block > summary, .guided-audio-mode-note, .continuity-state-cells span, .frame-sequence-thumbs span,
+  .guided-previous-frame-toggle small, .legacy-continuity-review > summary span, .frame-sequence-review > header span,
+  .guided-prompt-result > header span, .guided-finish-current small, .shot-stage-automation small,
+  .frame-sequence-review small, .motion-sound-launcher > summary > i, .motion-camera-glyph,
+  .guided-input-placeholder, .frame-operation-status > span, .frame-operation-status header span
+) { font-size:12px; }
+/* Two legacy declarations are !important (styles.css); these answer them one to one. */
+#main .bounded-shot-workspace .guided-work-stack .guided-ready-motion-prompt { font-size:12px!important; }
+#main .bounded-shot-workspace .guided-work-stack .guided-motion-frame-strip article > b { font-size:13px!important; }
+#main .bounded-shot-workspace .guided-work-stack :is(
+  .guided-asset-choice b, .guided-input-tray b, .shot-automation-status-grid b, .motion-workflow-map b, .assemble-btn,
+  .guided-frame-context > b, .guided-finish-current b, .guided-previous-frame-toggle b,
+  .motion-sound-launcher > summary b, .guided-add-frame b, .guided-next-note b, .fal-job-strip b
+) { font-size:13px; }
+#main .bounded-shot-workspace .guided-work-stack :is(.disabled-action-reason, .frames-to-motion-cta small, .guided-empty-inline b, .guided-empty-inline span, .automation-run-outcome, .fal-job-strip small) { font-size:14px; }
+/* Targets. A checkbox's target is its whole label row; an inline link keeps its sentence. */
+#main .bounded-shot-workspace .guided-work-stack :is(button, select, summary, textarea, input:not([type=checkbox]):not([type=radio]):not([type=file]):not([type=range]):not([type=color]):not([type=hidden])) { min-height:44px; }
+#main .bounded-shot-workspace .guided-work-stack :is(a.text-link-btn, a.chip, .guided-frame-context-actions a) { display:inline-flex; align-items:center; min-height:44px; }
+#main .bounded-shot-workspace .guided-work-stack label:is(.checkline, .project-media-use) { display:flex; align-items:center; gap:8px; min-height:44px; }
+#main .bounded-shot-workspace .navigator-toggle { min-width:44px; min-height:44px; }

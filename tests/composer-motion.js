@@ -1253,7 +1253,15 @@ async function testCandidateReviewAndCorrectionWorkspace() {
   project.shots[0].creationBrief = { activeBlockingAssetId: "blocking-guide-1", frameWorkflows: { "frame-a": { promptBuilds: [{ buildId: "frame-build-review", kind: "guided-frame" }] } }, promptBuilds: [{ buildId: "frame-build-review", kind: "guided-frame" }], composition: { camera: {}, elements: [] } };
   project.shots[0].candidateFiles = [{ stored: "FRAME_B.png", original: "FRAME_B.png", frameId: "frame-a", decision: "unreviewed", notes: "", labels: [], sourcePackageId: "L1-01-A-R01", sourcePackageLabel: "L1-01-A-R01" }];
   const rendered = await render("#/shot/L1-01", project, { storage: { "cinebraid-focused:fixture:shot-task:L1-01": "frames" } });
-  assert(rendered.html.includes("Review candidate"), "returned frame candidates should expose the structured review workspace");
+  /* EV2-7: the frame's candidate tray, which carried "Review candidate", is gone. A returned
+     frame candidate is reached through its exact Frame Results entry, and Results opens the
+     structured review workspace for a candidate that declares the revise workflow. */
+  const reviewRoute = JSON.parse(vm.runInContext(`JSON.stringify((() => {
+    const row = returnedReviewProjectionForBrowser().items.find((item) => item.candidate.name === "FRAME_B.png");
+    return { frame: row ? row.owner.frameId : "", workflows: row ? row.workflows : [] };
+  })())`, rendered.context));
+  assert(rendered.html.includes(`onclick="openShotResults('L1-01','frame','frame-a')"`), "returned frame candidates should be reachable through their exact Frame Results entry");
+  assert(reviewRoute.frame === "frame-a" && reviewRoute.workflows.includes("revise"), "and declare the structured review workflow Results opens for them");
   rendered.context.openCandidateReview("L1-01", "frame-a", "FRAME_B.png");
   const modal = rendered.context.document.getElementById("modal").innerHTML;
   assert(modal.includes("STRUCTURED RUBRIC"));

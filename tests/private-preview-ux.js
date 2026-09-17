@@ -173,9 +173,16 @@ async function main() {
   project.shots[0].deliveryRoute = 'flf';
   const motion = await render('#/shot/L1-01', project, { scan, storage: { 'cinebraid-focused:fixture:shot-task:L1-01': 'motion' } });
   assert(motion.html.includes('motion-workflow-map'), 'motion must expose a three-stage navigation map');
-  for (const text of ['1 · APPROVED FRAMES', '2 · RETURNED VIDEO', '3 · ASSISTED MOTION']) assert(motion.html.includes(text), `${text} heading missing`);
+  for (const text of ['1 · APPROVED FRAMES', '2 · VIDEO IMPORT', '3 · ASSISTED MOTION']) assert(motion.html.includes(text), `${text} heading missing`);
   assert(motion.html.includes('guided-motion-frame-preview'), 'approved motion frames must open larger previews');
-  assert(motion.html.includes('Larger preview'), 'returned videos must expose a non-fullscreen larger player');
+  /* EV2-7 B2.13: returned videos are played at size, compared and approved in Results and
+     Screening. The Motion stage keeps import; the Results rail is the one way in. */
+  const videoImport = (motion.html.match(/<section class="guided-motion-results[\s\S]*?<\/section>/) || [''])[0];
+  assert(videoImport.includes('id="motion-file"') && !/<video\b/.test(videoImport) && !videoImport.includes('APPROVE VIDEO'),
+    'the Motion stage keeps video import and draws no per-result player or approval of its own');
+  const motionEntries = [...motion.html.matchAll(/<button[^>]*onclick="([^"]*)"[^>]*>Motion Results<\/button>/g)].map((match) => match[1]);
+  assert.deepStrictEqual(motionEntries, ["openShotResults('L1-01','motion','')"], 'returned videos are reached through exactly one Motion Results entry');
+  assert(/data-results-target="motion" data-results-count="[1-9]\d*"/.test(motion.html), 'and the rail counts the returned video');
   assert(motion.html.includes('openMediaTheatre'), 'motion media must use the in-app theatre preview');
   motion.context.openMediaTheatre(encodeURIComponent('/assets/shots/L1-01/takes/FRAME_A.png'), encodeURIComponent('Frame A'), 'image');
   const modal = motion.context.document.getElementById('modal').innerHTML;

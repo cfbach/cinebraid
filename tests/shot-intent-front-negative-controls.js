@@ -272,8 +272,10 @@ mustFailAsync("NC-6 requiredFrameCount falls back to the stored flag", "the comm
       `    requiredFrameCount: routeNeeds.known ? routeRequiredFrameCount : progress.frames.filter((frame) => frame.required !== false).length,`,
       "NC-6"),
   });
-  const summary = (String(page.map.get("main").innerHTML || "").match(/<section class="shot-command-summary"[^]*?<\/section>/) || [""])[0];
-  assert(/<b>0\/0<\/b>/.test(summary), "the command summary counts no required frame");
+  /* EV2-7: the summary is one facts line; its frames fact carries the exact count. */
+  const summary = (String(page.map.get("main").innerHTML || "").match(/<p class="shot-facts"[^]*?<\/p>/) || [""])[0];
+  const framesFact = (summary.match(/<span data-shot-fact="frames"[^>]*>/) || [""])[0];
+  assert(/data-required-frames="0\/0"/.test(framesFact), "the command summary counts no required frame");
 });
 
 /* ===========================================================================
@@ -287,11 +289,12 @@ mustFailAsync("NC-7 the undeclared summary claims an intent", "must not call an 
   const page = await render("#/shot/SC-01-01", project, {
     scan: scanFor(project),
     mutateSource: pageMutation("creation-studio.js",
-      `    : routeDeclared ? "not required by this intent" : "none until you say how this shot is made";`,
-      `    : "not required by this intent";`,
+      `    : routeDeclared ? "Frames: not required by this intent" : "No intent declared";`,
+      `    : "Frames: not required by this intent";`,
       "NC-7"),
   });
-  const summary = (String(page.map.get("main").innerHTML || "").match(/<section class="shot-command-summary"[^]*?<\/section>/) || [""])[0];
+  const summary = (String(page.map.get("main").innerHTML || "").match(/<p class="shot-facts"[^]*?<\/p>/) || [""])[0];
+  assert(summary, "probe receipt: the facts line must render");
   assert(!/not required by this intent/.test(summary), "must not call an undeclared shot's silence an intent");
 });
 

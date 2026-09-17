@@ -238,8 +238,12 @@
       readinessActions: [
         { code: "repair-presence-declaration", surface: "shot-frames", renderer: "guidedFramePresencePanel", control: "setFramePresence" },
         { code: "resolve-frame-state-declaration", panel: "frames", surface: "shot-frame-state-declaration", renderer: "guidedContinuityPanel", control: "continuityFrameStatePanelMarkup", focus: '[data-frame-state-declaration-invalid="1"] select' },
-        { code: "approve-parent-frame", surface: "shot-frames", renderer: "guidedFrameCandidatesPanel", control: "approveGuidedFrame" },
-        { code: "approve-required-frames", surface: "shot-frames", renderer: "guidedFrameCandidatesPanel", control: "approveGuidedFrame" },
+        /* EV2-7: a frame is approved in Results. The work these two codes name is exposed by
+           the Shot Desk's Results rail — rendered above every stage, Frames included — whose
+           per-target renderer draws the exact "Frame A Results" entry that opens that
+           frame's Results, where the approval confirmation and its durable save live. */
+        { code: "approve-parent-frame", surface: "shot-frames", renderer: "shotResultsTargetMarkup", control: "openShotResults" },
+        { code: "approve-required-frames", surface: "shot-frames", renderer: "shotResultsTargetMarkup", control: "openShotResults" },
         { code: "produce-frame", surface: "shot-frames", renderer: "guidedFrameCandidatesPanel", control: "guidedFrameCandidatesPanel" },
       ],
       panelViews: {},

@@ -396,9 +396,10 @@ async function surfaceControls() {
     "NC-13 a declared intent changes a rendered surface outside the control that declares it",
     "changed a rendered surface OUTSIDE the Shot Intent control",
     async () => {
+      /* EV2-7: the four summary tiles became one facts line, so the leak is planted there. */
       const hook = replacing("creation-studio.js",
-        "<article><span>Open stage</span>",
-        "<article><span>Intent</span><b>${esc(declaredShotRoute(s) || \"none\")}</b><small>declared route</small></article><article><span>Open stage</span>",
+        "    `<span data-shot-fact=\"references\">${esc(referenceFact)}</span>`,",
+        "    `<span data-shot-fact=\"intent\">Intent: ${esc(declaredShotRoute(s) || \"none\")}</span>`,\n    `<span data-shot-fact=\"references\">${esc(referenceFact)}</span>`,",
         "NC-13");
       const mask = (slots) => slots.replace(/<details class="shot-intent-control"[\s\S]*?<\/details>/g, "<<SHOT-INTENT>>");
       const unrouted = await renderShot(undefined, { mutateSource: hook });

@@ -58,7 +58,8 @@ try:
     scan = {
         "anchors": [{"name":"CHAR-MANUAL-PRIMARY.png","url":tiny},{"name":"CHAR-MANUAL-FRONT.png","url":tiny},{"name":"CHAR-MANUAL-PROFILE.png","url":tiny}],
         "plates": [], "props": [], "vehicles": [], "audio": [], "media": [],
-        "shots": {shot_id: {"takes":[{"name":"MANUAL-FRAME-A.png","url":tiny},{"name":"MANUAL-FINISHED-VIDEO.mp4","assetId":"asset-11111111111111111111111111111111","url":"data:video/mp4;base64,"+base64.b64encode((ROOT / "tests/fixtures/ev2-6/motion-0.mp4").read_bytes()).decode()}],"locked":[]}},
+        # Each existing take carries the verified media identity Results approves by.
+        "shots": {shot_id: {"takes":[{"name":"MANUAL-FRAME-A.png","assetId":"asset-22222222222222222222222222222222","url":tiny},{"name":"MANUAL-FINISHED-VIDEO.mp4","assetId":"asset-11111111111111111111111111111111","url":"data:video/mp4;base64,"+base64.b64encode((ROOT / "tests/fixtures/ev2-6/motion-0.mp4").read_bytes()).decode()}],"locked":[]}},
     }
     disabled = {"ready":False,"label":"Disabled","provider":"none","model":"","message":"Disabled for manual-only audit.","action":""}
     agents = {"enabled":False,"manualMode":True,"active":0,"queued":0,"maxConcurrent":1,"capabilities":{k:disabled for k in ["text","verifier","vision","embedding","technical"]},"agents":[],"runs":[],"index":{"ready":False,"stale":True}}
@@ -211,7 +212,7 @@ try:
         open_hash(f"#/shot/{shot_id}")
         page.locator(".focused-task-button").filter(has=page.get_by_text("Frames", exact=True)).click()
         page.wait_for_timeout(150)
-        assert page.get_by_text("Import, choose, and approve images").count() == 1
+        assert page.get_by_text("Import or prepare images").count() == 1
         drop = page.locator(".guided-frame-dropzone").first
         # A FRAME'S ASSISTED TOOLS ARE `details.frame-generation` NOW -- "GENERATE THIS
         # FRAME · Prompt, where it runs, and what comes back". The claim is unchanged
@@ -224,12 +225,25 @@ try:
         assert not prompt.evaluate("node => node.open"), "frame prompt tools must stay collapsed"
         automation = page.locator("details.shot-stage-automation")
         assert automation.count() and not automation.first.evaluate("node => node.open"), "automation must remain optional and collapsed"
-        approve_frame = page.locator("button.guided-approve-selected")
-        assert approve_frame.count() == 1, "existing frame candidate must be directly approvable"
-        approve_frame.click()
-        page.wait_for_timeout(100)
-        page.get_by_role("button", name="APPROVE SHOT IMAGE").click()
+        # EV2-7 B2.11/B2.12: the Frames stage prepares requests and imports media; the
+        # existing frame is compared and approved in Results, reached through the Results
+        # rail's one entry for that frame. The same shipped confirmation is the only writer.
+        assert page.locator("button.guided-approve-selected").count() == 0, "the Frames stage no longer approves from a candidate tray"
+        assert page.get_by_text("Compare and approve in Results.", exact=False).count() >= 1, "the Frames stage says where approval happens"
+        page.evaluate("async()=>await flushPendingProjectSave()")
+        page.wait_for_function("()=>projectSaveSettled().settled")
+        rail = page.locator("[data-shot-results-rail]")
+        frame_results = rail.get_by_role("button", name="Frame A Results", exact=True)
+        assert rail.count() == 1 and frame_results.count() == 1, "the Results rail offers exactly one Frame A Results entry"
+        frame_results.click()
+        page.wait_for_selector("[data-results-desk]")
+        page.locator("#rx-approve").click()
+        page.wait_for_function("()=>document.getElementById('rx-confirm')&&!document.getElementById('rx-confirm').disabled")
+        page.locator('#rx-confirm').click()
+        page.wait_for_function('()=>!approvalSubmissionPending()')
         page.wait_for_timeout(250)
+        assert page.evaluate("id => (P.shots.find(x=>x.id===id).keyframes||[])[0].winner", shot_id) == "MANUAL-FRAME-A.png", "the existing frame became the Approved image through Results"
+        open_hash(f"#/shot/{shot_id}")
         motion_task = page.locator(".focused-task-button").filter(has=page.get_by_text("Motion & sound", exact=True))
         motion_task.click()
         page.wait_for_timeout(180)
@@ -239,12 +253,23 @@ try:
             page.wait_for_timeout(80)
         page.evaluate("async()=>await flushPendingProjectSave()")
         page.wait_for_function("()=>projectSaveSettled().settled")
-        assert page.get_by_text("Imported video", exact=True).count() >= 1
-        page.get_by_role("button", name="APPROVE VIDEO").click()
-        page.wait_for_function("()=>document.getElementById('rx-confirm')&&!document.getElementById('rx-confirm').disabled")
+        # EV2-13: Motion keeps video import and names what arrived; playing, comparing and
+        # approving the existing video happen in Results, through the rail's Motion entry.
+        assert page.locator("#motion-file").count() == 1, "the Motion stage keeps video import"
+        assert page.get_by_role("button", name="APPROVE VIDEO").count() == 0, "the Motion stage no longer approves per candidate"
+        motion_target = page.locator('[data-shot-results-rail] [data-results-target="motion"]')
+        assert motion_target.count() == 1 and int(motion_target.get_attribute("data-results-count") or "0") >= 1, "the rail counts the existing video"
+        motion_target.get_by_role("button", name="Motion Results", exact=True).click()
+        page.wait_for_selector("[data-results-desk]")
+        page.locator("#rx-approve").click()
+        page.wait_for_function("()=>(document.getElementById('rx-confirm')&&!document.getElementById('rx-confirm').disabled)||document.getElementById('rx-motion-target')")
+        if page.locator("#rx-motion-target").count():
+            page.get_by_role("button", name="Continue to review").click()
+            page.wait_for_function("()=>document.getElementById('rx-confirm')&&!document.getElementById('rx-confirm').disabled")
         page.locator('#rx-confirm').click()
         page.wait_for_function('()=>!approvalSubmissionPending()')
         page.wait_for_timeout(250)
+        open_hash(f"#/shot/{shot_id}")
         deliver_task = page.locator(".focused-task-button").filter(has=page.get_by_text("Deliver", exact=True))
         deliver_task.click()
         page.wait_for_timeout(180)

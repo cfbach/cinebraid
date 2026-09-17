@@ -28,7 +28,8 @@ WHAT IT ASSERTS, and every one is about the rendered DOM or a real click:
        control. This is the audit's first reproduction, from the filmmaker's side.
     B. SH-B opens on the REPAIR, declares itself a repair, and carries the take it
        repaired as Before — with that take's own image, comparable without leaving
-       the page.
+       the page. Its one action opens that exact repair in Results, which carries the
+       same reason and recorded parent beside the decision (EV2-7 B2.10).
     D. At 1280 the compact Before filename stays readable: nothing clipped, no
        ellipsis, and wrapped to a measure rather than a ribbon. Includes NC-RM17,
        a behavioural control that puts nowrap + ellipsis back through real CSS and
@@ -179,9 +180,14 @@ def card_state(page):
             headline: (card.querySelector('h2') || {}).textContent || '',
             body: (card.querySelector('p') || {}).textContent || '',
             primaryLabel: primary ? primary.textContent.trim() : '',
+            primaryCall: primary ? primary.getAttribute('onclick') || '' : '',
             primaryCount: document.querySelectorAll('.shot-primary-action').length,
-            actions: [...card.querySelectorAll('[data-returned-review-action]')]
+            // EV2-7: the hero reviews and Results decides, so a candidate decision drawn
+            // ANYWHERE in the shot workspace is counted, not only inside the card.
+            actions: [...document.querySelectorAll('#main [data-returned-review-action]')]
                 .map((b) => ({ id: b.dataset.returnedReviewAction, label: b.textContent.trim() })),
+            takeWords: /Use this take|Keep looking/.test(document.querySelector('#main')?.textContent || ''),
+            fix: (card.querySelector('.returned-review-fix') || {}).textContent || '',
             heroSrc: (card.querySelector('.guided-lifecycle-preview img') || {}).getAttribute?.('src') || '',
             heroCall: (card.querySelector('.guided-lifecycle-preview [onclick]') || {}).getAttribute?.('onclick') || '',
             // The readiness code lives on the secondary block itself, not on the card:
@@ -266,8 +272,14 @@ try:
         check("inspectMediaFile" in card["heroCall"],
               f"A. and it must hand off to the Inspector rather than only enlarging: {card['heroCall']!r}")
         check(card["primaryCount"] == 1, f"A. exactly one primary action, saw {card['primaryCount']}")
-        check([a["id"] for a in card["actions"]] == ["approve", "revise", "reject"],
-              f"A. the candidate's own decisions must be on the card: {card['actions']}")
+        # EV2-7 B2.10: the hero names the review and hands the EXACT result to Results,
+        # where approval, rejection and revision already live. It decides nothing itself.
+        check(card["primaryLabel"] == "Review Frame A result",
+              f"A. the one action is the review of that exact frame result, read {card['primaryLabel']!r}")
+        check(card["primaryCall"] == f"openReturnedResultReview('{SHOT_A}','{production['headKey']}')",
+              f"A. carrying the candidate Production named: {card['primaryCall']!r}")
+        check(card["actions"] == [], f"A. no candidate decision is drawn in the shot workspace: {card['actions']}")
+        check(not card["takeWords"], "A. and neither Use this take nor Keep looking is offered anywhere on it")
 
         # NOT ERASED. The reference confirmation is demoted, keeps its canonical words,
         # and keeps a control that performs it.
@@ -296,13 +308,30 @@ try:
         before = [c for c in repair["compares"] if c["kicker"] == "before"]
         check(len(before) == 1, f"B. the take being repaired must be on the card as Before: {repair['compares']}")
         check(PARENT_B in before[0]["text"], f"B. named: {before[0]['text']!r}")
+        check("Before · recorded parent" in before[0]["text"],
+              f"B. and labelled for exactly what it is: {before[0]['text']!r}")
         assert_media_image(page, project_dir, '[data-returned-review-compare=before] img', f'shots/{SHOT_B}/takes/{PARENT_B}')
-        check("Composition" in before[0]["text"],
-              f"B. alongside what the repair was asked to fix: {before[0]['text']!r}")
+        check(repair["fix"] == "Asked to fix: Composition",
+              f"B. alongside what the repair was asked to fix, in its own sentence: {repair['fix']!r}")
         assert_media_image(page, project_dir, '.guided-lifecycle-preview img', f'shots/{SHOT_B}/takes/{REPAIR_B}')
+        check(repair["actions"] == [] and repair["primaryCount"] == 1,
+              f"B. with one review action and no decision on the hero: {repair['actions']}")
+        # AND THE SAME CONTEXT ARRIVES IN RESULTS, where the decision is made: pressing the
+        # one action opens that exact repair with its reason and its recorded parent.
+        page.locator('.shot-primary-action').click()
+        page.wait_for_selector("[data-results-desk]")
+        check(page.evaluate("() => CineBraidResults.parse().key") == repair["key"],
+              "B. the review action opens Results on the exact repair")
+        assert_media_image(page, project_dir, '#rx-primary', f'shots/{SHOT_B}/takes/{REPAIR_B}')
+        results_repair = page.evaluate("""() => [...document.querySelectorAll('[data-results-desk] .rx-repair')]
+            .filter((el) => el.getClientRects().length).map((el) => el.textContent)""")
+        check(any("Asked to fix: Composition" in text and f"Before · recorded parent: {PARENT_B}" in text for text in results_repair),
+              f"B. and Results shows what it was asked to fix and the recorded parent beside the decision: {results_repair}")
+        check(page.locator('#rx-approve').count() == 1,
+              "B. where the shipped approval is offered for it")
         findings.append(
-            f"B. {SHOT_B} opened on the repair {repair['file']} with {PARENT_B} shown as Before "
-            f"and the recorded correction intent beside it")
+            f"B. {SHOT_B} opened on the repair {repair['file']} with {PARENT_B} shown as Before, "
+            f"the recorded correction intent beside it, and the same context in Results")
 
         # ---- D. 1280 WIDE: THE BEFORE FILENAME STAYS READABLE ------------------
         # The independent review found the compact Before card carrying nowrap +

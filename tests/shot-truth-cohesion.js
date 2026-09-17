@@ -515,8 +515,148 @@ function returnedVideoScan(project) {
   };
 }
 
-async function returnedMediaOutlivesGenerationReadiness() {
+/* ===========================================================================
+   EV2-7 — THE RESULTS SEAM, AS THE PRODUCT MOUNTS IT.
+
+   Approving a frame or a returned video is done in Results. The Shot Desk exposes that
+   work through its Results rail, above every stage. A claim that the work is reachable
+   is only worth something when the RENDERED control is followed: so these cases read the
+   rail out of #main, run the call that control carries, route to the exact address it
+   names with the shipped public/results-desk.js run into the same realm (the harness
+   does not load it), and press the rendered Results control through the listener
+   results-desk.js registered — which is what reaches the shipped confirmation and its
+   writer. The return trail is public/media-return.js's and is proven elsewhere, so
+   open() here records the exact scope and key and goes to the same address without it.
+   =========================================================================== */
+const { harnessAssetId } = require("./render-harness");
+const { memoryStore, confirmationDOM, confirmDecision } = require("./helpers/result-confirmation");
+const readProjectFile = (file) => require("fs").readFileSync(require("path").join(__dirname, "..", file), "utf8");
+const mainOf = (page) => page.context.document.getElementById("main").innerHTML;
+function mountResults(page) {
+  const before = (page.documentListeners.get("click") || []).length;
+  vm.runInContext(readProjectFile("public/results-desk.js"), page.context, { filename: "results-desk.js" });
+  const clicks = page.documentListeners.get("click") || [];
+  const listener = clicks[before];
+  assert.strictEqual(typeof listener, "function", "probe receipt: results-desk.js must register its own click listener");
+  /* The harness opens a gesture with a target-less trusted click to every listener; a
+     browser click always has a target, so only those reach Results. */
+  clicks[before] = (event) => (event && event.target ? listener(event) : undefined);
+  const opened = [];
+  page.context.CineBraidResults.open = (scope, key = "") => {
+    opened.push({ scope: { ...scope }, key });
+    page.context.location.hash = page.context.CineBraidResults.href(scope, key);
+    return page.context.route();
+  };
+  return { listener, opened };
+}
+function resultsOf(html) {
+  const control = (id) => (html.match(new RegExp(`<button[^>]*data-rx="${id}"[^>]*>`)) || [""])[0];
+  return {
+    desk: html.includes("data-results-desk"),
+    control,
+    authorityOf: (id) => (control(id).match(/data-rx-authority="([a-z]*)"/) || [])[1] || "",
+    selected: ((html.match(/data-rx-key="([^"]+)" aria-pressed="true"/) || [])[1] || "").replace(/&amp;/g, "&"),
+  };
+}
+async function pressResults(page, seam, id) {
+  assert(resultsOf(mainOf(page)).control(id), `the rendered Results page must offer the ${id} control`);
+  const target = { closest: (selector) => (selector === "[data-rx-job]" ? null : { dataset: { rx: id }, hasAttribute: (name) => name === "data-rx" }) };
+  /* Approve settles when the shipped confirmation has checked its save context and says so
+     in its status line, or asks which motion unit; the status is cleared first so an
+     earlier answer cannot count. Any other press settles once its repaint has run. */
+  const statusLine = page.context.document.getElementById("rx-confirm-status");
+  statusLine.textContent = "";
+  page.gesture.act(() => seam.listener({ type: "click", isTrusted: true, target }));
+  for (let i = 0; i < 200; i += 1) {
+    await new Promise((resolve) => setTimeout(resolve, 10));
+    const modal = page.context.document.getElementById("modal").innerHTML;
+    if (id !== "approve" ? i >= 4 : statusLine.textContent !== "" || modal.includes("rx-motion-target")) break;
+  }
+}
+/* A fixture that is going to SAVE declares its entities' default states up front, the
+   way tests/readiness-action-projection.js does; the write seam refuses a save that would
+   introduce them. Setup data, not authority. */
+function saveableProject(project) {
+  for (const list of ["characters", "locations", "props"])
+    for (const entity of project[list] || [])
+      if (!entity.continuityStates?.length)
+        entity.continuityStates = [{ id: "state-default", name: "Default", isDefault: true, approvedFile: entity.approvedFile || "", notes: "" }];
+  return project;
+}
+const rendersRail = (html) => (html.match(/<section class="shot-results-rail[\s\S]*?<\/section>/) || [""])[0];
+
+/* ===========================================================================
+   EV2-7 — FRAME APPROVAL THAT READINESS OWES IS DONE THROUGH THE RESULTS RAIL.
+
+   public/shared-stage-model.js declares that approve-parent-frame and
+   approve-required-frames land on the Frames stage and are exposed by the Results rail's
+   exact Frame Results entry (shotResultsTargetMarkup → openShotResults). The generic
+   completeness check above proves the names resolve and that the renderer's source
+   includes the control. This proves the rest, for a shot readiness genuinely says owes
+   those approvals: the declared router selects the declared stage, the rail is RENDERED
+   there with the entry for the frame that is owed, pressing it opens that frame's exact
+   Results with the exact waiting result, and approving there reaches the shipped
+   confirmation and writer — after which readiness stops owing it.
+   =========================================================================== */
+async function frameApprovalReadinessReachesResults() {
   const project = buildFixture();
+  const shot = project.shots[0];
+  project.productionAuthority = { version: 1, receipts: [] };
+  shot.winner = "";
+  for (const frame of shot.keyframes) frame.winner = "";
+  shot.deliveryRoute = "flf";
+  shot.candidateFiles = [{ stored: "FRAME_A.png", original: "FRAME_A.png", frameId: "frame-a", decision: "unreviewed", notes: "", labels: [], addedAt: "2026-08-20T10:00:00.000Z", generationJobId: "job-frame-a", generationProvider: "fal", generationModel: "gpt-image-2" }];
+  saveableProject(withCanon(project, entityCanonEntries()));
+  const assetId = harnessAssetId("shots/L1-01/takes/FRAME_A.png");
+  const scan = returnedVideoScan(project);
+  scan.shots["L1-01"].takes = [{ name: "FRAME_A.png", url: "/assets/shots/L1-01/takes/FRAME_A.png", assetId }];
+  const store = memoryStore(project);
+  const page = await render("#/shot/L1-01", project, { scan, fetch: store.fetch, storage: { "cinebraid-focused:fixture:shot-task:L1-01": "look" } });
+  const owedCodes = () => vm.runInContext(`(() => { const units = shotReadinessFor(P.shots[0]).units;
+    return JSON.stringify({ parent: units.find((row) => row.id === "frame:frame-b").nextAction.code, motion: units.find((row) => row.kind === "motion" && row.required).nextAction.code,
+      key: (returnedReviewProjectionForBrowser().queue.find((row) => row.candidate.name === "FRAME_A.png") || {}).key || "" }); })()`, page.context);
+  const owed = JSON.parse(owedCodes());
+  equal(owed.parent, "approve-parent-frame", "precondition: readiness says Frame A must be approved before Frame B");
+  equal(owed.motion, "approve-required-frames", "precondition: and that motion waits on the required frames' approval");
+  ok(owed.key, "precondition: Frame A's returned result is waiting for a decision");
+
+  for (const code of ["approve-parent-frame", "approve-required-frames"]) {
+    const destination = JSON.parse(vm.runInContext(`JSON.stringify(shotReadinessDestinationForAction(${JSON.stringify(code)}))`, page.context));
+    equal(destination.renderer, "shotResultsTargetMarkup", `${code}: declares the Results rail's target renderer`);
+    equal(destination.control, "openShotResults", `${code}: and its exact Results handoff as the control`);
+    vm.runInContext(`location.hash = "#/shot/L1-01"; boundedWriteFocusedTask(SHOT_STAGE_SCOPE, "L1-01", "look");`, page.context);
+    await page.context.route();
+    await vm.runInContext(`openShotReadinessAction("L1-01", ${JSON.stringify(code)})`, page.context);
+    const html = mainOf(page);
+    equal(vm.runInContext(`boundedShotSelectedTask(P.shots[0], takesFor("L1-01"))`, page.context), "frames", `${code}: the declared router selects the Frames stage`);
+    ok(html.includes('data-bounded-task="frames"'), `${code}: which is the stage rendered`);
+    const rail = rendersRail(html);
+    const entry = [...rail.matchAll(/<button[^>]*onclick="([^"]*)"[^>]*>Frame A Results<\/button>/g)].map((match) => match[1]);
+    deepEqual(entry, ["openShotResults('L1-01','frame','frame-a')"], `${code}: the rendered rail offers exactly one Frame A Results entry, calling the declared control for the owed frame`);
+    ok(html.indexOf("shot-results-rail") < html.indexOf("guided-work-stack"), `${code}: above the stage's own work, where it is reached before anything collapsed`);
+    ok(/data-frame-id="frame-a"[^>]*data-results-waiting="1"[^>]*data-results-approved="none"/.test(rail), `${code}: stating one waiting result and no Approved image yet`);
+  }
+
+  const seam = mountResults(page);
+  await vm.runInContext("openShotResults('L1-01','frame','frame-a')", page.context);
+  deepEqual(seam.opened, [{ scope: { shotId: "L1-01", kind: "frame", frameId: "frame-a" }, key: owed.key }],
+    "pressing the rendered entry opens Frame A's exact Results with the exact waiting result");
+  const results = resultsOf(mainOf(page));
+  equal(results.selected, owed.key, "Results selects that result");
+  equal(results.authorityOf("approve"), "decision", "and offers its approval as a declared decision");
+  await confirmDecision(page, confirmationDOM(page), ["L1-01", "FRAME_A.png", "frame", "frame-a"], store, () => pressResults(page, seam, "approve"));
+
+  vm.runInContext(`location.hash = "#/shot/L1-01";`, page.context);
+  await page.context.route();
+  const paid = JSON.parse(owedCodes());
+  ok(paid.parent !== "approve-parent-frame", "approving Frame A through Results pays the approval readiness owed: " + paid.parent);
+  ok(/data-frame-id="frame-a"[^>]*data-results-approved="retained"/.test(rendersRail(mainOf(page)))
+    && /Approved image<\/small><small class="shot-results-name">FRAME_A\.png<\/small>/.test(rendersRail(mainOf(page))),
+    "and the rail keeps the approved Frame A in view");
+}
+
+async function returnedMediaOutlivesGenerationReadiness() {
+  const project = saveableProject(buildFixture());
   const shot = project.shots[0];
   shot.deliveryRoute = "r2v";
   const scan = returnedVideoScan(project);
@@ -525,7 +665,8 @@ async function returnedMediaOutlivesGenerationReadiness() {
   ok(production.html.includes("video candidate to review"), "Production inbox still advertises the returned video");
   ok(production.html.includes("#/shot/L1-01"), "the inbox links the returned video back to its shot");
 
-  const page = await render("#/shot/L1-01", project, { scan });
+  const store = memoryStore(project);
+  const page = await render("#/shot/L1-01", project, { scan, fetch: store.fetch });
   const before = vm.runInContext(`(() => {
     const shot = P.shots[0];
     const takes = takesFor(shot.id);
@@ -551,36 +692,66 @@ async function returnedMediaOutlivesGenerationReadiness() {
   const selectedAfterNavigation = vm.runInContext('boundedShotSelectedTask(P.shots[0], takesFor("L1-01"))', page.context);
   equal(selectedAfterNavigation, "motion", "the available Motion stage reaches the returned-media workspace");
   ok(before.panel.includes('data-generation-readiness="blocked"'), "the review panel states that new generation remains blocked");
-  ok(before.panel.includes("PAID-RETURN.mp4"), "the returned provider asset remains visible");
-  ok(before.panel.includes("openMediaTheatre"), "the returned provider asset remains inspectable");
-  ok(before.panel.includes("APPROVE VIDEO"), "the existing approval owner remains reachable");
+  /* EV2-7 B2.13: NO WALL OF PLAYERS. Playing, comparing and approving a returned video
+     happen in Results/Screening; the Motion stage keeps import, history and the reason. */
+  ok(!/<video\b/.test(before.panel) && !before.panel.includes("APPROVE VIDEO") && !before.panel.includes("SEND TO FINISHING"),
+    "the Motion stage draws no per-result player, approval or finishing control of its own");
+  ok(before.panel.includes("1 video returned to this shot"), "it states how many returned videos Results holds");
   ok(before.panel.includes('id="motion-file"'), "the existing video import/ingest control remains reachable");
   ok(before.panel.includes(before.generationReason), "the canonical generation blocker remains visible");
   ok(!before.panel.includes("Build prompt"), "new prompt creation is not offered while readiness blocks new work");
   ok(!before.panel.includes("openFalH3MotionModal"), "no paid provider action is surfaced through the blocked creation section");
 
-  await page.gesture.act(() => page.context.approveGuidedMotion("L1-01", "PAID-RETURN.mp4"));
-  await new Promise((resolve) => setTimeout(resolve, 20));
+  /* THE RETURNED VIDEO IS REACHED THROUGH THE ONE RESULTS RAIL, BY ITS EXACT KEY. */
+  const desk = mainOf(page);
+  ok(desk.includes('data-bounded-task="motion"'), "precondition: the Motion stage is the one rendered");
+  const motionEntry = [...desk.matchAll(/<button[^>]*onclick="([^"]*)"[^>]*>Motion Results<\/button>/g)].map((match) => match[1]);
+  deepEqual(motionEntry, ["openShotResults('L1-01','motion','')"], "the Desk renders exactly one Motion Results entry, in the Results rail");
+  const motionTarget = (rendersRail(desk).match(/<article class="shot-results-target" data-results-target="motion"[\s\S]*?<\/article>/) || [""])[0];
+  ok(/data-results-waiting="1"/.test(motionTarget) && /No Approved motion · 1 new candidate/.test(motionTarget),
+    "the rail counts the returned video and states that no motion is Approved yet: " + motionTarget);
+  const paidKey = vm.runInContext(`returnedReviewProjectionForBrowser().queue.find((row) => row.candidate.name === "PAID-RETURN.mp4").key`, page.context);
+  const seam = mountResults(page);
+  await vm.runInContext(motionEntry[0], page.context);
+  deepEqual(seam.opened, [{ scope: { shotId: "L1-01", kind: "motion", frameId: "" }, key: paidKey }],
+    "pressing it opens Motion Results on the exact returned provider asset");
+  const results = resultsOf(mainOf(page));
+  equal(results.selected, paidKey, "Results selects PAID-RETURN.mp4");
+  ok(mainOf(page).includes("/assets/shots/L1-01/takes/PAID-RETURN.mp4"), "where the returned provider asset remains visible and playable");
+  equal(results.authorityOf("approve"), "decision", "and the existing approval owner remains reachable");
+
+  /* OPENING APPROVAL ESTABLISHES NOTHING; ONLY THE SHIPPED CONFIRMATION WRITES. */
+  const dom = confirmationDOM(page);
+  const writes = store.writes();
+  await pressResults(page, seam, "approve");
+  ok(page.context.document.getElementById("modal").innerHTML.includes("Choose the motion approval target"),
+    "a shot with two motion units asks which unit the approval is for, through the shipped chooser");
+  page.context.document.getElementById("rx-motion-target").value = "motion-a";
+  await page.context.CineBraidResultDecisions.prepareMotion();
+  ok(page.context.document.getElementById("modal").innerHTML.includes("rx-confirm"), "then opens the shipped confirmation");
+  equal(store.writes(), writes, "opening motion approval cannot itself establish authority");
+  dom.load();
+  await page.gesture.act(() => page.context.CineBraidResultDecisions.confirm());
+  for (let i = 0; i < 100 && vm.runInContext("!!approvalSubmissionPending()", page.context); i += 1) await new Promise((resolve) => setTimeout(resolve, 10));
+  const receipt = require("../public/shared-authority-kernel").currentHumanAuthority(store.stored(), { kind: "shot-motion", shotId: "L1-01", unitKey: "motion-a" });
+  ok(receipt && receipt.value === "PAID-RETURN.mp4" && receipt.assetId === "asset-paid-return", "confirming writes the exact motion receipt through the shipped writer");
+
+  vm.runInContext(`location.hash = "#/shot/L1-01";`, page.context);
+  await page.context.route();
   const after = vm.runInContext(`(() => {
     const shot = P.shots[0];
     const readiness = shotReadinessFor(shot);
     const unit = readiness.units.find((row) => row.kind === "motion" && row.required && !row.complete)
       || readiness.units.find((row) => row.kind === "motion" && row.required);
-    const receipt = (P.productionAuthority?.receipts || []).find((row) => row.kind === "shot-motion" && row.value === "PAID-RETURN.mp4" && row.status === "current");
     const panel = guidedMotionPanel(shot, guidedApprovedMotion(shot, takesFor(shot.id)), takesFor(shot.id), true);
-    return {
-      approvedFile: (shot.clips || []).map((row) => row.videoWinner).find(Boolean) || ensureShotCreation(shot).approvedMotionFile,
-      receipt: !!receipt,
-      generationStatus: unit.status,
-      panel,
-    };
+    return { generationStatus: unit.status, panel };
   })()`, page.context);
-
-  equal(after.approvedFile, "", "opening motion approval cannot itself establish authority; confirmation and durable save are exercised in EV2-6 browser acceptance");
-  equal(after.receipt, false, "opening motion review creates no receipt");
   ok(["BLOCKED", "NEEDS_DECISION"].includes(after.generationStatus), "approval does not erase the unmet prerequisite for additional generation");
-  ok(after.panel.includes("PAID-RETURN.mp4") && after.panel.includes("APPROVE VIDEO"), "unapproved returned media remains reachable until explicit confirmation");
   ok(after.panel.includes('data-generation-readiness="blocked"'), "new generation remains blocked after reviewing and approving returned media");
+  ok(after.panel.includes('id="motion-file"'), "and video import stays available");
+  const approvedTarget = (rendersRail(mainOf(page)).match(/<article class="shot-results-target" data-results-target="motion"[\s\S]*?<\/article>/) || [""])[0];
+  ok(/data-results-approved="retained"/.test(approvedTarget) && /<small class="shot-results-name">PAID-RETURN\.mp4<\/small>/.test(approvedTarget),
+    "the Results rail keeps the Approved motion in view, whatever stage is selected: " + approvedTarget);
 }
 
 async function main() {
@@ -588,6 +759,7 @@ async function main() {
   await descriptionOnlyConsumers();
   await firstLastMissingEndpoint();
   await actionableNextActionPanels();
+  await frameApprovalReadinessReachesResults();
   await historicReadinessActionsReachProduction();
   await returnedMediaOutlivesGenerationReadiness();
   console.log(`shot-truth-cohesion: ${checks} assertions passed`);

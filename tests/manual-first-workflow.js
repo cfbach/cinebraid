@@ -125,7 +125,7 @@ async function testManualShotAndApprovedLibrary() {
   const project = manualProject();
   const storage = { "cinebraid-focused:fixture:shot-task:L1-01": "frames" };
   const shot = await render("#/shot/L1-01", project, { storage, agentStatus: disabledAgents() });
-  assert(shot.html.includes("Import, choose, and approve images"));
+  assert(shot.html.includes("Import or prepare images"));
   assert(shot.html.includes("guided-frame-dropzone"), "manual frame intake must remain available even when canonical readiness names an earlier blocker");
   /* Generation Surface Polish V1 moved the execution path out of the "optional
      assisted creation" disclosure and into the frame's own generation section. The
@@ -159,7 +159,7 @@ function testSourceContracts() {
   assert(entities.includes('referenceRequirement: "planned"'));
   assert(entities.includes("Required for this project"));
   assert(creation.toLowerCase().includes("optional assisted creation"));
-  assert(creation.includes("Import, choose, and approve images"));
+  assert(creation.includes("Import or prepare images"));
   assert(views.includes("Manual-first production"));
 }
 

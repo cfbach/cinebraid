@@ -833,7 +833,9 @@ async function main() {
 
   const { html } = await render("#/shot/L1-01", buildFixture(), { storage: { "cinebraid-focused:fixture:shot-task:L1-01": "frames" } });
   assert(html.includes("NEXT ACTION"));
-  assert(html.includes("Create and choose the images"));
+  /* EV2-7: the Frames stage brings images in and prepares them; comparing and approving
+     are Results'. */
+  assert(html.includes("Bring in or prepare the images; compare and approve them in Results"));
   assert(!html.includes("Generation package"));
   assert(!html.includes("Review Inbox"));
   assert(!html.includes("Advanced workspace"));
@@ -970,7 +972,14 @@ async function main() {
   assert(/class="navigator-toggle"[^>]*aria-label="(?:Open|Close) project navigator"[^>]*aria-expanded="(?:true|false)"/.test(shotRender.html), "project navigator toggle must expose its accessible name and expanded state");
   assert.strictEqual((shotRender.html.match(/\bshot-primary-action\b/g) || []).length, 1, "shot route must render exactly one primary action");
   const shotActions = extractBalanced(shotRender.html, '<details class="guided-inline-actions', "details");
-  for (const label of ["Rename shot", "Duplicate shot", "Import existing"]) assert(shotActions.includes(label), `Shot actions disclosure is missing ${label}`);
+  for (const label of ["Rename shot", "Duplicate shot", "Delete shot"]) assert(shotActions.includes(label), `Shot actions disclosure is missing ${label}`);
+  /* EV2-7 B2.17: Import existing… is a normal production route, so it left the secondary
+     disclosure for the visible title row — one control, asking its target explicitly. */
+  const shotHead = extractBalanced(shotRender.html, '<header class="shot-workspace-head', "header");
+  assert(!shotActions.includes("Import existing"), "Import existing must no longer hide inside Shot actions");
+  assert.strictEqual((shotRender.html.match(/>Import existing…<\/button>/g) || []).length, 1, "the shot route offers Import existing… exactly once");
+  assert(/<button[^>]*onclick="openShotImportChooser\('L1-01'\)"[^>]*>Import existing…<\/button>/.test(shotHead.replace(shotActions, "")),
+    "Import existing… is a visible title-row button that opens the explicit target chooser");
   for (const staleLabel of [">BUILD PROMPT<", ">IMPROVE<", ">USE AS GUIDE<"]) assert(!shotRender.html.includes(staleLabel), `shot route still uses mixed-case legacy label ${staleLabel}`);
 
   for (const [hash, type, backHref] of [["#/shot/DOES-NOT-EXIST","Shot","#/shots/board"],["#/scene/S99","Scene","#/shots/scenes"],["#/character/CH-NOPE","Character","#/library/characters"],["#/prop/PR-NOPE","Prop","#/library/props"]]) {

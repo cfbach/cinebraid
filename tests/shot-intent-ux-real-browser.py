@@ -357,14 +357,14 @@ try:
         # DECLARED one is unchanged and still collapses, which the declared cases below
         # continue to exercise through open_intent().
         assert state["open"] is True, "1. an undeclared shot must open with the intent control expanded"
-        assert state["summary"] == "Not decided yet", f"1. and the summary line must still say so, got {state['summary']!r}"
+        assert state["summary"] == "Not declared", f"1. and the summary line must still say so, got {state['summary']!r}"
         undeclared_note = page.locator('.shot-intent-control [data-shot-intent-undeclared="1"]')
         assert undeclared_note.count() == 1, "1. and must state that no execution route was chosen"
         assert "No production route chosen yet" in undeclared_note.first.inner_text(), "1. in the filmmaker's own words, not an empty control"
         assert state["options"] == [""] + ROUTES, f"1. the five routes plus the undeclared state, got {state['options']}"
         assert all(label and label not in ROUTES for label in state["labels"]), \
             f"1. every option must be labelled in filmmaker language, got {state['labels']}"
-        findings.append(f"1. {FRAMES_SHOT} opens route-less: the control is EXPANDED and says the route was not chosen, reads 'Not decided yet', "
+        findings.append(f"1. {FRAMES_SHOT} opens route-less: the control is EXPANDED and says the route was not chosen, reads 'Not declared', "
                         f"offers {len(ROUTES)} routes plus the undeclared state, and the record carries no key")
 
         select_stage("Frames")
@@ -386,7 +386,7 @@ try:
             assert live["reading"] == "declared", f"2. {route}: the surface must report a declared reading"
             assert live["route"] == route, f"2. {route}: the surface must show the stored truth"
             assert live["selected"] == [route], f"2. {route}: exactly that option may be selected, got {live['selected']}"
-            assert live["summary"] not in ("", "Not decided yet"), \
+            assert live["summary"] not in ("", "Not declared"), \
                 f"2. {route}: the collapsed line must state the intent, got {live['summary']!r}"
             on_disk = saved_route(FRAMES_SHOT, route)
             assert on_disk == route, f"2. {route}: the project on disk must carry it after the save, got {on_disk!r}"
@@ -555,7 +555,7 @@ try:
         assert saved_route(FRAMES_SHOT, "ABSENT") == "ABSENT", \
             "7. withdrawing an intent must remove the key from the saved project, not store an empty one"
         withdrawn = page.evaluate(INTENT_STATE)
-        assert withdrawn["reading"] == "absent" and withdrawn["summary"] == "Not decided yet", \
+        assert withdrawn["reading"] == "absent" and withdrawn["summary"] == "Not declared", \
             "7. and the surface must return to the undeclared state"
         findings.append("7. hybrid persisted to disk, survived a full reload as hybrid rather than collapsing into "
                         "the undeclared state, and withdrawing it removed the key from the saved project")

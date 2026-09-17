@@ -89,11 +89,14 @@ ROUTES = ["t2v", "i2v", "flf", "r2v", "hybrid"]
 # The shot workspace, read out of the live DOM rather than recomputed.
 SHOT_STATE = """() => {
   const control = document.querySelector('.shot-intent-control');
-  const summary = document.querySelector('.shot-command-summary');
-  const tiles = summary ? [...summary.querySelectorAll('article')].map((row) => ({
-    label: (row.querySelector('span') || {}).textContent || '',
-    value: (row.querySelector('b') || {}).textContent || '',
-    note: (row.querySelector('small') || {}).textContent || '',
+  // EV2-7: the four summary tiles are one quiet facts line. Each fact keeps its name, the
+  // words it shows, and (for frames) the exact required-frame count it was derived from.
+  const summary = document.querySelector('#main .shot-facts');
+  const tiles = summary ? [...summary.querySelectorAll('[data-shot-fact]')].map((row) => ({
+    label: row.dataset.shotFact === 'frames' ? 'Required frames' : row.dataset.shotFact,
+    value: row.dataset.requiredFrames || '',
+    note: row.textContent || '',
+    visible: row.getClientRects().length > 0,
   })) : [];
   const primary = document.querySelector('#main .shot-primary-action');
   const inputs = document.querySelector('#main details.guided-inputs-card');
@@ -409,16 +412,23 @@ try:
         assert required_tile["value"] == "0/0", f"4. the summary counts no required frame, got {required_tile}"
         assert "not required by this intent" not in required_tile["note"], \
             f"4. and must not call an undeclared shot's silence an intent, got {required_tile['note']!r}"
+        # EV2-7: one quiet facts line, visible, saying the truth instead of a reassuring 0/0.
+        assert required_tile["visible"] and required_tile["note"].strip() == "No intent declared", \
+            f"4. the visible facts line says no intent is declared, got {required_tile}"
+        assert "0/0" not in " ".join(row["note"] for row in state["tiles"]), \
+            f"4. and prints no 0/0, got {state['tiles']}"
         assert state["routeDeclaredAttr"] == "0", "4. the summary states the undeclared reading for any reader"
         assert state["intentOpen"] is True, "4. the intent control is expanded, because it is the shot's next question"
+        assert page.locator("#main .shot-intent-control select").first.is_visible(), \
+            "4. and its selector is on screen, not inside a closed ancestor"
         assert any("No production route chosen yet" in note for note in state["undeclaredNote"]), \
             f"4. and says so in the filmmaker's words, got {state['undeclaredNote']}"
         assert state["selectedTask"] == "inputs", f"4. the shot opens on Inputs, got {state['selectedTask']!r}"
         assert state["inputsOpen"] is True, "4. with the source & references panel open"
         assert state["attachmentControls"] >= 1, "4. and the shipped attachment controls actually rendered"
         findings.append("4. the new shot opens with no required frame, no PRODUCE THE FRAME control, "
-                        "'0/0' required frames, the route control expanded saying the route was not chosen, "
-                        "and the reference controls open on the Inputs stage")
+                        "a facts line reading 'No intent declared' (count 0/0 kept as data), the route control "
+                        "expanded and visible saying the route was not chosen, and the reference controls open on the Inputs stage")
 
         # N1 — put the fabricated debt back on screen.
         page.evaluate("""() => {
@@ -908,14 +918,31 @@ try:
         # and this clicks the shipped approve control and confirms the shipped dialog.
         open_shot("SAMPLE-01", "11")
         page.evaluate("() => { const b = document.querySelector('.cb-stage-strip .focused-task-button[data-stage-id=\"frames\"]'); if (b) b.click(); }")
-        page.wait_for_selector("button.guided-approve-selected", timeout=20000)
-        page.locator("button.guided-approve-selected").first.click()
-        page.wait_for_selector("#modal:not(.hidden) button[onclick='confirmApproveTake()']", timeout=20000)
-        page.locator("#modal button[onclick='confirmApproveTake()']").first.click()
-        page.wait_for_timeout(800)
+        # EV2-7: a frame is approved in Results. The Shot Desk's Results rail opens Frame A's
+        # exact Results, and the shipped Approve result… / confirmation pair writes the receipt.
+        # Approval is bound to a verified media identity, which the server indexes after a scan.
+        page.evaluate("""async () => {
+          for (let i = 0; i < 40; i++) {
+            SCAN = await (await fetch('/api/scan')).json();
+            const takes = (SCAN.shots && SCAN.shots['SAMPLE-01'] && SCAN.shots['SAMPLE-01'].takes) || [];
+            if (takes.length && takes.every((take) => take.assetId)) { await route(); return; }
+            await new Promise((resolve) => setTimeout(resolve, 500));
+          }
+          throw Error('the sample shot media identity never became ready');
+        }""")
+        page.wait_for_selector("#main .shot-results-rail", timeout=20000)
+        page.get_by_role("button", name="Frame A Results", exact=True).click()
+        page.wait_for_selector("[data-results-desk]", timeout=20000)
+        page.wait_for_function("() => { const b = document.getElementById('rx-approve'); return !!b && !b.disabled; }", timeout=20000)
+        page.locator("#rx-approve").click()
+        page.wait_for_function("() => { const b = document.getElementById('rx-confirm'); return !!b && !b.disabled; }", timeout=20000)
+        page.locator("#rx-confirm").click()
+        page.wait_for_function("() => !approvalSubmissionPending()", timeout=20000)
+        page.wait_for_timeout(400)
         assert not page_errors, f"11. approving raised uncaught errors: {page_errors}"
         receipts = page.evaluate("() => ((P.productionAuthority || {}).receipts || []).length")
         assert receipts >= 1, "11. fixture check: the click must have written a real approval receipt"
+        open_shot("SAMPLE-01", "11")
 
         page.evaluate("() => { const b = document.querySelector('.cb-stage-strip .focused-task-button[data-stage-id=\"motion\"]'); if (b) b.click(); }")
         page.wait_for_timeout(400)
@@ -927,8 +954,8 @@ try:
             "11. and an owed frame that is approved completes the obligation — the correction withdraws false claims, not true ones"
         assert complete["claim"] is True, \
             "11. so the shipped completion claim is granted for it"
-        findings.append(f"11. SAMPLE-01, whose opening frame was approved by a real click through the shipped approve "
-                        f"control and dialog ({receipts} receipt, {complete['approvedOwed']}/{complete['owed']} owed), reaches "
+        findings.append(f"11. SAMPLE-01, whose opening frame was approved by real clicks from the Results rail through "
+                        f"Results' Approve result… and its confirmation ({receipts} receipt, {complete['approvedOwed']}/{complete['owed']} owed), reaches "
                         "frames-complete and IS granted the completion claim")
 
         # THE RENDERED HALF depends on the Motion workspace being open, which needs

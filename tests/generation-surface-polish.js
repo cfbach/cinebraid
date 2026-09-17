@@ -314,8 +314,8 @@ async function testReturnedResultPointsAtItsOwnCandidate() {
   assert(/not approval/i.test(card), "a returned result must not read as an approved frame");
 }
 
-/* An imported candidate awaiting a decision is the candidate tray's business and the
-   shot handoff's. It must not open a generation flow on a frame that never entered one. */
+/* An imported candidate awaiting a decision is Results' business and the shot handoff's.
+   It must not open a generation flow on a frame that never entered one. */
 async function testImportedCandidateIsNotAReturnedResult() {
   const result = await render("#/shot/L1-01", importingProject(), { storage: STORAGE });
   const card = frameCard(result.html);
@@ -323,8 +323,42 @@ async function testImportedCandidateIsNotAReturnedResult() {
     "an imported candidate must not be presented as a returned generation result");
   assert(card.includes('data-frame-generation="idle"'),
     "and must not report the frame as generating");
-  assert(card.includes("guided-frame-dropzone") && card.includes("guided-frame-candidate"),
-    "while manual import and the candidate tray stay exactly where they were");
+
+  /* EV2-7 B2.12 — IMPORT STAYS WITH THE FRAME, JUDGING MOVES TO RESULTS. Asserted one
+     fact at a time, because a substring of a retired class name would pass for all of
+     them at once. */
+  /* 1. Import: the frame's own drop target and file input, ahead of its generation. */
+  assert(card.includes('data-frame-dropzone="frame-a"') && card.includes('id="frame-file-frame-a"'),
+    "the frame keeps its own import drop target and file input");
+  assert(card.indexOf('data-frame-dropzone="frame-a"') < card.indexOf('class="frame-generation'),
+    "and manual import still comes before the optional generation section");
+  /* 2. Target: no second gallery and no approve control in the stage. */
+  assert(!/guided-frame-candidate-grid|guided-approve-selected|role="listbox"|approveGuidedFrame\(/.test(card),
+    "the frame card draws no candidate grid, selection or APPROVE of its own");
+  assert(card.includes("Compare and approve in Results."), "and says where comparing and approving happen");
+  /* 3. Handoff: the Results rail above the stage names this exact frame, and pressing it
+     resolves the imported candidate by its exact key, at press time. */
+  const rail = (result.html.match(/<section class="shot-results-rail[\s\S]*?<\/section>/) || [""])[0];
+  const entries = [...rail.matchAll(/<button[^>]*onclick="([^"]*)"[^>]*>Frame A Results<\/button>/g)].map((match) => match[1]);
+  assert.deepStrictEqual(entries, ["openShotResults('L1-01','frame','frame-a')"], "the rail offers exactly one Frame A Results entry");
+  assert(result.html.indexOf("shot-results-rail") < result.html.indexOf('<details class="guided-frame-card'),
+    "above the frame's own work");
+  const handed = JSON.parse(vm.runInContext(`(() => {
+    const opened = [];
+    CineBraidResults.open = (scope, key) => opened.push({ scope, key });
+    openShotResults("L1-01", "frame", "frame-a");
+    const queue = returnedReviewProjectionForBrowser().queue.filter((row) => row.shotId === "L1-01" && row.owner.frameId === "frame-a");
+    return JSON.stringify({ opened, key: queue[0].key, imported: queue.some((row) => row.candidate.name === "FRAME_A.png"), waiting: queue.length });
+  })()`, result.context));
+  assert(handed.imported, "precondition: the imported candidate is waiting in Frame A's Results");
+  assert.deepStrictEqual(handed.opened, [{ scope: { shotId: "L1-01", kind: "frame", frameId: "frame-a" }, key: handed.key }],
+    "and opens Frame A's Results on the first waiting candidate by its exact key");
+  /* 4. Approved state: nothing is approved, and the rail says so rather than showing the
+     newest file as if it were. */
+  assert(new RegExp(`data-frame-id="frame-a"[^>]*data-results-waiting="${handed.waiting}"[^>]*data-results-approved="none"`).test(rail)
+    && rail.includes(`No Approved image · ${handed.waiting} new candidate${handed.waiting === 1 ? "" : "s"}`)
+    && !/<img[^>]*FRAME_A\.png/.test(rail),
+    "the rail states Frame A has no Approved image beside its waiting candidates, and shows none of them as if it were");
 }
 
 /* ------------------------------------------- 6. nothing reflows a field or a choice */
@@ -443,6 +477,238 @@ function testTruthBoundariesHeld() {
     "and must not filter them by which backend is currently selected");
 }
 
+/* ------------------------------------ 9. Import existing… asks its exact target (EV2-7 B2.17) */
+/* External generation is a normal production route, so the import is a visible title-row
+   control on every stage. It asks WHICH target, never guesses one from the shot's lifecycle,
+   hands the choice to the shipped import owner (public/mutations.js), writes nothing when
+   cancelled, and keeps the dialog and its target when the import or its save does not land. */
+async function testImportExistingAsksItsExactTarget() {
+  const { memoryStore } = require("./helpers/result-confirmation");
+  const project = readyProject();
+  for (const list of ["characters", "locations", "props"])
+    for (const entity of project[list] || [])
+      if (!entity.continuityStates?.length)
+        entity.continuityStates = [{ id: "state-default", name: "Default", isDefault: true, approvedFile: entity.approvedFile || "", notes: "" }];
+  const posts = [];
+  let uploads = "refuse", saves = "accept";
+  const openWindow = async () => {
+    const store = memoryStore(project);
+    const page = await render("#/shot/L1-01", project, {
+      storage: { "cinebraid-focused:fixture:shot-task:L1-01": "inputs" },
+      fetch: async (url, options, respond) => {
+        if (/^\/api\/shots\/L1-01\/take\?name=/.test(url)) {
+          posts.push(decodeURIComponent(url.split("name=")[1]));
+          return uploads === "refuse" ? respond({ error: "Synthetic storage refusal" }, 507) : respond({ name: decodeURIComponent(url.split("name=")[1]) });
+        }
+        if (saves === "refuse" && ["PUT", "POST"].includes(options.method)) return respond({ error: "Synthetic save refusal" }, 503);
+        return store.fetch(url, options, respond);
+      },
+    });
+    return { store, result: page };
+  };
+  const { result } = await openWindow();
+  const html = result.html;
+  const shotActions = (html.match(/<details class="guided-inline-actions"[\s\S]*?<\/details>/) || [""])[0];
+  assert(html.includes('data-bounded-task="inputs"'), "precondition: the Inputs stage is the one rendered");
+  assert(/<button type="button"[^>]*onclick="openShotImportChooser\('L1-01'\)"[^>]*>Import existing…<\/button>/.test(html.replace(shotActions, "")),
+    "Import existing… is a visible title-row button on the Inputs stage");
+  assert(!shotActions.includes("Import existing") && /Rename shot/.test(shotActions) && /Duplicate shot/.test(shotActions) && /Delete shot/.test(shotActions),
+    "Shot actions keeps Rename, Duplicate and Delete, and no longer holds the import");
+
+  const P = () => vm.runInContext("JSON.stringify(P.shots)", result.context);
+  const modal = () => result.context.document.getElementById("modal");
+  const status = () => result.context.document.getElementById("shot-import-status").textContent;
+  const untouched = P();
+  result.context.openShotImportChooser("L1-01");
+  const targets = [...modal().innerHTML.matchAll(/<button type="button"[^>]*data-shot-import-target="([^"]*)"[^>]*onclick="([^"]*)"[^>]*>([^<]*)<\/button>/g)]
+    .map((match) => ({ target: match[1], call: match[2], label: match[3] }));
+  assert.deepStrictEqual(targets.map((row) => row.label), ["Frame A image", "Frame B image", "Motion video"],
+    "the chooser names each declared frame's image and the motion video as explicit targets");
+  assert.deepStrictEqual(targets.map((row) => row.call), [
+    "chooseShotImportTarget('L1-01','frame','frame-a')",
+    "chooseShotImportTarget('L1-01','frame','frame-b')",
+    "chooseShotImportTarget('L1-01','motion','')",
+  ], "and each carries its exact target, whatever stage or lifecycle the shot is in");
+  result.context.closeModal();
+  assert.strictEqual(P(), untouched, "cancelling writes nothing");
+  assert.deepStrictEqual(posts, [], "and uploads nothing");
+
+  /* A chosen target reaches the shipped owner for exactly that target. */
+  result.context.openShotImportChooser("L1-01");
+  vm.runInContext(`chooseShotImportTarget("L1-01", "frame", "frame-b")`, result.context);
+  const input = result.context.document.getElementById("shot-import-file");
+  assert.strictEqual(input.accept, "image/*", "a frame target asks for images");
+  input.files = [{ name: "EXTERNAL_B.png", type: "image/png" }];
+  await input.onchange();
+  assert.deepStrictEqual(posts, ["EXTERNAL_B.png"], "the chosen file is sent through the shipped import owner");
+  assert(!modal().classList.contains("hidden") && /Frame B image was not imported/.test(status()) && /target is still Frame B image/.test(status()),
+    "a refused upload keeps the chooser open, says so, and keeps its target: " + status());
+  assert(!P().includes("EXTERNAL_B.png"), "and records nothing for it");
+
+  uploads = "accept"; saves = "refuse";
+  input.files = [{ name: "EXTERNAL_B.png", type: "image/png" }];
+  await input.onchange();
+  const row = JSON.parse(P())[0].candidateFiles.find((item) => item.stored === "EXTERNAL_B.png");
+  assert(row && row.frameId === "frame-b", "an accepted upload is recorded against exactly Frame B");
+  assert(!modal().classList.contains("hidden") && /not saved yet/.test(status()) && /Frame B image/.test(status()),
+    "while its save has not landed the chooser stays, naming the target: " + status());
+
+  /* A window whose saves land. A fresh open, because a THROWN save failure stays on the save
+     chain until an ordinary edit re-arms it (public/app.js flushPendingProjectSave) — that is
+     the app's save owner, not this dialog, and the dialog above already said "not saved yet". */
+  saves = "accept";
+  const saved = await openWindow();
+  const second = saved.result;
+  const P2 = () => JSON.parse(vm.runInContext("JSON.stringify(P.shots)", second.context))[0];
+  const modal2 = () => second.context.document.getElementById("modal");
+  const status2 = () => second.context.document.getElementById("shot-import-status").textContent;
+  const authorityBefore = JSON.stringify(saved.store.stored().productionAuthority || null);
+  second.context.openShotImportChooser("L1-01");
+  vm.runInContext(`chooseShotImportTarget("L1-01", "motion", "")`, second.context);
+  const motionInput = second.context.document.getElementById("shot-import-file");
+  assert.strictEqual(motionInput.accept, "video/*", "the motion target asks for video");
+  /* This harness answers getElementById for ANY id, so the video owner finds a
+     #motion-dropzone even off the Motion stage; give it the text node a real one has. */
+  second.context.document.getElementById("motion-dropzone").childNodes = [{ nodeValue: "" }];
+  motionInput.files = [{ name: "EXTERNAL_MOTION.mp4", type: "video/mp4" }];
+  await motionInput.onchange();
+  assert(P2().candidateFiles.some((item) => item.stored === "EXTERNAL_MOTION.mp4" && item.mediaType === "video" && !item.frameId),
+    "a motion import is recorded as the shot's video, not as any frame");
+  assert(modal2().classList.contains("hidden"), "and a landed, saved import closes the chooser: " + status2());
+  const durable = saved.store.stored().shots.find((shot) => shot.id === "L1-01");
+  assert(durable.candidateFiles.some((item) => item.stored === "EXTERNAL_MOTION.mp4"), "the closed chooser means the import reached storage");
+  assert.strictEqual(JSON.stringify(saved.store.stored().productionAuthority || null), authorityBefore, "importing approves nothing");
+}
+
+/* ----------------------------- 10. The Results rail and the desk in hard states (EV2-7) */
+/* The rail is the Shot Desk's one way into Results from every stage, so the states a
+   filmmaker actually reaches are read off the rendered desk: an Approved receipt whose
+   file is gone beside a newer candidate, more frames than the rail lists, a projection
+   that cannot be read, and an operation that needs a person. None of them may write. */
+async function testResultsRailHardStates() {
+  const { rawFixture, withFixtureCanon } = require("./render-harness");
+  const mainOf = (page) => page.context.document.getElementById("main").innerHTML;
+  const railOf = (html) => (html.match(/<section class="shot-results-rail[\s\S]*?<\/section>/) || [""])[0];
+  const targetOf = (html, kind, frameId = "") => (railOf(html).match(new RegExp(`<article class="shot-results-target" data-results-target="${kind}"${frameId ? ` data-frame-id="${frameId}"` : ""}[\\s\\S]*?</article>`)) || [""])[0];
+  const entries = (html) => [...railOf(html).matchAll(/<button type="button" class="ghost-btn shot-results-open" onclick="([^"]*)">([^<]*)<\/button>/g)].map((match) => `${match[2]} → ${match[1]}`);
+  const shotsOf = (page) => vm.runInContext("JSON.stringify(P.shots)", page.context);
+  const inputs = { "cinebraid-focused:fixture:shot-task:L1-01": "inputs" };
+
+  /* 1. A CURRENT RECEIPT WHOSE FILE IS GONE, beside a newer candidate for the same frame. */
+  const lost = rawFixture();
+  lost.shots[0].keyframes[0].winner = "FRAME_A_LOST.png";
+  const lostProject = withFixtureCanon(lost);
+  lostProject.shots[0].candidateFiles = [{ stored: "FRAME_A.png", original: "FRAME_A.png", addedAt: "2026-09-05T10:05:00.000Z", decision: "unreviewed", frameId: "frame-a" }];
+  const gone = await render("#/shot/L1-01", lostProject, { storage: inputs });
+  const goneA = targetOf(mainOf(gone), "frame", "frame-a");
+  assert(/data-results-approved="unavailable"/.test(goneA) && goneA.includes("Approved image unavailable · 1 new candidate")
+    && goneA.includes("FRAME_A_LOST.png · receipt kept, file not found"),
+    "the rail names a receipt-backed Approved image whose file is gone as unavailable, by name: " + goneA);
+  assert(!/<img|<video|<a class="shot-results-approved"/.test(goneA), "and nothing stands in for it, least of all the newer candidate: " + goneA);
+  const goneB = targetOf(mainOf(gone), "frame", "frame-b");
+  assert(/data-results-approved="retained"/.test(goneB) && goneB.includes('<img src="/assets/shots/L1-01/takes/FRAME_B.png"'),
+    "while a receipt whose file is present keeps its own preview: " + goneB);
+  const hero = (mainOf(gone).match(/<section class="guided-next-action[\s\S]*?<\/section>/) || [""])[0];
+  const heldChip = (hero.match(/<div class="returned-review-compare missing" data-returned-review-compare="current">[\s\S]*?<\/div>/) || [""])[0];
+  assert(/Review Frame A result/.test(hero) && /Current · Approved/.test(heldChip) && /FRAME_A_LOST\.png/.test(heldChip) && /Approved image unavailable/.test(heldChip),
+    "and the hero reviewing the newer candidate says the Approved image in place is unavailable instead of dropping it: " + hero);
+
+  /* 2. MORE FRAMES THAN THE RAIL LISTS. One labelled selector; its default follows the
+     frame the Frames stage has selected and is never written; choosing another frame in it
+     changes only which Results target is in view. */
+  const many = generatingProject();
+  many.shots[0].keyframes.push(
+    { id: "frame-c", label: "C", title: "Third frame", winner: "", description: "Worker turns.", required: false, generationPackages: [] },
+    { id: "frame-d", label: "D", title: "Fourth frame", winner: "", description: "Worker exits.", required: false, generationPackages: [] });
+  const selectedKey = "cinebraid-bounded:fixture:selected:shot-frame:L1-01";
+  const wide = await render("#/shot/L1-01", many, { storage: { ...inputs, [selectedKey]: "frame-c" } });
+  const stored = () => vm.runInContext(`JSON.stringify([localStorage.getItem(${JSON.stringify(selectedKey)}), localStorage.getItem("cinebraid-focused:fixture:shot-task:L1-01")])`, wide.context);
+  const pickerOf = (html) => (railOf(html).match(/<label class="shot-results-picker"><span>Frame<\/span><select data-shot-results-frame="L1-01"[^>]*>([\s\S]*?)<\/select><\/label>/) || ["", ""]);
+  const optionsOf = (html) => [...pickerOf(html)[1].matchAll(/<option value="([^"]*)" (selected)?>/g)].map((match) => `${match[1]}${match[2] ? "*" : ""}`);
+  assert.deepStrictEqual(optionsOf(mainOf(wide)), ["frame-a", "frame-b", "frame-c*", "frame-d"],
+    "four frames get one labelled frame selector, defaulting to the frame already selected in the Frames stage");
+  assert.deepStrictEqual(entries(mainOf(wide)), ["Frame C Results → openShotResults('L1-01','frame','frame-c')", "Motion Results → openShotResults('L1-01','motion','')"],
+    "beside exactly one Results entry for that frame, and Motion's");
+  const before = { shots: shotsOf(wide), stored: stored() };
+  wide.context.viewShotResultsFrame("L1-01", "frame-d");
+  await wide.context.route();
+  assert.deepStrictEqual(entries(mainOf(wide)).map((row) => row.split(" → ")[0]), ["Frame D Results", "Motion Results"], "choosing Frame D in it brings Frame D's Results into view");
+  assert(mainOf(wide).includes('data-bounded-task="inputs"'), "without selecting any stage");
+  assert.strictEqual(shotsOf(wide), before.shots, "without writing the project");
+  assert.strictEqual(stored(), before.stored, "and without writing the Frames stage's selection or the stage");
+  vm.runInContext(`selectBoundedItem("shot-frame", "L1-01", "frame-b")`, wide.context);
+  await wide.context.route();
+  assert.deepStrictEqual(entries(mainOf(wide)).map((row) => row.split(" → ")[0]), ["Frame B Results", "Motion Results"],
+    "and when the Frames stage selects another frame, the rail follows it again");
+  const unchanged = mainOf(wide);
+  wide.context.viewShotResultsFrame("L1-01", "frame-gone");
+  await wide.context.route();
+  assert.strictEqual(entries(mainOf(wide)).join(), entries(unchanged).join(), "a frame that is not part of the shot is refused and nothing else is shown instead");
+
+  /* 3. THE PROJECTION CANNOT BE READ. The rail says so, and each button still opens its
+     exact target rather than disappearing with the counts. */
+  vm.runInContext(`returnedReviewProjectionForBrowser = () => ({ contract: "synthetic", available: false, reason: "production-media-unavailable", items: [], queue: [], blockers: [], counts: { items: 0, awaiting: 0, shots: 0, repairs: 0, unreviewable: 0, unavailable: 0 } });`, gone.context);
+  await gone.context.route();
+  const unread = railOf(mainOf(gone));
+  assert(/data-results-readable="0"/.test(unread) && unread.includes("Returned results cannot be read right now") && unread.includes("Frame A · results not readable"),
+    "an unreadable projection is stated, not rendered as an empty shot: " + unread);
+  assert.deepStrictEqual(entries(mainOf(gone)), [
+    "Frame A Results → openShotResults('L1-01','frame','frame-a')",
+    "Frame B Results → openShotResults('L1-01','frame','frame-b')",
+    "Motion Results → openShotResults('L1-01','motion','')",
+  ], "and every declared target keeps its one Results entry");
+  assert(/data-results-approved="unavailable"/.test(targetOf(mainOf(gone), "frame", "frame-a")),
+    "while the Approved facts, which are the receipts', are still told");
+
+  /* 4. AN OPERATION THAT NEEDS A PERSON sits beside the hero on every stage, with the way
+     into Activity; an unresolved paid request comes first and keeps its only exit. */
+  const desk = await render("#/shot/L1-01", readyProject(), { storage: inputs });
+  vm.runInContext(`AUTOMATION_RUNS = [{ id: "run-l1-frames", type: "shot-chain", targetId: "L1-01", label: "L1-01 frame automation", status: "failed", stage: "Needs attention", summary: "Stopped: Generate Frame A failed." }];`, desk.context);
+  await desk.context.route();
+  const inline = (html) => (html.match(/<div class="shot-activity-inline[\s\S]*?<\/button><\/div>(?:<\/div>)?/) || [""])[0];
+  const failed = inline(mainOf(desk));
+  assert(/is-attention/.test(failed) && failed.includes("L1-01 frame automation · needs attention") && failed.includes("Stopped: Generate Frame A failed.")
+    && failed.includes(`onclick="window.CineBraidCreatorSurfaces?.expandTerminal?.('run-l1-frames')">Open Activity</button>`),
+    "a failed run for this shot is stated inline, with what stopped and the way into Activity: " + failed);
+  assert(/class="shot-activity-inline state-failed is-attention"/.test(failed), "in the shipped run classifier's tone: " + failed);
+  vm.runInContext(`AUTOMATION_RUNS = [{ id: "run-l1-gate", type: "shot-chain", targetId: "L1-01", label: "L1-01 frame automation", status: "awaiting-review", stage: "Waiting for your frame decision", summary: "" }];`, desk.context);
+  await desk.context.route();
+  const parked = inline(mainOf(desk));
+  assert(/class="shot-activity-inline state-review"/.test(parked) && parked.includes("L1-01 frame automation · awaiting review") && parked.includes("Waiting for your frame decision"),
+    "and a run parked on a person reads as waiting for review, neither a failure nor a machine at work: " + parked);
+  const order = (html, needle) => html.indexOf(needle);
+  assert(order(mainOf(desk), "guided-next-action") < order(mainOf(desk), "shot-activity-inline") && order(mainOf(desk), "shot-activity-inline") < order(mainOf(desk), "shot-results-rail"),
+    "between the hero and the Results rail, on the Inputs stage");
+  vm.runInContext(`FAL_GENERATION_JOBS = [{ id: "job-l1-a", purpose: "frame", shotId: "L1-01", frameId: "frame-a", provider: "fal", backendId: "fal-queue", model: "gpt-image-2", status: "SUBMITTING", uncertain: true, externalId: "", createdAt: "2026-09-05T10:10:00.000Z" }];`, desk.context);
+  await desk.context.route();
+  const paid = inline(mainOf(desk));
+  assert((mainOf(desk).match(/class="shot-activity-inline/g) || []).length === 1, "one inline operation at a time");
+  assert(paid.includes("Paid request unresolved · Frame A") && paid.includes("cannot tell whether the provider ever received it")
+    && paid.includes(`onclick="openFalUnresolvedModal('job-l1-a')">Check and resolve</button>`)
+    && paid.includes(`onclick="window.CineBraidCreatorSurfaces?.expandTerminal?.('job:job-l1-a')">Open Activity</button>`),
+    "an unresolved paid request leads, in the shipped explanation, with the shipped reconciliation and its Activity row: " + paid);
+
+  /* 5. ONE Previous/Next pair, beside the title, named for where it goes; no hero carries a
+     second; notes and history sit in one keyed Shot details disclosure after the work. */
+  const pair = readyProject();
+  pair.shots.push({ ...JSON.parse(JSON.stringify(pair.shots[0])), id: "L1-02", title: "Hull walk-away" });
+  const paired = await render("#/shot/L1-01", pair, { storage: inputs });
+  for (const page of [gone, wide, desk, paired]) {
+    const html = mainOf(page);
+    const head = (html.match(/<header class="shot-workspace-head[\s\S]*?<\/header>/) || [""])[0];
+    const heroCard = (html.match(/<section class="guided-next-action[\s\S]*?<\/section>/) || [""])[0];
+    assert.strictEqual((html.match(/aria-label="Shot order"/g) || []).length, 1, "exactly one Previous/Next pair in the shot desk");
+    assert(/<nav class="shot-head-nav" aria-label="Shot order">/.test(head), "beside the title");
+    assert(heroCard && !/<nav\b|Previous shot|Next shot/.test(heroCard) && !/Previous shot|Next shot|shot-head-nav/.test(html.replace(head, "")),
+      "and neither the hero nor anything else in the desk carries a second pair");
+    if (page === paired)
+      assert(/<a href="#\/shot\/L1-02" title="Next shot" aria-label="Next shot: Hull walk-away">›<\/a>/.test(head),
+        "each link named for the shot it goes to: " + head);
+    assert(html.indexOf('data-ui-state-key="shot-details:L1-01"') > html.indexOf('class="guided-work-stack'),
+      "Shot details is one keyed disclosure after the selected stage's work");
+  }
+}
+
 /* EV2-5 moves setup, while the paid/local operation owners stay in shot work. */
 async function testSettingsSetupCannotBecomeAnOperation() {
   const project = buildFixture();
@@ -469,6 +735,8 @@ async function main() {
   await testChangedMappingKeepsItsReason();
   await testReturnedResultPointsAtItsOwnCandidate();
   await testImportedCandidateIsNotAReturnedResult();
+  await testImportExistingAsksItsExactTarget();
+  await testResultsRailHardStates();
   await testStateSurvivesARerender();
   testDialogKeepsTheCardsChoice();
   testReturnedMediaIsContained();

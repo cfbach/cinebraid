@@ -404,19 +404,33 @@ async function main() {
    * does not depend on a shot reaching a particular workflow state. */
   const creationJs = fs.readFileSync(path.join(ROOT, 'public', 'creation-studio.js'), 'utf8');
   const sceneJs = fs.readFileSync(path.join(ROOT, 'public', 'scene-review.js'), 'utf8');
+  /* EV2-7 B2.12 RETIRED THE FRAME'S CANDIDATE TRAY, and with it the tray's own enlarge
+   * control. A frame candidate is looked at and compared in Results, whose Inspector action
+   * hands the exact result to the one Inspector (whose full preview is the one theatre,
+   * asserted above); the Shot Desk's returned-result preview inspects through
+   * inspectMediaFile. Neither path selects or approves anything. */
+  const resultsJs = fs.readFileSync(path.join(ROOT, 'public', 'results-desk.js'), 'utf8');
   assert(
-    /candidate-enlarge[^]{0,400}openMediaTheatre\(/.test(creationJs),
-    'frame candidates must offer click-to-enlarge through the media theatre',
+    !/candidate-enlarge/.test(creationJs),
+    'the retired frame candidate tray must not come back with an enlarge control of its own',
   );
   assert(
-    /candidate-enlarge[^]{0,400}event\.stopPropagation\(\)/.test(creationJs),
+    /btn\('inspector','Inspector'/.test(resultsJs) && /if\(id==='inspector'\)return CineBraidMediaInspector\.inspect\(/.test(resultsJs),
+    'frame candidates must offer enlargement from Results through the one Inspector',
+  );
+  assert(
+    /const inspect = `inspectMediaFile\(/.test(creationJs) && /class="guided-lifecycle-media image" onclick="\$\{inspect\}"/.test(creationJs),
+    "the Shot Desk's returned-result preview must inspect through inspectMediaFile, not a viewer of its own",
+  );
+  assert(
+    !/if\(id==='inspector'\)[^;]*(approve|choose|select)/i.test(resultsJs),
     'enlarging a frame candidate must not select or approve it',
   );
   assert(
     /scene-still-preview[^]{0,400}openMediaTheatre\(/.test(sceneJs),
     'the scene approved-stills strip must offer click-to-enlarge through the media theatre',
   );
-  results.push('frame candidate + scene approved still: enlarge control -> openMediaTheatre');
+  results.push('frame candidate (Results -> Inspector) + scene approved still (theatre): one viewer, nothing selected or approved');
 
   /* No second enlargement system: every enlarge control in the app resolves to the
    * one media theatre entry point. */

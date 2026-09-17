@@ -231,7 +231,7 @@ async function checkRouteSelection() {
     assert.strictEqual(after.reading, "declared", `${route}: the surface must report a declared reading`);
     assert.strictEqual(after.route, route, `${route}: the surface must show the stored truth`);
     assert.deepStrictEqual(after.selectedValues, [route], `${route}: exactly that route may be selected`);
-    assert(after.summary && after.summary !== "Not decided yet",
+    assert(after.summary && after.summary !== "Not declared",
       `${route}: the collapsed summary must state the declared intent`);
   }
 
@@ -288,7 +288,9 @@ async function checkNoInference() {
     assert.strictEqual(control.reading, "absent", `${name}: must declare no intent`);
     assert.strictEqual(control.route, "", `${name}: must show no route`);
     assert.deepStrictEqual(control.selectedValues, [""], `${name}: only the undeclared option may be selected`);
-    assert.strictEqual(control.summary, "Not decided yet", `${name}: the summary must say so plainly`);
+    /* EV2-7: the summary states the recorded fact ("Not declared"); the selector's own
+       choice keeps its words ("Not decided yet"), asserted in shot-intent-front.js. */
+    assert.strictEqual(control.summary, "Not declared", `${name}: the summary must say so plainly`);
     const record = run(page.context, `
       const shot = P.shots.find((row) => row.id === "L1-01");
       return { hasKey: Object.prototype.hasOwnProperty.call(shot, "deliveryRoute") };`);
@@ -622,7 +624,7 @@ async function checkHybrid() {
   const control = readControl(result.markup);
   assert.strictEqual(control.route, "hybrid", "the surface must show it");
   assert.deepStrictEqual(control.selectedValues, ["hybrid"], "and select it, rather than the undeclared option");
-  assert.notStrictEqual(control.summary, "Not decided yet", "the summary must not read as undeclared");
+  assert.notStrictEqual(control.summary, "Not declared", "the summary must not read as undeclared");
 
   /* ITS ADAPTIVE PRESENTATION IS TRUTHFUL: a shot delivered by more than one method may
      be delivered by one that begins from a frame, so Frames stays. */
