@@ -5447,17 +5447,8 @@ window.requestEntityChanges = (list, id) =>
       toast("Changes requested");
     },
   );
-function entityInitials(id) {
-  return (
-    P.characters
-      .find((x) => x.id === id)
-      ?.name?.split(/\s+/)
-      .map((x) => x[0])
-      .join("")
-      .slice(0, 2)
-      .toUpperCase() || id.slice(0, 2).toUpperCase()
-  );
-}
+/* `entityInitials()` STOOD HERE. Its one reader was the shot card's relation badges, and
+   EV2-7 B2.4 replaced those initials with the characters' and locations' own names. */
 function continuityStateDeltaText(state) {
   if (!state) return "";
   const fields = [
@@ -5598,26 +5589,14 @@ function sceneReferenceRecords(sc) {
 function workflowChip(state) {
   return `<span class="workflow-chip wf-${state.cls}">${esc(state.label)}</span>`;
 }
-/* The badges on a shot card are one or two letters, so they carry their own accessible
-   name as well as a tooltip: a character shows its initials, every other reference type
-   shows its first letter. The board prints the key once above the cards. */
-function shotRelationshipChips(s) {
-  const all = referenceRecordsForShot(s);
-  const chips = all
-    .slice(0, 4)
-    .map((x) => {
-      const name = `${x.type}: ${x.name || x.id}`;
-      return `<span class="relation-chip relation-${x.type.toLowerCase()}" title="${attr(name)}" aria-label="${attr(name)}">${esc(x.type === "Character" ? entityInitials(x.id) : x.type[0])}</span>`;
-    })
-    .join("");
-  const more = Math.max(0, all.length - 4);
-  return chips + (more ? `<span class="relation-more" title="${attr(plural(more, "more linked reference"))}" aria-label="${attr(plural(more, "more linked reference"))}">+${more}</span>` : "");
-}
-/* A one-line key for those badges, so a filmmaker never has to guess what "TC" or "P"
-   means. It sits with the board controls rather than inside every card. */
-function shotBadgeLegend() {
-  const rows = [["Initials", "Character"], ["L", "Location"], ["P", "Prop"], ["V", "Vehicle"], ["A", "Audio"]];
-  return `<div class="board-badge-legend"><span>CARD BADGES</span>${rows.map(([mark, meaning]) => `<b><i>${esc(mark)}</i>${esc(meaning)}</b>`).join("")}</div>`;
+/* EV2-7 B2.4 — THE CARD SAYS WHO AND WHERE IN WORDS. The one- and two-letter relation
+   badges needed a legend printed above every board before "TC" or "P" meant anything, so
+   both are gone: up to two characters and one location by name, and the rest counted.
+   Every linked reference is still listed, and navigable, in the shot's own Desk. */
+function shotCardContext(refs) {
+  const named = [...refs.filter((x) => x.type === "Character").slice(0, 2), ...refs.filter((x) => x.type === "Location").slice(0, 1)];
+  const more = refs.length - named.length;
+  return [...named.map((x) => x.name || x.id), more ? plural(more, named.length ? "more reference" : "linked reference") : ""].filter(Boolean).join(" · ");
 }
 function shotReadinessFor(s, feed = projectShotReadiness()) {
   if (!s || !feed || feed.error) return null;
@@ -6030,26 +6009,18 @@ function slate(s, sceneId, readiness = null, returnedProjection = null) {
     ? isVideo(show.name)
       ? `<video muted preload="metadata" src="${show.url}#t=0.1"></video>`
       : `<img src="${show.url}" alt="">`
-    : `<div class="blueprint"><span class="bp-id">${esc(s.id)}</span><span class="bp-note">AWAITING CANDIDATE</span></div>`;
-  const warning =
-    state.key === "READY FOR REVIEW"
-      ? '<span class="slate-alert">Needs decision</span>'
-      : state.key === "CHANGES REQUESTED"
-        ? '<span class="slate-alert changes">Changes requested</span>'
-        : "";
-  const refs = referenceRecordsForShot(s);
+    : '<span class="slate-empty">No image yet</span>';
+  const context = shotCardContext(referenceRecordsForShot(s));
   /* EV2-7: the card names the SAME leading action the shot's own hero leads with — a
      returned result waiting for a decision outranks non-integrity readiness — through the
      one shared read-only precedence. claim "" because a board card is ordinary
-     navigation, never a route claim. The canonical readiness code stays on the chip as
-     data-readiness-code, and the board filters below still count readiness alone. */
+     navigation, never a route claim. The canonical readiness code stays on the next-action
+     line as data-readiness-code, and the board filters below still count readiness alone. */
   const cardReadiness = readiness || shotReadinessFor(s);
   const leading = typeof shotLeadingAction === "function"
     ? shotLeadingAction(s, cardReadiness, { claim: "", projection: returnedProjection })
     : { source: cardReadiness ? "readiness" : "unavailable", production: shotProductionNextAction(s, cardReadiness), review: null, key: "" };
   const next = typeof shotLeadingActionWords === "function" ? shotLeadingActionWords(leading) : leading.production;
-  /* The card itself is a link to the shot, so inspection needs its own control:
-     enlarging must never navigate away from the board. */
   /* O5: INSPECT, NOT MERELY ENLARGE. The board's thumbnail is the shot's approved
      pick or its newest take — production media with a disposition, an authority and a
      provenance — so the control that was "make it bigger" now opens the Inspector,
@@ -6057,18 +6028,26 @@ function slate(s, sceneId, readiness = null, returnedProjection = null) {
      back to the theatre for media the projection does not hold, so nothing that
      previewed before stops previewing. */
   const enlarge = show && !isVideo(show.name)
-    ? `<button type="button" class="media-enlarge-btn slate-enlarge" onclick="event.preventDefault();event.stopPropagation();inspectMediaFile('${attr(encodeURIComponent(show.url))}','${attr(show.assetId || "")}','${attr(encodeURIComponent(`${s.id} · ${show.name}`))}','image')" aria-label="Inspect the ${attr(s.id)} image">Inspect</button>`
+    ? `<button type="button" class="media-enlarge-btn slate-enlarge" onclick="event.preventDefault();event.stopPropagation();inspectMediaFile('${attr(encodeURIComponent(show.url))}','${attr(show.assetId || "")}','${attr(encodeURIComponent(`${s.id} · ${show.name}`))}','image')" aria-label="Inspect the ${attr(s.id)} image">Inspect preview</button>`
     : "";
-  return `<article class="slate wf-card-${state.cls}">
-    <div class="slate-top"><span class="slate-id">${esc(s.id)}</span><span class="dur-chip">${shotDur(s) ? shotDur(s) + "s" : ""}</span><span class="slate-route">${esc(outputPlanLabel(s))}</span>
-      ${sceneId ? `<span class="move-btns"><button onclick="moveShot('${s.id}',-1)" title="Move up">↑</button><button onclick="moveShot('${s.id}',1)" title="Move down">↓</button></span>` : ""}</div>
-    <div class="slate-thumb-shell"><a class="slate-thumb take-tile" href="#/shot/${s.id}" style="display:block;${attr(shotWellStyle(s))}">${thumb}${winner ? shotWinnerBadgeMarkup(s, winner) : ""}</a>${enlarge}</div>
-    <a class="slate-body" href="#/shot/${s.id}">
-      <div class="slate-title">${esc(s.title)}</div>
-      <div class="state-pair"><span class="shot-next-chip next-${attr(next.key)}" data-leading-source="${attr(leading.source)}" data-leading-key="${attr(leading.key || "")}" data-readiness-code="${attr(leading.production.action?.code || "")}" title="Next action for this shot">${esc(next.label)}</span><small>${esc(next.detail)}</small></div>
-      <div class="slate-relations">${shotRelationshipChips(s)}${warning}</div>
-      <div class="slate-footer"><span>${plural(takes.length, "version")} · ${plural(refs.length, "reference")}</span><span>${s.submittedAt ? "submitted " + esc(s.submittedAt.slice(0, 10)) : s.audio?.line || (s.clips || []).some((c) => c.line) ? "Dialogue linked" : ""}</span></div>
-    </a>
+  /* EV2-7 B2.6/B2.7 — ONE CARD, ONE WAY IN. Identity and recorded workflow status, the
+     whole title, the contained preview, the leading action with its one reason and the
+     Open shot cue are a single link to the shot. The action line only describes: opening
+     the shot is the one thing a card does, so it never requests, approves or changes a
+     stage. The link is named by the title and described by the action and its reason.
+     Inspect preview and the scene page's order buttons are SIBLINGS of the link, because
+     a control inside a link is two targets in one place. */
+  const ids = `slate-${attr(String(s.id).replace(/\s+/g, "_"))}`;
+  return `<article class="slate wf-card-${state.cls}" data-shot-id="${attr(s.id)}">
+    <a class="slate-link" href="#/shot/${s.id}" data-focus-key="board-shot:${attr(s.id)}" aria-labelledby="${ids}-title" aria-describedby="${ids}-next ${ids}-reason" onclick="rememberShotBoardReturn(this)">
+      <span class="slate-top"><span class="slate-id">${esc(s.id)}</span>${shotDur(s) ? `<span class="dur-chip">${shotDur(s)}s</span>` : ""}<span class="slate-state">${esc(state.label)}</span></span>
+      <span class="slate-title" id="${ids}-title">${esc(s.title)}</span>
+      <span class="slate-thumb take-tile" style="${attr(shotWellStyle(s))}">${thumb}${winner ? shotWinnerBadgeMarkup(s, winner) : ""}</span>
+      <span class="slate-next next-${attr(next.key)}" id="${ids}-next" data-leading-source="${attr(leading.source)}" data-leading-key="${attr(leading.key || "")}" data-readiness-code="${attr(leading.production.action?.code || "")}">${esc(next.label)}</span>
+      <span class="slate-reason" id="${ids}-reason">${esc(next.detail)}</span>${context ? `
+      <span class="slate-context">${esc(context)}</span>` : ""}
+      <span class="slate-open">Open shot <span aria-hidden="true">→</span></span>
+    </a>${sceneId ? `<div class="slate-order"><button type="button" onclick="moveShot('${s.id}',-1)" aria-label="Move ${attr(s.id)} earlier" title="Move up">↑</button><button type="button" onclick="moveShot('${s.id}',1)" aria-label="Move ${attr(s.id)} later" title="Move down">↓</button>${enlarge}</div>` : enlarge}
   </article>`;
 }
 window.toggleBatchShot = (id, on) => {
@@ -6163,16 +6142,17 @@ window.setBoardMode = (mode) => {
   localStorage.setItem("cinebraid-board-mode", mode);
   route();
 };
+/* EV2-7 B2.3 — THE BOARD HAS ONE CARD SIZE. The Card size control and its renderer are
+   gone: the board's columns are fixed per width (experience-coherence.css), because a
+   filmmaker scans this board for titles and next actions and judges images in Screening.
+   A stored density is neither applied here nor erased, and this compatibility entry point
+   still records a choice for any older caller. */
 window.setShotBoardDensity = (mode) => {
   if (!["compact", "comfortable", "large"].includes(mode)) return;
   SHOT_BOARD_DENSITY = mode;
   localStorage.setItem("cinebraid-shot-board-density", mode);
   route();
 };
-function shotBoardDensityControl() {
-  const labels = { compact: "Compact", comfortable: "Standard", large: "Large" };
-  return `<div class="board-density-control" aria-label="Shot preview size"><span>Card size</span><div class="board-density-buttons">${Object.entries(labels).map(([id, label]) => `<button type="button" class="${SHOT_BOARD_DENSITY === id ? "selected" : ""}" onclick="setShotBoardDensity('${id}')" aria-pressed="${SHOT_BOARD_DENSITY === id ? "true" : "false"}">${label}</button>`).join("")}</div></div>`;
-}
 window.toggleSceneCollapse = (id) => {
   COLLAPSED_SCENES.has(id)
     ? COLLAPSED_SCENES.delete(id)
@@ -7273,18 +7253,18 @@ function shotBoardActionCategory(shot, readiness = shotReadinessFor(shot)) {
 /* The undelivered set: every shot the Production page's own NOT YET DELIVERED list
    shows, which is the complement of the delivered filter and nothing else.
 
-   The literal filter labels are written ONCE, in `defs` below, deliberately. A copy
-   of one in a comment up here would quietly satisfy the source-text assertion in
-   tests/clarity-consolidation.js that pins the shipped taxonomy — which is to say a
-   comment would be holding a product contract up, and the rename it guards against
-   would stop being caught. */
+   The literal filter labels are written ONCE, in shotBoardActionDefs() below,
+   deliberately. A copy of one in a comment up here would quietly satisfy the
+   source-text assertion in tests/clarity-consolidation.js that pins the shipped
+   taxonomy — which is to say a comment would be holding a product contract up, and the
+   rename it guards against would stop being caught. */
 function shotBoardNotDelivered(shot, readiness = shotReadinessFor(shot)) {
   return shotBoardActionCategory(shot, readiness) !== "complete";
 }
 window.setShotActionFilter = (value) => {
   FILTER.action = value || "unfinished";
   localStorage.setItem("cinebraid-shot-action-filter", FILTER.action);
-  if (typeof boundedWriteState === "function") boundedWriteState("page:shots", `board:${FILTER.status}:${FILTER.route}:${FILTER.char}:${FILTER.action}`, 0);
+  if (typeof boundedWriteState === "function") boundedWriteState("page:shots", shotBoardPageKey(), 0);
   route();
 };
 function shotBoardActionMatches(shot, feed = projectShotReadiness()) {
@@ -7293,7 +7273,7 @@ function shotBoardActionMatches(shot, feed = projectShotReadiness()) {
   if (FILTER.action === "unfinished") return shotBoardNotDelivered(shot, shotReadinessFor(shot, feed));
   return category === FILTER.action;
 }
-function shotBoardActionFilters(feed = projectShotReadiness()) {
+function shotBoardActionDefs() {
   /* Only ONE label changed here. "Needs a decision" is the same word the Production
      summary tile and the scene cards use, over the same rows; it used to read "Needs
      review", which is the phrase Returned Results uses for its own much narrower
@@ -7302,10 +7282,96 @@ function shotBoardActionFilters(feed = projectShotReadiness()) {
      and naming an action does not rename the state the board has always filtered on.
      tests/clarity-consolidation.js pins the first of them by its literal text, so it
      appears in this file exactly once, on the line below. */
-  const defs = [["unfinished","Not delivered"],["review",`Needs a ${FILMMAKER_DECISION_LABEL}`],["missing-inputs","Missing inputs"],["ready",manualFirstWorkflow() ? "Ready for media" : "Ready to generate"],["complete","Delivered"],["all","All shots"]];
-  const counts = Object.fromEntries(defs.map(([id]) => [id, P.shots.filter((shot) => id === "all" ? true : id === "unfinished" ? shotBoardNotDelivered(shot, shotReadinessFor(shot, feed)) : shotBoardActionCategory(shot, shotReadinessFor(shot, feed)) === id).length]));
-  return `<nav class="board-action-filters" aria-label="Shot next-action filters">${defs.map(([id,label]) => `<button type="button" class="${FILTER.action===id?"selected":""}" onclick="setShotActionFilter('${id}')"><span>${esc(label)}</span><b>${counts[id]}</b></button>`).join("")}</nav>`;
+  return [["unfinished","Not delivered"],["review",`Needs a ${FILMMAKER_DECISION_LABEL}`],["missing-inputs","Missing inputs"],["ready",manualFirstWorkflow() ? "Ready for media" : "Ready to generate"],["complete","Delivered"],["all","All shots"]];
 }
+/* EV2-7 B2.2 — ONE NATIVE Show SELECTOR. Six permanent buttons stood between the heading
+   and the first shot, two to a row on a phone; the same six production states and their
+   canonical counts now sit in one labelled select, and the board prints the matching count
+   and page range beside it. The predicates and the counts are unchanged, and each option
+   carries its filter id and count as data so a reader never parses the words. */
+function shotBoardActionFilters(feed = projectShotReadiness()) {
+  const defs = shotBoardActionDefs();
+  const counts = Object.fromEntries(defs.map(([id]) => [id, P.shots.filter((shot) => id === "all" ? true : id === "unfinished" ? shotBoardNotDelivered(shot, shotReadinessFor(shot, feed)) : shotBoardActionCategory(shot, shotReadinessFor(shot, feed)) === id).length]));
+  return `<label class="board-show" for="shot-board-show"><span>Show</span><select id="shot-board-show" aria-describedby="shot-board-range" onchange="setShotActionFilter(this.value)">${defs.map(([id,label]) => `<option value="${id}" data-board-filter="${id}" data-count="${counts[id]}"${FILTER.action===id?" selected":""}>${esc(label)} · ${counts[id]}</option>`).join("")}</select></label>`;
+}
+function shotBoardPageKey() {
+  return `board:${FILTER.status}:${FILTER.route}:${FILTER.char}:${FILTER.action}`;
+}
+window.clearShotBoardFilters = () => {
+  FILTER.status = "";
+  FILTER.route = "";
+  FILTER.char = "";
+  route();
+};
+/* EV2-7 B2.2 — A FILTER THAT MATCHES NOTHING SAYS SO, AND SAYS HOW TO SEE THE REST. */
+function shotBoardNoMatch(moreActive) {
+  const showing = FILTER.action && FILTER.action !== "all" ? (shotBoardActionDefs().find(([id]) => id === FILTER.action) || [])[1] || "" : "";
+  const one = P.shots.length === 1;
+  const none = one ? "This project’s one shot" : `None of this project’s ${plural(P.shots.length, "shot")}`;
+  const why = showing && !moreActive
+    ? `${none} ${one ? "is not" : "are"} in this production state.`
+    : `${none} ${one ? "does not match" : "match"} ${showing ? "this production state and " : ""}the filters in More filters.`;
+  const how = [showing ? "show all shots" : "", moreActive ? "clear filters" : ""].filter(Boolean).join(" or ");
+  return `<div class="empty-state board-no-match"><h2>${esc(showing ? `No shots match “${showing}”` : "No shots match these filters")}</h2><p>${esc(`${why} To see ${one ? "it" : "them"}, ${how}.`)}</p>${showing ? '<button type="button" onclick="setShotActionFilter(\'all\')">Show all shots</button>' : ""}</div>`;
+}
+/* EV2-7 B2.5 — ONE PAGER, AFTER THE SHOTS, AND ONLY WHEN THERE IS A SECOND PAGE. Five
+   shots a page, as before. Turning a page takes the reader with it: focus moves to the new
+   page's first scene heading and that heading scrolls under the header, instead of leaving
+   the reader at the foot of a page that has just been replaced. */
+function shotBoardPager(info) {
+  if (!info || info.pages <= 1) return "";
+  return `<nav class="bounded-pager board-pager" aria-label="Shot pages"><button type="button" ${info.page <= 0 ? "disabled" : ""} onclick="setShotBoardPage(${info.page - 1})">Previous</button><span>${info.start + 1}–${info.end} of ${info.total}</span><button type="button" ${info.page >= info.pages - 1 ? "disabled" : ""} onclick="setShotBoardPage(${info.page + 1})">Next</button></nav>`;
+}
+let SHOT_BOARD_PAGE_TURN = false;
+window.setShotBoardPage = (page) => {
+  SHOT_BOARD_PAGE_TURN = true;
+  setBoundedPage("shots", shotBoardPageKey(), page);
+};
+/* RETURNING FROM A SHOT PUTS THE BOARD BACK WHERE IT WAS. The page already comes back: it
+   is the bounded page state, per filter. What a card link lost was the scroll, because
+   route() starts every other route at the top. So the card being opened is remembered IN
+   MEMORY ONLY — nothing is stored, and a project switch or reopen voids it — with where it
+   sat in the window. The next board paint that follows only shot routes puts that card
+   back at the same height and focuses it; going anywhere else first forgets it. */
+let SHOT_BOARD_RETURN = null;
+window.rememberShotBoardReturn = (link) => {
+  const parts = String(location.hash || "").split("?")[0].split("/");
+  const shotId = link?.closest?.("[data-shot-id]")?.dataset?.shotId || "";
+  if (parts[1] !== "shots" || parts[2] === "scenes" || !shotId || typeof link.getBoundingClientRect !== "function") return;
+  SHOT_BOARD_RETURN = { slug: ACTIVE_PROJECT_SLUG, epoch: PROJECT_OPEN_EPOCH, pageKey: shotBoardPageKey(), shotId, top: link.getBoundingClientRect().top, visited: false };
+};
+function settleShotBoardArrival({ view = "", id = "" } = {}) {
+  const turned = SHOT_BOARD_PAGE_TURN, saved = SHOT_BOARD_RETURN;
+  if (view === "shot") { SHOT_BOARD_PAGE_TURN = false; if (saved) saved.visited = true; return; }
+  SHOT_BOARD_PAGE_TURN = false;
+  SHOT_BOARD_RETURN = null;
+  /* productionView() draws the board for every Shots tab but the Scene directory. */
+  if (view !== "shots" || id === "scenes") return;
+  const returning = !!saved && saved.visited && saved.slug === ACTIVE_PROJECT_SLUG && saved.epoch === PROJECT_OPEN_EPOCH && saved.pageKey === shotBoardPageKey();
+  if (!turned && !returning) return;
+  /* After restoreRouteViewState() and the media return have settled their own frames: a
+     page turn replaces what they restored, and an explicit media return outranks this. */
+  const settle = () => {
+    const main = document.getElementById("main");
+    if (!main || String(location.hash || "").split("?")[0].split("/")[1] !== "shots") return;
+    if (turned) {
+      const heading = main.querySelector(".shot-board .log-heading");
+      heading?.focus?.({ preventScroll: true });
+      heading?.closest?.(".log-strip")?.scrollIntoView?.({ block: "start" });
+      return;
+    }
+    if (window.CineBraidMediaReturn?.restoredThisRender?.()) return;
+    const link = [...main.querySelectorAll(".shot-board .slate-link")].find((node) => node.closest("[data-shot-id]")?.dataset.shotId === saved.shotId);
+    if (!link) return;
+    const delta = link.getBoundingClientRect().top - saved.top;
+    if (main.scrollHeight > main.clientHeight + 1 && /auto|scroll/.test(getComputedStyle(main).overflowY)) main.scrollTop += delta;
+    else window.scrollBy?.(0, delta);
+    link.focus({ preventScroll: true });
+  };
+  if (typeof requestAnimationFrame === "function") requestAnimationFrame(() => requestAnimationFrame(settle));
+  else setTimeout(settle, 0);
+}
+window.addEventListener("cinebraid:route-rendered", (event) => settleShotBoardArrival(event?.detail || {}));
 function productionView(tab = "board") {
   if (!["board", "table", "scenes"].includes(tab)) tab = "board";
   const shotReadiness = projectShotReadiness();
@@ -7324,16 +7390,13 @@ function productionView(tab = "board") {
   const tabDefs = [["board", "Shot board"], ["scenes", "Scene directory"]];
   if (tab === "table") tab = "board";
   const tabs = workspaceTabs("production", tab, tabDefs);
-  /* AT1-C. This head offered a bare CONTINUE on a project with no shots at all,
-     and the press answered "Every shot has been delivered". Same owner as
-     Production's primary control, so the two heads cannot say different things
-     about the same project; CONTINUE keeps its short word when there is work. */
-  /* HANDED THE FEED THIS VIEW ALREADY DERIVED. Calling it bare re-ran
-     evaluateProjectReadiness() for the whole project a second time on every
-     board paint — against this file's own rule, stated above productionHomeView,
-     that the answer is derived ONCE and handed to every reader. */
-  const boardPrimary = projectPrimaryProductionAction(shotReadiness);
-  const head = `<div class="view-head board-head"><div><div class="eyebrow">Shots</div><span class="view-title">Shots</span><div class="view-sub">Track scene readiness, approved frames, and one clear next action for every shot.</div></div><div class="board-head-actions"><button class="assemble-btn" onclick="continueProduction()">${esc(boardPrimary.kind === "continue" ? "CONTINUE" : boardPrimary.label)}</button><button class="add-btn" onclick="openContextualAdd('shot')">＋ Add</button></div></div>${tabs}`;
+  /* EV2-7 B2.1 — THE SHOTS HEAD NAMES THE PAGE, COUNTS IT, AND ADDS A SHOT. AT1-C gave
+     this head the Production owner's words so a zero-shot project could not be answered
+     "Every shot has been delivered"; the ruling removes Continue from this browsing surface
+     altogether, so it now lives only on Production, where that owner renders it. The one
+     Add here is contextual — it opens New shot in one press, on an empty board and a full
+     one — while the shell's own Add stays the general chooser. */
+  const head = `<div class="view-head board-head"><div><h1 class="view-title">Shots</h1><div class="view-sub board-count">${esc(`${plural(P.shots.length, "shot")} · ${plural(P.scenes.length, "scene")}`)}</div></div><div class="board-head-actions"><button class="add-btn" onclick="openContextualAdd('shot')">＋ Add shot</button></div></div>${tabs}`;
   if (tab === "scenes") {
     const scenePage = boundedPage(P.scenes, "scenes", "overview", BOUNDED_PAGE_SIZES.scenes);
     return head + runtimeBar(P.shots, P.meta.targetRuntime) + `<div class="bounded-scene-list">${scenePage.rows.map((sc) => {
@@ -7344,8 +7407,7 @@ function productionView(tab = "board") {
   const routes = [
     ...new Set(P.shots.map((s) => outputPlanLabel(s)).filter(Boolean)),
   ];
-  const filterBody = `<div class="toolbar"><select aria-label="Filter lifecycle" onchange="FILTER.status=this.value;route()"><option value="">All shots</option>${WORKFLOW_STATES.map((x) => `<option value="${x}" ${FILTER.status === x ? "selected" : ""}>${workflowStatusLabel(x)}</option>`).join("")}</select><select aria-label="Filter output" onchange="FILTER.route=this.value;route()"><option value="">Any output</option>${routes.map((r) => `<option value="${attr(r.toUpperCase())}" ${FILTER.route === r.toUpperCase() ? "selected" : ""}>${esc(r)}</option>`).join("")}</select><select aria-label="Filter character" onchange="FILTER.char=this.value;route()"><option value="">Any character</option>${P.characters.map((c) => `<option value="${c.id}" ${FILTER.char === c.id ? "selected" : ""}>${esc(c.name)}</option>`).join("")}</select></div>`;
-  const controls = `<div class="board-list-controls">${shotBoardActionFilters(shotReadiness)}${shotBoardDensityControl()}</div>${P.shots.length ? shotBadgeLegend() : ""}${tab === "table" ? batchToolbar() : ""}<details class="board-filter-fold" ${(FILTER.status || FILTER.route || FILTER.char) ? "open" : ""}><summary>More filters${(FILTER.status || FILTER.route || FILTER.char) ? " · active" : ""}</summary>${filterBody}</details>`;
+  const filterBody = `<div class="toolbar board-filter-fields"><label><span>Workflow status</span><select onchange="FILTER.status=this.value;route()"><option value="">Any workflow status</option>${WORKFLOW_STATES.map((x) => `<option value="${x}" ${FILTER.status === x ? "selected" : ""}>${workflowStatusLabel(x)}</option>`).join("")}</select></label><label><span>Output</span><select onchange="FILTER.route=this.value;route()"><option value="">Any output</option>${routes.map((r) => `<option value="${attr(r.toUpperCase())}" ${FILTER.route === r.toUpperCase() ? "selected" : ""}>${esc(r)}</option>`).join("")}</select></label><label><span>Character</span><select onchange="FILTER.char=this.value;route()"><option value="">Any character</option>${P.characters.map((c) => `<option value="${c.id}" ${FILTER.char === c.id ? "selected" : ""}>${esc(c.name)}</option>`).join("")}</select></label></div>`;
   const filteredPairs = [];
   P.scenes.forEach((sc) => {
     P.shots.filter((shot) => shot.scene === sc.id).filter((shot) =>
@@ -7355,21 +7417,32 @@ function productionView(tab = "board") {
       shotBoardActionMatches(shot, shotReadiness)
     ).forEach((shot) => filteredPairs.push({ sc, shot }));
   });
-  const boardPageKey = `board:${FILTER.status}:${FILTER.route}:${FILTER.char}:${FILTER.action}`;
+  const boardPageKey = shotBoardPageKey();
   const shotPage = boundedPage(filteredPairs, "shots", boardPageKey, 5);
   /* Derived ONCE for the page and handed to every card: returnedReviewProjectionForBrowser()
      is uncached, and each slate asking for it would re-derive the whole project. */
   const returnedProjection = typeof returnedReviewProjectionForBrowser === "function" ? returnedReviewProjectionForBrowser() : null;
+  /* EV2-7 B2.2/B2.4 — Show, the visible matching count and range, then More filters as the
+     one secondary fold. Its active count and Clear filters stay outside the fold, so a
+     filter hidden in a closed disclosure never narrows the board unannounced. The fold
+     states which dimension Show filters, and that a returned result does not change it. */
+  const moreActive = [FILTER.status, FILTER.route, FILTER.char].filter(Boolean).length;
+  const range = `${filteredPairs.length} of ${plural(P.shots.length, "shot")}${shotPage.total ? ` · ${shotPage.start + 1}–${shotPage.end} shown` : ""}`;
+  const controls = P.shots.length ? `<div class="board-scope">${shotBoardActionFilters(shotReadiness)}<span class="board-range" id="shot-board-range">${esc(range)}</span><details class="board-filter-fold" data-ui-state-key="shot-board-more-filters"><summary>More filters${moreActive ? ` <span class="board-filter-count">${moreActive} active</span>` : ""}</summary><div class="board-filter-body"><p class="board-filter-note"><b>Production state</b> is what Show filters by: each shot’s readiness. A returned result waiting for your review does not change a shot’s production state. These filters narrow the board further.</p>${filterBody}</div></details>${moreActive ? '<button type="button" class="board-clear-filters" onclick="clearShotBoardFilters()">Clear filters</button>' : ""}</div>` : "";
   const grouped = new Map();
   shotPage.rows.forEach(({ sc, shot }) => { if (!grouped.has(sc.id)) grouped.set(sc.id, { sc, shots: [] }); grouped.get(sc.id).shots.push(shot); });
+  /* Each page's scenes are plain headings over their cards. The heading takes focus when a
+     page turns (tabindex -1 keeps it out of the tab order); collapsing a scene is still a
+     remembered choice. The board's columns are fixed per width, so no stored card size is
+     applied to the row. */
   const body = [...grouped.values()].map(({ sc, shots }) => {
-    const all = P.shots.filter((shot) => shot.scene === sc.id), collapsed = COLLAPSED_SCENES.has(sc.id), pending = all.filter((shot) => workflowState(shot).key === "READY FOR REVIEW").length, approvedCount = all.filter(shotIsApproved).length;
-    return `<section class="log-strip ${collapsed ? "collapsed" : ""}"><div class="log-head"><button class="collapse-btn" onclick="toggleSceneCollapse('${sc.id}')" aria-label="${collapsed ? "Expand" : "Collapse"} ${attr(sc.title || sc.id)}" aria-expanded="${collapsed ? "false" : "true"}">${collapsed ? "▸" : "▾"}</button><a class="log-title" href="#/scene/${sc.id}">${esc(sc.title)}</a><span class="tier-badge ${sc.tier || "B"}">TIER ${sc.tier || "B"}</span>${pending ? `<span class="scene-attention">${plural(pending, "shot")} ready for review</span>` : ""}<span class="log-count" title="Shots in this scene whose workflow status has reached Signed off">${approvedCount}/${all.length} ${pluralWord(all.length, "shot")} signed off</span></div>${collapsed ? "" : `<div class="shot-row bounded-shot-page size-${SHOT_BOARD_DENSITY}">${shots.map((shot) => slate(shot, "", readinessByShot.get(shot.id), returnedProjection)).join("")}</div>`}</section>`;
+    const all = P.shots.filter((shot) => shot.scene === sc.id), collapsed = COLLAPSED_SCENES.has(sc.id), approvedCount = all.filter(shotIsApproved).length;
+    const headingId = `board-scene-${attr(String(sc.id).replace(/\s+/g, "_"))}`;
+    return `<section class="log-strip board-scene ${collapsed ? "collapsed" : ""}" aria-labelledby="${headingId}"><div class="log-head"><h2 class="log-heading" id="${headingId}" tabindex="-1"><a class="log-title" href="#/scene/${sc.id}">${esc(sc.title)}</a></h2><span class="log-count" title="Shots in this scene whose workflow status has reached Signed off">${approvedCount} of ${plural(all.length, "shot")} signed off</span><button class="collapse-btn" onclick="toggleSceneCollapse('${sc.id}')" aria-label="${collapsed ? "Expand" : "Collapse"} ${attr(sc.title || sc.id)}" aria-expanded="${collapsed ? "false" : "true"}">${collapsed ? "▸" : "▾"}</button></div>${collapsed ? "" : `<div class="shot-row bounded-shot-page">${shots.map((shot) => slate(shot, "", readinessByShot.get(shot.id), returnedProjection)).join("")}</div>`}</section>`;
   }).join("") || (P.shots.length
-    ? `<div class="empty-state"><h2>No shots match these filters</h2><p>Change a filter to see the other ${plural(P.shots.length, "shot")} in this project.</p></div>`
-    : `<div class="empty-state"><h2>This project has no shots yet</h2><p>Add the first shot to start tracking scenes, frames and deliveries.</p><button class="add-btn" onclick="openContextualAdd('shot')">＋ Add shot</button></div>`);
-  const pager = boundedPagerMarkup("shots",boardPageKey,shotPage,"shots");
-  return head + controls + pager + body + pager;
+    ? shotBoardNoMatch(moreActive)
+    : `<div class="empty-state board-empty"><h2>This project has no shots yet</h2><p>Use Add shot to create the first one. Its scene, frames and deliveries are tracked here.</p></div>`);
+  return `<div class="shot-board"><div class="shot-board-frame">${head}${controls}${tab === "table" ? batchToolbar() : ""}${body}${shotBoardPager(shotPage)}</div></div>`;
 }
 /* S7 — THE LIBRARY SPEAKS THE THREE-CONCEPT LANGUAGE.
  *

@@ -85,10 +85,12 @@ const MOTION_CLIP = { id: "motion-a", label: "A", suffix: "a", title: "Panel che
 
 /* ---------------------------------------------------------------- readers */
 const mainHtml = (page) => page.context.document.getElementById("main").innerHTML;
+/* EV2-7 B2.6 made the card one link whose next-action line is a descriptive span with its
+   reason beside it, instead of a chip and a <small>; the same attributes are read off it. */
 function boardCards(html) {
   return Object.fromEntries(html.split('<article class="slate').slice(1).map((chunk) => {
     const card = chunk.split("</article>")[0];
-    const chip = card.match(/<span class="shot-next-chip ([^"]*)"([^>]*)>([^<]*)<\/span><small>([^<]*)<\/small>/) || [];
+    const chip = card.match(/<span class="slate-next ([^"]*)"([^>]*)>([^<]*)<\/span>\s*<span class="slate-reason"[^>]*>([^<]*)<\/span>/) || [];
     const data = (name) => ((chip[2] || "").match(new RegExp(`${name}="([^"]*)"`)) || [])[1];
     const id = (card.match(/href="#\/shot\/([^"]+)"/) || [])[1];
     return [id, { cls: chip[1] || "", source: data("data-leading-source"), key: data("data-leading-key"), readinessCode: data("data-readiness-code"), label: chip[3], detail: chip[4] }];
@@ -135,7 +137,7 @@ async function caseA(options = {}) {
   equal(cards["L1-01"].key, keyOf("L1-01", "FRAME_A.png"), "(a) and it is the exact returned file");
   equal(cards["L1-01"].label, "Review Frame A result", "(a) the Board card says review, not the readiness words");
   ok(cards["L1-01"].label !== readiness.label, "(a) the card no longer says " + readiness.label);
-  ok(cards["L1-01"].detail.includes("FRAME_A.png"), "(a) and names the file");
+  equal(cards["L1-01"].detail, "A returned Frame A result is waiting for your decision.", "(a) with one plain reason: the identity travels as the key, not as a filename");
   equal(cards["L1-01"].readinessCode, "produce-frame", "(a) the canonical readiness code stays readable on the card");
   const sameRealm = evaluate(board.context, `
     const shot = shotById("L1-01");

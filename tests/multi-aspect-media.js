@@ -212,54 +212,89 @@ note(`formats: ${FORMATS.map((f) => f.label).join(', ')} all resolve to usable C
    3. Overview policy — bounded wells, untouched grid columns
    ================================================================================ */
 /* A ratio-derived column width can produce a track floor above its own ceiling, which
- * collapses an auto-fill grid. The board's columns therefore stay two literal constants
- * whatever the production format is, and the well is bounded by height instead. */
-const BOARD_DENSITIES = [
-  ['compact', '.shot-row.bounded-shot-page.size-compact', 260, 219],
-  ['comfortable', '.shot-row.bounded-shot-page.size-comfortable', 340, 287],
-  ['large', '.shot-row.bounded-shot-page.size-large', 460, 388],
-];
-
-for (const [label, selector, columnWidth, expectedCap] of BOARD_DENSITIES) {
-  const track = declaration(selector, 'grid-template-columns');
-  assert(track, `board size "${label}": ${selector} must declare its columns`);
+ * collapses an auto-fill grid. The board's columns therefore stay literal whatever the
+ * production format is, and the well is bounded by height instead.
+ *
+ * EV2-7 B2.3 RETIRED THE BOARD'S CARD-SIZE CONTROL. The three density tracks and their well
+ * caps in styles.css (`.shot-row.bounded-shot-page.size-compact`, `-comfortable`, `-large`)
+ * size no card any more — the board renders no size class — so they are not asserted here:
+ * a check on them would pass on dead CSS. The live board declares its columns as container
+ * steps in the Shot Board section of public/experience-coherence.css, a literal column count
+ * each, bounding the board to cards of one literal widest width; every card's well keeps the
+ * shared .slate-thumb rule (the format-aware ratio below, and its 287px browse cap), and a
+ * phone caps the well at a lower literal height. The widths a browser really lays out are
+ * measured at 390/1280/1440/1920 by tests/v6642-board-density-real-browser.py. */
+const coherenceCss = fs.readFileSync(path.join(ROOT, 'public', 'experience-coherence.css'), 'utf8');
+const boardRow = coherenceCss.match(/#main \.shot-board \.log-strip \.shot-row\.bounded-shot-page \{([^}]*)\}/);
+const BOARD_GAP = parseFloat(((boardRow && boardRow[1].match(/(?:^|;)\s*gap\s*:\s*([0-9.]+)px/)) || [])[1]);
+assert(Number.isFinite(BOARD_GAP), 'the Shot Board row must declare a literal px gap');
+const BOARD_STEPS = [...coherenceCss.matchAll(/@container shot-board \(min-width:\s*([0-9.]+)px\)\s*\{([\s\S]*?)\n\}/g)].map((match) => ({
+  threshold: parseFloat(match[1]),
+  track: ((match[2].match(/\.shot-row\.bounded-shot-page \{[^}]*grid-template-columns:\s*([^;}]+)/) || [])[1] || '').trim(),
+  frame: ((match[2].match(/\.shot-board-frame \{[^}]*max-width:\s*([^;}]+)/) || [])[1] || '').trim(),
+}));
+assert(BOARD_STEPS.length >= 3, `the Shot Board must declare its column steps, found ${BOARD_STEPS.length}`);
+const boardWidest = [];
+for (const step of BOARD_STEPS) {
   assert(
-    !track.includes('var('),
-    `board size "${label}": column widths must stay literal — a ratio-derived track can invert its own minmax(). Got "${track}"`,
+    !step.track.includes('var(') && !step.frame.includes('var('),
+    `board step at ${step.threshold}px: columns and bound must stay literal — a ratio-derived track can invert its own minmax(). Got "${step.track}" / "${step.frame}"`,
   );
-  const bounds = track.match(/minmax\(\s*([0-9.]+)px\s*,\s*([0-9.]+)px\s*\)/);
-  assert(bounds, `board size "${label}": expected two literal px bounds, got "${track}"`);
-  const [min, max] = [parseFloat(bounds[1]), parseFloat(bounds[2])];
-  assert(min <= max, `board size "${label}": the column minimum (${min}px) must never exceed its maximum (${max}px)`);
-
-  const cap = parseFloat(String(declaration(`${selector} .slate-thumb`, 'max-height') || '').replace('px', ''));
-  assert.strictEqual(
-    cap,
-    expectedCap,
-    `board size "${label}": the well cap must be round(${columnWidth} / (16/9) * 1.5) = ${expectedCap}px, got ${cap}px`,
-  );
-  assert.strictEqual(cap, Aspect.overviewWellCap(columnWidth, 'browse'), 'the declared cap must match the shared sizing rule');
-  note(`board "${label}": columns ${min}-${max}px literal, well capped at ${cap}px`);
+  const columns = step.track.match(/^repeat\((\d+),\s*minmax\(0,\s*1fr\)\)$/);
+  assert(columns, `board step at ${step.threshold}px: expected a literal repeat(N, minmax(0,1fr)), got "${step.track}"`);
+  const frame = step.frame.match(/^([0-9.]+)px$/);
+  assert(frame, `board step at ${step.threshold}px: expected a literal px bound on the board, got "${step.frame}"`);
+  const count = Number(columns[1]);
+  const narrowest = (step.threshold - (count - 1) * BOARD_GAP) / count;
+  const widest = (parseFloat(frame[1]) - (count - 1) * BOARD_GAP) / count;
+  assert(narrowest <= widest, `board step at ${step.threshold}px: the narrowest card (${narrowest}px) must never exceed the widest (${widest}px)`);
+  boardWidest.push(widest);
+  note(`board ${count} columns from ${step.threshold}px: cards ${Math.floor(narrowest)}-${Math.round(widest)}px, literal`);
 }
+const BOARD_CARD = Math.max(...boardWidest);
+assert(boardWidest.every((width) => Math.abs(width - BOARD_CARD) < 1), `every board step must bound its cards to one widest width, got ${boardWidest.join(', ')}`);
+
+/* Read from the rule whose selector list names `.slate-thumb` itself: declaration() also
+   matches the retired `.shot-row.bounded-shot-page.size-* .slate-thumb` caps by their tail. */
+function exactDeclaration(selector, property) {
+  let value = null;
+  for (const chunk of baseCss.replace(/\/\*[\s\S]*?\*\//g, '').split('}')) {
+    const open = chunk.indexOf('{');
+    if (open === -1 || !chunk.slice(0, open).split(',').map((part) => part.trim()).includes(selector)) continue;
+    const match = chunk.slice(open + 1).match(new RegExp(`(?:^|;)\\s*${property}\\s*:\\s*([^;]+)`, 'i'));
+    if (match) value = match[1].trim().replace(/\s*!important\s*$/i, '');
+  }
+  return value;
+}
+const BOARD_CAP = parseFloat(String(exactDeclaration('.slate-thumb', 'max-height') || '').replace('px', ''));
+assert.strictEqual(BOARD_CAP, Aspect.overviewWellCap(340, 'browse'), 'the shared .slate-thumb cap must still match the shared sizing rule it was computed from');
+assert(
+  BOARD_CAP >= Math.round(BOARD_CARD / (16 / 9)) && BOARD_CAP <= Aspect.overviewWellCap(BOARD_CARD, 'browse'),
+  `the ${BOARD_CAP}px well cap must leave a 16:9 frame in the widest ${BOARD_CARD}px board card uncut, and stay within the browse rule for that width`,
+);
+const PHONE_CAP = parseFloat(((coherenceCss.match(/@media\(max-width:760px\)\s*\{\s*#main \.slate-thumb \{\s*max-height:\s*([0-9.]+)px/) || [])[1]));
+assert(Number.isFinite(PHONE_CAP) && PHONE_CAP < BOARD_CAP, `a phone must cap the board well at a literal height below ${BOARD_CAP}px, got ${PHONE_CAP}`);
+note(`board wells: ${BOARD_CAP}px cap on cards up to ${BOARD_CARD}px wide, ${PHONE_CAP}px on a phone`);
 
 /* The measurement that motivated the whole repair: what a board card actually becomes in
- * each format, at each density. The 9:16 case is the one that used to be intolerable. */
-for (const [label, selector, columnWidth, cap] of BOARD_DENSITIES) {
+ * each format, at the widest card and on a phone. The 9:16 case is the one that used to be
+ * intolerable. */
+for (const [label, columnWidth, cap] of [['widest desktop card', BOARD_CARD, BOARD_CAP], ['390 phone card', 370, PHONE_CAP]]) {
   for (const format of FORMATS) {
     const wellRatio = Aspect.overviewAspect(format.ratio);
     const height = Math.min(Math.round(columnWidth / wellRatio), cap);
     assert(
       height <= cap,
-      `board "${label}" at ${format.label}: the well reached ${height}px, above its ${cap}px cap`,
+      `board ${label} at ${format.label}: the well reached ${height}px, above its ${cap}px cap`,
     );
     assert(height > 0);
     if (format.label === '9:16') {
       const unbounded = Math.round(columnWidth / format.ratio);
       assert(
         unbounded > cap && height === cap,
-        `board "${label}": a 9:16 card would reach ${columnWidth}x${unbounded} unbounded; it must be capped at ${cap}px`,
+        `board ${label}: a 9:16 card would reach ${columnWidth}x${unbounded} unbounded; it must be capped at ${cap}px`,
       );
-      note(`board "${label}" at 9:16: ${columnWidth}x${height} — not ${columnWidth}x${unbounded}`);
+      note(`board ${label} at 9:16: ${columnWidth}x${height} — not ${columnWidth}x${unbounded}`);
     }
   }
 }
@@ -268,7 +303,7 @@ for (const [label, selector, columnWidth, cap] of BOARD_DENSITIES) {
   const unbounded = Math.round(340 / 0.5625);
   assert.strictEqual(unbounded, 604, 'a 9:16 card in a 340px column is 604px tall if nothing bounds it');
   assert.strictEqual(Math.min(Math.round(340 / Aspect.overviewAspect(0.5625)), 287), 287);
-  note('board "comfortable" at 9:16 is 340x287, never 340x604');
+  note('a board card at 9:16 in a 340px column is 340x287, never 340x604');
 }
 
 /* The clamp itself: vertical media cannot make a row three times as tall, and scope

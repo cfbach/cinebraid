@@ -622,9 +622,15 @@ async function nc7() {
     scan: scanWith(project, { "L1-01": ["FRAME_A.png"] }),
     mutateSource: replacing("app.js", NC7_ANCHOR, NC7_BREAK),
   });
+  /* The filters are options of one Show selector (EV2-7 B2.2), read by the same hooks
+     tests/readiness-action-projection.js UX1-11 reads: data-board-filter finds each one, and
+     its label is its words without the " · <data-count>" suffix. */
   const seen = await evaluateAsync(page.context, `
     const filters = shotBoardActionFilters();
-    return ({ labels: [...filters.matchAll(/<span>([^<]*)<\\/span>/g)].map((m) => m[1]) });
+    return ({ labels: [...filters.matchAll(/<option\\b([^>]*\\bdata-board-filter="[^"]*"[^>]*)>([^<]*)<\\/option>/g)].map((m) => {
+      const count = (m[1].match(/\\bdata-count="(\\d+)"/) || [])[1];
+      return count !== undefined && m[2].endsWith(" · " + count) ? m[2].slice(0, -(" · " + count).length) : m[2];
+    }) });
   `);
 
   /* 1. THE DEFECT, AS A READER SEES IT. */

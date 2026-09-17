@@ -963,7 +963,9 @@ async function main() {
        read-only glance stays; what is asserted here is the draft the screen
        exists for, plus the line saying where the retired tools live. */
     ["#/create", fixture, ["Start with the basics", "CREATE THIS PROJECT", "data-manual-after-create"], { storage: { "cinebraid-creation-start-path": "scratch" } }],
-    ["#/shots/board", fixture, ["Shots", "Hull check", "CARD BADGES"]],
+    /* EV2-7 B2.4 retired the badge legend ("CARD BADGES"); each card now ends in its one
+       way in. */
+    ["#/shots/board", fixture, ["Shots", "Hull check", "Open shot"]],
     /* The five stage labels used to be expected here because the shot workspace rendered
        the stage taskbar itself. Since O4 the navigator is built by public/stage-surfaces.js
        into the shell's persistent bar — outside `#main`, which is all this harness renders —

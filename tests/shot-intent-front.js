@@ -202,12 +202,27 @@ async function checkContextualAdd() {
   const board = await render("#/shots/board", project, { scan: scanFor(project) });
 
   /* The rendered Shots page is what a filmmaker clicks, so the handler is read out of
-     its markup rather than out of the source file. */
-  const boardHtml = String(board.map.get("main").innerHTML || "");
-  assert(/onclick="openContextualAdd\('shot'\)"/.test(boardHtml),
-    "the Shots page Add control must go straight to the New Shot flow");
-  assert(!/onclick="openGlobalAdd\('shot'\)"/.test(boardHtml),
-    "and must not re-ask which record the filmmaker meant");
+     its markup rather than out of the source file. EV2-7 B2.1: the board offers ONE
+     contextual Add shot, on a board with shots and on an empty one alike — never a
+     second copy in the empty state, and never a detour through the chooser. */
+  const emptyProject = buildFixture();
+  emptyProject.scenes = [];
+  emptyProject.shots = [];
+  const emptyBoard = await render("#/shots/board", emptyProject, { scan: scanFor(emptyProject) });
+  for (const [which, page] of [["a Shots page with shots", board], ["an empty Shots page", emptyBoard]]) {
+    const boardHtml = String(page.map.get("main").innerHTML || "");
+    assert.strictEqual((boardHtml.match(/onclick="openContextualAdd\('shot'\)"/g) || []).length, 1,
+      `the Shots page Add control must go straight to the New Shot flow, once, on ${which}`);
+    assert(!/onclick="openGlobalAdd\('shot'\)"/.test(boardHtml),
+      "and must not re-ask which record the filmmaker meant");
+    const pressed = run(page.context, `
+      openContextualAdd("shot");
+      const html = String(document.getElementById("modal").innerHTML || "");
+      closeModal();
+      return { chooser: html.includes("What are you adding?"), form: html.includes("New shot") };`);
+    assert.deepStrictEqual(pressed, { chooser: false, form: true },
+      `one press of that Add opens New shot directly on ${which}`);
+  }
 
   /* A1 — the contextual entry opens New Shot, and the chooser's question is absent. */
   const contextual = run(board.context, `

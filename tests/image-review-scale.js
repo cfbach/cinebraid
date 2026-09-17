@@ -223,20 +223,25 @@ const JUDGEMENT_SURFACES = [
   },
 ];
 
-/* The card-size control has to stay usable at all three settings. Compact is the
- * density the user deliberately chose for browsing, so it is held to the overview
- * floor; Standard and Large are the sizes people switch to in order to compare
- * frames, so they have to reach the selection tier. */
-const BOARD_DENSITIES = [
-  ['compact', '.shot-row.bounded-shot-page.size-compact', 200],
-  ['comfortable', '.shot-row.bounded-shot-page.size-comfortable', SELECTION_MIN_WIDTH],
-  ['large', '.shot-row.bounded-shot-page.size-large', 340],
-];
-
-function trackFloor(template) {
-  /* `repeat(auto-fill, minmax(A, B))` — A is the width a card is guaranteed. */
-  const match = String(template || '').match(/minmax\(\s*([0-9.]+)px/);
-  return match ? parseFloat(match[1]) : null;
+/* EV2-7 B2.3 RETIRED THE BOARD'S CARD-SIZE CONTROL. This suite used to hold the three
+ * density tracks in styles.css (`.shot-row.bounded-shot-page.size-compact`, `-comfortable`,
+ * `-large`) to their floors, but the board renders no size class any more, so those rules
+ * size no card a filmmaker sees and a floor asserted on them would pass on dead CSS. The
+ * live board has ONE card size per width, declared as container steps in the Shot Board
+ * section of public/experience-coherence.css: from each step's threshold, column count and
+ * gap follows the NARROWEST card that step can lay out, and that card must still reach the
+ * selection tier. The rendered widths are measured at 390, 1280, 1440 and 1920 by
+ * tests/v6642-board-density-real-browser.py. */
+const coherenceCss = fs.readFileSync(path.join(ROOT, 'public', 'experience-coherence.css'), 'utf8');
+function boardColumnSteps(source) {
+  const base = source.match(/#main \.shot-board \.log-strip \.shot-row\.bounded-shot-page \{([^}]*)\}/);
+  const gap = base && base[1].match(/(?:^|;)\s*gap\s*:\s*([0-9.]+)px/);
+  const steps = [...source.matchAll(/@container shot-board \(min-width:\s*([0-9.]+)px\)\s*\{([\s\S]*?)\n\}/g)].map((match) => {
+    const columns = match[2].match(/\.shot-row\.bounded-shot-page \{[^}]*grid-template-columns:\s*repeat\((\d+),\s*minmax\(0,\s*1fr\)\)/);
+    const frame = match[2].match(/\.shot-board-frame \{[^}]*max-width:\s*([0-9.]+)px/);
+    return { threshold: parseFloat(match[1]), columns: columns ? Number(columns[1]) : null, frame: frame ? parseFloat(frame[1]) : null };
+  });
+  return { gap: gap ? parseFloat(gap[1]) : null, steps };
 }
 
 async function main() {
@@ -298,17 +303,23 @@ async function main() {
   }
   results.push(`width rule negative control: ${WIDTH_CONTROL.length} values — full bleed accepted, malformed/intrinsic/undersized/absent rejected`);
 
-  for (const [label, selector, minimum] of BOARD_DENSITIES) {
-    const floor = trackFloor(declaration(selector, 'grid-template-columns'));
+  const boardSteps = boardColumnSteps(coherenceCss);
+  assert(boardSteps.gap !== null, 'the Shot Board row must declare a literal px gap, so its narrowest card is knowable');
+  assert.deepStrictEqual(
+    boardSteps.steps.map((step) => step.columns),
+    [2, 3, 4],
+    'the Shot Board must widen from one card to two, three and four columns as the board gains room',
+  );
+  for (const step of boardSteps.steps) {
+    assert(step.frame !== null, `board step at ${step.threshold}px must bound the board to its cards, so no card stretches past its width`);
+    const narrowest = (step.threshold - (step.columns - 1) * boardSteps.gap) / step.columns;
+    const widest = (step.frame - (step.columns - 1) * boardSteps.gap) / step.columns;
     assert(
-      floor !== null,
-      `board card size "${label}": ${selector} must declare a minmax card floor so the thumbnail size is knowable`,
+      narrowest >= SELECTION_MIN_WIDTH,
+      `board step at ${step.threshold}px: ${step.columns} cards must stay usable for recognizing a frame (>=${SELECTION_MIN_WIDTH}px), narrowest is ${narrowest.toFixed(1)}px`,
     );
-    assert(
-      floor >= minimum,
-      `board card size "${label}": cards must stay usable for judging a frame (>=${minimum}px), got ${floor}px`,
-    );
-    results.push(`board "${label}": card floor ${floor}px -> thumbnail ${Math.round(floor / SOURCE_RATIO)}px tall at 16:9`);
+    assert(narrowest <= widest, `board step at ${step.threshold}px: its narrowest card (${narrowest}px) cannot exceed its widest (${widest}px)`);
+    results.push(`board ${step.columns} columns from ${step.threshold}px: cards ${Math.floor(narrowest)}-${Math.round(widest)}px -> thumbnail ${Math.round(narrowest / SOURCE_RATIO)}-${Math.round(widest / SOURCE_RATIO)}px tall at 16:9`);
   }
 
   /* ---------- 3. one viewer, reached from every judgement surface ---------- */

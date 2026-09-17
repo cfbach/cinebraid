@@ -160,3 +160,113 @@
   #toast.toast { left:16px; right:16px; transform:none; max-width:none; text-align:left; }
 }
 @container (max-width:52px) { #topbar .topbar-project,#topbar .topbar-view { visibility:hidden; } }
+
+/* EV2-7 Checkpoint 2 — Shot Board */
+/* B2.1–B2.7. The Shots page reads: the heading and its count beside one contextual Add shot; Shot board / Scene
+   directory; one Show selector with the matching count and page range beside it; More filters as the one secondary
+   fold; then each page's scenes as plain headings over their cards, and one pager after them.
+   The board is a container, so its columns follow the room the board really has (a Braidy rail included): one card
+   below 600px, two to 879px, three to 1289px and four beyond, and each step bounds the whole board (head, controls,
+   cards) to that many 360px cards. 390 reads one full-width card, 1280 and 1440 three, 1920 four.
+   A card is ONE link: shot ID and recorded workflow status, the whole title (it wraps, never clamps), the contained
+   preview, the leading action and its one reason, Open shot. Inspect preview is a sibling at the card's foot.
+   styles.css is not edited: its density tracks are simply no longer applied (the board renders no size class), and
+   .slate-thumb keeps its shared format-aware aspect ratio, object-fit:contain and 287px cap; a phone caps the well
+   at 145px. Type floors: title 18px, action 16px, reason 14px, secondary 12px. Every target is at least 44px. */
+#main .shot-board { container:shot-board / inline-size; }
+#main .shot-board-frame { max-width:100%; }
+#main .board-head { display:flex; flex-direction:row; align-items:flex-start; justify-content:space-between; gap:12px 16px; margin:0 0 8px; }
+#main .board-head>div:first-child { min-width:0; }
+#main .board-head .view-title { margin:0; font:700 30px/1.2 var(--display); letter-spacing:-.01em; color:var(--ink); }
+#main .board-head .board-count { margin:4px 0 0; max-width:none; font:14px/1.45 var(--body); letter-spacing:normal; color:var(--muted); }
+#main .board-head .board-head-actions { display:flex; flex:0 0 auto; width:auto; margin:0; }
+#main .board-head .board-head-actions .add-btn { flex:0 0 auto; min-height:44px; margin:0; padding:0 16px; border-radius:8px; font:700 14px/1 var(--body); letter-spacing:normal; text-transform:none; white-space:nowrap; box-shadow:none; }
+/* Add shot is the page's warm primary, as the shell's Add is; the light surface keeps its accent fill and white label. */
+#app:not([data-surf="light"]) #main .board-head .add-btn { background:var(--cb-action-warm)!important; border-color:var(--cb-action-warm)!important; color:#241e17!important; }
+#app:not([data-surf="light"]) #main .board-head .add-btn:hover { background:#efcfa9!important; border-color:#efcfa9!important; filter:none; }
+#main .workspace-tabs[data-tabs="production"] { display:flex; flex-wrap:wrap; align-items:center; gap:0 20px; margin:0 0 4px; padding:0; border:0; background:none; overflow:visible; }
+#main .workspace-tabs[data-tabs="production"] .workspace-tab { display:inline-flex; align-items:center; min-height:44px; padding:0; border:0; border-radius:0; background:none; box-shadow:none; font:500 14px/1.3 var(--body); color:var(--acc); text-decoration:underline; text-underline-offset:3px; }
+#main .workspace-tabs[data-tabs="production"] .workspace-tab.on { font-weight:700; color:var(--ink); text-decoration:none; }
+#main .board-scope { display:flex; flex-wrap:wrap; align-items:center; gap:8px 16px; margin:8px 0 22px; }
+#main .board-show { display:inline-flex; align-items:center; gap:10px; margin:0; font:500 14px/1.3 var(--body); color:var(--ink); }
+#main .board-show select { min-height:44px; max-width:100%; padding:0 12px; border:1px solid var(--line-2); border-radius:8px; background-color:var(--panel); font:500 15px/1.3 var(--body); color:var(--ink); }
+#main .board-range { font:13px/1.4 var(--body); color:var(--muted); }
+#main .board-filter-fold { min-width:0; margin:0; padding:0; border:0; }
+#main .board-filter-fold[open] { flex:1 1 100%; }
+#main .board-filter-fold>summary { display:inline-flex; align-items:center; gap:8px; width:auto; min-height:44px; padding:0 14px; border:1px solid var(--line-2); border-radius:8px; font:500 14px/1.3 var(--body); color:var(--ink); cursor:pointer; }
+#main .board-filter-fold[open]>summary { border-color:var(--acc); }
+#main .board-filter-count { padding:2px 8px; border-radius:999px; background:var(--acc-soft); font:600 12px/1.4 var(--body); color:var(--ink); }
+#main .board-filter-body { margin-top:10px; padding:14px; border:1px solid var(--line); border-radius:8px; background:var(--panel); }
+#main .board-filter-note { max-width:72ch; margin:0 0 12px; font:14px/1.5 var(--body); color:var(--muted); }
+#main .board-filter-note b { font-weight:600; color:var(--ink); }
+#main .board-filter-body .board-filter-fields { display:flex; flex-wrap:wrap; gap:12px; margin:0; padding:0; background:none; }
+#main .board-filter-fields label { display:grid; gap:4px; flex:1 1 180px; min-width:0; font:500 13px/1.3 var(--body); color:var(--muted); }
+#main .board-filter-fields select { width:100%; min-height:44px; font:14px/1.3 var(--body); }
+#main .board-clear-filters { min-height:44px; padding:0 14px; border:1px solid var(--line-2); border-radius:8px; background:transparent; font:500 14px/1 var(--body); color:var(--ink); }
+#main .board-clear-filters:hover { border-color:var(--acc); }
+/* Scenes: a heading row over the cards, not a panel. The heading is where focus lands when a page turns, and its
+   scroll margin keeps it clear of the pinned header. */
+#main .shot-board .log-strip { margin:0 0 28px; padding:0; border:0; border-radius:0; background:none!important; box-shadow:none; overflow:visible; scroll-margin-top:calc(var(--cb-topbar-stop,64px) + var(--cb-bar-height,0px) + 12px); }
+#main .shot-board .log-head { display:flex; flex-wrap:wrap; align-items:center; gap:0 12px; margin:0 0 8px; padding:0; border:0; background:none; }
+#main .shot-board .log-heading { flex:0 1 auto; min-width:0; margin:0; font:650 19px/1.3 var(--body); letter-spacing:normal; color:var(--ink); }
+#main .shot-board .log-heading:focus-visible { outline:3px solid var(--cb-focus); outline-offset:3px; }
+#main .shot-board .log-title { display:inline-flex; align-items:center; min-height:44px; font:inherit; letter-spacing:inherit; color:inherit; text-decoration:none; overflow-wrap:anywhere; }
+#main .shot-board .log-title:hover { text-decoration:underline; text-underline-offset:3px; }
+#main .shot-board .log-count { margin-left:auto; font:13px/1.4 var(--body); letter-spacing:normal; color:var(--muted); }
+#main .shot-board .log-head .collapse-btn { display:grid; place-items:center; width:44px; height:44px; min-width:44px; min-height:44px; border:1px solid var(--line); border-radius:8px; background:transparent; font:500 14px/1 var(--body); color:var(--muted); }
+#main .shot-board .log-strip .shot-row.bounded-shot-page { display:grid; grid-template-columns:minmax(0,1fr); gap:16px; justify-content:start; align-items:stretch; width:100%; margin:0; padding:0; }
+/* Narrow boards keep the heading and its collapse control on one row, with the signed-off count beneath. */
+@container shot-board (max-width:599px) {
+  #main .board-range { flex:1 1 100%; }
+  #main .shot-board .log-heading { flex:1 1 0; }
+  #main .shot-board .log-count { order:1; flex:1 1 100%; margin:0; }
+}
+@container shot-board (min-width:600px) {
+  #main .shot-board-frame { max-width:736px; }
+  #main .shot-board .log-strip .shot-row.bounded-shot-page { grid-template-columns:repeat(2,minmax(0,1fr)); }
+}
+@container shot-board (min-width:880px) {
+  #main .shot-board-frame { max-width:1112px; }
+  #main .shot-board .log-strip .shot-row.bounded-shot-page { grid-template-columns:repeat(3,minmax(0,1fr)); }
+}
+@container shot-board (min-width:1290px) {
+  #main .shot-board-frame { max-width:1488px; }
+  #main .shot-board .log-strip .shot-row.bounded-shot-page { grid-template-columns:repeat(4,minmax(0,1fr)); }
+}
+/* The card. These rules follow the card's markup wherever slate() renders it (the board and a scene's shot list). */
+#main .slate { position:relative; display:flex; flex-direction:column; min-width:0; min-height:0; margin:0; border:1px solid var(--line); border-radius:10px; background:var(--panel); box-shadow:none; transform:none; overflow:hidden; }
+#main .slate:hover { border-color:var(--line-2)!important; box-shadow:none; transform:none; }
+#main .slate-link { display:flex; flex-direction:column; flex:1 1 auto; min-width:0; padding:14px 16px 10px; color:var(--ink); text-decoration:none; }
+#main .slate-link:hover .slate-title { text-decoration:underline; text-underline-offset:3px; text-decoration-thickness:1px; }
+#main .slate-link:focus-visible { outline:3px solid var(--cb-focus); outline-offset:-3px; border-radius:10px; }
+#main .slate-top { display:flex; flex-wrap:wrap; align-items:baseline; gap:2px 10px; min-width:0; min-height:0; margin:0; padding:0; border:0; }
+#main .slate-id { font:600 12px/1.4 var(--mono); letter-spacing:.02em; color:var(--muted); }
+#main .slate .dur-chip { font:12px/1.4 var(--body); letter-spacing:normal; color:var(--muted); }
+#main .slate-state { margin-left:auto; font:500 12px/1.4 var(--body); text-align:right; color:var(--green); }
+#main .slate.wf-card-draft .slate-state { color:var(--muted); }
+#main .slate.wf-card-changes-requested .slate-state { color:var(--amber); }
+#main .slate-title { display:block; min-height:0; margin:6px 0 12px; font:650 18px/1.35 var(--body); letter-spacing:normal; color:var(--ink); white-space:normal; overflow:visible; overflow-wrap:anywhere; }
+#main .slate-thumb { display:flex; align-items:center; justify-content:center; width:100%; margin:0; padding:0; border-radius:6px; background:var(--img-well-bg); }
+#main .slate-thumb::after { content:none; }
+#main .slate-thumb img,#main .slate-thumb video { width:100%; height:100%; object-fit:contain; object-position:center; }
+#main .slate-empty { padding:10px; font:14px/1.4 var(--body); text-align:center; color:var(--muted); }
+#main .slate .win-badge { top:8px; left:8px; padding:3px 8px; font:600 12px/1.3 var(--body); letter-spacing:.02em; }
+#main .slate-next { display:block; margin:14px 0 4px; font:650 16px/1.35 var(--body); letter-spacing:normal; text-transform:none; color:var(--ink); overflow-wrap:anywhere; }
+#app:not([data-surf="light"]) #main .slate-next { color:var(--cb-action-warm); }
+#main .slate-reason { display:block; font:14px/1.45 var(--body); color:var(--ink); overflow-wrap:anywhere; }
+#main .slate-context { display:block; margin-top:8px; font:13px/1.45 var(--body); color:var(--muted); overflow-wrap:anywhere; }
+#main .slate-open { display:flex; align-items:center; gap:.35em; min-height:44px; margin-top:auto; padding-top:8px; font:500 14px/1.3 var(--body); color:var(--acc); }
+#main .slate .slate-enlarge { position:absolute; top:auto; right:16px; bottom:10px; left:auto; z-index:1; display:inline-flex; align-items:center; min-height:44px; padding:0 14px; border:1px solid var(--line-2); border-radius:8px; background:var(--panel-2); box-shadow:none; opacity:1; font:500 13px/1 var(--body); letter-spacing:normal; color:var(--ink); }
+#main .slate .slate-enlarge:hover,#main .slate .slate-enlarge:focus-visible { border-color:var(--acc); filter:none; }
+#main .slate-order { display:flex; align-items:center; gap:8px; padding:0 16px 12px; }
+#main .slate-order button { min-width:44px; min-height:44px; border:1px solid var(--line); border-radius:8px; background:transparent; font:500 14px/1 var(--body); color:var(--ink); }
+#main .slate-order .slate-enlarge { position:static; margin-left:auto; }
+@media(max-width:760px) { #main .slate-thumb { max-height:145px; } }
+#main .shot-board .board-pager { display:flex; flex-wrap:wrap; align-items:center; justify-content:center; gap:12px; margin:4px 0 24px; padding:0; border:0; border-radius:0; background:none; }
+#main .shot-board .board-pager button { min-width:96px; min-height:44px; padding:0 16px; border:1px solid var(--line-2); border-radius:8px; background:transparent; font:500 14px/1 var(--body); color:var(--ink); }
+#main .shot-board .board-pager button:disabled { opacity:.5; cursor:default; }
+#main .shot-board .board-pager span { font:500 14px/1.3 var(--body); letter-spacing:normal; color:var(--ink); }
+#main .shot-board .empty-state { max-width:560px; margin:20px 0 28px; padding:22px 24px; text-align:left; }
+#main .shot-board .empty-state h2 { margin:0; font:650 20px/1.3 var(--body); color:var(--ink); }
+#main .shot-board .empty-state p { margin:8px 0 0; font:14px/1.5 var(--body); color:var(--muted); }
+#main .shot-board .board-no-match button { min-height:44px; margin-top:16px; padding:0 16px; border:1px solid var(--line-2); border-radius:8px; background:transparent; font:500 14px/1 var(--body); color:var(--ink); }

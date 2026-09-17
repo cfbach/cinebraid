@@ -17,9 +17,13 @@ function ok(value, message) {
   checks += 1;
   assert(value, message);
 }
+/* EV2-7 B2.2: the board's filters are the options of one Show selector, and each option
+   carries its filter id and canonical count as data. The count is read off that hook AND
+   must be the number the option shows a filmmaker, so the hook cannot drift from the words. */
 function countForFilter(markup, id) {
-  const match = new RegExp("setShotActionFilter\\('" + id + "'\\)[\\s\\S]*?<b>(\\d+)</b>").exec(markup);
-  return match ? Number(match[1]) : -1;
+  const option = new RegExp(`<option\\b([^>]*\\bdata-board-filter="${id}"[^>]*)>([^<]*)</option>`).exec(markup);
+  const count = option ? (option[1].match(/\bdata-count="(\d+)"/) || [])[1] : undefined;
+  return count !== undefined && option[2].endsWith(` · ${count}`) ? Number(count) : -1;
 }
 
 async function blockedShotConsumers() {
@@ -84,7 +88,14 @@ async function blockedShotConsumers() {
   equal(countForFilter(payload.filterMarkup, "ready"), 0, "Ready filter count is canonical");
   equal(countForFilter(payload.filterMarkup, "review"), 1, "Review filter count is canonical");
 
-  ok(payload.board.includes(payload.local.label), "board chip renders the canonical action");
+  /* The card's next-action line and its one reason, read as the elements a filmmaker sees:
+     where readiness leads, they are the canonical action and explanation word for word. */
+  const boardNext = /<span class="slate-next ([^"]*)"([^>]*)>([^<]*)<\/span>\s*<span class="slate-reason"[^>]*>([^<]*)<\/span>/.exec(payload.board) || [];
+  const text = (value) => String(value || "").replace(/&quot;/g, '"').replace(/&lt;/g, "<").replace(/&gt;/g, ">").replace(/&amp;/g, "&");
+  equal((/data-leading-source="([^"]*)"/.exec(boardNext[2] || "") || [])[1], "readiness", "precondition: canonical readiness leads this board card");
+  equal(text(boardNext[3]), payload.local.label, "board card's next-action line renders the canonical action");
+  equal(text(boardNext[4]), payload.local.detail, "board card renders the canonical explanation as its one reason");
+  ok(payload.board.includes(payload.local.label), "board card renders the canonical action");
   ok(payload.board.includes(payload.local.detail), "board card renders the canonical explanation");
   ok(!payload.board.includes("next-animate"), "board card does not retain the media-derived Animate key");
 

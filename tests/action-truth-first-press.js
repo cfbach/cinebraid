@@ -341,23 +341,41 @@ async function c_emptyProjectFirstShot() {
 
   /* THE SHOTS BOARD HEAD offered a bare CONTINUE with no empty guard at all.
    *
-   * Read off the RENDERED HEAD, not off projectPrimaryProductionAction(). That
-   * owner is route-independent — it depends only on P — so asking it again here
-   * would assert nothing about this page, and the board-head correction would be
-   * revertible with this suite still green. What is under test is that
-   * productionView() CONSULTS the owner, which only its own markup can show. */
+   * EV2-7 B2.1 then retired Continue from the Shots board altogether: a browsing
+   * surface dispatches no unexplained Continue, so the project's primary action has ONE
+   * rendered head, Production's, and C4 follows it there. Everything is still read off
+   * RENDERED MARKUP, not off projectPrimaryProductionAction(). That owner is
+   * route-independent — it depends only on P — so asking it again would assert nothing
+   * about either page. What is under test: the zero-shot board renders no Continue of
+   * any kind and offers the one contextual Add shot, which opens the real New shot flow;
+   * and Production's head still CONSULTS the owner, which only its markup can show. */
   const board = await render("#/shots/board", emptyFixture());
   const boardSeen = evaluate(board.context, `
-    const head = (document.getElementById("main") || { innerHTML: "" }).innerHTML.split("</div>${"$"}{tabs}")[0];
     const main = (document.getElementById("main") || { innerHTML: "" }).innerHTML;
-    const button = (main.split('onclick="continueProduction()">')[1] || "").split("<")[0];
+    const adds = [...main.matchAll(/<button\\b[^>]*onclick="openContextualAdd\\('shot'\\)"[^>]*>([^<]*)<\\/button>/g)].map((m) => m[1]);
+    openContextualAdd("shot");
+    return {
+      continues: (main.match(/continueProduction\\(\\)/g) || []).length,
+      adds: adds.join(" | "),
+      modalHtml: (document.getElementById("modal") || {}).innerHTML || "",
+    };
+  `);
+  equal(boardSeen.continues, 0,
+    "C4: the zero-shot Shots board renders no Continue of its own, so no bare CONTINUE can answer for the project");
+  equal(boardSeen.adds, "＋ Add shot", "C4: it offers exactly one Add, the contextual Add shot");
+  ok(/New shot/i.test(boardSeen.modalHtml),
+    "C4: and one press of it opens the real New shot flow: " + boardSeen.modalHtml.slice(0, 140));
+  const home = await render("#/production", emptyFixture());
+  const homeSeen = await evaluateAsync(home.context, `
+    const view = await productionHomeView();
+    const button = (view.split('onclick="continueProduction()">')[1] || "").split("<")[0];
     return { button, offersBareContinue: button === "CONTINUE", primary: projectPrimaryProductionAction().label };
   `);
-  equal(boardSeen.button, "ADD THE FIRST SHOT",
-    "C4: the Shots board's own rendered head offers the first shot, not a bare CONTINUE");
-  equal(boardSeen.offersBareContinue, false, "C4: the pre-slice bare CONTINUE is gone from a zero-shot board");
-  equal(boardSeen.button, boardSeen.primary,
-    "C4: and it is the owner's word verbatim, so the two heads cannot disagree");
+  equal(homeSeen.button, "ADD THE FIRST SHOT",
+    "C4: Production's rendered head, where the primary action now lives alone, offers the first shot, not a bare CONTINUE");
+  equal(homeSeen.offersBareContinue, false, "C4: the pre-slice bare CONTINUE is gone from a zero-shot project");
+  equal(homeSeen.button, homeSeen.primary,
+    "C4: and it is the owner's word verbatim, so the head and the owner cannot disagree");
 
   note("C a zero-shot project offers ADD THE FIRST SHOT, and pressing it opens the real New shot flow");
 }

@@ -2784,12 +2784,23 @@ function shotLeadingAction(s, readiness = typeof shotReadinessFor === "function"
 function shotLeadingActionWords(leading) {
   const production = leading?.production || { key: "unavailable", label: "Readiness unavailable", detail: "Open Production for details" };
   const item = leading?.review?.item;
+  /* PLAIN WORDS FROM RECORDED FACTS, AND NO FILENAME. The result's identity travels as its
+     exact key (data-leading-key) and is named in full on the Desk and in Results; a card's
+     one reason naming a long external render file became a wall of text. A repair says
+     what it was asked to fix only where the correction recorded it, and "stays in place"
+     is said only of a receipt-backed approval. */
   if (leading?.source === "returned-review" && item) {
-    const unit = item.owner.kind === "shot-motion" ? "motion" : `Frame ${item.owner.frameLabel || item.owner.frameId || "A"}`;
-    return { key: "returned-review", label: `Review ${unit} result`, detail: `${item.candidate.name} came back and needs your decision.` };
+    const motion = item.owner.kind === "shot-motion";
+    const unit = motion ? "motion" : `Frame ${item.owner.frameLabel || item.owner.frameId || "A"}`;
+    const detail = item.repairOf
+      ? `A revised ${unit} result is ready.${item.correction?.intent ? ` Asked to fix: ${item.correction.intent}.` : ""}`
+      : item.comparison?.receiptBacked
+        ? `A new ${unit} result is ready; the current Approved ${motion ? "take" : "image"} stays in place.`
+        : `A returned ${unit} result is waiting for your decision.`;
+    return { key: "returned-review", label: `Review ${unit} result`, detail };
   }
   if (leading?.source === "returned-unavailable" && item)
-    return { key: "returned-unavailable", label: "Returned result missing", detail: `${item.candidate.name} is recorded, but its file is no longer in this project.` };
+    return { key: "returned-unavailable", label: "Returned result missing", detail: "The recorded result cannot be loaded. Inspect its record before another request." };
   return { key: production.key, label: production.label, detail: production.detail };
 }
 /* THE EXACT RESULTS HANDOFF for one frame or the shot's motion. Read-only.

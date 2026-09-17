@@ -1083,11 +1083,17 @@ async function ux1_10_returnedResultRouting() {
 async function ux1_11_deliveredTaxonomy() {
   const project = projectOf([{ id: "L1-01", winner: "FRAME_A.png", final: true }]);
   const page = await render("#/shots/board", project, { scan: scanWith(project, { "L1-01": ["FRAME_A.png"] }) });
+  /* EV2-7 B2.2: the filters are options of one Show selector. Each is found by its
+     data-board-filter hook, and its label is the words it shows once the " · <data-count>"
+     suffix is taken off — a missing or disagreeing count leaves the words unmatched. */
   const seen = await evaluateAsync(page.context, `
     const filters = shotBoardActionFilters();
     const home = await productionHomeView();
     return ({
-      labels: [...filters.matchAll(/<span>([^<]*)<\\/span>/g)].map((m) => m[1]),
+      labels: [...filters.matchAll(/<option\\b([^>]*\\bdata-board-filter="[^"]*"[^>]*)>([^<]*)<\\/option>/g)].map((m) => {
+        const count = (m[1].match(/\\bdata-count="(\\d+)"/) || [])[1];
+        return count !== undefined && m[2].endsWith(" · " + count) ? m[2].slice(0, -(" · " + count).length) : m[2];
+      }),
       actionWord: READINESS_ACTION_WORDS["mark-shot-final"],
       home,
     });

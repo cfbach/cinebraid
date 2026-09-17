@@ -245,7 +245,10 @@ assert.strictEqual(
   'var(--text)',
   'the headline Production metrics still read --text; if that changes, the token contract above stops covering them',
 );
-for (const selector of ['.production-next', '.board-list-controls', '.shot-command-summary article', '.focused-taskbar']) {
+/* `.board-list-controls` left this list with EV2-7 B2.2: the Shot Board no longer renders
+   that dark filter panel (its Show row, .board-scope, paints no background of its own), so a
+   light-surface rule for it would be asserted on CSS nothing uses. */
+for (const selector of ['.production-next', '.shot-command-summary article', '.focused-taskbar']) {
   const scoped = declaration(`${LIGHT} ${selector}`, 'background');
   assert(scoped, `${selector} paints a dark literal and needs a light-surface background`);
   assert(
