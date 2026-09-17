@@ -157,7 +157,7 @@
   }
   function stepAssign(b,entity,ctx) {
     const view=viewName(b,entity),s=b.assign,asset=b.pendingCrop?.assetId||b.source?.assetId||'',what=b.pendingCrop?'The crop is saved as a candidate. ':'';
-    const detail='<details class="bc-detail"><summary>Failure detail</summary><pre>'+e(['Target: '+(entity.name||entity.id)+' · '+b.stateName+' · '+view,'Asset: '+asset,'Crop candidate: '+(b.pendingCrop?.stored||'—'),'Source: '+(b.source?.name||'—'),'Code: '+(s.code||'—')].join('\n'))+'</pre></details>';
+    const detail='<details class="bc-detail"><summary>Failure detail</summary><pre>'+e(['Target: '+(entity.name||entity.id)+' · '+b.stateName+' · '+view,'Asset: '+asset,'Crop candidate: '+(b.pendingCrop?.stored||'—'),'Source: '+(b.source?.name||'—'),'Code: '+(s.code||'—'),...(s.status==='unknown'&&s.error?['Reason: '+s.error]:[])].join('\n'))+'</pre></details>';
     if(s.status==='saving')return '<p class="bc-status" role="status">Assigning '+e(view)+' for '+e(b.stateName)+'…</p>';
     if(s.status==='refreshing')return '<p class="bc-status" role="status">Re-reading the saved project. Nothing is assigned.</p>';
     if(s.status==='stale')return '<p class="bc-error" role="alert">The project changed while this was open. Refresh the target before assigning.</p>'+detail+'<div class="bc-row">'+button('data-bc-action="refresh-target" id="bc-refresh-target"','Refresh target','rd-primary')+button('data-bc-action="keep"','Keep as candidate')+'</div>';

@@ -2215,6 +2215,9 @@ async function testUnconfirmableRefreshKeepsTheCropAndRecovers() {
   ok(held.modal.includes('data-bc-action="assign-retry"') && held.modal.includes('data-bc-action="keep"'), "EV2-7 C6: with Check and retry and Keep as candidate");
   ok(held.modal.includes("Target: Nora") && held.modal.includes("Alternate") && held.modal.includes("Profile"), "EV2-7 C6: and the failure detail names the exact target");
   ok(held.modal.includes("Asset: asset-crop-0") && held.modal.includes("Crop candidate: "), "EV2-7 C6: the exact asset and crop");
+  /* An outcome stated in one sentence hides WHY behind a code; the detail carries the reason the window gave. */
+  ok(/Reason: The assignment was saved\. CineBraid could not re-read the project to confirm it here \(/.test(held.modal),
+    "EV2-7 C6: and the reason the project could not be re-read, in the window's own words");
   eq(held.crops.length, 1, "EV2-7 C6: the crop row is retained");
   harness.unblock();
   await clickBuild(rendered, { bcAction: "assign-retry" });
