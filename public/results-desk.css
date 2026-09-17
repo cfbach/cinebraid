@@ -1,30 +1,143 @@
-/* Results inherits the accepted desks' quiet dark palette and the existing shell. */
-.results-desk{--rx-bg:#111315;--rx-panel:#191c1e;--rx-well:#090b0c;--rx-ink:#eef0f1;--rx-muted:#acb2b8;--rx-line:#303539;--rx-accent:#8cd3d9;color:var(--rx-ink);background:var(--rx-bg);max-width:1720px;margin:0 auto;padding:22px;min-width:0;box-sizing:border-box}
-.results-desk *{box-sizing:border-box;min-width:0}.results-desk button,.results-desk select,.rx-entry button{min-height:44px;border:1px solid #394146;border-radius:7px;background:#202528;color:#eef0f1;padding:9px 14px;font:inherit;cursor:pointer}.results-desk button:hover{border-color:#8cd3d9}.results-desk button:disabled{opacity:.46;cursor:not-allowed}.results-desk :focus-visible,.rx-entry :focus-visible{outline:3px solid #8cd3d9;outline-offset:3px}.results-desk .rx-primary{background:#b4e7ea;color:#142428;border-color:#b4e7ea;font-weight:700}
-.rx-heading,.rx-toolbar,.rx-decision,.rx-screen-controls{display:flex;align-items:center;justify-content:space-between;gap:16px}.rx-heading{padding-bottom:18px;border-bottom:1px solid var(--rx-line)}.rx-heading h1{font-size:32px;margin:5px 0}.rx-heading p{margin:4px 0;color:var(--rx-muted)}.rx-heading .rx-eyebrow{font-size:12px;color:var(--rx-accent);letter-spacing:.09em}.rx-head-actions,.rx-toolbar>div,.rx-decision>div:last-child,.rx-entry{display:flex;gap:8px;flex-wrap:wrap}.rx-head-actions{align-items:center}.rx-context{padding:15px 0;display:flex;flex-direction:column;gap:6px}.rx-context strong{font-weight:500}.rx-context span,.rx-job-note,.rx-decision small{font-size:12px;color:var(--rx-muted)}.rx-job-note{margin:0 0 16px;padding:10px 12px;border-left:2px solid #667b83;background:#171d20}.rx-toolbar{margin:0 0 18px}.rx-toolbar label,.rx-screen-controls label{display:flex;align-items:center;gap:10px}.rx-grid{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:12px;align-content:start}.results-desk .rx-card{padding:0;overflow:hidden;text-align:left;background:var(--rx-panel);border:1px solid var(--rx-line);min-height:0}.results-desk .rx-card[aria-pressed=true]{border:2px solid var(--rx-accent);box-shadow:0 0 0 2px #35555b}.rx-thumb{aspect-ratio:16/10;background:var(--rx-well);display:grid;place-items:center;position:relative;overflow:hidden}.rx-thumb img,.rx-thumb video{width:100%;height:100%;object-fit:contain}.rx-thumb>span{font-size:12px;color:#b9c0c5;padding:8px}.rx-thumb .rx-video-badge{position:absolute;bottom:8px;left:8px;background:#111c;border-radius:5px;padding:4px 8px}.rx-card-info{display:grid;grid-template-columns:1fr auto;gap:6px;padding:12px}.rx-card-info b{font-size:14px}.rx-card-info small{grid-column:1/-1;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;color:var(--rx-muted);font-size:11px}.rx-status{font-size:11px;color:#ced5d8;white-space:nowrap}.is-approved .rx-status{color:#9de0bb}.rx-selected{margin:22px 0 0;background:var(--rx-panel);padding:16px;display:grid;grid-template-columns:minmax(0,1fr) minmax(230px,.7fr);gap:24px;align-items:center;border-radius:8px}.rx-selected h2{font-size:22px}.rx-selected p{color:var(--rx-muted);line-height:1.6}.rx-selected-media{height:300px}.rx-media{height:100%;margin:0;position:relative;display:flex;flex-direction:column;background:var(--rx-well);border-radius:7px;overflow:hidden}.rx-media img,.rx-media video{width:100%;height:calc(100% - 32px);object-fit:contain;min-height:0;flex:1}.rx-media figcaption{height:32px;padding:8px 12px;font-size:11px;color:var(--rx-muted)}.rx-load-error{position:absolute;inset:15%;padding:20px;background:#202528;white-space:normal}.rx-load-error[hidden]{display:none}.rx-stage{height:min(66vh,820px);display:grid;grid-template-columns:minmax(0,1fr);gap:12px}.rx-stage.rx-ab{grid-template-columns:repeat(2,minmax(0,1fr))}.rx-screen-controls{justify-content:flex-start;flex-wrap:wrap;margin:16px 0;font-size:12px}.rx-decision{border-top:1px solid var(--rx-line);padding:18px 0 0;margin-top:20px}.rx-decision>div:first-child{display:flex;flex-direction:column;gap:6px}.rx-unavailable{padding:35px 20px;text-align:center;background:#191d20;border:1px dashed #58636b;border-radius:8px;line-height:1.6}.rx-pages{display:flex;justify-content:center;align-items:center;gap:20px;padding:20px}.rx-requests{padding:12px;border:1px solid var(--rx-line);margin-bottom:16px}.rx-requests article{display:flex;flex-direction:column;gap:7px;padding:12px 0;border-bottom:1px solid var(--rx-line);overflow-wrap:anywhere}.rx-requests summary{cursor:pointer}.rx-entry{margin:16px 0}.rx-confirm figure{height:280px;background:#080a0b;margin:16px 0}.rx-confirm figure img,.rx-confirm figure video,.entity-approval-pending video{width:100%;height:100%;object-fit:contain}.rx-confirm p,.rx-request p{line-height:1.6}.rx-request pre{white-space:pre-wrap;overflow-wrap:anywhere;max-height:45vh;overflow:auto;background:#101315;padding:18px}.rx-screening .rx-context,.rx-screening .rx-job-note{display:none}
+/* Results and Screening. Selection, comparison and Screening are view state only.
+
+   EV2-7 dogfood correction — ONE CALM CARD SYSTEM. The grid card, the selected-result panel, the
+   decision footer, the request record and the empty states are the same card: var(--panel), 1px
+   var(--line), radius 10px, no coloured stripe and no gradient, and no card inside another card.
+   Labels are sentence-case body text rather than uppercase kickers; status is the WORD, with at most
+   one small dot beside it (green approved, amber needs attention, red failure); the warm accent
+   carries exactly one control on the surface (Approve result…), and teal is only a focus ring.
+
+   THE CONTEXTUAL RETURN IS NOT STYLED HERE. .cb-return is the one control public/media-return.js
+   paints into [data-return-slot], and it must read the same on every page — so every generic control
+   rule below excludes it rather than dressing it as a Results button. */
+
+/* The desk's palette, declared the way the other desks declare theirs: inside Results, --panel,
+   --line and --ink ARE the shell's graphite, whatever surface theme the app is wearing. */
+body.results-desk-active #app{--bg:#111315;--bg-2:#111315;--canvas:#111315;--workspace:#111315;--panel:#181a1c;--panel-2:#1d2023;--surface:#181a1c;--surface-1:#181a1c;--surface-2:#1d2023;--ink:#edeef0;--text:#edeef0;--muted:#a4a9af;--faint:#858c94;--line:#2b2e32;--line-soft:#2b2e32;--line-2:#454b52;--acc:#7dcad3;--accent:#7dcad3;--acc-ink:#7dcad3;--acc-soft:rgba(125,202,211,.09);--accent-wash:rgba(125,202,211,.09)}
+.results-desk{--rx-bg:#111315;--rx-panel:#181a1c;--rx-well:#090b0c;--rx-ink:#edeef0;--rx-muted:#a4a9af;--rx-line:#2b2e32;--rx-accent:#86dfdc;color:var(--rx-ink);background:var(--rx-bg);max-width:1720px;margin:0 auto;padding:22px 22px 16px;min-width:0;box-sizing:border-box;font:400 14px/1.5 var(--body)}
+.results-desk *{box-sizing:border-box;min-width:0}
+.results-desk button:not(:where(.cb-return)),.results-desk select,.rx-entry button{min-height:44px;border:1px solid var(--line-2);border-radius:8px;background:transparent;color:var(--ink);padding:10px 14px;font:500 14px/1.25 var(--body);letter-spacing:normal;text-transform:none;white-space:normal;cursor:pointer}
+.results-desk select{background-color:var(--panel-2)}
+.results-desk button:not(:where(.cb-return)):hover{border-color:#8a9299}
+.results-desk button:disabled{opacity:.46;cursor:not-allowed}
+.results-desk :focus-visible,.rx-entry :focus-visible{outline:3px solid var(--cb-focus,#86dfdc);outline-offset:3px}
+/* The one current primary action on this surface, and the only warm thing on it. */
+.results-desk .rx-primary{background:var(--cb-action-warm,#e5bd8e);border-color:var(--cb-action-warm,#e5bd8e);color:#241e17;font-weight:600}
+.results-desk .rx-primary:hover{background:#eccfa8;border-color:#eccfa8}
+.results-desk .rx-primary:disabled{opacity:.42}
+/* THE ONE CARD. */
+.results-desk .rx-card,.rx-selected,.results-desk .rx-decision,.rx-requests,.rx-job-note,.rx-unavailable{background:var(--panel);border:1px solid var(--line);border-radius:10px}
+/* Header: the contextual return first, above the eyebrow and the heading, then the title row. */
+.rx-heading{display:flex;flex-direction:column;align-items:stretch;gap:10px;padding-bottom:18px;border-bottom:1px solid var(--line)}
+.rx-heading-row{display:flex;align-items:center;justify-content:space-between;gap:16px;min-width:0}
+.rx-toolbar,.results-desk .rx-decision,.rx-screen-controls{display:flex;align-items:center;justify-content:space-between;gap:16px}
+.rx-heading h1{font:600 30px/1.2 var(--body);letter-spacing:-.02em;margin:5px 0}
+.rx-heading p{margin:4px 0;color:var(--muted);font-size:14px}
+.rx-heading .rx-eyebrow{font:400 12px/1.45 var(--body);letter-spacing:normal;color:var(--muted)}
+.rx-head-actions,.rx-toolbar>div,.results-desk .rx-decision>div:last-child,.rx-entry{display:flex;gap:8px;flex-wrap:wrap}
+.rx-head-actions{align-items:center}
+.rx-context{padding:15px 0;display:flex;flex-direction:column;gap:6px}
+.rx-context strong{font:500 14px/1.5 var(--body)}
+.rx-context span,.rx-job-note,.results-desk .rx-decision small{font-size:12px;color:var(--muted)}
+.rx-job-note{margin:0 0 16px;padding:12px 14px;line-height:1.5}
+.rx-toolbar{margin:0 0 18px}
+.rx-toolbar label,.rx-screen-controls label{display:flex;align-items:center;gap:10px;font-size:14px}
+.rx-grid{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:12px;align-content:start}
+.results-desk .rx-card{display:flex;flex-direction:column;padding:0;overflow:hidden;text-align:left;min-height:0;color:var(--ink)}
+.results-desk .rx-card:hover{border-color:var(--line-2)}
+/* A selected result says so and says what pressing it again does — in the word, in the hint and in the cursor. */
+.results-desk .rx-card[aria-pressed=true]{border-color:#8a9299;background:var(--panel-2);box-shadow:inset 0 0 0 2px #8a9299;cursor:zoom-in}
+.results-desk .rx-card[aria-pressed=true] .rx-card-open{color:var(--ink)}
+/* The contact sheet keeps room under its last row for the decision footer that floats over it. */
+.rx-work{padding-bottom:96px}
+.rx-screening .rx-work{padding-bottom:0}
+.rx-card-open{display:flex;align-items:center;gap:6px;padding:0 12px 11px;font:500 12px/1.3 var(--body);color:var(--muted)}
+.rx-thumb{aspect-ratio:16/10;background:var(--rx-well);display:grid;place-items:center;position:relative;overflow:hidden}
+.rx-thumb img,.rx-thumb video{width:100%;height:100%;object-fit:contain}
+.rx-thumb>span{font-size:12px;color:var(--muted);padding:8px}
+.rx-thumb .rx-video-badge{position:absolute;bottom:8px;left:8px;background:rgba(17,19,21,.82);border-radius:5px;padding:4px 8px}
+.rx-card-info{display:grid;grid-template-columns:1fr auto;gap:6px;padding:12px}
+.rx-card-info b{font:600 14px/1.3 var(--body)}
+.rx-card-info small{grid-column:1/-1;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;color:var(--muted);font-size:12px}
+/* Status is the word. The dot only agrees with it. */
+.rx-status{display:inline-flex;align-items:center;gap:6px;font-size:12px;color:var(--muted);white-space:nowrap}
+.rx-status::before{content:"";flex:0 0 auto;width:7px;height:7px;border-radius:50%;background:var(--line-2)}
+.rx-status[data-rx-state=approved]::before{background:var(--green,#7fd7b3)}
+.rx-status[data-rx-state=rejected]::before{background:var(--amber,#f3b761)}
+.rx-status[data-rx-state=unavailable]::before{background:var(--red,#e8846f)}
+.rx-status[data-rx-state=none]::before{display:none}
+.rx-selected{margin:22px 0 0;padding:16px;display:grid;grid-template-columns:minmax(0,1fr) minmax(230px,.7fr);gap:24px;align-items:center}
+.rx-selected h2{font:600 20px/1.3 var(--body);letter-spacing:-.01em}
+.rx-selected p{color:var(--muted);line-height:1.6;font-size:14px}
+.rx-selected .rx-status{font-size:14px}
+.rx-selected-media{height:300px}
+/* The media well inside the card is a well, not a second card. */
+.rx-media{height:100%;margin:0;position:relative;display:flex;flex-direction:column;background:var(--rx-well);border-radius:8px;overflow:hidden}
+.rx-media img,.rx-media video{width:100%;height:calc(100% - 32px);object-fit:contain;min-height:0;flex:1}
+.rx-media figcaption{height:32px;padding:8px 12px;font-size:12px;color:var(--muted)}
+/* The preview IS the control that opens Screening: the whole media area, with a visible hint. */
+.results-desk .rx-open{position:absolute;inset:0 0 32px;display:flex;align-items:flex-end;justify-content:center;padding:10px;border:0;border-radius:0;background:transparent;cursor:zoom-in}
+.results-desk .rx-open>span{display:inline-flex;align-items:center;gap:6px;padding:7px 11px;border:1px solid var(--line-2);border-radius:999px;background:rgba(17,19,21,.84);font:500 12px/1.2 var(--body);color:var(--ink)}
+.results-desk .rx-open:hover>span{border-color:#8a9299}
+.rx-load-error{position:absolute;inset:15%;padding:20px;background:var(--panel-2);border-radius:8px;white-space:normal;font-size:14px}
+.rx-load-error[hidden]{display:none}
+.rx-stage{height:min(66vh,820px);display:grid;grid-template-columns:minmax(0,1fr);gap:12px}
+.rx-stage.rx-ab{grid-template-columns:repeat(2,minmax(0,1fr))}
+.rx-screen-controls{justify-content:flex-start;flex-wrap:wrap;margin:16px 0;font-size:14px}
+.results-desk .rx-decision{padding:14px 16px;margin-top:20px}
+.results-desk .rx-decision>div:first-child{display:flex;flex-direction:column;gap:6px}
+.results-desk .rx-decision #rx-decision{font:600 15px/1.3 var(--body);color:var(--ink)}
+.rx-unavailable{padding:32px 20px;text-align:center;line-height:1.6}
+.rx-unavailable h2{font:600 18px/1.3 var(--body);margin-bottom:8px}
+/* Standing in for missing media, it is that media's well — not a second card inside the panel or stage. */
+.rx-selected-media>.rx-unavailable,.rx-stage>.rx-unavailable{height:100%;display:grid;align-content:center;padding:20px;border:0;border-radius:8px;background:var(--rx-well)}
+.rx-pages{display:flex;justify-content:center;align-items:center;gap:20px;padding:20px;font-size:14px}
+.rx-requests{padding:12px 14px;margin-bottom:16px}
+.rx-requests article{display:flex;flex-direction:column;gap:7px;padding:12px 0;border-bottom:1px solid var(--line);overflow-wrap:anywhere;font-size:14px}
+.rx-requests article span,.rx-requests article small{color:var(--muted);font-size:12px}
+.rx-requests summary{cursor:pointer;font-size:14px}
+.rx-entry{margin:16px 0}
+.rx-confirm figure{height:280px;background:#080a0b;margin:16px 0;border-radius:8px;overflow:hidden}
+.rx-confirm figure img,.rx-confirm figure video,.entity-approval-pending video{width:100%;height:100%;object-fit:contain}
+.rx-confirm p,.rx-request p{line-height:1.6;font-size:14px}
+/* The decision this surface asks for wears the surface's own primary: warm, sentence-case, 44px — not the
+   old 9px monospace pill. Nothing about the confirmation, its save fence or its writer changes. */
+/* styles.css fills every .approve-btn with the accent under !important, so the one narrow override is too. */
+#modal .rx-confirm .approve-btn{min-height:44px;padding:10px 16px;border:1px solid var(--cb-action-warm,#e5bd8e)!important;border-radius:8px;background:var(--cb-action-warm,#e5bd8e)!important;color:#241e17!important;font:600 14px/1.2 var(--body);letter-spacing:normal;text-transform:none}
+#modal .rx-confirm .approve-btn:disabled{opacity:.42}
+#modal .rx-confirm+.modal-actions .cancel,#modal .rx-confirm .modal-actions .cancel{min-height:44px;padding:10px 14px;font:500 14px/1.2 var(--body);color:var(--muted)}
+.rx-request pre{white-space:pre-wrap;overflow-wrap:anywhere;max-height:45vh;overflow:auto;background:#101315;border-radius:8px;padding:18px}
+/* This surface's own dialog closes with a control, not a line of text: it sits outside .modal-actions,
+   which is the only thing styles.css dresses. Secondary geometry, the same as the desk's. */
+#modal .rx-request>.cancel{display:inline-flex;align-items:center;min-height:44px;margin-top:14px;padding:10px 14px;border:1px solid var(--line-2);border-radius:8px;background:transparent;color:var(--ink);font:500 14px/1.2 var(--body)}
+.rx-screening .rx-context,.rx-screening .rx-job-note{display:none}
 @media(min-width:1700px){.rx-grid{grid-template-columns:repeat(5,minmax(0,1fr))}.rx-contact{display:grid;grid-template-columns:minmax(0,1fr) 370px;gap:20px}.rx-selected{margin:0;display:block;align-self:start}.rx-selected-media{height:260px}.rx-pages{grid-column:1}.rx-contact .rx-selected{grid-column:2;grid-row:1/3}}
-@media(max-width:1100px){.rx-grid{grid-template-columns:repeat(3,minmax(0,1fr))}.rx-heading{align-items:flex-start}.rx-head-actions{justify-content:flex-end}.rx-heading h1{font-size:28px}}
-@media(max-width:650px){.results-desk{padding:14px 10px 20px}.rx-heading{display:block;padding-bottom:12px}.rx-heading h1{font-size:28px}.rx-head-actions{justify-content:flex-start;margin-top:12px}.rx-head-actions button{font-size:12px;padding:8px 10px}.rx-context{padding:12px 0;font-size:13px}.rx-context span{font-size:11px}.rx-grid{grid-template-columns:repeat(2,minmax(0,1fr));gap:10px}.rx-card-info{padding:9px 7px;gap:5px;display:flex;flex-wrap:wrap;justify-content:space-between}.rx-card-info b{font-size:12px}.rx-card-info small{width:100%;font-size:10px}.rx-status{font-size:10px}.rx-toolbar{display:block}.rx-toolbar>div{margin-top:10px;display:grid;grid-template-columns:repeat(3,1fr);gap:5px}.rx-toolbar>div button{font-size:11px;padding:8px 5px}.rx-selected{display:block;padding:12px;margin-top:14px}.rx-selected-media{height:210px}.rx-selected h2{margin:10px 0}.rx-selected p{font-size:13px}.rx-decision{align-items:flex-start;flex-direction:column}.rx-decision>div:last-child{width:100%}.rx-decision button{flex:1}.rx-stage{height:52vh}.rx-stage.rx-ab{height:70vh;grid-template-columns:1fr;grid-template-rows:1fr 1fr}.rx-screen-controls{gap:8px}.rx-screen-controls select{max-width:230px}.rx-confirm figure{height:190px}.rx-job-note{font-size:11px}.rx-heading p{overflow-wrap:anywhere}.rx-entry button{font-size:12px}}
-@media(min-width:1101px){.rx-contact{display:grid;grid-template-columns:minmax(0,1fr) 340px;gap:18px}.rx-contact .rx-grid{grid-template-columns:repeat(3,minmax(0,1fr))}.rx-contact .rx-selected{margin:0;display:block;align-self:start;grid-column:2;grid-row:1/3;position:sticky;top:12px}.rx-selected-media{height:245px}.rx-contact .rx-pages{grid-column:1}.rx-card-info{padding:10px 8px}}
-.rx-screening{height:calc(100dvh - 210px);min-height:440px;display:flex;flex-direction:column}.rx-screening .rx-heading{padding-bottom:10px}.rx-screening .rx-heading h1{font-size:26px;margin:2px 0}.rx-screening .rx-toolbar{margin:10px 0}.rx-screening .rx-work{flex:1;min-height:120px;display:flex;flex-direction:column}.rx-screening .rx-stage{height:auto;flex:1;min-height:100px}.rx-screening .rx-screen-controls{margin:8px 0}.rx-screening .rx-decision{margin-top:4px;padding-top:10px}.rx-screening .rx-requests{display:none}.rx-screening .rx-heading #rx-import,.rx-screening .rx-heading #rx-revise{display:none}
-@media(max-width:650px){.rx-screening{height:calc(100dvh - 225px);min-height:555px}.rx-screening .rx-heading{display:flex;gap:8px;align-items:center}.rx-screening .rx-heading h1{font-size:24px}.rx-screening .rx-heading p:not(.rx-eyebrow){display:none}.rx-screening .rx-head-actions{margin:0}.rx-screening .rx-toolbar{display:flex;gap:8px;align-items:flex-start}.rx-screening .rx-toolbar>label{display:none}.rx-screening .rx-toolbar>div{display:flex;margin:0}.rx-screening .rx-decision{flex-direction:row;font-size:12px;gap:8px}.rx-screening .rx-decision small{font-size:10px}.rx-screening .rx-decision>div:last-child{width:auto}.rx-screening .rx-decision button{font-size:11px;padding:7px}.rx-screening .rx-stage.rx-ab{grid-template-columns:1fr;grid-template-rows:repeat(2,minmax(0,1fr))}.rx-screen-controls>span:last-child{font-size:10px}.rx-screen-controls button{font-size:11px;padding:6px 9px}}
-.rd-slot-pair{min-width:0;display:flex;flex-direction:column;gap:6px}.rd-slot-pair .rd-slot{width:100%;flex:1}.rd-slot-pair>.rd-button{font-size:11px;min-height:44px;white-space:normal}.results-desk .rx-decision{position:sticky;bottom:0;background:#111315;padding-bottom:10px;z-index:2}
+@media(max-width:1100px){.rx-grid{grid-template-columns:repeat(3,minmax(0,1fr))}.rx-heading-row{align-items:flex-start}.rx-head-actions{justify-content:flex-end}.rx-heading h1{font-size:28px}}
+@media(max-width:650px){.results-desk{padding:14px 10px 16px}.rx-heading{padding-bottom:12px;gap:10px}.rx-heading-row{display:block}.rx-heading h1{font-size:26px}.rx-head-actions{justify-content:flex-start;margin-top:12px}.rx-context{padding:12px 0}.rx-grid{grid-template-columns:repeat(2,minmax(0,1fr));gap:10px}.rx-card-info{padding:10px 9px;gap:5px;display:flex;flex-wrap:wrap;justify-content:space-between;align-items:baseline}.rx-card-info small{width:100%}.rx-card-open{padding:0 9px 10px}.rx-toolbar{display:block}.rx-toolbar>div{margin-top:10px;display:grid;grid-template-columns:repeat(3,1fr);gap:6px}.rx-toolbar>div button{padding:8px 6px;font-size:13px}.rx-selected{display:block;padding:12px;margin-top:14px}.rx-selected-media{height:210px}.rx-selected h2{margin:10px 0}.results-desk .rx-decision{align-items:center;flex-wrap:wrap;gap:10px}.results-desk .rx-decision>div:last-child{flex:1 1 100%}.results-desk .rx-decision button{flex:1 1 auto}.rx-stage{height:52vh}.rx-stage.rx-ab{height:70vh;grid-template-columns:1fr;grid-template-rows:1fr 1fr}.rx-screen-controls{gap:8px}.rx-screen-controls select{max-width:230px}.rx-confirm figure{height:190px}.rx-heading p{overflow-wrap:anywhere}}
+@media(min-width:1101px){.rx-contact{display:grid;grid-template-columns:minmax(0,1fr) 340px;gap:18px}.rx-contact .rx-grid{grid-template-columns:repeat(3,minmax(0,1fr))}.rx-contact .rx-selected{margin:0;display:block;align-self:start;grid-column:2;grid-row:1/3;position:sticky;top:12px}.rx-selected-media{height:245px}.rx-contact .rx-pages{grid-column:1}.rx-card-info{padding:10px 9px}}
+.rx-screening{height:calc(100dvh - 210px);min-height:440px;display:flex;flex-direction:column}.rx-screening .rx-heading{padding-bottom:10px;gap:8px}.rx-screening .rx-heading h1{font-size:26px;margin:2px 0}.rx-screening .rx-toolbar{margin:10px 0}.rx-screening .rx-work{flex:1;min-height:120px;display:flex;flex-direction:column}.rx-screening .rx-stage{height:auto;flex:1;min-height:100px}.rx-screening .rx-screen-controls{margin:8px 0}.rx-screening .rx-decision{margin-top:4px}.rx-screening .rx-requests{display:none}.rx-screening .rx-heading #rx-import,.rx-screening .rx-heading #rx-revise{display:none}
+@media(max-width:650px){.rx-screening{height:calc(100dvh - 225px);min-height:555px}.rx-screening .rx-heading-row{display:flex;gap:8px;align-items:center}.rx-screening .rx-heading h1{font-size:24px}.rx-screening .rx-heading p:not(.rx-eyebrow){display:none}.rx-screening .rx-head-actions{margin:0}.rx-screening .rx-toolbar{display:flex;gap:8px;align-items:flex-start}.rx-screening .rx-toolbar>label{display:none}.rx-screening .rx-toolbar>div{display:flex;margin:0}.results-desk.rx-screening .rx-decision{gap:8px;padding:10px 12px}.rx-screening .rx-decision small{font-size:12px}.rx-screening .rx-stage.rx-ab{grid-template-columns:1fr;grid-template-rows:repeat(2,minmax(0,1fr))}.rx-screen-controls>span:last-child{font-size:12px}}
+.rd-slot-pair{min-width:0;display:flex;flex-direction:column;gap:6px}.rd-slot-pair .rd-slot{width:100%;flex:1}.rd-slot-pair>.rd-button{font-size:12px;min-height:44px;white-space:normal}
+/* The decision footer stays in reach while the sheet scrolls under it. */
+.results-desk .rx-decision{position:sticky;bottom:0;z-index:2}
 /* Match the accepted desk shell and reserve the existing Activity dock. */
 body.results-desk-active{height:100dvh;overflow:hidden;background:#111315}
 body.results-desk-active #app{height:100dvh;min-height:0;zoom:1}
 body.results-desk-active #workspace{display:flex;flex-direction:column;min-width:0;min-height:0;height:100%;padding:0 0 var(--cb-dock-reserve,0px);background:#111315}
-body.results-desk-active #cb-shell-bar,body.results-desk-active #cb-shell-rail{display:none!important}
-body.results-desk-active #cb-shell-main{flex:1 1 auto;min-height:0;min-width:0;grid-template-columns:minmax(0,1fr)!important}
+body.results-desk-active #cb-shell-bar{display:none!important}
+/* EV2-7 dogfood correction: the Braidy rail is NOT hidden here any more. Hiding the shell's rail slot
+   (and pinning one grid column) is what made the topbar's Braidy toggle look inert on Results: the rail
+   mounted and could never be seen. The shell's own permit — an occupied slot, and a measured centre wide
+   enough for it — decides the column, exactly as it does on every other page. */
+body.results-desk-active #cb-shell-main{flex:1 1 auto;min-height:0;min-width:0}
 body.results-desk-active #app #main{display:block;min-height:0;min-width:0;width:100%;max-width:none;height:100%;padding:0;overflow:auto;background:#111315}
 .results-desk.rx-screening{height:100%;min-height:530px}
 /* Media that cannot be loaded: a neutral placeholder, never a broken-image icon or leaked alt text. */
-.rx-thumb .rx-thumb-unavailable{position:absolute;inset:0;display:grid;place-items:center;padding:8px;font-size:13px;color:#b9c0c5;background:var(--rx-well);text-align:center}.rx-thumb .rx-thumb-unavailable[hidden]{display:none}.rx-failed>img,.rx-failed>video{visibility:hidden}
+.rx-thumb .rx-thumb-unavailable{position:absolute;inset:0;display:grid;place-items:center;padding:8px;font-size:13px;color:var(--muted);background:var(--rx-well);text-align:center}.rx-thumb .rx-thumb-unavailable[hidden]{display:none}.rx-failed>img,.rx-failed>video{visibility:hidden}
 @media(max-width:650px){
- .rx-heading{padding-bottom:8px}.rx-context{padding:9px 0}.rx-context span{display:none}
- .rx-job-note{padding:7px 9px;margin-bottom:10px}.rx-toolbar{margin-bottom:12px}
- .rx-decision{flex-direction:row;align-items:center;gap:8px;padding-top:10px;font-size:12px}
- .rx-decision>div:first-child{max-width:105px}.rx-decision small{font-size:10px}
- .rx-decision>div:last-child{width:auto;flex:1;justify-content:flex-end;flex-wrap:nowrap}
- .rx-decision button{padding:8px;font-size:11px;flex:0 1 auto}
+ .rx-heading{padding-bottom:10px}.rx-context{padding:9px 0}.rx-context span{display:none}
+ .rx-job-note{padding:9px 11px;margin-bottom:10px}.rx-toolbar{margin-bottom:12px}
+ .results-desk .rx-decision{padding:10px 12px}
+ .results-desk .rx-decision>div:first-child{max-width:none}
  .results-desk.rx-screening{min-height:560px}
 }

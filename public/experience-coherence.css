@@ -585,7 +585,10 @@
 .approved-media-repair .approved-media-repair-actions .ghost-btn { min-height:44px; padding:0 14px; font:500 14px/1.2 var(--body); letter-spacing:normal; text-transform:none; color:var(--ink); }
 .approved-media-repair .approved-media-repair-status { min-height:1.5em; margin:16px 0 0; font:14px/1.5 var(--body); color:var(--muted); }
 /* The recorded repair context Results carries beside the selected result, in Screening and in Original request. */
-.results-desk .rx-repair,.rx-request .rx-repair { display:grid; gap:4px; margin:10px 0 12px; padding:10px 12px; border-left:3px solid var(--cb-action-warm); background:rgba(255,255,255,.03); }
+/* EV2-7 dogfood: retired the warm left stripe and the tint. A repair is judged with its reason, and the
+   warm accent belongs to the one current action; this is a quiet note inside the card, declared once here so
+   Results needs no override of its own. */
+.results-desk .rx-repair,.rx-request .rx-repair { display:grid; gap:4px; margin:10px 0 12px; padding:10px 12px; border:1px solid var(--line); border-radius:8px; background:transparent; }
 .results-desk .rx-repair p,.rx-request .rx-repair p { margin:0; font:14px/1.5 var(--body); overflow-wrap:anywhere; }
 .results-desk .rx-repair-fix,.rx-request .rx-repair-fix { font-weight:600; color:var(--rx-ink,#eef0f1); }
 .results-desk .rx-repair-parent,.rx-request .rx-repair-parent { color:var(--rx-muted,#acb2b8); }
@@ -649,9 +652,6 @@
 #main .bounded-shot-workspace .guided-work-stack :is(a.text-link-btn, a.chip, .guided-frame-context-actions a) { display:inline-flex; align-items:center; min-height:44px; }
 #main .bounded-shot-workspace .guided-work-stack label:is(.checkline, .project-media-use) { display:flex; align-items:center; gap:8px; min-height:44px; }
 #main .bounded-shot-workspace .navigator-toggle { min-width:44px; min-height:44px; }
-/* EV2-7 Dogfood — Shell utilities & contextual return */
-/* Two utilities hang off the shared shell: Activity along the bottom (#cb-shell-dock) and Braidy down
-   the side (#cb-shell-rail). They are the shell's own furniture rather than two more products, so they
 
 /* EV2-7 DOGFOOD CORRECTION — THE STAGE BODY JOINS THE DESK'S ONE SYSTEM.
    The floor above fixed the SIZE of the stage renderers' type. What was left was the register: the same
@@ -731,6 +731,9 @@
 #main .bounded-shot-workspace .guided-work-stack .guided-frame-return.is-approved { border-color:var(--line); background:transparent; }
 #main .bounded-shot-workspace .guided-work-stack .guided-frame-return.has-candidates { border-color:var(--line); }
 
+/* EV2-7 Dogfood — Shell utilities & contextual return */
+/* Two utilities hang off the shared shell: Activity along the bottom (#cb-shell-dock) and Braidy down
+   the side (#cb-shell-rail). They are the shell's own furniture rather than two more products, so they
    are drawn with the shell's tokens — the header's graphite ground, one line colour, one ink, 44/48px
    controls at one radius, one focus ring — and their frames carry no second palette and no uppercase
    monospace kicker. Only the FRAMES are touched: the Activity rows keep their dense operational
