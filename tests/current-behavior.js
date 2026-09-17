@@ -438,12 +438,13 @@ async function main() {
     "ev2-6-results.js",
     "ev2-6-review-real-browser.js",
     "ev2-7-bible-working-draft.js",
+    "ev2-7-desk-hierarchy.js",
     "ev2-7-navigation.js",
     "ev2-7-reference-coverage-real-browser.py",
-    "ev2-7-shot-leading-action.js",
     "ev2-7-shell-utilities-browser.js",
     "ev2-7-shell-utilities-negative-controls.js",
     "ev2-7-shell-utilities.js",
+    "ev2-7-shot-leading-action.js",
     "external-test-readiness.js",
     "fal-generation.js",
     "fixtures",
@@ -835,7 +836,9 @@ async function main() {
     assert(fs.existsSync(path.join(ROOT, exempt)), `${exempt} is exempt from the retired-name guard and must therefore exist`);
 
   const { html } = await render("#/shot/L1-01", buildFixture(), { storage: { "cinebraid-focused:fixture:shot-task:L1-01": "frames" } });
-  assert(html.includes("NEXT ACTION"));
+  /* EV2-7 dogfood correction: the Desk's kickers are sentence-case labels, not uppercase
+     monospace ones. The hero still names the leading task in its own kicker. */
+  assert(html.includes("Next action"));
   /* EV2-7: the Frames stage brings images in and prepares them; comparing and approving
      are Results'. */
   assert(html.includes("Bring in or prepare the images; compare and approve them in Results"));

@@ -190,11 +190,15 @@ def card_state(page):
             fix: (card.querySelector('.returned-review-fix') || {}).textContent || '',
             heroSrc: (card.querySelector('.guided-lifecycle-preview img') || {}).getAttribute?.('src') || '',
             heroCall: (card.querySelector('.guided-lifecycle-preview [onclick]') || {}).getAttribute?.('onclick') || '',
-            // The readiness code lives on the secondary block itself, not on the card:
-            // it describes that block. Read it from the element it is on.
-            secondary: (card.querySelector('.returned-review-secondary') || {}).dataset?.returnedReviewSecondary || '',
-            secondaryText: (card.querySelector('.returned-review-secondary') || {}).textContent || '',
-            secondaryControl: (card.querySelector('.returned-review-secondary .chip') || {}).getAttribute?.('onclick') || '',
+            // The readiness code lives on the compact list of what else is outstanding, not on
+            // the card: it describes that list. Read it from the element it is on. EV2-7's
+            // dogfood correction replaced the bordered block nested in the hero with this list;
+            // what it must still carry — the code, the canonical words, a working control — is
+            // unchanged, and a control here is a quiet text link rather than a second button.
+            secondary: (card.querySelector('.shot-outstanding') || {}).dataset?.returnedReviewSecondary || '',
+            secondaryText: (card.querySelector('.shot-outstanding') || {}).textContent || '',
+            secondaryControl: (card.querySelector('.shot-outstanding .shot-outstanding-action') || {}).getAttribute?.('onclick') || '',
+            secondaryNested: !!card.querySelector('.returned-review-secondary'),
             stale: card.dataset.returnedReviewStale === '1',
             unavailable: card.dataset.returnedReviewUnavailable === '1',
             compares: [...card.querySelectorAll('[data-returned-review-compare]')].map((el) => ({
@@ -291,6 +295,8 @@ try:
               f"A. with its canonical explanation, read {card['secondaryText']!r}")
         check("openShotReadinessAction" in card["secondaryControl"],
               f"A. and a working control, so nothing became unreachable: {card['secondaryControl']!r}")
+        check(not card["secondaryNested"],
+              "A. as a compact list rather than a card nested inside the hero")
         check("Confirm existing reference" not in card["headline"],
               f"A. but it must not be the headline, which read {card['headline']!r}")
         findings.append(

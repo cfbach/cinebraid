@@ -160,27 +160,59 @@
 @container (max-width:52px) { #topbar .topbar-project,#topbar .topbar-view { visibility:hidden; } }
 
 /* EV2-7 Checkpoint 2 — Stage bar & Shot layout */
-/* B2.15. The persistent stage bar (public/stage-surfaces.js) keeps ONE strip and ONE actions group at every width.
+/* B2.15, and the EV2-7 dogfood correction's ONE QUIET, UNIFORM STRIP.
+   The persistent stage bar (public/stage-surfaces.js) keeps ONE strip and ONE actions group at every width.
    Desktop: five compact stages (name; status · note) beside the stage actions. Phone (≤760): the current stage and
    its status with one 44px "Choose stage" toggle; the same strip opens beneath it in normal flow, one stage per row.
    The bar sits in the page's flow on a phone, so an opened list scrolls with the page instead of pinning a column
    of stages under the header. Which width is a phone is decided HERE: the markup is the same at every width and
    carries only the filmmaker's choice (data-stage-chooser), so rotation and resize need no repaint. The actions and
-   a blocked stage's reason are never inside the chooser. open-stage-work is demoted visually only; its suffix
-   (styles.css ::after) is untouched. Every rule is scoped to #cb-stage-mount, so no other taskbar changes. */
+   a blocked stage's reason are never inside the chooser. Every rule is scoped to #cb-stage-mount, so no other
+   taskbar changes.
+
+   FIVE STAGES, ONE TREATMENT. The strip used to paint three chrome systems at once: a teal-filled, teal-bordered,
+   teal-underlined current stage; an accent halo on a running one; a hollow amber ring for blocked; and uppercase
+   monospace status words. Beside a hero with its own accent and a rail with its own buttons, the eye had nothing
+   to rest on. Now every stage is drawn the same way — a name, a muted status sentence, at most one small dot —
+   and exactly one thing distinguishes the stage you are on: ink text over a 2px ink underline. Colour carries
+   status only, and only three of them: green approved, amber needs attention or blocked, red failed. A machine
+   working is a word, not a glow. The open-stage-work action and every other stage action are quiet secondary
+   controls: the one warm action on this page belongs to the hero. */
 #cb-stage-mount .cb-stage-chooser { display:none; }
-#cb-stage-mount .cb-stage-strip .focused-task-button { min-width:150px; min-height:48px; grid-template-columns:8px auto minmax(0,1fr); grid-template-areas:"dot title title" "dot state note"; align-content:center; }
+#cb-stage-mount .cb-stage-bar { gap:14px; padding:9px 24px 10px; }
+#cb-stage-mount .cb-stage-strip { gap:2px; }
+#cb-stage-mount .cb-stage-strip .focused-task-button { min-width:150px; min-height:48px; padding:7px 12px!important; grid-template-columns:8px auto minmax(0,1fr); grid-template-areas:"dot title title" "dot state note"; align-content:center;
+  border:0!important; border-bottom:2px solid transparent!important; border-radius:0!important; background:transparent!important; }
+#cb-stage-mount .cb-stage-strip .focused-task-button:hover { background:transparent!important; border-bottom-color:var(--line-2)!important; }
 #cb-stage-mount .cb-stage-strip .focused-task-button>span { display:contents; }
-#cb-stage-mount .cb-stage-strip .focused-task-button b { grid-area:title; min-width:0; font:600 14px/1.3 var(--body); }
-#cb-stage-mount .cb-stage-strip .focused-task-button>em { grid-area:state; align-self:baseline; font:600 12px/1.35 var(--body); letter-spacing:normal; text-transform:none; white-space:nowrap; }
-#cb-stage-mount .cb-stage-strip .focused-task-button small { grid-area:note; min-width:0; align-self:baseline; font:500 12px/1.35 var(--body); }
+#cb-stage-mount .cb-stage-strip .focused-task-button b { grid-area:title; min-width:0; font:500 14px/1.3 var(--body); color:var(--muted); }
+#cb-stage-mount .cb-stage-strip .focused-task-button>em { grid-area:state; align-self:baseline; font:400 12px/1.35 var(--body); letter-spacing:normal; text-transform:none; white-space:nowrap; color:var(--muted); }
+#cb-stage-mount .cb-stage-strip .focused-task-button small { grid-area:note; min-width:0; align-self:baseline; font:400 12px/1.35 var(--body); color:var(--faint); }
 #cb-stage-mount .cb-stage-strip .focused-task-button small::before { content:"· "; }
 #cb-stage-mount .cb-stage-strip .focused-task-button:focus-visible { outline:3px solid var(--cb-focus); outline-offset:-3px; }
-#cb-stage-mount .cb-stage-action { min-height:44px; padding:10px 14px; font:600 14px/1.2 var(--body); letter-spacing:normal; }
-#cb-stage-mount .cb-stage-action[data-action-id="open-stage-work"] { border-color:var(--line-2); background:transparent; font-weight:500; }
-#cb-stage-mount .cb-stage-action[data-action-id="open-stage-work"]:hover:not(:disabled) { border-color:var(--acc); }
+/* One small dot per stage, and only the three status colours. */
+#cb-stage-mount .cb-stage-strip .focused-task-button>i { width:6px; height:6px; background:var(--line-2)!important; box-shadow:none!important; }
+#cb-stage-mount .cb-stage-strip .focused-task-button.tone-complete>i { background:var(--green)!important; }
+#cb-stage-mount .cb-stage-strip .focused-task-button.tone-attention>i { background:var(--amber)!important; }
+#cb-stage-mount .cb-stage-strip .focused-task-button.tone-attention>em { color:var(--amber); }
+#cb-stage-mount .cb-stage-strip .focused-task-button.tone-active>i { background:var(--muted)!important; box-shadow:none!important; }
+#cb-stage-mount .cb-stage-strip .focused-task-button.tone-active>em { color:var(--muted); }
+#cb-stage-mount .cb-stage-strip .focused-task-button.tone-failed>i { background:var(--red)!important; }
+#cb-stage-mount .cb-stage-strip .focused-task-button.tone-failed>em { color:var(--red); }
+/* Blocked stays distinguishable from not-started — amber, in the word and the dot — without a second chrome. */
+#cb-stage-mount .cb-stage-strip .focused-task-button[data-availability="blocked"] { opacity:1; }
+#cb-stage-mount .cb-stage-strip .focused-task-button[data-availability="blocked"]>i { background:transparent!important; box-shadow:inset 0 0 0 2px var(--amber)!important; }
+#cb-stage-mount .cb-stage-strip .focused-task-button[data-availability="blocked"]>em { color:var(--amber); }
+/* The one stage you are on. Neutral, and last so it wins over every state above. */
+#cb-stage-mount .cb-stage-strip .focused-task-button[aria-current="step"] { border-bottom-color:var(--ink)!important; background:transparent!important; box-shadow:none!important; }
+#cb-stage-mount .cb-stage-strip .focused-task-button[aria-current="step"]>b { color:var(--ink); font-weight:650; }
+/* The actions: secondary controls, at reading size, whatever emphasis the contract declared. */
+#cb-stage-mount .cb-stage-action { min-height:44px; padding:10px 14px; border:1px solid var(--line-2); border-radius:8px; background:transparent; color:var(--ink); font:500 14px/1.2 var(--body); letter-spacing:normal; }
+#cb-stage-mount .cb-stage-action.emphasis-primary { border-color:var(--line-2); background:transparent; color:var(--ink); }
+#cb-stage-mount .cb-stage-action:hover:not(:disabled) { border-color:var(--ink); }
 #cb-stage-mount :is(.cb-stage-action,.cb-stage-chooser-toggle):focus-visible { outline:3px solid var(--cb-focus); outline-offset:2px; }
-#cb-stage-mount .cb-stage-action-reason { font:500 14px/1.45 var(--body); letter-spacing:normal; }
+#cb-stage-mount .cb-stage-action-reason { font:400 14px/1.45 var(--body); letter-spacing:normal; color:var(--amber); }
+#cb-stage-mount .cb-stage-action-reason.cb-stage-action-none { color:var(--muted); }
 @media(max-width:760px) {
   #cb-shell-bar { position:relative; top:auto; }
   #cb-stage-mount .cb-stage-bar { display:grid; grid-template-columns:minmax(0,1fr); gap:10px; padding:12px 16px 14px; }
@@ -331,7 +363,27 @@
    leading-task hero; one Results rail; the selected stage's work; one Shot details disclosure. The header is part of
    the page rather than a second sticky band under the stage bar. Type floors: body and reasons 14px, operational
    secondary text 12px; every control at least 44px. Every rule is scoped to the shot workspace, the import chooser or
-   the repair context Results carries. */
+   the repair context Results carries.
+
+   EV2-7 DOGFOOD CORRECTION — ONE CALM CARD SYSTEM, AND ONE WARM ACTION.
+
+   The Desk was drawing the same page in five idioms at once: an accent-striped hero, a warm-striped returned-result
+   hero, a blue-striped operation block, a bordered card nested inside the hero, plain rail cards, and teal uppercase
+   monospace kickers under all of it. The information was right and the surface read as six products.
+
+   The system now is one card: background var(--panel), 1px solid var(--line), radius 10px. No coloured left stripes,
+   no gradients, and no card inside a card — where a card needs a division it uses spacing or one 1px var(--line)
+   rule. The hero is the only card allowed to be louder, and it is louder by ONE step: a slightly elevated background
+   (var(--panel-2)), more padding and a bigger title. It is not a different colour system.
+
+   The identity, intent and facts rows are not cards at all; they are the reading order the ruling's target draws,
+   separated by hairlines, so nothing competes with the hero above the fold.
+
+   COLOUR SAYS THREE THINGS AND NOTHING ELSE. var(--cb-action-warm) is the one current action — the hero's — and is
+   used nowhere else on this page. Status is words plus at most a small dot: green approved, amber needs attention or
+   blocked, red failed. Teal is focus rings and links. Every other control on the Desk (the stage strip's actions, the
+   rail's Results buttons, Import existing…, Shot actions and everything inside a stage body) is a secondary control:
+   transparent, 1px var(--line-2), ink label — or a plain text link. */
 #main .bounded-shot-workspace .shot-main>.crumb { margin:0; font:14px/1.4 var(--body); letter-spacing:normal; color:var(--muted); }
 #main .bounded-shot-workspace .shot-main>.crumb a { display:inline-flex; align-items:center; min-height:44px; color:var(--acc); text-decoration:underline; text-underline-offset:3px; }
 #main .bounded-shot-workspace .shot-workspace-head { position:static; top:auto; z-index:auto; display:flex; flex-wrap:wrap; align-items:flex-start; justify-content:space-between; gap:12px 20px; margin:0; padding:0 0 12px; border:0; border-bottom:1px solid var(--line); border-radius:0; background:none; box-shadow:none; backdrop-filter:none; }
@@ -341,10 +393,10 @@
 #main .bounded-shot-workspace .shot-head-controls { display:flex; flex-wrap:wrap; align-items:flex-start; justify-content:flex-end; gap:8px; width:auto; }
 #main .bounded-shot-workspace .shot-head-nav { display:flex; gap:8px; }
 #main .bounded-shot-workspace .shot-head-nav>a,#main .bounded-shot-workspace .shot-head-nav>span { display:grid; place-items:center; width:44px; min-width:44px; height:44px; min-height:44px; border:1px solid var(--line-2); border-radius:8px; font:22px/1 var(--body); color:var(--ink); text-decoration:none; }
-#main .bounded-shot-workspace .shot-head-nav>a:hover { border-color:var(--acc); }
+#main .bounded-shot-workspace .shot-head-nav>a:hover { border-color:var(--ink); }
 #main .bounded-shot-workspace .shot-head-nav>span { opacity:.35; }
 #main .bounded-shot-workspace .shot-head-controls>.shot-import-open { width:auto; min-height:44px; padding:0 14px; border:1px solid var(--line-2); border-radius:8px; background:transparent; font:500 15px/1.2 var(--body); letter-spacing:normal; text-transform:none; white-space:nowrap; color:var(--ink); }
-#main .bounded-shot-workspace .shot-import-open:hover { border-color:var(--acc); }
+#main .bounded-shot-workspace .shot-import-open:hover { border-color:var(--ink); }
 #main .bounded-shot-workspace .shot-head-controls>.guided-inline-actions { min-width:0; flex:0 0 auto; border:0; background:none; }
 #main .bounded-shot-workspace .shot-head-controls>.guided-inline-actions>summary { min-height:44px; padding:0 10px; border:1px solid transparent; border-radius:8px; background:transparent; font:500 15px/1.2 var(--body); letter-spacing:normal; text-transform:none; white-space:nowrap; color:var(--ink); }
 #main .bounded-shot-workspace .shot-head-controls>.guided-inline-actions>summary::before { content:"▸"; margin-right:8px; font-size:12px; }
@@ -363,7 +415,7 @@
 #main .bounded-shot-workspace .shot-intent-control[open]>summary::after { content:"Done"; }
 #main .bounded-shot-workspace .shot-intent-control[data-shot-intent-reading="absent"]:not([open])>summary::after { content:"Choose"; }
 #main .bounded-shot-workspace .shot-intent-control[data-shot-intent-reading="absent"][open]>summary::after { content:none; }
-#main .bounded-shot-workspace .shot-intent-control>summary:hover::after { border-color:var(--acc); }
+#main .bounded-shot-workspace .shot-intent-control>summary:hover::after { border-color:var(--ink); }
 #main .bounded-shot-workspace .shot-intent-control .shot-intent-undeclared { margin:0 0 8px; padding:0; font:15px/1.5 var(--body); color:var(--ink); }
 #main .bounded-shot-workspace .shot-intent-fields { gap:8px 16px; padding:0 0 14px; }
 #main .bounded-shot-workspace .shot-intent-fields label { font:600 15px/1.4 var(--body); letter-spacing:normal; text-transform:none; color:var(--ink); }
@@ -373,9 +425,11 @@
 #main .bounded-shot-workspace .shot-facts { margin:0; padding:10px 0 12px; border-bottom:1px solid var(--line); font:14px/1.5 var(--body); color:var(--muted); overflow-wrap:anywhere; }
 #main .bounded-shot-workspace .shot-facts-sep { color:var(--faint); }
 /* 5. One leading-task hero: a compact contained preview beside the recommendation, its one action, what a repair was
-   asked to fix, and Before/Current as small labelled previews. The previous/next pair is no longer drawn here. */
-#main .bounded-shot-workspace .guided-next-action { grid-template-columns:240px minmax(0,1fr); gap:20px; align-items:start; margin:16px 0; padding:18px 20px; border:1px solid var(--line); border-left:3px solid var(--acc); border-radius:0 10px 10px 0; background:var(--panel); }
-#main .bounded-shot-workspace .guided-next-action.returned-review-card { border-left-color:var(--cb-action-warm); }
+   asked to fix, Before/Current as small labelled previews, and the compact list of what else is outstanding. It is
+   the one dominant card: the same card as every other, one step brighter. No stripe, whichever answer it is. */
+#main .bounded-shot-workspace .guided-next-action { grid-template-columns:240px minmax(0,1fr); gap:20px; align-items:start; margin:18px 0 16px; padding:20px 22px; border:1px solid var(--line); border-left:1px solid var(--line); border-radius:10px; background:var(--panel-2); }
+#main .bounded-shot-workspace .guided-next-action.returned-review-card,
+#main .bounded-shot-workspace .guided-next-action.approved-media-unavailable { border-left-color:var(--line); }
 #main .bounded-shot-workspace .guided-next-action .guided-lifecycle-preview { width:240px; height:135px; max-height:none; aspect-ratio:auto; min-height:0; border-radius:6px; overflow:hidden; background:var(--img-well-bg); }
 #main .bounded-shot-workspace .guided-next-action .guided-lifecycle-media { display:grid; place-items:center; width:100%; height:100%; }
 #main .bounded-shot-workspace .guided-next-action .guided-lifecycle-media img,#main .bounded-shot-workspace .guided-next-action .guided-lifecycle-media video { width:auto; height:auto; max-width:240px; max-height:135px; object-fit:contain; }
@@ -387,12 +441,15 @@
   #main .bounded-shot-workspace .guided-next-action .guided-lifecycle-media:has(>.media-enlarge-btn)>video { border-radius:6px; background:var(--img-well-bg); }
   #main .bounded-shot-workspace .guided-next-action .guided-lifecycle-media>.media-enlarge-btn { position:static; justify-self:stretch; min-height:44px; padding:0 12px; border:1px solid var(--line-2); border-radius:8px; background:var(--panel-2); color:var(--ink); font:500 14px/1.2 var(--body); letter-spacing:normal; box-shadow:none; opacity:1; }
 }
-#main .bounded-shot-workspace .guided-next-action>div>span { font:600 12px/1.4 var(--body); letter-spacing:.06em; color:var(--muted); }
-#main .bounded-shot-workspace .guided-next-action h2 { margin:4px 0 6px; font:700 23px/1.3 var(--display); color:var(--ink); overflow-wrap:anywhere; }
-#main .bounded-shot-workspace .guided-next-action p { margin:0 0 12px; font:15px/1.5 var(--body); color:var(--ink); overflow-wrap:anywhere; }
+/* The kicker: a 13px sentence-case muted label, in the body font. Not a monospace shout. */
+#main .bounded-shot-workspace .guided-next-action>div>span { display:block; font:500 13px/1.45 var(--body); letter-spacing:normal; text-transform:none; color:var(--muted); }
+#main .bounded-shot-workspace .guided-next-action h2 { margin:3px 0 7px; font:700 23px/1.3 var(--display); color:var(--ink); overflow-wrap:anywhere; }
+#main .bounded-shot-workspace .guided-next-action p { margin:0 0 14px; font:15px/1.5 var(--body); color:var(--ink); overflow-wrap:anywhere; }
 #main .bounded-shot-workspace .guided-next-actions { display:flex; flex-wrap:wrap; align-items:center; gap:8px 14px; }
-#main .bounded-shot-workspace .guided-next-actions .shot-primary-action { min-height:44px; padding:0 18px; font:650 15px/1.2 var(--body); letter-spacing:normal; text-transform:none; }
-#main .bounded-shot-workspace .returned-review-card .shot-primary-action { border-color:var(--cb-action-warm); background:var(--cb-action-warm); color:#241e17; }
+/* THE ONE WARM ACTION ON THE DESK, whichever answer the hero is showing. Every other control
+   on this page is secondary or a text link, so the warm fill means "this, now" and nothing else. */
+#main .bounded-shot-workspace .guided-next-action .shot-primary-action { min-height:44px; padding:0 18px; border:1px solid var(--cb-action-warm); background:var(--cb-action-warm); color:#241e17; font:650 15px/1.2 var(--body); letter-spacing:normal; text-transform:none; box-shadow:none; }
+#main .bounded-shot-workspace .guided-next-action .shot-primary-action:hover { background:#efcfa9; border-color:#efcfa9; filter:none; }
 #main .bounded-shot-workspace .returned-review-more { font:13px/1.45 var(--body); color:var(--muted); }
 #main .bounded-shot-workspace .returned-review-fix { margin:14px 0 0; font:15px/1.5 var(--body); font-weight:600; color:var(--ink); }
 #main .bounded-shot-workspace .returned-review-context { display:flex; flex-wrap:wrap; gap:10px 20px; margin:12px 0 0; }
@@ -403,26 +460,43 @@
 #main .bounded-shot-workspace .returned-review-compare b { font:500 13px/1.35 var(--body); letter-spacing:normal; text-transform:none; color:var(--muted); }
 #main .bounded-shot-workspace .returned-review-compare small { font:12px/1.35 var(--body); color:var(--muted); }
 #main .bounded-shot-workspace .returned-review-compare em { font:12px/1.4 var(--body); color:var(--muted); }
-#main .bounded-shot-workspace .returned-review-secondary { gap:4px; margin-top:14px; padding:12px 14px; }
-#main .bounded-shot-workspace .returned-review-secondary>span { font:600 12px/1.4 var(--body); letter-spacing:.04em; }
-#main .bounded-shot-workspace .returned-review-secondary>b { font:600 14px/1.4 var(--body); }
-#main .bounded-shot-workspace .returned-review-secondary>small { font:13px/1.5 var(--body); }
-#main .bounded-shot-workspace .returned-review-secondary>.chip { min-height:44px; padding:0 14px; font:500 14px/1.2 var(--body); letter-spacing:normal; text-transform:none; }
-#main .bounded-shot-workspace .guided-lifecycle-empty span { font:600 12px/1.4 var(--body); letter-spacing:.06em; }
-/* A failed or unsettled run for this shot, beside the hero on every stage. */
-#main .bounded-shot-workspace .shot-activity-inline { display:flex; flex-wrap:wrap; align-items:center; justify-content:space-between; gap:10px 16px; margin:-4px 0 16px; padding:12px 16px; border:1px solid var(--line); border-left:3px solid var(--blue); border-radius:0 10px 10px 0; background:var(--panel); }
-#main .bounded-shot-workspace .shot-activity-inline.state-active { border-left-color:var(--op-working); }
-#main .bounded-shot-workspace .shot-activity-inline.state-review,#main .bounded-shot-workspace .shot-activity-inline.state-pending { border-left-color:var(--op-waiting); }
-#main .bounded-shot-workspace .shot-activity-inline.state-done { border-left-color:var(--op-done); }
-#main .bounded-shot-workspace .shot-activity-inline.state-failed,#main .bounded-shot-workspace .shot-activity-inline.is-attention { border-left-color:var(--op-attention); }
+/* THE COMPACT LIST OF WHAT ELSE IS OUTSTANDING. Rows, not a card: one hairline separates it from
+   the hero's body, and each row is "Also needed · <action> — <reason>" with at most a text link.
+   No border box, no second filled button, nothing nested. */
+#main .bounded-shot-workspace .shot-outstanding { display:grid; gap:2px; margin:16px 0 0; padding:12px 0 0; border-top:1px solid var(--line); list-style:none; }
+#main .bounded-shot-workspace .shot-outstanding-row { display:flex; flex-wrap:wrap; align-items:baseline; gap:0 6px; margin:0; padding:2px 0; font:14px/1.5 var(--body); color:var(--ink); }
+#main .bounded-shot-workspace .shot-outstanding-lead { flex:0 0 auto; color:var(--muted); }
+#main .bounded-shot-workspace .shot-outstanding-label { font-weight:600; color:var(--ink); }
+#main .bounded-shot-workspace .shot-outstanding-why { flex:1 1 220px; min-width:0; font:14px/1.5 var(--body); color:var(--muted); overflow-wrap:anywhere; }
+#main .bounded-shot-workspace .shot-outstanding-more { margin:2px 0 0; font:13px/1.5 var(--body); color:var(--muted); }
+/* The row's action is a link, not a control that competes with the hero's: teal, underlined, and
+   44px tall so it is still a comfortable target. */
+#main .bounded-shot-workspace .shot-outstanding-action { display:inline-flex; align-items:center; min-height:44px; margin:0; padding:0; border:0; background:none; font:600 14px/1.5 var(--body); letter-spacing:normal; text-transform:none; color:var(--acc); text-decoration:underline; text-underline-offset:3px; cursor:pointer; }
+#main .bounded-shot-workspace .shot-outstanding-action:hover { color:var(--ink); }
+#main .bounded-shot-workspace .guided-lifecycle-empty span { font:500 12px/1.4 var(--body); letter-spacing:normal; text-transform:none; color:var(--muted); }
+/* A failed or unsettled run for this shot, beside the hero on every stage: the same card as
+   everything else, with its state in the words and one small dot. */
+#main .bounded-shot-workspace .shot-activity-inline { display:flex; flex-wrap:wrap; align-items:center; justify-content:space-between; gap:10px 16px; margin:-2px 0 16px; padding:13px 16px; border:1px solid var(--line); border-left:1px solid var(--line); border-radius:10px; background:var(--panel); }
+/* The state is one 6px dot, and its colour is the OPERATIONAL token the Activity dock and the
+   Assistant already paint that state with — the shipped run classifier's answer, rendered once.
+   A stripe down the card said the same thing at forty times the size, in a fourth colour system. */
+#main .bounded-shot-workspace .shot-activity-inline { --shot-activity-dot:var(--op-idle); }
+#main .bounded-shot-workspace .shot-activity-inline.state-active { --shot-activity-dot:var(--op-working); }
+#main .bounded-shot-workspace .shot-activity-inline.state-review,#main .bounded-shot-workspace .shot-activity-inline.state-pending { --shot-activity-dot:var(--op-waiting); }
+#main .bounded-shot-workspace .shot-activity-inline.state-done { --shot-activity-dot:var(--op-done); }
+#main .bounded-shot-workspace .shot-activity-inline.state-failed,#main .bounded-shot-workspace .shot-activity-inline.is-attention { --shot-activity-dot:var(--op-attention); }
+#main .bounded-shot-workspace .shot-activity-inline>div>b::before { content:""; display:inline-block; width:6px; height:6px; margin-right:9px; border-radius:50%; background:var(--shot-activity-dot,var(--op-idle)); vertical-align:middle; }
 #main .bounded-shot-workspace .shot-activity-inline>div { display:grid; gap:2px; min-width:0; flex:1 1 320px; }
 #main .bounded-shot-workspace .shot-activity-inline>.shot-activity-actions { display:flex; flex-wrap:wrap; gap:8px; flex:0 1 auto; }
 #main .bounded-shot-workspace .shot-activity-inline b { font:600 15px/1.4 var(--body); color:var(--ink); overflow-wrap:anywhere; }
 #main .bounded-shot-workspace .shot-activity-inline span { font:14px/1.45 var(--body); color:var(--muted); overflow-wrap:anywhere; }
 #main .bounded-shot-workspace .shot-activity-inline .ghost-btn { width:auto; min-height:44px; padding:0 16px; font:500 14px/1.2 var(--body); color:var(--ink); }
-/* 6. One Results rail: a summary per target, the current Approved preview, exactly one named Results button each. */
+/* 6. One Results rail: a summary per target, the current Approved preview, and ONE action per target —
+   its named Results button, or, when the hero above is already leading with that exact returned result,
+   a quiet line saying so instead of a second button onto the same place. */
 #main .bounded-shot-workspace .shot-results-rail { display:grid; grid-template-columns:repeat(auto-fit,minmax(min(100%,280px),1fr)); gap:12px; margin:0 0 24px; }
 #main .bounded-shot-workspace .shot-results-note { grid-column:1/-1; margin:0; font:14px/1.5 var(--body); color:var(--amber); }
+#main .bounded-shot-workspace .shot-results-led { display:flex; align-items:center; min-height:44px; margin:2px 0 0; font:14px/1.45 var(--body); color:var(--muted); }
 #main .bounded-shot-workspace .shot-results-target { display:grid; grid-template-columns:72px minmax(0,1fr); gap:12px 14px; align-items:center; min-width:0; padding:14px; border:1px solid var(--line); border-radius:10px; background:var(--panel); }
 #main .bounded-shot-workspace .shot-results-approved { display:grid; place-items:center; width:72px; height:48px; border-radius:6px; overflow:hidden; background:var(--img-well-bg); color:inherit; }
 #main .bounded-shot-workspace .shot-results-approved img,#main .bounded-shot-workspace .shot-results-approved video { width:100%; height:100%; object-fit:contain; }
@@ -432,8 +506,8 @@
 #main .bounded-shot-workspace .shot-results-copy { display:grid; gap:2px; min-width:0; justify-items:start; }
 #main .bounded-shot-workspace .shot-results-copy>b { font:650 15px/1.35 var(--body); color:var(--ink); overflow-wrap:anywhere; }
 #main .bounded-shot-workspace .shot-results-copy>small { font:13px/1.45 var(--body); color:var(--muted); overflow-wrap:anywhere; }
-#main .bounded-shot-workspace .shot-results-open { width:auto; min-height:44px; margin-top:8px; padding:0 16px; border:1px solid var(--line-2); border-radius:8px; background:var(--panel-2); font:500 15px/1.2 var(--body); letter-spacing:normal; text-transform:none; color:var(--ink); }
-#main .bounded-shot-workspace .shot-results-open:hover { border-color:var(--acc); }
+#main .bounded-shot-workspace .shot-results-open { width:auto; min-height:44px; margin-top:8px; padding:0 16px; border:1px solid var(--line-2); border-radius:8px; background:transparent; font:500 15px/1.2 var(--body); letter-spacing:normal; text-transform:none; color:var(--ink); }
+#main .bounded-shot-workspace .shot-results-open:hover { border-color:var(--ink); }
 #main .bounded-shot-workspace .shot-results-picker { display:flex; flex-wrap:wrap; align-items:center; gap:8px; margin:0 0 6px; font:600 14px/1.3 var(--body); color:var(--ink); }
 #main .bounded-shot-workspace .shot-results-picker select { width:auto; min-width:190px; min-height:44px; padding:8px 30px 8px 12px; font:15px/1.3 var(--body); }
 /* 7. The selected stage's own words, at reading size. */
@@ -480,8 +554,11 @@
   #main .bounded-shot-workspace .guided-next-action>div>span { grid-column:2; grid-row:1; align-self:end; }
   #main .bounded-shot-workspace .guided-next-action>div>h2 { grid-column:2; grid-row:2; align-self:start; margin:0; font-size:20px; }
   #main .bounded-shot-workspace .guided-next-action>div>:not(span):not(h2) { grid-column:1 / -1; }
-  #main .bounded-shot-workspace .guided-next-action p { margin:4px 0 0; }
-  #main .bounded-shot-workspace .guided-next-actions .shot-primary-action { flex:1 1 100%; width:100%; }
+  #main .bounded-shot-workspace .guided-next-action p { margin:4px 0 12px; }
+  #main .bounded-shot-workspace .guided-next-action .shot-primary-action { flex:1 1 100%; width:100%; }
+  /* The compact list wraps to its own rows on a phone; the lead, the action and the reason stay one row each. */
+  #main .bounded-shot-workspace .shot-outstanding-row { gap:0 5px; }
+  #main .bounded-shot-workspace .shot-outstanding-why { flex:1 1 100%; }
   #main .bounded-shot-workspace .returned-review-context { display:grid; grid-template-columns:1fr 1fr; gap:10px; }
   #main .bounded-shot-workspace .returned-review-compare { flex-direction:column; align-items:flex-start; }
   #main .bounded-shot-workspace .shot-results-rail { grid-template-columns:minmax(0,1fr); gap:10px; }
@@ -496,6 +573,17 @@
 .shot-import-chooser .shot-import-target { width:100%; min-height:44px; padding:10px 14px; text-align:left; font:500 15px/1.3 var(--body); letter-spacing:normal; text-transform:none; color:var(--ink); }
 .shot-import-chooser .shot-import-target[aria-pressed="true"] { border-color:var(--acc); background:var(--acc-soft,rgba(125,202,211,.09)); }
 .shot-import-chooser .shot-import-status { min-height:1.5em; margin:14px 0 0; font:14px/1.5 var(--body); color:var(--muted); }
+/* Locate or replace an approved file the project cannot show (a modal, so it is outside #main too).
+   Two numbered steps, each with one quiet control, and a status line that never claims an approval
+   changed — because nothing here changes one. */
+.approved-media-repair .approved-media-repair-lede { margin:10px 0 14px; font:14px/1.5 var(--body); color:var(--ink); overflow-wrap:anywhere; }
+.approved-media-repair .approved-media-repair-steps { display:grid; gap:14px; margin:0; padding:0 0 0 20px; }
+.approved-media-repair .approved-media-repair-steps li { font:14px/1.55 var(--body); color:var(--muted); }
+.approved-media-repair .approved-media-repair-steps b { color:var(--ink); }
+.approved-media-repair .approved-media-repair-path { display:inline-block; padding:2px 6px; border:1px solid var(--line); border-radius:6px; background:rgba(255,255,255,.03); font:13px/1.5 var(--mono); color:var(--ink); overflow-wrap:anywhere; }
+.approved-media-repair .approved-media-repair-actions { margin:8px 0 0; }
+.approved-media-repair .approved-media-repair-actions .ghost-btn { min-height:44px; padding:0 14px; font:500 14px/1.2 var(--body); letter-spacing:normal; text-transform:none; color:var(--ink); }
+.approved-media-repair .approved-media-repair-status { min-height:1.5em; margin:16px 0 0; font:14px/1.5 var(--body); color:var(--muted); }
 /* The recorded repair context Results carries beside the selected result, in Screening and in Original request. */
 .results-desk .rx-repair,.rx-request .rx-repair { display:grid; gap:4px; margin:10px 0 12px; padding:10px 12px; border-left:3px solid var(--cb-action-warm); background:rgba(255,255,255,.03); }
 .results-desk .rx-repair p,.rx-request .rx-repair p { margin:0; font:14px/1.5 var(--body); overflow-wrap:anywhere; }
@@ -564,6 +652,85 @@
 /* EV2-7 Dogfood — Shell utilities & contextual return */
 /* Two utilities hang off the shared shell: Activity along the bottom (#cb-shell-dock) and Braidy down
    the side (#cb-shell-rail). They are the shell's own furniture rather than two more products, so they
+
+/* EV2-7 DOGFOOD CORRECTION — THE STAGE BODY JOINS THE DESK'S ONE SYSTEM.
+   The floor above fixed the SIZE of the stage renderers' type. What was left was the register: the same
+   panel drew teal 7px monospace kickers with .14em tracking, uppercase status pills, accent left edges and
+   three card treatments, so the work below the rail read as a different product from the page above it.
+   Nothing about the markup or the behaviour changes here — only family, tracking, case and colour, and
+   only inside the Shot Desk's own stage body. Supporting and technical panels recede rather than vanish:
+   every control and every reason stays where it was, at the size the floor gives it. */
+#main .bounded-shot-workspace .guided-work-stack :is(span,small,b,i,em,strong,summary,label,button,a,h1,h2,h3,h4,p,dt,dd,li,div,article,header,footer,nav,section) {
+  font-family:var(--body); letter-spacing:normal; text-transform:none; }
+/* The kickers: 13px sentence-case muted labels, wherever a stage renderer draws one. */
+#main .bounded-shot-workspace .guided-work-stack :is(
+  .guided-work-panel > summary > div > span, .motion-section-heading > span, .motion-section-heading > i,
+  .frame-generation-head > div > span, .guided-frame-head > div > span, .frame-prompt-tools > summary > span,
+  .guided-assisted-tools > summary > div > span, .reference-assisted-tools > summary > div > span,
+  .shot-automation-hub > summary > div > span, .shot-automation-status-grid article > span,
+  .guided-frame-return > header > span, .guided-prompt-result > header > div > span,
+  .shot-frames-not-required > div > span, .automation-motion-ready > span, .blocking-attempt-revision > span,
+  .frame-sequence-review > header > div > span, .guided-shot-state-declarations > header > span,
+  .legacy-continuity-review > summary > span, .motion-unit-tabs > summary > span, .motion-sound-launcher > summary > span,
+  .shot-aspect-control > summary > b, .guided-workflow-title > div > span
+) { font:500 13px/1.45 var(--body); letter-spacing:normal; text-transform:none; color:var(--muted); }
+/* Status pills and standing markers: words, not badges — a border, no fill, no colour of their own.
+   Green says approved, amber says it needs attention or is blocked; nothing else is coloured. */
+#main .bounded-shot-workspace .guided-work-stack :is(.guided-mode-pill, .frame-generation-standing, .motion-section-heading > i, .guided-work-panel > summary > .guided-mode-pill) {
+  padding:3px 9px; border:1px solid var(--line); border-radius:999px; background:transparent; font:500 12px/1.5 var(--body); letter-spacing:normal; text-transform:none; white-space:nowrap; color:var(--muted); }
+#main .bounded-shot-workspace .guided-work-stack :is(.guided-mode-pill.ready, .prompt-check.ok) { border-color:color-mix(in srgb,var(--green) 45%,var(--line)); color:var(--green); background:transparent; }
+#main .bounded-shot-workspace .guided-work-stack :is(.prompt-check.warn, .disabled-action-reason) { color:var(--amber); }
+/* One card style below the rail as well: no accent edges, no gradients, one radius, one border. */
+#main .bounded-shot-workspace .guided-work-stack :is(.guided-work-panel, .shot-subworkspace, .guided-frame-card, .motion-workflow-section, .frame-sequence-review, .shot-frames-not-required, .guided-assisted-tools, .shot-stage-automation, .shot-automation-hub, .guided-shot-state-declarations, .blocking-revision-box, .automation-inline-card) {
+  border:1px solid var(--line); border-left:1px solid var(--line); border-radius:10px; background:var(--panel); box-shadow:none; background-image:none; }
+/* AND NO CARD INSIDE A CARD. A stage body is one card; the panels the stage renderers draw
+   inside it are divisions of it, so they are drawn with a rule and spacing instead of a second
+   and third border. Nothing is removed and nothing moves: only the frame around it. */
+#main .bounded-shot-workspace .guided-work-stack :is(.guided-work-panel,.guided-frame-card,.shot-subworkspace,.motion-workflow-section,.guided-frame-workflow) :is(.guided-frame-card,.guided-frame-return,.frame-generation,.frame-prompt-tools,.motion-workflow-section,.guided-assisted-tools,.shot-stage-automation,.blocking-revision-box,.automation-inline-card,.shot-continuity-fold,.legacy-continuity-review) {
+  border:0; border-top:1px solid var(--line); border-radius:0; background:transparent; box-shadow:none; }
+#main .bounded-shot-workspace .guided-work-stack .guided-work-panel > summary > div > b { font:600 15px/1.4 var(--body); color:var(--ink); }
+#main .bounded-shot-workspace .guided-work-stack .guided-work-panel > summary > div > small { color:var(--muted); }
+/* Buttons in the stage body are secondary controls: the Desk's one warm action is the hero's.
+   `.approve-btn` is filled accent under !important two stylesheets down (styles.css), so this
+   answers it in kind rather than leaving one cyan button shouting under a quiet page. */
+#main .bounded-shot-workspace .guided-work-stack :is(.assemble-btn, .approve-btn, .ghost-btn, .chip) {
+  border:1px solid var(--line-2)!important; border-radius:8px; background:transparent!important; color:var(--ink)!important; font-weight:500; letter-spacing:normal; text-transform:none; box-shadow:none; background-image:none; }
+#main .bounded-shot-workspace .guided-work-stack :is(.assemble-btn, .approve-btn, .ghost-btn, .chip):hover:not(:disabled) { border-color:var(--ink)!important; background:transparent!important; filter:none; }
+#main .bounded-shot-workspace .guided-work-stack :is(.assemble-btn, .approve-btn, .ghost-btn, .chip):disabled { border-color:var(--line)!important; color:var(--muted)!important; }
+#main .bounded-shot-workspace .guided-work-stack .danger-btn { border:1px solid var(--line-2); background:transparent; color:var(--red); }
+/* Text links stay links: teal and underlined, which is the one place teal still means something. */
+#main .bounded-shot-workspace .guided-work-stack .text-link-btn { border:0; background:none; color:var(--acc); text-decoration:underline; text-underline-offset:3px; }
+/* The remaining accent marks inside the stage body, one by one: a returned-work heading, a frame's
+   number, the frame strip's selected card, the stage's own two tabs, the status pills and the
+   dropzone's wash. All of them said "look here" at the same time as the hero did. */
+#main .bounded-shot-workspace .guided-work-stack .guided-frame-return>header span,
+#main .bounded-shot-workspace .guided-work-stack .guided-frame-head span,
+#main .bounded-shot-workspace .guided-work-stack .guided-frame-candidate .guided-candidate-actions>span,
+#main .bounded-shot-workspace .guided-work-stack .guided-frame-number { color:var(--muted); }
+#main .bounded-shot-workspace .guided-work-stack .guided-frame-return>header span { font:500 13px/1.45 var(--body); }
+#main .bounded-shot-workspace .guided-work-stack .guided-frame-number { font:600 15px/1 var(--body); border-color:var(--line); background:transparent; }
+#main .bounded-shot-workspace .guided-work-stack .guided-frame-rail button.selected { border-color:var(--line-2); background:transparent; box-shadow:inset 0 -2px 0 var(--ink); }
+#main .bounded-shot-workspace .guided-work-stack .guided-frame-rail button>small { font:400 12px/1.4 var(--body); letter-spacing:normal; text-transform:none; color:var(--muted); }
+#main .bounded-shot-workspace .guided-work-stack .guided-frame-rail button.tone-active>i { background:var(--muted); }
+#main .bounded-shot-workspace .entity-subworkspace-tabs button { border:1px solid var(--line); border-radius:8px; background:transparent; min-height:44px; font:500 14px/1.3 var(--body); color:var(--muted); }
+#main .bounded-shot-workspace .entity-subworkspace-tabs button.selected { border-color:var(--line-2); background:transparent; box-shadow:inset 0 -2px 0 var(--ink); color:var(--ink); }
+#main .bounded-shot-workspace .guided-work-stack .workspace-status-pill { padding:3px 9px; border:1px solid var(--line); border-radius:999px; background:transparent; font:500 12px/1.5 var(--body); letter-spacing:normal; text-transform:none; white-space:nowrap; color:var(--muted); }
+#main .bounded-shot-workspace .guided-work-stack .workspace-status-pill.tone-attention { border-color:color-mix(in srgb,var(--amber) 45%,var(--line)); color:var(--amber); }
+#main .bounded-shot-workspace .guided-work-stack .workspace-status-pill.tone-complete { border-color:color-mix(in srgb,var(--green) 45%,var(--line)); color:var(--green); }
+#main .bounded-shot-workspace .guided-work-stack .guided-frame-dropzone { background:transparent; }
+/* On a phone the frame head is two columns, so its status takes its own row rather than being
+   squeezed into a column narrower than the word it holds. */
+@media(max-width:760px) {
+  #main .bounded-shot-workspace .guided-work-stack .guided-frame-head>.workspace-status-pill { grid-column:1 / -1; justify-self:start; margin-top:6px; }
+}
+#main .bounded-shot-workspace .guided-work-stack .guided-add-frame:hover { border-color:var(--line-2); background:transparent; }
+/* A frame card's state is its dot and its words; the card itself stays the one card. */
+#main .bounded-shot-workspace .guided-work-stack .guided-frame-card.state-approved { border-color:var(--line); box-shadow:none; }
+#main .bounded-shot-workspace .guided-work-stack .guided-frame-card.state-approved>.guided-frame-head { background:transparent; }
+#main .bounded-shot-workspace .guided-work-stack .guided-frame-card.state-review { border-color:var(--line); }
+#main .bounded-shot-workspace .guided-work-stack .guided-frame-return.is-approved { border-color:var(--line); background:transparent; }
+#main .bounded-shot-workspace .guided-work-stack .guided-frame-return.has-candidates { border-color:var(--line); }
+
    are drawn with the shell's tokens — the header's graphite ground, one line colour, one ink, 44/48px
    controls at one radius, one focus ring — and their frames carry no second palette and no uppercase
    monospace kicker. Only the FRAMES are touched: the Activity rows keep their dense operational

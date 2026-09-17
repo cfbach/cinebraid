@@ -250,10 +250,22 @@ try:
             picker = rail.locator('select[data-shot-results-frame]')
             assert picker.count() == 1, 'with four declared frames the Results rail offers a labelled frame selector'
             picker.select_option(frame_id)
+            # EV2-7 dogfood correction — ONE ACTION PER RESULT TARGET. While the hero is leading
+            # this frame's returned result, the hero's exact-key review IS that frame's one
+            # action and the rail card says so instead of repeating it as a second button.
+            # Either way exactly one control on the Desk opens this frame's Results.
             entry = page.locator('#main [data-shot-results-rail]').get_by_role('button', name=f'Frame {frame} Results', exact=True)
-            entry.wait_for(state='visible', timeout=20000)
-            assert entry.count() == 1, f'Frame {frame}: the rail offers exactly one Results entry for it'
-            press_real(entry, f'Frame {frame} Results')
+            hero_entry = page.locator('#main .guided-next-action').get_by_role('button', name=f'Review Frame {frame} result', exact=True)
+            page.wait_for_function(
+                "(label) => document.querySelectorAll('#main [data-shot-results-rail] .shot-results-open, #main .guided-next-action .shot-primary-action')"
+                ".length > 0", arg=frame, timeout=20000)
+            assert entry.count() + hero_entry.count() == 1, f'Frame {frame}: exactly one control on the Desk opens its Results'
+            if entry.count():
+                press_real(entry, f'Frame {frame} Results')
+            else:
+                card = page.locator(f'#main [data-shot-results-rail] [data-frame-id="{frame_id}"]')
+                assert 'Being reviewed above' in (card.inner_text() or ''), f'Frame {frame}: the rail says where its one action is'
+                press_real(hero_entry, f'Review Frame {frame} result')
             page.wait_for_selector('[data-results-desk]', timeout=20000)
             page.wait_for_function("() => { const b = document.getElementById('rx-approve'); return !!b && !b.disabled; }", timeout=20000)
             press_real(page.locator('#rx-approve'), f'Frame {frame}: Approve result…')

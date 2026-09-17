@@ -330,6 +330,60 @@ async function caseH(options = {}) {
   ok(b.same && b.revision === 0 && b.hint === "A2.png", "(h) and it is still only read");
 }
 
+/* ---------------------------------------------------------------- (i)
+   EV2-7 DOGFOOD CORRECTION — AN APPROVAL WHOSE FILE IS NOT IN THE PROJECT.
+
+   The receipt is authoritative and stays exactly as it is; what is broken is that the
+   project cannot show the bytes it names. Both surfaces lead with the repair, in the same
+   words, and neither downgrades the approval or lets a newer candidate stand in for it.
+   The negative control below removes the integrity read and the case goes red. */
+async function caseI(options = {}) {
+  const project = projectOf([{
+    id: "L1-01",
+    frames: [{ id: "frame-a", label: "A", winner: "APPROVED_GONE.png" }],
+    candidates: [candidate("NEWER.png", { addedAt: "2026-08-21T09:00:00.000Z" })],
+  }]);
+  /* The approved file is genuinely absent from the project's media; the newer candidate is
+     present and waiting, which is the state that used to lead with a review. */
+  const { board, desk, cards, hero } = await surfaces(project, { "L1-01": ["NEWER.png"] }, options);
+  const seen = evaluate(board.context, `
+    const s = shotById("L1-01");
+    const receipt = currentHumanAuthority(P, { kind: "shot-frame", shotId: "L1-01", frameId: "frame-a" });
+    return {
+      awaiting: returnedReviewProjectionForBrowser().counts.awaiting,
+      gaps: shotApprovedMediaGaps(s),
+      receipt: receipt ? { value: receipt.value, id: receipt.id } : null,
+      leading: shotLeadingAction(s, shotReadinessFor(s), { claim: "" }).source,
+    };`);
+  equal(seen.awaiting, 1, "(i) precondition: a newer candidate is genuinely waiting for a decision");
+  ok(seen.receipt && seen.receipt.value === "APPROVED_GONE.png", "(i) precondition: the approval receipt names the missing file");
+  deepEqual(seen.gaps.map((row) => `${row.kind}:${row.frameId}:${row.name}`), ["frame:frame-a:APPROVED_GONE.png"],
+    "(i) the gap is derived from the receipt and the project's media, per declared target");
+  equal(seen.leading, "approved-media-unavailable", "(i) the shared precedence leads with the integrity repair");
+  equal(cards["L1-01"].source, "approved-media-unavailable", "(i) the Board card leads with it too");
+  equal(cards["L1-01"].label, "Locate or replace image", "(i) in words that repair rather than review");
+  equal(cards["L1-01"].detail, "The approval for Frame A is recorded, but its image is not in this project.",
+    "(i) with one reason that keeps the approval and states the fact");
+  /* Canonical readiness reads the RECEIPT and is therefore satisfied — it would have the
+     filmmaker mark a shot final whose approved image the project cannot show. That code
+     stays readable on the card, and it stays out of the list while a result is waiting. */
+  equal(cards["L1-01"].readinessCode, "mark-shot-final", "(i) while the canonical readiness code stays readable on the card");
+  ok(!hero.review && /data-approved-media-unavailable="1"/.test(hero.markup), "(i) and the Desk hero is the same integrity state");
+  equal(hero.headline, "Locate or replace image", "(i) with the same headline the card named");
+  ok(/APPROVED_GONE\.png is not in this project/.test(hero.markup), "(i) the Desk names the file that is missing");
+  ok(!/NEWER\.png/.test(hero.markup.split("<ul class=\"shot-outstanding\"")[0]),
+    "(i) and nothing newer stands in for it above the list: " + hero.markup);
+  ok(/Also waiting ·<\/span><b class="shot-outstanding-label">Review Frame A result/.test(hero.markup),
+    "(i) the waiting candidate is named first in the compact list, without a second control");
+  /* THE RECEIPT IS UNTOUCHED BY ALL OF THIS. */
+  const after = evaluate(desk.context, `
+    const receipt = currentHumanAuthority(P, { kind: "shot-frame", shotId: "L1-01", frameId: "frame-a" });
+    return { value: receipt ? receipt.value : "", revision: SAVE_REVISION, winner: shotById("L1-01").keyframes[0].winner };`);
+  equal(after.value, "APPROVED_GONE.png", "(i) painting either surface leaves the approval receipt exactly as it was");
+  equal(after.winner, "APPROVED_GONE.png", "(i) and the frame still points at the file it approved");
+  equal(after.revision, 0, "(i) and marks nothing dirty");
+}
+
 /* ---------------------------------------------------------------- negative controls */
 function replacing(file, needle, replacement) {
   return (name, source) => {
@@ -359,10 +413,17 @@ async function negativeControls() {
     () => caseH({ mutate: replacing("creation-studio.js",
       `  if (pending) return { scope, key: pending.key, source: "pending" };`,
       `  if (pending) { if (kind === "frame") selectGuidedFrameCandidate(s.id, scope.frameId, pending.candidate.name); return { scope, key: pending.key, source: "pending" }; }`) }));
+  /* NC-L4 — THE INTEGRITY READ IS REMOVED, so an approval whose file is gone goes back to
+     leading with a review of the newer candidate: the presentation mismatch this pass
+     exists to end, restored on demand. */
+  await mustFail("NC-L4 missing approved bytes stop leading", "(i) the shared precedence leads with the integrity repair",
+    () => caseI({ mutate: replacing("creation-studio.js",
+      `  const gaps = ledgerBlocked ? [] : shotApprovedMediaGaps(s, options.takes || null);`,
+      `  const gaps = [];`) }));
 }
 
 (async () => {
-  for (const [name, fn] of [["a", caseA], ["b", caseB], ["c", caseC], ["d", caseD], ["e", caseE], ["f", caseF], ["g", caseG], ["h", caseH], ["negative controls", negativeControls]]) {
+  for (const [name, fn] of [["a", caseA], ["b", caseB], ["c", caseC], ["d", caseD], ["e", caseE], ["f", caseF], ["g", caseG], ["h", caseH], ["i", caseI], ["negative controls", negativeControls]]) {
     await fn();
     console.log(`  ok  (${name})`);
   }

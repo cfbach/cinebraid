@@ -167,7 +167,9 @@ async function descriptionOnlyConsumers() {
   equal(payload.action, "produce-motion", "next action advances to Motion");
   ok(payload.frameMarkup.includes('data-frames-not-required="1"'), "Shot Intent surface says Frames are not required");
   ok(!payload.panel.includes("guided-motion-card locked"), "Motion workspace is not frame-locked");
-  ok(payload.panel.includes("NO FRAMES NEEDED"), "Motion workspace wording agrees with the route");
+  /* EV2-7 dogfood correction: the stage bodies read in sentence case. The words are the
+     same words; only the shouting is gone. */
+  ok(payload.panel.includes("No frames needed"), "Motion workspace wording agrees with the route");
   ok(payload.unavailableLifecycle.includes("UNAVAILABLE"), "lifecycle card states when canonical readiness is unavailable");
   ok(payload.unavailableLifecycle.includes("Readiness unavailable"), "unavailable lifecycle card projects no media-derived action");
   ok(!payload.unavailableLifecycle.includes(">Add motion<"), "readiness failure cannot revive the old Add motion answer");
@@ -631,8 +633,20 @@ async function frameApprovalReadinessReachesResults() {
     equal(vm.runInContext(`boundedShotSelectedTask(P.shots[0], takesFor("L1-01"))`, page.context), "frames", `${code}: the declared router selects the Frames stage`);
     ok(html.includes('data-bounded-task="frames"'), `${code}: which is the stage rendered`);
     const rail = rendersRail(html);
+    /* EV2-7 dogfood correction — ONE ACTION PER RESULT TARGET. Frame A's returned result is
+       waiting, so the hero leads with it and the hero's exact-key review IS Frame A's one
+       action; the rail keeps Frame A's card, its count and its Approved state, and says in
+       words that the target is being handled above rather than offering a second button
+       onto the same Results. The declared destination's own control is exercised below,
+       where nothing is waiting any more. */
     const entry = [...rail.matchAll(/<button[^>]*onclick="([^"]*)"[^>]*>Frame A Results<\/button>/g)].map((match) => match[1]);
-    deepEqual(entry, ["openShotResults('L1-01','frame','frame-a')"], `${code}: the rendered rail offers exactly one Frame A Results entry, calling the declared control for the owed frame`);
+    deepEqual(entry, [], `${code}: no second Frame A Results button while the hero leads that exact result`);
+    const frameA = (rail.match(/<article class="shot-results-target" data-results-target="frame" data-frame-id="frame-a"[\s\S]*?<\/article>/) || [""])[0];
+    ok(/data-results-led="1"/.test(frameA) && frameA.includes("Being reviewed above") && !/<button/.test(frameA),
+      `${code}: the rail states where Frame A's one action is: ${frameA}`);
+    const heroAction = (html.match(/class="assemble-btn shot-primary-action"[^>]*onclick="([^"]*)"[^>]*>([^<]*)/) || []).slice(1);
+    deepEqual(heroAction, [`openReturnedResultReview('L1-01','${owed.key}')`, "Review Frame A result"],
+      `${code}: and that action opens the owed frame's exact returned result`);
     ok(html.indexOf("shot-results-rail") < html.indexOf("guided-work-stack"), `${code}: above the stage's own work, where it is reached before anything collapsed`);
     ok(/data-frame-id="frame-a"[^>]*data-results-waiting="1"[^>]*data-results-approved="none"/.test(rail), `${code}: stating one waiting result and no Approved image yet`);
   }
@@ -653,6 +667,11 @@ async function frameApprovalReadinessReachesResults() {
   ok(/data-frame-id="frame-a"[^>]*data-results-approved="retained"/.test(rendersRail(mainOf(page)))
     && /Approved image<\/small><small class="shot-results-name">FRAME_A\.png<\/small>/.test(rendersRail(mainOf(page))),
     "and the rail keeps the approved Frame A in view");
+  /* With nothing waiting for that target any more, its one named entry is the rail's own
+     again — the declared destination's renderer and control, rendered and callable. */
+  deepEqual([...rendersRail(mainOf(page)).matchAll(/<button[^>]*onclick="([^"]*)"[^>]*>Frame A Results<\/button>/g)].map((match) => match[1]),
+    ["openShotResults('L1-01','frame','frame-a')"],
+    "and Frame A's named Results entry returns once its returned result has been decided");
 }
 
 async function returnedMediaOutlivesGenerationReadiness() {
@@ -705,14 +724,23 @@ async function returnedMediaOutlivesGenerationReadiness() {
   /* THE RETURNED VIDEO IS REACHED THROUGH THE ONE RESULTS RAIL, BY ITS EXACT KEY. */
   const desk = mainOf(page);
   ok(desk.includes('data-bounded-task="motion"'), "precondition: the Motion stage is the one rendered");
+  /* EV2-7 dogfood correction — ONE ACTION FOR THIS TARGET. The returned video is what the
+     hero leads with, so the Desk's one way into Motion Results is the hero's exact-key
+     review; the rail keeps the Motion card, its count and its Approved state, and says the
+     target is being handled above rather than repeating the entry under another name. */
   const motionEntry = [...desk.matchAll(/<button[^>]*onclick="([^"]*)"[^>]*>Motion Results<\/button>/g)].map((match) => match[1]);
-  deepEqual(motionEntry, ["openShotResults('L1-01','motion','')"], "the Desk renders exactly one Motion Results entry, in the Results rail");
+  deepEqual(motionEntry, [], "no second Motion Results button while the hero leads that returned video");
   const motionTarget = (rendersRail(desk).match(/<article class="shot-results-target" data-results-target="motion"[\s\S]*?<\/article>/) || [""])[0];
   ok(/data-results-waiting="1"/.test(motionTarget) && /No Approved motion · 1 new candidate/.test(motionTarget),
     "the rail counts the returned video and states that no motion is Approved yet: " + motionTarget);
+  ok(/data-results-led="1"/.test(motionTarget) && motionTarget.includes("Being reviewed above") && !/<button/.test(motionTarget),
+    "and says where its one action is: " + motionTarget);
   const paidKey = vm.runInContext(`returnedReviewProjectionForBrowser().queue.find((row) => row.candidate.name === "PAID-RETURN.mp4").key`, page.context);
+  const heroMotion = (desk.match(/class="assemble-btn shot-primary-action"[^>]*onclick="([^"]*)"[^>]*>([^<]*)/) || []).slice(1);
+  deepEqual(heroMotion, [`openReturnedResultReview('L1-01','${paidKey}')`, "Review motion result"],
+    "the Desk's one motion action is the hero's exact-key review");
   const seam = mountResults(page);
-  await vm.runInContext(motionEntry[0], page.context);
+  await vm.runInContext(heroMotion[0], page.context);
   deepEqual(seam.opened, [{ scope: { shotId: "L1-01", kind: "motion", frameId: "" }, key: paidKey }],
     "pressing it opens Motion Results on the exact returned provider asset");
   const results = resultsOf(mainOf(page));

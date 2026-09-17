@@ -204,7 +204,17 @@ async function main() {
     'the bounded Shot shell must pack its tracks to the start, or the auto navigator track absorbs the spare width');
   /* Scoped to Shots: no !important and no rule reaching the generic focused shell, the
      References shell or any inspector. */
-  assert(!/!important/.test(shotLayoutCss), 'the Shots layout must not override the focused shells with !important');
+  /* EV2-7 dogfood correction: this section also carries the stage strip's own treatment, and the
+     strip's neutral chrome has to answer `!important` declarations two stylesheets down
+     (styles.css paints .focused-task-button's border, background and padding that way). That is
+     allowed — inside #cb-stage-mount, which reaches nothing but the bar. Anything else in this
+     section that shouts is the defect this check was written for. */
+  const shouting = shotLayoutCss.split('}')
+    .filter((chunk) => chunk.includes('!important'))
+    .map((chunk) => chunk.slice(0, chunk.lastIndexOf('{')).split(/[{;]/).pop().trim().replace(/\s+/g, ' '));
+  for (const selector of shouting)
+    assert(selector.startsWith('#cb-stage-mount'),
+      `the Shots layout must not override the focused shells with !important: ${selector}`);
   for (const [pattern, what] of [
     [/(^|[\s,}>])\.focused-workspace-shell\s*[{,:]/, 'every focused workspace shell'],
     [/\.focused-entity-shell/, 'the References shell'],

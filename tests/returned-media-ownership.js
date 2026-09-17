@@ -442,7 +442,9 @@ async function rm4_returnedMotionOwnsReview() {
   equal(seen.queue[0].owner, "shot-motion", "RM4: owned by motion");
   equal(seen.queue[0].file, "SHOT_MOTION_1.mp4", "RM4: and it is the returned video");
   ok(card.returnedReview && card.owner === "shot-motion", "RM4: the returned Motion owns the shot workspace card");
-  ok(/RETURNED RESULT · MOTION/.test(card.markup), "RM4: named as Motion rather than as a frame");
+  /* EV2-7 dogfood correction: the kicker is a sentence-case label rather than an uppercase
+     monospace one. What it must still say is which unit came back. */
+  ok(/Returned result · Motion/.test(card.markup), "RM4: named as Motion rather than as a frame");
   ok(!/Create Frame|Produce the frame/i.test(card.markup), "RM4: and it does not fall back to a frame-generation CTA");
   ok(card.markup.includes("<video"), "RM4: the returned video itself is on the card");
   /* A video can be used or passed on. It cannot be `revised`: a targeted repair is built

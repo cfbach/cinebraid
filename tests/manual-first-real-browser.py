@@ -233,9 +233,20 @@ try:
         page.evaluate("async()=>await flushPendingProjectSave()")
         page.wait_for_function("()=>projectSaveSettled().settled")
         rail = page.locator("[data-shot-results-rail]")
+        frame_card = rail.locator('[data-results-target="frame"][data-frame-id="frame-a"]')
+        assert rail.count() == 1 and frame_card.count() == 1, "the Results rail carries exactly one Frame A card"
+        # EV2-7 dogfood correction — ONE ACTION PER RESULT TARGET. The imported frame is waiting
+        # for a decision, so the hero leads with it and the hero's exact-key review IS Frame A's
+        # one action; the rail keeps the card and says so in words rather than offering a second
+        # button onto the same Results. Either way there is exactly one control for this target.
         frame_results = rail.get_by_role("button", name="Frame A Results", exact=True)
-        assert rail.count() == 1 and frame_results.count() == 1, "the Results rail offers exactly one Frame A Results entry"
-        frame_results.click()
+        hero_review = page.locator("#main .guided-next-action").get_by_role("button", name="Review Frame A result", exact=True)
+        assert frame_results.count() + hero_review.count() == 1, "exactly one control on the Desk opens Frame A's Results"
+        if frame_results.count():
+            frame_results.click()
+        else:
+            assert "Being reviewed above" in (frame_card.inner_text() or ""), "the rail says where Frame A's one action is"
+            hero_review.click()
         page.wait_for_selector("[data-results-desk]")
         page.locator("#rx-approve").click()
         page.wait_for_function("()=>document.getElementById('rx-confirm')&&!document.getElementById('rx-confirm').disabled")
@@ -259,7 +270,16 @@ try:
         assert page.get_by_role("button", name="APPROVE VIDEO").count() == 0, "the Motion stage no longer approves per candidate"
         motion_target = page.locator('[data-shot-results-rail] [data-results-target="motion"]')
         assert motion_target.count() == 1 and int(motion_target.get_attribute("data-results-count") or "0") >= 1, "the rail counts the existing video"
-        motion_target.get_by_role("button", name="Motion Results", exact=True).click()
+        # The same one-action rule for Motion: the rail's entry, or the hero's exact-key review
+        # when the returned video is what the Desk is leading with.
+        motion_results = motion_target.get_by_role("button", name="Motion Results", exact=True)
+        hero_motion = page.locator("#main .guided-next-action").get_by_role("button", name="Review motion result", exact=True)
+        assert motion_results.count() + hero_motion.count() == 1, "exactly one control on the Desk opens Motion Results"
+        if motion_results.count():
+            motion_results.click()
+        else:
+            assert "Being reviewed above" in (motion_target.inner_text() or ""), "the rail says where Motion's one action is"
+            hero_motion.click()
         page.wait_for_selector("[data-results-desk]")
         page.locator("#rx-approve").click()
         page.wait_for_function("()=>(document.getElementById('rx-confirm')&&!document.getElementById('rx-confirm').disabled)||document.getElementById('rx-motion-target')")

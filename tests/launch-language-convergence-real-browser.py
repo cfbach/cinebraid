@@ -336,9 +336,15 @@ try:
         inline = page.evaluate("""() => [...document.querySelectorAll('#main button[onclick]')]
             .filter((b) => /approveGuidedStill\\(|approveGuidedFrame\\(|approveTake\\(/.test(b.getAttribute('onclick') || '')).length""")
         check(inline == 0, f"F: the Shot Desk offers no approval control of its own, found {inline}")
+        # EV2-7 dogfood correction — ONE ACTION PER RESULT TARGET. This shot's hero leads with the
+        # returned Frame A candidate, so the hero's exact-key review IS Frame A's one action and
+        # the rail states that rather than repeating it as a button. Whichever shape the Desk is
+        # in, exactly one control opens Frame A's Results, and the confirmation behind it is the
+        # one this case is about.
         rail = page.locator("#main [data-shot-results-rail]").get_by_role("button", name="Frame A Results", exact=True)
-        check(rail.count() == 1, f"F: the Results rail offers exactly one Frame A Results, found {rail.count()}")
-        rail.click()
+        hero = page.locator("#main .guided-next-action").get_by_role("button", name="Review Frame A result", exact=True)
+        check(rail.count() + hero.count() == 1, f"F: exactly one control opens Frame A's Results, found rail={rail.count()} hero={hero.count()}")
+        (rail if rail.count() else hero).click()
         page.wait_for_selector("#main [data-results-desk] [data-rx-key]", timeout=15000)
         page.locator("#main [data-rx-key]").first.click()
         page.wait_for_function("() => { const b = document.getElementById('rx-approve'); return !!b && !b.disabled; }", timeout=15000)

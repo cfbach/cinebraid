@@ -607,8 +607,15 @@ try:
                 status: readiness.status, generationStatus: unit?.status || '',
                 stage: shotStageState('motion', shotStageModelFacts(shot, takesFor(shot.id))).availability,
                 returned: Number(target?.dataset.resultsCount || 0),
+                /* EV2-7 dogfood correction — ONE ACTION PER RESULT TARGET. Motion's one action is
+                   the rail's named entry, or — while the hero is leading this very returned video —
+                   the hero's exact-key review, with the rail card saying so in words. Either shape
+                   is exactly one control for this target, and both open Motion's own Results. */
                 results: entries.length === 1 && entries[0].closest('[data-results-target="motion"]') === target
                     && entries[0].getAttribute('onclick') === "openShotResults('SAMPLE-01','motion','')",
+                led: target?.dataset.resultsLed === '1' && (target?.textContent || '').includes('Being reviewed above'),
+                heroReview: [...document.querySelectorAll('#main .guided-next-action .shot-primary-action')]
+                    .filter((node) => node.textContent.trim() === 'Review motion result').length,
                 players: panel.querySelectorAll('video').length,
                 approve: [...document.querySelectorAll('#main button')].some((node) => node.textContent.includes('APPROVE VIDEO')),
                 importInput: !!panel.querySelector('#motion-file'),
@@ -618,12 +625,17 @@ try:
         }""")
         assert b2_before["status"] == "BLOCKED" and b2_before["generationStatus"] == "BLOCKED",             f"B2: the explicitly revoked route prerequisite must block fresh generation: {b2_before}"
         assert b2_before["stage"] == "available", f"B2: returned work must keep Motion reachable: {b2_before}"
-        assert b2_before["returned"] >= 1 and b2_before["results"],             f"B2: the Results rail must count the returned video and offer exactly one Motion Results entry: {b2_before}"
+        assert b2_before["returned"] >= 1, f"B2: the Results rail must count the returned video: {b2_before}"
+        assert b2_before["results"] != (b2_before["led"] and b2_before["heroReview"] == 1),             f"B2: Motion must have exactly one action — the rail's entry, or the hero's review with the rail stating it: {b2_before}"
         assert b2_before["importInput"], f"B2: the blocked Motion stage lost video import: {b2_before}"
         assert b2_before["players"] == 0 and not b2_before["approve"],             f"B2: the Motion stage must not keep per-candidate players or APPROVE VIDEO: {b2_before}"
         assert not b2_before["buildPrompt"] and not b2_before["paidAction"],             f"B2: fresh or paid generation leaked through the blocked route: {b2_before}"
 
-        page.locator('#main [data-shot-results-rail] [data-results-target="motion"]').get_by_role("button", name="Motion Results", exact=True).click()
+        motion_entry = page.locator('#main [data-shot-results-rail] [data-results-target="motion"]').get_by_role("button", name="Motion Results", exact=True)
+        if motion_entry.count():
+            motion_entry.click()
+        else:
+            page.locator('#main .guided-next-action').get_by_role("button", name="Review motion result", exact=True).click()
         page.wait_for_selector("[data-results-desk]", timeout=15000)
         page.wait_for_function("() => (document.querySelector('#rx-primary')?.getAttribute('src') || '').includes('PAID-RETURN.mp4')", timeout=15000)
         page.wait_for_function("() => { const b = document.getElementById('rx-approve'); return !!b && !b.disabled; }", timeout=15000)

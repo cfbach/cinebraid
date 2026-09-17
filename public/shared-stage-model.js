@@ -437,6 +437,16 @@
     "blockingGuideCandidateCount",
     "frameTotal",
     "frameApprovedCount",
+    /* EV2-7 dogfood correction — PRESENTATION ONLY, AND IT CHANGES NO VERDICT.
+       An approval receipt whose file the project cannot show is a recorded approval AND a
+       missing file, and the strip used to be able to say only one of those: it counted
+       "0 of 1 frame approved", which reads as though nobody had approved anything, beside
+       a facts line reading "1 of 1 approved". Both counts arrive here so the note can say
+       both. Nothing below reads them for availability, completion, readiness or
+       requiredFramesApproved — `frameApprovedCount` remains the media-aware evidence and
+       remains the only count any verdict is derived from. */
+    "frameApprovalsRecorded",
+    "frameApprovalsUnavailable",
     "frameNeedsReview",
     "requiredFramesApproved",
     "routeRequirementsKnown",
@@ -491,6 +501,8 @@
       blockingGuideCandidateCount: stageCount(raw.blockingGuideCandidateCount),
       frameTotal: stageCount(raw.frameTotal),
       frameApprovedCount: stageCount(raw.frameApprovedCount),
+      frameApprovalsRecorded: stageCount(raw.frameApprovalsRecorded),
+      frameApprovalsUnavailable: stageCount(raw.frameApprovalsUnavailable),
       frameNeedsReview: !!raw.frameNeedsReview,
       requiredFramesApproved: !!raw.requiredFramesApproved,
       routeRequirementsKnown: !!raw.routeRequirementsKnown,
@@ -609,7 +621,14 @@
     /* Completion is computed FIRST and without reference to the run, because what a
        machine is doing is not how far the work has got. The projection below then
        prefers the run for the status slot, which is what the shipped taskbar does. */
-    const note = { key: "frames-approved", count: facts.frameApprovedCount, total: facts.frameTotal };
+    /* EV2-7 dogfood correction — WHAT THE NOTE SAYS WHEN AN APPROVAL'S FILE IS NOT HERE.
+       The note is the only thing these two facts reach. Every branch below chooses between
+       "say the fraction" and "say nothing"; where an approval exists whose file the project
+       cannot show, the fraction is not the truth and this says what is: how many approvals
+       are recorded, and how many of their files are missing. The verdicts are unchanged. */
+    const note = facts.frameApprovalsUnavailable
+      ? { key: "frames-approval-unavailable", count: facts.frameApprovalsUnavailable, total: facts.frameApprovalsRecorded || facts.frameApprovalsUnavailable }
+      : { key: "frames-approved", count: facts.frameApprovedCount, total: facts.frameTotal };
     /* NOTHING HAS ASKED FOR A FRAME — asked of the count, not of whether a route
        happens to be declared.
 

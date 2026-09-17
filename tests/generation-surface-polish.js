@@ -336,11 +336,23 @@ async function testImportedCandidateIsNotAReturnedResult() {
   assert(!/guided-frame-candidate-grid|guided-approve-selected|role="listbox"|approveGuidedFrame\(/.test(card),
     "the frame card draws no candidate grid, selection or APPROVE of its own");
   assert(card.includes("Compare and approve in Results."), "and says where comparing and approving happen");
-  /* 3. Handoff: the Results rail above the stage names this exact frame, and pressing it
-     resolves the imported candidate by its exact key, at press time. */
+  /* 3. Handoff: ONE ACTION FOR FRAME A, and pressing it resolves the imported candidate by
+     its exact key, at press time. EV2-7 dogfood correction: the hero above leads with this
+     shot's returned Frame A result, so Frame A's one action is the hero's exact-key review
+     and the rail states where that target is being handled instead of offering a second
+     button onto the same Results. Every other target keeps its named entry. */
   const rail = (result.html.match(/<section class="shot-results-rail[\s\S]*?<\/section>/) || [""])[0];
-  const entries = [...rail.matchAll(/<button[^>]*onclick="([^"]*)"[^>]*>Frame A Results<\/button>/g)].map((match) => match[1]);
-  assert.deepStrictEqual(entries, ["openShotResults('L1-01','frame','frame-a')"], "the rail offers exactly one Frame A Results entry");
+  const hero = (result.html.match(/<section class="guided-next-action[\s\S]*?<\/section>/) || [""])[0];
+  const frameATarget = (rail.match(/<article class="shot-results-target" data-results-target="frame" data-frame-id="frame-a"[\s\S]*?<\/article>/) || [""])[0];
+  assert.deepStrictEqual([...rail.matchAll(/<button[^>]*onclick="([^"]*)"[^>]*>Frame A Results<\/button>/g)].map((m) => m[1]), [],
+    "with the hero leading Frame A, the rail offers no second Frame A Results button: " + frameATarget);
+  assert(/data-results-led="1"/.test(frameATarget) && frameATarget.includes("Being reviewed above") && !/<button/.test(frameATarget),
+    "the Frame A card keeps its place and its facts and says, in words, where its one action is: " + frameATarget);
+  assert.deepStrictEqual([...rail.matchAll(/<button[^>]*onclick="([^"]*)"[^>]*>Motion Results<\/button>/g)].map((m) => m[1]),
+    ["openShotResults('L1-01','motion','')"], "while Motion keeps exactly one named Results entry");
+  const heroAction = (hero.match(/class="assemble-btn shot-primary-action"[^>]*onclick="([^"]*)"[^>]*>([^<]*)/) || []).slice(1);
+  assert(/^openReturnedResultReview\('L1-01','path:shots\/L1-01\/takes\/FRAME_A\.png'\)$/.test(heroAction[0] || "") && heroAction[1] === "Review Frame A result",
+    "and Frame A's one action is the hero's exact-key review: " + JSON.stringify(heroAction));
   assert(result.html.indexOf("shot-results-rail") < result.html.indexOf('<details class="guided-frame-card'),
     "above the frame's own work");
   const handed = JSON.parse(vm.runInContext(`(() => {
@@ -608,10 +620,31 @@ async function testResultsRailHardStates() {
   const goneB = targetOf(mainOf(gone), "frame", "frame-b");
   assert(/data-results-approved="retained"/.test(goneB) && goneB.includes('<img src="/assets/shots/L1-01/takes/FRAME_B.png"'),
     "while a receipt whose file is present keeps its own preview: " + goneB);
+  /* EV2-7 dogfood correction — MISSING APPROVED BYTES ARE AN INTEGRITY PROBLEM, AND THE
+     REPAIR LEADS. The hero used to review the newer candidate and mention the unavailable
+     approval in a chip beside it; a filmmaker cannot judge a replacement for a frame the
+     project cannot show. The receipt is never downgraded: the hero says the approval is
+     recorded, names the file that is missing, offers one repair, and the waiting candidate
+     is named first in the compact list beneath — opened where that target is owned. */
   const hero = (mainOf(gone).match(/<section class="guided-next-action[\s\S]*?<\/section>/) || [""])[0];
-  const heldChip = (hero.match(/<div class="returned-review-compare missing" data-returned-review-compare="current">[\s\S]*?<\/div>/) || [""])[0];
-  assert(/Review Frame A result/.test(hero) && /Current · Approved/.test(heldChip) && /FRAME_A_LOST\.png/.test(heldChip) && /Approved image unavailable/.test(heldChip),
-    "and the hero reviewing the newer candidate says the Approved image in place is unavailable instead of dropping it: " + hero);
+  assert(/data-approved-media-unavailable="1"/.test(hero) && /data-approved-media-file="FRAME_A_LOST\.png"/.test(hero)
+    && /<h2>Locate or replace image<\/h2>/.test(hero) && /The approval for Frame A is recorded, but FRAME_A_LOST\.png is not in this project/.test(hero)
+    && /onclick="openApprovedMediaRepair\('L1-01','frame','frame-a'\)"/.test(hero),
+    "the hero leads with the integrity repair for the Approved image the project cannot show: " + hero);
+  assert(/until you approve a replacement in Results/.test(hero) && !/withdraw|no longer approved|not approved/i.test(hero),
+    "without downgrading the recorded approval: " + hero);
+  const alsoRow = (hero.match(/<li class="shot-outstanding-row" data-shot-outstanding="waiting">[\s\S]*?<\/li>/) || [""])[0];
+  assert(/Also waiting ·/.test(alsoRow) && /Review Frame A result/.test(alsoRow) && /FRAME_A\.png came back/.test(alsoRow) && !/<button/.test(alsoRow),
+    "and the newer candidate is named first in the compact list, with no second control of its own: " + alsoRow);
+  assert(hero.indexOf('data-shot-outstanding="waiting"') < hero.indexOf('data-shot-outstanding="readiness"'),
+    "ahead of the ordinary readiness row: " + hero);
+  assert(!/<div class="returned-review-secondary"/.test(mainOf(gone)) && /<ul class="shot-outstanding"/.test(hero),
+    "as a compact list rather than a card nested inside the hero: " + hero);
+  /* The facts line says both halves too, instead of "1 of 1 approved". */
+  const factsLine = (mainOf(gone).match(/<p class="shot-facts"[\s\S]*?<\/p>/) || [""])[0];
+  assert(/data-approved-media="unavailable"/.test(factsLine) && /1 approval recorded/.test(factsLine) && /Approved image unavailable/.test(factsLine)
+    && !/1 of 1 approved/.test(factsLine),
+    "the facts line counts the approval and says its image is unavailable: " + factsLine);
 
   /* 2. MORE FRAMES THAN THE RAIL LISTS. One labelled selector; its default follows the
      frame the Frames stage has selected and is never written; choosing another frame in it

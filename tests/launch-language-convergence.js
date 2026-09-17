@@ -643,7 +643,9 @@ async function ll7_oneNamePerAction() {
 async function ll8_workspaceNameSurvives() {
   const page = await open({ motion: false });
   const seen = evaluate(page.context, SURFACES);
-  ok(seen.finish.includes("FINISH &amp; DELIVERY") || seen.finish.includes("FINISH & DELIVERY"),
+  /* EV2-7 dogfood correction: the Desk's kickers are sentence case, so the workspace's own
+     name is written the way it is spoken. The NAME is what this case protects, not its case. */
+  ok(/Finish (&amp;|&) delivery/i.test(seen.finish),
     "LL8: Finish & Delivery keeps its name — it is a truthful workspace name, not a control");
 
   const stage = evaluate(page.context, `

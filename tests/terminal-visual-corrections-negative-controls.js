@@ -275,9 +275,12 @@ async function main() {
   {
     const coherence = fs.readFileSync(path.join(ROOT, "public", "experience-coherence.css"), "utf8");
     const selector = "#main .bounded-shot-workspace .shot-activity-inline";
+    /* EV2-7 dogfood correction: the inline run is the Desk's one card treatment, and its state
+       is a 6px dot painted from the operational token rather than a coloured stripe. The control
+       is unchanged in kind — it hardcodes amber on the base rule and requires the check to notice. */
     const broken = anchored(coherence,
-      `${selector} { display:flex; flex-wrap:wrap; align-items:center; justify-content:space-between; gap:10px 16px; margin:-4px 0 16px; padding:12px 16px; border:1px solid var(--line); border-left:3px solid var(--blue);`,
-      `${selector} { display:flex; flex-wrap:wrap; align-items:center; justify-content:space-between; gap:10px 16px; margin:-4px 0 16px; padding:12px 16px; border:1px solid var(--line); border-left:3px solid rgba(244,170,75,.9)!important;`,
+      `${selector} { display:flex; flex-wrap:wrap; align-items:center; justify-content:space-between; gap:10px 16px; margin:-2px 0 16px; padding:13px 16px; border:1px solid var(--line); border-left:1px solid var(--line);`,
+      `${selector} { display:flex; flex-wrap:wrap; align-items:center; justify-content:space-between; gap:10px 16px; margin:-2px 0 16px; padding:13px 16px; border:1px solid var(--line); border-left:3px solid rgba(244,170,75,.9)!important;`,
       "NC-V9");
     await control("NC-V9 TONE-1: the inline run does not hardcode amber", {
       before: !/rgba\(244,\s*170,\s*75/.test(declarationsFor(coherence, selector)),

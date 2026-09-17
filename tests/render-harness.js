@@ -972,7 +972,7 @@ async function main() {
        so what remains expected of the workspace is its own content. The navigator's labels
        and order are asserted against the shipped renderer in tests/stage-surfaces.js and in
        a live document in tests/stage-surfaces-real-browser.py. */
-    ["#/shot/L1-01", fixture, ["Hull check", "NEXT ACTION", "Shot actions", "data-selected-task="]],
+    ["#/shot/L1-01", fixture, ["Hull check", "Next action", "Shot actions", "data-selected-task="]],
     ["#/library", fixture, ["References", "Kai"]],
     ["#/prop/PR-TOOL", fixture, ["Panel tool", "UPLOAD & ORGANIZE", "Map imported references"]],
     ["#/vehicle/VEH-CART", fixture, ["Maintenance cart", "UPLOAD & ORGANIZE", "Upload reference files"]],
