@@ -391,6 +391,74 @@ function integrationControls() {
 }
 
 /* ===========================================================================
+   THE PHONE CHOOSER (EV2-7 Checkpoint 2, ruling B2.15) — where a phone could lose
+   the stage actions, forget what the filmmaker opened, or decide by viewport at paint.
+   =========================================================================== */
+
+function chooserControls() {
+  note("The phone chooser:");
+
+  control("C38 the chooser opens from the viewport at paint", "checkPhoneChooser",
+    { surfaces: mutate(SOURCES.surfaces,
+        "    return !!shotId && CHOOSER_OPEN.has(chooserScope(shotId));",
+        "    return !!shotId && (CHOOSER_OPEN.has(chooserScope(shotId)) || (typeof matchMedia === \"function\" && matchMedia(\"(min-width: 761px)\").matches));",
+        "C38") },
+    "This is the rejected draft exactly: read once per paint, blind to rotation, reset by every repaint — and always closed in a Node realm while a desktop browser saw it open.");
+
+  control("C39 the expansion is persisted", "checkPhoneChooser",
+    { surfaces: mutate(SOURCES.surfaces,
+        "    if (CHOOSER_OPEN.has(scope)) CHOOSER_OPEN.delete(scope);\n    else CHOOSER_OPEN.add(scope);",
+        "    if (CHOOSER_OPEN.has(scope)) CHOOSER_OPEN.delete(scope);\n    else CHOOSER_OPEN.add(scope);\n    try { localStorage.setItem(\"cinebraid-stage-chooser:\" + scope, CHOOSER_OPEN.has(scope) ? \"1\" : \"0\"); } catch {}",
+        "C39") },
+    "Whether a list is open on a phone is not production truth and not a preference. A persisted expansion is a second store the stage bar was ruled not to have.");
+
+  control("C40 the stage actions fold into the chooser", "checkPhoneChooser",
+    { surfaces: mutate(mutate(SOURCES.surfaces,
+        "      + ` onclick=\"window.CineBraidStageSurfaces.toggleChooser()\">Choose stage</button></div>`;",
+        "      + ` onclick=\"window.CineBraidStageSurfaces.toggleChooser()\">Choose stage</button>${actionsMarkup(model)}</div>`;",
+        "C40a"),
+        "      + `${chooserMarkup(model)}${stripMarkup(model)}${actionsMarkup(model)}</div>`;",
+        "      + `${chooserMarkup(model)}${stripMarkup(model)}</div>`;",
+        "C40b") },
+    "A blocked action must explain itself without another tap. Actions and reasons inside what the toggle opens is the second half of the rejected draft.");
+
+  control("C41 aria-expanded stops saying what is open", "checkPhoneChooser",
+    { surfaces: mutate(SOURCES.surfaces,
+        " aria-expanded=\"${chooserOpen(model.shotId) ? \"true\" : \"false\"}\"",
+        " aria-expanded=\"false\"",
+        "C41") },
+    "A toggle that always announces itself collapsed tells a screen-reader user the stages they just opened are not there.");
+
+  control("C42 every repaint closes the chooser", "checkPhoneChooser",
+    { surfaces: mutate(SOURCES.surfaces,
+        " data-stage-chooser=\"${chooserOpen(model.shotId) ? \"open\" : \"closed\"}\"",
+        " data-stage-chooser=\"closed\"",
+        "C42") },
+    "The activity signal repaints the bar every few seconds. An expansion that does not survive a repaint closes under the filmmaker's thumb.");
+
+  control("C43 the expansion leaks to every shot", "checkPhoneChooser",
+    { surfaces: mutate(SOURCES.surfaces,
+        "    return `${slug || (project && project.meta && project.meta.id) || \"project\"}::${shotId}`;",
+        "    return `${slug || (project && project.meta && project.meta.id) || \"project\"}`;",
+        "C43") },
+    "Opening the stages on one shot must not open them on the next one the filmmaker navigates to.");
+
+  control("C44 Escape stops closing the chooser", "checkPhoneChooser",
+    { surfaces: mutate(SOURCES.surfaces,
+        "    if (!event || event.key !== \"Escape\" || !closeChooser()) return false;",
+        "    if (!event || event.key !== \"Esc\" || !closeChooser()) return false;",
+        "C44") },
+    "Escape closing an opened list and returning to its opener is the keyboard contract the ruling names.");
+
+  control("C45 choosing through the chooser bypasses the shipped owner", "checkPhoneChooser",
+    { surfaces: mutate(SOURCES.surfaces,
+        "    return stage ? closeChooser() : false;",
+        "    if (stage && typeof selectBoundedTask === \"function\") selectBoundedTask(\"shot-task\", \"\", String(stage.dataset && stage.dataset.stageId));\n    return stage ? closeChooser() : false;",
+        "C45") },
+    "The stage buttons already select through selectBoundedTask. A second selection path in the chooser is a second writer of the one stage choice.");
+}
+
+/* ===========================================================================
    RUN
    =========================================================================== */
 
@@ -428,6 +496,7 @@ stripControls();
 actionRenderControls();
 runtimeControls();
 integrationControls();
+chooserControls();
 assetStampGuard();
 
 for (const line of notes) console.log(line);

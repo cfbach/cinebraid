@@ -17,6 +17,7 @@ const { render, buildFixture } = require('./render-harness');
 
 const ROOT = path.join(__dirname, '..');
 const css = fs.readFileSync(path.join(ROOT, 'public', 'styles.css'), 'utf8');
+const coherence = fs.readFileSync(path.join(ROOT, 'public', 'experience-coherence.css'), 'utf8').replace(/\r\n/g, '\n');
 
 /* The default column model lives outside any @media block; narrow-width overrides
  * are asserted separately so a mobile rule can never stand in for the desktop one. */
@@ -37,6 +38,20 @@ function stripAtRules(text) {
   return out;
 }
 const baseCss = stripAtRules(css);
+
+/* EV2-7 Checkpoint 2 (B2.16) gives the Shot workspace its own column model in the section of
+ * public/experience-coherence.css it appended. That stylesheet loads after styles.css, so its
+ * shot rule is the one in force. It is sliced from its own heading to the next EV2-7 section
+ * heading, so rules another section appends are never read as the Shots layout. */
+const SHOT_LAYOUT_HEADING = '/* EV2-7 Checkpoint 2 — Stage bar & Shot layout */';
+const shotLayoutCss = (() => {
+  const at = coherence.indexOf(SHOT_LAYOUT_HEADING);
+  if (at < 0) return '';
+  const rest = coherence.slice(at + SHOT_LAYOUT_HEADING.length);
+  const next = rest.search(/\/\* EV2-7 Checkpoint \d/);
+  return stripAtRules(next < 0 ? rest : rest.slice(0, next)).replace(/\/\*[\s\S]*?\*\//g, ' ');
+})();
+const SHOT_SHELL = '.bounded-shot-workspace.focused-workspace-shell';
 
 /* The widths this repair is required to serve. */
 const TARGET_WIDTHS = [1280, 1366, 1440, 1600, 1920];
@@ -77,8 +92,8 @@ function ruleFor(selector, source = baseCss) {
   return blocks;
 }
 
-function declaration(selector, property) {
-  const blocks = ruleFor(selector);
+function declaration(selector, property, source = baseCss) {
+  const blocks = ruleFor(selector, source);
   let value = null;
   for (const block of blocks) {
     const match = block.match(new RegExp(`(?:^|;)\\s*${property}\\s*:\\s*([^;]+)`, 'i'));
@@ -166,9 +181,39 @@ async function main() {
     splitTracks(shellColumns).length === 2,
     `the shot shell must reserve two tracks by default, not a third for an inspector that may not exist (got "${shellColumns}")`,
   );
-  const gatedColumns = declaration('.focused-workspace-shell:has(> .focused-inspector)', 'grid-template-columns');
-  assert(gatedColumns, 'the inspector track must be gated on an inspector actually being rendered');
-  assert(splitTracks(gatedColumns).length === 3, 'the gated rule is the one that adds the inspector track');
+  /* EV2-7 B2.16 — THE SHOT WORKSPACE HAS NO INSPECTOR TRACK. The Shot Inspector aside is
+     removed (tests/focused-workspaces.js drives enhance() and requires nothing appended), so
+     the `:has(> .focused-inspector)` rule in styles.css no longer applies to any shot and is
+     not asserted here: a check against a rule the shot route never reaches would keep
+     passing on dead CSS. What is asserted is the Shots column model in force. */
+  assert(shotLayoutCss, `public/experience-coherence.css must carry the "${SHOT_LAYOUT_HEADING}" section`);
+  const shotColumns = declaration(SHOT_SHELL, 'grid-template-columns', shotLayoutCss);
+  assert(shotColumns, `the Shots section must declare the shot shell's column model (${SHOT_SHELL})`);
+  const shotTracks = splitTracks(shotColumns);
+  assert.strictEqual(shotTracks.length, 2,
+    `the Shot workspace is two tracks, navigator | work, with no inspector track (got "${shotColumns}")`);
+  assert.strictEqual(shotTracks[0], 'auto', "the first track stays the navigator's own open/closed width");
+  const shotWork = parseTrack(shotTracks[1]);
+  assert(shotWork.min.px === 0 && shotWork.max.px > 0 && shotWork.max.fr === undefined,
+    `the work track must yield and be bounded, so a wide window does not inflate every card (got "${shotTracks[1]}")`);
+  /* A bounded track leaves free space, and a grid's normal content alignment hands that space
+     to its `auto` tracks: measured in Chromium at 1920, the collapsed navigator's 34px track grew
+     to 292px and the work started 258px further from the navigator. The spare width belongs
+     after the work, which is what the solver below assumes. */
+  assert.strictEqual(declaration(SHOT_SHELL, 'justify-content', shotLayoutCss), 'start',
+    'the bounded Shot shell must pack its tracks to the start, or the auto navigator track absorbs the spare width');
+  /* Scoped to Shots: no !important and no rule reaching the generic focused shell, the
+     References shell or any inspector. */
+  assert(!/!important/.test(shotLayoutCss), 'the Shots layout must not override the focused shells with !important');
+  for (const [pattern, what] of [
+    [/(^|[\s,}>])\.focused-workspace-shell\s*[{,:]/, 'every focused workspace shell'],
+    [/\.focused-entity-shell/, 'the References shell'],
+    [/\.focused-inspector/, 'an inspector'],
+  ]) assert(!pattern.test(shotLayoutCss), `the Shots layout section must not restyle ${what}`);
+  /* And the References layout keeps its own three tracks, inspector included. */
+  const entityColumns = declaration('.focused-entity-shell', 'grid-template-columns');
+  assert(entityColumns && splitTracks(entityColumns).length === 3,
+    `the References shell keeps navigator | main | inspector (got "${entityColumns}")`);
 
   /* A collapsed navigator must release its width rather than hold a track open. */
   const closedWidth = declaration('.focused-workspace-shell > .project-navigator.closed', 'width');
@@ -231,7 +276,18 @@ async function main() {
   for (const viewport of TARGET_WIDTHS) {
     for (const state of ['closed', 'open']) {
       const shellAvailable = viewport - CHROME_AROUND_SHELL;
-      const [navTrack, mainTrack] = solveGrid(shellColumns, shellAvailable, SHELL_GAP, [navWidths[state]]);
+      const [navTrack, mainTrack] = solveGrid(shotColumns, shellAvailable, SHELL_GAP, [navWidths[state]]);
+      /* The bound is reached only where the window has room to spare, and never exceeded. */
+      assert(
+        mainTrack <= shotWork.max.px + 0.5,
+        `${viewport}px / navigator ${state}: the work track grew to ${mainTrack}px, past its ${shotWork.max.px}px bound`,
+      );
+      if (shellAvailable - navWidths[state] - SHELL_GAP < shotWork.max.px) {
+        assert(
+          Math.abs(mainTrack - (shellAvailable - navWidths[state] - SHELL_GAP)) <= 0.5,
+          `${viewport}px / navigator ${state}: below the bound the work track must take all the room (${mainTrack}px)`,
+        );
+      }
       /* .shot-main caps its own reading width; the frame body sizes to the cap. */
       const contentWidth = Math.min(mainTrack, SHOT_MAIN_MAX);
       const bodyAvailable = contentWidth - FRAME_BODY_INSET;

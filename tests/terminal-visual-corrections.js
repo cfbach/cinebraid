@@ -227,16 +227,30 @@ async function main() {
   ok(tone(runningRun("t")) !== tone({ status: "awaiting-review" }),
     "TONE-1: so one fixed colour cannot honestly serve both");
 
-  const inspector = fs.readFileSync(path.join(ROOT, "public", "focused-workspaces.js"), "utf8");
-  ok(inspector.includes("window.v670RunTone(run)"),
-    "TONE-1: the inspector card must take its tone from that classifier rather than a second one");
+  /* EV2-7 B2.16 removed the Shot Inspector column this was first proven on. A run for the
+     shot is now drawn inline on the Shot Desk, beside the hero on every stage, and the
+     same rule holds there: its tone is the shipped classifier's, and its paint reads the
+     operational tokens. */
+  const studio = fs.readFileSync(path.join(ROOT, "public", "creation-studio.js"), "utf8");
+  const inline = studio.slice(studio.indexOf("function shotActiveOperationMarkup"), studio.indexOf("function shotDetailsMarkup"));
+  ok(inline.length > 0 && /v670RunTone\(run\)/.test(inline) && inline.includes("shot-activity-inline state-${attr(tone)}"),
+    "TONE-1: the Shot Desk's inline run must take its tone from that classifier rather than a second one");
+  ok(!/focused-inspector-alert|function shotInspector/.test(fs.readFileSync(path.join(ROOT, "public", "focused-workspaces.js"), "utf8")),
+    "TONE-1: and the retired Inspector card does not come back as a second run surface");
 
-  const alert = declarationsFor(".focused-inspector-alert");
-  ok(!/rgba\(244,\s*170,\s*75/.test(alert),
-    "TONE-1: the card must no longer hardcode amber for every run state");
-  ok(/--op-working/.test(declarationsFor(".focused-inspector-alert.state-active")),
+  const COHERENCE = fs.readFileSync(path.join(ROOT, "public", "experience-coherence.css"), "utf8").replace(/\/\*[\s\S]*?\*\//g, "");
+  const inlineRule = (suffix) => {
+    const selector = `#main .bounded-shot-workspace .shot-activity-inline${suffix}`;
+    const out = COHERENCE.split("}").map((chunk) => [chunk.slice(0, chunk.lastIndexOf("{")).split(/[{;]/).pop().split(",").map((part) => part.trim().replace(/\s+/g, " ")), chunk.slice(chunk.lastIndexOf("{") + 1)])
+      .filter(([selectors]) => selectors.includes(selector)).map(([, body]) => body);
+    if (!out.length) throw new Error(`no CSS rule found for "${selector}"; a check against it would pass vacuously`);
+    return out.join("\n");
+  };
+  ok(!/rgba\(244,\s*170,\s*75/.test(inlineRule("")),
+    "TONE-1: the inline run must not hardcode amber for every run state");
+  ok(/--op-working/.test(inlineRule(".state-active")),
     "TONE-1: machine-active must paint from the operational working token");
-  ok(/--op-waiting/.test(declarationsFor(".focused-inspector-alert.state-review")),
+  ok(/--op-waiting/.test(inlineRule(".state-review")),
     "TONE-1: and waiting-on-a-person keeps the waiting token");
 
   /* =======================================================================

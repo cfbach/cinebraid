@@ -37,8 +37,10 @@ const executable = source.replace(/\/\*[\s\S]*?\*\//g, '');
 for (const read of RETIRED_WINDOW_READS)
   assert(!executable.includes(read),
     `focused-workspaces.js reads ${read}, which is undefined in a browser: app.js declares it with let/const, so it is in the global lexical scope and not on window`);
-for (const accessor of ['function activeProject()', 'function activeProjectSlug()', 'function activeAutomationRuns()',
-  'function findShot(', 'function findScene(', 'function escapeText('])
+/* activeAutomationRuns() and findShot() were read by the Shot Inspector alone; they left
+   with it (EV2-7 B2.16, below) and the retired window reads above still guard their return. */
+for (const accessor of ['function activeProject()', 'function activeProjectSlug()',
+  'function findScene(', 'function escapeText('])
   assert(source.includes(accessor), `focused-workspaces.js must resolve shared runtime state through ${accessor}`);
 assert(/typeof P === "undefined" \? null : P/.test(source),
   'the project accessor must return the live lexical binding, not a copy of it');
@@ -86,4 +88,63 @@ sandbox.window.enhanceFocusedWorkspace();
 assert.strictEqual(sandbox.document.body.dataset.focusedRoute, 'shots',
   'enhancing with no project in scope must be a no-op, not an error');
 
-console.log('Focused Workspaces suite passed module order, task isolation, inspectors, list pagination, slot focus, mobile rules, non-persistent UI state, and lexical-scope runtime resolution.');
+/* ---------------------------------------------------------------------------
+   EV2-7 B2.16 — THE SHOT WORKSPACE HAS NO INSPECTOR COLUMN.
+
+   The Shot Inspector aside repeated the Desk's title, id and counts in a third column and
+   took its width from the work, so it is removed rather than hidden or folded. Driven
+   through the module's own enhance() on a rendered shot, with a project, a matching shot
+   and the shared run list all in scope — the conditions under which the removed code
+   appended its aside — for the bounded workspace and the legacy shell alike. A source
+   search alone would pass an inspector that had merely been renamed. */
+function enhanceShotRoute(moduleSource, bounded) {
+  const created = [];
+  const appended = [];
+  const node = (classes, dataset, children = {}) => ({
+    dataset, innerHTML: '',
+    classList: { add: (name) => classes.push(name), contains: (name) => classes.includes(name) },
+    querySelector: (selector) => children[selector] || null,
+    querySelectorAll: () => [],
+    appendChild: (child) => { appended.push(child); return child; },
+    addEventListener() {},
+  });
+  const stack = node(['guided-work-stack'], {});
+  const shell = node(['guided-shot-shell'], bounded ? { bounded: '1', selectedTask: 'frames' } : {}, { '.guided-work-stack': stack });
+  const root = node([], {}, { '.guided-shot-shell': shell, '.focused-workspace-shell': shell });
+  const shots = [{ id: 'SH-01', title: 'Arrival', keyframes: [{ id: 'a', winner: '' }], desc: 'A production note.' }];
+  const realm = {
+    console,
+    location: { hash: '#/shot/SH-01' },
+    localStorage: { getItem() { return null; }, setItem() {} },
+    requestAnimationFrame() { return 0; },
+    P: { meta: { id: 'fixture' }, shots },
+    ACTIVE_PROJECT_SLUG: 'fixture',
+    AUTOMATION_RUNS: [{ id: 'run-1', targetId: 'SH-01', status: 'failed', label: 'Frame run' }],
+    shotById: (id) => shots.find((shot) => shot.id === id) || null,
+    document: {
+      body: { dataset: {} }, readyState: 'loading', addEventListener() {},
+      getElementById: (id) => (id === 'main' ? root : null),
+      createElement: (tag) => { created.push(tag); return node([], {}); },
+    },
+  };
+  realm.window = { addEventListener() {}, document: realm.document, location: realm.location };
+  vm.createContext(realm);
+  vm.runInContext(moduleSource, realm);
+  realm.window.enhanceFocusedWorkspace();
+  return { created, appended, focused: shell.dataset.focused };
+}
+for (const bounded of [true, false]) {
+  const shape = bounded ? 'bounded Shot workspace' : 'legacy shot shell';
+  const run = enhanceShotRoute(source, bounded);
+  assert.strictEqual(run.focused, '1', `${shape}: the precondition failed — enhance() never reached the shot shell, so the next checks prove nothing`);
+  assert.deepStrictEqual(run.appended, [], `${shape}: enhancing a shot must append nothing to its shell — the Shot Inspector column is removed (EV2-7 B2.16)`);
+  assert(!run.created.includes('aside'), `${shape}: enhancing a shot must build no aside`);
+}
+assert(!/\bshotInspector\b|SHOT INSPECTOR/.test(executable), 'focused-workspaces.js must not keep a Shot Inspector renderer (EV2-7 B2.16)');
+/* The References inspector is a different surface, outside this ruling, and stays. */
+const entityInspectorBody = executable.slice(executable.indexOf('function entityInspector('), executable.indexOf('function enhanceEntity('));
+assert(/document\.createElement\("aside"\)/.test(entityInspectorBody) && /aside\.className = "focused-inspector"/.test(entityInspectorBody),
+  'the References inspector must still build its own aside');
+assert(/shell\.appendChild\(entityInspector\(entity, list, center\)\)/.test(executable), 'and the References shell must still attach it');
+
+console.log('Focused Workspaces suite passed module order, task isolation, the References inspector and no Shot Inspector column, list pagination, slot focus, mobile rules, non-persistent UI state, and lexical-scope runtime resolution.');

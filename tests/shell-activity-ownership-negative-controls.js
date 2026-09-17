@@ -53,7 +53,16 @@ const SOURCES = () => ({
   focused: read("public/focused-workspaces.js"),
   braidy: read("public/shared-braidy.js"),
   scene: read("public/scene-automation.js"),
+  /* EV2-7 B2.16: a run for a shot is drawn inline on the Shot Desk, which replaced the
+     Shot Inspector card in focused-workspaces.js. Only that function is in this boundary,
+     as only the Inspector card was: the rest of creation-studio.js was never part of A1. */
+  studio: shotDeskRunSurface(read("public/creation-studio.js")),
 });
+function shotDeskRunSurface(source) {
+  const start = source.indexOf("function shotActiveOperationMarkup"), end = source.indexOf("function shotDetailsMarkup");
+  assert.ok(start >= 0 && end > start, "the Shot Desk's inline run renderer (shotActiveOperationMarkup) is where this boundary expects it");
+  return source.slice(start, end);
+}
 
 /* SA-2 / SA-11 — the drawer is retired as an owner. Not hidden: absent, with nothing
    left that can render it or mount it. */
@@ -136,7 +145,7 @@ function checkNoHandWrittenStatusLists(sources) {
      consult v670RunUnsettled on that same line. A rule that banned the words would
      have been satisfied by moving them one line up. */
   const literal = /\[\s*"running"\s*,\s*"awaiting-review"/;
-  for (const name of ["surfaces", "focused", "scene", "automation"]) {
+  for (const name of ["surfaces", "focused", "scene", "automation", "studio"]) {
     for (const line of toLF(sources[name]).split("\n")) {
       if (!literal.test(line)) continue;
       assert.ok(/v670RunUnsettled/.test(line),
@@ -209,12 +218,14 @@ control("NC-A4 the Assistant renders a row per run again", "checkAssistantIsNotA
       "NC-A4") },
   "A rail that lists runs is a second chronological feed of the ledger below it.");
 
-/* NC-A5 — a hand-written status list reappears in the A1 presentation boundary. */
+/* NC-A5 — a hand-written status list reappears in the A1 presentation boundary. It is
+   anchored on the Shot Desk's inline run, which EV2-7 B2.16 moved there from the retired
+   Shot Inspector card. */
 control("NC-A5 a manual status-literal classifier returns", "checkNoHandWrittenStatusLists",
-  { focused: mutate(read("public/focused-workspaces.js"),
-      `(typeof window.v670RunUnsettled === "function" ? window.v670RunUnsettled(row) : ["running", "awaiting-review", "failed"].includes(row.status))`,
-      `["running", "awaiting-review", "failed"].includes(row.status)`,
-      "NC-A5") },
+  { studio: shotDeskRunSurface(mutate(read("public/creation-studio.js"),
+      `const unsettled = (row) => typeof v670RunUnsettled === "function" ? v670RunUnsettled(row) : ["running", "awaiting-review"].includes(row?.status);`,
+      `const unsettled = (row) => ["running", "awaiting-review"].includes(row?.status);`,
+      "NC-A5")) },
   "A second status list drifts from the shipped predicates exactly where they already disagree.");
 
 /* NC-A6 — a drawer-only capability is dropped rather than rehomed. This is the one

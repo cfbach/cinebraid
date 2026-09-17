@@ -161,6 +161,60 @@
 }
 @container (max-width:52px) { #topbar .topbar-project,#topbar .topbar-view { visibility:hidden; } }
 
+/* EV2-7 Checkpoint 2 — Stage bar & Shot layout */
+/* B2.15. The persistent stage bar (public/stage-surfaces.js) keeps ONE strip and ONE actions group at every width.
+   Desktop: five compact stages (name; status · note) beside the stage actions. Phone (≤760): the current stage and
+   its status with one 44px "Choose stage" toggle; the same strip opens beneath it in normal flow, one stage per row.
+   The bar sits in the page's flow on a phone, so an opened list scrolls with the page instead of pinning a column
+   of stages under the header. Which width is a phone is decided HERE: the markup is the same at every width and
+   carries only the filmmaker's choice (data-stage-chooser), so rotation and resize need no repaint. The actions and
+   a blocked stage's reason are never inside the chooser. open-stage-work is demoted visually only; its suffix
+   (styles.css ::after) is untouched. Every rule is scoped to #cb-stage-mount, so no other taskbar changes. */
+#cb-stage-mount .cb-stage-chooser { display:none; }
+#cb-stage-mount .cb-stage-strip .focused-task-button { min-width:150px; min-height:48px; grid-template-columns:8px auto minmax(0,1fr); grid-template-areas:"dot title title" "dot state note"; align-content:center; }
+#cb-stage-mount .cb-stage-strip .focused-task-button>span { display:contents; }
+#cb-stage-mount .cb-stage-strip .focused-task-button b { grid-area:title; min-width:0; font:600 14px/1.3 var(--body); }
+#cb-stage-mount .cb-stage-strip .focused-task-button>em { grid-area:state; align-self:baseline; font:600 12px/1.35 var(--body); letter-spacing:normal; text-transform:none; white-space:nowrap; }
+#cb-stage-mount .cb-stage-strip .focused-task-button small { grid-area:note; min-width:0; align-self:baseline; font:500 12px/1.35 var(--body); }
+#cb-stage-mount .cb-stage-strip .focused-task-button small::before { content:"· "; }
+#cb-stage-mount .cb-stage-strip .focused-task-button:focus-visible { outline:3px solid var(--cb-focus); outline-offset:-3px; }
+#cb-stage-mount .cb-stage-action { min-height:44px; padding:10px 14px; font:600 14px/1.2 var(--body); letter-spacing:normal; }
+#cb-stage-mount .cb-stage-action[data-action-id="open-stage-work"] { border-color:var(--line-2); background:transparent; font-weight:500; }
+#cb-stage-mount .cb-stage-action[data-action-id="open-stage-work"]:hover:not(:disabled) { border-color:var(--acc); }
+#cb-stage-mount :is(.cb-stage-action,.cb-stage-chooser-toggle):focus-visible { outline:3px solid var(--cb-focus); outline-offset:2px; }
+#cb-stage-mount .cb-stage-action-reason { font:500 14px/1.45 var(--body); letter-spacing:normal; }
+@media(max-width:760px) {
+  #cb-shell-bar { position:relative; top:auto; }
+  #cb-stage-mount .cb-stage-bar { display:grid; grid-template-columns:minmax(0,1fr); gap:10px; padding:12px 16px 14px; }
+  #cb-stage-mount .cb-stage-chooser { display:flex; flex-direction:column; align-items:flex-start; gap:8px; }
+  #cb-stage-mount .cb-stage-current { max-width:100%; margin:0; font:500 15px/1.4 var(--body); color:var(--ink); overflow-wrap:anywhere; }
+  #cb-stage-mount .cb-stage-current>b { font-weight:700; }
+  #cb-stage-mount .cb-stage-current>span { font-size:14px; color:var(--muted); }
+  #cb-stage-mount .cb-stage-current>span[data-availability="blocked"] { color:var(--amber); }
+  #cb-stage-mount .cb-stage-chooser-toggle { flex:0 0 auto; min-height:44px; padding:10px 16px; border:1px solid var(--line-2); border-radius:8px; background:var(--panel-2); color:var(--ink); font:600 14px/1.2 var(--body); cursor:pointer; }
+  #cb-stage-mount .cb-stage-chooser-toggle::after { content:"▾"; margin-left:8px; }
+  #cb-stage-mount .cb-stage-chooser-toggle[aria-expanded="true"] { border-color:var(--acc); }
+  #cb-stage-mount .cb-stage-chooser-toggle[aria-expanded="true"]::after { content:"▴"; }
+  #cb-stage-mount .cb-stage-bar[data-stage-chooser="closed"]>.cb-stage-strip { display:none; }
+  #cb-stage-mount .cb-stage-bar[data-stage-chooser="open"]>.cb-stage-strip { display:grid; grid-template-columns:minmax(0,1fr); gap:6px; overflow:visible; }
+  #cb-stage-mount .cb-stage-strip .focused-task-button { width:100%; min-width:0; min-height:52px; grid-template-columns:8px minmax(0,1fr) auto; grid-template-areas:"dot title state" "dot note note"; }
+  #cb-stage-mount .cb-stage-strip .focused-task-button b { white-space:normal; overflow-wrap:anywhere; font-size:15px; }
+  #cb-stage-mount .cb-stage-strip .focused-task-button>em { align-self:center; justify-self:end; }
+  #cb-stage-mount .cb-stage-strip .focused-task-button small { display:block; white-space:normal; overflow:visible; text-overflow:clip; overflow-wrap:anywhere; }
+  #cb-stage-mount .cb-stage-strip .focused-task-button small::before { content:none; }
+  #cb-stage-mount .cb-stage-actions { justify-content:flex-start; }
+  #cb-stage-mount .cb-stage-action { white-space:normal; text-align:left; }
+  #cb-stage-mount .cb-stage-action-reason { text-align:left; }
+}
+/* B2.16. The Shot workspace renders no Inspector column (focused-workspaces.js), so its shell is two tracks: the
+   compact project navigator at its own width, then the work. Narrower windows give the work the inspector's old
+   width; from about 1660 (navigator collapsed) the work stops at 1360px, its width beside the inspector at 1920,
+   so a wide window adds room beside the work instead of stretching every card across it, and the frame review
+   column still never narrows as the window widens. justify-content:start keeps the spare width after the work:
+   a grid's normal alignment would stretch the auto navigator track and open a gap between navigator and work.
+   Scoped to the shot shell; the References shell and its inspector keep their own three tracks. */
+.bounded-shot-workspace.focused-workspace-shell { grid-template-columns:auto minmax(0,1360px); justify-content:start; }
+
 /* EV2-7 Checkpoint 2 — Shot Board */
 /* B2.1–B2.7. The Shots page reads: the heading and its count beside one contextual Add shot; Shot board / Scene
    directory; one Show selector with the matching count and page range beside it; More filters as the one secondary

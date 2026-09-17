@@ -38,8 +38,6 @@
      and a bare reference would throw. */
   function activeProject() { return typeof P === "undefined" ? null : P; }
   function activeProjectSlug() { return typeof ACTIVE_PROJECT_SLUG === "undefined" ? "" : safeText(ACTIVE_PROJECT_SLUG); }
-  function activeAutomationRuns() { return typeof AUTOMATION_RUNS !== "undefined" && Array.isArray(AUTOMATION_RUNS) ? AUTOMATION_RUNS : []; }
-  function findShot(id) { return typeof shotById === "function" ? shotById(id) : null; }
   function findScene(id) { return typeof sceneById === "function" ? sceneById(id) : null; }
   /* app.js's own `esc`, or a byte-identical local one. Every call site used to read
      `window.esc ? window.esc(x) : x`, and `window.esc` is undefined for the same
@@ -199,18 +197,6 @@
     bar?.querySelectorAll("button[data-task-id]").forEach((button) => button.classList.toggle("selected", button.dataset.taskId === selected?.id));
     if (activeTaskContext) activeTaskContext.taskId = selected?.id || "";
   }
-  function shotInspector(shot) {
-    const aside = document.createElement("aside");
-    aside.className = "focused-inspector";
-    const refs = typeof window.shotCreationReferences === "function" ? window.shotCreationReferences(shot) : [];
-    const readyRefs = refs.filter((row) => row.url).length;
-    const frames = Array.isArray(shot?.keyframes) ? shot.keyframes : [];
-    const approvedFrames = frames.filter((frame) => frame.winner).length;
-    const run = activeAutomationRuns().find((row) => row.targetId === shot?.id && (typeof window.v670RunUnsettled === "function" ? window.v670RunUnsettled(row) : ["running", "awaiting-review", "failed"].includes(row.status)));
-    aside.innerHTML = `<header><span>SHOT INSPECTOR</span><b>${escapeText(shot?.id || "Shot")}</b><p>${escapeText(shot?.title || "")}</p></header><div class="focused-inspector-facts"><article><span>References</span><b>${readyRefs}/${refs.length}</b></article><article><span>Frames</span><b>${approvedFrames}/${frames.length || 1}</b></article><article><span>Duration</span><b>${Number(shot?.sec || shot?.duration || 0) || "—"}s</b></article><article><span>Workflow</span><b>${escapeText(window.workflowState?.(shot)?.label || shot?.workflowStatus || "Draft")}</b></article></div><section><b>Current production note</b><p>${escapeText(shot?.desc || shot?.positioning || "No additional shot note.")}</p></section>${run ? `<section class="focused-inspector-alert${typeof window.v670RunTone === "function" ? ` state-${window.v670RunTone(run)}` : ""}"><b>${escapeText(run.label || "Automation")}</b><p>${escapeText(run.stage || run.summary || run.status)}</p><button type="button" data-open-activity="${run.id}">Open activity</button></section>` : `<section><b>Activity</b><p>No active operation for this shot.</p></section>`}`;
-    aside.querySelector("[data-open-activity]")?.addEventListener("click", (event) => window.CineBraidCreatorSurfaces?.expandTerminal?.(event.currentTarget.dataset.openActivity));
-    return aside;
-  }
   function disclosureFallbackLabel(element) {
     if (element.classList.contains("asset-creation-card")) return ["Create primary reference", "Build or improve the identity authority"];
     if (element.classList.contains("entity-approved-section")) return ["Approved references", "Canonical state authorities"];
@@ -235,6 +221,15 @@
       summary.innerHTML = `<span><b>${escapeText(label)}</b><small>${escapeText(detail)}</small></span><em>Ready</em>`;
     });
   }
+  /* NO SHOT INSPECTOR IS ATTACHED HERE EITHER. EV2-7 Checkpoint 2, ruling B2.16.
+
+     A Shot Inspector aside used to be appended to the shot shell as a third column. It
+     repeated the shot's title, id and counts beside the Desk that already states them,
+     and took its width from the work. Under the ruling the Desk owns what was unique in
+     it — identity, counts and duration in its visible context, notes and history in a
+     keyed Shot details disclosure, active failures inline with Activity access — so the
+     column is removed rather than hidden or folded. The References inspector is a
+     different surface and is untouched (entityInspector, below). */
   function enhanceShot(root, id) {
     if (root.dataset.focusedShot === "1" && !root.querySelector(".focused-workspace-shell")) delete root.dataset.focusedShot;
     ensureDisclosureLabels(root);
@@ -244,15 +239,12 @@
     if (shell.dataset.bounded === "1") {
       shell.dataset.focused = "1";
       root.dataset.focusedShot = "1";
-      const shot = findShot(id);
-      if (shot && !shell.querySelector(":scope > .focused-inspector")) shell.appendChild(shotInspector(shot));
       activeTaskContext = { bounded: true, kind: "shot-task", id, taskId: shell.dataset.selectedTask || "" };
       return;
     }
     shell.dataset.focused = "1";
     root.dataset.focusedShot = "1";
     shell.classList.add("focused-workspace-shell");
-    const shot = findShot(id);
     /* NO SHOT TASKBAR IS BUILT HERE, and that is the point of O1.
 
        This branch used to spread the work stack's rendered children, filter them by tag
@@ -266,8 +258,8 @@
        rendered by the bounded workspace above, which states its selection in
        data-selected-task. A shot shell without data-bounded means that workspace did
        not render; the honest response is to leave the panels alone rather than invent
-       five stages that agree with nothing. The inspector is still attached — it reads
-       the shot record, not the DOM, so it was never part of the problem.
+       five stages that agree with nothing. No inspector is attached on this branch
+       either (B2.16, above).
 
        The helpers this branch used are still live for the scene and legacy entity
        routes, which answer a different question and are deliberately not migrated. */
@@ -275,7 +267,6 @@
        set last, and a shot route that establishes none must not inherit the previous
        route's. */
     activeTaskContext = null;
-    if (shot) shell.appendChild(shotInspector(shot));
   }
   function entityListName(view) {
     return ({ character: "characters", location: "locations", prop: "props", vehicle: "vehicles", sound: "audio" })[view] || "";

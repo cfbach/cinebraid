@@ -20,7 +20,14 @@ and they are the eight a filmmaker would actually notice:
   * THE STICKY GEOMETRY. The bar pins beneath the topbar, the rail and the shot's
     inspector pin beneath the bar, and none of them overlaps the Activity Terminal.
   * THE RESPONSIVE RULE. All five stages stay reachable and the current one stays
-    visible at ten widths, in both themes, with no horizontal document overflow.
+    visible at ten widths, in both themes, with no horizontal document overflow. On a
+    phone (EV2-7 B2.15) "reachable" is one press away: the bar shows the current stage,
+    its status and ONE 44px Choose stage toggle, the stage actions stay visible beside
+    it, and the same strip opens beneath it in the page's normal flow.
+  * THE PHONE CHOOSER. Keyboard selection through the shipped owner with focus returned
+    to the toggle, Escape, an expansion kept through a job-refresh repaint, a full route
+    rerender and a resize to desktop and back, a blocked stage's reason visible with the
+    chooser closed, and nothing stored.
   * THE STATUS COLOURS RESOLVE. Three of the shipped tone colours were painted with
     custom properties this stylesheet never declared, so they computed to `unset` and
     were invisible. Only a real engine can say whether a colour exists.
@@ -39,6 +46,10 @@ what the check reads — the probe receipt — and then requires the check to no
   N6 re-enables a disabled action.
   N7 lets the bar overlap the Activity Terminal.
   N8 hides two stages at a phone width.
+  N9 folds the stage actions behind the closed phone chooser.
+  N10 lets a repaint forget the chooser's expansion.
+  N11 pins the opened phone chooser under the header.
+  N12 stops Escape closing the chooser and returning focus to its toggle.
 
 THE FIXTURE IS THE DEMO SANDBOX, built by scripts/qa-sandbox.js and read back through
 the real server, so what the strip renders is a project the writers really persist.
@@ -81,6 +92,9 @@ VIEWPORTS = [
     ("tablet", 900, 1024, 0),
     ("phone", 390, 844, 0),
 ]
+# EV2-7 B2.15: at and below this width the strip is opened by the Choose stage toggle
+# (public/experience-coherence.css, "Stage bar & Shot layout").
+PHONE_MAX = 760
 
 
 def free_port():
@@ -257,9 +271,52 @@ GEOMETRY = """
       const b = bar.getBoundingClientRect(), t = topbar.getBoundingClientRect();
       return b.top < t.bottom - 1;
     })(),
+    /* THE PHONE CHOOSER (EV2-7 B2.15). A stage is "shown" here only if it has a box, so a
+       strip folded behind the toggle counts as zero, and a column of stages is one left edge. */
+    barPosition: bar ? getComputedStyle(bar).position : '',
+    chooserState: (document.querySelector('.cb-stage-bar') || { dataset: {} }).dataset.stageChooser || '',
+    toggle: (() => {
+      const t = document.getElementById('cb-stage-chooser-toggle');
+      if (!t) return null;
+      const r = t.getBoundingClientRect();
+      return { shown: shown(t) && r.width > 0 && r.height > 0, h: Math.round(r.height), expanded: t.getAttribute('aria-expanded') };
+    })(),
+    stageColumns: strip ? new Set([...strip.querySelectorAll('.focused-task-button')]
+      .filter((b) => getComputedStyle(b).display !== 'none' && b.getBoundingClientRect().width > 0)
+      .map((b) => Math.round(b.getBoundingClientRect().left))).size : 0,
+    actionsShown: [...document.querySelectorAll('.cb-stage-action')].map((b) => {
+      const r = b.getBoundingClientRect();
+      return getComputedStyle(b).visibility !== 'hidden' && r.width > 0 && r.height >= 44;
+    }),
   };
 }
 """
+
+# What the chooser says about itself, and where focus and the selection are. Read, never
+# derived: the state is the bar's own attribute and the toggle's own aria-expanded.
+CHOOSER = """
+() => {
+  const bar = document.querySelector('.cb-stage-bar');
+  const toggle = document.getElementById('cb-stage-chooser-toggle');
+  const line = document.getElementById('cb-stage-current');
+  const active = document.activeElement;
+  const storage = [];
+  for (let i = 0; i < localStorage.length; i += 1) { const key = localStorage.key(i); storage.push(key + '=' + localStorage.getItem(key)); }
+  return {
+    state: bar ? bar.dataset.stageChooser : '',
+    expanded: toggle ? toggle.getAttribute('aria-expanded') : '',
+    line: line ? line.textContent : '',
+    focus: active ? (active.id || (active.dataset && active.dataset.stageId) || active.tagName) : '',
+    selected: (document.querySelector('[data-bounded-task]') || { dataset: {} }).dataset.boundedTask || '',
+    storage: storage.sort().join('|') + '|session:' + sessionStorage.length,
+    actionsText: (document.querySelector('.cb-stage-actions') || {}).innerText || '',
+  };
+}
+"""
+
+# Three animation frames: the route's own focus and scroll restoration runs two frames after
+# a render, so a focus assertion made sooner would be read before the app has finished.
+FRAMES = "() => new Promise((done) => requestAnimationFrame(() => requestAnimationFrame(() => requestAnimationFrame(done))))"
 
 # The production truth a persistent action must not touch. Deliberately NOT the whole
 # project record: `creation.openPanels` is disclosure memory the shipped openGuidedPanel
@@ -308,9 +365,13 @@ try:
 
         page.route("**/*", guard)
 
-        def open_shot(shot):
+        def open_shot(shot, phone=False):
             page.goto(f"{base}/?o4={shot}#/shot/{shot}", wait_until="domcontentloaded")
-            page.wait_for_selector(".cb-stage-strip .focused-task-button", timeout=20000)
+            # On a phone the strip is mounted but folded behind the Choose stage toggle (B2.15),
+            # so the wait is for the strip to exist and for the toggle a filmmaker would press.
+            page.wait_for_selector(".cb-stage-strip .focused-task-button", state="attached" if phone else "visible", timeout=20000)
+            if phone:
+                page.wait_for_selector("#cb-stage-chooser-toggle", timeout=20000)
             page.wait_for_function("() => typeof P !== 'undefined' && !!P", timeout=20000)
 
         def select_stage(stage_id):
@@ -539,10 +600,35 @@ try:
                 page.set_viewport_size({"width": width, "height": height})
                 page.wait_for_timeout(260)
                 g = page.evaluate(GEOMETRY)
+                phone = width <= PHONE_MAX
                 if g["horizontalOverflow"]:
                     overflow.append(f"{theme}/{name} {width}px: scrollWidth {g['scrollWidth']}")
-                if g["stageCount"] != 5 or g["stagesVisible"] != 5:
+                if not phone and (g["stageCount"] != 5 or g["stagesVisible"] != 5):
                     reach.append(f"{theme}/{name} {width}px: {g['stagesVisible']}/{g['stageCount']} stages reachable")
+                if phone:
+                    # B2.15. The five stages are one press away, behind ONE visible 44px toggle,
+                    # and the stage actions are not behind it. Opened, they are all there, in one
+                    # column; Escape folds them again.
+                    toggle = g["toggle"] or {}
+                    if g["chooserState"] != "closed" or g["stagesVisible"] != 0:
+                        reach.append(f"{theme}/{name} {width}px: the chooser must start closed with the strip folded "
+                                     f"(state {g['chooserState']!r}, {g['stagesVisible']} stages shown)")
+                    if not (toggle.get("shown") and toggle.get("h", 0) >= 44 and toggle.get("expanded") == "false"):
+                        reach.append(f"{theme}/{name} {width}px: Choose stage must be a visible 44px toggle, got {toggle}")
+                    if not g["actionsShown"] or not all(g["actionsShown"]):
+                        reach.append(f"{theme}/{name} {width}px: the stage actions must stay visible outside the chooser, "
+                                     f"got {g['actionsShown']}")
+                    page.focus("#cb-stage-chooser-toggle")
+                    page.keyboard.press("Enter")
+                    page.wait_for_selector('.cb-stage-bar[data-stage-chooser="open"]', timeout=10000)
+                    opened = page.evaluate(GEOMETRY)
+                    if opened["stageCount"] != 5 or opened["stagesVisible"] != 5 or opened["stageColumns"] != 1:
+                        reach.append(f"{theme}/{name} {width}px: {opened['stagesVisible']}/{opened['stageCount']} stages "
+                                     f"reachable in {opened['stageColumns']} column(s) once Choose stage is pressed")
+                    if opened["horizontalOverflow"]:
+                        overflow.append(f"{theme}/{name} {width}px opened: scrollWidth {opened['scrollWidth']}")
+                    page.keyboard.press("Escape")
+                    page.wait_for_selector('.cb-stage-bar[data-stage-chooser="closed"]', timeout=10000)
                 assert g["currentInView"] is not False, \
                     f"16. {theme}/{name} {width}px: the current stage is scrolled out of the strip"
                 assert g["railDockedWidth"] == expected_rail, \
@@ -561,8 +647,17 @@ try:
                 page.wait_for_timeout(170)
                 pinned = page.evaluate(GEOMETRY)
                 if pinned["scrollY"] > 0:
-                    assert not pinned["barOverlapsTopbar"], \
-                        f"{theme}/{name} {width}px: the bar pinned behind the topbar while scrolled"
+                    if phone:
+                        # B2.15. On a phone the bar sits in the page's flow, so an opened list of
+                        # stages scrolls away with the page instead of pinning under the header.
+                        assert pinned["barPosition"] not in ("sticky", "fixed"), \
+                            f"{theme}/{name} {width}px: the phone stage bar must be in normal flow, got {pinned['barPosition']}"
+                        assert pinned["barBox"]["top"] <= g["barBox"]["top"] - pinned["scrollY"] + 2, \
+                            (f"{theme}/{name} {width}px: the phone stage bar stayed at {pinned['barBox']['top']}px after "
+                             f"scrolling {pinned['scrollY']}px — it is pinned, not in the page's flow")
+                    else:
+                        assert not pinned["barOverlapsTopbar"], \
+                            f"{theme}/{name} {width}px: the bar pinned behind the topbar while scrolled"
                     assert not pinned["barOverlapsDock"], \
                         f"13. {theme}/{name} {width}px: the bar overlapped the Terminal while scrolled"
                     if pinned["railShown"] and pinned["railBox"]:
@@ -575,8 +670,9 @@ try:
         assert not overflow, f"15. horizontal document overflow: {overflow}"
         assert not reach, f"16. stages became unreachable: {reach}"
         findings.append(f"15-17. {len(VIEWPORTS)} widths x 2 themes: no horizontal overflow, all five stages "
-                        f"reachable and the current one in view at every one, and O3's 340/240/0 rail bands "
-                        f"and 900px centre floor are unchanged")
+                        f"reachable and the current one in view at every one (at {PHONE_MAX}px and below through one "
+                        f"44px Choose stage toggle, with the actions visible beside it and the bar in normal flow), "
+                        f"and O3's 340/240/0 rail bands and 900px centre floor are unchanged")
 
         page.set_viewport_size({"width": 1600, "height": 1000})
         page.wait_for_timeout(260)
@@ -593,6 +689,127 @@ try:
             f"17. these stages painted an invisible status dot with no ring either: {transparent}"
         findings.append(f"17. every stage's status dot resolves to a real colour or a ring in both themes "
                         f"({len({row['dotColour'] for row in painted})} distinct dot colours in this state)")
+
+        # ---- 18. the phone chooser (EV2-7 Checkpoint 2, ruling B2.15) ---------------------
+        # One document, driven the way a filmmaker on a phone drives it: the keyboard opens the
+        # chooser and chooses a stage through the SHIPPED selectBoundedTask on the stage button;
+        # focus comes back to the toggle; a job-refresh repaint, a full route rerender and a
+        # rotation to desktop and back all keep what was opened; Escape folds it and returns
+        # focus; and none of it stores anything or touches production truth.
+        page.set_viewport_size({"width": 390, "height": 844})
+        open_shot(APPROVED_SHOT, phone=True)
+        page.evaluate(FRAMES)
+        phone_view = page.evaluate(SURFACE)
+        phone_stamps = page.evaluate(STAMP)
+        closed_state = page.evaluate(CHOOSER)
+        assert closed_state["state"] == "closed" and closed_state["expanded"] == "false", \
+            f"18. a freshly loaded shot must show the chooser closed, got {closed_state}"
+        current_id = [row["id"] for row in phone_view["rendered"] if row["current"]][0]
+        target = [stage for stage in phone_view["declaredOrder"] if stage != current_id and stage in ("inputs", "look")][0]
+        truth_phone = page.evaluate(TRUTH)
+
+        page.focus("#cb-stage-chooser-toggle")
+        page.keyboard.press("Enter")
+        page.wait_for_selector('.cb-stage-bar[data-stage-chooser="open"]', timeout=10000)
+        opened_state = page.evaluate(CHOOSER)
+        assert opened_state["expanded"] == "true" and opened_state["focus"] == "cb-stage-chooser-toggle", \
+            f"18. Enter must open the chooser and leave focus on its toggle, got {opened_state}"
+        for _ in range(phone_view["declaredOrder"].index(target) + 1):
+            page.keyboard.press("Tab")
+        assert page.evaluate("() => document.activeElement.dataset.stageId || ''") == target, \
+            "18. Tab from the toggle must move through the opened stages in their declared order"
+        page.keyboard.press("Enter")
+        page.wait_for_selector(f'[data-bounded-task="{target}"]', timeout=20000)
+        page.wait_for_selector(f'.cb-stage-strip [data-stage-id="{target}"][aria-current="step"]', state="attached", timeout=20000)
+        page.wait_for_selector('.cb-stage-bar[data-stage-chooser="closed"]', timeout=10000)
+        page.wait_for_function("() => document.body.dataset.renderReady === '1'", timeout=20000)
+        page.evaluate(FRAMES)
+        chosen = page.evaluate(CHOOSER)
+        target_label = page.evaluate("(id) => document.querySelector('.cb-stage-strip [data-stage-id=\"' + id + '\"] b').textContent", target)
+        assert chosen["selected"] == target, f"18. the keyboard choice must render {target}, got {chosen['selected']!r}"
+        assert chosen["focus"] == "cb-stage-chooser-toggle", \
+            f"18. choosing a stage must fold the chooser and return focus to its toggle, focus is on {chosen['focus']!r}"
+        assert f"Current stage: {target_label}" in " ".join(chosen["line"].split()), \
+            f"18. the current-stage line must name the chosen stage, reads {chosen['line']!r}"
+        assert page.evaluate(READ_STAMP) == phone_stamps, "18. choosing through the chooser rebuilt a persistent surface"
+        storage_after_choice = chosen["storage"]
+
+        page.focus("#cb-stage-chooser-toggle")
+        page.keyboard.press("Enter")
+        page.wait_for_selector('.cb-stage-bar[data-stage-chooser="open"]', timeout=10000)
+        page.evaluate("() => window.dispatchEvent(new CustomEvent('cinebraid:activity-updated'))")
+        assert page.evaluate(CHOOSER)["state"] == "open", "18. a job-refresh repaint must keep the chooser open"
+        page.evaluate("() => route()")
+        page.wait_for_function("() => document.body.dataset.renderReady === '1'", timeout=20000)
+        page.evaluate(FRAMES)
+        rerendered = page.evaluate(GEOMETRY)
+        assert rerendered["chooserState"] == "open" and rerendered["stagesVisible"] == 5, \
+            f"18. a full route() rerender must keep the chooser open with its five stages, got {rerendered['chooserState']} / {rerendered['stagesVisible']}"
+        assert page.evaluate(READ_STAMP) == phone_stamps, "18. a repaint with the chooser open rebuilt a persistent surface"
+
+        at_rest = page.evaluate(GEOMETRY)
+        page.evaluate("() => window.scrollTo(0, 600)")
+        page.wait_for_timeout(170)
+        scrolled_open = page.evaluate(GEOMETRY)
+        assert scrolled_open["barBox"]["top"] <= at_rest["barBox"]["top"] - scrolled_open["scrollY"] + 2, \
+            (f"18. the opened chooser must scroll with the page, not pin {scrolled_open['barBox']['h']}px of stages "
+             f"under the header (bar top {scrolled_open['barBox']['top']}px after {scrolled_open['scrollY']}px)")
+        page.evaluate("() => window.scrollTo(0, 0)")
+        page.wait_for_timeout(130)
+
+        page.set_viewport_size({"width": 1600, "height": 1000})
+        page.wait_for_timeout(260)
+        desktop = page.evaluate(GEOMETRY)
+        assert desktop["stagesVisible"] == 5 and not (desktop["toggle"] or {}).get("shown"), \
+            f"18. rotated to desktop the five stages show without the toggle, got {desktop['stagesVisible']} / {desktop['toggle']}"
+        assert desktop["barPosition"] == "sticky", f"18. on desktop the bar pins again, got {desktop['barPosition']}"
+        assert desktop["chooserState"] == "open", "18. a rotation must not reset what the filmmaker opened"
+        page.set_viewport_size({"width": 390, "height": 844})
+        page.wait_for_timeout(260)
+        rotated_back = page.evaluate(GEOMETRY)
+        assert rotated_back["chooserState"] == "open" and rotated_back["stagesVisible"] == 5 \
+            and rotated_back["stageColumns"] == 1 and (rotated_back["toggle"] or {}).get("expanded") == "true", \
+            f"18. rotated back to the phone the chooser must still be open, got {rotated_back['chooserState']} / {rotated_back['stagesVisible']}"
+
+        page.focus(f'.cb-stage-strip .focused-task-button[data-stage-id="{current_id}"]')
+        page.keyboard.press("Escape")
+        page.wait_for_selector('.cb-stage-bar[data-stage-chooser="closed"]', timeout=10000)
+        escaped = page.evaluate(CHOOSER)
+        assert escaped["focus"] == "cb-stage-chooser-toggle" and escaped["expanded"] == "false", \
+            f"18. Escape from a stage in the list must fold the chooser and return focus to its toggle, got {escaped}"
+        assert escaped["storage"] == storage_after_choice, \
+            "18. opening, repainting, rotating and closing the chooser must store nothing"
+        assert escaped["selected"] == target, "18. and none of it may change the selected stage"
+        assert page.evaluate(TRUTH) == truth_phone, "18. and none of it may change production truth"
+
+        # A BLOCKED STAGE ON A PHONE EXPLAINS ITSELF WITHOUT ANOTHER TAP.
+        open_shot(BLOCKED_SHOT, phone=True)
+        blocked_phone = [row for row in page.evaluate(SURFACE)["declared"] if row["availability"] == "blocked"][0]
+        page.focus("#cb-stage-chooser-toggle")
+        page.keyboard.press("Enter")
+        page.wait_for_selector('.cb-stage-bar[data-stage-chooser="open"]', timeout=10000)
+        page.click(f'.cb-stage-strip .focused-task-button[data-stage-id="{blocked_phone["id"]}"]')
+        page.wait_for_selector(f'[data-bounded-task="{blocked_phone["id"]}"]', timeout=20000)
+        page.wait_for_selector('.cb-stage-bar[data-stage-chooser="closed"]', timeout=10000)
+        blocked_actions = page.evaluate(SURFACE)["actions"]
+        blocked_geometry = page.evaluate(GEOMETRY)
+        blocked_chooser = page.evaluate(CHOOSER)
+        disabled_phone = [a for a in blocked_actions if a["disabled"]]
+        assert disabled_phone and all(a["reasonVisible"] and a["reason"] == blocked_phone["blockedReason"] for a in disabled_phone), \
+            f"18. with the chooser closed a blocked stage's action must be disabled with its declared reason visible, got {blocked_actions}"
+        assert blocked_geometry["actionsShown"] and all(blocked_geometry["actionsShown"]), \
+            f"18. and the disabled action itself must be visible, got {blocked_geometry['actionsShown']}"
+        assert blocked_phone["blockedReason"] in blocked_chooser["actionsText"], \
+            "18. the reason must be readable text in the actions, not a tooltip"
+        findings.append(f"18. at 390px the keyboard opened the chooser, Tab reached {target} and Enter selected it through "
+                        f"the shipped selectBoundedTask with focus returned to the toggle; a job-refresh repaint, a full "
+                        f"route() and a rotation to 1600px and back kept it open without rebuilding the strip or the "
+                        f"actions; the open list scrolls with the page; Escape returned focus; nothing was stored and "
+                        f"no production truth changed; and {blocked_phone['id']}'s disabled action showed its reason with "
+                        f"the chooser closed")
+
+        page.set_viewport_size({"width": 1600, "height": 1000})
+        page.wait_for_timeout(260)
 
         # =================================================================================
         # NEGATIVE CONTROLS. Each mutates the running page, proves the mutation changed
@@ -737,9 +954,13 @@ try:
         assert not page.evaluate(GEOMETRY)["barOverlapsDock"], "N7: removing the control did not restore the geometry"
         findings.append("N7. a bar allowed to cover the Activity Terminal is caught by the overlap measurement")
 
-        # N8 — hide two stages at a phone width.
+        # N8 — hide two stages at a phone width. On a phone the stages are reached through the
+        # Choose stage toggle (B2.15), so the control is applied to the opened chooser.
         page.set_viewport_size({"width": 390, "height": 844})
         page.wait_for_timeout(300)
+        page.focus("#cb-stage-chooser-toggle")
+        page.keyboard.press("Enter")
+        page.wait_for_selector('.cb-stage-bar[data-stage-chooser="open"]', timeout=10000)
         probe("N8", page.evaluate(GEOMETRY)["stagesVisible"] == 5, "not all five stages were reachable to begin with")
         page.evaluate("""() => {
             const style = document.createElement('style');
@@ -758,11 +979,94 @@ try:
         assert page.evaluate(GEOMETRY)["stagesVisible"] == 5, "N8: removing the control did not restore reachability"
         findings.append("N8. hiding stages at a phone width is caught by the reachability measurement")
 
+        # N9 — fold the stage actions behind the closed chooser, the rejected draft's second half.
+        page.focus("#cb-stage-chooser-toggle")
+        page.keyboard.press("Enter")
+        page.wait_for_selector('.cb-stage-bar[data-stage-chooser="closed"]', timeout=10000)
+        before_n9 = page.evaluate(GEOMETRY)["actionsShown"]
+        probe("N9", before_n9 and all(before_n9), f"the actions were not all visible to begin with: {before_n9}")
+        page.evaluate("""() => {
+            const style = document.createElement('style');
+            style.id = 'cb-o4-control-fold-actions';
+            style.textContent = '@media(max-width:760px){.cb-stage-bar[data-stage-chooser="closed"] .cb-stage-actions{display:none!important}}';
+            document.head.appendChild(style);
+        }""")
+        page.wait_for_timeout(200)
+        folded = page.evaluate(GEOMETRY)["actionsShown"]
+        assert not (folded and all(folded)), \
+            f"N9: actions folded behind the closed chooser still read as visible ({folded}), so the phone check is not measuring them"
+        page.evaluate("() => document.getElementById('cb-o4-control-fold-actions')?.remove()")
+        page.wait_for_timeout(200)
+        assert all(page.evaluate(GEOMETRY)["actionsShown"]), "N9: removing the control did not restore the actions"
+        findings.append("N9. stage actions folded behind the closed phone chooser are caught by the visibility measurement")
+
+        # N10 — a repaint that forgets what the filmmaker opened.
+        page.focus("#cb-stage-chooser-toggle")
+        page.keyboard.press("Enter")
+        page.wait_for_selector('.cb-stage-bar[data-stage-chooser="open"]', timeout=10000)
+        page.evaluate("""() => {
+            window.__o4ControlForget = () => { const bar = document.querySelector('.cb-stage-bar'); if (bar) bar.dataset.stageChooser = 'closed'; };
+            window.addEventListener('cinebraid:activity-updated', window.__o4ControlForget);
+            window.dispatchEvent(new CustomEvent('cinebraid:activity-updated'));
+        }""")
+        forgot = page.evaluate(CHOOSER)
+        probe("N10", forgot["expanded"] == "true", "the toggle was not open when the forgetting repaint ran")
+        assert forgot["state"] != "open", "N10: a repaint that closed the chooser was not caught by the retention check"
+        page.evaluate("""() => {
+            window.removeEventListener('cinebraid:activity-updated', window.__o4ControlForget);
+            delete window.__o4ControlForget;
+            window.CineBraidStageSurfaces.paint();
+        }""")
+        assert page.evaluate(CHOOSER)["state"] == "open", "N10: the real repaint did not restore the retained expansion"
+        findings.append("N10. a repaint that forgets the chooser's expansion is caught, and the real repaint restores it")
+
+        # N11 — pin the opened chooser under the header: the tall fixed scroll trap the ruling refuses.
+        page.evaluate("() => window.scrollTo(0, 0)")
+        page.wait_for_timeout(130)
+        rest_n11 = page.evaluate(GEOMETRY)
+        page.evaluate("""() => {
+            const style = document.createElement('style');
+            style.id = 'cb-o4-control-pin-chooser';
+            style.textContent = '@media(max-width:760px){#cb-shell-bar{position:sticky!important;top:var(--cb-topbar-stop,64px)!important}}';
+            document.head.appendChild(style);
+            window.scrollTo(0, 600);
+        }""")
+        page.wait_for_timeout(200)
+        pinned_n11 = page.evaluate(GEOMETRY)
+        probe("N11", pinned_n11["scrollY"] > 0, "the page did not scroll, so pinning could not be observed")
+        assert pinned_n11["barBox"]["top"] > rest_n11["barBox"]["top"] - pinned_n11["scrollY"] + 2, \
+            "N11: a pinned phone chooser still read as scrolling with the page, so the normal-flow check is not measuring position"
+        page.evaluate("() => { document.getElementById('cb-o4-control-pin-chooser')?.remove(); window.scrollTo(0, 0); }")
+        page.wait_for_timeout(200)
+        findings.append("N11. an opened phone chooser pinned under the header is caught by the normal-flow measurement")
+
+        # N12 — Escape stops folding the chooser and returning focus to its toggle.
+        page.evaluate("""() => {
+            window.__o4ControlKeydown = window.CineBraidStageSurfaces.chooserKeydown;
+            window.CineBraidStageSurfaces.chooserKeydown = () => false;
+        }""")
+        page.focus("#cb-stage-chooser-toggle")
+        page.keyboard.press("Tab")
+        page.keyboard.press("Escape")
+        page.evaluate(FRAMES)
+        ignored = page.evaluate(CHOOSER)
+        probe("N12", ignored["focus"] != "", "focus was nowhere before Escape")
+        assert not (ignored["state"] == "closed" and ignored["focus"] == "cb-stage-chooser-toggle"), \
+            "N12: an Escape that did nothing was not caught by the focus-return check"
+        page.evaluate("""() => {
+            window.CineBraidStageSurfaces.chooserKeydown = window.__o4ControlKeydown;
+            delete window.__o4ControlKeydown;
+        }""")
+        page.keyboard.press("Escape")
+        page.wait_for_selector('.cb-stage-bar[data-stage-chooser="closed"]', timeout=10000)
+        assert page.evaluate(CHOOSER)["focus"] == "cb-stage-chooser-toggle", "N12: restoring the handler did not restore Escape"
+        findings.append("N12. an Escape that neither folds the chooser nor returns focus is caught")
+
         # ---- teardown -------------------------------------------------------------------
         page.set_viewport_size({"width": 1600, "height": 1000})
         page.wait_for_timeout(200)
         final = page.evaluate("""() => ({
-            controls: document.querySelectorAll('#cb-o4-control-overlap,#cb-o4-control-hide,#cb-o4-control-second-nav').length,
+            controls: document.querySelectorAll('#cb-o4-control-overlap,#cb-o4-control-hide,#cb-o4-control-second-nav,#cb-o4-control-fold-actions,#cb-o4-control-pin-chooser').length,
             navigators: document.querySelectorAll('.focused-taskbar').length,
             actionSurfaces: document.querySelectorAll('[data-cb-stage-actions]').length,
             assistants: document.querySelectorAll('#cb-assistant-mount').length,

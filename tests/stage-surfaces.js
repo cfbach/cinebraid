@@ -588,10 +588,12 @@ function checkShellIntegration(sources = SOURCES) {
   assert.ok(/--cb-bar-height/.test(shellRuntime), "public/workspace-shell.js must publish the bar's height");
   assert.ok(/--cb-bar-height/.test(sources.styles), "and public/styles.css must consume it");
   /* Every surface that pins beneath the bar. Each anchor carries its own probe: the rule
-     must be findable, or the assertion about it would be vacuous. */
+     must be findable, or the assertion about it would be vacuous. The second rule still
+     pins the shot's project navigator; its `.focused-inspector` half now serves only the
+     References inspector, because the Shot workspace renders no inspector (EV2-7 B2.16). */
   for (const [what, anchor] of [
     ["the Assistant rail", "#cb-shell-rail{position:sticky;top:calc("],
-    ["the shot's navigator and inspector", ".focused-workspace-shell>.project-navigator,.focused-inspector{"],
+    ["the shot's navigator and the References inspector", ".focused-workspace-shell>.project-navigator,.focused-inspector{"],
   ]) {
     const at = sources.styles.indexOf(anchor);
     assert.ok(at >= 0, `${what}: expected a sticky rule at "${anchor}" — the check below would otherwise be reading nothing`);
@@ -782,6 +784,113 @@ function checkStageActionGlyph(sources = SOURCES) {
   note(`Stage action suffix: content is ${namedCodepoints(content)} with margin-left:2px and nothing else, and 0 of ${declared.length} content declarations in public/styles.css hold a control character`);
 }
 
+/* ===========================================================================
+   11. THE PHONE CHOOSER. EV2-7 Checkpoint 2, ruling B2.15.
+
+   A phone shows the current stage, its status and ONE "Choose stage" toggle, and the
+   SAME strip opens beneath it. Proven here, against the shipped renderers and handlers:
+   the toggle is a real button whose aria-expanded is the chooser's own state; the line
+   names the declared stage in the shipped status words; the expansion is scoped to its
+   project and shot, survives a repaint, and is closed by Escape and by choosing a stage;
+   the strip and the actions (a blocked reason included) render identically open or
+   closed and never inside the chooser; and nothing about it reads the viewport or
+   stores anything. Which width shows what, resize, rotation and focus return are
+   statements about a live document: tests/stage-surfaces-real-browser.py proves those.
+
+   THE DEFECTS THIS STANDS AGAINST are the rejected draft's (H15): a disclosure opened
+   by matchMedia at paint — which reset on every repaint and never reacted to rotation,
+   and which a Node realm always saw closed while a desktop browser saw it open — and
+   the actions and blocked reasons folded away behind a second closed disclosure.
+   =========================================================================== */
+
+function checkPhoneChooser(sources = SOURCES) {
+  const { surfaces, sandbox } = loadRuntime(sources);
+  const writes = [];
+  sandbox.localStorage = { getItem: () => null, setItem: (key) => writes.push(`localStorage:${key}`), removeItem: (key) => writes.push(`localStorage-remove:${key}`) };
+  sandbox.sessionStorage = { getItem: () => null, setItem: (key) => writes.push(`sessionStorage:${key}`), removeItem: (key) => writes.push(`sessionStorage-remove:${key}`) };
+  const model = modelFor(sources, FIXTURES.fresh, "motion");
+  assert.strictEqual(model.current.availability, "blocked", "fixture check: the chooser is proven on a blocked stage, so its reason is in play");
+  const barState = (html) => (attrsOf(html, "div").find((div) => div["data-cb-stage-bar"] === "1") || {})["data-stage-chooser"];
+  const toggleOf = (html) => attrsOf(html, "button").filter((button) => /\bcb-stage-chooser-toggle\b/.test(button.class || ""));
+
+  /* ONE REAL TOGGLE, closed until the filmmaker opens it, named in plain words. */
+  const closed = surfaces.barMarkup(model);
+  const toggles = toggleOf(closed);
+  assert.strictEqual(toggles.length, 1, "the bar must render exactly one Choose stage toggle");
+  assert.strictEqual(toggles[0].type, "button", "the toggle must be a real button, or a keyboard cannot reach it");
+  assert.ok(/>Choose stage<\/button>/.test(closed), "the toggle must say what it does");
+  assert.strictEqual(toggles[0]["aria-expanded"], "false", "the chooser starts closed: nothing about it is remembered before it is opened");
+  assert.strictEqual(barState(closed), "closed", "and the bar states the same thing for the stylesheet");
+
+  /* THE LINE NAMES THE STAGE THE STRIP MARKS CURRENT, in the words the strip uses. */
+  const line = closed.match(/<p class="cb-stage-current" id="([^"]+)">([\s\S]*?)<\/p>/);
+  assert.ok(line, "the bar must state the current stage in its own line");
+  assert.ok(line[2].includes(`<b>${model.current.label.replace(/&/g, "&amp;")}</b>`), "the line must name the selected stage by its declared label");
+  assert.ok(line[2].includes(model.status(model.selectedId).label), "and give its status in the shipped status words");
+  assert.strictEqual(toggles[0]["aria-describedby"], line[1], "the toggle must be described by that line, so it is announced with the stage it would change");
+
+  /* THE CHOOSER HOLDS THE LINE AND THE TOGGLE, NOTHING ELSE. The strip is the one strip,
+     rendered unchanged; the actions and the blocked reason follow it, outside. */
+  const chooser = closed.match(/<div class="cb-stage-chooser">([\s\S]*?)<\/div>/);
+  assert.ok(chooser, "the chooser must be its own element");
+  assert.ok(!/cb-stage-action|cb-stage-strip|<nav |focused-task-button/.test(chooser[1]),
+    "the chooser must never hold the actions, a blocked reason or a copy of the stages");
+  assert.ok(closed.indexOf('class="cb-stage-chooser"') < closed.indexOf("<nav ")
+    && closed.indexOf("<nav ") < closed.indexOf('data-cb-stage-actions="1"'),
+    "the order is chooser, strip, actions: the actions are never inside what the toggle opens");
+  assert.ok(!/<details\b|\shidden(?=[\s>=])/.test(closed), "nothing in the bar may be hidden by markup; which width shows what is the stylesheet's decision");
+  assert.ok(/<p class="cb-stage-action-reason" id="cb-stage-reason-0">/.test(closed), "the blocked reason must be rendered while the chooser is closed");
+
+  /* OPENED FOR THIS SHOT, KEPT THROUGH REPAINTS, IDENTICAL IN EVERYTHING ELSE. */
+  assert.strictEqual(surfaces.toggleChooser(), true, "the toggle must open the chooser for the shot on screen");
+  for (const [label, html] of [["opened", surfaces.barMarkup(model)], ["repainted", surfaces.barMarkup(model)]]) {
+    assert.strictEqual(barState(html), "open", `${label}: the expansion must survive a repaint — a paint that forgets it is the rejected draft's defect`);
+    assert.strictEqual(toggleOf(html)[0]["aria-expanded"], "true", `${label}: aria-expanded must be the chooser's own state`);
+    assert.ok(html.includes(surfaces.stripMarkup(model)), `${label}: the strip must render exactly as it does closed`);
+    assert.ok(html.includes(surfaces.actionsMarkup(model)), `${label}: the actions and their reason must render exactly as they do closed`);
+  }
+  assert.ok(closed.includes(surfaces.stripMarkup(model)) && closed.includes(surfaces.actionsMarkup(model)),
+    "and closed, the strip and the actions are the same markup");
+  assert.strictEqual(barState(surfaces.barMarkup(modelFor(sources, FIXTURES.fresh, "motion", "SAMPLE-02"))), "closed",
+    "another shot must not inherit the expansion");
+  sandbox.ACTIVE_PROJECT_SLUG = "another-project";
+  assert.strictEqual(barState(surfaces.barMarkup(model)), "closed", "the same shot id in another project must not inherit it either");
+  delete sandbox.ACTIVE_PROJECT_SLUG;
+  assert.strictEqual(barState(surfaces.barMarkup(model)), "open", "and the original project's shot is still open");
+
+  /* WHAT CLOSES IT: Escape, a chosen stage, the toggle. Nothing else does. */
+  const wired = attrsOf(closed, "div").find((div) => div["data-cb-stage-bar"] === "1");
+  assert.strictEqual(wired.onclick, "window.CineBraidStageSurfaces.chooserClick(event)", "the bar must route clicks to the chooser");
+  assert.strictEqual(wired.onkeydown, "window.CineBraidStageSurfaces.chooserKeydown(event)", "and keys");
+  assert.strictEqual(surfaces.chooserClick({ target: { closest: () => null } }), false, "a click that is not on a stage must leave it open");
+  assert.strictEqual(surfaces.chooserKeydown({ key: "Enter" }), false, "a key that is not Escape must leave it open");
+  assert.strictEqual(barState(surfaces.barMarkup(model)), "open", "so it is still open");
+  let prevented = 0;
+  assert.strictEqual(surfaces.chooserKeydown({ key: "Escape", preventDefault: () => { prevented += 1; }, stopPropagation: () => {} }), true, "Escape must close it");
+  assert.strictEqual(prevented, 1, "and consume the key, so nothing behind the bar also reacts to it");
+  assert.strictEqual(barState(surfaces.barMarkup(model)), "closed", "closed by Escape");
+  assert.strictEqual(surfaces.chooserKeydown({ key: "Escape", preventDefault: () => { prevented += 1; } }), false, "Escape on a closed chooser is not the chooser's key");
+  surfaces.toggleChooser();
+  const stageButton = { closest: (selector) => (selector === "[data-stage-id]" ? {} : null) };
+  assert.strictEqual(surfaces.chooserClick({ target: stageButton }), true, "choosing a stage from it must close it");
+  assert.strictEqual(barState(surfaces.barMarkup(model)), "closed", "closed by the choice");
+  assert.strictEqual(surfaces.toggleChooser(), true, "the toggle opens it");
+  assert.strictEqual(surfaces.toggleChooser(), false, "and the toggle closes it");
+
+  /* IT CHOOSES NOTHING, READS NO VIEWPORT AND STORES NOTHING. The stage buttons it reveals
+     keep the shipped selectBoundedTask call; the chooser's own code calls no owner at all. */
+  assert.deepStrictEqual(writes, [], `the chooser must store nothing, found: ${writes.join(", ")}`);
+  const code = codeOnly(sources.surfaces);
+  assert.ok(!/matchMedia|innerWidth|outerWidth|screen\.(?:width|height|orientation)|orientation\b/.test(code),
+    "public/stage-surfaces.js must not read the viewport: whether the chooser or the strip is on screen is the stylesheet's decision, so a rotation needs no repaint");
+  assert.ok(!/localStorage|sessionStorage|indexedDB|document\.cookie|history\.(?:push|replace)State|location\.hash\s*=(?!=)/.test(code),
+    "the expansion is ephemeral: public/stage-surfaces.js must not persist it anywhere");
+  const chooserCode = code.slice(code.indexOf("function toggleChooser"), code.indexOf("function applyMarkup"));
+  assert.ok(chooserCode.length > 200 && !/selectBoundedTask|openGuidedPanel|invoke\(/.test(chooserCode),
+    "the chooser's handlers must select no stage and open no panel: the stage buttons do that through the shipped owner");
+  note("Phone chooser: one real toggle whose aria-expanded is its state, a line naming the declared stage and shipped status, the same strip and actions open or closed and never inside it, an expansion scoped to project and shot that survives repaints and closes on Escape or a chosen stage, no viewport read and nothing stored");
+}
+
 const CHECKS = {
   checkSingleNavigator,
   checkDeclarationOwnership,
@@ -793,6 +902,7 @@ const CHECKS = {
   checkRefusals,
   checkLifecycle,
   checkStageActionGlyph,
+  checkPhoneChooser,
 };
 
 function run(sources = SOURCES) {

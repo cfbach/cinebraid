@@ -269,29 +269,34 @@ async function main() {
     });
   }
 
-  /* NC-V9 — the fixed amber returns, and every run state is painted as a warning. */
+  /* NC-V9 — the fixed amber returns, and every run state is painted as a warning. Since
+     EV2-7 B2.16 the run for a shot is drawn inline on the Shot Desk
+     (experience-coherence.css), not in the retired Inspector card. */
   {
-    const broken = anchored(css,
-      ".focused-inspector-alert{border:1px solid color-mix(in srgb,var(--op-idle) 45%,var(--line))!important}",
-      ".focused-inspector-alert{border:1px solid rgba(244,170,75,.45)!important}",
+    const coherence = fs.readFileSync(path.join(ROOT, "public", "experience-coherence.css"), "utf8");
+    const selector = "#main .bounded-shot-workspace .shot-activity-inline";
+    const broken = anchored(coherence,
+      `${selector} { display:flex; flex-wrap:wrap; align-items:center; justify-content:space-between; gap:10px 16px; margin:-4px 0 16px; padding:12px 16px; border:1px solid var(--line); border-left:3px solid var(--blue);`,
+      `${selector} { display:flex; flex-wrap:wrap; align-items:center; justify-content:space-between; gap:10px 16px; margin:-4px 0 16px; padding:12px 16px; border:1px solid var(--line); border-left:3px solid rgba(244,170,75,.9)!important;`,
       "NC-V9");
-    await control("NC-V9 TONE-1: the inspector card does not hardcode amber", {
-      before: !/rgba\(244,\s*170,\s*75/.test(declarationsFor(css, ".focused-inspector-alert")),
-      after: /rgba\(244,\s*170,\s*75/.test(declarationsFor(broken, ".focused-inspector-alert")),
+    await control("NC-V9 TONE-1: the inline run does not hardcode amber", {
+      before: !/rgba\(244,\s*170,\s*75/.test(declarationsFor(coherence, selector)),
+      after: /rgba\(244,\s*170,\s*75/.test(declarationsFor(broken, selector)),
     });
   }
 
-  /* NC-V10 — the inspector stops consuming the shipped classifier and goes back to one
+  /* NC-V10 — the inline run stops consuming the shipped classifier and goes back to one
      class for every state. */
   {
-    const focused = fs.readFileSync(path.join(ROOT, "public", "focused-workspaces.js"), "utf8");
-    const broken = anchored(focused,
-      '<section class="focused-inspector-alert${typeof window.v670RunTone === "function" ? ` state-${window.v670RunTone(run)}` : ""}">',
-      '<section class="focused-inspector-alert">',
+    const studio = fs.readFileSync(path.join(ROOT, "public", "creation-studio.js"), "utf8");
+    const bodyOf = (text) => text.slice(text.indexOf("function shotActiveOperationMarkup"), text.indexOf("function shotDetailsMarkup"));
+    const broken = anchored(studio,
+      'const tone = typeof v670RunTone === "function" ? v670RunTone(run) : failed ? "failed" : "active";',
+      'const tone = failed ? "failed" : "active";',
       "NC-V10");
-    await control("NC-V10 TONE-1: the card takes its tone from the shipped classifier", {
-      before: focused.includes("window.v670RunTone(run)"),
-      after: !broken.includes("window.v670RunTone(run)"),
+    await control("NC-V10 TONE-1: the inline run takes its tone from the shipped classifier", {
+      before: /v670RunTone\(run\)/.test(bodyOf(studio)),
+      after: !/v670RunTone\(run\)/.test(bodyOf(broken)),
     });
   }
 

@@ -225,13 +225,15 @@ async function main() {
      The exact code O1 removed: identity from a CSS class, order from render order,
      status from a regular expression over visible text. */
   await mustFail("C7 enhanceShot derives stages from rendered children again", "must not derive shot stages from the DOM", async () => {
+    /* Anchored on the end of enhanceShot. It used to be the Shot Inspector's append, which
+       EV2-7 B2.16 removed with the column itself. */
     const restored = mutate(FOCUSED_SOURCE,
-      `    if (shot) shell.appendChild(shotInspector(shot));\n  }\n  function entityListName(view) {`,
+      `    activeTaskContext = null;\n  }\n  function entityListName(view) {`,
       `    const tasks = [...stack.children].filter((element) => element.matches("details,section"));\n`
       + `    const active = resolveTaskSelection(tasks, readState("shot-task", id, ""), nextTaskIndex(tasks));\n`
       + `    const bar = buildTaskbar(tasks, "shot-task", id, active, () => {});\n`
       + `    stack.parentNode.insertBefore(bar, stack);\n`
-      + `    if (shot) shell.appendChild(shotInspector(shot));\n  }\n  function entityListName(view) {`,
+      + `    activeTaskContext = null;\n  }\n  function entityListName(view) {`,
       "C7");
     const body = restored.slice(restored.indexOf("function enhanceShot"), restored.indexOf("function entityListName"));
     for (const inference of ["buildTaskbar", "nextTaskIndex", "resolveTaskSelection", "taskIdForElement", "stack.children"]) {

@@ -15,8 +15,10 @@
 
      stripMarkup()     where am I, and what is the state of the other stages.
      actionsMarkup()   what can I do here, and why not.
+     chooserMarkup()   on a phone: which stage this is, and the one toggle that opens
+                       the strip (EV2-7 B2.15, below).
 
-   Both renderers read that one model and NOTHING else. Neither contains a stage id, a
+   All three renderers read that one model and NOTHING else. None contains a stage id, a
    stage label, a stage order or a panel name: every one of those comes out of
    public/shared-stage-model.js on the way through. tests/stage-surfaces.js reads the
    source of this file and requires it to name no declared stage in code, and
@@ -89,6 +91,9 @@
 
   let BAR_NODE = null;
   let STALE = false;
+  /* The phone chooser's expansion, one entry per project and shot that is open. In
+     memory only — see THE PHONE CHOOSER below for why it is nowhere else. */
+  const CHOOSER_OPEN = new Set();
 
   /* ==========================================================================
      READING THE APP.
@@ -306,9 +311,59 @@
       + ` aria-label="${attr(`${model.current.label} actions`)}" role="group">${body}</div>`;
   }
 
+  /* ==========================================================================
+     THE PHONE CHOOSER. EV2-7 Checkpoint 2, ruling B2.15.
+
+     A desktop keeps the five compact stages. A phone shows which stage it is on, with
+     that stage's status, and ONE "Choose stage" toggle that opens the five stages
+     beneath it — in the page's normal flow, never as a pinned sheet that can grow
+     taller than the screen and trap its own scrolling.
+
+     IT OPENS THE STRIP; IT IS NOT A SECOND ONE. Nothing here copies a stage, and there
+     is no wrapper around the strip or the actions, so the one-navigator rule, the
+     shipped selectors and the node identity the browser suite stamps are what they were.
+
+     WHICH WIDTH IS A PHONE IS THE STYLESHEET'S QUESTION. The markup is the same at every
+     width and carries only the filmmaker's own choice, `data-stage-chooser`; CSS decides
+     whether that choice is what is on screen, so a rotation or a resize answers itself.
+     Nothing reads the viewport at paint, so no paint can disagree with the width it
+     lands on.
+
+     THE EXPANSION IS EPHEMERAL AND SCOPED. It lives in this closure, keyed by project and
+     shot: a route repaint, a job refresh or a resize keeps it, another shot does not
+     inherit it, and a reload forgets it. It is not production truth and not a
+     preference, so nothing is written to the project, to storage or to the address.
+
+     THE ACTIONS AND THE BLOCKED REASON ARE OUTSIDE IT, at every width. A blocked action
+     must explain itself without another tap. */
+  function chooserScope(shotId) {
+    const project = activeProject();
+    const slug = typeof ACTIVE_PROJECT_SLUG === "undefined" ? "" : String(ACTIVE_PROJECT_SLUG || "");
+    return `${slug || (project && project.meta && project.meta.id) || "project"}::${shotId}`;
+  }
+  function chooserOpen(shotId) {
+    return !!shotId && CHOOSER_OPEN.has(chooserScope(shotId));
+  }
+  /* The stage's name and its status are the SAME two calls the strip makes for its
+     current button — the declared label and the shipped status wording — so the line
+     and the strip cannot name different stages or say different things about one. */
+  function chooserMarkup(model) {
+    const status = model.status(model.selectedId);
+    return `<div class="cb-stage-chooser">`
+      + `<p class="cb-stage-current" id="cb-stage-current">Current stage: <b>${esc(model.current.label)}</b>`
+      + ` <span data-availability="${attr(model.current.availability)}">· ${esc(status.label)}</span></p>`
+      + `<button type="button" class="cb-stage-chooser-toggle" id="cb-stage-chooser-toggle"`
+      + ` aria-expanded="${chooserOpen(model.shotId) ? "true" : "false"}" aria-describedby="cb-stage-current"`
+      + ` onclick="window.CineBraidStageSurfaces.toggleChooser()">Choose stage</button></div>`;
+  }
+
+  /* The two handlers on the bar are the chooser's and nothing else's: a stage chosen
+     from it closes it, and Escape closes it. Both return focus to the toggle. */
   function barMarkup(model) {
     return `<div class="cb-stage-bar" data-cb-stage-bar="1" data-shot-id="${attr(model.shotId)}"`
-      + ` data-current-stage="${attr(model.selectedId)}">${stripMarkup(model)}${actionsMarkup(model)}</div>`;
+      + ` data-current-stage="${attr(model.selectedId)}" data-stage-chooser="${chooserOpen(model.shotId) ? "open" : "closed"}"`
+      + ` onclick="window.CineBraidStageSurfaces.chooserClick(event)" onkeydown="window.CineBraidStageSurfaces.chooserKeydown(event)">`
+      + `${chooserMarkup(model)}${stripMarkup(model)}${actionsMarkup(model)}</div>`;
   }
 
   /* ==========================================================================
@@ -336,6 +391,57 @@
       return true;
     }
     return false;
+  }
+
+  /* THE CHOOSER'S THREE GESTURES. None of them selects a stage: a stage button inside
+     the opened strip still calls the shipped selectBoundedTask itself, exactly as it does
+     on a desktop, and the chooser only closes behind it. Each one repaints through
+     paint(), the one rendering path, and asks nothing of the viewport. */
+  function toggleChooser() {
+    const context = stageContext();
+    if (!context.shotId) return false;
+    const scope = chooserScope(context.shotId);
+    if (CHOOSER_OPEN.has(scope)) CHOOSER_OPEN.delete(scope);
+    else CHOOSER_OPEN.add(scope);
+    paint();
+    focusChooserToggle();
+    return CHOOSER_OPEN.has(scope);
+  }
+
+  function closeChooser() {
+    const context = stageContext();
+    if (!chooserOpen(context.shotId)) return false;
+    CHOOSER_OPEN.delete(chooserScope(context.shotId));
+    paint();
+    focusChooserToggle();
+    return true;
+  }
+
+  /* A stage chosen from the opened strip. The stage button's own handler has already
+     run by the time the click reaches the bar, so the selection is the shipped one; all
+     that is left is to fold the choices away and give focus back to the control that
+     opened them. On a desktop the toggle is not rendered, focus() is refused, and the
+     clicked stage keeps it. */
+  function chooserClick(event) {
+    const target = event && event.target;
+    const stage = target && typeof target.closest === "function" ? target.closest("[data-stage-id]") : null;
+    return stage ? closeChooser() : false;
+  }
+
+  function chooserKeydown(event) {
+    if (!event || event.key !== "Escape" || !closeChooser()) return false;
+    if (typeof event.preventDefault === "function") event.preventDefault();
+    if (typeof event.stopPropagation === "function") event.stopPropagation();
+    return true;
+  }
+
+  /* preventScroll, for the reason revealCurrentStage gives: a control that moves the
+     page on its own is a yank, and the toggle is where the filmmaker just was. */
+  function focusChooserToggle() {
+    const toggle = BAR_NODE && typeof BAR_NODE.querySelector === "function"
+      ? BAR_NODE.querySelector(".cb-stage-chooser-toggle")
+      : null;
+    if (toggle && typeof toggle.focus === "function") toggle.focus({ preventScroll: true });
   }
 
   /* ==========================================================================
@@ -400,7 +506,9 @@
   /* THE CURRENT STAGE MUST BE VISIBLE, INCLUDING ON A PHONE.
 
      At narrow widths the strip scrolls horizontally rather than dropping stages, which
-     means the current stage can be off the left or right edge of it. This nudges the
+     means the current stage can be off the left or right edge of it. (On a phone the
+     strip opens as a column beneath the chooser instead, and this finds nothing to move;
+     the current stage is named on the chooser's own line.) This nudges the
      STRIP's own scrollLeft — never scrollIntoView(), which is allowed to scroll every
      scrollable ancestor including the document, and would yank the page whenever the
      bar repainted. Idempotent: a stage already fully in view is not moved, so the
@@ -451,7 +559,11 @@
     stageModel: () => stageModel(stageContext()),
     stripMarkup,
     actionsMarkup,
+    chooserMarkup,
     barMarkup,
+    toggleChooser,
+    chooserClick,
+    chooserKeydown,
     isStale: () => STALE,
   };
 })();

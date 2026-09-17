@@ -2357,11 +2357,6 @@ body[data-focused-workspace="1"] #main{max-width:none;padding:18px 22px 80px;ove
 .focused-inspector-facts b{display:block;margin-top:5px;font-size:14px;overflow-wrap:anywhere}
 .focused-inspector section{display:grid;gap:6px;padding:12px;border-radius:12px;background:rgba(255,255,255,.025)}
 .focused-inspector section p{margin:0;color:var(--muted);line-height:1.45;overflow-wrap:anywhere}
-.focused-inspector-alert{border:1px solid color-mix(in srgb,var(--op-idle) 45%,var(--line))!important}
-.focused-inspector-alert.state-active{border-color:color-mix(in srgb,var(--op-working) 55%,var(--line))!important}
-.focused-inspector-alert.state-review,.focused-inspector-alert.state-pending{border-color:color-mix(in srgb,var(--op-waiting) 55%,var(--line))!important}
-.focused-inspector-alert.state-failed{border-color:color-mix(in srgb,var(--op-attention) 55%,var(--line))!important}
-.focused-inspector-alert.state-done{border-color:color-mix(in srgb,var(--op-done) 55%,var(--line))!important}
 .focused-inspector button{width:100%}
 .focused-taskbar{position:sticky;top:58px;z-index:20;display:flex;gap:7px;padding:8px;margin:0 0 12px;border:1px solid var(--line);border-radius:15px;background:rgba(19,23,26,.97);overflow-x:auto;box-shadow:0 8px 20px rgba(0,0,0,.18)}
 .focused-task-button{flex:0 0 minmax(146px,1fr);min-width:140px;display:grid!important;grid-template-columns:8px minmax(0,1fr);grid-template-areas:"dot title" "dot state";align-items:center;text-align:left;gap:2px 8px;padding:9px 10px!important;border:1px solid transparent!important;border-radius:10px!important;background:transparent!important;color:var(--text)!important}
