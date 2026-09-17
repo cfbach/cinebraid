@@ -25,6 +25,14 @@ held=[];checks=[];errors=[];blocked=[];save_mode='ok';authority_mode='ok';mutati
 def check(name,value):
  checks.append({'check':name,'passed':bool(value)});assert value,name
 def capture(page,name):page.screenshot(path=str(OUT/(name+'.png')),full_page=False)
+# EV2-7: the Working draft is read by the server from the saved project file; the page never posts its buffers.
+def working_draft(page):return page.evaluate("fetch(document.getElementById('wb-export-working-draft').getAttribute('href'),{cache:'no-store'}).then(r=>r.status===200?r.text():'HTTP '+r.status)")
+def export_links_ok(page):
+ page.locator('#wb-export-menu>summary').click();page.locator('#wb-export-working-draft').wait_for()
+ hrefs=page.locator('#wb-export-menu a').evaluate_all("els=>els.map(a=>[a.getAttribute('href'),a.hasAttribute('download')])")
+ # EV2-7: each download names the open project; the server refuses a different active project with 409.
+ ok=hrefs==[[f'/api/bible/export?preset={preset}&project={slug}',True] for preset in ('working-draft','approved','supporting')]
+ page.locator('#wb-export-menu>summary').click();return ok
 try:
  for _ in range(160):
   try:urllib.request.urlopen(base+'/api/project',timeout=1);break
@@ -56,41 +64,79 @@ try:
   check('Editor navigation owns Bible',page.locator('.nav-btn[data-view="bible"]').count()==1)
   check('Only real project creative fields shown','The creative foundation' in page.locator('.wb-document').inner_text())
   check('Large cast is bounded',page.locator('.wb-rows>a').count()==40)
+  check('Approved record preview is discoverable from the overview',page.locator('#wb-preview-approved').get_attribute('href')=='/bible.html' and page.locator('#wb-preview-approved').get_attribute('target')=='_blank')
+  check('Overview export menu offers exactly the three explicit downloads',export_links_ok(page))
   for width,height in ((1280,720),(1440,900),(1920,1080),(390,844)):
    page.set_viewport_size({'width':width,'height':height});page.wait_for_timeout(120);capture(page,f'overview-{width}')
    check(f'No horizontal page obstruction {width}',page.evaluate('document.documentElement.scrollWidth<=innerWidth+1'))
+  page.locator('#wb-export-menu>summary').click();page.locator('#wb-export-working-draft').wait_for();capture(page,'export-menu-390')
+  check('Mobile export menu fits and keeps 44px targets',page.evaluate("document.documentElement.scrollWidth<=innerWidth+1&&[...document.querySelectorAll('#wb-export-menu a,#wb-export-menu>summary,#wb-preview-approved')].every(el=>el.getBoundingClientRect().height>=44)"))
+  page.locator('#wb-export-menu>summary').click()
+  check('Mobile index is collapsed behind Find',not page.locator('#wb-browser').is_visible())
+  page.locator('[data-wb="find"]').click();check('Find opens the mobile index and focuses search',page.locator('#wb-browser').is_visible() and page.evaluate("document.activeElement.id")=='wb-search' and page.locator('[data-wb="find"]').get_attribute('aria-expanded')=='true');capture(page,'index-open-390')
+  check('Open mobile index fits',page.evaluate('document.documentElement.scrollWidth<=innerWidth+1'))
+  page.locator('[data-wb="find"]').click();check('Find closes the mobile index',not page.locator('#wb-browser').is_visible())
+  # A row that points at the current page fires no hashchange: the index must still close and Find must reopen on its first press.
+  page.locator('[data-wb="find"]').click();page.locator('#wb-index-project').click();page.wait_for_timeout(120)
+  check('Choosing the current row closes the mobile index and resets Find',not page.locator('#wb-browser').is_visible() and page.locator('[data-wb="find"]').get_attribute('aria-expanded')=='false' and page.locator('[data-wb="find"]').text_content()=='Find an element' and page.evaluate("document.activeElement.id")=='wb-document')
+  page.locator('[data-wb="find"]').click();check('Find reopens the index on its first press after a row',page.locator('#wb-browser').is_visible() and page.locator('[data-wb="find"]').get_attribute('aria-expanded')=='true')
+  page.locator('[data-wb="find"]').click();check('Find closes the reopened index',not page.locator('#wb-browser').is_visible())
   page.set_viewport_size({'width':1440,'height':900})
   page.locator('[data-wb="next"]').click();check('Large cast pagination changes bounded rows','Crew member 039' in page.locator('.wb-rows').inner_text());capture(page,'large-cast-1440')
   page.locator('[data-wb="previous"]').click()
   page.locator('#wb-search').fill('Kai');page.locator('.wb-rows>a').click();page.locator('.wb-document>h2').wait_for();page.locator('.wb-approved').first.wait_for()
   check('Entity prose distinct from approved target','Creative intent · saved in this project' in page.locator('.wb-document').inner_text())
   capture(page,'character-1440')
+  check('Approved record preview is discoverable from an element',page.locator('#wb-preview-approved').get_attribute('href')=='/bible.html' and page.locator('#wb-preview-approved').get_attribute('target')=='_blank')
+  check('Element export menu offers exactly the three explicit downloads',export_links_ok(page))
+  check('Imported identifiers and IDs sit under Sources & history',page.locator('#wb-sources').count()==1 and page.locator('#wb-sources').get_attribute('open') is None)
   page.locator('[data-field="notes"]').click();page.locator('#wb-text').fill('A measured voice. A final night on the coast.');capture(page,'edit-1440')
+  count_before=len(mutations);md=working_draft(page)
+  check('Working draft excludes the open textarea buffer','WORKING DRAFT · SAVED SNAPSHOT · NOT APPROVED' in md and 'Kai measures each answer' in md and 'A measured voice' not in md)
+  check('Reading the working draft leaves the draft open and unwritten',page.evaluate('CineBraidWorkingBible.blocked()') and page.locator('#wb-text').input_value()=='A measured voice. A final night on the coast.' and len(mutations)==count_before)
+  page.locator('#wb-export-menu>summary').click();check('Export note says an edit is open',page.locator('[data-wb-export-note]').inner_text()=='An edit is open or not yet saved. Exports contain the last saved version only.')
+  dialogs=[]
+  def on_dialog(d):dialogs.append(d.type);d.dismiss()
+  page.on('dialog',on_dialog)
+  with page.expect_download() as download_info:page.locator('#wb-export-working-draft').click()
+  downloaded=pathlib.Path(download_info.value.path()).read_text(encoding='utf-8')
+  page.wait_for_timeout(250);page.remove_listener('dialog',on_dialog)
+  check('Downloading with an open draft raises no leave-page dialog',not dialogs and page.url.endswith('#/bible/characters/KAI'))
+  check('Downloaded working draft lacks the unsaved text',download_info.value.suggested_filename=='working-draft.md' and 'NOT APPROVED' in downloaded and 'A measured voice' not in downloaded and f'· project {slug} ·' in downloaded)
+  check('Download keeps the draft in the editor',page.locator('#wb-text').input_value()=='A measured voice. A final night on the coast.' and len(mutations)==count_before)
+  page.locator('#wb-export-menu>summary').click()
   awaitless=page.evaluate("async()=>{const old=PROJECT_OPEN_EPOCH;await switchProject('does-not-exist');return old===PROJECT_OPEN_EPOCH&&CineBraidWorkingBible.blocked();}")
   check('Unsubmitted draft blocks project replacement',awaitless)
   count_before=len(mutations);page.evaluate("async()=>{requestDeleteProject(ACTIVE_PROJECT_SLUG,'synthetic');requestArchiveProject(ACTIVE_PROJECT_SLUG,'synthetic');await restoreProjectBackup('synthetic-backup.json');}");check('Open draft guards delete, archive and backup restore before any request',len(mutations)==count_before)
   save_mode='fail';page.locator('[data-wb="save"]').click();page.locator('#wb-save-status[role="alert"]').wait_for()
   check('Failed save keeps typed text',page.locator('#wb-text').input_value()=='A measured voice. A final night on the coast.')
+  check('Working draft excludes an applied but refused save',page.locator('[data-wb="save"]').inner_text()=='Retry save' and 'A measured voice' not in working_draft(page))
   capture(page,'save-failure-1440')
   page.set_viewport_size({'width':390,'height':844});page.locator('[data-wb="save"]').scroll_into_view_if_needed();capture(page,'save-failure-390')
   check('Mobile failed-save controls reachable',page.locator('[data-wb="save"]').is_enabled())
   save_mode='ok';page.locator('[data-wb="save"]').click();page.wait_for_function('!CineBraidWorkingBible.blocked()&&projectSaveSettled().settled')
   check('Retry writes through existing save chain',json.loads(pf.read_text(encoding='utf-8'))['characters'][0]['notes']=='A measured voice. A final night on the coast.')
+  check('Working draft includes text once the save is acknowledged','A measured voice. A final night on the coast.' in working_draft(page))
   check('Ordinary save preserves approval ledger',page.evaluate('JSON.stringify(P.productionAuthority)')==baseline)
-  page.set_viewport_size({'width':1440,'height':900});page.locator('#wb-open-reference').click();page.locator('[data-reference-desk]').wait_for();page.locator('.wb-return [data-wb="back"]').click();page.locator('.wb-document>h2').wait_for();page.wait_for_timeout(250)
+  page.set_viewport_size({'width':1440,'height':900});page.locator('#wb-open-reference').click();page.locator('[data-reference-desk]').wait_for();page.locator('[data-media-return]').click();page.locator('.wb-document>h2').wait_for();page.wait_for_timeout(250)
   check('Reference return preserves entity and search',page.url.endswith('#/bible/characters/KAI') and page.locator('#wb-search').input_value()=='Kai')
   check('Reference return restores initiating focus',page.evaluate('document.activeElement.id')=='wb-open-reference')
-  page.locator('#wb-target-0').focus();page.keyboard.press('Enter');page.locator('[data-reference-desk]').wait_for();page.locator('.wb-return [data-wb="back"]').click();page.wait_for_timeout(250)
+  page.locator('#wb-target-0').focus();page.keyboard.press('Enter');page.locator('[data-reference-desk]').wait_for();page.locator('[data-media-return]').click();page.wait_for_timeout(250)
   check('Keyboard exact-target return restores focus',page.evaluate('document.activeElement.id')=='wb-target-0')
   page.locator('[data-field="notes"]').focus();page.keyboard.press('Enter');page.locator('#wb-text').wait_for();check('Keyboard editing moves focus into the editor',page.evaluate('document.activeElement.id')=='wb-text');page.locator('[data-wb="discard"]').click()
 
   page.locator('#wb-open-media').click();page.locator('.production-contact-sheet').wait_for();check('Media link selects exact entity relationship',page.evaluate("CineBraidMediaBrowser.instances.get('production').state.related")=='characters:KAI')
   capture(page,'related-media-1440')
   page.locator('[data-md-open]').first.click();page.locator('[data-mi-action="open-owner"]').first.click();page.locator('[data-media-return]').wait_for();capture(page,'nested-reference-return-1440')
-  page.locator('.wb-return [data-wb="back"]').click();page.wait_for_timeout(250)
-  check('Direct Bible return clears nested media return session',page.locator('[data-media-return]').count()==0)
+  # EV2-7: one return control at a time, unwound in order (owner → Production Media → Bible).
+  check('Nested owner shows one return to Production Media',page.locator('[data-media-return]').count()==1 and 'Return to Production Media' in page.locator('[data-media-return]').inner_text())
+  page.locator('[data-media-return]').click();page.locator('.production-contact-sheet').wait_for();page.wait_for_timeout(250)
+  check('Production Media return keeps the related selection',page.evaluate("CineBraidMediaBrowser.instances.get('production').state.related")=='characters:KAI')
+  check('Production Media shows one return to the Bible',page.locator('[data-media-return]').count()==1 and 'Return to Working Bible' in page.locator('[data-media-return]').inner_text())
+  page.locator('[data-media-return]').click();page.locator('.wb-document>h2').wait_for();page.wait_for_timeout(250)
+  check('Unwound Bible return leaves no return control',page.locator('[data-media-return]').count()==0)
   check('Media return restores initiating focus',page.evaluate('document.activeElement.id')=='wb-open-media')
-  shot=page.locator('.wb-shot-links a').first;check('Existing shot relationship shown',shot.count()==1);shot.click();page.wait_for_function("location.hash==='#/shot/SH010'&&document.body.dataset.renderReady==='1'");page.locator('.wb-return [data-wb="back"]').click();page.wait_for_timeout(250)
+  shot=page.locator('.wb-shot-links a').first;check('Existing shot relationship shown',shot.count()==1);shot.click();page.wait_for_function("location.hash==='#/shot/SH010'&&document.body.dataset.renderReady==='1'");page.locator('[data-media-return]').click();page.wait_for_timeout(250)
   check('Shot return preserves exact entity',page.url.endswith('#/bible/characters/KAI'))
   authority_mode='hold';page.locator('[data-wb="reload-authority"]').click();page.locator('.wb-authority[aria-busy="true"]').wait_for();check('Loading authority never claims no approval','No current approved reference' not in page.locator('.wb-authority').inner_text());capture(page,'authority-loading-1440');authority_mode='ok'
   for request in held:request.continue_()
@@ -116,6 +162,7 @@ try:
   page.goto(base+'/#/settings');page.locator('a[href="#/bible/project"]').wait_for();check('Settings points to single creative editor',page.locator('#cfg-global-visual-style').count()==0)
   viewer=context.new_page();viewer.goto(base+'/bible.html');viewer.locator('.record-target').first.wait_for();capture(viewer,'approved-record-1440')
   check('Viewer omits creative prose and supporting action','measured voice' not in viewer.locator('body').inner_text() and viewer.locator('a[href*="supporting"]').count()==0)
+  check('Viewer offers no working draft',viewer.locator('a[href*="working-draft"]').count()==0)
   viewer.set_viewport_size({'width':390,'height':844});capture(viewer,'approved-record-390');check('Viewer mobile width fits',viewer.evaluate('document.documentElement.scrollWidth<=innerWidth+1'))
   # Location writer, long prose, and project-style mirror use existing storage.
   page.goto(base+'/#/bible/locations/HULL');page.locator('[data-field="creationDescription"]').wait_for();page.locator('[data-field="creationDescription"]').click()
@@ -129,8 +176,9 @@ try:
   check('Creative edits still preserve authority',page.evaluate('JSON.stringify(P.productionAuthority)')==baseline)
   # Return to an in-memory draft from another workflow preserves text and caret.
   page.locator('[data-field="worldSetting"]').click();page.locator('#wb-text').fill('Unsubmitted coastal setting.');page.locator('#wb-text').evaluate('(el)=>{el.focus();el.setSelectionRange(4,12)}')
-  page.locator('a[href="#/shots"]').last.click();page.locator('.wb-return [data-wb="back"]').click();page.locator('#wb-text').wait_for();check('Draft survives owner round trip',page.locator('#wb-text').input_value()=='Unsubmitted coastal setting.')
+  page.locator('a[href="#/shots"]').last.click();page.locator('[data-media-return]').click();page.locator('#wb-text').wait_for();check('Draft survives owner round trip',page.locator('#wb-text').input_value()=='Unsubmitted coastal setting.')
   page.locator('[data-wb="discard"]').click();check('Discard does not write',json.loads(pf.read_text(encoding='utf-8'))['meta']['world']['setting']!='Unsubmitted coastal setting.')
+  check('Working draft never carries a discarded edit','Unsubmitted coastal setting' not in working_draft(page))
   # Simulate a removed entity in this disposable browser record: recovery may
   # copy/discard the orphan draft, but must not recreate or write the entity.
   page.goto(base+'/#/bible/characters/KAI');page.locator('[data-field="notes"]').wait_for();page.locator('[data-field="notes"]').click();page.locator('#wb-text').fill('Orphan draft to preserve.')

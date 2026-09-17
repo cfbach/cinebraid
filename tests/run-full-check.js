@@ -4,6 +4,7 @@ const path = require("path");
 
 const nodeSuites = [
   "check:ev2-7-navigation",
+  "check:ev2-7-bible-export",
   "check:reference-enrollment",
   "check:ev2-4-audience",
   "check:ev2-5-writers",
@@ -322,8 +323,8 @@ const browserSuites = [
   "check:ev2-4-visual-browser",
   "check:ev2-5-browser",
   "check:ev2-5-mobile-browser",
-
   "check:ev2-7-coverage-browser",
+
   /* The only browser suite that needs no Playwright: it drives the Chrome already on the
      machine over the DevTools Protocol, so the keyed-reconciliation proofs — which are
      about DOM node identity and cannot be made in Node — actually run here. */

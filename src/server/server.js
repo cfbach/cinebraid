@@ -49,6 +49,7 @@ const AuthorityKernel = require("../../public/shared-authority-kernel");
 const { WRITE_CLASSES, isCreateOnlyWriteClass, createAuthorityWriteSeam, canonComparison } = require("../authority/authority-write-seam");
 const ShotReadiness = require("../../public/shared-shot-readiness");
 const ApprovedRecord = require("./approved-record");
+const WorkingDraft = require("./working-draft-export");
 /* There is nothing to wire. The Canon kernel depends on
    public/shared-entity-ownership.js directly — by `require` in Node, by name in
    the browser's shared scope — so the ownership veto cannot be handed over,
@@ -10037,11 +10038,30 @@ app.get("/api/bible", (req, res) => {
 });
 app.get("/api/bible/export", (req, res) => {
   res.setHeader("Cache-Control", "private, no-store");
+  let openSlug="";try { openSlug=activeSlug()||""; } catch {}
+  res.setHeader("X-CineBraid-Project",openSlug);
   const requested=String(req.query?.preset || "canon").toLowerCase();
   const supporting=["supporting","canon-appendix"].includes(requested);
+  const workingDraft=requested==="working-draft";
   if(supporting && req.role!=="editor") return res.status(403).json({error:"Working material export is editor only."});
-  if(!supporting && !["canon","approved"].includes(requested)) return res.status(400).json({error:"Unknown export. Use approved or supporting."});
+  if(workingDraft && req.role!=="editor") return res.status(403).json({error:"Working draft export is editor only."});
+  if(!supporting && !workingDraft && !["canon","approved"].includes(requested)) return res.status(400).json({error:"Unknown export. Use approved, working-draft or supporting."});
+  /* A download names the project the page had open. If the server's active project changed
+     since (another tab switched it), refuse rather than hand back a different project's file.
+     Read-only: nothing is switched or written, and links without the parameter behave as before. */
+  if(req.query?.project!==undefined && String(req.query.project)!==openSlug) return res.status(409).json({error:"The open project changed. Reload and export again."});
   try {
+    if(workingDraft){
+      /* The SAVED snapshot only: one read, so the bytes and the revision describe the same file.
+         The browser never posts Bible buffers here, so open or refused edits cannot enter it. */
+      const raw=fs.readFileSync(DATA());
+      const project=parseJsonText(raw.toString("utf8"));
+      const revision=crypto.createHash("sha256").update(raw).digest("hex");
+      res.setHeader("Content-Type","text/markdown; charset=utf-8");
+      res.setHeader("Content-Disposition",'attachment; filename="working-draft.md"');
+      res.setHeader("X-CineBraid-Project-Revision",`"${revision}"`);
+      return res.send(WorkingDraft.workingDraftMarkdown(project,{revision,exportedAt:new Date().toISOString(),projectSlug:openSlug}));
+    }
     const project=readJsonSync(DATA());
     res.setHeader("Content-Type", supporting ? "application/json; charset=utf-8" : "text/markdown; charset=utf-8");
     res.setHeader("Content-Disposition", `attachment; filename="${supporting?'working-material.json':'approved-record.md'}"`);

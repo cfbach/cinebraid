@@ -625,7 +625,39 @@ function entityReferenceDemand(project, type, entityId) {
   return { known: true, demanded: false, shotIds: [], uncertain: [], total: shots.length };
 }
 
+/* W18 — RAW IMPORT IDENTIFIERS ARE PROVENANCE, NOT PRODUCTION NOTES.
+ *
+ * Folding Chair's notes begin "Sections 7, 9, 14, N347, N353, N354, N409, N410,
+ * N422, N433, N441, N442, N458, N459." — the source sections and locked-decision
+ * ids the Project Builder import carried across. That is genuinely useful and it
+ * is genuinely NOT what a filmmaker is reading the notes field for; it sat at the
+ * top of every rendering of those notes, pushing the actual production sentence
+ * below the fold.
+ *
+ * These two readers SEPARATE it for display and nothing else. The stored value is
+ * never rewritten and the editable field below is still the whole string, because
+ * silently rewriting authored production content to improve a layout is exactly
+ * the thing W18 forbids. If the pattern does not match, everything stays notes —
+ * this only ever moves text it can positively identify as identifiers.
+ *
+ * The pattern is deliberately narrow: a LEADING run of "Section(s) N" and/or
+ * bare decision ids (N347), ending at the first sentence that is not one.
+ *
+ * EV2-7: moved here from entities.js (not copied) so the editor-only Working draft
+ * export on the server reads notes through the same two readers the page does. */
+const V672_PROVENANCE_PREFIX = /^\s*((?:sections?\s*)?(?:n?\d+[a-z]?)(?:\s*,\s*(?:sections?\s*)?(?:n?\d+[a-z]?))*\s*\.)\s*/i;
+function entityNotesProvenance(notes) {
+  const match = String(notes || "").match(V672_PROVENANCE_PREFIX);
+  return match ? match[1].trim() : "";
+}
+function entityReadableNotes(notes) {
+  const text = String(notes || "");
+  return text.replace(V672_PROVENANCE_PREFIX, "").trim();
+}
+
 if (typeof window !== "undefined") {
+  window.entityReadableNotes = entityReadableNotes;
+  window.entityNotesProvenance = entityNotesProvenance;
   window.shotEntityTokenMatches = shotEntityTokenMatches;
   window.entityVisualDescription = entityVisualDescription;
   window.resolveShotDuration = resolveShotDuration;
@@ -675,5 +707,8 @@ if (typeof module !== "undefined" && module.exports) {
     shotEntityUseReading,
     entityReferenceDemand,
     unresolvedShotDependencies,
+    V672_PROVENANCE_PREFIX,
+    entityNotesProvenance,
+    entityReadableNotes,
   };
 }

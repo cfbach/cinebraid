@@ -437,6 +437,8 @@ async function main() {
     "ev2-5-settings-writers.js",
     "ev2-6-results.js",
     "ev2-6-review-real-browser.js",
+    "ev2-7-bible-working-draft.js",
+    "ev2-7-navigation.js",
     "ev2-7-reference-coverage-real-browser.py",
     "external-test-readiness.js",
     "fal-generation.js",

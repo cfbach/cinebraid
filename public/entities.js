@@ -2940,34 +2940,9 @@ function entityCoverageStatesMarkup(list, entity, mediaByName, media) {
   const pack = list === "audio" || typeof entityPlanningMediaPanel !== "function" ? "" : `<details class="entity-details-advanced entity-reference-pack"><summary>Supporting reference pack</summary><div>${entityPlanningMediaPanel(list, entity)}</div></details>`;
   return `<section class="entity-subworkspace">${entityDemandMarkup(list, entity, production || undefined, obligations || undefined)}<section class="entity-coverage-detail" data-coverage-detail="1" data-coverage-detail-open="${detailOpen ? "1" : "0"}">${toggle}${board}</section>${pack}</section>`;
 }
-/* W18 — RAW IMPORT IDENTIFIERS ARE PROVENANCE, NOT PRODUCTION NOTES.
- *
- * Folding Chair's notes begin "Sections 7, 9, 14, N347, N353, N354, N409, N410,
- * N422, N433, N441, N442, N458, N459." — the source sections and locked-decision
- * ids the Project Builder import carried across. That is genuinely useful and it
- * is genuinely NOT what a filmmaker is reading the notes field for; it sat at the
- * top of every rendering of those notes, pushing the actual production sentence
- * below the fold.
- *
- * These two readers SEPARATE it for display and nothing else. The stored value is
- * never rewritten and the editable field below is still the whole string, because
- * silently rewriting authored production content to improve a layout is exactly
- * the thing W18 forbids. If the pattern does not match, everything stays notes —
- * this only ever moves text it can positively identify as identifiers.
- *
- * The pattern is deliberately narrow: a LEADING run of "Section(s) N" and/or
- * bare decision ids (N347), ending at the first sentence that is not one. */
-const V672_PROVENANCE_PREFIX = /^\s*((?:sections?\s*)?(?:n?\d+[a-z]?)(?:\s*,\s*(?:sections?\s*)?(?:n?\d+[a-z]?))*\s*\.)\s*/i;
-function entityNotesProvenance(notes) {
-  const match = String(notes || "").match(V672_PROVENANCE_PREFIX);
-  return match ? match[1].trim() : "";
-}
-function entityReadableNotes(notes) {
-  const text = String(notes || "");
-  return text.replace(V672_PROVENANCE_PREFIX, "").trim();
-}
-window.entityReadableNotes = entityReadableNotes;
-window.entityNotesProvenance = entityNotesProvenance;
+/* W18 — the notes provenance readers (entityNotesProvenance, entityReadableNotes)
+   live in shared-entities.js, loaded before this file, so the server's Working
+   draft export splits notes exactly as this page does. */
 /* The concise canonical constraint, read through the SHARED resolver rather than
    through a second field-precedence chain of this surface's own. `entityVisualDescription`
    already answers "what is this entity's authored design description" for the prompt

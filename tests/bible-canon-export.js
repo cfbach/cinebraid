@@ -1462,6 +1462,7 @@ function bureaucracyCases() {
   ok(!/<input(?![^>]*id="bible-search")/.test(html.replace(/<input id="bible-search"[^>]*>/, "")),
     "bureaucracy: the export asks for no configuration and no filename");
   ok(!/preset=canon-appendix|supporting/.test(html), "audience: viewer HTML offers no supporting export");
+  ok(!/working-draft|preset=supporting/.test(html + readLF("public/bible.js")), "audience: viewer offers no working export");
   note("No Bible ledger or write endpoint; editor writers remain in their existing owners.");
 }
 
