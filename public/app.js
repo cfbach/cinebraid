@@ -2448,6 +2448,10 @@ function paintProjectSaveState() {
   el.dataset.state = state;
   /* The topbar status ellipsises a long failure label; the whole sentence stays on hover. */
   el.title = label || "";
+  /* The compact header (≤900px) shows a short word for the same state; the full label stays the text. */
+  el.dataset.short = label === "Not loaded" ? "Not loaded" : label === "No project open" ? "No project"
+    : /refresh required/i.test(label || "") ? "Refresh" : /updating/i.test(label || "") ? "Updating…"
+    : ({ saved: "Saved", saving: "Saving…", dirty: "Unsaved", error: "Not saved", loading: "Opening…" }[state] || label || "");
   const text = el.querySelector("span:last-child");
   if (text) text.textContent = label;
 }

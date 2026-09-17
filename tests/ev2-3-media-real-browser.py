@@ -377,6 +377,35 @@ try:
         check('390: category chips are a three-column grid of 44px buttons with no horizontal strip',phone['chipCols']==3 and phone['chipMin']>=44 and phone['chipScroll']<=0)
         check('390: results are a two-column contact sheet with no card overflow',phone['gridCols']==2 and not phone['cardOverflow'] and phone['fit'])
         check('390: the card caption hides the filename line and clamps the title to two lines',phone['fileHidden'] and phone['titleLines']<=2)
+        # EV2-7 phone density: categories, search, Media type, Decision and More filters stay visible; Sort, Group and Grid/List fold behind one closed 44px
+        # View options button on the asset-count row, so the first card starts on the first screen. The disclosure is presentation state in memory only.
+        read_density="""()=>{const m=document.getElementById('main');if(m)m.scrollTop=0;scrollTo(0,0);const root=document.querySelector('#main [data-md="production"]'),t=root.querySelector('[data-md-view-options]'),panel=document.getElementById(t.getAttribute('aria-controls')),
+          shown=s=>{const n=root.querySelector(s);return !!n&&n.getClientRects().length>0;},card=root.querySelector('.md-card').getBoundingClientRect(),tr=t.getBoundingClientRect(),count=root.querySelector('.md-arrange [role=status]').getBoundingClientRect();
+          return {expanded:t.getAttribute('aria-expanded'),inPanel:['sort','group'].every(f=>panel.contains(root.querySelector(`[data-md-field="${f}"]`)))&&panel.querySelectorAll('[data-md-view]').length===2,
+            sort:shown('[data-md-field="sort"]'),group:shown('[data-md-field="group"]'),grid:shown('[data-md-view="grid"]'),visible:['[data-md-category="all"]','[data-md-field="query"]','[data-md-field="type"]','[data-md-field="decision"]','.md-more summary'].every(shown),
+            toggle:{w:tr.width,h:tr.height,shown:tr.height>0},sameRow:Math.abs((tr.top+tr.bottom)/2-(count.top+count.bottom)/2)<12,cardTop:card.top,innerHeight,overflow:document.documentElement.scrollWidth>innerWidth||panel.scrollWidth>panel.clientWidth+1,
+            decisions:root.querySelectorAll('[data-md-field="decision"]').length,state:CineBraidMediaBrowser.instances.get('production').state.viewOptions===true};}"""
+        dense=page.evaluate(read_density)
+        check('390: View options is a closed 44px button on the asset-count row holding Sort, Group and Grid/List',dense['expanded']=='false' and not dense['state'] and dense['inPanel'] and dense['toggle']['h']>=44 and dense['toggle']['w']>=44 and dense['sameRow'] and not (dense['sort'] or dense['group'] or dense['grid']))
+        check('390: categories, search, Media type, Decision and More filters stay visible with one Decision field',dense['visible'] and dense['decisions']==1)
+        check(f'390: the first media card starts on the first screen (top {round(dense["cardTop"])}px)',dense['cardTop']<dense['innerHeight']*0.8)
+        page.locator('#main [data-md-view-options]').click()
+        opened=page.evaluate(read_density)
+        page.screenshot(path=str(OUT/'view-options-open-390.png'))
+        check('390: View options opens in place, keeps focus on its button and shows Sort, Group and Grid/List without overflow',opened['expanded']=='true' and opened['state'] and opened['sort'] and opened['group'] and opened['grid'] and not opened['overflow'] and page.evaluate('document.activeElement?.hasAttribute("data-md-view-options")'))
+        page.keyboard.press('Tab')
+        check('390: keyboard reaches Sort straight after View options',page.evaluate('document.activeElement?.dataset.mdField')=='sort')
+        page.locator('#main [data-md-field="sort"]').select_option('name')
+        check('390: changing Sort repaints with the panel open and focus kept on Sort',page.evaluate('document.activeElement?.dataset.mdField')=='sort' and page.evaluate(read_density)['expanded']=='true')
+        page.locator('#main [data-md-field="sort"]').select_option('recent')
+        page.locator('#main [data-md-view-options]').press('Enter')
+        closed=page.evaluate(read_density)
+        check('390: Enter closes View options and keeps focus on its button',closed['expanded']=='false' and not closed['sort'] and page.evaluate('document.activeElement?.hasAttribute("data-md-view-options")'))
+        page.set_viewport_size({'width':1440,'height':900})
+        wide=page.evaluate("""()=>{const r=document.querySelector('#main [data-md="production"]'),t=r.querySelector('[data-md-view-options]');return {toggle:t.getClientRects().length,sort:r.querySelector('[data-md-field="sort"]').getClientRects().length>0,grid:r.querySelector('[data-md-view="grid"]').getClientRects().length>0};}""")
+        check('1440: no View options button; Sort, Group and Grid/List stay in the arrange row',wide['toggle']==0 and wide['sort'] and wide['grid'])
+        check('View options writes nothing to project or ledger',stored_hashes()==stored_before)
+        page.set_viewport_size({'width':390,'height':844})
         page.locator('[data-md-page="1"]').click()
         check('Next page has bounded remaining assets',page.locator('.md-card').count()<48)
         page.locator('.md-open').last.scroll_into_view_if_needed()

@@ -1109,6 +1109,14 @@ function checkRendering({ PM, Results, Inspector, Browser, sources }) {
   for (const [label, html] of [["page", page], ["picker", picker]])
     assert.strictEqual((html.match(/data-md-field="decision"/g) || []).length, 1, `the ${label} mount has exactly one Decision field`);
   assert(!/data-md-category="/.test(picker), "the reference picker mount has no category chips");
+  /* EV2-7 phone density — Sort, Group and Grid/List sit in one View options panel after a closed toggle on the count row; Media type and Decision stay outside it. */
+  const panel = /<div class="md-arrange"><p role="status">[^<]*<\/p><button type="button" class="md-view-toggle" data-md-view-options aria-expanded="false" aria-controls="md-view-options-ev2-7-page">View options <span aria-hidden="true">▾<\/span><\/button><div class="md-view-options" id="md-view-options-ev2-7-page">(.*?)<\/div><\/div><\/div><div class="md-collection/.exec(page);
+  assert(panel, "the page mount renders a closed View options toggle controlling its panel on the asset-count row");
+  assert(/data-md-field="sort"/.test(panel[1]) && /data-md-field="group"/.test(panel[1]) && /data-md-view="grid"/.test(panel[1]) && /data-md-view="list"/.test(panel[1]), "View options holds Sort, Group and Grid/List");
+  assert(!/data-md-field="(type|decision|query)"/.test(panel[1]) && /class="md-tools">.*data-md-field="type".*data-md-field="decision"/.test(page), "Media type and Decision stay visible in the tools row, outside View options");
+  const openPage = Browser.mount("ev2-7-open", { state: { ...D.defaults(), viewOptions: true }, records: () => composed });
+  assert(openPage.includes('aria-expanded="true" aria-controls="md-view-options-ev2-7-open"') && openPage.includes('<div class="md-view-options is-open" id="md-view-options-ev2-7-open">'), "an open View options state renders the expanded toggle and the open panel");
+  assert(!("viewOptions" in D.defaults()) && !("viewOptions" in D.defaults(true)), "View options is transient presentation state, not a discovery default");
   const captions = [...page.matchAll(/<small class="md-file" title="([^"]+)">File · ([^<]+)<\/small>/g)];
   assert(captions.length > 0 && captions.every((m) => m[1] === m[2] && composed.some((r) => r.fileName === m[1] && r.title !== m[1])), "the filename is a small caption carrying its title attribute, never the headline");
   const names = [...page.matchAll(/aria-label="(Inspect [^"]*)"/g)].map((m) => m[1]);

@@ -17,6 +17,8 @@ body.results-desk-active #cb-shell-bar,body.results-desk-active #cb-shell-rail{d
 body.results-desk-active #cb-shell-main{flex:1 1 auto;min-height:0;min-width:0;grid-template-columns:minmax(0,1fr)!important}
 body.results-desk-active #app #main{display:block;min-height:0;min-width:0;width:100%;max-width:none;height:100%;padding:0;overflow:auto;background:#111315}
 .results-desk.rx-screening{height:100%;min-height:530px}
+/* Media that cannot be loaded: a neutral placeholder, never a broken-image icon or leaked alt text. */
+.rx-thumb .rx-thumb-unavailable{position:absolute;inset:0;display:grid;place-items:center;padding:8px;font-size:13px;color:#b9c0c5;background:var(--rx-well);text-align:center}.rx-thumb .rx-thumb-unavailable[hidden]{display:none}.rx-failed>img,.rx-failed>video{visibility:hidden}
 @media(max-width:650px){
  .rx-heading{padding-bottom:8px}.rx-context{padding:9px 0}.rx-context span{display:none}
  .rx-job-note{padding:7px 9px;margin-bottom:10px}.rx-toolbar{margin-bottom:12px}

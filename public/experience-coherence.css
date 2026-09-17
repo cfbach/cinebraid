@@ -104,6 +104,19 @@
 /* Transient messages never take a press and never sit on a decision bar, Retry, a dialog footer or the
    phone dock: they announce beneath the pinned header (and stage bar), centred, and wrap instead of growing. */
 #toast.toast { top:calc(var(--cb-topbar-stop,72px) + var(--cb-bar-height,0px) + 12px); bottom:auto; max-width:min(560px,calc(100vw - 32px)); white-space:normal; overflow-wrap:anywhere; pointer-events:none; font:13px/1.45 var(--body); letter-spacing:normal; }
+/* Content surfaces that pin beneath the frame read the shell's stop. styles.css wrote them against the old 72px
+   header (a 58/51px one for the taskbar), so under the one 64px header scrolled content showed through an 8px band
+   above the shot navigator and the taskbar slid 6–13px behind the header. --cb-bar-height is 0px wherever the
+   stage bar is not painted. The bands where these surfaces stop being sticky keep their own rules
+   (inspector relative ≤1180, reports history relative ≤1400, navigator/subnav/inspector hidden ≤820). */
+.project-navigator,.focused-workspace-shell>.project-navigator,.focused-subnav { top:calc(var(--cb-topbar-stop) + var(--cb-bar-height,0px)); max-height:calc(100vh - var(--cb-topbar-stop) - var(--cb-bar-height,0px) - 20px); }
+.focused-taskbar { top:calc(var(--cb-topbar-stop) + var(--cb-bar-height,0px)); }
+@media(min-width:1181px) { .focused-inspector { top:calc(var(--cb-topbar-stop) + var(--cb-bar-height,0px)); max-height:calc(100vh - var(--cb-topbar-stop) - var(--cb-bar-height,0px) - 20px); } }
+@media(min-width:1401px) { .reports-history { top:calc(var(--cb-topbar-stop) + 14px); max-height:calc(100vh - var(--cb-topbar-stop) - 38px); } }
+/* One backdrop behind content on every route: the graphite the desks (References, Production media, Results)
+   already paint, so the page no longer flips navy↔graphite between routes. Only the #workspace/#main backdrop
+   changes; panels, cards and their borders keep their own surface tokens. The light surface keeps its own page. */
+#app:not([data-surf="light"]) #workspace,#app:not([data-surf="light"]) #main { background:#111315; }
 @media(max-width:1180px) {
   #topbar .topbar-search { flex:0 0 var(--cb-control-height); width:var(--cb-control-height); min-width:var(--cb-control-height); max-width:none; padding:0; justify-content:center; }
   #topbar .topbar-search::before { content:""; flex:0 0 20px; width:20px; height:20px; background:var(--ink); -webkit-mask:var(--cb-search-mark) center/contain no-repeat; mask:var(--cb-search-mark) center/contain no-repeat; }
@@ -125,6 +138,12 @@
   #topbar #automation-activity-toggle>small::before { content:none; }
   #topbar #save-state { max-width:110px; padding:0 2px; gap:6px; }
   #topbar #save-state>span:last-child { min-width:0; overflow:hidden; text-overflow:ellipsis; font-size:12px; }
+  /* The compact row shows the short status app.js derives from the same state (Saved, Saving…, Unsaved,
+     Not saved, Refresh…). The full label stays rendered text for innerText and screen readers, visually
+     clipped; the short one is decorative (empty alt) and the whole sentence stays in the title. */
+  #topbar #save-state[data-short] { position:relative; max-width:112px; }
+  #topbar #save-state[data-short]>span:last-child { position:absolute; width:1px; height:1px; margin:-1px; padding:0; overflow:hidden; clip-path:inset(50%); white-space:nowrap; }
+  #topbar #save-state[data-short]::after { content:attr(data-short); content:attr(data-short) / ""; min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; font-size:13px; }
 }
 /* Once the rail is a drawer the header gutter is 12px at every width, which leaves the compact row the room its save status needs. */
 @media(max-width:900px) { #app #topbar { padding-inline:12px; } }
@@ -137,6 +156,7 @@
   #topbar .topbar-actions { flex:0 0 auto; gap:6px; }
   #topbar #automation-activity-toggle { max-width:100px; }
   #topbar #save-state { max-width:72px; }
+  #topbar #save-state[data-short] { max-width:104px; }
   #toast.toast { left:16px; right:16px; transform:none; max-width:none; text-align:left; }
 }
 @container (max-width:52px) { #topbar .topbar-project,#topbar .topbar-view { visibility:hidden; } }

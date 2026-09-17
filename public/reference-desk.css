@@ -170,6 +170,23 @@ body:is(.reference-desk-active,.production-media-active) #modal .rd-confirm-box{
 .bc-quote{display:flex;flex-direction:column;gap:3px;padding:10px 14px;background:#1c1f22;font-size:13px}.bc-quote em{font-style:normal;color:#e8c4a0}
 .bc-sheets,.bc-returned{list-style:none;margin:0;padding:0;display:grid;grid-template-columns:repeat(auto-fill,minmax(150px,1fr));gap:12px}.bc-sheets li,.bc-returned li{display:flex;flex-direction:column;gap:4px;min-width:0}.bc-sheet,.bc-returned label{display:flex;flex-direction:column;gap:6px;min-height:44px;padding:6px;border:1px solid #353a40;border-radius:6px;background:#202327;color:#edeef0;text-align:left;cursor:pointer;font-size:13px;overflow-wrap:anywhere}.bc-sheet:disabled{opacity:.5;cursor:not-allowed}.bc-sheet img,.bc-returned img{width:100%;height:100px;object-fit:contain;background:#0b0d0e}.bc-sheets small{font-size:13px;color:#b4bbc2}.bc-returned input{width:20px;height:20px;accent-color:#ddb68b}
 .bc-crop .bc-target{font-size:15px}.bc-crop .bc-ack{display:flex;gap:10px;align-items:flex-start;padding:10px 0;font-size:14px;min-height:44px}.bc-crop .bc-ack input{width:20px;height:20px;flex-shrink:0;accent-color:#ddb68b}.bc-crop .bc-approval{font-size:13px}.coverage-crop-state-note{margin:0;font-size:13px;color:#e3c29c;align-self:center}
+/* EV2-7 — THE GUIDED CROP WEARS THE BUILD COVERAGE DIALOG. Body type throughout, 44px targets, one warm primary,
+   a quiet secondary, and a disabled primary that reads as unavailable until the view is acknowledged. Presentation only. */
+.bc-crop{font:14px/1.55 var(--body);color:#edeef0}.bc-crop>*,.bc-crop .coverage-extractor-layout>*{min-width:0}
+.bc-crop>header>div>span:first-child{display:block;color:var(--sd-warm,#ddb68b);font-size:13px;letter-spacing:.08em;text-transform:uppercase}.bc-crop>header h3{font:550 22px/1.3 var(--body);letter-spacing:-.02em;margin:2px 0 6px;overflow-wrap:anywhere}.bc-crop>header .cancel{flex:0 0 auto;min-width:44px;padding:0 12px;font:500 13px/1.3 var(--body)}
+.bc-crop .coverage-extractor-layout small,.bc-crop .coverage-crop-overlay span{font-size:13px}
+.bc-crop .rd-button,.bc-crop .coverage-extractor-actions .cancel{font:500 13px/1.3 var(--body);min-height:44px;padding:10px 16px;white-space:normal;overflow-wrap:anywhere;text-align:center}
+.bc-crop .rd-primary:disabled{opacity:1!important;background:#35302a!important;border-color:#4a4239!important;color:#aa9e90!important;cursor:not-allowed}.bc-crop .rd-button:not(.rd-primary):disabled{opacity:.55!important;cursor:not-allowed}
+.bc-crop .coverage-extractor-actions{display:flex;flex-wrap:wrap;align-items:center;justify-content:flex-end;gap:10px;margin-top:4px;background:linear-gradient(transparent,rgb(34 38 41) 12px)}.bc-crop .coverage-extractor-actions .cancel{margin-right:auto;background:transparent;border:0;color:#c1c7ce}
+.bc-crop .coverage-crop-advanced{margin-top:2px;border:1px solid #353a40;border-radius:6px;background:#1d2023}
+.bc-crop .coverage-crop-advanced>summary{display:flex;align-items:center;gap:8px;min-height:44px;padding:0 12px;font:500 13px/1.4 var(--body);letter-spacing:0;color:#a6c9cf;list-style:none}.bc-crop .coverage-crop-advanced>summary::-webkit-details-marker{display:none}.bc-crop .coverage-crop-advanced>summary::before{content:"▸";font-size:16px;line-height:1}.bc-crop .coverage-crop-advanced[open]>summary::before{content:"▾"}.bc-crop .coverage-crop-advanced>summary:hover{color:#edeef0}
+.bc-crop .coverage-crop-advanced>div{gap:10px;padding:0 12px 12px;font-size:13px}.bc-crop .coverage-crop-advanced label>span,.bc-crop .coverage-crop-provenance b,.bc-crop .coverage-crop-provenance span,.bc-crop .coverage-crop-provenance small{font-size:13px;overflow-wrap:anywhere}
+.bc-crop .coverage-crop-advanced input,.bc-crop .coverage-crop-advanced select,.bc-crop .coverage-crop-advanced textarea{min-height:44px;font:14px/1.4 var(--body)}.bc-crop .coverage-crop-presets{flex-wrap:wrap}.bc-crop .coverage-crop-presets button{flex:1 1 140px;min-height:44px;padding:10px 14px;font:500 13px/1.3 var(--body);background:#222529;color:#edeef0;border:1px solid #41464c;border-radius:6px;cursor:pointer}.bc-crop .coverage-crop-presets button:hover{background:#2b2f34}
+@media (max-width: 760px) { .bc-crop .coverage-extractor-actions { bottom: -16px; } }
+@media (max-width: 767px) {
+  .bc-crop .coverage-extractor-actions .rd-primary { order: -1; flex: 1 1 100%; }
+  .bc-crop .coverage-extractor-actions .cancel, .bc-crop .coverage-extractor-actions #coverage-crop-guided-candidate { flex: 1 1 0; margin-right: 0; }
+}
 @media (max-width: 767px) {
   .bc-layout { grid-template-columns: minmax(0,1fr); }
   .bc-method { grid-template-columns: minmax(0,1fr); }

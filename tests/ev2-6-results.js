@@ -16,4 +16,12 @@ m=c.CineBraidResults.model({shotId:'shot',kind:'frame',frameId:'a'});check('Exac
 records=[{...b,relationships:[{...a,disposition:{role:'approved'}},b]}];entity.candidateFiles[0].decision='rejected';entity.candidateFiles[1].decision='rejected';
 check('Coverage disposition cannot hide exact candidate rejection',c.CineBraidResults.model(scope).rows[0].rejected);
 check('Current primary authority outranks stale rejection',!c.CineBraidResults.model({...scope,stateId:'night',slotId:'side'}).rows[0].rejected);
+// Load failure is presentation only: every loadable card carries a hidden neutral placeholder, the stage keeps its load-error panel hidden and Approve starts disabled until the exact media loads.
+c.document.body={classList:{add(){},toggle(){}}};const gone=result('gone','a');items=[result('shown','a'),{...gone,mediaAvailable:false,unreviewable:'media-not-available',candidate:{...gone.candidate,url:''}},{...result('clip','a'),candidate:{...result('clip','a').candidate,mediaType:'video'}}];records=[];
+const html=c.CineBraidResults.view({scope:{shotId:'shot',kind:'frame',frameId:'a'},key:''}),grid=html.slice(html.indexOf('class="rx-grid"'),html.indexOf('<aside class="rx-selected"'));
+check('Each loadable card has one hidden placeholder',(grid.match(/<(img|video) /g)||[]).length===2&&(grid.match(/<span class="rx-thumb-unavailable" hidden>Media unavailable<\/span>/g)||[]).length===2);
+check('Recorded-missing card shows its placeholder',(grid.match(/<span class="rx-thumb-unavailable">Media unavailable<\/span>/g)||[]).length===1);
+check('Placeholders keep exact card identity and decision label',grid.includes('aria-label="Result 1, Result"')&&grid.includes('aria-label="Result 2, Unavailable"')&&(grid.match(/data-rx-key=/g)||[]).length===3);
+check('Stage load error starts hidden with Retry loading',html.includes('<div class="rx-load-error" hidden role="status">Result cannot be loaded. Selection retained. <button type="button" data-rx="reload-media"'));
+check('Approve waits for the exact media to load',/id="rx-approve" class="rx-primary" disabled/.test(html));
 console.log('EV2-6 Results scope: '+checks+' checks passed');
