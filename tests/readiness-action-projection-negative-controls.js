@@ -480,7 +480,8 @@ async function nc5() {
   equal(seen.deliverCompletion, "complete", "the Deliver stage reports complete");
   equal(seen.deliverWord, "Complete", "and renders the word Complete");
   equal(seen.finishSummary, "Final delivery locked", "Finish & Delivery says the delivery is locked");
-  equal(seen.finishBadge, "FINAL", "with a FINAL badge");
+  /* EV2-7 dogfood correction: the stage body no longer shouts; the badge is the same badge, in sentence case. */
+  equal(String(seen.finishBadge).toUpperCase(), "FINAL", "with a FINAL badge");
   equal(seen.finishMarkedFinal, true, "and a Marked final state");
 
   /* 2. AND THE INVARIANT GOES RED. */
