@@ -166,7 +166,7 @@
       const v=ctx.views.find(x=>x.slot.id===b.slotId),now=!v?view+' is not a required view for '+b.stateName+'.':v.filled?view+' for '+b.stateName+' is filled now. Assigning replaces its current image; that image stays a candidate.':v.earlier?view+' for '+b.stateName+': '+v.label+'. Assigning fills it for '+b.stateName+'.':view+' for '+b.stateName+' is not filled.';
       return '<p class="bc-status" role="status" id="bc-confirm-now" data-bc-now="'+a(v?v.status:'optional')+'">'+e(now)+'</p><p class="bc-target-line">'+e(what)+'Target: <b>'+e(entity.name||entity.id)+'</b> · <b>'+e(b.stateName)+'</b> · <b>'+e(view)+'</b></p><div class="bc-row">'+button('data-bc-action="assign-confirm" id="bc-assign-confirm"','Assign to '+e(view)+' for '+e(b.stateName),'rd-primary')+button('data-bc-action="keep"','Keep as candidate')+'</div>';
     }
-    if(s.status==='unknown')return '<p class="bc-error" role="alert">'+e(what)+'CineBraid could not confirm whether the assignment was saved.</p>'+detail+'<div class="bc-row">'+button('data-bc-action="assign-retry"','Check and retry','rd-primary')+button('data-bc-action="keep"','Keep as candidate')+'</div>';
+    if(s.status==='unknown')return '<p class="bc-error" role="alert">'+e(what)+(s.code==='unconfirmed'?'The assignment was saved. CineBraid could not re-read the project here to show it.':'CineBraid could not confirm whether the assignment was saved.')+'</p>'+detail+'<div class="bc-row">'+button('data-bc-action="assign-retry"','Check and retry','rd-primary')+button('data-bc-action="keep"','Keep as candidate')+'</div>';
     if(s.status==='failed')return '<p class="bc-error" role="alert">'+e(what)+'Assigning it to '+e(view)+' for '+e(b.stateName)+' was not saved: '+e(s.error)+'</p>'+detail+'<div class="bc-row">'+button('data-bc-action="assign-retry"','Retry assignment','rd-primary')+button('data-bc-action="keep"','Keep as candidate')+'</div>';
     return '<p class="bc-status" role="status">Ready to assign to '+e(view)+' for '+e(b.stateName)+'.</p>';
   }
@@ -244,6 +244,8 @@
         const refreshed=await load({intent:'refresh'});if(build!==b)return;if(!inScope(b))return lost(b);
         if(refreshed&&refreshed.committed===false){b.assign={status:'unknown',error:'',code:'unknown',bindingId:''};b.notice='CineBraid could not re-read the project ('+(refreshed.reason||'refresh refused')+'). Nothing was sent; check again.';return;}
         b.revision=PROJECT_REVISION;b.notice='';
+        // And it reuses the EXACT saved crop: if that row left the reference while this was open, nothing is assigned in its place.
+        if(b.pendingCrop&&!(entityOf(b)?.candidateFiles||[]).some(r=>(r.stored||r.name)===b.pendingCrop.stored)){b.assign={status:'failed',error:'The saved crop is no longer on this reference.',code:'scope',bindingId:''};return;}
       }
       if(PROJECT_REVISION!==b.revision){b.assign={status:'stale',error:'',code:'stale',bindingId:''};return;}
       b.assign={status:'saving',error:'',code:'',bindingId:''};render();
@@ -255,7 +257,7 @@
       if(error.code==='scope'&&(b.slug!==ACTIVE_PROJECT_SLUG||b.epoch!==PROJECT_OPEN_EPOCH)){b.busy=false;return lost(b);}
       // The server's revision moved: the same If-Match can only be refused again. Re-read and show the target; never re-post blind.
       reread=error.code==='PROJECT_REVISION_CONFLICT'||error.action==='reload';
-      const unknown=error.code==='unknown'||error.code==='unverified';
+      const unknown=error.code==='unknown'||error.code==='unverified'||error.code==='unconfirmed';
       b.assign=reread?{status:'refreshing',error:'',code:error.code||'reload',bindingId:''}:{status:unknown?'unknown':'failed',error:error.message||'The assignment was not saved.',code:error.code||'refused',bindingId:''};
     }finally{
       if(build===b){b.busy=false;if(!reread)render();}

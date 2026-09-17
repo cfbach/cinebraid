@@ -1956,9 +1956,9 @@ function soakedFixture() {
   withCanon(project, { kind: "entity-state", list: "characters", entityId: "CHAR-UX", stateId: "state-soaked", value: "CHAR-UX-SOAKED.png" });
   return { project, binding };
 }
-function guidedHarness(project, { mutateSource = null, enroll = [], scanMisses = 0 } = {}) {
-  const uploaded = [], enrolls = [], jobs = [], puts = [];
-  const plan = { enroll: [...enroll], scanMisses };
+function guidedHarness(project, { mutateSource = null, enroll = [], scanMisses = 0, advanceDuringRefresh = 0, blockDuringRefresh = 0 } = {}) {
+  const uploaded = [], enrolls = [], jobs = [], puts = [], projectReadsAfterEnroll = [];
+  const plan = { enroll: [...enroll], scanMisses, advanceDuringRefresh, blockDuringRefresh };
   let server = structuredClone(project), revision = 1;
   const rev = () => `"guided-rev-${revision}"`;
   const entityOf = () => server.characters.find((row) => row.id === "CHAR-UX");
@@ -1966,10 +1966,11 @@ function guidedHarness(project, { mutateSource = null, enroll = [], scanMisses =
     ? { name: row.stored, assetId: row.referenceBinding.assetId, bindingId: row.referenceBinding.id, stateId: row.referenceBinding.stateId, slotId: row.referenceBinding.slotId, available: true, url: `/fixture/ref/${row.stored}` }
     : { name: row.stored, assetId: row.assetId || "", available: true, url: `/assets/anchors/${row.stored}` };
   const harness = {
-    uploaded, enrolls, jobs, puts, mutateSource,
+    uploaded, enrolls, jobs, puts, projectReadsAfterEnroll, mutateSource,
     server: () => server,
     /* A write from elsewhere: the stored project moves to a new revision. */
     backgroundWrite: (change) => { change(server); revision++; },
+    interfere: null,
     render: () => render("#/character/CHAR-UX", project, {
       scan: convergenceScan(), storage: {}, ...(mutateSource ? { mutateSource } : {}),
       fetch: async (url, options = {}, respond) => {
@@ -1987,7 +1988,25 @@ function guidedHarness(project, { mutateSource = null, enroll = [], scanMisses =
           server = JSON.parse(options.body); revision++; puts.push(rev());
           return respond({ ok: true, revision: rev() });
         }
-        if (target === "/api/project") return respond(server, 200, { "x-cinebraid-project-slug": "fixture", "x-cinebraid-project-revision": rev(), etag: rev() });
+        if (target === "/api/project") {
+          if (enrolls.length && harness.saveGeneration) projectReadsAfterEnroll.push(harness.saveGeneration());
+          /* A CONCURRENT WRITER, IN THE ONE PLACE A REFRESH CAN BE OVERTAKEN.
+
+             noteCurrentProjectDurableAdvance() is the single statement by which an accepted save, a
+             generation ingest or the revision watch tells this window that the durable record moved
+             independently of a refresh commit. Calling it HERE - after beginProjectRefresh() has taken
+             its ticket and before projectRefreshRefusal() reads it - is exactly the interleaving the
+             post-demo dogfood hit on Linda Miller's Front view, without the scheduling nondeterminism
+             of driving the revision watch itself. SAVE_BLOCKED is the other kind: a window that has
+             stopped saving cannot commit a refresh at all, and will not until it is unblocked. */
+          if (plan.advanceDuringRefresh > 0 && harness.interfere) { plan.advanceDuringRefresh--; harness.interfere("advance"); }
+          if (plan.blockDuringRefresh > 0 && harness.interfere) { plan.blockDuringRefresh--; harness.interfere("block"); }
+          return respond(server, 200, { "x-cinebraid-project-slug": "fixture", "x-cinebraid-project-revision": rev(), etag: rev() });
+        }
+        /* The revision watch's own read. The server hashes the stored bytes; this harness has a
+           counter that moves for exactly the same reason, so a window whose PROJECT_REVISION is
+           behind the store reads as behind it here too. */
+        if (target === "/api/projects/fixture/revision") return respond({ revision: rev() });
         if (target === "/api/scan") {
           const miss = plan.scanMisses > 0 && uploaded.length > 0;
           if (miss) plan.scanMisses--;
@@ -2003,7 +2022,7 @@ function guidedHarness(project, { mutateSource = null, enroll = [], scanMisses =
         }
         if (target === "/api/references/enroll") {
           const body = JSON.parse(options.body), step = plan.enroll.shift() || "ok";
-          enrolls.push({ ifMatch: options.headers["If-Match"], body, step, lastPut: puts[puts.length - 1] || "" });
+          enrolls.push({ ifMatch: options.headers["If-Match"], body, step, lastPut: puts[puts.length - 1] || "", generation: harness.saveGeneration ? harness.saveGeneration() : -1 });
           if (step === "refuse") return respond({ error: "The project revision changed. Nothing was enrolled." }, 409);
           /* The seam's own refusal after a background write moved the stored revision: the same If-Match can never pass again. */
           if (step === "conflict") { revision++; return respond({ ok: false, error: "The project changed before this write, so the entire operation was refused.", code: "PROJECT_REVISION_CONFLICT", status: 409, yourRevision: options.headers["If-Match"], action: "reload", revision: rev() }, 409); }
@@ -2032,6 +2051,9 @@ function guidedHarness(project, { mutateSource = null, enroll = [], scanMisses =
 async function bootGuided(harness) {
   const rendered = await harness.render();
   vm.runInContext("globalThis.matchMedia = () => ({ matches: false, addEventListener() {} }); globalThis.requestAnimationFrame = (fn) => setTimeout(fn, 0); pollFalGeneration = () => {};", rendered.context);
+  harness.interfere = (kind) => vm.runInContext(kind === "advance" ? "noteCurrentProjectDurableAdvance(ACTIVE_PROJECT_SLUG)" : "SAVE_BLOCKED = true", rendered.context);
+  harness.saveGeneration = () => vm.runInContext("PROJECT_SAVE_GENERATION", rendered.context);
+  harness.unblock = () => vm.runInContext("SAVE_BLOCKED = false", rendered.context);
   for (const file of EV27_RUNTIME) {
     const source = fs.readFileSync(path.join(ROOT, "public", file), "utf8");
     if (file === "reference-coverage-build.js") vm.runInContext("globalThis.__ev27Add = document.addEventListener; document.addEventListener = function (type, fn, options) { if (type === 'click') globalThis.__ev27Click = fn; return globalThis.__ev27Add.call(document, type, fn, options); };", rendered.context);
@@ -2132,6 +2154,122 @@ async function testCropRetryAfterRefreshKeepsOneRow() {
   eq(out.crops.length, 1, "EV2-7 C3b: a persisted row is recognised by its stored name, not duplicated");
   eq(out.doneKind, "candidate", "EV2-7 C3b: and the crop is saved as a candidate with no view changed");
   eq(harness.enrolls.length, 0, "EV2-7 C3b: saving a candidate assigns nothing");
+}
+
+/* EV2-7 POST-DEMO C5 - THE LINDA MILLER DEFECT.
+
+   A crop of Linda's Front view was saved and assigned, the assignment WAS saved, and the flow reported
+   "CineBraid could not confirm whether the assignment was saved" with the coverage table still showing
+   Front missing. One press of Check and retry then filled it, from the same crop, with no duplicate -
+   which is the signature of a confirmation that read a project it had never actually re-read. The
+   enrollment's follow-up refresh was overtaken by a declared durable advance, refused to commit, left
+   P exactly as it was, and the absence of the binding in that untouched P was reported as evidence. */
+async function testDelayedConfirmationIsNotAFailure() {
+  const harness = guidedHarness(guidedFixture(), { advanceDuringRefresh: 1 });
+  const rendered = await bootGuided(harness);
+  const before = harness.saveGeneration();
+  await vm.runInContext(`(async () => { ${GUIDED_OPEN(EV27_ALT)} await CineBraidBuildCoverage.cropSave(true); })()`, rendered.context);
+  const out = JSON.parse(vm.runInContext(GUIDED_READ, rendered.context));
+  eq(harness.enrolls.length, 1, "EV2-7 C5: the assignment is posted exactly once");
+  eq(harness.uploaded.length, 1, "EV2-7 C5: and the crop is uploaded exactly once");
+  eq(out.assign.status, "done", "EV2-7 C5: a refresh overtaken by a concurrent durable advance is not a failed assignment");
+  eq(out.step, "done", "EV2-7 C5: the flow completes");
+  ok(!out.modal.includes("could not confirm whether the assignment was saved"), "EV2-7 C5: and never says it could not confirm a save that succeeded");
+  eq(out.bindings && out.bindings[EV27_ALT], harness.server().characters[0].candidateFiles.find((r) => r.referenceBinding)?.stored,
+    "EV2-7 C5: the view the filmmaker was looking at holds the binding the server saved");
+  ok(out.modal.includes("Profile is filled for Alternate. Approval is unchanged."), "EV2-7 C5: and says the view is filled");
+  ok(harness.projectReadsAfterEnroll.length > 0 && harness.projectReadsAfterEnroll[0] > harness.enrolls[0].generation,
+    `EV2-7 C5: the enrollment declares its own durable advance before it goes to look, so a refresh prepared before it can never commit over it (${harness.enrolls[0].generation} at the write, ${harness.projectReadsAfterEnroll[0]} at the read)`);
+  ok(harness.saveGeneration() > before,
+    "EV2-7 C5: and the window ends the flow knowing its durable record moved");
+  eq(out.crops.length, 1, "EV2-7 C5: one crop row");
+  eq(harness.server().characters[0].candidateFiles.filter((r) => r.referenceBinding).length, 1, "EV2-7 C5: and exactly one binding in storage");
+}
+
+/* EV2-7 POST-DEMO C6 - A WINDOW THAT CANNOT RE-READ SAYS SO, AND DOES NOT INVENT A VERDICT.
+   SAVE_BLOCKED is the durable kind of refusal: no number of re-reads will commit while it stands. The
+   assignment still landed, so the honest sentence is that it was saved and could not be shown here. */
+async function testUnconfirmableRefreshKeepsTheCropAndRecovers() {
+  const harness = guidedHarness(guidedFixture(), { blockDuringRefresh: 1 });
+  const rendered = await bootGuided(harness);
+  await vm.runInContext(`(async () => { ${GUIDED_OPEN(EV27_ALT)} await CineBraidBuildCoverage.cropSave(true); })()`, rendered.context);
+  const held = JSON.parse(vm.runInContext(GUIDED_READ, rendered.context));
+  eq(harness.enrolls.length, 1, "EV2-7 C6: the assignment is posted once");
+  eq(held.assign.status, "unknown", "EV2-7 C6: an unreadable project is a recoverable outcome, not a refusal");
+  eq(held.assign.code, "unconfirmed", "EV2-7 C6: and is named for what actually happened");
+  ok(held.modal.includes("The assignment was saved."), "EV2-7 C6: the words do not deny a write that succeeded");
+  ok(held.modal.includes("The crop is saved as a candidate."), "EV2-7 C6: the crop is stated as kept");
+  ok(held.modal.includes('data-bc-action="assign-retry"') && held.modal.includes('data-bc-action="keep"'), "EV2-7 C6: with Check and retry and Keep as candidate");
+  ok(held.modal.includes("Target: Nora") && held.modal.includes("Alternate") && held.modal.includes("Profile"), "EV2-7 C6: and the failure detail names the exact target");
+  ok(held.modal.includes("Asset: asset-crop-0") && held.modal.includes("Crop candidate: "), "EV2-7 C6: the exact asset and crop");
+  eq(held.crops.length, 1, "EV2-7 C6: the crop row is retained");
+  harness.unblock();
+  await clickBuild(rendered, { bcAction: "assign-retry" });
+  const out = JSON.parse(vm.runInContext(GUIDED_READ, rendered.context));
+  eq(harness.enrolls.length, 1, "EV2-7 C6: Check and retry finds the binding that landed and posts nothing new");
+  eq(harness.uploaded.length, 1, "EV2-7 C6: and uploads nothing new");
+  eq(out.step, "done", "EV2-7 C6: the flow completes on the verified binding");
+  eq(out.crops.length, 1, "EV2-7 C6: still one crop");
+}
+
+/* EV2-7 POST-DEMO C7 - REPEATED RETRIES ARE THE SAME ANSWER, NOT MORE MEDIA. */
+async function testRepeatedRetriesStayIdempotent() {
+  const harness = guidedHarness(guidedFixture(), { enroll: ["lost"] });
+  const rendered = await bootGuided(harness);
+  await vm.runInContext(`(async () => { ${GUIDED_OPEN(EV27_ALT)} await CineBraidBuildCoverage.cropSave(true); })()`, rendered.context);
+  eq(JSON.parse(vm.runInContext(GUIDED_READ, rendered.context)).assign.status, "unknown", "EV2-7 C7: the lost response is an unknown outcome");
+  for (let attempt = 0; attempt < 3; attempt++) await clickBuild(rendered, { bcAction: "assign-retry" });
+  const out = JSON.parse(vm.runInContext(GUIDED_READ, rendered.context));
+  eq(harness.enrolls.length, 1, "EV2-7 C7: three retries post nothing after the first landed");
+  eq(harness.uploaded.length, 1, "EV2-7 C7: and upload nothing");
+  eq(harness.server().characters[0].candidateFiles.filter((r) => r.referenceBinding).length, 1, "EV2-7 C7: exactly one binding in storage");
+  eq(out.crops.length, 1, "EV2-7 C7: exactly one crop row");
+  eq(out.step, "done", "EV2-7 C7: and the flow rests on done");
+}
+
+/* EV2-7 POST-DEMO C8 - RELOAD READS THE RECOVERED ASSIGNMENT, BECAUSE STORAGE HOLDS IT. */
+async function testRecoveredAssignmentSurvivesReload() {
+  const first = guidedHarness(guidedFixture(), { advanceDuringRefresh: 1 });
+  const firstRendered = await bootGuided(first);
+  await vm.runInContext(`(async () => { ${GUIDED_OPEN(EV27_ALT)} await CineBraidBuildCoverage.cropSave(true); })()`, firstRendered.context);
+  eq(JSON.parse(vm.runInContext(GUIDED_READ, firstRendered.context)).step, "done", "EV2-7 C8: the assignment completed before the reload");
+  /* A NEW WINDOW OVER THE SAME STORED DOCUMENT - which is all a restart is. */
+  const reopened = guidedHarness(structuredClone(first.server()));
+  const reopenedRendered = await bootGuided(reopened);
+  const out = JSON.parse(vm.runInContext(GUIDED_READ, reopenedRendered.context));
+  const stored = first.server().characters[0].candidateFiles.find((r) => r.referenceBinding);
+  eq(out.bindings && out.bindings[EV27_ALT], stored.stored, "EV2-7 C8: the reopened project holds the same binding");
+  eq(out.crops.length, 1, "EV2-7 C8: and the same single crop row");
+  eq(reopened.enrolls.length, 0, "EV2-7 C8: a reload enrolls nothing");
+  eq(reopened.uploaded.length, 0, "EV2-7 C8: and uploads nothing");
+  const filled = vm.runInContext(`(() => { const e = P.characters.find((x) => x.id === 'CHAR-UX'), slot = e.coverageSlots.find((s) => s.id === 'profile');
+    const status = CineBraidReferenceMedia.viewStatus(e, slot, '${EV27_ALT}', CineBraidReferenceMedia.listing(SCAN, 'characters', 'CHAR-UX'));
+    return JSON.stringify({ filled: status.filled, key: status.key }); })()`, reopenedRendered.context);
+  eq(JSON.parse(filled).filled, true, "EV2-7 C8: and the view reads filled after the reload, from the same one answer every surface reads");
+}
+
+/* EV2-7 POST-DEMO C9 - CHECK AND RETRY REUSES THE EXACT CROP, OR REFUSES.
+   The retry must never quietly assign something else because the crop it was made for went away. */
+async function testRetryRefusesWhenTheExactCropIsGone() {
+  const harness = guidedHarness(guidedFixture(), { enroll: ["lost"] });
+  const rendered = await bootGuided(harness);
+  await vm.runInContext(`(async () => { ${GUIDED_OPEN(EV27_ALT)} await CineBraidBuildCoverage.cropSave(true); })()`, rendered.context);
+  const pending = JSON.parse(vm.runInContext(GUIDED_READ, rendered.context)).pending;
+  ok(pending && pending.stored, "EV2-7 C9: the crop the retry must reuse is named");
+  /* Removed from storage by something else, binding and all. */
+  harness.backgroundWrite((server) => {
+    const entity = server.characters.find((row) => row.id === "CHAR-UX");
+    entity.candidateFiles = entity.candidateFiles.filter((row) => row.stored !== pending.stored && row.referenceBinding?.assetId !== pending.assetId);
+    const slot = entity.coverageSlots.find((row) => row.id === "profile");
+    if (slot.referenceBindings) delete slot.referenceBindings[EV27_ALT];
+  });
+  await clickBuild(rendered, { bcAction: "assign-retry" });
+  const out = JSON.parse(vm.runInContext(GUIDED_READ, rendered.context));
+  eq(harness.enrolls.length, 1, "EV2-7 C9: the retry posts nothing once the exact crop is gone");
+  eq(out.assign.status, "failed", "EV2-7 C9: and says so");
+  eq(out.assign.code, "scope", "EV2-7 C9: as a scope refusal");
+  ok(out.modal.includes("The saved crop is no longer on this reference."), "EV2-7 C9: naming what went missing");
+  ok(out.modal.includes('data-bc-action="keep"'), "EV2-7 C9: with a way out that writes nothing");
 }
 
 async function testSheetRecordedForOtherStateRefused() {
@@ -2559,6 +2697,11 @@ async function main() {
   await testGuidedAssignmentFailureRetainsCrop();
   await testUnknownEnrollOutcomeDoesNotDuplicate();
   await testCropRetryAfterRefreshKeepsOneRow();
+  await testDelayedConfirmationIsNotAFailure();
+  await testUnconfirmableRefreshKeepsTheCropAndRecovers();
+  await testRepeatedRetriesStayIdempotent();
+  await testRecoveredAssignmentSurvivesReload();
+  await testRetryRefusesWhenTheExactCropIsGone();
   await testSheetRecordedForOtherStateRefused();
   await testStateCoverageSubmitCarriesState();
   await testReceiptChangeDuringDialogRefuses();
@@ -2577,7 +2720,7 @@ async function main() {
     + `requirement-vs-demand legibility, staged preview, the visual chooser, continuity-state authoring, single-state `
     + `approval, dropdown readability and Details disclosure, plus the alpha blockers: dormant coverage claiming no `
     + `attention, the fail-closed direction, Save crop & use converging in one action, Save as candidate assigning `
-    + `nothing, the retired stale-assign action and strip/board agreement, plus the two residual surfaces this pass found: the provenance chooser on the generation-record fold, and the target lists and the batch-approval confirmation that described an occupied slot through the key the writer deletes; and EV2-7 Build coverage: exact state/view crop enrollment, refused and unknown assignment outcomes without duplicates, other-state sheets refused, state-scoped generation requests and receipt revalidation, one wording for earlier selections across the Desk and the dialog, revision conflicts and Refresh target answered by a re-read before an explicit assignment, no override recorded on open, and picker dismissal returning to Build coverage; and the EV2-7 human dogfood correction: a derived next action beside the coverage status that names the exact next missing view and writes nothing, empty views whose Review control says it is empty, approval stated in words beside its state, a sheet's missing record described as the sheet's, and a generate flow that selects only the requested view, expands only by an explicit press, and submits nothing before the confirmation. Provider calls made: 0.`);
+    + `nothing, the retired stale-assign action and strip/board agreement, plus the two residual surfaces this pass found: the provenance chooser on the generation-record fold, and the target lists and the batch-approval confirmation that described an occupied slot through the key the writer deletes; and EV2-7 Build coverage: exact state/view crop enrollment, refused and unknown assignment outcomes without duplicates, other-state sheets refused, state-scoped generation requests and receipt revalidation, one wording for earlier selections across the Desk and the dialog, revision conflicts and Refresh target answered by a re-read before an explicit assignment, no override recorded on open, and picker dismissal returning to Build coverage; and the EV2-7 human dogfood correction: a derived next action beside the coverage status that names the exact next missing view and writes nothing, empty views whose Review control says it is empty, approval stated in words beside its state, a sheet's missing record described as the sheet's, and a generate flow that selects only the requested view, expands only by an explicit press, and submits nothing before the confirmation; and the EV2-7 post-demo closeout: an enrollment that declares the durable write it just caused, a confirmation that re-reads the saved project rather than reporting a project it never re-read, a window that cannot re-read saying the assignment was saved instead of inventing a verdict, repeated retries that stay one binding and one crop, a reload that still reads the view as filled, and a retry that refuses rather than assign something other than the exact saved crop. Provider calls made: 0.`);
 }
 
 main().catch((error) => { console.error(error); process.exit(1); });

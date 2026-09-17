@@ -269,10 +269,40 @@
       // A refusal that asks for a reload (PROJECT_REVISION_CONFLICT) carries that action: the caller re-reads, it never re-posts the same If-Match.
       throw Object.assign(fail(data.error||'The assignment was not saved.',data.code||'refused'),{action:String(data.action||'')});
     }
-    await load({intent:'refresh'});
+    /* EV2-7 POST-DEMO - THE WRITE LANDED, SO SAY SO BEFORE GOING TO LOOK.
+       The server wrote the OPEN project's document and this window sent none of it, which is the exact case
+       noteCurrentProjectDurableAdvance() exists for - and enrollment was the one such writer that never
+       declared it. Undeclared, a refresh PREPARED BEFORE this enrollment could still commit over the enrolled
+       record, and the revision watch read this window's own write as a foreign change. Declared here, BEFORE
+       the follow-up refresh starts, the follow-up captures the new generation and commits normally. It moves
+       one integer and nothing else: not the revision, not the saved baseline, not the save indicator. */
+    if(typeof noteCurrentProjectDurableAdvance==='function')noteCurrentProjectDurableAdvance(slug);
+    const confirmed=await confirmSavedProject();
+    if(slug!==ACTIVE_PROJECT_SLUG||epoch!==PROJECT_OPEN_EPOCH)throw fail('The open project changed.','scope');
+    /* A REFRESH THAT DID NOT COMMIT IS NOT EVIDENCE OF ABSENCE. It leaves P exactly as it was, so reading that
+       P and calling the assignment unverified reports a save that SUCCEEDED as one that might not have - which
+       is the defect a filmmaker met as "could not confirm" over a view the server had already filled. */
+    if(!confirmed.committed)throw fail('The assignment was saved. CineBraid could not re-read the project to confirm it here ('+(confirmed.reason||'the refresh did not commit')+').','unconfirmed');
     const fresh=P[list]?.find(x=>x.id===id),slot=(fresh?.coverageSlots||[]).find(s=>s.id===slotId);
     if(slot?.referenceBindings?.[stateId]!==data.bindingId||!R.listing(SCAN,list,id).some(r=>r.name===data.bindingId))throw fail('The assignment response was received but the saved project does not show it. Refresh and check.','unverified');
     return {bindingId:data.bindingId,revision:data.revision};
+  }
+  /* READ-AFTER-WRITE THAT TOLERATES PROPAGATION AND NOTHING ELSE.
+     A refresh is several awaits long and refuses to commit when the durable record moved while it was in
+     flight - this window's own save settling, a generation ingest, the revision watch noticing the enrollment
+     itself. That refusal is transient by construction: the next refresh takes a new ticket and agrees. So
+     re-read, at most CONFIRM_READS times, and only while this window is still SETTLED - a window holding
+     unsaved work or refusing to save is not waiting for anything, and asking it again would only postpone an
+     honest answer. Bounded, not a poll and not a longer timeout: nothing here writes, sends, or repeats the
+     assignment, and the caller is told which of the two answers it got. */
+  const CONFIRM_READS=3;
+  async function confirmSavedProject() {
+    let outcome={committed:false,reason:'the project was not re-read'};
+    for(let read=0;read<CONFIRM_READS;read++){
+      outcome=await load({intent:'refresh'})||{committed:false,reason:'the project could not be re-read'};
+      if(outcome.committed||!projectSaveSettled().settled)return outcome;
+    }
+    return outcome;
   }
   async function commitPicker() {
     const p=picker;if(!p||p.busy||p.loadFailed||!p.single)return;
@@ -308,7 +338,7 @@
         if(!p.loadFailed&&!p.error)p.error='The project changed before this was saved, so nothing was added. The selection was re-read; check the view and add again.';
         renderPicker();syncPicker();return;
       }
-      p.error=error.message;p.unknown=error.code==='unknown'||error.code==='unverified';p.busy=false;syncPicker();document.getElementById('rd-picker-cancel')?.focus();
+      p.error=error.message;p.unknown=error.code==='unknown'||error.code==='unverified'||error.code==='unconfirmed';p.busy=false;syncPicker();document.getElementById('rd-picker-cancel')?.focus();
     }
   }
   // "This image contains several views": close the picker and crop the exact chosen original instead.
