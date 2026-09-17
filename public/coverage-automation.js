@@ -119,6 +119,30 @@
        still resolves instead of silently becoming "no primary reference". */
     return resolveApprovalMedia({ file: row.value, assetId: row.assetId || "" }, entityMedia(list, entity));
   }
+  /* EV2-7 — ONE CONTINUITY STATE'S COVERAGE, ASKED OF THAT STATE ALONE.
+     Build coverage works on entity + state + view. The identity input is that state's
+     own receipt — never the default's, never the first canon row — and a view counts
+     as filled for a nondefault state only through a binding recorded for that state.
+     An earlier slot selection nobody scoped is disclosed (`unscoped`), not counted. */
+  function stateCoverageContext(list, entity, stateId) {
+    const R = typeof CineBraidReferenceMedia !== "undefined" ? CineBraidReferenceMedia : null;
+    if (!R || !entity || typeof entityProductionTruth !== "function") return { available: false, reason: "Reference coverage readers are unavailable." };
+    const truth = entityProductionTruth(P, list, entity.id);
+    const states = entityStateListRead(entity, true);
+    const state = states.length ? states.find((row) => row.id === stateId) || null : stateId === "state-default" ? { id: "state-default", name: "Default", isDefault: true } : null;
+    if (!state) return { available: false, reason: "This continuity state no longer exists." };
+    const canon = truth.canon.find((row) => row.stateId === stateId) || null;
+    const media = entityMedia(list, entity);
+    const primary = canon ? resolveApprovalMedia({ file: canon.value, assetId: canon.assetId || "" }, media) : null;
+    const primaryEligible = !!primary && artifactMayHoldPrimaryAuthority(referenceArtifactStructureOf(entity, primary.name));
+    const isDefault = stateId === R.defaultStateId(entity);
+    /* The same per-view answer and wording the Desk reads (CineBraidReferenceMedia.viewStatus), over every state's rows. */
+    const views = R.requiredSlots(entity).map((slot) => {
+      const view = R.viewStatus(entity, slot, stateId, media);
+      return { ...view, slot, unscoped: view.earlier };
+    });
+    return { available: true, state, isDefault, canon, receiptId: canon?.receiptId || "", primary, primaryEligible, views, coverage: R.coverage(entity, media, stateId), missing: views.filter((view) => !view.filled).map((view) => view.slot) };
+  }
   /* What is sitting there with nobody's name on it. Offered to the creator as
      something they may confirm in one act; never used as identity input. */
   function historicPrimaryPointer(list, entity) {
@@ -136,8 +160,11 @@
    * model may look at. The old names — `identity-authority` for a raw pointer,
    * `approved-view` for a slot selection — were the two halves of the same
    * mistake, and both are gone. */
-  function coverageReferencePackage(list, entity, targetSlot = null) {
-    const primary = primaryReference(list, entity);
+  function coverageReferencePackage(list, entity, targetSlot = null, stateId = "") {
+    /* EV2-7 — a state-scoped package: that state's own canon, and only views bound to that
+       state (plus legacy selections for the default state). Without a state, unchanged. */
+    const scoped = stateId ? stateCoverageContext(list, entity, stateId) : null;
+    const primary = scoped ? (scoped.available ? scoped.primary : null) : primaryReference(list, entity);
     const media = entityMedia(list, entity);
     const desired = targetSlot ? coverageSlotViewTag(list, targetSlot) : "custom";
     const refs = [];
@@ -147,12 +174,14 @@
     };
     add(primary, null, 1000, "identity-canon");
     for (const slot of ensureCoverageSlots(list, entity)) {
-      const slotFile = slotSelectedFile(slot);
+      const assignment = scoped ? CineBraidReferenceMedia.selectedAssignment(entity, slot, stateId) : null;
+      if (scoped && !(scoped.available && (assignment.basis === "binding" || (scoped.isDefault && assignment.basis === "legacy")))) continue;
+      const slotFile = scoped ? assignment.key : slotSelectedFile(slot);
       if (!slotFile || entityCandidateIsCoverageSheet(entity, slotFile)) continue;
       /* Identity first, filename second — the same rule primaryReference() uses,
          so a coverage view and the primary cannot disagree about whether the
          image they both point at still exists. */
-      const item = resolveApprovalMedia({ file: slotFile, assetId: slot.selectedAssetId || slot.approvedAssetId || "" }, media);
+      const item = scoped ? media.find((row) => row.name === slotFile) || null : resolveApprovalMedia({ file: slotFile, assetId: slot.selectedAssetId || slot.approvedAssetId || "" }, media);
       if (!item) continue;
       const candidateView = coverageSlotViewTag(list, slot);
       const score = targetSlot && typeof referenceViewScore === "function"
@@ -319,7 +348,11 @@
       if (!belongs)
         throw new Error(`${options.slot?.label || slotId || "That slot"} is not ${group === "expressions" ? "an expression" : "a coverage"} slot on ${entity.name || entity.id}. Nothing was submitted.`);
     }
-    const authorities = coverageReferencePackage(list, entity, options.slot || null);
+    const authorities = coverageReferencePackage(list, entity, options.slot || null, options.stateId || "");
+    /* EV2-7 — a state-scoped request is refused before anything is sent when that state has
+       no approved identity of its own. The default state's approval is never borrowed. */
+    if (options.stateId && !authorities.some((row) => row.kind === "identity-canon"))
+      throw new Error(`Approve a ${options.stateName || "state"} reference before generating its views. Nothing was submitted.`);
     const primary = authorities[0]?.item || null;
     /* S8 — EVERY ROLE NAMES A PURPOSE. Only `identity-canon` is receipt-backed,
        and only it makes a claim; a supporting view travels as context and says
@@ -370,6 +403,9 @@
       ...(Number(options.maximumImages) > 0 ? { coverageMaximumImages: Number(options.maximumImages) } : {}),
       targetCoverageSlotId: options.slot?.id || "",
       targetCoverageSlotName: options.slot?.label || "",
+      /* The continuity state this request is for. The server already validates and stamps it
+         onto returned candidates; a request without a state sends exactly what it always did. */
+      ...(options.stateId ? { continuityStateId: options.stateId, continuityStateName: options.stateName || "" } : {}),
       coverageSourceFile: primary?.name || "",
       // Explicit provenance for edit/reference jobs. This is not a correction
       // requirement, but it prevents support reports from looking source-less.
@@ -684,20 +720,68 @@
     if (slotId) boundedWriteState(`selected:${expressions ? "expression-slot" : "coverage-slot"}`, expressions ? entityId : context, slotId);
   }
   window.returnToCoverageSlot = returnToCoverageSlot;
-  window.openCoverageSheetExtractor = (list, entityId, fileName, allowHumanOverride = false) => {
+  /* The extractor's machinery, one markup for the legacy and the guided surface. */
+  function coverageCropFineTune(layout, panelIndex, fileName) {
+    return `<details class="coverage-crop-advanced"><summary>Fine tune</summary><div><div class="coverage-crop-quick-grid"><label><span>Sheet layout</span><select id="coverage-crop-layout" onchange="setCoverageCropLayout(this.value)">${Object.entries(COVERAGE_CROP_LAYOUTS).map(([id,preset]) => `<option value="${id}" ${id === layout ? "selected" : ""}>${preset.label}</option>`).join("")}</select></label><label><span>Panel position</span><select id="coverage-crop-panel" onchange="setCoverageCropPanel(this.value)">${coverageCropPanelOptions(layout,panelIndex)}</select></label></div><div class="coverage-crop-presets"><button onclick="applyCoverageCropPreset()">Reset to panel</button><button onclick="setCoverageCropFull()">Use full image</button></div><div class="coverage-crop-fields">${["x","y","w","h"].map((key) => `<label><span>${key.toUpperCase()} %</span><input id="coverage-crop-${key}" type="number" min="0" max="100" step="0.5" onchange="setCoverageCropField('${key}',this.value)"></label>`).join("")}</div><label><span>Extraction note</span><textarea id="coverage-crop-note" placeholder="Why this panel is authoritative or any limitations."></textarea></label><div class="coverage-crop-provenance"><b>Source sheet</b><span>${esc(fileName)}</span><small>CineBraid stores the crop coordinates, panel layout, and source file so the angle can be traced later.</small></div></div></details>`;
+  }
+  /* EV2-7 — THE GUIDED CROP. One target line, one view, one acknowledgment, and two
+     saves that say exactly what they do. Nothing here detects panels, and neither save
+     approves anything; the assignment itself is Build coverage's exact enrollment. */
+  function openGuidedCoverageExtractor(list, entity, fileName, media, row, guided) {
+    const stateId = guided.stateId, stateName = stateNameOf(entity, stateId);
+    const ctx = stateCoverageContext(list, entity, stateId);
+    const slots = (entity.coverageSlots || []).filter((slot) => slot && !slot.retired);
+    if (!slots.length) return toast("This reference has no views to fill.");
+    const filled = (slot) => !!ctx.available && ctx.views.some((view) => view.slot.id === slot.id && view.filled);
+    const wanted = slots.find((slot) => slot.id === guided.slotId) || slots.find((slot) => !filled(slot)) || slots[0];
+    const layout = "3x1", panelIndex = Math.max(0, Math.min(2, slots.indexOf(wanted)));
+    window._coverageCrop = { list, entityId: entity.id, fileName, url: media.url, sheetType: "angles", slots, slotId: wanted.id, layout, panelIndex, crop: cropPresetForPanel(panelIndex, layout), sourceRow: row, guided, acknowledged: false };
+    const recorded = String(row.targetStateId || "");
+    const disclosure = guided.source?.kind === "media" ? "Production Media sheet · the original is not changed and is not added to this reference." : recorded ? "" : "State not recorded on this sheet · the crop is recorded for " + stateName + ".";
+    const label = esc(wanted.label || wanted.id);
+    const close = `onclick="window.CineBraidBuildCoverage ? CineBraidBuildCoverage.cancelCrop() : closeModal()"`;
+    openModal(`<div class="coverage-extractor-modal bc-crop" data-bc-crop><header><div><span>BUILD COVERAGE · CROP ONE VIEW</span><h3>${esc(entity.name || entity.id)}</h3><p class="bc-target" id="bc-crop-target">Crop for ${esc(stateName)} · <b id="coverage-crop-target-name">${label}</b></p>${disclosure ? `<p class="bc-note">${esc(disclosure)}</p>` : ""}</div><button class="cancel" ${close}>Close</button></header><div class="coverage-extractor-layout"><div><div id="coverage-crop-stage" class="coverage-crop-stage"><img id="coverage-crop-source" src="${attr(media.url)}" alt="Reference sheet for ${attr(entity.name || entity.id)}"><div id="coverage-crop-overlay" class="coverage-crop-overlay"><span id="coverage-crop-target-label"></span></div></div><small>Drag on the sheet to draw the crop around one view.</small></div><aside><label><span>This crop shows</span><select id="coverage-crop-slot" onchange="selectCoverageCropSlot(this.value)">${slots.map((slot) => `<option value="${attr(slot.id)}" ${slot.id === wanted.id ? "selected" : ""}>${esc(slot.label || slot.id)}${filled(slot) ? ` · filled for ${esc(stateName)}` : ""}</option>`).join("")}</select></label><div class="coverage-crop-navigation"><button class="ghost-btn" onclick="stepCoverageCropPanel(-1)">← Previous panel</button><button class="ghost-btn" onclick="stepCoverageCropPanel(1)">Next panel →</button></div><label class="bc-ack"><input id="coverage-crop-ack" type="checkbox" onchange="syncCoverageCropGuided()"><span>This crop shows the <b id="coverage-crop-ack-view">${label}</b> view. CineBraid does not detect panels.</span></label><p class="bc-approval">Saving or assigning a crop never approves it. Approval unchanged.</p>${coverageCropFineTune(layout, panelIndex, fileName)}</aside></div><div class="modal-actions coverage-extractor-actions"><button class="cancel" ${close}>Cancel</button><button class="ghost-btn" id="coverage-crop-guided-candidate" disabled onclick="CineBraidBuildCoverage.cropSave(false)">Save crop as candidate</button><button class="approve-btn large" id="coverage-crop-guided-assign" disabled onclick="CineBraidBuildCoverage.cropSave(true)">Save crop and assign to <span id="coverage-crop-assign-view">${label}</span></button></div></div>`);
+    setTimeout(() => { coverageCropRender(); coverageCropBindStage(); }, 30);
+  }
+  window.syncCoverageCropGuided = () => {
+    const state = window._coverageCrop;
+    if (!state?.guided) return;
+    const slot = state.slots.find((item) => item.id === state.slotId), label = slot?.label || slot?.id || "";
+    state.acknowledged = !!document.getElementById("coverage-crop-ack")?.checked;
+    for (const id of ["coverage-crop-target-name", "coverage-crop-ack-view", "coverage-crop-assign-view"]) { const el = document.getElementById(id); if (el) el.textContent = label; }
+    for (const id of ["coverage-crop-guided-candidate", "coverage-crop-guided-assign"]) { const el = document.getElementById(id); if (el) el.disabled = !state.acknowledged || !!state.saving; }
+  };
+  /* The default continuity state, read the way the Reference Desk reads it. */
+  function defaultStateIdOf(entity) {
+    if (typeof CineBraidReferenceMedia !== "undefined" && CineBraidReferenceMedia.defaultStateId) return CineBraidReferenceMedia.defaultStateId(entity);
+    const states = entityStateListRead(entity, true);
+    return (states.find((row) => row.isDefault) || states[0])?.id || "state-default";
+  }
+  function stateNameOf(entity, stateId) {
+    const states = entityStateListRead(entity, true);
+    return states.find((row) => row.id === stateId)?.name || (stateId === "state-default" ? "Default" : stateId);
+  }
+  /* EV2-7 — THE GUIDED SOURCE MODE. `guided` is Build coverage's transient selection:
+     {token, stateId, slotId, source:{kind:"entity"|"media", name, url, assetId, identity}}.
+     A Production Media sheet is not entity-owned, so nothing is written to any row for it:
+     its provenance travels only in the crop's existing coverageCrop.sourceSheet string. */
+  window.openCoverageSheetExtractor = (list, entityId, fileName, allowHumanOverride = false, guided = null) => {
     const entity = entityFor(list, entityId);
-    const media = entity && entityMedia(list, entity).find((item) => item.name === fileName);
+    const external = guided?.source?.kind === "media";
+    const media = entity && (external ? (guided.source.url ? { name: fileName, url: guided.source.url } : null) : entityMedia(list, entity).find((item) => item.name === fileName));
     if (!entity || !media) return toast("Reference sheet is unavailable");
-    const row = (entity.candidateFiles || []).find((item) => (item.stored || item.original) === fileName) || {};
-    const sheetReview = typeof entityLatestCandidateReview === "function" ? entityLatestCandidateReview(entity, fileName) : null;
-    if (!sheetReview?.pass && !row.sheetExtractionOverrideConfirmed && !allowHumanOverride) {
+    const row = external ? {} : (entity.candidateFiles || []).find((item) => (item.stored || item.original) === fileName) || {};
+    const sheetReview = !external && typeof entityLatestCandidateReview === "function" ? entityLatestCandidateReview(entity, fileName) : null;
+    if (!external && !sheetReview?.pass && !row.sheetExtractionOverrideConfirmed && !allowHumanOverride) {
       return openModal(`<div class="coverage-human-override"><span>HUMAN OVERRIDE</span><h3>Crop this sheet without an AI pass?</h3><p>The image has not passed an optional sheet review. You can still crop it by human judgment; CineBraid will record that decision in provenance.</p><div class="modal-actions"><button class="cancel" onclick="closeModal()">Go back</button><button class="approve-btn" onclick="closeModal();openCoverageSheetExtractor('${attr(list)}','${attr(entityId)}','${attr(fileName)}',true)">CONTINUE TO CROP</button></div></div>`);
     }
-    if (!sheetReview?.pass && !row.sheetExtractionOverrideConfirmed && allowHumanOverride) {
+    /* Guided mode records nothing on open: its acknowledgment is the human decision, written only when a guided crop is saved. */
+    if (!guided && !external && !sheetReview?.pass && !row.sheetExtractionOverrideConfirmed && allowHumanOverride) {
       row.sheetExtractionOverrideConfirmed = true;
       row.sheetExtractionOverrideAt = new Date().toISOString();
       dirty();
     }
+    if (guided) return openGuidedCoverageExtractor(list, entity, fileName, media, row, guided);
     const sheetType = row.coverageSheetType || "angles";
     let slots = coverageSheetSlots(list, entity, sheetType);
     if (!slots.length) slots = (typeof ensureCoverageSlots === "function" ? ensureCoverageSlots(list, entity) : entity.coverageSlots || []).slice(0, 4);
@@ -707,6 +791,10 @@
     const panelCount = COVERAGE_CROP_LAYOUTS[layout].cols * COVERAGE_CROP_LAYOUTS[layout].rows;
     const panelIndex = Math.max(0, Math.min(panelCount - 1, firstIndex));
     window._coverageCrop = { list, entityId, fileName, url: media.url, sheetType, slots, slotId: slots[firstIndex]?.id || slots[0]?.id || "", layout, panelIndex, crop: cropPresetForPanel(panelIndex, layout), sourceRow: row };
+    /* A sheet brought in for a nondefault state cannot fill that state's views through the
+       legacy global slot writer; that assignment belongs to Build coverage's exact enrollment. */
+    const legacyStateId = String(row.targetStateId || "");
+    const nondefaultSource = !!legacyStateId && legacyStateId !== defaultStateIdOf(entity);
     /* The sheet workflow's own condition: more than one view on this sheet is
        still empty, so "and then the next one" is a real offer rather than a
        button that reopens the extractor on nothing. */
@@ -756,13 +844,15 @@
      * "the intended slot converges visibly". No owner moves and no state is
      * added; the label now reads the same predicate the rest of the function
      * does. */
-    openModal(`<div class="coverage-extractor-modal"><header><div><span>REFERENCE EXTRACTION</span><h3>${esc(entity.name || entity.id)}</h3><p>Turn one sheet into clean authority views. Select a target, choose the panel, fine-tune only when needed, then save.</p></div><button class="cancel" onclick="closeModal()">Close</button></header><nav class="coverage-extractor-steps" aria-label="Reference extraction steps"><span class="active"><b>1</b> Choose target</span><span class="active"><b>2</b> Crop panel</span><span><b>3</b> Save authority</span></nav><div class="coverage-extractor-layout"><div><div id="coverage-crop-stage" class="coverage-crop-stage"><img id="coverage-crop-source" src="${attr(media.url)}" alt="Reference sheet"><div id="coverage-crop-overlay" class="coverage-crop-overlay"><span id="coverage-crop-target-label"></span></div></div><small>Drag anywhere on the sheet to redraw the crop. The layout and panel controls provide a fast starting point.</small></div><aside><label><span>Save this crop as</span><select id="coverage-crop-slot" onchange="selectCoverageCropSlot(this.value)">${slots.map((slot) => `<option value="${attr(slot.id)}" ${slot.id === window._coverageCrop.slotId ? "selected" : ""}>${esc(slot.label)}${slotSelectedFile(slot) ? " · already assigned" : ""}</option>`).join("")}</select></label><div class="coverage-crop-navigation"><button class="ghost-btn" onclick="stepCoverageCropPanel(-1)">← Previous panel</button><button class="ghost-btn" onclick="stepCoverageCropPanel(1)">Next panel →</button></div><div class="coverage-review-gate"><b>Review is optional</b><span>Save crop &amp; use puts this crop into the view above in one action. Save as candidate keeps it without changing the view. Neither is a canon approval, and an AI check can be run afterwards either way.</span></div><details class="coverage-crop-advanced"><summary>Fine tune</summary><div><div class="coverage-crop-quick-grid"><label><span>Sheet layout</span><select id="coverage-crop-layout" onchange="setCoverageCropLayout(this.value)">${Object.entries(COVERAGE_CROP_LAYOUTS).map(([id,preset]) => `<option value="${id}" ${id === layout ? "selected" : ""}>${preset.label}</option>`).join("")}</select></label><label><span>Panel position</span><select id="coverage-crop-panel" onchange="setCoverageCropPanel(this.value)">${coverageCropPanelOptions(layout,panelIndex)}</select></label></div><div class="coverage-crop-presets"><button onclick="applyCoverageCropPreset()">Reset to panel</button><button onclick="setCoverageCropFull()">Use full image</button></div><div class="coverage-crop-fields">${["x","y","w","h"].map((key) => `<label><span>${key.toUpperCase()} %</span><input id="coverage-crop-${key}" type="number" min="0" max="100" step="0.5" onchange="setCoverageCropField('${key}',this.value)"></label>`).join("")}</div><label><span>Extraction note</span><textarea id="coverage-crop-note" placeholder="Why this panel is authoritative or any limitations."></textarea></label><div class="coverage-crop-provenance"><b>Source sheet</b><span>${esc(fileName)}</span><small>CineBraid stores the crop coordinates, panel layout, and source file so the angle can be traced later.</small></div></div></details></aside></div><div class="modal-actions coverage-extractor-actions"><button class="cancel" onclick="closeModal()">Cancel</button><button class="ghost-btn" onclick="extractCoverageCrop({ assign: false })">SAVE AS CANDIDATE</button>${moreToCrop ? `<button class="ghost-btn" onclick="extractCoverageCrop({ assign: false, next: true })">SAVE & NEXT VIEW</button>` : ""}<button class="approve-btn large" onclick="extractCoverageCrop({ assign: true })">SAVE CROP & USE</button></div></div>`);
+    openModal(`<div class="coverage-extractor-modal"><header><div><span>REFERENCE EXTRACTION</span><h3>${esc(entity.name || entity.id)}</h3><p>Turn one sheet into clean authority views. Select a target, choose the panel, fine-tune only when needed, then save.</p></div><button class="cancel" onclick="closeModal()">Close</button></header><nav class="coverage-extractor-steps" aria-label="Reference extraction steps"><span class="active"><b>1</b> Choose target</span><span class="active"><b>2</b> Crop panel</span><span><b>3</b> Save authority</span></nav><div class="coverage-extractor-layout"><div><div id="coverage-crop-stage" class="coverage-crop-stage"><img id="coverage-crop-source" src="${attr(media.url)}" alt="Reference sheet"><div id="coverage-crop-overlay" class="coverage-crop-overlay"><span id="coverage-crop-target-label"></span></div></div><small>Drag anywhere on the sheet to redraw the crop. The layout and panel controls provide a fast starting point.</small></div><aside><label><span>Save this crop as</span><select id="coverage-crop-slot" onchange="selectCoverageCropSlot(this.value)">${slots.map((slot) => `<option value="${attr(slot.id)}" ${slot.id === window._coverageCrop.slotId ? "selected" : ""}>${esc(slot.label)}${slotSelectedFile(slot) ? " · already assigned" : ""}</option>`).join("")}</select></label><div class="coverage-crop-navigation"><button class="ghost-btn" onclick="stepCoverageCropPanel(-1)">← Previous panel</button><button class="ghost-btn" onclick="stepCoverageCropPanel(1)">Next panel →</button></div><div class="coverage-review-gate"><b>Review is optional</b><span>Save crop &amp; use puts this crop into the view above in one action. Save as candidate keeps it without changing the view. Neither is a canon approval, and an AI check can be run afterwards either way.</span></div>${coverageCropFineTune(layout, panelIndex, fileName)}</aside></div><div class="modal-actions coverage-extractor-actions"><button class="cancel" onclick="closeModal()">Cancel</button><button class="ghost-btn" onclick="extractCoverageCrop({ assign: false })">SAVE AS CANDIDATE</button>${moreToCrop ? `<button class="ghost-btn" onclick="extractCoverageCrop({ assign: false, next: true })">SAVE & NEXT VIEW</button>` : ""}${nondefaultSource ? `<p class="coverage-crop-state-note" role="note">Assign ${esc(stateNameOf(entity, legacyStateId))} views from the Reference Desk → Build coverage.</p>` : `<button class="approve-btn large" onclick="extractCoverageCrop({ assign: true })">SAVE CROP & USE</button>`}</div></div>`);
     setTimeout(() => { coverageCropRender(); coverageCropBindStage(); }, 30);
   };
   window.selectCoverageCropSlot = (slotId) => {
     const state = window._coverageCrop;
     if (!state) return;
     state.slotId = slotId;
+    /* A guided crop's acknowledgment names one view; changing the view withdraws it. */
+    if (state.guided) { const ack = document.getElementById("coverage-crop-ack"); if (ack) ack.checked = false; window.syncCoverageCropGuided(); }
     coverageCropRender();
   };
   window.setCoverageCropLayout = (layout) => {
@@ -832,26 +922,41 @@
    * existing save writer retains recoverable edits on failure, and a retry reuses
    * the exact upload. A boolean argument is still accepted, meaning
    * what it always meant, so a page mid-session cannot break on an old handler. */
-  window.extractCoverageCrop = async (options = false) => {
-    const settings = options && typeof options === "object" ? options : { assign: false, next: options !== true };
-    const assign = settings.assign === true;
-    /* Continuation belongs to the candidate path alone, because an assignment may
-       still raise the REPLACE question and reopening the extractor over it would
-       bury a decision the filmmaker has to make. */
-    const continueToNext = !assign && settings.next === true;
-    const state = window._coverageCrop;
-    const entity = state && entityFor(state.list, state.entityId);
+  /* EV2-7 — THE CROP CANDIDATE WRITER, AWAITABLE ON ITS OWN. extractCoverageCrop() and
+     Build coverage both save through it, so a guided crop is the same upload, the same
+     row, the same serialized save and the same scan check as the legacy one.
+     `targetStateId` is Build coverage's explicit target; a sheet recorded for another
+     state refuses it before anything is uploaded. Retries reuse the pending upload,
+     survive a refresh of the same open project, and never push the row twice. */
+  async function saveCoverageCropCandidate(state, { assign = false, targetStateId: requestedStateId = "" } = {}) {
+    const report = (message) => {
+      let notice=document.getElementById('coverage-crop-save-error');
+      if(!notice && document.querySelector('.coverage-extractor-modal')){notice=document.createElement('p');notice.id='coverage-crop-save-error';notice.setAttribute('role','alert');document.querySelector('.coverage-extractor-actions').before(notice);}
+      if(notice)notice.textContent=message;
+      toast(message);return {ok:false,message};
+    };
+    const sourceEntity = state && entityFor(state.list, state.entityId);
     const slot = state?.slots.find((item) => item.id === state.slotId);
     const img = document.getElementById("coverage-crop-source");
-    if (!state || !entity || !slot || !img?.naturalWidth) return toast("The source sheet is not ready");
-    if (state.saving) return;
+    if (!state || !sourceEntity || !slot || !img?.naturalWidth) { toast("The source sheet is not ready"); return {ok:false,message:"The source sheet is not ready"}; }
+    if (state.saving) return {ok:false,busy:true,message:"This crop is already being saved."};
     const project=P,slug=ACTIVE_PROJECT_SLUG;
-    const targetStateId=state.sourceRow.targetStateId || entityStateListRead(entity,true).find(s=>s.isDefault)?.id || "state-default";
-    if(!entityStateById(entity,targetStateId))return toast("The source sheet's continuity state is unavailable");
+    const recordedStateId=String(state.sourceRow.targetStateId || "");
+    if(requestedStateId && recordedStateId && recordedStateId!==requestedStateId)return report(`This sheet was brought in for ${stateNameOf(sourceEntity,recordedStateId)}; it cannot supply ${stateNameOf(sourceEntity,requestedStateId)} views. Nothing was uploaded.`);
+    const targetStateId=requestedStateId || state.sourceRow.targetStateId || entityStateListRead(sourceEntity,true).find(s=>s.isDefault)?.id || "state-default";
+    if(!entityStateById(sourceEntity,targetStateId) && !(requestedStateId==="state-default" && !entityStateListRead(sourceEntity,true).length)){toast("The source sheet's continuity state is unavailable");return {ok:false,message:"The source sheet's continuity state is unavailable"};}
     state.saving=true;
     try {
       // A retry completes this exact upload; it never creates another crop.
       if(!state.pendingCrop) {
+        const external = state.guided?.source?.kind === "media" ? state.guided.source : null;
+        if (external) {
+          /* A Production Media sheet is re-read at the moment of use: the crop must come from the exact original that was chosen. */
+          const inventory = await fetch('/api/references/media?project='+encodeURIComponent(slug),{cache:'no-store'}).then(r=>r.json()).catch(()=>({}));
+          const current = (inventory.images||[]).find(r=>r.assetId===external.assetId);
+          if (!current?.available || JSON.stringify(current.identity)!==JSON.stringify(external.identity)) throw new Error("The sheet changed. Reopen it.");
+        }
+        const entity = sourceEntity;
         const sx = Math.round(img.naturalWidth * state.crop.x / 100), sy = Math.round(img.naturalHeight * state.crop.y / 100);
         const sw = Math.max(1, Math.round(img.naturalWidth * state.crop.w / 100)), sh = Math.max(1, Math.round(img.naturalHeight * state.crop.h / 100));
         const canvas = document.createElement("canvas"); canvas.width = sw; canvas.height = sh;
@@ -864,17 +969,26 @@
         const data = await response.json().catch(() => ({}));
         if (!response.ok) throw new Error(data.error || "Could not save the extracted crop");
         const note = document.getElementById("coverage-crop-note")?.value || "";
-        state.pendingCrop={slug,project,slotId:slot.id,row:{ stored: data.name, original: data.name, addedAt: new Date().toISOString(), decision: "unreviewed", reviewRequired: !assign, directApprovalRequested: !!assign, targetStateId, targetCoverageSlotId: slot.id, targetCoverageSlotName: slot.label, coverageGroup: state.sheetType === "expressions" ? "expressions" : "angles", coverageCrop: { sourceSheet: state.fileName, layout: state.layout, panelIndex: state.panelIndex, normalized: { ...state.crop }, sourceBuildId: state.sourceRow.sourceBuildId || "", generationJobId: state.sourceRow.generationJobId || "", manuallyAdjusted: true, note }, coverageJobType: "extracted-crop", referenceView: coverageSlotViewTag(state.list, slot) }};
+        state.pendingCrop={slug,epoch:PROJECT_OPEN_EPOCH,slotId:slot.id,row:{ stored: data.name, original: data.name, addedAt: new Date().toISOString(), decision: "unreviewed", reviewRequired: !assign, directApprovalRequested: !!assign, targetStateId, targetCoverageSlotId: slot.id, targetCoverageSlotName: slot.label, coverageGroup: state.sheetType === "expressions" ? "expressions" : "angles", coverageCrop: { sourceSheet: state.fileName, layout: state.layout, panelIndex: state.panelIndex, normalized: { ...state.crop }, sourceBuildId: state.sourceRow.sourceBuildId || "", generationJobId: state.sourceRow.generationJobId || "", manuallyAdjusted: true, note }, coverageJobType: "extracted-crop", referenceView: coverageSlotViewTag(state.list, slot) }};
       }
       const pending=state.pendingCrop;
-      if(P!==pending.project || ACTIVE_PROJECT_SLUG!==pending.slug || slot.id!==pending.slotId)throw new Error("The reference context changed. The uploaded crop is kept; reopen this reference before continuing.");
+      // The same open project (slug and open epoch), not the same object: a refresh between attempts still completes this upload.
+      if(ACTIVE_PROJECT_SLUG!==pending.slug || PROJECT_OPEN_EPOCH!==pending.epoch || slot.id!==pending.slotId || pending.row.targetStateId!==targetStateId)throw new Error("The reference context changed. The uploaded crop is kept; reopen this reference before continuing.");
       const preparedResponse=await fetch('/api/media/prepare-identity',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({projectSlug:slug,dir:entityFolder(state.list),name:pending.row.stored})});
       const prepared=await preparedResponse.json();
       if(!preparedResponse.ok || prepared.status!=='ready' || !prepared.assetId)throw new Error("The crop's identity is not ready. Retry this save.");
       if(P!==project || ACTIVE_PROJECT_SLUG!==slug)throw new Error("The project changed while saving the crop.");
+      const entity = entityFor(state.list, state.entityId);
+      if(!entity)throw new Error("This reference no longer exists. The uploaded crop is kept.");
       pending.row.assetId=prepared.assetId;
       entity.candidateFiles = Array.isArray(entity.candidateFiles) ? entity.candidateFiles : [];
-      if(!entity.candidateFiles.includes(pending.row))entity.candidateFiles.push(pending.row);
+      // By stored name: a save whose response was lost but which persisted must not become an ambiguous duplicate row.
+      if(!entity.candidateFiles.some(r => (r.stored||r.name) === pending.row.stored))entity.candidateFiles.push(pending.row);
+      /* A guided crop of an entity sheet with no passing review: the acknowledged save is the human override, recorded now and not when the crop opened. */
+      if(state.guided && state.guided.source?.kind !== "media"){
+        const sheetRow=entity.candidateFiles.find(r => (r.stored||r.original) === state.fileName), sheetReview=typeof entityLatestCandidateReview === "function" ? entityLatestCandidateReview(entity, state.fileName) : null;
+        if(sheetRow && !sheetReview?.pass && !sheetRow.sheetExtractionOverrideConfirmed){sheetRow.sheetExtractionOverrideConfirmed=true;sheetRow.sheetExtractionOverrideAt=new Date().toISOString();}
+      }
       updateCoverageTerminalState(state.list, entity);
       dirty();
       // Use the existing serialized writer, including its retry/refusal behavior.
@@ -889,15 +1003,25 @@
       const resolved=scan.references?.[state.list]?.[state.entityId]?.find(r=>r.name===pending.row.stored);
       if(!resolved?.available || resolved.assetId!==prepared.assetId)throw new Error("The candidate is saved, but its exact image is unavailable. Retry after checking the media.");
       SCAN=scan;
+      return {ok:true,row:pending.row,assetId:prepared.assetId};
     } catch(error) {
       // Retain the exact upload and unsaved edit under the existing save-error
       // recovery. No success, assignment, approval, deletion or duplicate upload.
-      const message="Candidate save not complete. "+(error.message || "Retry the save.");
-      let notice=document.getElementById('coverage-crop-save-error');
-      if(!notice && document.querySelector('.coverage-extractor-modal')){notice=document.createElement('p');notice.id='coverage-crop-save-error';notice.setAttribute('role','alert');document.querySelector('.coverage-extractor-actions').before(notice);}
-      if(notice)notice.textContent=message;
-      toast(message);return;
+      return report("Candidate save not complete. "+(error.message || "Retry the save."));
     } finally { state.saving=false; }
+  }
+  window.extractCoverageCrop = async (options = false) => {
+    const settings = options && typeof options === "object" ? options : { assign: false, next: options !== true };
+    const assign = settings.assign === true;
+    /* Continuation belongs to the candidate path alone, because an assignment may
+       still raise the REPLACE question and reopening the extractor over it would
+       bury a decision the filmmaker has to make. */
+    const continueToNext = !assign && settings.next === true;
+    const state = window._coverageCrop;
+    const saved = await saveCoverageCropCandidate(state, { assign });
+    if (!saved.ok) return;
+    const entity = entityFor(state.list, state.entityId);
+    const slot = state.slots.find((item) => item.id === state.pendingCrop.slotId);
     const data = { name: state.pendingCrop.row.stored };
     const approve = assign;
     const group = state.sheetType === "expressions" ? "expressions" : "angles";
@@ -938,7 +1062,10 @@
          entities.js's entityCandidateCard), which is where a request to review
          something belongs: on the thing. What changed is that CineBraid no
          longer opens it on the filmmaker's behalf after a save. */
-      if (approve) approveCoverageCandidate(state.list, state.entityId, data.name, slot.id, true, { confirmed: true });
+      /* EV2-7 — the global slot writer never assigns a nondefault state's crop. That exact
+         assignment belongs to Build coverage; the crop is kept as a candidate. */
+      if (approve && entity && state.pendingCrop.row.targetStateId !== defaultStateIdOf(entity)) toast(`${slot.label} crop saved as a candidate. Assign ${stateNameOf(entity, state.pendingCrop.row.targetStateId)} views from the Reference Desk → Build coverage.`);
+      else if (approve) approveCoverageCandidate(state.list, state.entityId, data.name, slot.id, true, { confirmed: true });
       else toast(`${slot.label} crop saved as a candidate — review it from the candidate card whenever you want to`);
     }
   };
@@ -1127,5 +1254,5 @@
      module's own dialogs read; a second derivation over there is exactly the
      duplicate truth the Aug 26 pass found. */
   window.coverageRunState = coverageRunState;
-  window.__CINEBRAID_COVERAGE_AUTOMATION = { missingCoverageSlots, missingCoverageWork, coverageSheetSlots, coverageSlotsForTask, coverageRunSlots, coverageRunCoverage, coverageRunState, updateCoverageTerminalState, primaryReference, historicPrimaryPointer, coverageReferencePackage, coverageSlotPrompt, submitCoverageJob };
+  window.__CINEBRAID_COVERAGE_AUTOMATION = { missingCoverageSlots, missingCoverageWork, coverageSheetSlots, coverageSlotsForTask, coverageRunSlots, coverageRunCoverage, coverageRunState, updateCoverageTerminalState, primaryReference, historicPrimaryPointer, coverageReferencePackage, coverageSlotPrompt, submitCoverageJob, stateCoverageContext, saveCoverageCropCandidate, coverageClientRequestId };
 })();

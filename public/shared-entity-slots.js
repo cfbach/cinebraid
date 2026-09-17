@@ -181,6 +181,20 @@ function assignSlotReference(slot, request = {}) {
       return { assigned: false, reason: "SLOT_OWNERSHIP_UNRESOLVED", message: `${fileName} is not durably owned by ${slotText(owner.entityId)}. Claim it for this reference first.` };
     }
   }
+  /* EV2-7 — A STATE-SCOPED BINDING IS ONE STATE'S ANSWER, NOT THE SLOT'S.
+     Enrolling a Weathered view used to fall through to the global write below:
+     `selectedFile` became the Weathered binding, `approvedFile` was deleted, and
+     the Default state's legacy selection vanished for every global reader. A
+     scoped write touches only this state's entry in `referenceBindings`; the
+     legacy selection, its history and its claims stay exactly as they were. */
+  if (it.stateScoped === true) {
+    const stateId = slotText(it.stateId);
+    if (!stateId) return { assigned: false, reason: "no-state" };
+    const bindings = slotObject(target.referenceBindings);
+    const previousForState = slotText(bindings[stateId]);
+    target.referenceBindings = { ...bindings, [stateId]: fileName };
+    return { assigned: true, reason: "selected", previous: previousForState, fileName, scope: "state" };
+  }
   const previous = slotSelectedFile(target);
   if (previous && previous !== fileName) {
     target.replacementHistory = slotList(target.replacementHistory);

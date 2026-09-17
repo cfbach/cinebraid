@@ -222,6 +222,7 @@ const SOURCES = [
   "tests/reference-enrollment.js",
   "tests/shot-desk-presentation.js",
   "public/media-return.js",
+  "public/reference-coverage-build.js",
 ];
 for (const source of SOURCES) {
   const result = spawnSync(process.execPath, ["--check", source], { cwd: ROOT, stdio: "inherit", windowsHide: true });

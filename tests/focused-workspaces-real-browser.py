@@ -389,8 +389,8 @@ try:
         assert module_loaded(), 'NC-D keeps the renderer script loaded'
         expect_red("NC-D", "a loaded renderer that never produces its surface", check_execution)
 
-        arm("NC-E", ("coverage:R.coverage(entity,media,state.stateId)",
-            "coverage:{...R.coverage(entity,media,state.stateId),required:(entity.coverageSlots||[]).filter(s=>s.required!==false).length}"))
+        arm("NC-E", ("coverage:R.coverage(entity,all,state.stateId)",
+            "coverage:{...R.coverage(entity,all,state.stateId),required:(entity.coverageSlots||[]).filter(s=>s.required!==false).length}"))
         settle(f"#/location/{location_id}")
         check_execution()
         expect_red("NC-E", "retired boolean semantics count planned and not-required views as required", check_coverage_agreement)

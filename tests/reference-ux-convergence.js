@@ -1919,6 +1919,425 @@ async function testBatchApprovalNamesWhatItWouldReplace() {
 }
 
 /* ==========================================================================
+   EV2-7 — BUILD COVERAGE: STATE-SAFE, EXACT, AND NEVER TWICE.
+
+   A composite sheet is a source. Build coverage takes a transient selection of it,
+   saves a derived crop through the shipped crop writer, and binds that crop to one
+   exact continuity state and view through the unchanged enrollment contract. The
+   server is modelled here as a small in-memory store so a refresh reads back what
+   was "persisted": a crop, a binding, a revision. Nothing here is a provider, and
+   every paid route is a local stub that records what it was asked.
+   ========================================================================== */
+const EV27_RUNTIME = ["shared-reference-media.js", "reference-desk.js", "reference-coverage-build.js"];
+const EV27_ALT = "state-alternate";
+const EV27_IDENTITY = { bytes: 12, mtimeMs: 1, contentHash: "" };
+function guidedFixture({ sheetState = EV27_ALT } = {}) {
+  const project = convergenceFixture();
+  project.characters[0].continuityStates.push({ id: EV27_ALT, name: "Alternate", isDefault: false, approvedFile: "" });
+  project.characters[0].candidateFiles.find((row) => row.stored === "CHAR-UX-SHEET.png").targetStateId = sheetState;
+  return project;
+}
+/* A second state with its own receipt and its own bound Front, and a third with neither. */
+function soakedFixture() {
+  const project = convergenceFixture({ states: 2 });
+  const character = project.characters[0];
+  const binding = "ref-50a4ed00-0000-4000-8000-000000000001";
+  character.continuityStates.find((state) => state.id === "state-soaked").approvedFile = "CHAR-UX-SOAKED.png";
+  character.continuityStates.push({ id: "state-dry", name: "Dry", isDefault: false, approvedFile: "" });
+  character.candidateFiles.push(
+    { stored: "CHAR-UX-SOAKED.png", original: "CHAR-UX-SOAKED.png", decision: "unreviewed", coverageJobType: "single-reference", targetStateId: "state-soaked" },
+    { stored: binding, original: "soaked-front.png", decision: "unreviewed", coverageJobType: "single-reference", targetStateId: "state-soaked", targetCoverageSlotId: "front",
+      referenceBinding: { version: 1, id: binding, assetId: "asset-" + "b".repeat(32), entityList: "characters", entityId: "CHAR-UX", stateId: "state-soaked", slotId: "front", identity: EV27_IDENTITY } });
+  character.coverageSlots.find((slot) => slot.id === "front").referenceBindings = { "state-soaked": binding };
+  withCanon(project, { kind: "entity-state", list: "characters", entityId: "CHAR-UX", stateId: "state-soaked", value: "CHAR-UX-SOAKED.png" });
+  return { project, binding };
+}
+function guidedHarness(project, { mutateSource = null, enroll = [], scanMisses = 0 } = {}) {
+  const uploaded = [], enrolls = [], jobs = [], puts = [];
+  const plan = { enroll: [...enroll], scanMisses };
+  let server = structuredClone(project), revision = 1;
+  const rev = () => `"guided-rev-${revision}"`;
+  const entityOf = () => server.characters.find((row) => row.id === "CHAR-UX");
+  const listingRow = (row) => row.referenceBinding
+    ? { name: row.stored, assetId: row.referenceBinding.assetId, bindingId: row.referenceBinding.id, stateId: row.referenceBinding.stateId, slotId: row.referenceBinding.slotId, available: true, url: `/fixture/ref/${row.stored}` }
+    : { name: row.stored, assetId: row.assetId || "", available: true, url: `/assets/anchors/${row.stored}` };
+  const harness = {
+    uploaded, enrolls, jobs, puts, mutateSource,
+    server: () => server,
+    /* A write from elsewhere: the stored project moves to a new revision. */
+    backgroundWrite: (change) => { change(server); revision++; },
+    render: () => render("#/character/CHAR-UX", project, {
+      scan: convergenceScan(), storage: {}, ...(mutateSource ? { mutateSource } : {}),
+      fetch: async (url, options = {}, respond) => {
+        const target = String(url || "");
+        if (target.startsWith("/api/media/upload")) {
+          const name = decodeURIComponent((/name=([^&]+)/.exec(target) || [])[1] || "");
+          uploaded.push(name);
+          return respond({ name });
+        }
+        if (target === "/api/media/prepare-identity") {
+          const { name } = JSON.parse(options.body);
+          return respond({ status: uploaded.includes(name) ? "ready" : "unavailable", assetId: "asset-crop-" + uploaded.indexOf(name) });
+        }
+        if (target.startsWith("/api/projects/") && options.method === "PUT") {
+          server = JSON.parse(options.body); revision++; puts.push(rev());
+          return respond({ ok: true, revision: rev() });
+        }
+        if (target === "/api/project") return respond(server, 200, { "x-cinebraid-project-slug": "fixture", "x-cinebraid-project-revision": rev(), etag: rev() });
+        if (target === "/api/scan") {
+          const miss = plan.scanMisses > 0 && uploaded.length > 0;
+          if (miss) plan.scanMisses--;
+          const base = convergenceScan();
+          return respond({ ...base, anchors: [...base.anchors, ...uploaded.map((name) => ({ name, url: `/assets/anchors/${name}` }))],
+            references: { characters: { "CHAR-UX": (entityOf().candidateFiles || []).filter((row) => !(miss && uploaded.includes(row.stored))).map(listingRow) } } });
+        }
+        if (target.startsWith("/api/references/media")) {
+          return respond({ images: [
+            ...(entityOf().candidateFiles || []).filter((row) => row.assetId).map((row) => ({ assetId: row.assetId, available: true, identity: EV27_IDENTITY, url: `/fixture/media/${row.assetId}`, storagePath: `anchors/${row.stored}`, sourceName: row.stored })),
+            { assetId: "asset-media-turnaround", available: true, identity: { bytes: 99, mtimeMs: 5, contentHash: "" }, url: "/fixture/media/turnaround", storagePath: "media/TURNAROUND.png", sourceName: "TURNAROUND.png" },
+          ] });
+        }
+        if (target === "/api/references/enroll") {
+          const body = JSON.parse(options.body), step = plan.enroll.shift() || "ok";
+          enrolls.push({ ifMatch: options.headers["If-Match"], body, step, lastPut: puts[puts.length - 1] || "" });
+          if (step === "refuse") return respond({ error: "The project revision changed. Nothing was enrolled." }, 409);
+          /* The seam's own refusal after a background write moved the stored revision: the same If-Match can never pass again. */
+          if (step === "conflict") { revision++; return respond({ ok: false, error: "The project changed before this write, so the entire operation was refused.", code: "PROJECT_REVISION_CONFLICT", status: 409, yourRevision: options.headers["If-Match"], action: "reload", revision: rev() }, 409); }
+          const entity = server.characters.find((row) => row.id === body.entityId), slot = entity.coverageSlots.find((row) => row.id === body.slotId);
+          const id = `ref-${String(enrolls.length).padStart(8, "0")}-0000-4000-8000-000000000000`;
+          entity.candidateFiles.push({ stored: id, original: "enrolled", decision: "unreviewed", coverageJobType: "single-reference", targetStateId: body.stateId, targetCoverageSlotId: body.slotId,
+            referenceBinding: { version: 1, id, assetId: body.assetId, entityList: body.list, entityId: body.entityId, stateId: body.stateId, slotId: body.slotId, identity: body.expectedIdentity } });
+          slot.referenceBindings = { ...(slot.referenceBindings || {}), [body.stateId]: id };
+          revision++;
+          if (step === "lost") throw new Error("The connection closed after the server saved.");
+          return respond({ ok: true, bindingId: id, assetId: body.assetId, revision: rev() });
+        }
+        if (target === "/api/generation/fal/coverage/jobs" && options.method === "POST") {
+          const body = JSON.parse(options.body);
+          jobs.push(body);
+          return respond({ ok: true, job: { id: `ev27-job-${jobs.length}`, status: "IN_QUEUE", purpose: "entity-reference", ...body } });
+        }
+        return null;
+      },
+    }),
+  };
+  return harness;
+}
+/* The desk, the reader and Build coverage are not in the shared harness list; loading them
+   for every fixture would change entityMedia() for suites that set SCAN.references. */
+async function bootGuided(harness) {
+  const rendered = await harness.render();
+  vm.runInContext("globalThis.matchMedia = () => ({ matches: false, addEventListener() {} }); globalThis.requestAnimationFrame = (fn) => setTimeout(fn, 0); pollFalGeneration = () => {};", rendered.context);
+  for (const file of EV27_RUNTIME) {
+    const source = fs.readFileSync(path.join(ROOT, "public", file), "utf8");
+    if (file === "reference-coverage-build.js") vm.runInContext("globalThis.__ev27Add = document.addEventListener; document.addEventListener = function (type, fn, options) { if (type === 'click') globalThis.__ev27Click = fn; return globalThis.__ev27Add.call(document, type, fn, options); };", rendered.context);
+    /* The Desk's own delegated listeners, so a picker dismissal can be delivered the way the page receives it. */
+    if (file === "reference-desk.js") vm.runInContext("globalThis.__ev27Add = document.addEventListener; document.addEventListener = function (type, fn, options) { if (type === 'click') globalThis.__ev27DeskClick = fn; if (type === 'keydown') globalThis.__ev27DeskKey = fn; return globalThis.__ev27Add.call(document, type, fn, options); };", rendered.context);
+    vm.runInContext(harness.mutateSource ? String(harness.mutateSource(file, source) ?? source) : source, rendered.context, { filename: file });
+    if (file === "reference-coverage-build.js" || file === "reference-desk.js") vm.runInContext("document.addEventListener = globalThis.__ev27Add;", rendered.context);
+  }
+  return rendered;
+}
+/* Delivers a click to Build coverage's own delegated handler, then waits for the flow to settle. */
+async function clickBuild(rendered, dataset) {
+  vm.runInContext(`(() => { const d = ${JSON.stringify(dataset)}; const button = { dataset: d, disabled: false, hasAttribute: (name) => name === 'data-bc-sheet' && !!d.bcSheet };
+    globalThis.__ev27Click({ type: 'click', target: { closest: (selector) => /data-bc-/.test(String(selector)) ? button : null } }); })()`, rendered.context);
+  for (let i = 0; i < 300; i++) {
+    await new Promise((resolve) => setTimeout(resolve, 10));
+    if (!vm.runInContext("(() => { const b = CineBraidBuildCoverage.state(); return !!b && b.busy; })()", rendered.context)) break;
+  }
+}
+const GUIDED_OPEN = (stateId, extra = "") => `
+  ${EXTRACTOR_CANVAS}
+  CineBraidBuildCoverage.open({ list: 'characters', id: 'CHAR-UX', stateId: '${stateId}', slotId: 'profile', method: 'sheet', source: { kind: 'entity', name: 'CHAR-UX-SHEET.png' }${extra} });
+  const opened = !!(window._coverageCrop && window._coverageCrop.guided);
+  if (opened) { ${EXTRACTOR_SOURCE_SIZE} document.getElementById('coverage-crop-ack').checked = true; syncCoverageCropGuided(); }`;
+const GUIDED_READ = `(() => {
+  const b = CineBraidBuildCoverage.state(), e = P.characters.find((x) => x.id === 'CHAR-UX'), profile = e.coverageSlots.find((s) => s.id === 'profile');
+  return JSON.stringify({ step: b && b.step, doneKind: b && b.doneKind, assign: b && b.assign, pending: b && b.pendingCrop, global: slotSelectedFile(profile), bindings: profile.referenceBindings || null,
+    crops: (e.candidateFiles || []).filter((r) => r.coverageJobType === 'extracted-crop' && r.coverageCrop).map((r) => ({ stored: r.stored, state: r.targetStateId, assetId: r.assetId, sheet: r.coverageCrop && r.coverageCrop.sourceSheet })),
+    authority: JSON.stringify(P.productionAuthority || null), notice: document.getElementById('coverage-crop-save-error').textContent, modal: document.getElementById('modal').innerHTML });
+})()`;
+
+async function testGuidedCropAssignsExactState() {
+  const harness = guidedHarness(guidedFixture());
+  const rendered = await bootGuided(harness);
+  const before = JSON.parse(await vm.runInContext(`(async () => { ${GUIDED_OPEN(EV27_ALT)} const read = JSON.parse(${GUIDED_READ}); read.opened = opened; read.target = document.getElementById('modal').innerHTML; return JSON.stringify(read); })()`, rendered.context));
+  eq(before.opened, true, "EV2-7 C1: Build coverage opens the guided crop for the sheet");
+  ok(before.target.includes("Crop for Alternate · <b id=\"coverage-crop-target-name\">Profile</b>"), "EV2-7 C1: the crop names its exact state and view before anything is saved");
+  ok(/This crop shows the <b id="coverage-crop-ack-view">Profile<\/b> view\. CineBraid does not detect panels\./.test(before.target), "EV2-7 C1: the acknowledgment says CineBraid does not detect panels");
+  ok(!before.target.includes("SAVE CROP & USE"), "EV2-7 C1: the guided crop does not offer the legacy global assignment");
+  await vm.runInContext("CineBraidBuildCoverage.cropSave(true)", rendered.context);
+  const out = JSON.parse(vm.runInContext(GUIDED_READ, rendered.context));
+  eq(harness.uploaded.length, 1, "EV2-7 C1: exactly one crop upload");
+  eq(out.crops.length, 1, "EV2-7 C1: one extracted-crop row");
+  eq(out.crops[0].state, EV27_ALT, "EV2-7 C1: the crop is recorded for the exact state");
+  eq(out.crops[0].sheet, "CHAR-UX-SHEET.png", "EV2-7 C1: with its source sheet provenance");
+  eq(harness.enrolls.length, 1, "EV2-7 C1: one enrollment request");
+  const request = harness.enrolls[0];
+  eq(JSON.stringify([request.body.stateId, request.body.slotId, request.body.assetId, request.body.expectedIdentity]), JSON.stringify([EV27_ALT, "profile", "asset-crop-0", EV27_IDENTITY]), "EV2-7 C1: the enrollment names the exact state, view, crop identity and observed bytes");
+  ok(request.ifMatch && request.ifMatch === request.lastPut, `EV2-7 C1: If-Match is the revision the crop save produced (${request.ifMatch} vs ${request.lastPut})`);
+  eq(out.global, "", "EV2-7 C1: the global slot selection is untouched");
+  eq(out.bindings && out.bindings[EV27_ALT], harness.server().characters[0].candidateFiles.find((r) => r.referenceBinding)?.stored, "EV2-7 C1: the refreshed project holds the binding for that state");
+  eq(out.authority, before.authority, "EV2-7 C1: no authority is written");
+  eq(out.step, "done", "EV2-7 C1: the flow says Done only after the binding is verified");
+  ok(out.modal.includes("Profile is filled for Alternate. Approval is unchanged."), "EV2-7 C1: and says approval is unchanged");
+}
+
+async function testGuidedAssignmentFailureRetainsCrop() {
+  const harness = guidedHarness(guidedFixture(), { enroll: ["refuse"] });
+  const rendered = await bootGuided(harness);
+  await vm.runInContext(`(async () => { ${GUIDED_OPEN(EV27_ALT)} await CineBraidBuildCoverage.cropSave(true); })()`, rendered.context);
+  const failed = JSON.parse(vm.runInContext(GUIDED_READ, rendered.context));
+  eq(failed.assign.status, "failed", "EV2-7 C2: a refused enrollment is shown as not saved");
+  ok(failed.modal.includes("The crop is saved as a candidate. Assigning it to Profile for Alternate was not saved: The project revision changed."), "EV2-7 C2: in words that say the crop is kept and the assignment is not");
+  ok(failed.modal.includes('data-bc-action="assign-retry"') && failed.modal.includes('data-bc-action="keep"'), "EV2-7 C2: with Retry assignment and Keep as candidate");
+  await clickBuild(rendered, { bcAction: "assign-retry" });
+  const out = JSON.parse(vm.runInContext(GUIDED_READ, rendered.context));
+  eq(harness.uploaded.length, 1, "EV2-7 C2: the retry uploads nothing new");
+  eq(harness.enrolls.length, 2, "EV2-7 C2: the retry enrolls again");
+  eq(harness.enrolls[1].body.assetId, harness.enrolls[0].body.assetId, "EV2-7 C2: with the same crop identity");
+  eq(out.crops.length, 1, "EV2-7 C2: still one crop row");
+  eq(out.step, "done", "EV2-7 C2: and completes");
+}
+
+async function testUnknownEnrollOutcomeDoesNotDuplicate() {
+  const harness = guidedHarness(guidedFixture(), { enroll: ["lost"] });
+  const rendered = await bootGuided(harness);
+  await vm.runInContext(`(async () => { ${GUIDED_OPEN(EV27_ALT)} await CineBraidBuildCoverage.cropSave(true); })()`, rendered.context);
+  const unknown = JSON.parse(vm.runInContext(GUIDED_READ, rendered.context));
+  eq(unknown.assign.status, "unknown", "EV2-7 C3: a lost response is an unknown outcome, not a failure");
+  ok(unknown.modal.includes("CineBraid could not confirm whether the assignment was saved.") && unknown.modal.includes("Check and retry"), "EV2-7 C3: and says so");
+  await clickBuild(rendered, { bcAction: "assign-retry" });
+  const out = JSON.parse(vm.runInContext(GUIDED_READ, rendered.context));
+  eq(harness.enrolls.length, 1, "EV2-7 C3: Check and retry finds the binding that landed and posts nothing");
+  eq(harness.server().characters[0].candidateFiles.filter((r) => r.referenceBinding).length, 1, "EV2-7 C3: exactly one binding exists");
+  eq(out.crops.length, 1, "EV2-7 C3: and one crop");
+  eq(out.step, "done", "EV2-7 C3: the flow completes on the verified binding");
+}
+
+async function testCropRetryAfterRefreshKeepsOneRow() {
+  const harness = guidedHarness(guidedFixture(), { scanMisses: 1 });
+  const rendered = await bootGuided(harness);
+  await vm.runInContext(`(async () => { ${GUIDED_OPEN(EV27_ALT)} await CineBraidBuildCoverage.cropSave(false); })()`, rendered.context);
+  const failed = JSON.parse(vm.runInContext(GUIDED_READ, rendered.context));
+  ok(/Candidate save not complete\./.test(failed.notice), "EV2-7 C3b: the first save could not confirm the crop's media");
+  /* The row came back from storage as a new object, exactly as a refresh delivers it. */
+  const out = JSON.parse(await vm.runInContext(`(async () => { const e = P.characters.find((x) => x.id === 'CHAR-UX'); e.candidateFiles = JSON.parse(JSON.stringify(e.candidateFiles)); await CineBraidBuildCoverage.cropSave(false); return ${GUIDED_READ}; })()`, rendered.context));
+  eq(harness.uploaded.length, 1, "EV2-7 C3b: the retry completes the same upload");
+  eq(out.crops.length, 1, "EV2-7 C3b: a persisted row is recognised by its stored name, not duplicated");
+  eq(out.doneKind, "candidate", "EV2-7 C3b: and the crop is saved as a candidate with no view changed");
+  eq(harness.enrolls.length, 0, "EV2-7 C3b: saving a candidate assigns nothing");
+}
+
+async function testSheetRecordedForOtherStateRefused() {
+  const harness = guidedHarness(guidedFixture());
+  const rendered = await bootGuided(harness);
+  const listed = vm.runInContext(`(() => { CineBraidBuildCoverage.open({ list: 'characters', id: 'CHAR-UX', stateId: 'state-default', slotId: 'profile', method: 'sheet' }); return document.getElementById('modal').innerHTML; })()`, rendered.context);
+  ok(/data-bc-sheet="CHAR-UX-SHEET\.png" disabled/.test(listed) && listed.includes("Brought in for Alternate; it cannot supply Default views."), "EV2-7 C4: a sheet recorded for another state is listed as unavailable, with the reason");
+  const out = JSON.parse(await vm.runInContext(`(async () => { ${GUIDED_OPEN("state-default")} await CineBraidBuildCoverage.cropSave(true); return ${GUIDED_READ}; })()`, rendered.context));
+  eq(harness.uploaded.length, 0, "EV2-7 C4: nothing is uploaded");
+  ok(out.notice.includes("This sheet was brought in for Alternate; it cannot supply Default views."), "EV2-7 C4: and the refusal is explicit");
+  eq(harness.enrolls.length, 0, "EV2-7 C4: nothing is enrolled");
+}
+
+async function testStateCoverageSubmitCarriesState() {
+  const { project, binding } = soakedFixture();
+  const harness = guidedHarness(project);
+  const rendered = await bootGuided(harness);
+  const refused = await vm.runInContext(`(async () => {
+    const A = __CINEBRAID_COVERAGE_AUTOMATION, e = P.characters.find((x) => x.id === 'CHAR-UX'), profile = e.coverageSlots.find((s) => s.id === 'profile');
+    await A.submitCoverageJob('characters', e, { prompt: 'p', coverageJobType: 'slot', slot: profile, stateId: 'state-soaked', stateName: 'Soaked', clientRequestId: 'ev27-soaked' });
+    await A.submitCoverageJob('characters', e, { prompt: 'p', coverageJobType: 'slot', slot: profile, clientRequestId: 'ev27-legacy' });
+    try { await A.submitCoverageJob('characters', e, { prompt: 'p', coverageJobType: 'slot', slot: profile, stateId: 'state-dry', stateName: 'Dry', clientRequestId: 'ev27-dry' }); return ''; }
+    catch (error) { return error.message; }
+  })()`, rendered.context);
+  eq(harness.jobs.length, 2, "EV2-7 C5: a state with no approved identity is refused before anything is sent");
+  eq(refused, "Approve a Dry reference before generating its views. Nothing was submitted.", "EV2-7 C5: with the reason");
+  const [scoped, legacy] = harness.jobs;
+  eq(scoped.continuityStateId, "state-soaked", "EV2-7 C5: the state-scoped request carries its state");
+  eq(scoped.continuityStateName, "Soaked", "EV2-7 C5: and its name");
+  eq(`${scoped.references[0].role}:${scoped.references[0].sourceFile}`, "identity-canon:CHAR-UX-SOAKED.png", "EV2-7 C5: its identity canon is that state's own receipt");
+  eq(JSON.stringify(scoped.references.slice(1).map((r) => r.sourceFile)), JSON.stringify([binding]), "EV2-7 C5: its supporting views are that state's bindings only");
+  eq(Object.hasOwn(legacy, "continuityStateId"), false, "EV2-7 C5: a request without a state sends no state key at all");
+  eq(legacy.references[0].sourceFile, "CHAR-UX-PRIMARY.png", "EV2-7 C5: and still uses the default primary");
+  ok(legacy.references.some((r) => r.sourceFile === "CHAR-UX-FRONT.png"), "EV2-7 C5: with the legacy supporting view it always used");
+}
+
+async function testReceiptChangeDuringDialogRefuses() {
+  const { project } = soakedFixture();
+  const harness = guidedHarness(project);
+  const rendered = await bootGuided(harness);
+  vm.runInContext(`CONFIG.generation = CONFIG.generation || {}; CONFIG.generation.fal = { ...(CONFIG.generation.fal || {}), enabled: true, keySource: "environment" };
+    CineBraidBuildCoverage.open({ list: 'characters', id: 'CHAR-UX', stateId: 'state-soaked', slotId: 'profile' });`, rendered.context);
+  await clickBuild(rendered, { bcMethod: "generate" });
+  const quote = vm.runInContext("document.getElementById('modal').innerHTML", rendered.context);
+  /* Every missing required view of this state is offered, checked by default (project normalisation seeds a template 3/4 view). */
+  ok(quote.includes("2 paid requests · up to 6 images") && quote.includes("Each request is paid.") && quote.includes("Submit 2 paid requests") && quote.includes("Approved Soaked reference"),
+    "EV2-7 C6: the dialog quotes the paid work from the state's own approved source before anything is sent");
+  eq(harness.jobs.length, 0, "EV2-7 C6: opening the quote sends nothing");
+  vm.runInContext(`(() => { const r = P.productionAuthority.receipts.find((x) => x.stateId === 'state-soaked' && x.status === 'current'); r.id = 'authority-replaced-while-open'; })()`, rendered.context);
+  await clickBuild(rendered, { bcAction: "generate-submit" });
+  const refused = JSON.parse(vm.runInContext("JSON.stringify(CineBraidBuildCoverage.state().generation)", rendered.context));
+  eq(harness.jobs.length, 0, "EV2-7 C6: an approval replaced while the dialog was open refuses the submission");
+  ok(/The Soaked approval changed while this was open\. Review the new source/.test(refused.error), "EV2-7 C6: and says why");
+  await clickBuild(rendered, { bcAction: "generate-submit" });
+  eq(harness.jobs.length, 2, "EV2-7 C6: once the new source has been shown, a deliberate second press submits");
+  eq(harness.jobs.map((job) => `${job.continuityStateId}:${job.targetCoverageSlotId}:${job.coverageMode}`).sort().join("|"), "state-soaked:front-three-quarter:individual|state-soaked:profile:individual", "EV2-7 C6: one individual request per chosen view, each for the exact state");
+  ok(harness.jobs.every((job) => job.references[0].sourceFile === "CHAR-UX-SOAKED.png" && job.clientRequestId.includes("state-soaked:")), "EV2-7 C6: from the state's own approved source, with state-scoped idempotency keys");
+  ok(vm.runInContext("document.getElementById('modal').innerHTML", rendered.context).includes("2 requests submitted for Soaked."), "EV2-7 C6: and the dialog says what was submitted");
+}
+
+async function testLegacyExtractorNondefaultUseRoutesToEnrollment() {
+  const harness = extractorHarness(guidedFixture(), COVERAGE_STORAGE);
+  const rendered = await harness.render();
+  const out = JSON.parse(await vm.runInContext(`(async () => {
+    ${EXTRACTOR_CANVAS}
+    openCoverageSheetExtractor('characters','CHAR-UX','CHAR-UX-SHEET.png', true);
+    const modal = document.getElementById('modal').innerHTML;
+    ${EXTRACTOR_SOURCE_SIZE}
+    selectCoverageCropSlot('profile');
+    const profile = () => slotSelectedFile(ensureCoverageSlots('characters', P.characters.find((x) => x.id === 'CHAR-UX')).find((s) => s.id === 'profile'));
+    await extractCoverageCrop({ assign: true });
+    return JSON.stringify({ modal, after: profile(), crops: P.characters.find((x) => x.id === 'CHAR-UX').candidateFiles.filter((r) => r.coverageJobType === 'extracted-crop' && r.coverageCrop).map((r) => r.targetStateId) });
+  })()`, rendered.context));
+  ok(!out.modal.includes("SAVE CROP & USE"), "EV2-7 C7: the legacy extractor does not offer a global assignment for a nondefault sheet");
+  ok(out.modal.includes("Assign Alternate views from the Reference Desk → Build coverage."), "EV2-7 C7: it points to Build coverage instead");
+  ok(out.modal.includes("SAVE AS CANDIDATE"), "EV2-7 C7: saving a candidate is still available");
+  eq(out.after, "", "EV2-7 C7: even a direct assign call leaves the global slot unchanged");
+  eq(JSON.stringify(out.crops), JSON.stringify([EV27_ALT]), "EV2-7 C7: and keeps the crop as that state's candidate");
+}
+
+/* EV2-7 C8 — A legacy Front selection whose crop was recorded for Default, viewed from Alternate. The Desk
+   header, the Desk's Front button and Build coverage's views table say the same true thing, and count it the same. */
+async function testEarlierSelectionReadsTheSameEverywhere() {
+  const project = guidedFixture();
+  project.characters[0].candidateFiles.find((row) => row.stored === "CHAR-UX-FRONT.png").targetStateId = "state-default";
+  const harness = guidedHarness(project);
+  const rendered = await bootGuided(harness);
+  const out = JSON.parse(vm.runInContext(`(() => {
+    const e = P.characters.find((x) => x.id === 'CHAR-UX');
+    SCAN.references = { characters: { 'CHAR-UX': e.candidateFiles.map((r) => ({ name: r.stored, assetId: '', available: true, url: '/assets/anchors/' + r.stored })) } };
+    CineBraidReferenceDesk.selectForResults({ list: 'characters', id: 'CHAR-UX', stateId: '${EV27_ALT}' });
+    const alternate = CineBraidReferenceDesk.view('characters', 'CHAR-UX');
+    CineBraidBuildCoverage.open({ list: 'characters', id: 'CHAR-UX', stateId: '${EV27_ALT}', slotId: 'profile' });
+    const modal = document.getElementById('modal').innerHTML;
+    CineBraidReferenceDesk.selectForResults({ list: 'characters', id: 'CHAR-UX', stateId: 'state-default' });
+    return JSON.stringify({ alternate, modal, fallback: CineBraidReferenceDesk.view('characters', 'CHAR-UX') });
+  })()`, rendered.context));
+  const front = /<button class="rd-slot[^"]*" data-rd-slot="front" data-rd-slot-status="([a-z]+)"[^>]*>[\s\S]*?<small>([^<]*)<\/small>/.exec(out.alternate) || [];
+  eq(front[1], "earlier", "EV2-7 C8: from Alternate, a Front selection recorded for Default is an earlier selection on the Desk, not an unavailable image");
+  eq(front[2], "Earlier selection · recorded for Default", "EV2-7 C8: and the Desk's Front button names the state it was recorded for");
+  ok(!out.alternate.includes("Image unavailable"), "EV2-7 C8: nothing on the Desk calls the available image unavailable");
+  const header = (/<section class="rd-coverage"><header><h2>Required views<\/h2><span>([^<]*)<\/span>/.exec(out.alternate) || [])[1] || "";
+  ok(/^0 of \d+ required views filled · 1 earlier selection, recorded for Default$/.test(header), `EV2-7 C8: the Desk header counts it as an earlier selection recorded for Default (${header})`);
+  const summary = (/<p class="bc-views-summary" id="bc-views-summary">([^<]*)<\/p>/.exec(out.modal) || [])[1] || "";
+  eq(summary, header, "EV2-7 C8: Build coverage counts it in the same words as the Desk header");
+  ok(/<th scope="row">Front<\/th><td data-bc-status="earlier">Earlier selection · recorded for Default<\/td>/.test(out.modal), "EV2-7 C8: and its views table uses the Desk button's exact wording");
+  ok(!out.modal.includes("state not recorded"), "EV2-7 C8: no surface claims the state was not recorded");
+  ok(/data-rd-slot="front" data-rd-slot-status="filled"[^>]*>[\s\S]*?<small>View filled<\/small>/.test(out.fallback), "EV2-7 C8: from Default the same selection fills Front");
+}
+
+/* EV2-7 C9 — PROJECT_REVISION_CONFLICT is answered by a re-read, never by re-posting the same If-Match. */
+const EV27_ASSIGN_READ = `JSON.stringify({ assign: CineBraidBuildCoverage.state().assign, step: CineBraidBuildCoverage.state().step, notice: CineBraidBuildCoverage.state().notice, revision: PROJECT_REVISION, modal: document.getElementById('modal').innerHTML })`;
+/* The fixture opens at an older schema, which owes one migration save 50ms after open. It lands first, so the
+   unsettled-save refusal is never what a multi-press test observes. */
+async function settledOpen(harness) {
+  const rendered = await bootGuided(harness);
+  await new Promise((resolve) => setTimeout(resolve, 80));
+  await vm.runInContext("flushPendingProjectSave()", rendered.context);
+  return rendered;
+}
+async function testRevisionConflictRereadsBeforeAssigning() {
+  const harness = guidedHarness(guidedFixture(), { enroll: ["conflict"] });
+  const rendered = await settledOpen(harness);
+  await vm.runInContext(`(async () => { ${GUIDED_OPEN(EV27_ALT)} await CineBraidBuildCoverage.cropSave(true); })()`, rendered.context);
+  const refreshed = JSON.parse(vm.runInContext(EV27_ASSIGN_READ, rendered.context));
+  eq(harness.enrolls.length, 1, "EV2-7 C9: a revision conflict is not retried with the same If-Match");
+  eq(refreshed.assign.status, "confirm", "EV2-7 C9: the project is re-read and the target is shown for confirmation");
+  ok(refreshed.notice.includes("The project changed before the assignment was saved, so nothing was assigned."), "EV2-7 C9: and says nothing was assigned");
+  ok(refreshed.modal.includes('data-bc-action="assign-confirm"') && refreshed.modal.includes("Assign to Profile for Alternate") && refreshed.modal.includes("Profile for Alternate is not filled."), "EV2-7 C9: with the view's current status and an explicit Assign to <View> for <State>");
+  ok(!refreshed.modal.includes('data-bc-action="assign-retry"'), "EV2-7 C9: a blind Retry assignment is not offered");
+  ok(refreshed.revision !== harness.enrolls[0].ifMatch, `EV2-7 C9: the re-read adopted the moved revision (${refreshed.revision})`);
+  await clickBuild(rendered, { bcAction: "assign-confirm" });
+  const out = JSON.parse(vm.runInContext(EV27_ASSIGN_READ, rendered.context));
+  eq(harness.enrolls.length, 2, "EV2-7 C9: the explicit press posts once");
+  eq(harness.enrolls[1].ifMatch, refreshed.revision, "EV2-7 C9: and the second POST carries the re-read revision as If-Match");
+  ok(harness.enrolls[1].ifMatch !== harness.enrolls[0].ifMatch, "EV2-7 C9: not the refused one");
+  eq(out.step, "done", "EV2-7 C9: and completes on the verified binding");
+}
+
+/* EV2-7 C10 — Refresh target is a read: it shows the target as the saved project now has it, including a
+   view someone else filled meanwhile, and only the next explicit press writes. */
+async function testRefreshTargetIsARead() {
+  const harness = guidedHarness(guidedFixture(), { enroll: ["conflict"] });
+  const rendered = await settledOpen(harness);
+  await vm.runInContext(`(async () => { ${GUIDED_OPEN(EV27_ALT)} await CineBraidBuildCoverage.cropSave(true); })()`, rendered.context);
+  /* Meanwhile another session fills Profile for Alternate, and this dialog's revision is behind. */
+  const other = "ref-0babe000-0000-4000-8000-000000000000";
+  harness.backgroundWrite((server) => {
+    const character = server.characters.find((row) => row.id === "CHAR-UX");
+    character.candidateFiles.push({ stored: other, original: "other.png", decision: "unreviewed", coverageJobType: "single-reference", targetStateId: EV27_ALT, targetCoverageSlotId: "profile",
+      referenceBinding: { version: 1, id: other, assetId: "asset-" + "c".repeat(32), entityList: "characters", entityId: "CHAR-UX", stateId: EV27_ALT, slotId: "profile", identity: EV27_IDENTITY } });
+    character.coverageSlots.find((slot) => slot.id === "profile").referenceBindings = { [EV27_ALT]: other };
+  });
+  vm.runInContext("CineBraidBuildCoverage.state().revision = '\"behind\"';", rendered.context);
+  await clickBuild(rendered, { bcAction: "assign-confirm" });
+  const stale = JSON.parse(vm.runInContext(EV27_ASSIGN_READ, rendered.context));
+  eq(stale.assign.status, "stale", "EV2-7 C10: a changed project is caught before posting");
+  ok(stale.modal.includes('data-bc-action="refresh-target"'), "EV2-7 C10: and offers Refresh target");
+  eq(harness.enrolls.length, 1, "EV2-7 C10: nothing new was posted");
+  await clickBuild(rendered, { bcAction: "refresh-target" });
+  const shown = JSON.parse(vm.runInContext(EV27_ASSIGN_READ, rendered.context));
+  eq(harness.enrolls.length, 1, "EV2-7 C10: Refresh target writes nothing");
+  eq(shown.assign.status, "confirm", "EV2-7 C10: it re-renders the assign step for confirmation");
+  ok(shown.modal.includes("Profile for Alternate is filled now. Assigning replaces its current image; that image stays a candidate."), "EV2-7 C10: saying the view is now filled");
+  ok(/<th scope="row">Profile <small>· target<\/small><\/th><td data-bc-status="filled">View filled<\/td>/.test(shown.modal), "EV2-7 C10: the views table shows the target view filled");
+  ok(shown.modal.includes("Target: <b>Nora</b> · <b>Alternate</b> · <b>Profile</b>") && shown.modal.includes("Assign to Profile for Alternate"), "EV2-7 C10: with the explicit target and button");
+  await clickBuild(rendered, { bcAction: "assign-confirm" });
+  eq(harness.enrolls.length, 2, "EV2-7 C10: only the explicit press assigns");
+  eq(harness.enrolls[1].ifMatch, shown.revision, "EV2-7 C10: against the revision it showed");
+}
+
+/* EV2-7 C11 — Opening a guided crop records no human override; the acknowledged save does. */
+async function testGuidedOpenRecordsNoOverride() {
+  const harness = guidedHarness(guidedFixture());
+  const rendered = await bootGuided(harness);
+  const FLAG = `(() => { const s = P.characters.find((x) => x.id === 'CHAR-UX').candidateFiles.find((r) => r.stored === 'CHAR-UX-SHEET.png'); return JSON.stringify({ flag: s.sheetExtractionOverrideConfirmed === true, at: !!s.sheetExtractionOverrideAt }); })()`;
+  const opened = JSON.parse(await vm.runInContext(`(async () => { ${GUIDED_OPEN(EV27_ALT)} return ${FLAG}; })()`, rendered.context));
+  eq(JSON.stringify(opened), JSON.stringify({ flag: false, at: false }), "EV2-7 C11: opening the guided crop writes no override confirmation");
+  await vm.runInContext("CineBraidBuildCoverage.cropSave(false)", rendered.context);
+  eq(JSON.stringify(JSON.parse(vm.runInContext(FLAG, rendered.context))), JSON.stringify({ flag: true, at: true }), "EV2-7 C11: the acknowledged guided save records it");
+  eq(harness.server().characters[0].candidateFiles.find((r) => r.stored === "CHAR-UX-SHEET.png").sheetExtractionOverrideConfirmed, true, "EV2-7 C11: and it is saved with that crop");
+}
+
+/* EV2-7 C12 — Cancel or Escape in the picker returns to Build coverage's method step, on the method pressed. */
+async function testPickerDismissalReturnsToBuildCoverage() {
+  const harness = guidedHarness(guidedFixture());
+  const rendered = await bootGuided(harness);
+  vm.runInContext(`globalThis.CineBraidMediaDiscovery = { defaults: () => ({}), eligibility: () => '', compose: (p, r, images) => images };
+    globalThis.CineBraidMediaBrowser = { mount: () => '' }; globalThis.CineBraidMediaInspector = { projection: () => null };
+    globalThis.__ev27Closes = []; const close = closeModal; globalThis.closeModal = (options) => { __ev27Closes.push(JSON.stringify(options || {})); return close(options); };
+    document.getElementById('bc-method-media').focus = () => { globalThis.__ev27Focused = 'bc-method-media'; };
+    CineBraidBuildCoverage.open({ list: 'characters', id: 'CHAR-UX', stateId: '${EV27_ALT}', slotId: 'profile' });`, rendered.context);
+  for (const [how, dismiss] of [["Escape", "__ev27DeskKey({ key: 'Escape', preventDefault() {}, stopImmediatePropagation() {} })"],
+    ["Cancel", "__ev27DeskClick({ target: { id: '', closest: (s) => s === '[data-rd-picker-cancel]' ? { disabled: false } : null }, stopPropagation() {} })"]]) {
+    vm.runInContext("__ev27Closes.length = 0; globalThis.__ev27Focused = '';", rendered.context);
+    await clickBuild(rendered, { bcMethod: "media" });
+    const opened = JSON.parse(vm.runInContext("JSON.stringify({ closes: __ev27Closes.slice(), modal: document.getElementById('modal').innerHTML })", rendered.context));
+    eq(opened.closes[0], JSON.stringify({ restoreFocus: false }), `EV2-7 C12 (${how}): Build coverage closes without a deferred focus restore before the picker opens`);
+    ok(opened.modal.includes("data-rd-picker-cancel"), `EV2-7 C12 (${how}): the picker's Cancel hands back to Build coverage`);
+    vm.runInContext(dismiss, rendered.context);
+    await new Promise((resolve) => setTimeout(resolve, 30));
+    const back = JSON.parse(vm.runInContext("JSON.stringify({ step: CineBraidBuildCoverage.state() && CineBraidBuildCoverage.state().step, focused: __ev27Focused, modal: document.getElementById('modal').innerHTML })", rendered.context));
+    eq(back.step, "method", `EV2-7 C12 (${how}): dismissing the picker returns to the method step`);
+    ok(back.modal.includes('data-bc-step="method"') && back.modal.includes('id="bc-method-media"'), `EV2-7 C12 (${how}): Build coverage is shown again`);
+    eq(back.focused, "bc-method-media", `EV2-7 C12 (${how}): with focus on the method that was pressed`);
+  }
+  eq(harness.enrolls.length, 0, "EV2-7 C12: dismissing the picker assigns nothing");
+}
+
+/* ==========================================================================
    NOTHING PERSISTED, NOTHING DISPATCHED.
    ========================================================================== */
 function testNoNewPersistenceAndNoDispatch() {
@@ -1966,13 +2385,26 @@ async function main() {
   await testProvenanceRecordChooserFollowsTheSameRule();
   await testTargetListsNameTheViewsAlreadyFilled();
   await testBatchApprovalNamesWhatItWouldReplace();
+  await testGuidedCropAssignsExactState();
+  await testGuidedAssignmentFailureRetainsCrop();
+  await testUnknownEnrollOutcomeDoesNotDuplicate();
+  await testCropRetryAfterRefreshKeepsOneRow();
+  await testSheetRecordedForOtherStateRefused();
+  await testStateCoverageSubmitCarriesState();
+  await testReceiptChangeDuringDialogRefuses();
+  await testLegacyExtractorNondefaultUseRoutesToEnrollment();
+  await testEarlierSelectionReadsTheSameEverywhere();
+  await testRevisionConflictRereadsBeforeAssigning();
+  await testRefreshTargetIsARead();
+  await testGuidedOpenRecordsNoOverride();
+  await testPickerDismissalReturnsToBuildCoverage();
   testNoNewPersistenceAndNoDispatch();
   console.log(`References UX convergence suite passed ${checks} checks across the provenance chooser, the lightbox backdrop, `
     + `extraction disclosure, the save/assign hand-off, unreviewed factors, the compact production-needs summary, `
     + `requirement-vs-demand legibility, staged preview, the visual chooser, continuity-state authoring, single-state `
     + `approval, dropdown readability and Details disclosure, plus the alpha blockers: dormant coverage claiming no `
     + `attention, the fail-closed direction, Save crop & use converging in one action, Save as candidate assigning `
-    + `nothing, the retired stale-assign action and strip/board agreement, plus the two residual surfaces this pass found: the provenance chooser on the generation-record fold, and the target lists and the batch-approval confirmation that described an occupied slot through the key the writer deletes. Provider calls made: 0.`);
+    + `nothing, the retired stale-assign action and strip/board agreement, plus the two residual surfaces this pass found: the provenance chooser on the generation-record fold, and the target lists and the batch-approval confirmation that described an occupied slot through the key the writer deletes; and EV2-7 Build coverage: exact state/view crop enrollment, refused and unknown assignment outcomes without duplicates, other-state sheets refused, state-scoped generation requests and receipt revalidation, one wording for earlier selections across the Desk and the dialog, revision conflicts and Refresh target answered by a re-read before an explicit assignment, no override recorded on open, and picker dismissal returning to Build coverage. Provider calls made: 0.`);
 }
 
 main().catch((error) => { console.error(error); process.exit(1); });

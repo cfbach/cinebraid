@@ -344,6 +344,7 @@
     "check:authority-browser": "node tests/run-authority-browser-gate.js",
     "check:shot-desk": "node tests/shot-desk-presentation.js",
     "check:ev2-7-navigation": "node tests/ev2-7-navigation.js",
+    "check:ev2-7-coverage-browser": "node tests/run-python-check.js tests/ev2-7-reference-coverage-real-browser.py",
     "check:ev2-6": "node tests/ev2-6-results.js",
     "check:ev2-6-browser": "node tests/ev2-6-review-real-browser.js",
     "check:reference-enrollment": "node tests/reference-enrollment.js",

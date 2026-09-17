@@ -106,7 +106,9 @@ function enroll({project,list,entityId,stateId,slotId,assetId,expectedIdentity,p
   const issue = Shared.bindingIssue(entity,list,row);
   if (issue) throw Error("The selected assignment is unavailable ("+issue+").");
   entity.candidateFiles = [...(entity.candidateFiles || []),row];
-  const assigned = Slots.assignSlotReference(slot,{fileName:id,at,by:"human",via:"production-media-enrollment",owner:{project:next,list,entityId},stateId,assetId});
+  // A nondefault state's binding never rewrites the legacy slot selection. No default state recorded: every state is scoped (fail safe).
+  const states = entity.continuityStates || [], defaultId = (states.find(s => s.isDefault) || (states.length ? null : {id:"state-default"}))?.id || "";
+  const assigned = Slots.assignSlotReference(slot,{fileName:id,at,by:"human",via:"production-media-enrollment",owner:{project:next,list,entityId},stateId,assetId,stateScoped: stateId !== defaultId});
   if (!assigned.assigned) throw Error(assigned.message || assigned.reason);
 
   return {project:next,candidate:row};

@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """EV2-3 focused workflow acceptance. Synthetic projects only; no sample reads."""
-import json, os, pathlib, socket, struct, subprocess, sys, time, zlib, urllib.request, tempfile
+import json, os, pathlib, socket, struct, subprocess, sys, time, zlib, urllib.request, tempfile, hashlib
 ROOT=pathlib.Path(__file__).resolve().parents[1]
 sys.path.insert(0,str(ROOT/'tests'))
 from media_browser_contract import assert_media_image
@@ -46,6 +46,8 @@ def build_fixture(projects_root):
         "anchors/KAI_DEFAULT_V001.png": (58, 96, 74),
         "anchors/KAI_FAL_CANDIDATE_2.png": (70, 78, 96),
         "anchors/KAI_FAL_CANDIDATE_3.png": (104, 58, 52),
+        # EV2-7: a stored name that SAYS approved on a candidate nobody reviewed.
+        "anchors/KAI_APPROVED_TURNAROUND_V034.png": (88, 70, 60),
         "plates/HULL_DEFAULT_V001.png": (52, 68, 88),
         "media/animatic-opening.png": (72, 64, 84),
         "shots/SH010/takes/SH010_FRAME_A_V001.png": (46, 84, 92),
@@ -110,6 +112,8 @@ def build_fixture(projects_root):
                 # REJECTED, retained, no reason recorded anywhere.
                 {"stored": "KAI_FAL_CANDIDATE_3.png", "addedAt": iso(3), "decision": "rejected", "decidedAt": iso(3),
                  "generationProvider": "fal", "generationModel": "openai/gpt-image-2", "generationJobId": "job-kai-3"},
+                # EV2-7: UNREVIEWED, whatever its filename claims. Filenames never supply decision or category.
+                {"stored": "KAI_APPROVED_TURNAROUND_V034.png", "addedAt": iso(2), "decision": "unreviewed"},
             ]}],
         "locations": [{"id": "HULL", "name": "Hull bay", "prefix": "HULL", "status": "APPROVED",
                        "workflowStatus": "APPROVED", "approvedFile": "HULL_DEFAULT_V001.png",
@@ -274,20 +278,120 @@ try:
         context.route('**/*',guard)
         page=context.new_page();page.on('pageerror',lambda ex:errors.append(str(ex)))
         page.goto(base+'/#/results');page.locator('[data-md="production"]').wait_for(timeout=30000)
-        check('Current and Recently added defaults',page.locator('[data-md-tab="current"]').get_attribute('aria-pressed')=='true' and page.locator('[data-md-field="sort"]').input_value()=='recent')
+        check('All categories, Current decision and Recently added defaults',page.locator('[data-md-category="all"]').get_attribute('aria-pressed')=='true' and page.locator('#main [data-md-field="decision"]').input_value()=='current' and page.locator('[data-md-field="sort"]').input_value()=='recent')
         check('Unique page bounded to 48',page.locator('.md-card').count()==48)
         page.wait_for_function('projectSaveSettled().settled')
         page.wait_for_timeout(250)
         page.wait_for_selector('#toast.hidden',state='attached',timeout=5000)
+        # EV2-7 derived categories. Read-only: the stored project and ledger bytes are identical after browsing.
+        def stored_hashes():
+            return {rel:(hashlib.sha256((project_root/rel).read_bytes()).hexdigest() if (project_root/rel).exists() else '') for rel in ('project.json','media-assets.json')}
+        stored_before=stored_hashes()
+        read_discovery="""()=>{const c=CineBraidMediaBrowser.instances.get('production'),D=CineBraidMediaDiscovery,records=c.records(),q=D.query(records,c.state);
+          return {keys:[...document.querySelectorAll('#main .md-card[data-md-key]')].map(x=>x.dataset.mdKey),expected:q.rows.map(r=>r.key),all:q.all.map(r=>({key:r.key,file:r.fileName,type:r.type,categories:r.categories})),
+            counts:D.categoryCounts(records,c.state,c),chips:Object.fromEntries([...document.querySelectorAll('#main [data-md-category]')].map(b=>[b.dataset.mdCategory,Number(b.querySelector('small').textContent)]))};}"""
+        def category(token):
+            page.locator(f'#main [data-md-category="{token}"]').click()
+            page.wait_for_function('t=>CineBraidMediaBrowser.instances.get("production").state.category===t',arg=token)
+            return page.evaluate(read_discovery)
+        seen=page.evaluate(read_discovery)
+        check('Category chip counts equal the shared query counts',seen['chips']==seen['counts'] and seen['chips']['all']==len(seen['all']))
+        seen=category('blocking-previs')
+        check('Blocking & previs holds recorded blocking and animatic media',{'SH010_BLOCKING_FAL_1.png','animatic-opening.png'}<={r['file'] for r in seen['all']} and seen['keys']==seen['expected'])
+        check('Blocking & previs chip is pressed and focused',page.locator('#main [data-md-category="blocking-previs"]').get_attribute('aria-pressed')=='true' and page.evaluate('document.activeElement?.dataset.mdCategory')=='blocking-previs')
+        seen=category('characters')
+        check('Characters holds only character references',len(seen['all'])>=2 and all(r['file'].startswith('KAI_') for r in seen['all']) and seen['keys']==seen['expected'])
+        seen=category('other')
+        check('Scene-only planning links fall under Other',any(r['file'].startswith('contact-') for r in seen['all']) and not any(r['file'].startswith('KAI_') for r in seen['all']))
+        seen=category('audio')
+        check('Ledger-recorded audio is under Audio with an Audio media type',any(r['file']=='room-tone.wav' and r['type']=='audio' for r in seen['all']) and seen['chips']==seen['counts'])
+        category('all')
+        page.locator('#main [data-md-field="query"]').fill('KAI_APPROVED')
+        named=page.locator('#main .md-card')
+        check('A filename saying APPROVED on an unreviewed candidate reads Candidate',named.count()==1 and named.first.locator('.md-decision').inner_text()=='Candidate')
+        check('The stored filename is never the card headline',named.count()==1 and 'APPROVED' not in named.first.locator('.md-caption b').inner_text() and 'KAI_APPROVED_TURNAROUND_V034.png' in named.first.locator('.md-file').get_attribute('title'))
+        label=named.first.locator('.md-open').get_attribute('aria-label') if named.count()==1 else ''
+        check('The card accessible name carries its decision and file',label.startswith('Inspect ') and ' · Candidate · ' in label and label.endswith('KAI_APPROVED_TURNAROUND_V034.png'))
+        page.locator('#main [data-md-field="query"]').fill('')
+        page.locator('#main [data-md-field="decision"]').select_option('all')
+        page.locator('#main [data-md-field="type"]').select_option('image')
+        category('shot-renders')
+        seen=page.evaluate(read_discovery)
+        check('Combined category, decision and type filters match the shared query',seen['keys']==seen['expected'] and seen['chips']==seen['counts'] and all(r['type']=='image' and 'shot-renders' in r['categories'] for r in seen['all']))
+        category('all')
+        page.locator('[data-md-page="1"]').click()
+        page.locator('#main [data-md-field="type"]').select_option('all')
+        page.locator('#main [data-md-field="decision"]').select_option('current')
+        page.wait_for_timeout(250)
+        check('Category, decision, type and page changes write nothing to project or ledger',stored_hashes()==stored_before)
+        # EV2-7: Open related Production media (the Working Bible's openRelated) sets Related to while More filters stays closed.
+        # The page must name that filter beside the categories, with a 44px Clear that resets only it; counts keep following the one query.
+        page.goto(base+'/#/character/KAI');page.locator('#main [data-md="production"]').wait_for(state='detached')
+        page.evaluate("()=>CineBraidResults.openRelated('characters:KAI')")
+        page.locator('#main [data-md="production"]').wait_for()
+        read_related="""()=>{const c=CineBraidMediaBrowser.instances.get('production'),D=CineBraidMediaDiscovery,records=c.records(),q=D.query(records,c.state),m=document.querySelector('#main [data-md=production]'),kids=[...m.children];
+          return {narrowed:q.all.length>0&&q.all.every(r=>r.related.some(x=>x.key==='characters:KAI'))&&D.categoryCounts(records,{...c.state,related:'all'},c).all>q.total,
+            order:[kids.indexOf(m.querySelector('.md-categories')),kids.indexOf(m.querySelector('[data-md-active]')),kids.indexOf(m.querySelector('.md-tools'))]};}"""
+        active=page.locator('#main [data-md-active]')
+        seen=page.evaluate(read_discovery);related=page.evaluate(read_related)
+        check('Related media arrives with More filters closed and the filter named beside the categories',not page.locator('#main .md-more').evaluate('(n)=>n.open') and active.is_visible()
+              and 'Showing media' in active.locator('.md-active-lead').inner_text() and active.locator('.md-active-filter').count()==1 and 'related to Kai' in active.locator('[data-md-active-filter="related"] > span').inner_text())
+        check('The related summary sits between the category buttons and the tools',related['order'][0]>=0 and related['order'][1]==related['order'][0]+1 and related['order'][2]==related['order'][1]+1)
+        check('Related chip counts and cards follow the shared query and really narrow',related['narrowed'] and seen['chips']==seen['counts'] and seen['keys']==seen['expected'])
+        clear=active.locator('[data-md-clear="related"]');box=clear.bounding_box()
+        check('The related Clear is a named 44px target',box is not None and box['height']>=44 and box['width']>=44 and clear.get_attribute('aria-label')=='Clear filter: related to Kai')
+        clear.focus();page.keyboard.press('Enter')
+        page.wait_for_function("()=>CineBraidMediaBrowser.instances.get('production').state.related==='all'")
+        seen=page.evaluate(read_discovery)
+        check('Keyboard Clear resets only Related to, removes the summary and returns focus to the pressed category',page.locator('#main [data-md-active]').count()==0 and page.locator('#main [data-md-field="decision"]').input_value()=='all'
+              and page.evaluate("()=>!!document.activeElement?.matches('#main [data-md-category][aria-pressed=true]')") and seen['chips']==seen['counts'] and seen['keys']==seen['expected'])
+        more=page.locator('#main .md-more');more.locator('summary').click()
+        page.locator('#main [data-md-field="related"]').select_option('characters:KAI');page.locator('#main [data-md-field="availability"]').select_option('available')
+        page.locator('#main .md-more summary').click()
+        check('Two hidden filters each get a Clear while More filters is closed',not page.locator('#main .md-more').evaluate('(n)=>n.open') and [x.get_attribute('data-md-clear') for x in page.locator('#main [data-md-clear]').all()]==['related','availability'])
+        for width,height in ((1280,720),(1440,900),(1920,1080),(390,844)):
+            page.set_viewport_size({'width':width,'height':height})
+            page.screenshot(path=str(OUT/f'active-filters-{width}.png'))
+            fit=page.evaluate("""()=>{const n=document.querySelector('#main [data-md-active]'),b=[...n.querySelectorAll('[data-md-clear]')].map(x=>x.getBoundingClientRect());
+              return {overflow:document.documentElement.scrollWidth>innerWidth||n.scrollWidth>n.clientWidth+1||n.getBoundingClientRect().right>innerWidth+0.5,min:Math.min(...b.map(r=>Math.min(r.width,r.height))),inside:b.every(r=>r.right<=innerWidth+0.5)};}""")
+            check(f'{width}: active-filter summary has 44px Clears and no overflow',not fit['overflow'] and fit['min']>=44 and fit['inside'])
+        page.set_viewport_size({'width':1440,'height':900})
+        page.locator('#main [data-md-clear="related"]').click()
+        page.wait_for_function("()=>CineBraidMediaBrowser.instances.get('production').state.related==='all'")
+        check('Clearing one of two filters keeps the other and focuses the remaining Clear',page.locator('#main [data-md-field="availability"]').input_value()=='available' and page.evaluate("document.activeElement?.dataset.mdClear")=='availability')
+        page.keyboard.press('Enter')
+        page.wait_for_function("()=>CineBraidMediaBrowser.instances.get('production').state.availability==='all'")
+        check('The last Clear removes the summary',page.locator('#main [data-md-active]').count()==0)
+        page.locator('#main [data-md-field="decision"]').select_option('current')
+        check('Active-filter summary and Clear write nothing to project or ledger',stored_hashes()==stored_before)
         for width,height in ((1280,720),(1440,900),(1920,1080),(390,844)):
             page.set_viewport_size({'width':width,'height':height})
             page.screenshot(path=str(OUT/f'workspace-{width}.png'))
             check(f'{width}: workspace no document overflow',page.evaluate('document.documentElement.scrollWidth<=innerWidth'))
+        # EV2-7 phone layout (viewport is 390 here): chips are a 3-column grid of 44px buttons with no strip scroll; results are a two-column contact sheet.
+        phone=page.evaluate("""()=>{const n=document.querySelector('#main .md-categories'),b=[...n.querySelectorAll('button')],g=document.querySelector('#main .md-collection'),cards=[...g.querySelectorAll('.md-card')],file=g.querySelector('.md-file');
+          return {chipCols:getComputedStyle(n).gridTemplateColumns.split(' ').length,chipMin:Math.min(...b.map(x=>x.getBoundingClientRect().height)),chipScroll:n.scrollWidth-n.clientWidth,
+            gridCols:getComputedStyle(g).gridTemplateColumns.split(' ').length,cardOverflow:cards.some(c=>c.getBoundingClientRect().right>innerWidth+0.5||c.scrollWidth>c.clientWidth+1),
+            fileHidden:!file||getComputedStyle(file).display==='none',titleLines:Math.max(...cards.map(c=>{const t=c.querySelector('.md-caption b');return Math.round(t.getBoundingClientRect().height/parseFloat(getComputedStyle(t).lineHeight));})),
+            fit:cards.every(c=>{const m=c.querySelector('.md-visual img');return !m||getComputedStyle(m).objectFit==='contain';})};}""")
+        check('390: category chips are a three-column grid of 44px buttons with no horizontal strip',phone['chipCols']==3 and phone['chipMin']>=44 and phone['chipScroll']<=0)
+        check('390: results are a two-column contact sheet with no card overflow',phone['gridCols']==2 and not phone['cardOverflow'] and phone['fit'])
+        check('390: the card caption hides the filename line and clamps the title to two lines',phone['fileHidden'] and phone['titleLines']<=2)
         page.locator('[data-md-page="1"]').click()
         check('Next page has bounded remaining assets',page.locator('.md-card').count()<48)
         page.locator('.md-open').last.scroll_into_view_if_needed()
         scroll=page.locator('#main').evaluate('(el)=>el.scrollTop')
-        page.locator('.md-open').last.click();page.locator('[data-media-inspector] .cancel').click()
+        opened=page.locator('.md-open').last;opened_key=opened.get_attribute('data-md-open')
+        opened.click();page.locator('[data-media-inspector]').wait_for()
+        # EV2-7: on a phone the Inspector opens immediately as a full-screen sheet with focus inside it.
+        sheet=page.locator('#modal .modal-box').bounding_box()
+        check('390: Inspector opens as a full-screen sheet',sheet is not None and abs(sheet['x'])<1 and abs(sheet['y'])<1 and sheet['width']>=389 and sheet['height']>=843)
+        check('390: Inspector receives focus immediately',page.evaluate('!!document.activeElement?.closest("[data-media-inspector]")'))
+        check('390: Inspector Close is visible without scrolling',page.locator('[data-media-inspector] .cancel').is_visible() and page.locator('[data-media-inspector] .cancel').bounding_box()['y']<120)
+        page.locator('[data-media-inspector] .cancel').click()
+        page.wait_for_timeout(120)
+        check('390: closing restores focus to the opened card',page.evaluate('document.activeElement?.dataset.mdOpen')==opened_key)
+        check('390: closing keeps the opened card selected',page.locator('.md-card.is-selected').get_attribute('data-md-key')==opened_key)
         check('Inspector retains exact result page',page.evaluate('CineBraidMediaBrowser.instances.get("production").state.page')==1)
         check('Inspector retains workspace scroll',abs(page.locator('#main').evaluate('(el)=>el.scrollTop')-scroll)<2)
         page.locator('[data-md-page="0"]').click()
@@ -318,7 +422,9 @@ try:
         page.locator('[data-md-view="list"]').click()
         check('Optional compact list works',page.locator('.md-list').count()==1)
         page.goto(base+'/#/character/KAI')
-        page.locator('[data-rd-action="choose"]').first.click()
+        # EV2-7: the Desk's one entry is Build coverage; Production Media is one of its methods. Aimed at Front, so the picker's target is Front.
+        page.locator('[data-rd-slot="front"]').click()
+        page.locator('[data-bc-method="media"]').click()
         page.locator('[data-md="reference-picker"]').wait_for()
         check('Selector shares browser controls',page.locator('#modal [data-md-field="query"]').count()==1)
         check('Unavailable hidden with visible count',not page.locator('[data-md-field="showUnavailable"]').is_checked())
@@ -364,7 +470,8 @@ try:
         check('Rejected result hidden by default',page.locator('#modal .md-card').count()==0)
         page.locator('[data-md-field="showRejected"]').check()
         page.locator('#modal .md-open').first.click()
-        page.locator('#rd-assign-slot').select_option('front')
+        # EV2-7: the target was set in Build coverage and stays locked through the owner round trip.
+        check('Picker target stays locked to Build coverage view',page.locator('#rd-assign-slot').input_value()=='front' and page.locator('#rd-assign-slot').is_disabled())
         page.locator('#rd-single').check()
         check('Revealed rejected result cannot be added',page.locator('#rd-add-candidate').is_disabled())
         page.locator('#modal [data-md-inspect]').first.click()
@@ -379,9 +486,13 @@ try:
         page.wait_for_function('!document.getElementById("rd-add-candidate").disabled')
         check('Restored candidate becomes reusable only after owner save and revalidation',page.locator('#rd-add-candidate').is_enabled())
         page.locator('#rd-picker-cancel').click()
+        # EV2-7: Cancel returns to Build coverage's method step, on the method that opened the picker.
+        page.locator('[data-build-coverage][data-bc-step="method"]').wait_for()
+        page.wait_for_function('document.activeElement?.matches("[data-bc-method=media]")')
+        check('Picker Cancel returns to Build coverage on the pressed method',page.evaluate('document.activeElement?.dataset.bcMethod')=='media')
         # Original disappears only inside this suite's disposable project.
         (project_root/'media'/'contact-000.png').unlink()
-        page.locator('[data-rd-action="choose"]').first.click()
+        page.locator('[data-bc-method="media"]').click()
         page.locator('[data-md="reference-picker"]').wait_for()
         page.locator('#modal [data-md-field="query"]').fill('contact-000.png')
         check('Missing original hidden from selector',page.locator('#modal .md-card').count()==0)
@@ -393,6 +504,9 @@ try:
         check('Missing result stays inspectable',page.locator('[data-media-inspector]').count()==1)
         page.locator('[data-media-inspector] .cancel').click()
         page.locator('#rd-picker-cancel').click()
+        page.locator('[data-build-coverage][data-bc-step="method"]').wait_for()
+        page.locator('[data-build-coverage] [data-bc-action="close"]').first.click()
+        page.wait_for_selector('#modal.hidden',state='attached')
         page.goto(base+'/#/results');page.locator('[data-md="production"]').wait_for()
         page.locator('#main [data-md-field="type"]').select_option('audio')
         check('Audio is discoverable',page.locator('#main .md-card').count()>=1)
@@ -425,7 +539,10 @@ try:
         page.goto(base+'/#/character/KAI')
         page.wait_for_function('projectSaveSettled().settled',timeout=15000)
         before=page.evaluate('({authority:JSON.stringify(P.productionAuthority), count:P.characters.find(e=>e.id==="KAI").candidateFiles.length})')
+        # EV2-7: a view opens Build coverage aimed at that exact view.
         page.locator('[data-rd-slot="front"]').click()
+        check('A view opens Build coverage with its exact target',page.locator('#bc-target').inner_text()=='Target: Kai · Default · Front')
+        page.locator('[data-bc-method="media"]').click()
         page.locator('[data-md="reference-picker"]').wait_for()
         page.locator('#modal [data-md-field="query"]').fill('contact-001.png')
         page.locator('#modal .md-open').click()
@@ -435,6 +552,10 @@ try:
         page.wait_for_function('!document.getElementById("rd-add-candidate").disabled')
         allow_enroll=True
         page.locator('#rd-add-candidate').click()
+        # EV2-7: a verified enrollment returns to Build coverage's Done step, which closes back to the Desk.
+        page.locator('[data-build-coverage][data-bc-step="done"]').wait_for(timeout=15000)
+        check('Done says the view is filled and approval is unchanged','Front is filled for Default. Approval is unchanged.' in page.locator('[data-build-coverage]').inner_text())
+        page.locator('[data-build-coverage] [data-bc-action="close"]').first.click()
         page.wait_for_selector('#modal.hidden',state='attached',timeout=15000)
         page.wait_for_function('P.characters.find(e=>e.id==="KAI").candidateFiles.some(r=>r.referenceBinding?.assetId==="'+selected_id+'")')
         allow_enroll=False
@@ -445,7 +566,8 @@ try:
         check('Enrollment returns to actual Reference Desk target',page.locator('[data-reference-desk]').count()==1)
         page.screenshot(path=str(OUT/'enrolled-candidate.png'))
         context.route('**/api/references/media?*',lambda route:route.fulfill(status=503,content_type='application/json',body='{"error":"Synthetic inventory failure"}'))
-        page.locator('[data-rd-action="choose"]').first.click()
+        page.locator('[data-rd-action="build"]').first.click()
+        page.locator('[data-bc-method="media"]').click()
         page.locator('#rd-picker-retry').wait_for()
         check('Failed selector load has explicit recovery',page.locator('#rd-picker-error').inner_text()=='Synthetic inventory failure')
         check('Inventory failure never claims an empty production',page.locator('[data-md-load-failure]').count()==1 and 'No production media yet' not in page.locator('.rd-picker-library').inner_text())
@@ -455,6 +577,9 @@ try:
         page.locator('#modal .md-card').first.wait_for()
         check('Retry returns to usable selector',page.locator('#modal .md-card').count()>0)
         page.locator('#rd-picker-cancel').click()
+        page.locator('[data-build-coverage][data-bc-step="method"]').wait_for()
+        page.locator('[data-build-coverage] [data-bc-action="close"]').first.click()
+        page.wait_for_selector('#modal.hidden',state='attached')
         check('No uncaught browser errors',not errors)
         check('No blocked external or paid operation attempted',not blocked)
         browser.close()

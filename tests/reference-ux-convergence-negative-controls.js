@@ -1006,6 +1006,214 @@ controlAsync({
   explain: "Confirming this replaces the reference, so a confirmation that cannot name the occupant is the one place this defect costs work.",
 });
 
+/* ===========================================================================
+   EV2-7 — BUILD COVERAGE. Four mechanisms that keep a nondefault state's views its
+   own and keep every retry from writing twice, each broken in memory.
+   =========================================================================== */
+const { spawnSync } = require("child_process");
+const EV27_IDENTITY = { bytes: 12, mtimeMs: 1, contentHash: "" };
+const EV27_RUNTIME = ["shared-reference-media.js", "reference-desk.js", "reference-coverage-build.js"];
+function ev27Fixture() {
+  const project = sheetFixture();
+  const character = project.characters.find((row) => row.id === "CHAR-NC");
+  character.continuityStates.push({ id: "state-alternate", name: "Alternate", isDefault: false, approvedFile: "" });
+  character.candidateFiles.find((row) => row.stored === "CHAR-NC-SHEET.png").targetStateId = "state-alternate";
+  return project;
+}
+/* The in-memory "server" the suite's own guided harness uses, reduced to what these four probes read. */
+async function ev27Draw(mutateSource, { enroll = [], scanMisses = 0 } = {}) {
+  const project = ev27Fixture(), uploaded = [], enrolls = [], jobs = [], plan = { enroll: [...enroll], scanMisses };
+  let server = structuredClone(project), revision = 1;
+  const rev = () => `"ev27-control-${revision}"`, entity = () => server.characters.find((row) => row.id === "CHAR-NC");
+  const rendered = await render("#/character/CHAR-NC", project, {
+    scan: uxScan(), storage: {}, ...(mutateSource ? { mutateSource } : {}),
+    fetch: async (url, options = {}, respond) => {
+      const target = String(url || "");
+      if (target.startsWith("/api/media/upload")) { const name = decodeURIComponent((/name=([^&]+)/.exec(target) || [])[1] || ""); uploaded.push(name); return respond({ name }); }
+      if (target === "/api/media/prepare-identity") { const { name } = JSON.parse(options.body); return respond({ status: uploaded.includes(name) ? "ready" : "unavailable", assetId: "asset-crop-" + uploaded.indexOf(name) }); }
+      if (target.startsWith("/api/projects/") && options.method === "PUT") { server = JSON.parse(options.body); revision++; return respond({ ok: true, revision: rev() }); }
+      if (target === "/api/project") return respond(server, 200, { "x-cinebraid-project-slug": "fixture", "x-cinebraid-project-revision": rev(), etag: rev() });
+      if (target === "/api/scan") {
+        const miss = plan.scanMisses > 0 && uploaded.length > 0; if (miss) plan.scanMisses--;
+        return respond({ ...uxScan(), references: { characters: { "CHAR-NC": (entity().candidateFiles || []).filter((row) => !(miss && uploaded.includes(row.stored))).map((row) => row.referenceBinding
+          ? { name: row.stored, assetId: row.referenceBinding.assetId, bindingId: row.referenceBinding.id, stateId: row.referenceBinding.stateId, slotId: row.referenceBinding.slotId, available: true, url: "/fixture/ref/" + row.stored }
+          : { name: row.stored, assetId: row.assetId || "", available: true, url: "/assets/anchors/" + row.stored }) } } });
+      }
+      if (target.startsWith("/api/references/media")) return respond({ images: (entity().candidateFiles || []).filter((row) => row.assetId).map((row) => ({ assetId: row.assetId, available: true, identity: EV27_IDENTITY, url: "/fixture/media/" + row.assetId })) });
+      if (target === "/api/references/enroll") {
+        const body = JSON.parse(options.body), step = plan.enroll.shift() || "ok";
+        enrolls.push({ ...body, ifMatch: options.headers["If-Match"] });
+        /* The seam's refusal after a background write moved the stored revision. */
+        if (step === "conflict") { revision++; return respond({ ok: false, error: "The project changed before this write, so the entire operation was refused.", code: "PROJECT_REVISION_CONFLICT", action: "reload", revision: rev() }, 409); }
+        const owner = server.characters.find((row) => row.id === body.entityId), slot = owner.coverageSlots.find((row) => row.id === body.slotId);
+        const id = `ref-${String(enrolls.length).padStart(8, "0")}-0000-4000-8000-000000000000`;
+        owner.candidateFiles.push({ stored: id, coverageJobType: "single-reference", targetStateId: body.stateId, targetCoverageSlotId: body.slotId,
+          referenceBinding: { version: 1, id, assetId: body.assetId, entityList: body.list, entityId: body.entityId, stateId: body.stateId, slotId: body.slotId, identity: body.expectedIdentity } });
+        slot.referenceBindings = { ...(slot.referenceBindings || {}), [body.stateId]: id };
+        revision++;
+        if (step === "lost") throw new Error("The connection closed after the server saved.");
+        return respond({ ok: true, bindingId: id, assetId: body.assetId, revision: rev() });
+      }
+      if (target === "/api/generation/fal/coverage/jobs" && options.method === "POST") { const body = JSON.parse(options.body); jobs.push(body); return respond({ ok: true, job: { id: "ev27-control-job", status: "IN_QUEUE", ...body } }); }
+      return null;
+    },
+  });
+  vm.runInContext("globalThis.matchMedia = () => ({ matches: false, addEventListener() {} }); globalThis.requestAnimationFrame = (fn) => setTimeout(fn, 0); pollFalGeneration = () => {};", rendered.context);
+  for (const file of EV27_RUNTIME) {
+    const source = fs.readFileSync(path.join(ROOT, "public", file), "utf8");
+    if (file === "reference-coverage-build.js") vm.runInContext("globalThis.__ev27Add = document.addEventListener; document.addEventListener = function (type, fn, options) { if (type === 'click') globalThis.__ev27Click = fn; return globalThis.__ev27Add.call(document, type, fn, options); };", rendered.context);
+    vm.runInContext(mutateSource ? String(mutateSource(file, source) ?? source) : source, rendered.context, { filename: file });
+    if (file === "reference-coverage-build.js") vm.runInContext("document.addEventListener = globalThis.__ev27Add;", rendered.context);
+  }
+  return { rendered, uploaded, enrolls, jobs, server: () => server };
+}
+const EV27_CROP = (assign) => `(async () => {
+  const realCreate = document.createElement.bind(document);
+  document.createElement = (tag) => String(tag).toLowerCase() === "canvas"
+    ? { width: 0, height: 0, getContext: () => ({ drawImage() {} }), toBlob: (done) => done({ size: 12, type: "image/png" }) }
+    : realCreate(tag);
+  CineBraidBuildCoverage.open({ list: 'characters', id: 'CHAR-NC', stateId: 'state-alternate', slotId: 'profile', method: 'sheet', source: { kind: 'entity', name: 'CHAR-NC-SHEET.png' } });
+  if (!window._coverageCrop || !window._coverageCrop.guided) return null;
+  const source = document.getElementById('coverage-crop-source'); source.naturalWidth = 1200; source.naturalHeight = 400;
+  document.getElementById('coverage-crop-ack').checked = true; syncCoverageCropGuided();
+  await CineBraidBuildCoverage.cropSave(${assign ? "true" : "false"});
+  return CineBraidBuildCoverage.state();
+})()`;
+async function ev27Click(rendered, dataset) {
+  vm.runInContext(`(() => { const d = ${JSON.stringify(dataset)}; const button = { dataset: d, disabled: false, hasAttribute: () => false };
+    globalThis.__ev27Click({ type: 'click', target: { closest: (selector) => /data-bc-/.test(String(selector)) ? button : null } }); })()`, rendered.context);
+  for (let i = 0; i < 300; i++) {
+    await new Promise((resolve) => setTimeout(resolve, 10));
+    if (!vm.runInContext("(() => { const b = CineBraidBuildCoverage.state(); return !!b && b.busy; })()", rendered.context)) break;
+  }
+}
+
+/* ===========================================================================
+   N19 — A NONDEFAULT ENROLLMENT MUST NOT REWRITE THE LEGACY SLOT SELECTION.
+
+   The live defect this checkpoint fixed: enroll a Weathered Front and the Default
+   state's legacy Front selection disappears for every global reader. The enrollment
+   contract suite runs as its own process against the mutated server module, so the
+   probe watches the real disposable-root checks rather than a copy of them.
+   =========================================================================== */
+controlAsync({
+  label: "N19 a nondefault enrollment keeps the default state's legacy selection",
+  mutateSource: (file, text) => (file !== "reference-media.js" ? text : mutate(text, "stateScoped: stateId !== defaultId", "stateScoped: false", "N19")),
+  probe: async (mutateSource) => {
+    const target = path.join(ROOT, "src/media/reference-media.js");
+    const replacement = mutateSource ? mutateSource("reference-media.js", fs.readFileSync(target, "utf8")) : "";
+    const hook = `const Module = require("module"), path = require("path"), compile = Module.prototype._compile;
+      Module.prototype._compile = function (content, filename) { return compile.call(this, process.env.EV27_REFERENCE_MEDIA && path.resolve(filename) === path.resolve(${JSON.stringify(target)}) ? process.env.EV27_REFERENCE_MEDIA : content, filename); };
+      require(${JSON.stringify(path.join(ROOT, "tests/reference-enrollment.js"))});`;
+    const run = spawnSync(process.execPath, ["-e", hook], { cwd: ROOT, encoding: "utf8", env: { ...process.env, EV27_REFERENCE_MEDIA: replacement }, timeout: 120000 });
+    const out = String(run.stdout || ""), err = String(run.stderr || "");
+    if (!out.includes("PASS independent views resolve their exact selected assets")) return { reached: false, held: false, reason: "enrollment-suite-did-not-reach-the-check" };
+    const held = run.status === 0 && out.includes("PASS nondefault enrollment preserves the default state's legacy selection");
+    const overwrote = !held && !out.includes("PASS nondefault enrollment preserves") && /old\.png/.test(err);
+    return { reached: true, held, reason: held ? "legacy-selection-preserved" : overwrote ? "nondefault-enrollment-overwrote-the-legacy-selection" : "enrollment-suite-failed-elsewhere" };
+  },
+  reason: "nondefault-enrollment-overwrote-the-legacy-selection",
+  explain: "A Weathered binding written over the global slot erases the Default state's selection for every reader that still reads it.",
+});
+
+/* ===========================================================================
+   N20 — A STATE-SCOPED GENERATION REQUEST MUST SAY WHICH STATE IT IS FOR.
+   =========================================================================== */
+controlAsync({
+  label: "N20 a state-scoped coverage request carries its continuity state",
+  mutateSource: only("coverage-automation.js", (text) => mutate(
+    text,
+    '      ...(options.stateId ? { continuityStateId: options.stateId, continuityStateName: options.stateName || "" } : {}),\n',
+    "",
+    "N20")),
+  probe: async (mutateSource) => {
+    const drawn = await ev27Draw(mutateSource);
+    await vm.runInContext(`(async () => {
+      const e = P.characters.find((x) => x.id === 'CHAR-NC'), profile = e.coverageSlots.find((s) => s.id === 'profile');
+      await __CINEBRAID_COVERAGE_AUTOMATION.submitCoverageJob('characters', e, { prompt: 'p', coverageJobType: 'slot', slot: profile, stateId: 'state-default', stateName: 'Default', clientRequestId: 'ev27-n20' });
+    })()`, drawn.rendered.context);
+    if (drawn.jobs.length !== 1) return { reached: false, held: false, reason: `jobs-posted(${drawn.jobs.length})` };
+    const carried = drawn.jobs[0].continuityStateId === "state-default";
+    return { reached: true, held: carried, reason: carried ? "state-carried" : "state-scoped-request-sent-without-its-state" };
+  },
+  reason: "state-scoped-request-sent-without-its-state",
+  explain: "Without the state the server files returned candidates under no state, and a Weathered request comes back as Default's.",
+});
+
+/* ===========================================================================
+   N21 — AN UNKNOWN OUTCOME IS CHECKED, NOT REPEATED.
+   =========================================================================== */
+controlAsync({
+  label: "N21 a retry after an unknown enrollment outcome posts nothing new",
+  mutateSource: only("reference-desk.js", (text) => mutate(
+    text,
+    "const existing=R.findExactBinding(entity,{assetId,stateId,slotId});",
+    "const existing=null;",
+    "N21")),
+  probe: async (mutateSource) => {
+    const drawn = await ev27Draw(mutateSource, { enroll: ["lost"] });
+    const first = await vm.runInContext(EV27_CROP(true), drawn.rendered.context);
+    if (!first || first.assign.status !== "unknown") return { reached: false, held: false, reason: `first-outcome(${first && first.assign.status})` };
+    await ev27Click(drawn.rendered, { bcAction: "assign-retry" });
+    const bindings = drawn.server().characters.find((row) => row.id === "CHAR-NC").candidateFiles.filter((row) => row.referenceBinding).length;
+    return { reached: true, held: drawn.enrolls.length === 1 && bindings === 1, reason: drawn.enrolls.length === 1 ? "existing-binding-reused" : "unknown-outcome-retry-posted-a-second-enrollment" };
+  },
+  reason: "unknown-outcome-retry-posted-a-second-enrollment",
+  explain: "A response lost after the server saved is still a saved binding; posting again creates a second one for the same view.",
+});
+
+/* ===========================================================================
+   N22 — A CROP ROW IS RECOGNISED BY ITS STORED NAME, NOT BY OBJECT IDENTITY.
+   =========================================================================== */
+controlAsync({
+  label: "N22 a crop retry after the project is re-read keeps one row",
+  mutateSource: only("coverage-automation.js", (text) => mutate(
+    text,
+    "if(!entity.candidateFiles.some(r => (r.stored||r.name) === pending.row.stored))entity.candidateFiles.push(pending.row);",
+    "if(!entity.candidateFiles.includes(pending.row))entity.candidateFiles.push(pending.row);",
+    "N22")),
+  probe: async (mutateSource) => {
+    const drawn = await ev27Draw(mutateSource, { scanMisses: 1 });
+    const first = await vm.runInContext(EV27_CROP(false), drawn.rendered.context);
+    if (!first || first.pendingCrop) return { reached: false, held: false, reason: "first-save-did-not-fail-at-the-media-check" };
+    const rows = JSON.parse(await vm.runInContext(`(async () => {
+      const e = P.characters.find((x) => x.id === 'CHAR-NC'); e.candidateFiles = JSON.parse(JSON.stringify(e.candidateFiles));
+      await CineBraidBuildCoverage.cropSave(false);
+      return JSON.stringify(P.characters.find((x) => x.id === 'CHAR-NC').candidateFiles.filter((r) => r.coverageCrop).map((r) => r.stored));
+    })()`, drawn.rendered.context));
+    if (drawn.uploaded.length !== 1) return { reached: false, held: false, reason: `uploads(${drawn.uploaded.length})` };
+    return { reached: true, held: rows.length === 1, reason: rows.length === 1 ? "one-crop-row" : "retry-after-refresh-duplicated-the-crop-row" };
+  },
+  reason: "retry-after-refresh-duplicated-the-crop-row",
+  explain: "Two rows with one stored name make the crop ambiguous, and an ambiguous candidate cannot resolve or be assigned.",
+});
+
+/* ===========================================================================
+   N23 — A REVISION CONFLICT IS ANSWERED BY A RE-READ, NOT BY THE SAME IF-MATCH.
+   =========================================================================== */
+controlAsync({
+  label: "N23 an enrollment refused for a moved revision is re-read before the next post",
+  mutateSource: only("reference-coverage-build.js", (text) => mutate(
+    text,
+    "reread=error.code==='PROJECT_REVISION_CONFLICT'||error.action==='reload';",
+    "reread=false;",
+    "N23")),
+  probe: async (mutateSource) => {
+    const drawn = await ev27Draw(mutateSource, { enroll: ["conflict"] });
+    /* The fixture's owed migration save lands first, so an unsettled project is not what is observed. */
+    await new Promise((resolve) => setTimeout(resolve, 80));
+    await vm.runInContext("flushPendingProjectSave()", drawn.rendered.context);
+    const first = await vm.runInContext(EV27_CROP(true), drawn.rendered.context);
+    if (!first || drawn.enrolls.length !== 1) return { reached: false, held: false, reason: `first-post(${drawn.enrolls.length})` };
+    await ev27Click(drawn.rendered, { bcAction: first.assign.status === "confirm" ? "assign-confirm" : "assign-retry" });
+    if (drawn.enrolls.length !== 2) return { reached: false, held: false, reason: `second-post(${drawn.enrolls.length}:${first.assign.status})` };
+    const moved = drawn.enrolls[1].ifMatch !== drawn.enrolls[0].ifMatch;
+    return { reached: true, held: moved, reason: moved ? "second-post-carries-the-re-read-revision" : "revision-conflict-retried-with-the-refused-if-match" };
+  },
+  reason: "revision-conflict-retried-with-the-refused-if-match",
+  explain: "The server refuses every post that names a revision it has moved past, so a retry with the same If-Match can never assign the crop.",
+});
+
 /* ---------------------------------------------------------------------------
    NO CATCH-AS-SUCCESS. Enforced, not promised. */
 function testNoCatchAsSuccess() {

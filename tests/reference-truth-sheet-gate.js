@@ -854,6 +854,57 @@ const gateScan = () => ({
   shots: { "L1-01": { takes: [], locked: [] } },
 });
 
+/* EV2-7 — A GUIDED CROP AND ITS BINDING, AND THE SHEET THEY CAME FROM.
+
+   Build coverage turns a sheet into a derived crop (a new identity with provenance)
+   and binds that crop to one exact state and view. The binding row is a single view
+   and may be approved as a primary like any other; the sheet stays a sheet, and the
+   Reference Desk offers it as a source for views, never as an approvable image. */
+const EV27_DESK_RUNTIME = ["public/shared-reference-media.js", "public/reference-desk.js"];
+async function testGuidedCropKeepsTheSheetASource() {
+  const bindingId = "ref-99999999-9999-4999-8999-999999999999", assetId = "asset-" + "a".repeat(32);
+  const cropRow = { stored: "CHAR-IREN-COVERAGE-FRONT-X.png", original: "CHAR-IREN-COVERAGE-FRONT-X.png", decision: "unreviewed", reviewRequired: true,
+    coverageJobType: "extracted-crop", targetStateId: "state-default", targetCoverageSlotId: "front", targetCoverageSlotName: "Front", assetId,
+    coverageCrop: { sourceSheet: "CHAR-IREN-SHEET.png", layout: "3x1", panelIndex: 0, normalized: { x: 0, y: 0, w: 33, h: 100 }, manuallyAdjusted: true, note: "" } };
+  const bindingRow = { stored: bindingId, original: "CHAR-IREN-COVERAGE-FRONT-X.png", decision: "unreviewed", coverageJobType: "single-reference", targetStateId: "state-default", targetCoverageSlotId: "front",
+    referenceBinding: { version: 1, id: bindingId, assetId, entityList: "characters", entityId: "CHAR-IREN", stateId: "state-default", slotId: "front", identity: { bytes: 12, mtimeMs: 1, contentHash: "" } } };
+  eq(Coverage.referenceArtifactStructure(bindingRow), "single", "EV2-7: a binding over a derived crop is a single view");
+  eq(Coverage.artifactMayHoldPrimaryAuthority(Coverage.referenceArtifactStructure(bindingRow)), true, "EV2-7: and may hold primary authority like any single view");
+  const sheetRow = { stored: "CHAR-IREN-SHEET.png", original: "CHAR-IREN-SHEET.png", decision: "unreviewed", coverageJobType: "sheet", coverageSheetType: "angles" };
+  const owner = { candidateFiles: [sheetRow, cropRow, bindingRow] };
+  eq(Coverage.referenceArtifactStructureOf(owner, "CHAR-IREN-SHEET.png"), "sheet", "EV2-7: the source sheet is still a sheet after a guided crop and assignment");
+  eq(Coverage.artifactMayHoldPrimaryAuthority(Coverage.referenceArtifactStructureOf(owner, "CHAR-IREN-SHEET.png")), false, "EV2-7: and still cannot hold primary authority");
+
+  const project = gateFixture();
+  const character = project.characters[0];
+  character.coverageSlots = [{ id: "front", label: "Front", requirement: "required", selectedFile: "", referenceBindings: { "state-default": bindingId } }];
+  character.candidateFiles.push(cropRow, bindingRow);
+  const rendered = await render("#/character/CHAR-IREN", project, { scan: gateScan() });
+  vm.runInContext("globalThis.matchMedia = () => ({ matches: false, addEventListener() {} });", rendered.context);
+  for (const file of EV27_DESK_RUNTIME) vm.runInContext(fs.readFileSync(path.join(ROOT, file), "utf8"), rendered.context, { filename: file });
+  const desk = (candidateName) => vm.runInContext(`(() => {
+    SCAN.references = { characters: { "CHAR-IREN": [
+      { name: "CHAR-IREN-PRIMARY.png", assetId: "", available: true, url: "/assets/anchors/CHAR-IREN-PRIMARY.png" },
+      { name: "CHAR-IREN-SHEET.png", assetId: "", available: true, url: "/assets/anchors/CHAR-IREN-SHEET.png" },
+      { name: "CHAR-IREN-COVERAGE-FRONT-X.png", assetId: ${JSON.stringify(assetId)}, available: true, url: "/fixture/crop" },
+      { name: ${JSON.stringify(bindingId)}, assetId: ${JSON.stringify(assetId)}, bindingId: ${JSON.stringify(bindingId)}, stateId: "state-default", slotId: "front", available: true, url: "/fixture/binding" },
+    ] } };
+    CineBraidReferenceDesk.selectContext({ list: "characters", id: "CHAR-IREN", stateId: "state-default", candidateName: ${JSON.stringify(candidateName)} });
+    return CineBraidReferenceDesk.view("characters", "CHAR-IREN");
+  })()`, rendered.context);
+  const sheetDesk = desk("CHAR-IREN-SHEET.png");
+  ok(sheetDesk.includes("Reference sheet · a source for views. Views are filled only when you assign a crop."), "EV2-7: a selected sheet says what it is on the canvas");
+  ok(sheetDesk.includes('data-rd-action="sheet"') && sheetDesk.includes("Use this sheet to fill views"), "EV2-7: the sheet's footer offers to fill views from it");
+  ok(!sheetDesk.includes('data-rd-action="approve"'), "EV2-7: a selected sheet is never offered approval");
+  ok(/<li><b>Front<\/b><span>assigned to Front<\/span><\/li>/.test(sheetDesk), "EV2-7: the views cropped from the sheet say where they are assigned");
+  ok(!sheetDesk.includes('data-rd-candidate="CHAR-IREN-COVERAGE-FRONT-X.png"') && sheetDesk.includes(`data-rd-candidate="${bindingId}"`),
+    "EV2-7: one image in one state shows once — the binding, not also its crop row");
+  ok(sheetDesk.includes("Crop from CHAR-IREN-SHEET.png"), "EV2-7: and the binding carries its crop provenance");
+  const bindingDesk = desk(bindingId);
+  ok(bindingDesk.includes('data-rd-action="approve"') && !bindingDesk.includes('data-rd-action="sheet"'), "EV2-7: the assigned crop is a single view and approval stays its separate decision");
+  eq(JSON.stringify(vm.runInContext("P.productionAuthority", rendered.context)), JSON.stringify(project.productionAuthority), "EV2-7: rendering the Desk changes no authority");
+}
+
 /* 5 — EXISTING BAD PRIMARY: DETECT AND TELL, NEVER REVOKE. */
 async function testExistingBadPrimaryIsReportedNotRevoked() {
   const project = gateFixture({ sheetIsCanon: true });
@@ -1389,6 +1440,7 @@ async function main() {
   await testVisualChooserSelectsWithoutWriting();
   await testCoverageQuoteMatchesTheRateOwner();
   await testSheetSourceLeavesPrimaryUntouched();
+  await testGuidedCropKeepsTheSheetASource();
   console.log(`Reference truth + sheet gate suite passed ${checks} checks across structural classification, the authority boundary, detect-and-tell, four-state coverage, non-committing selection and the coverage quote. Provider calls made: 0.`);
 }
 

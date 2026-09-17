@@ -190,13 +190,31 @@ window.doIntake = async () => {
     /* Re-read at the writer, not carried from the click, and refused rather than
        defaulted: a silent default would be the guess this whole seam exists to
        avoid. */
-    structure = document.getElementById("in-structure")?.value || "",
-    it = P[list].find((x) => x.id === id),
-    type = ENTITY_MEDIA[list];
+    structure = document.getElementById("in-structure")?.value || "";
   /* The button is disabled without a choice; this is the writer saying the same
      thing, so a replayed or scripted call cannot land undeclared rows either. */
   if (!INTAKE_STRUCTURES.includes(structure)) return toast("Say whether these files are a single reference or a coverage sheet");
   closeModal();
+  const { saved, settled } = await intakeEntityFiles({ list, id, files, structure, targetStateId, targetStateName, model });
+  window._pendingEntityStateUpload = null;
+  /* SLICE 3: the candidate grid these files land in moved into `reference`.
+     Writing the retired `review` id would still resolve through legacyMap, but it
+     would leave a stale id in storage that every later read has to translate. */
+  if (targetStateId) window.selectBoundedTask?.("entity-task", `${list}:${id}`, "reference");
+  else route();
+  if (!settled.settled) {
+    return toast(`${saved.length} candidate file(s) are on disk but this import is not saved yet, so they cannot be approved. ${settled.reason}`);
+  }
+  toast(saved.length + ` candidate file(s) uploaded${targetStateName ? ` for ${targetStateName}` : ""}`);
+};
+/* EV2-7 — THE INTAKE WRITER, AWAITABLE. doIntake() reads the DOM and delegates here;
+   Build coverage calls it with `structure: "sheet"` and continues only when the save
+   settled. Same upload, same declared structure, same row, same settled-save rule. */
+async function intakeEntityFiles({ list, id, files, structure, targetStateId = "", targetStateName = "", model = "" }) {
+  const it = P[list]?.find((x) => x.id === id),
+    type = ENTITY_MEDIA[list];
+  if (!INTAKE_STRUCTURES.includes(structure)) throw new Error("Say whether these files are a single reference or a coverage sheet");
+  if (!it) throw new Error("This reference no longer exists.");
   const saved = [],
     original = [];
   const prefix = (it.prefix || it.anchorPrefix || it.id).replace(/-+$/, "");
@@ -257,17 +275,9 @@ window.doIntake = async () => {
   await flushPendingProjectSave();
   const settled = typeof projectSaveSettled === "function" ? projectSaveSettled() : { settled: true };
   SCAN = await (await fetch("/api/scan")).json();
-  window._pendingEntityStateUpload = null;
-  /* SLICE 3: the candidate grid these files land in moved into `reference`.
-     Writing the retired `review` id would still resolve through legacyMap, but it
-     would leave a stale id in storage that every later read has to translate. */
-  if (targetStateId) window.selectBoundedTask?.("entity-task", `${list}:${id}`, "reference");
-  else route();
-  if (!settled.settled) {
-    return toast(`${saved.length} candidate file(s) are on disk but this import is not saved yet, so they cannot be approved. ${settled.reason}`);
-  }
-  toast(saved.length + ` candidate file(s) uploaded${targetStateName ? ` for ${targetStateName}` : ""}`);
-};
+  return { saved, settled };
+}
+window.intakeEntityFiles = intakeEntityFiles;
 
 /* ---------- clip mutations ---------- */
 window.setClip = (id, ci, k, v) => {

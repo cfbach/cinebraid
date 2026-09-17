@@ -258,3 +258,35 @@ body:is(.reference-desk-active,.production-media-active) #modal .rd-confirm-box{
   .rd-picker footer p { max-width: 100%; }
   .rd-confirm figure { height: 190px; }
 }
+
+/* EV2-7 — Build coverage: one target, the views it owes, and methods that say why they are unavailable. */
+.rd-sheet-caption{position:absolute;inset:auto 0 0 0;padding:10px 14px;background:rgba(9,10,11,.88);color:#e8d4bd;font:13px/1.45 var(--body)}
+.rd-sheet-tag{font-weight:650;color:#e8c4a0}.rd-candidates .rd-crop-from{color:#a6c9cf;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+/* The strip grows to its tallest tile, so a "Crop from <sheet>" line is never clipped at desktop widths. */
+.rd-candidates{flex-basis:auto;min-height:83px}
+@media(max-height:820px){.rd-candidates{min-height:70px}}
+.rd-derived{border-left:2px solid #b89a78;padding:10px 14px;background:#1c1d1c}.rd-derived h2{font:550 14px/1.4 var(--body);margin:0 0 6px}.rd-derived ul{list-style:none;margin:0;padding:0;display:grid;gap:4px}.rd-derived li{display:flex;flex-wrap:wrap;gap:8px;font:13px/1.5 var(--body)}.rd-derived li span{color:#b4bbc2}.rd-derived p{margin:0;font:13px/1.5 var(--body);color:#b4bbc2}
+.rd-slot-earlier img{opacity:.55}.rd-slot-earlier small{color:#e3c29c}
+.rd-target-locked{font-size:13px;color:#b4bbc2}.rd-assignment select:disabled{opacity:.8;cursor:not-allowed}
+.rd-picker .rd-sheet-link{align-self:flex-start;background:transparent;border-color:#5b6168;color:#a6c9cf;min-height:44px;text-align:left}.rd-sheet-note{margin:0;padding:12px 14px;border-left:2px solid #b89a78;background:#222321;font:13px/1.5 var(--body)}
+.bc-dialog{font:14px/1.55 var(--body);color:#edeef0;min-width:0}.bc-head{display:flex;justify-content:space-between;align-items:start;gap:16px}.bc-head h3{font:550 22px/1.3 var(--body);letter-spacing:-.02em;margin:2px 0 6px;overflow-wrap:anywhere}.bc-head .rd-eyebrow{margin:0;color:var(--sd-warm,#ddb68b);font-size:13px;letter-spacing:.08em;text-transform:uppercase}
+.bc-target{margin:6px 0;padding:10px 14px;border-left:3px solid #ddb68b;background:#222321;font-size:15px;overflow-wrap:anywhere}.bc-target b{font-weight:600}.bc-approval{margin:0 0 14px;font-size:13px;color:#b9c0c8}.bc-note{margin:0 0 12px;font-size:13px;color:#a6c9cf}
+.bc-layout{display:grid;grid-template-columns:minmax(0,1.5fr) minmax(240px,1fr);gap:24px;align-items:start}.bc-work{min-width:0;display:flex;flex-direction:column;gap:14px}.bc-side{min-width:0}
+.bc-views{width:100%;border-collapse:collapse;font-size:13px}.bc-views caption{text-align:left;font-weight:600;padding:0 0 8px}.bc-views th,.bc-views td{text-align:left;padding:8px 6px;border-bottom:1px solid #30343a;vertical-align:top;overflow-wrap:anywhere}.bc-views thead th{color:#a4a9af;font-weight:500}.bc-views tbody th{font-weight:550}.bc-views .bc-view-target{background:#24221f}.bc-views .bc-view-target th{box-shadow:inset 3px 0 0 #ddb68b}.bc-views small{color:#e3c29c;font-size:13px}.bc-views-summary{margin:0 0 8px;font-size:13px;color:#bbc1c7}.bc-target-line{margin:0;font-size:14px;overflow-wrap:anywhere}
+.bc-field{display:flex;flex-direction:column;gap:6px;font-size:13px;color:#c1c7ce}.bc-field select{min-height:44px;background:#1d2023;border:1px solid #41464c;border-radius:5px;padding:9px 10px;color:#edeef0;font:14px/1.4 var(--body);max-width:100%}
+.bc-methods{border:0;margin:0;padding:0;display:grid;gap:10px;min-width:0}.bc-methods legend{font-weight:600;padding:0 0 8px;font-size:15px}.bc-method{display:grid;grid-template-columns:minmax(180px,auto) minmax(0,1fr);gap:4px 14px;align-items:center;padding:8px 0;border-top:1px solid #2b2e32}.bc-method small{font-size:13px;color:#b4bbc2;overflow-wrap:anywhere}.bc-method.is-disabled small{color:#e3c29c}
+.bc-dialog .rd-button,.bc-dialog .cancel,.bc-crop .approve-btn,.bc-crop .ghost-btn,.bc-crop .cancel{min-height:44px;font-size:13px}
+.bc-dialog :focus-visible,.bc-crop :focus-visible,.rd-picker :focus-visible{outline:3px solid #ddb68b;outline-offset:2px}
+.bc-row{display:flex;flex-wrap:wrap;gap:10px;align-items:center}.bc-error{margin:0;padding:10px 14px;border-left:3px solid #e39a86;background:#2d2220;color:#ffd8cf;font-size:13px}.bc-status{margin:0;font-size:14px}.bc-done{padding:12px 14px;border-left:3px solid #7dcad3;background:#1c2426}.bc-done p{margin:0}.bc-confirm{padding:12px 14px;border-left:3px solid #ddb68b;background:#24221f}.bc-confirm p{margin:0}
+.bc-detail summary{cursor:pointer;min-height:44px;display:flex;align-items:center;color:#a6c9cf}.bc-detail pre{white-space:pre-wrap;overflow-wrap:anywhere;font:13px/1.5 ui-monospace,monospace;background:#0f1113;padding:10px;margin:0;user-select:all}
+.bc-source{display:flex;gap:14px;align-items:center}.bc-source img{width:120px;height:120px;object-fit:contain;background:#08090a;flex-shrink:0}.bc-source p{margin:0}.bc-source small{display:block;font-size:13px;color:#b4bbc2}
+.bc-gen-views{border:0;margin:0;padding:0;display:flex;flex-wrap:wrap;gap:6px 18px}.bc-gen-views legend{font-weight:600;padding:0 0 6px}.bc-gen-views .rd-check,.bc-dialog .rd-check{display:flex;align-items:center;gap:9px;min-height:44px;font-size:14px}
+.bc-quote{display:flex;flex-direction:column;gap:3px;padding:10px 14px;background:#1c1f22;font-size:13px}.bc-quote em{font-style:normal;color:#e8c4a0}
+.bc-sheets,.bc-returned{list-style:none;margin:0;padding:0;display:grid;grid-template-columns:repeat(auto-fill,minmax(150px,1fr));gap:12px}.bc-sheets li,.bc-returned li{display:flex;flex-direction:column;gap:4px;min-width:0}.bc-sheet,.bc-returned label{display:flex;flex-direction:column;gap:6px;min-height:44px;padding:6px;border:1px solid #353a40;border-radius:6px;background:#202327;color:#edeef0;text-align:left;cursor:pointer;font-size:13px;overflow-wrap:anywhere}.bc-sheet:disabled{opacity:.5;cursor:not-allowed}.bc-sheet img,.bc-returned img{width:100%;height:100px;object-fit:contain;background:#0b0d0e}.bc-sheets small{font-size:13px;color:#b4bbc2}.bc-returned input{width:20px;height:20px;accent-color:#ddb68b}
+.bc-crop .bc-target{font-size:15px}.bc-crop .bc-ack{display:flex;gap:10px;align-items:flex-start;padding:10px 0;font-size:14px;min-height:44px}.bc-crop .bc-ack input{width:20px;height:20px;flex-shrink:0;accent-color:#ddb68b}.bc-crop .bc-approval{font-size:13px}.coverage-crop-state-note{margin:0;font-size:13px;color:#e3c29c;align-self:center}
+@media (max-width: 767px) {
+  .bc-layout { grid-template-columns: minmax(0,1fr); }
+  .bc-method { grid-template-columns: minmax(0,1fr); }
+  .bc-head { flex-wrap: wrap; }
+  .bc-source { flex-wrap: wrap; }
+}

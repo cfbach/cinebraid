@@ -208,7 +208,7 @@ def assert_surface_polish(page, label):
           return Math.abs(parseFloat(reserve||'0') - dock.getBoundingClientRect().height) <= 1; }""",
         timeout=20000)
     desk=reference_desk_ready(page)
-    action=desk.get_by_role('button', name='Choose from production media', exact=True)
+    action=desk.get_by_role('button', name='Build coverage', exact=True)
     action.scroll_into_view_if_needed()
     settled_floor=page.evaluate("() => document.querySelector('#cb-shell-dock')?.getBoundingClientRect().top ?? innerHeight")
     bounds=action.bounding_box()

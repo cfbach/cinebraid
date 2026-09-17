@@ -31,6 +31,74 @@ check("enrollment creates coverage and no human authority",()=>{assert.equal(Sha
 check("second state remains unfilled",()=>assert.equal(Shared.coverage(project.props[0],resolve().listing("props",project.props[0]),"weathered").filled,0));
 const second=Reference.enroll({...request,project,assetId:side.assetId,expectedIdentity:resolve().asset(side.assetId).identity,slotId:"side",bindingId:"ref-22222222-2222-4222-8222-222222222222"});project=second.project;
 check("independent views resolve their exact selected assets",()=>{assert.equal(Shared.coverage(project.props[0],resolve().listing("props",project.props[0]),"state-default").filled,2);assert.equal(resolve().resolve("props",project.props[0],second.candidate.stored).assetId,side.assetId);});
+/* EV2-7 — A NONDEFAULT STATE'S BINDING IS THAT STATE'S ANSWER ONLY. Each check below works on its own clone
+   with a legacy-selected entity, so the contract sequence above and below is untouched. */
+const Slots=require("../public/shared-entity-slots");
+const cropAsset=record("props/legacy-tool-COVERAGE-SIDE-X.png");Store.writeLedgerSync(dir,{...ledger,assets:[...ledger.assets,cropAsset]});
+function legacyProject({states=entity("legacy-tool").continuityStates}={}) {
+  const p=structuredClone(project),e=entity("legacy-tool");e.continuityStates=states;
+  e.coverageSlots[0].selectedFile="old.png";e.coverageSlots[0].selectedAssetId=legacy.assetId;e.coverageSlots[0].status="selected";
+  e.candidateFiles=[{stored:"old.png",original:"old.png",coverageJobType:"single-reference"}];p.props.push(e);return p;
+}
+const legacyOf=p=>p.props.find(e=>e.id==="legacy-tool");
+const enrollOn=(p,over)=>Reference.enroll({...request,project:p,entityId:"legacy-tool",stateId:"weathered",slotId:"front",assetId:image.assetId,expectedIdentity:resolve().asset(image.assetId).identity,...over});
+check("nondefault enrollment preserves the default state's legacy selection",()=>{
+  const before=legacyProject(),out=enrollOn(before,{bindingId:"ref-44444444-4444-4444-8444-444444444444"}),e=legacyOf(out.project),front=e.coverageSlots[0];
+  assert.equal(front.selectedFile,"old.png");assert.equal(front.selectedAssetId,legacy.assetId);assert.equal(front.status,"selected");assert.equal(front.replacementHistory,undefined);
+  assert.equal(front.referenceBindings.weathered,"ref-44444444-4444-4444-8444-444444444444");
+  assert.equal(Shared.selectedKey(e,front,"state-default"),"old.png");assert.equal(Shared.selectedKey(e,front,"weathered"),"ref-44444444-4444-4444-8444-444444444444");
+  assert.equal(Shared.selectedAssignment(e,front,"state-default").basis,"legacy");assert.equal(Shared.selectedAssignment(e,front,"weathered").basis,"binding");
+  const media=Reference.resolver({...opts(),project:out.project}).listing("props",e);
+  assert.deepEqual(Shared.coverage(e,media,"weathered"),{required:2,filled:1,unscoped:0,earlier:{}});
+  assert.deepEqual(Shared.coverage(e,media,"state-default"),{required:2,filled:1,unscoped:0,earlier:{}});
+  assert.equal(out.project.productionAuthority,undefined);
+});
+check("nondefault enrollment into an empty view leaves the global slot selection empty",()=>{
+  const out=enrollOn(legacyProject(),{slotId:"side",bindingId:"ref-55555555-5555-4555-8555-555555555555"}),side=legacyOf(out.project).coverageSlots[1];
+  assert.equal(Slots.slotSelectedFile(side),"");assert.equal(side.selectedAssetId,undefined);assert.equal(side.referenceBindings.weathered,"ref-55555555-5555-4555-8555-555555555555");
+});
+check("a nondefault state does not count an unscoped legacy selection as filled",()=>{
+  const p=legacyProject(),e=legacyOf(p),media=Reference.resolver({...opts(),project:p}).listing("props",e);
+  assert.deepEqual(Shared.coverage(e,media,"weathered"),{required:2,filled:0,unscoped:1,earlier:{"state not recorded":1}});
+  assert.deepEqual(Shared.coverage(e,media,"state-default"),{required:2,filled:1,unscoped:0,earlier:{}});
+  assert.equal(Shared.viewStatus(e,e.coverageSlots[0],"weathered",media).label,"Earlier selection · state not recorded");
+  assert.equal(Shared.coverageSummary(Shared.coverage(e,media,"weathered")),"0 of 2 required views filled · 1 earlier selection, state not recorded");
+});
+check("an earlier selection recorded for the default state is named for it, not called unrecorded or unavailable",()=>{
+  const p=legacyProject(),e=legacyOf(p);e.candidateFiles[0].targetStateId="state-default";
+  const media=Reference.resolver({...opts(),project:p}).listing("props",e,true),v=Shared.viewStatus(e,e.coverageSlots[0],"weathered",media);
+  assert.equal(v.status,"earlier");assert.equal(v.present,true);assert.equal(v.recordedStateId,"state-default");assert.equal(v.label,"Earlier selection · recorded for Clean");
+  assert.deepEqual(Shared.coverage(e,media,"weathered"),{required:2,filled:0,unscoped:1,earlier:{"recorded for Clean":1}});
+  assert.equal(Shared.coverageSummary(Shared.coverage(e,media,"weathered")),"0 of 2 required views filled · 1 earlier selection, recorded for Clean");
+  assert.equal(Shared.viewStatus(e,e.coverageSlots[0],"state-default",media).label,"View filled");
+  assert.equal(Shared.viewStatus(e,e.coverageSlots[1],"weathered",media).label,"Missing");
+});
+check("states without a recorded default are all scoped (fail safe)",()=>{
+  const out=enrollOn(legacyProject({states:[{id:"state-default",name:"Clean"},{id:"weathered",name:"Weathered"}]}),{stateId:"state-default",bindingId:"ref-66666666-6666-4666-8666-666666666666"});
+  assert.equal(legacyOf(out.project).coverageSlots[0].selectedFile,"old.png");
+});
+const cropRow={stored:"legacy-tool-COVERAGE-SIDE-X.png",original:"legacy-tool-COVERAGE-SIDE-X.png",addedAt:at,decision:"unreviewed",reviewRequired:true,coverageJobType:"extracted-crop",targetStateId:"weathered",targetCoverageSlotId:"side",targetCoverageSlotName:"Side",
+  coverageCrop:{sourceSheet:"sheet.png",layout:"3x1",panelIndex:1,normalized:{x:33,y:0,w:33,h:100},manuallyAdjusted:true,note:""},assetId:cropAsset.assetId};
+const cropProject=legacyProject();legacyOf(cropProject).candidateFiles.push(structuredClone(cropRow));
+const cropBinding="ref-77777777-7777-4777-8777-777777777777";
+const cropEnrolled=enrollOn(cropProject,{slotId:"side",assetId:cropAsset.assetId,expectedIdentity:resolve().asset(cropAsset.assetId).identity,bindingId:cropBinding});
+check("a derived crop enrolls into an exact nondefault view and keeps its own row",()=>{
+  const e=legacyOf(cropEnrolled.project),r=Reference.resolver({...opts(),project:cropEnrolled.project});
+  assert.deepEqual(e.candidateFiles.find(x=>x.stored===cropRow.stored),cropRow);
+  assert.equal(r.resolve("props",e,cropBinding).path,path.join(dir,"props/legacy-tool-COVERAGE-SIDE-X.png"));
+  assert.equal(r.resolve("props",e,cropRow.stored).available,true);
+  assert.equal(Shared.selectedKey(e,e.coverageSlots[1],"state-default"),"");assert.equal(Shared.selectedKey(e,e.coverageSlots[1],"weathered"),cropBinding);
+  assert.equal(cropEnrolled.project.productionAuthority,undefined);
+});
+check("an exact existing binding is found for retry idempotency; the server alone would add a second row",()=>{
+  const e=legacyOf(cropEnrolled.project);
+  assert.equal(Shared.keyOf(Shared.findExactBinding(e,{assetId:cropAsset.assetId,stateId:"weathered",slotId:"side"})),cropBinding);
+  assert.equal(Shared.findExactBinding(e,{assetId:cropAsset.assetId,stateId:"state-default",slotId:"side"}),null);
+  assert.equal(Shared.findExactBinding(e,{assetId:image.assetId,stateId:"weathered",slotId:"side"}),null);
+  // Documented: enroll() has no idempotency of its own. The client's findExactBinding guard is what prevents this.
+  const again=enrollOn(cropEnrolled.project,{slotId:"side",assetId:cropAsset.assetId,expectedIdentity:resolve().asset(cropAsset.assetId).identity,bindingId:"ref-88888888-8888-4888-8888-888888888888"});
+  assert.equal(legacyOf(again.project).candidateFiles.filter(x=>x.referenceBinding?.assetId===cropAsset.assetId).length,2);
+});
 const third=Reference.enroll({...request,project,entityId:"other-tool",bindingId:"ref-33333333-3333-4333-8333-333333333333"});project=third.project;
 check("one physical image supports distinct explicit reference bindings",()=>{assert.equal(resolve().resolve("props",project.props[0],fixed).available,true);assert.equal(resolve().resolve("props",project.props[1],third.candidate.stored).available,true);});
 check("another relationship of the same asset is never substituted",()=>assert.equal(Disposition.resolveApprovalMedia({file:"ref-missing",assetId:image.assetId},resolve().listing("props",project.props[1])),null));
@@ -108,4 +176,11 @@ check("a media junction into another project cannot resolve",()=>{
   assert.equal(resolve().asset(redirected.assetId).available,false);
 });
 check("unchanged unavailable bindings and receipts survive ordinary saves",()=>{Reference.validateSuccessor({current:project,successor:structuredClone(project),projectsRoot:w.projectsRoot,slug,canon:false});assert.deepEqual(project.productionAuthority,approved.productionAuthority);});
+/* EV2-7 Production Media reads two additive inventory fields: ledgerRole (category only) and libraryOriginalName (so an upload-stem title is never a headline). */
+check("inventory() carries the ledger role as ledgerRole, never as role, and the library's original name",()=>{
+  const library={...project,mediaAssets:[{id:"library-a",file:"source.png",originalName:"SOURCE_APPROVED.png",title:"SOURCE_APPROVED",links:[{targetType:"prop",targetId:"tool"}]}]};
+  const rows=Reference.resolver({...opts(),project:library}).inventory(),row=rows.find(r=>r.assetId===image.assetId),plain=rows.find(r=>r.assetId===side.assetId);
+  assert.equal(row.ledgerRole,"import");assert.equal("role" in row,false);assert.equal(row.libraryOriginalName,"SOURCE_APPROVED.png");assert.equal(row.title,"SOURCE_APPROVED");
+  assert.equal(plain.ledgerRole,"import");assert.equal(plain.libraryOriginalName,"");assert(rows.every(r=>typeof r.ledgerRole==="string"&&!("role" in r)));
+});
 console.log(checks+" reference enrollment contract checks passed; disposable fixture: "+w.home);
