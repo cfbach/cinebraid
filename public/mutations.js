@@ -1092,4 +1092,5 @@ window.confirmLock = (id) => {
   closeModal();
   route();
   stampCeremony("LOCKED");
+  toast("Shot locked");
 };

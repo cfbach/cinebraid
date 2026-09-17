@@ -22,8 +22,8 @@ body:is(.reference-desk-active,.production-media-active) {
 body:is(.reference-desk-active,.production-media-active)::before { display: none; }
 body:is(.reference-desk-active,.production-media-active) #app {
   --cb-nav-width: 208px;
-  --cb-topbar-height: 52px;
-  --cb-topbar-stop: 52px;
+  --cb-topbar-height: 64px;
+  --cb-topbar-stop: 64px;
   --acc: var(--sd-cyan);
   --accent: var(--sd-cyan);
   --acc-ink: var(--sd-cyan);
@@ -176,10 +176,8 @@ body:is(.reference-desk-active,.production-media-active) #topbar {
   backdrop-filter: none;
   box-shadow: none;
 }
-body:is(.reference-desk-active,.production-media-active) #global-add,
-body:is(.reference-desk-active,.production-media-active) .topbar-search,
-body:is(.reference-desk-active,.production-media-active) #topbar-view,
-body:is(.reference-desk-active,.production-media-active) #creator-rail-toggle { display: none !important; }
+/* EV2-7: the desk shows the same shell controls as every other surface (experience-coherence.css). */
+body:is(.reference-desk-active,.production-media-active) #topbar-view { display: none !important; }
 body:is(.reference-desk-active,.production-media-active) .topbar-context { min-width: 0; gap: 10px; }
 body:is(.reference-desk-active,.production-media-active) .topbar-project {
   max-width: 52vw;
@@ -191,19 +189,6 @@ body:is(.reference-desk-active,.production-media-active) .topbar-project {
   text-transform: none;
   color: var(--sd-muted);
 }
-body:is(.reference-desk-active,.production-media-active) .topbar-actions { gap: 16px; }
-body:is(.reference-desk-active,.production-media-active) .automation-activity-toggle {
-  min-height: 32px;
-  padding: 6px 9px;
-  border-color: transparent;
-  border-radius: 5px;
-  background: transparent;
-  font-size: 12px;
-  color: var(--sd-muted);
-  box-shadow: none;
-}
-body:is(.reference-desk-active,.production-media-active) .automation-activity-toggle:hover { border-color: var(--sd-line-strong); color: var(--sd-ink); }
-body:is(.reference-desk-active,.production-media-active) .save-state { font: 11px/1.4 var(--body); }
 
 /* References have their own media and assignment layout inside the accepted shell. */
 .reference-desk,.rd-library{font-family:var(--body);color:var(--sd-ink);width:100%;min-width:0;height:100%;padding:22px 26px 0;box-sizing:border-box}
@@ -213,7 +198,6 @@ body:is(.reference-desk-active,.production-media-active) .save-state { font: 11p
 .rd-button,.rd-picker .cancel,.rd-confirm .cancel{font:500 12px/1.4 var(--body);background:#222529;color:var(--sd-ink,#edeef0);border:1px solid #41464c;border-radius:6px;padding:9px 13px;min-height:36px;cursor:pointer;text-transform:none;letter-spacing:0;box-shadow:none}.rd-button:hover{background:#2b2f34}.rd-primary{background:#ddb68b!important;color:#201a14!important;border-color:#ddb68b!important;font-weight:650!important}.rd-primary:hover{background:#e9c8a4!important}.rd-button:disabled,.rd-picker button:disabled{opacity:.45;cursor:not-allowed}
 .reference-desk :focus-visible,.rd-library :focus-visible,.rd-picker :focus-visible,.rd-confirm :focus-visible{outline:2px solid #ddb68b;outline-offset:3px}
 .rd-toolbar{display:flex;gap:16px;justify-content:space-between;align-items:center}.rd-toolbar label{display:flex;align-items:center;gap:12px;color:var(--sd-muted);font-size:12px}.rd-toolbar select,.rd-assignment select,.rd-search input{background:#1d2023;border:1px solid #41464c;border-radius:5px;padding:9px 10px;color:#edeef0;font:13px/1.4 var(--body);max-width:100%}.rd-toolbar select{min-width:200px;max-width:580px}
-.rd-origin{display:flex;justify-content:space-between;align-items:center;gap:12px;padding:8px 12px;background:#202321;border-left:2px solid #ddb68b;font-size:12px;color:#c7ccc9}.rd-origin span{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.rd-origin button{flex-shrink:0}
 .rd-body{display:grid;grid-template-columns:minmax(540px,1fr);flex:1;min-height:0;min-width:0;gap:24px}.rd-body.rd-inspection-open{grid-template-columns:minmax(540px,1fr) 260px}.rd-working{display:flex;flex-direction:column;min-height:0;min-width:0;overflow:auto;gap:12px}
 .rd-canvas{margin:0;min-height:250px;flex:1 1 auto;background:#090a0b;border-radius:7px;display:flex;align-items:center;justify-content:center;position:relative;overflow:hidden}.rd-canvas>img{width:100%;height:100%;min-height:0;object-fit:contain;position:absolute;inset:0}.rd-image-error{position:absolute;inset:auto 20px 20px;padding:12px;background:#3f2725;color:#ffd8cf}
 .rd-empty{text-align:center;max-width:570px;padding:34px;color:var(--sd-muted,#a4a9af)}.rd-empty-mark{display:block;color:#8b7d6a;font-size:38px;line-height:1}.rd-empty h2{color:#edeef0;font:550 24px/1.3 var(--body);margin:18px 0 12px}.rd-empty p{font:14px/1.6 var(--body);margin:0 0 24px}.rd-empty .rd-button{margin:4px}

@@ -1038,14 +1038,11 @@ window.closeLB = () => {
   renderLB();
 };
 
-/* ---------- stamp ceremony ---------- */
-function stampCeremony(text) {
-  const o = document.createElement("div");
-  o.className = "stamp-overlay";
-  o.innerHTML = `<div class="stamp-big">${esc(text)}</div>`;
-  document.body.appendChild(o);
-  setTimeout(() => o.remove(), 950);
-}
+/* ---------- decision announcement seam ---------- */
+/* Called once, only after a decision is durably proven; approval suites spy on this
+   call. It no longer paints: the persistent exact-target badge and the caller's toast
+   announce the decision, so no oversized overlay covers the work or its actions. */
+function stampCeremony(text) {}
 
 /* ---------- global semantic search ---------- */
 let SEARCH_T = null;
@@ -1084,7 +1081,8 @@ async function runSearch(q) {
     style: "#/settings",
     session: "#/activity",
   };
-  openModal(`<h3>Search</h3><div class="modal-sub">${esc(d.mode || "").toUpperCase()}</div>
+  /* Search is global navigation: a result link clears any contextual return. */
+  openModal(`<div data-global-navigation><h3>Search</h3><div class="modal-sub">${esc(d.mode || "").toUpperCase()}</div>
     ${
       d.results.length
         ? d.results
@@ -1098,7 +1096,7 @@ async function runSearch(q) {
             .join("")
         : '<div class="canon-notes">Nothing found.</div>'
     }
-    <div class="modal-actions"><button class="cancel" onclick="closeModal()">Close</button></div>`);
+    <div class="modal-actions"><button class="cancel" onclick="closeModal()">Close</button></div></div>`);
 }
 
 document.addEventListener("keydown", (e) => {

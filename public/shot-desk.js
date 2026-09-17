@@ -70,7 +70,7 @@
     const m = resolve(shot.id, key);
     if (m.state !== "ready") {
       const words = m.state === "unavailable" ? ["This image is unavailable", "CineBraid cannot currently resolve this exact image. The review has not moved to another candidate."] : ["This review target has changed", "The linked image no longer belongs to this shot and frame, or its record is missing. No other image has been selected in its place."];
-      return `<section class="shot-desk" data-shot-desk>${context(shot, m)}<div class="sd-empty"><h2>${words[0]}</h2><p role="status">${words[1]}</p>${button("sd-refresh", "Try again")}<a class="sd-back" href="#/shot/${a(encodeURIComponent(shot.id))}">Return to shot</a></div></section>`;
+      return `<section class="shot-desk" data-shot-desk>${context(shot, m)}<div class="sd-empty"><h2>${words[0]}</h2><p role="status">${words[1]}</p>${button("sd-refresh", "Try again")}<a class="sd-back" href="#/shot/${a(encodeURIComponent(shot.id))}">Open shot preparation</a></div></section>`;
     }
     const state = stateFor(m), target = comparison(m, state);
     const selected = imageLabel(m, key);

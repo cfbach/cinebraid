@@ -1104,8 +1104,11 @@ function v641UpdateActivityButton() {
      standing mark, because a spinning icon over a stopped runner is the whole
      defect this batch exists to remove. */
   button.classList.toggle("waiting", status.tone === "waiting");
-  button.innerHTML = `<span>${count ? '<i class="spin">◌</i>' : status.tone === "waiting" ? "<i>!</i>" : "◉"}</span><b>${esc(status.label.replace("Activity · ", ""))}</b>${detail ? `<small>${esc(detail)}</small>` : ""}`;
-  button.title = status.label;
+  /* EV2-7: the chip names the action and its state, "Activity · Idle". The state is
+     text, never colour alone; the running detail stays in the tooltip and the name. */
+  button.innerHTML = `<span aria-hidden="true">${count ? '<i class="spin">◌</i>' : status.tone === "waiting" ? "<i>!</i>" : "◉"}</span><b>Activity</b><small class="activity-state">${esc(status.label.replace("Activity · ", ""))}</small>`;
+  button.title = status.label + (detail ? ` · ${detail}` : "");
+  button.setAttribute("aria-label", status.label);
   v670AnnounceActivityUpdate();
 }
 /* WHAT A SCREEN READER IS TOLD, in the classification vocabulary everything else uses.

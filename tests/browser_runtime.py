@@ -518,7 +518,7 @@ def open_reference_tools(page, timeout=20000):
         link.click()
     tools = page.locator('[data-reference-tools]')
     tools.wait_for(state="visible", timeout=timeout)
-    tools.get_by_role("link", name="← Back to reference", exact=True).wait_for(state="visible", timeout=timeout)
+    tools.get_by_role("link", name="Open reference", exact=True).wait_for(state="visible", timeout=timeout)
     page.wait_for_function("() => location.hash.endsWith('/tools') && document.body.dataset.renderReady === '1'", timeout=timeout)
     assert not page.locator('#modal:not(.hidden)').count(), "tools navigation left a dialog over its destination"
     return tools

@@ -2446,6 +2446,8 @@ function paintProjectSaveState() {
   const el = $("#save-state");
   if (!el) return;
   el.dataset.state = state;
+  /* The topbar status ellipsises a long failure label; the whole sentence stays on hover. */
+  el.title = label || "";
   const text = el.querySelector("span:last-child");
   if (text) text.textContent = label;
 }

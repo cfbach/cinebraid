@@ -30,7 +30,10 @@
 
      The rule is that the layer asking for a decision is always on top:
 
-         stamp  >  toast  >  lightbox  >  dialog  >  page chrome  >  page
+         toast  >  lightbox  >  dialog  >  page chrome  >  page
+
+     (EV2-7 retired the full-screen stamp overlay and its --z-stamp rung. A durable
+     decision is announced by its persistent badge and a toast that takes no press.)
 
      Every OVERLAY takes its number from here. A new overlay adds a token to this
      ladder rather than picking a literal, because picking a literal is exactly how
@@ -50,7 +53,6 @@
   --z-dialog:200;          /* modals and confirmations — always above page chrome */
   --z-lightbox:210;        /* full-media inspection, opened from inside a dialog */
   --z-toast:220;           /* feedback about what just happened, above everything it is about */
-  --z-stamp:230;           /* pointer-events:none decoration */
 }
 /* ---- accent themes: set data-acc on #app ---- */
 #app[data-acc="green"]{--acc:#7dc98a;--acc-soft:rgba(125,201,138,.14)}
@@ -338,18 +340,6 @@ button:focus-visible{outline:2px solid var(--acc);outline-offset:1px}
 .bp-id{position:relative;z-index:1;font-family:var(--mono);font-weight:600;font-size:20px;letter-spacing:.14em;color:var(--line-2)}
 .bp-note{position:relative;z-index:1;font-family:var(--mono);font-size:8.5px;letter-spacing:.22em;color:var(--faint)}
 
-/* ===== the stamp ceremony ===== */
-.stamp-overlay{position:fixed;inset:0;display:flex;align-items:center;justify-content:center;pointer-events:none;z-index:var(--z-stamp)}
-.stamp-big{font-family:var(--mono);font-weight:600;font-size:56px;letter-spacing:.3em;padding:14px 34px 14px 44px;color:var(--green);border:4px solid var(--green);border-radius:var(--r-card);background:rgba(125,201,138,.12);
-  animation:stamp-hit .9s cubic-bezier(.2,1.4,.4,1) forwards}
-@keyframes stamp-hit{
-  0%{opacity:0;transform:scale(2.4) rotate(-10deg)}
-  28%{opacity:1;transform:scale(1) rotate(-4deg)}
-  38%{transform:scale(1.04) rotate(-4deg)}
-  46%{transform:scale(1) rotate(-4deg)}
-  78%{opacity:1}
-  100%{opacity:0;transform:scale(1) rotate(-4deg)}}
-
 /* ===== lightbox ===== */
 .lb{position:fixed;inset:0;background:rgba(4,5,6,.94);z-index:var(--z-lightbox);display:flex;flex-direction:column}
 .lb-top{display:flex;align-items:center;gap:14px;padding:14px 20px;font-family:var(--mono);font-size:11.5px;color:var(--muted);letter-spacing:.06em}
@@ -383,7 +373,7 @@ button:focus-visible{outline:2px solid var(--acc);outline-offset:1px}
     --acc:#1e6b2e;--acc-soft:rgba(30,107,46,.08)}
   body{background:#fff}
   #app{grid-template-columns:1fr}
-  #rail,.toolbar,.copy-btn,.lb,.stamp-overlay,.add-btn,.dropzone,.move-btns{display:none!important}
+  #rail,.toolbar,.copy-btn,.lb,.add-btn,.dropzone,.move-btns{display:none!important}
   #main{background:#fff}
   .bible{max-width:100%;padding:0}
   .bible-hero,.bible-law{background:none;border-color:#c9c6bf}

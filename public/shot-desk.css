@@ -22,8 +22,8 @@ body.shot-desk-active {
 body.shot-desk-active::before { display: none; }
 body.shot-desk-active #app {
   --cb-nav-width: 208px;
-  --cb-topbar-height: 52px;
-  --cb-topbar-stop: 52px;
+  --cb-topbar-height: 64px;
+  --cb-topbar-stop: 64px;
   --acc: var(--sd-cyan);
   --accent: var(--sd-cyan);
   --acc-ink: var(--sd-cyan);
@@ -176,10 +176,8 @@ body.shot-desk-active #topbar {
   backdrop-filter: none;
   box-shadow: none;
 }
-body.shot-desk-active #global-add,
-body.shot-desk-active .topbar-search,
-body.shot-desk-active #topbar-view,
-body.shot-desk-active #creator-rail-toggle { display: none !important; }
+/* EV2-7: the desk shows the same shell controls as every other surface (experience-coherence.css). */
+body.shot-desk-active #topbar-view { display: none !important; }
 body.shot-desk-active .topbar-context { min-width: 0; gap: 10px; }
 body.shot-desk-active .topbar-project {
   max-width: 52vw;
@@ -191,19 +189,6 @@ body.shot-desk-active .topbar-project {
   text-transform: none;
   color: var(--sd-muted);
 }
-body.shot-desk-active .topbar-actions { gap: 16px; }
-body.shot-desk-active .automation-activity-toggle {
-  min-height: 32px;
-  padding: 6px 9px;
-  border-color: transparent;
-  border-radius: 5px;
-  background: transparent;
-  font-size: 12px;
-  color: var(--sd-muted);
-  box-shadow: none;
-}
-body.shot-desk-active .automation-activity-toggle:hover { border-color: var(--sd-line-strong); color: var(--sd-ink); }
-body.shot-desk-active .save-state { font: 11px/1.4 var(--body); }
 
 .shot-desk {
   display: flex;

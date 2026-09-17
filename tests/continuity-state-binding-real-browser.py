@@ -568,7 +568,7 @@ try:
 
         def check_focused_workspaces():
             """CASE 8 — the current reference workspace reads the same live entity."""
-            page.get_by_role("link", name="← Back to reference", exact=True).click()
+            page.get_by_role("link", name="Open reference", exact=True).click()
             desk = reference_desk_ready(page)
             expected = page.evaluate("() => P.locations.find(row => row.id === 'LOC-DOOR').name")
             assert desk.get_by_role("heading", level=1).inner_text() == expected, "case 8: Reference Desk did not render the live entity"

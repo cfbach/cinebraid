@@ -1,33 +1,93 @@
-/* EV2-7 shared geometry. Domain layouts keep their own task-appropriate forms. */
-:root { --cb-control-height:48px; --cb-control-radius:8px; --cb-action-warm:#e5bd8e; --cb-focus:#86dfdc; }
-#topbar .topbar-actions { display:flex; align-items:center; gap:8px; flex:1; min-width:0; }
-#topbar .topbar-context { flex:0 1 240px; min-width:110px; }
-#topbar #global-add,#topbar #automation-activity-toggle,#topbar #creator-rail-toggle,#topbar #save-state,#topbar .topbar-search {
-  height:var(--cb-control-height); min-height:var(--cb-control-height); border-radius:var(--cb-control-radius); box-sizing:border-box;
-  display:flex; align-items:center; justify-content:center; gap:8px; padding:0 14px; font:500 13px/1.35 var(--body); letter-spacing:normal;
-}
-#topbar #global-add { background:var(--cb-action-warm); color:#241e17; border:1px solid var(--cb-action-warm); box-shadow:none; font-weight:700; white-space:nowrap; }
-#topbar #automation-activity-toggle,#topbar #creator-rail-toggle,#topbar #save-state { background:transparent; border:1px solid var(--line-2); color:var(--muted); }
-#topbar #automation-activity-toggle b,#topbar #creator-rail-toggle b { font:inherit; }
-#topbar #automation-activity-toggle small { display:none; }
-#topbar #save-state { flex:none; }
-#topbar .topbar-search { flex:1; min-width:130px; width:auto; justify-content:flex-start; }
-#topbar .topbar-search input { font:14px var(--body); width:100%; min-width:0; }
-#topbar #creator-rail-toggle[hidden] { display:none!important; }
-.md-return { min-height:44px; max-width:100%; margin:0 0 20px; padding:10px 14px; white-space:normal; overflow-wrap:anywhere; text-align:left; border-radius:8px; }
-#main :is(button,a,input,select,textarea,summary):focus-visible,#topbar :is(button,input):focus-visible { outline:3px solid var(--cb-focus); outline-offset:3px; }
-@media(max-width:1100px) {
-  #topbar { flex-wrap:wrap; }
-  #topbar .topbar-actions { flex-basis:100%; }
-}
-@media(max-width:600px) {
-  #topbar { gap:10px; padding:12px; }
-  #topbar .topbar-context { flex:1; }
-  #topbar .topbar-actions { display:grid; grid-template-columns:auto minmax(0,1fr) minmax(0,1fr) auto; gap:6px; width:100%; }
-  #topbar #global-add,#topbar #automation-activity-toggle,#topbar #creator-rail-toggle,#topbar #save-state { padding:0 9px; min-width:0; font-size:12px; }
-  #topbar .topbar-search { grid-column:1/-1; width:100%; min-width:0; position:static; padding:0 12px; }
-  #topbar .topbar-search input,#topbar .topbar-search:focus-within input { position:static; opacity:1; pointer-events:auto; width:100%; }
-  #topbar .topbar-search:focus-within { position:static; width:100%; }
+/* EV2-7 shared shell. ONE row of 48px controls with one radius, at every width and on every desk.
+   Add is the warm primary action; Activity and Braidy are bordered actions; Saved is a quiet status
+   (no border, no hover, never focusable: it is a div); Search flexes, then folds to a 48×48 control
+   that expands on focus. The header never wraps, so --cb-topbar-height stays the real header height
+   and every surface pinned at --cb-topbar-stop sits beneath it. #creator-rail-toggle display stays
+   owned by styles.css (creator shell gate and the measured 720px phone floor). */
+:root { --cb-control-height:48px; --cb-control-radius:8px; --cb-action-warm:#e5bd8e; --cb-focus:#86dfdc;
+  --cb-search-mark:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='2.2' stroke-linecap='round'%3E%3Ccircle cx='10.5' cy='10.5' r='6.5'/%3E%3Cpath d='M15.5 15.5 21 21'/%3E%3C/svg%3E"); }
+#topbar { flex-wrap:nowrap; gap:12px; }
+#topbar .topbar-context { flex:0 1 auto; min-width:0; }
+#topbar .topbar-context>div { min-width:0; }
+#topbar .topbar-project,#topbar .topbar-view { overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+#topbar .topbar-actions { display:flex; align-items:center; justify-content:flex-end; gap:8px; flex:1 1 auto; min-width:0; }
+#topbar #global-add,#topbar #automation-activity-toggle,#topbar #creator-rail-toggle,#topbar #save-state,#topbar .topbar-search,#topbar #mobile-nav {
+  box-sizing:border-box; height:var(--cb-control-height); min-height:var(--cb-control-height); border-radius:var(--cb-control-radius);
+  padding:0 14px; font:500 13px/1.3 var(--body); letter-spacing:normal; text-transform:none; white-space:nowrap; flex:0 0 auto; box-shadow:none; }
+#topbar #global-add { display:inline-flex; align-items:center; justify-content:center; gap:6px; background:var(--cb-action-warm)!important; color:#241e17!important; border:1px solid var(--cb-action-warm)!important; font-weight:700; }
+#topbar #global-add:hover { background:#efcfa9!important; border-color:#efcfa9!important; }
+#topbar #automation-activity-toggle,#topbar #creator-rail-toggle { align-items:center; gap:8px; border:1px solid var(--line-2); background:transparent; color:var(--ink); cursor:pointer; }
+/* Activity yields after Saved: its state ellipsises above a floor that keeps "Activity" and a glyph of state
+   (live-activity.js keeps the whole "Activity · state" in its aria-label and title). */
+#topbar #automation-activity-toggle { display:inline-flex; flex:0 1 auto; min-width:132px; }
+#topbar #automation-activity-toggle>span,#topbar #automation-activity-toggle>b { flex:0 0 auto; }
+#topbar #automation-activity-toggle:hover,#topbar #creator-rail-toggle:hover:not(:disabled) { border-color:var(--cb-focus); }
+#topbar #automation-activity-toggle.active { border-color:color-mix(in srgb,var(--blue) 55%,var(--line-2)); }
+#topbar #automation-activity-toggle.waiting { border-color:color-mix(in srgb,var(--amber,#f5a524) 60%,var(--line-2)); }
+#topbar #creator-rail-toggle.open { border-color:color-mix(in srgb,var(--acc) 55%,var(--line-2)); background:var(--acc-soft); }
+#topbar #automation-activity-toggle>span { width:auto; height:auto; font-size:12px; }
+#topbar #automation-activity-toggle>b,#topbar #creator-rail-toggle>b { font:inherit; font-weight:600; color:inherit; letter-spacing:normal; }
+#topbar #automation-activity-toggle>small { display:inline; min-width:0; overflow:hidden; text-overflow:ellipsis; font:inherit; color:var(--muted); }
+#topbar #automation-activity-toggle>small::before { content:"·"; margin-right:8px; }
+/* The save status is the one control that gives way: real failure labels ("Not saved — this window cannot
+   identify the project revision") ellipsise inside a bounded box, and app.js mirrors the full label to its title. */
+#topbar #save-state { display:inline-flex; align-items:center; gap:8px; flex:0 4 auto; min-width:64px; max-width:300px; overflow:hidden; padding:0 6px; border:1px solid transparent; background:transparent; color:var(--muted); cursor:default; }
+#topbar #save-state>.save-dot { flex:0 0 auto; }
+#topbar #save-state>span:last-child { min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+#topbar #save-state[data-state="error"] { color:var(--red); }
+#topbar .topbar-search { position:relative; display:flex; align-items:center; gap:10px; flex:1 1 240px; min-width:160px; max-width:440px; width:auto; padding:0 12px; border:1px solid var(--line-2); background:transparent; color:var(--muted); }
+#topbar .topbar-search input { flex:1 1 auto; width:100%; min-width:0; height:100%; font:14px/1.3 var(--body); color:var(--ink); }
+#topbar .topbar-search:focus-within { outline:3px solid var(--cb-focus); outline-offset:2px; }
+#topbar .topbar-search input:focus,#topbar .topbar-search input:focus-visible { outline:none; box-shadow:none; }
+#topbar #mobile-nav { width:var(--cb-control-height); padding:0; font-size:18px; line-height:46px; text-align:center; }
+.cb-return { display:inline-flex; flex-direction:column; align-items:flex-start; align-self:flex-start; flex:0 0 auto; gap:2px; box-sizing:border-box; min-height:44px; max-width:100%; margin:0 0 20px; padding:10px 14px; border:1px solid var(--line-2); border-radius:8px; background:transparent; color:#8ed9d5; font:500 14px/1.4 var(--body); letter-spacing:normal; text-align:left; white-space:normal; overflow-wrap:anywhere; cursor:pointer; }
+.cb-return:hover { border-color:#8ed9d5; }
+#app[data-surf="light"] .cb-return:not(.results-desk .cb-return) { color:var(--ink); }
+.cb-return small { color:var(--muted); font-size:12px; }
+[data-return-slot] { display:contents; }
+[data-return-slot] .cb-return { margin:0; }
+/* Reference tools: the return sits in the page's own row beside the plain "Open reference" target. */
+.rd-tools-nav { display:flex; flex-wrap:wrap; align-items:center; gap:8px 16px; margin:0 0 20px; }
+.rd-tools-nav .rd-tools-back { display:inline-flex; align-items:center; min-height:44px; margin:0; }
+#main :is(button,a,input,select,textarea,summary):focus-visible,#topbar :is(button,input):focus-visible,.cb-return:focus-visible { outline:3px solid var(--cb-focus); outline-offset:3px; }
+/* Transient messages never take a press and never sit on a decision bar, Retry, a dialog footer or the
+   phone dock: they announce beneath the pinned header (and stage bar), centred, and wrap instead of growing. */
+#toast.toast { top:calc(var(--cb-topbar-stop,72px) + var(--cb-bar-height,0px) + 12px); bottom:auto; max-width:min(560px,calc(100vw - 32px)); white-space:normal; overflow-wrap:anywhere; pointer-events:none; font:13px/1.45 var(--body); letter-spacing:normal; }
+@media(max-width:1180px) {
+  #topbar .topbar-search { flex:0 0 var(--cb-control-height); width:var(--cb-control-height); min-width:var(--cb-control-height); max-width:none; padding:0; justify-content:center; }
+  #topbar .topbar-search::before { content:""; flex:0 0 20px; width:20px; height:20px; background:var(--ink); -webkit-mask:var(--cb-search-mark) center/contain no-repeat; mask:var(--cb-search-mark) center/contain no-repeat; }
   #topbar .topbar-search kbd { display:none; }
-  #topbar #save-state { display:flex; white-space:normal; }
+  #topbar .topbar-search input { position:absolute; inset:0; width:100%; height:100%; opacity:0; pointer-events:auto; cursor:pointer; }
+  #topbar .topbar-search:focus-within { position:absolute; top:0; bottom:0; left:12px; right:12px; width:auto; margin:auto 0; z-index:5; padding:0 12px; justify-content:flex-start; background:var(--panel); border-color:var(--cb-focus); }
+  #topbar .topbar-search:focus-within::before { background:var(--muted); }
+  #topbar .topbar-search:focus-within input { position:static; opacity:1; cursor:text; }
 }
+@media(max-width:980px) { #topbar { padding-block:7px; } }
+/* Wherever the navigation folds behind ☰, the controls go compact so the row still fits beside a desk
+   rail: Add is a 48×48 ＋ (its name is unchanged), Activity shows its state (the full "Activity · state"
+   stays its accessible name and tooltip), and a long save status ellipsises instead of wrapping. */
+@media(max-width:900px) {
+  #topbar #global-add { width:var(--cb-control-height); padding:0; font-size:0; }
+  #topbar #global-add::before { content:"＋"; font-size:22px; font-weight:700; }
+  #topbar #automation-activity-toggle { min-width:0; max-width:132px; padding:0 10px; gap:6px; }
+  #topbar #automation-activity-toggle>b { display:none; }
+  #topbar #automation-activity-toggle>small { min-width:0; overflow:hidden; text-overflow:ellipsis; color:var(--ink); }
+  #topbar #automation-activity-toggle>small::before { content:none; }
+  #topbar #save-state { max-width:110px; padding:0 2px; gap:6px; }
+  #topbar #save-state>span:last-child { min-width:0; overflow:hidden; text-overflow:ellipsis; font-size:12px; }
+}
+/* Beside a docked desk rail (768–900) the 24px desk gutter is what the save status needs; phones keep their own gutter. */
+@media(min-width:761px) and (max-width:900px) { #app #topbar { padding-inline:12px; } }
+@media(max-width:760px) {
+  /* Phone: the same single row. The controls keep their size; the page name takes what is left
+     (it is repeated by the page heading) and steps aside rather than showing a lone ellipsis. */
+  #topbar { gap:6px; padding-inline:8px; }
+  #topbar .topbar-context { flex:1 1 0; gap:6px; }
+  #topbar .topbar-context>div { flex:1 1 0; container-type:inline-size; }
+  #topbar .topbar-actions { flex:0 0 auto; gap:6px; }
+  #topbar #automation-activity-toggle { max-width:100px; }
+  #topbar #save-state { max-width:72px; }
+  #topbar .topbar-view { font-size:15px; }
+  #toast.toast { left:16px; right:16px; transform:none; max-width:none; text-align:left; }
+}
+@container (max-width:52px) { #topbar .topbar-project,#topbar .topbar-view { visibility:hidden; } }
