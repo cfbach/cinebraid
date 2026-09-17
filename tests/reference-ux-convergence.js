@@ -2026,6 +2026,8 @@ function guidedHarness(project, { mutateSource = null, enroll = [], scanMisses =
           const body = JSON.parse(options.body), step = plan.enroll.shift() || "ok";
           enrolls.push({ ifMatch: options.headers["If-Match"], body, step, lastPut: puts[puts.length - 1] || "", generation: harness.saveGeneration ? harness.saveGeneration() : -1 });
           if (step === "refuse") return respond({ error: "The project revision changed. Nothing was enrolled." }, 409);
+          /* THE ONE CASE "unverified" IS ACTUALLY ABOUT: a 200 that names a binding the stored project does not hold. */
+          if (step === "phantom") return respond({ ok: true, bindingId: "ref-ffffffff-0000-4000-8000-000000000000", assetId: JSON.parse(options.body).assetId, revision: rev() });
           /* The seam's own refusal after a background write moved the stored revision: the same If-Match can never pass again. */
           if (step === "conflict") { revision++; return respond({ ok: false, error: "The project changed before this write, so the entire operation was refused.", code: "PROJECT_REVISION_CONFLICT", status: 409, yourRevision: options.headers["If-Match"], action: "reload", revision: rev() }, 409); }
           const entity = server.characters.find((row) => row.id === body.entityId), slot = entity.coverageSlots.find((row) => row.id === body.slotId);
@@ -2303,6 +2305,25 @@ async function testTheRevisionWatchKnowsThisWindowsOwnEnrollment() {
   eq(out.step, "done", "EV2-7 C10: the assignment completes");
   eq(harness.enrolls.length, 1, "EV2-7 C10: posted once");
   eq(harness.revisionReads > 0, true, "EV2-7 C10: and the watch really did ask the server for the stored revision");
+}
+
+/* EV2-7 POST-DEMO C11 - AND WHEN THE PROJECT REALLY DOES NOT SHOW IT, IT STILL SAYS SO.
+   The confirmation is more patient than it was, not blinder. A response that names a binding the
+   saved project does not hold, read from a refresh that DID commit, is still unverified - and still
+   recoverable, with the crop kept and the exact target named. */
+async function testAVerifiedAbsenceIsStillReported() {
+  const harness = guidedHarness(guidedFixture(), { enroll: ["phantom"] });
+  const rendered = await bootGuided(harness);
+  await vm.runInContext(`(async () => { ${GUIDED_OPEN(EV27_ALT)} await CineBraidBuildCoverage.cropSave(true); })()`, rendered.context);
+  const out = JSON.parse(vm.runInContext(GUIDED_READ, rendered.context));
+  eq(out.assign.status, "unknown", "EV2-7 C11: a binding the saved project does not hold is a recoverable outcome");
+  eq(out.assign.code, "unverified", "EV2-7 C11: named for what was actually checked");
+  ok(out.modal.includes("could not confirm whether the assignment was saved"), "EV2-7 C11: and does not claim the write succeeded");
+  ok(out.modal.includes("The crop is saved as a candidate."), "EV2-7 C11: the crop is kept");
+  ok(out.modal.includes("Target: Nora") && out.modal.includes("Alternate") && out.modal.includes("Profile"), "EV2-7 C11: with the exact target named");
+  ok(out.modal.includes('data-bc-action="assign-retry"') && out.modal.includes('data-bc-action="keep"'), "EV2-7 C11: and both ways forward");
+  eq(out.crops.length, 1, "EV2-7 C11: one crop row");
+  eq(harness.enrolls.length, 1, "EV2-7 C11: posted once");
 }
 
 async function testSheetRecordedForOtherStateRefused() {
@@ -2736,6 +2757,7 @@ async function main() {
   await testRecoveredAssignmentSurvivesReload();
   await testRetryRefusesWhenTheExactCropIsGone();
   await testTheRevisionWatchKnowsThisWindowsOwnEnrollment();
+  await testAVerifiedAbsenceIsStillReported();
   await testSheetRecordedForOtherStateRefused();
   await testStateCoverageSubmitCarriesState();
   await testReceiptChangeDuringDialogRefuses();
@@ -2754,7 +2776,7 @@ async function main() {
     + `requirement-vs-demand legibility, staged preview, the visual chooser, continuity-state authoring, single-state `
     + `approval, dropdown readability and Details disclosure, plus the alpha blockers: dormant coverage claiming no `
     + `attention, the fail-closed direction, Save crop & use converging in one action, Save as candidate assigning `
-    + `nothing, the retired stale-assign action and strip/board agreement, plus the two residual surfaces this pass found: the provenance chooser on the generation-record fold, and the target lists and the batch-approval confirmation that described an occupied slot through the key the writer deletes; and EV2-7 Build coverage: exact state/view crop enrollment, refused and unknown assignment outcomes without duplicates, other-state sheets refused, state-scoped generation requests and receipt revalidation, one wording for earlier selections across the Desk and the dialog, revision conflicts and Refresh target answered by a re-read before an explicit assignment, no override recorded on open, and picker dismissal returning to Build coverage; and the EV2-7 human dogfood correction: a derived next action beside the coverage status that names the exact next missing view and writes nothing, empty views whose Review control says it is empty, approval stated in words beside its state, a sheet's missing record described as the sheet's, and a generate flow that selects only the requested view, expands only by an explicit press, and submits nothing before the confirmation; and the EV2-7 post-demo closeout: an enrollment that declares the durable write it just caused, a confirmation that re-reads the saved project rather than reporting a project it never re-read, a window that cannot re-read saying the assignment was saved instead of inventing a verdict, repeated retries that stay one binding and one crop, a reload that still reads the view as filled, a retry that refuses rather than assign something other than the exact saved crop, and a revision watch that reads this window's own enrollment as nothing foreign. Provider calls made: 0.`);
+    + `nothing, the retired stale-assign action and strip/board agreement, plus the two residual surfaces this pass found: the provenance chooser on the generation-record fold, and the target lists and the batch-approval confirmation that described an occupied slot through the key the writer deletes; and EV2-7 Build coverage: exact state/view crop enrollment, refused and unknown assignment outcomes without duplicates, other-state sheets refused, state-scoped generation requests and receipt revalidation, one wording for earlier selections across the Desk and the dialog, revision conflicts and Refresh target answered by a re-read before an explicit assignment, no override recorded on open, and picker dismissal returning to Build coverage; and the EV2-7 human dogfood correction: a derived next action beside the coverage status that names the exact next missing view and writes nothing, empty views whose Review control says it is empty, approval stated in words beside its state, a sheet's missing record described as the sheet's, and a generate flow that selects only the requested view, expands only by an explicit press, and submits nothing before the confirmation; and the EV2-7 post-demo closeout: an enrollment that declares the durable write it just caused, a confirmation that re-reads the saved project rather than reporting a project it never re-read, a window that cannot re-read saying the assignment was saved instead of inventing a verdict, repeated retries that stay one binding and one crop, a reload that still reads the view as filled, a retry that refuses rather than assign something other than the exact saved crop, a revision watch that reads this window's own enrollment as nothing foreign, and a binding the saved project really does not hold still reported as unverified. Provider calls made: 0.`);
 }
 
 main().catch((error) => { console.error(error); process.exit(1); });
