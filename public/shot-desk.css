@@ -20,10 +20,10 @@ body.shot-desk-active {
   color: var(--sd-ink);
 }
 body.shot-desk-active::before { display: none; }
+/* EV2-7: the rail, the header and their geometry (--cb-nav-width, --cb-topbar-height) are the one shared
+   shell in experience-coherence.css. The desk keeps its own palette for its content and its own scroll
+   model: a viewport-tall #app whose #main holds the review, with the header and rail fixed around it. */
 body.shot-desk-active #app {
-  --cb-nav-width: 208px;
-  --cb-topbar-height: 64px;
-  --cb-topbar-stop: 64px;
   --acc: var(--sd-cyan);
   --accent: var(--sd-cyan);
   --acc-ink: var(--sd-cyan);
@@ -44,8 +44,6 @@ body.shot-desk-active #app {
   --faint: var(--sd-quiet);
   --line: var(--sd-line);
   --line-2: var(--sd-line-strong);
-  display: grid;
-  grid-template-columns: var(--cb-nav-width) minmax(0, 1fr);
   width: 100%;
   max-width: 100%;
   height: 100vh;
@@ -84,110 +82,6 @@ body.shot-desk-active #app #main {
   padding: 0;
   overflow: hidden;
   background: var(--sd-bg);
-}
-
-/* The existing navigation remains useful, while production counters and the
-   repeated product copy stop competing with the current image. */
-body.shot-desk-active #rail {
-  position: relative;
-  top: auto;
-  height: 100%;
-  min-height: 0;
-  width: auto;
-  background: #141618;
-  border-right: 1px solid var(--sd-line);
-  box-shadow: none;
-}
-body.shot-desk-active .rail-head { padding: 20px 16px 17px; }
-body.shot-desk-active .brand-lockup { gap: 9px; margin-bottom: 22px; }
-body.shot-desk-active .brand-logo { height: 28px; }
-body.shot-desk-active .brand-kicker { display: none; }
-body.shot-desk-active .wordmark { font-size: 15px; letter-spacing: -.02em; }
-body.shot-desk-active .project-title {
-  margin-top: 0;
-  font: 600 16px/1.35 var(--body);
-  letter-spacing: -.015em;
-  -webkit-line-clamp: 2;
-}
-body.shot-desk-active .project-format {
-  display: -webkit-box;
-  -webkit-box-orient: vertical;
-  -webkit-line-clamp: 2;
-  max-height: 2.9em;
-  overflow: hidden;
-  margin-top: 6px;
-  font: 11px/1.45 var(--body);
-  letter-spacing: 0;
-  text-transform: none;
-  color: var(--sd-muted);
-}
-body.shot-desk-active #nav { flex: 1 1 auto; min-height: 0; padding: 12px 9px; }
-body.shot-desk-active .nav-group { padding: 0; }
-body.shot-desk-active .nav-btn {
-  min-height: 39px;
-  padding: 9px 10px;
-  gap: 9px;
-  border-radius: 6px;
-  font: 400 12px/1.45 var(--body);
-  color: var(--sd-muted);
-  box-shadow: none;
-  transform: none;
-}
-body.shot-desk-active .nav-btn:hover { background: #1e2124; transform: none; }
-body.shot-desk-active .nav-btn.active {
-  background: var(--sd-cyan-wash);
-  border-color: transparent;
-  color: var(--sd-ink);
-  box-shadow: none;
-}
-body.shot-desk-active .nav-btn.active::before {
-  width: 2px;
-  top: 10px;
-  bottom: 10px;
-  background: var(--sd-cyan);
-  box-shadow: none;
-}
-body.shot-desk-active .nav-icon { font-size: 12px; color: var(--sd-quiet); }
-body.shot-desk-active .rail-foot { display: block; padding: 13px 14px 15px; background: transparent; }
-body.shot-desk-active .rail-foot #tally,
-body.shot-desk-active .rail-foot .foot-note:not(.app-identity) { display: none; }
-body.shot-desk-active .rail-foot .ghost-btn {
-  min-height: 33px;
-  padding: 7px 8px;
-  border-color: transparent;
-  text-align: left;
-  font-size: 11px;
-}
-body.shot-desk-active .rail-foot .ghost-btn:hover { border-color: var(--sd-line); }
-body.shot-desk-active .app-identity { margin-top: 10px; padding-left: 8px; font: 10px/1.5 var(--body); }
-
-body.shot-desk-active #topbar {
-  position: relative;
-  top: auto;
-  flex: 0 0 var(--cb-topbar-height);
-  height: var(--cb-topbar-height);
-  min-height: 0;
-  margin: 0;
-  padding: 0 24px;
-  border: 0;
-  border-bottom: 1px solid var(--sd-line);
-  border-radius: 0;
-  background: #141618;
-  backdrop-filter: none;
-  box-shadow: none;
-}
-/* EV2-7: the desk shows the same shell controls as every other surface (experience-coherence.css). */
-body.shot-desk-active #topbar-view { display: none !important; }
-body.shot-desk-active .topbar-context { min-width: 0; gap: 10px; }
-body.shot-desk-active .topbar-project {
-  max-width: 52vw;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-  font: 500 12px/1.4 var(--body);
-  letter-spacing: 0;
-  text-transform: none;
-  color: var(--sd-muted);
 }
 
 .shot-desk {
@@ -362,8 +256,6 @@ body.shot-desk-active :is(button, a, input, select, textarea, summary):focus-vis
   .sd-inspection-open > .sd-inspection { display: flex; flex-direction: column; }
 }
 @media (min-width: 1760px) {
-  body.shot-desk-active #app { --cb-nav-width: 224px; }
-  body.shot-desk-active #topbar { padding-inline: 32px; }
   .shot-desk { padding: 24px 32px 0; gap: 20px; }
   .sd-body { gap: 24px; }
   .sd-body.sd-inspection-open { grid-template-columns: minmax(720px, 1fr) 320px; }
@@ -378,13 +270,9 @@ body.shot-desk-active :is(button, a, input, select, textarea, summary):focus-vis
   .sd-canvas { min-width: 680px; }
   .sd-inspection-open > .sd-inspection { display: none; }
 }
-/* Collapse navigation before it consumes the protected desktop media width. */
+/* The shared shell narrows the rail to 178px below 1360 and folds it behind ☰ at 900, which still leaves
+   the protected 680px media width inside the 18px gutter at every width. */
 @media (max-width: 1059px) {
-  body.shot-desk-active #app { --cb-nav-width: 0px; display: block; }
-  body.shot-desk-active #rail { position: fixed; top: 0; left: 0; bottom: 0; width: 240px; height: 100dvh; transform: translateX(-102%); box-shadow: 16px 0 40px rgba(0, 0, 0, .35); }
-  body.shot-desk-active.rail-open #rail { transform: none; }
-  body.shot-desk-active #mobile-nav { display: block; }
-  body.shot-desk-active #topbar { padding-inline: 18px; }
   .shot-desk { padding-inline: 18px; }
 }
 @media (max-width: 767px) {
@@ -404,8 +292,6 @@ body.shot-desk-active :is(button, a, input, select, textarea, summary):focus-vis
   body.shot-desk-active #app .sd-candidate { flex-basis: 90px; }
   .sd-decision { align-items: flex-start; flex-wrap: wrap; gap: 10px; padding: 12px 0 14px; }
   .sd-decision-actions { margin-left: auto; }
-  body.shot-desk-active .topbar-actions { gap: 6px; }
-  body.shot-desk-active .topbar-project { max-width: 44vw; }
   .sd-confirm-preview { grid-template-columns: 110px minmax(0, 1fr); gap: 12px; }
   .sd-confirm-preview > img { height: 82px; }
   body.shot-desk-active .modal-box:has(.sd-confirmation),

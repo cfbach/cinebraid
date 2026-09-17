@@ -1,14 +1,63 @@
-/* EV2-7 shared shell. ONE row of 48px controls with one radius, at every width and on every desk.
+/* EV2-7 shared shell. ONE graphite frame on every route (Production, the Shot board and workspace,
+   Results, References, Production Media, the Working Bible, Settings), so nothing in the frame moves
+   when the page changes: one rail (208px; 178px below 1360; a 240px drawer behind ☰ at 900 and below),
+   one brand and project block, one navigation treatment, one quiet rail foot, one flush 64px header.
+   The frame carries its own palette on #rail and #topbar, so a desk's #app tokens, the surface theme
+   and the accent never change how the chrome reads. reference-desk.css and shot-desk.css keep only
+   their own scroll model and content; page content is not restyled here.
+   In the header: ONE row of 48px controls with one radius, at every width and on every desk.
    Add is the warm primary action; Activity and Braidy are bordered actions; Saved is a quiet status
    (no border, no hover, never focusable: it is a div); Search flexes, then folds to a 48×48 control
    that expands on focus. The header never wraps, so --cb-topbar-height stays the real header height
    and every surface pinned at --cb-topbar-stop sits beneath it. #creator-rail-toggle display stays
    owned by styles.css (creator shell gate and the measured 720px phone floor). */
-:root { --cb-control-height:48px; --cb-control-radius:8px; --cb-action-warm:#e5bd8e; --cb-focus:#86dfdc;
+:root { --cb-control-height:48px; --cb-control-radius:8px; --cb-action-warm:#e5bd8e; --cb-focus:#86dfdc; --cb-shell-bg:#141618; --cb-shell-hover:#1e2124;
   --cb-search-mark:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='2.2' stroke-linecap='round'%3E%3Ccircle cx='10.5' cy='10.5' r='6.5'/%3E%3Cpath d='M15.5 15.5 21 21'/%3E%3C/svg%3E"); }
-#topbar { flex-wrap:nowrap; gap:12px; }
-#topbar .topbar-context { flex:0 1 auto; min-width:0; }
+#rail,#topbar { color-scheme:dark; --bg:#111315; --bg-2:#111315; --canvas:#111315; --workspace:#111315; --panel:#181a1c; --panel-2:#1d2023; --surface:#181a1c; --surface-1:#181a1c; --surface-2:#1d2023;
+  --ink:#edeef0; --text:#edeef0; --muted:#a4a9af; --faint:#858c94; --line:#2b2e32; --line-soft:#2b2e32; --line-2:#454b52;
+  --acc:#7dcad3; --accent:#7dcad3; --acc-ink:#7dcad3; --acc-soft:rgba(125,202,211,.09); --accent-wash:rgba(125,202,211,.09);
+  --green:#7fd7b3; --blue:#72b8f2; --amber:#f3b761; --red:#e8846f; }
+/* The frame's geometry: one rail width per band, one header height. --cb-nav-width still feeds the #app grid
+   and the dock's left edge (styles.css), so the dock ends where this rail ends. */
+#app { --cb-nav-width:208px; --cb-topbar-height:64px; grid-template-columns:var(--cb-nav-width) minmax(0,1fr); }
+@media(max-width:1359px) { #app { --cb-nav-width:178px; } }
+@media(max-width:900px) { #app { --cb-nav-width:0px; } }
+@media print { #app { --cb-nav-width:0px; } }
+#rail { background:var(--cb-shell-bg); border-right:1px solid var(--line); box-shadow:none; }
+#rail .rail-head { padding:20px 16px 17px; border-bottom:1px solid var(--line); }
+#rail .brand-lockup { gap:9px; margin:0 0 22px; }
+#rail .brand-logo { height:28px; }
+#rail .brand-kicker { display:none; }
+#rail .wordmark { font-size:15px; letter-spacing:-.02em; }
+#rail .project-title { margin-top:0; font:600 16px/1.35 var(--body); letter-spacing:-.015em; }
+#rail .project-format { display:-webkit-box; -webkit-box-orient:vertical; -webkit-line-clamp:2; max-height:2.9em; overflow:hidden; margin-top:6px; font:12px/1.45 var(--body); letter-spacing:0; text-transform:none; color:var(--muted); }
+#rail #nav { flex:1 1 auto; min-height:0; padding:12px 9px; }
+#rail .nav-group { display:flex; flex-direction:column; gap:2px; padding:0; border-bottom:0; }
+#rail .nav-btn { min-height:44px; padding:8px 10px; gap:9px; border-radius:6px; font:400 13px/1.4 var(--body); color:var(--muted); box-shadow:none; transform:none; }
+#rail .nav-btn:hover { background:var(--cb-shell-hover); color:var(--ink); transform:none; }
+#rail .nav-btn.active { background:var(--acc-soft); border-color:transparent; color:var(--ink); box-shadow:none; }
+#rail .nav-btn.active::before { top:10px; bottom:10px; left:0; width:2px; background:var(--acc); box-shadow:none; }
+#rail .nav-icon { font-size:12px; color:var(--faint); }
+#rail .nav-btn.active .nav-icon { color:var(--acc); }
+#rail .rail-foot { display:block; padding:13px 14px 15px; border-top:1px solid var(--line); background:transparent; }
+#rail .rail-foot #tally,#rail .rail-foot .foot-note:not(.app-identity) { display:none; }
+#rail .rail-foot .ghost-btn { display:flex; align-items:center; justify-content:flex-start; min-height:44px; padding:0 10px; border-color:transparent; text-align:left; font:400 13px/1.3 var(--body); color:var(--muted); }
+#rail .rail-foot .ghost-btn+.ghost-btn { margin-top:4px; }
+#rail .rail-foot .ghost-btn:hover { border-color:var(--line); color:var(--ink); }
+#rail .app-identity { margin-top:10px; padding-left:10px; font:11px/1.5 var(--body); }
+/* At 900 and below the rail is the ☰ drawer (styles.css positions it). It stacks exactly as the docked rail
+   does (an older phone rule made it a wrapping row) and casts a shadow only while open. */
+@media(max-width:900px) {
+  #rail { flex-direction:column; flex-wrap:nowrap; align-items:stretch; width:240px; height:100dvh; box-shadow:none; }
+  body.rail-open #rail { box-shadow:16px 0 40px rgba(0,0,0,.35); }
+}
+/* The header frame: flush with the rail, full width, one border beneath, the same height at every width. */
+#topbar { flex:0 0 auto; flex-wrap:nowrap; gap:12px; height:var(--cb-topbar-height); min-height:0; margin:0; padding:0 24px; border:0; border-bottom:1px solid var(--line); border-radius:0; background:var(--cb-shell-bg); color:var(--ink); backdrop-filter:none; box-shadow:none; }
+#topbar .topbar-context { flex:0 1 auto; min-width:0; gap:10px; }
 #topbar .topbar-context>div { min-width:0; }
+/* The header names the project; each page names itself in its own heading. */
+#topbar #topbar-view { display:none; }
+#topbar .topbar-project { font:500 13px/1.4 var(--body); letter-spacing:0; text-transform:none; color:var(--muted); }
 #topbar .topbar-project,#topbar .topbar-view { overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
 #topbar .topbar-actions { display:flex; align-items:center; justify-content:flex-end; gap:8px; flex:1 1 auto; min-width:0; }
 #topbar #global-add,#topbar #automation-activity-toggle,#topbar #creator-rail-toggle,#topbar #save-state,#topbar .topbar-search,#topbar #mobile-nav {
@@ -50,6 +99,8 @@
 .rd-tools-nav { display:flex; flex-wrap:wrap; align-items:center; gap:8px 16px; margin:0 0 20px; }
 .rd-tools-nav .rd-tools-back { display:inline-flex; align-items:center; min-height:44px; margin:0; }
 #main :is(button,a,input,select,textarea,summary):focus-visible,#topbar :is(button,input):focus-visible,.cb-return:focus-visible { outline:3px solid var(--cb-focus); outline-offset:3px; }
+/* Inside the rail the ring sits within the navigation's 9px gutter, so its scroll box never clips it. */
+#rail :is(button,a,input,select,textarea,summary):focus-visible { outline:3px solid var(--cb-focus); outline-offset:2px; box-shadow:none; }
 /* Transient messages never take a press and never sit on a decision bar, Retry, a dialog footer or the
    phone dock: they announce beneath the pinned header (and stage bar), centred, and wrap instead of growing. */
 #toast.toast { top:calc(var(--cb-topbar-stop,72px) + var(--cb-bar-height,0px) + 12px); bottom:auto; max-width:min(560px,calc(100vw - 32px)); white-space:normal; overflow-wrap:anywhere; pointer-events:none; font:13px/1.45 var(--body); letter-spacing:normal; }
@@ -62,9 +113,8 @@
   #topbar .topbar-search:focus-within::before { background:var(--muted); }
   #topbar .topbar-search:focus-within input { position:static; opacity:1; cursor:text; }
 }
-@media(max-width:980px) { #topbar { padding-block:7px; } }
-/* Wherever the navigation folds behind ☰, the controls go compact so the row still fits beside a desk
-   rail: Add is a 48×48 ＋ (its name is unchanged), Activity shows its state (the full "Activity · state"
+/* Wherever the navigation folds behind ☰, the controls go compact so the row still fits beside the ☰
+   control: Add is a 48×48 ＋ (its name is unchanged), Activity shows its state (the full "Activity · state"
    stays its accessible name and tooltip), and a long save status ellipsises instead of wrapping. */
 @media(max-width:900px) {
   #topbar #global-add { width:var(--cb-control-height); padding:0; font-size:0; }
@@ -76,18 +126,17 @@
   #topbar #save-state { max-width:110px; padding:0 2px; gap:6px; }
   #topbar #save-state>span:last-child { min-width:0; overflow:hidden; text-overflow:ellipsis; font-size:12px; }
 }
-/* Beside a docked desk rail (768–900) the 24px desk gutter is what the save status needs; phones keep their own gutter. */
-@media(min-width:761px) and (max-width:900px) { #app #topbar { padding-inline:12px; } }
+/* Once the rail is a drawer the header gutter is 12px at every width, which leaves the compact row the room its save status needs. */
+@media(max-width:900px) { #app #topbar { padding-inline:12px; } }
 @media(max-width:760px) {
-  /* Phone: the same single row. The controls keep their size; the page name takes what is left
-     (it is repeated by the page heading) and steps aside rather than showing a lone ellipsis. */
-  #topbar { gap:6px; padding-inline:8px; }
+  /* Phone: the same single row. The controls keep their size; the project name takes what is left
+     and steps aside rather than showing a lone ellipsis. */
+  #topbar { gap:6px; }
   #topbar .topbar-context { flex:1 1 0; gap:6px; }
   #topbar .topbar-context>div { flex:1 1 0; container-type:inline-size; }
   #topbar .topbar-actions { flex:0 0 auto; gap:6px; }
   #topbar #automation-activity-toggle { max-width:100px; }
   #topbar #save-state { max-width:72px; }
-  #topbar .topbar-view { font-size:15px; }
   #toast.toast { left:16px; right:16px; transform:none; max-width:none; text-align:left; }
 }
 @container (max-width:52px) { #topbar .topbar-project,#topbar .topbar-view { visibility:hidden; } }
