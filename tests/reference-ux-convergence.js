@@ -1956,9 +1956,9 @@ function soakedFixture() {
   withCanon(project, { kind: "entity-state", list: "characters", entityId: "CHAR-UX", stateId: "state-soaked", value: "CHAR-UX-SOAKED.png" });
   return { project, binding };
 }
-function guidedHarness(project, { mutateSource = null, enroll = [], scanMisses = 0, advanceDuringRefresh = 0, blockDuringRefresh = 0 } = {}) {
+function guidedHarness(project, { mutateSource = null, enroll = [], scanMisses = 0, advanceDuringRefresh = 0, blockDuringRefresh = 0, watchDuringRefresh = 0 } = {}) {
   const uploaded = [], enrolls = [], jobs = [], puts = [], projectReadsAfterEnroll = [];
-  const plan = { enroll: [...enroll], scanMisses, advanceDuringRefresh, blockDuringRefresh };
+  const plan = { enroll: [...enroll], scanMisses, advanceDuringRefresh, blockDuringRefresh, watchDuringRefresh };
   let server = structuredClone(project), revision = 1;
   const rev = () => `"guided-rev-${revision}"`;
   const entityOf = () => server.characters.find((row) => row.id === "CHAR-UX");
@@ -1971,6 +1971,7 @@ function guidedHarness(project, { mutateSource = null, enroll = [], scanMisses =
     /* A write from elsewhere: the stored project moves to a new revision. */
     backgroundWrite: (change) => { change(server); revision++; },
     interfere: null,
+    revisionReads: 0,
     render: () => render("#/character/CHAR-UX", project, {
       scan: convergenceScan(), storage: {}, ...(mutateSource ? { mutateSource } : {}),
       fetch: async (url, options = {}, respond) => {
@@ -2001,12 +2002,13 @@ function guidedHarness(project, { mutateSource = null, enroll = [], scanMisses =
              stopped saving cannot commit a refresh at all, and will not until it is unblocked. */
           if (plan.advanceDuringRefresh > 0 && harness.interfere) { plan.advanceDuringRefresh--; harness.interfere("advance"); }
           if (plan.blockDuringRefresh > 0 && harness.interfere) { plan.blockDuringRefresh--; harness.interfere("block"); }
+          if (plan.watchDuringRefresh > 0 && harness.interfere) { plan.watchDuringRefresh--; harness.interfere("watch"); }
           return respond(server, 200, { "x-cinebraid-project-slug": "fixture", "x-cinebraid-project-revision": rev(), etag: rev() });
         }
         /* The revision watch's own read. The server hashes the stored bytes; this harness has a
            counter that moves for exactly the same reason, so a window whose PROJECT_REVISION is
            behind the store reads as behind it here too. */
-        if (target === "/api/projects/fixture/revision") return respond({ revision: rev() });
+        if (target === "/api/projects/fixture/revision") { harness.revisionReads++; return respond({ revision: rev() }); }
         if (target === "/api/scan") {
           const miss = plan.scanMisses > 0 && uploaded.length > 0;
           if (miss) plan.scanMisses--;
@@ -2051,7 +2053,16 @@ function guidedHarness(project, { mutateSource = null, enroll = [], scanMisses =
 async function bootGuided(harness) {
   const rendered = await harness.render();
   vm.runInContext("globalThis.matchMedia = () => ({ matches: false, addEventListener() {} }); globalThis.requestAnimationFrame = (fn) => setTimeout(fn, 0); pollFalGeneration = () => {};", rendered.context);
-  harness.interfere = (kind) => vm.runInContext(kind === "advance" ? "noteCurrentProjectDurableAdvance(ACTIVE_PROJECT_SLUG)" : "SAVE_BLOCKED = true", rendered.context);
+  const INTERFERENCE = {
+    advance: "noteCurrentProjectDurableAdvance(ACTIVE_PROJECT_SLUG)",
+    block: "SAVE_BLOCKED = true",
+    /* The shipped watch, started (not awaited) in the middle of the confirmation refresh - which is when
+       the stored revision has moved and this window's has not. Its own answer is read afterwards. */
+    watch: "globalThis.__ev27Watch = watchProjectRevision();",
+  };
+  harness.interfere = (kind) => vm.runInContext(INTERFERENCE[kind], rendered.context);
+  harness.watchOutcome = () => vm.runInContext("globalThis.__ev27Watch || Promise.resolve(\"never-started\")", rendered.context);
+  harness.conflicted = () => vm.runInContext("!!PROJECT_CONFLICT", rendered.context);
   harness.saveGeneration = () => vm.runInContext("PROJECT_SAVE_GENERATION", rendered.context);
   harness.unblock = () => vm.runInContext("SAVE_BLOCKED = false", rendered.context);
   for (const file of EV27_RUNTIME) {
@@ -2270,6 +2281,28 @@ async function testRetryRefusesWhenTheExactCropIsGone() {
   eq(out.assign.code, "scope", "EV2-7 C9: as a scope refusal");
   ok(out.modal.includes("The saved crop is no longer on this reference."), "EV2-7 C9: naming what went missing");
   ok(out.modal.includes('data-bc-action="keep"'), "EV2-7 C9: with a way out that writes nothing");
+}
+
+/* EV2-7 POST-DEMO C10 - THIS WINDOW'S OWN ENROLLMENT IS NOT A FOREIGN CHANGE.
+
+   The revision watch compares the stored revision with this window's, every few seconds, and a content
+   hash cannot say who moved it. An enrollment moves the stored one and leaves this window's behind until
+   the confirmation installs it - so for that moment the watch sees exactly what a write from another
+   window looks like, and it acts: it declares a durable advance (refusing the confirmation refresh in
+   flight), and over any unsaved edit it raises the conflict surface on top of the assignment. It already
+   refuses to read this window's own accepted SAVE back that way; this is the same rule for the write it
+   asked the server to make. */
+async function testTheRevisionWatchKnowsThisWindowsOwnEnrollment() {
+  const harness = guidedHarness(guidedFixture(), { watchDuringRefresh: 1 });
+  const rendered = await bootGuided(harness);
+  await vm.runInContext(`(async () => { ${GUIDED_OPEN(EV27_ALT)} await CineBraidBuildCoverage.cropSave(true); })()`, rendered.context);
+  const outcome = await harness.watchOutcome();
+  eq(outcome, null, "EV2-7 C10: the watch reads this window's own enrollment as nothing foreign");
+  eq(harness.conflicted(), false, "EV2-7 C10: and raises no conflict over a write this window asked for");
+  const out = JSON.parse(vm.runInContext(GUIDED_READ, rendered.context));
+  eq(out.step, "done", "EV2-7 C10: the assignment completes");
+  eq(harness.enrolls.length, 1, "EV2-7 C10: posted once");
+  eq(harness.revisionReads > 0, true, "EV2-7 C10: and the watch really did ask the server for the stored revision");
 }
 
 async function testSheetRecordedForOtherStateRefused() {
@@ -2702,6 +2735,7 @@ async function main() {
   await testRepeatedRetriesStayIdempotent();
   await testRecoveredAssignmentSurvivesReload();
   await testRetryRefusesWhenTheExactCropIsGone();
+  await testTheRevisionWatchKnowsThisWindowsOwnEnrollment();
   await testSheetRecordedForOtherStateRefused();
   await testStateCoverageSubmitCarriesState();
   await testReceiptChangeDuringDialogRefuses();
@@ -2720,7 +2754,7 @@ async function main() {
     + `requirement-vs-demand legibility, staged preview, the visual chooser, continuity-state authoring, single-state `
     + `approval, dropdown readability and Details disclosure, plus the alpha blockers: dormant coverage claiming no `
     + `attention, the fail-closed direction, Save crop & use converging in one action, Save as candidate assigning `
-    + `nothing, the retired stale-assign action and strip/board agreement, plus the two residual surfaces this pass found: the provenance chooser on the generation-record fold, and the target lists and the batch-approval confirmation that described an occupied slot through the key the writer deletes; and EV2-7 Build coverage: exact state/view crop enrollment, refused and unknown assignment outcomes without duplicates, other-state sheets refused, state-scoped generation requests and receipt revalidation, one wording for earlier selections across the Desk and the dialog, revision conflicts and Refresh target answered by a re-read before an explicit assignment, no override recorded on open, and picker dismissal returning to Build coverage; and the EV2-7 human dogfood correction: a derived next action beside the coverage status that names the exact next missing view and writes nothing, empty views whose Review control says it is empty, approval stated in words beside its state, a sheet's missing record described as the sheet's, and a generate flow that selects only the requested view, expands only by an explicit press, and submits nothing before the confirmation; and the EV2-7 post-demo closeout: an enrollment that declares the durable write it just caused, a confirmation that re-reads the saved project rather than reporting a project it never re-read, a window that cannot re-read saying the assignment was saved instead of inventing a verdict, repeated retries that stay one binding and one crop, a reload that still reads the view as filled, and a retry that refuses rather than assign something other than the exact saved crop. Provider calls made: 0.`);
+    + `nothing, the retired stale-assign action and strip/board agreement, plus the two residual surfaces this pass found: the provenance chooser on the generation-record fold, and the target lists and the batch-approval confirmation that described an occupied slot through the key the writer deletes; and EV2-7 Build coverage: exact state/view crop enrollment, refused and unknown assignment outcomes without duplicates, other-state sheets refused, state-scoped generation requests and receipt revalidation, one wording for earlier selections across the Desk and the dialog, revision conflicts and Refresh target answered by a re-read before an explicit assignment, no override recorded on open, and picker dismissal returning to Build coverage; and the EV2-7 human dogfood correction: a derived next action beside the coverage status that names the exact next missing view and writes nothing, empty views whose Review control says it is empty, approval stated in words beside its state, a sheet's missing record described as the sheet's, and a generate flow that selects only the requested view, expands only by an explicit press, and submits nothing before the confirmation; and the EV2-7 post-demo closeout: an enrollment that declares the durable write it just caused, a confirmation that re-reads the saved project rather than reporting a project it never re-read, a window that cannot re-read saying the assignment was saved instead of inventing a verdict, repeated retries that stay one binding and one crop, a reload that still reads the view as filled, a retry that refuses rather than assign something other than the exact saved crop, and a revision watch that reads this window's own enrollment as nothing foreign. Provider calls made: 0.`);
 }
 
 main().catch((error) => { console.error(error); process.exit(1); });

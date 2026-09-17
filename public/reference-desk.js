@@ -247,7 +247,16 @@
      called done until the refreshed project shows the binding and the scan resolves it.
      A retry after an unknown outcome refreshes first; an existing exact binding is reused,
      never duplicated. Nothing here approves. */
-  async function enrollExact({slug,epoch,list,id,stateId,slotId,assetId,revision}) {
+  async function enrollExact(request) {
+    /* THE WRITE THIS WINDOW IS ABOUT TO ASK THE SERVER TO MAKE, DECLARED WHILE IT IS IN FLIGHT.
+       Held from here until the confirmation has installed its result, so the revision watch cannot read
+       this enrollment as a change made by somebody else - which raised a conflict over this window’s own
+       write and buried the assignment behind it. It orders nothing and blocks nothing; the only thing
+       that waits on it is that watch, and it is released however this ends. */
+    const releaseServerWrite=typeof beginProjectServerWrite==='function'?beginProjectServerWrite():()=>{};
+    try { return await enrollExactWrite(request); } finally { releaseServerWrite(); }
+  }
+  async function enrollExactWrite({slug,epoch,list,id,stateId,slotId,assetId,revision}) {
     const fail=(message,code)=>Object.assign(Error(message),{code});
     if(slug!==ACTIVE_PROJECT_SLUG||epoch!==PROJECT_OPEN_EPOCH)throw fail('The open project changed.','scope');
     const settled=projectSaveSettled();if(!settled.settled)throw fail(settled.reason||'The project has unsaved changes. Finish saving, then retry.','unsettled');

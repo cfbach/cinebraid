@@ -1984,6 +1984,28 @@ async function applyProjectMutationResult(owner, data) {
    and the answer is then only acted on if this window's revision is still the one
    it asked about — so a save that lands mid-flight aborts the comparison instead
    of racing it, and the next tick simply agrees. */
+/* THIS WINDOW'S OWN SERVER-SIDE PROJECT WRITES, WHICH THE SAVE CHAIN CANNOT SEE.
+
+   SAVE_CHAIN carries every write this window COMPOSES and PUTs. It does not carry the writes
+   this window ASKS THE SERVER TO MAKE - reference enrollment is one - where the browser sends a
+   request and the server writes project.json itself. Between that response and the follow-up
+   refresh that installs it, the stored revision has moved and this window's has not, which a
+   content hash cannot tell apart from a change made by somebody else. The watch below already
+   refuses to read this window's own accepted save back as a foreign change; this is the same
+   rule, for the same reason, for the writes the chain never sees.
+
+   IT IS A PLACE TO WAIT, NEVER A LOCK. It grants nothing, blocks no write and orders nothing:
+   the only thing that ever awaits it is the watch, and the release below runs however the
+   operation ends. A caller that forgets to release would stall the watch and nothing else. */
+let PROJECT_SERVER_WRITE = Promise.resolve();
+function beginProjectServerWrite() {
+  let open;
+  const gate = new Promise((resolve) => { open = resolve; });
+  PROJECT_SERVER_WRITE = PROJECT_SERVER_WRITE.then(() => gate, () => gate);
+  let released = false;
+  return () => { if (released) return; released = true; open(); };
+}
+if (typeof window !== "undefined") window.beginProjectServerWrite = beginProjectServerWrite;
 let PROJECT_REVISION_WATCH = null;
 window.watchProjectRevision = async () => {
   /* One in flight at a time; the interval is not a queue. */
@@ -2003,6 +2025,9 @@ window.watchProjectRevision = async () => {
       /* Let this window's own save settle before asking, so its own accepted
          write is never read back as somebody else's change. */
       await SAVE_CHAIN.catch(() => {});
+      /* And the writes it asked the server to make, for the same reason. PROJECT_REVISION is read
+         AFTER both, so an enrollment that has already installed its own result is simply agreed with. */
+      await PROJECT_SERVER_WRITE.catch(() => {});
       if (!P || !ACTIVE_PROJECT_SLUG || !PROJECT_REVISION) return null;
       const owner = { slug: ACTIVE_PROJECT_SLUG, epoch: PROJECT_OPEN_EPOCH, revision: PROJECT_REVISION };
       const response = await fetch(`/api/projects/${encodeURIComponent(owner.slug)}/revision`, { cache: "no-store" });

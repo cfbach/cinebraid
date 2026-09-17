@@ -36,7 +36,8 @@
  * assignment, and was told CineBraid could not confirm the assignment had been saved. N26 pins what a
  * confirmation may conclude from a refresh that did not commit, N27 pins the declaration that keeps a
  * refresh prepared before the write from committing over it, and N28 pins the retry to the exact saved
- * crop it was made from.
+ * crop it was made from. N29 pins the last half: the revision watch reading this window’s own
+ * enrollment as a change made by somebody else.
  *
  * IN MEMORY, ALWAYS. Nothing in the working tree is written, so no control can be
  * "restored" by a checkout that would also discard real work.
@@ -1027,11 +1028,11 @@ function ev27Fixture() {
   return project;
 }
 /* The in-memory "server" the suite's own guided harness uses, reduced to what these four probes read. */
-async function ev27Draw(mutateSource, { enroll = [], scanMisses = 0, advanceDuringRefresh = 0 } = {}) {
-  const project = ev27Fixture(), uploaded = [], enrolls = [], jobs = [], plan = { enroll: [...enroll], scanMisses, advanceDuringRefresh };
+async function ev27Draw(mutateSource, { enroll = [], scanMisses = 0, advanceDuringRefresh = 0, watchDuringRefresh = 0 } = {}) {
+  const project = ev27Fixture(), uploaded = [], enrolls = [], jobs = [], plan = { enroll: [...enroll], scanMisses, advanceDuringRefresh, watchDuringRefresh };
   /* Read back out of the running page: the one integer every writer moves to say the durable record
      advanced independently of a refresh commit, and the counter of reads about the exact image. */
-  const live = {}, projectReadsAfterEnroll = [], inventoryReads = { count: 0 };
+  const live = {}, projectReadsAfterEnroll = [], inventoryReads = { count: 0 }, revisionReads = { count: 0 };
   const generation = () => (live.context ? vm.runInContext("PROJECT_SAVE_GENERATION", live.context) : -1);
   let server = structuredClone(project), revision = 1;
   const rev = () => `"ev27-control-${revision}"`, entity = () => server.characters.find((row) => row.id === "CHAR-NC");
@@ -1042,11 +1043,16 @@ async function ev27Draw(mutateSource, { enroll = [], scanMisses = 0, advanceDuri
       if (target.startsWith("/api/media/upload")) { const name = decodeURIComponent((/name=([^&]+)/.exec(target) || [])[1] || ""); uploaded.push(name); return respond({ name }); }
       if (target === "/api/media/prepare-identity") { const { name } = JSON.parse(options.body); return respond({ status: uploaded.includes(name) ? "ready" : "unavailable", assetId: "asset-crop-" + uploaded.indexOf(name) }); }
       if (target.startsWith("/api/projects/") && options.method === "PUT") { server = JSON.parse(options.body); revision++; return respond({ ok: true, revision: rev() }); }
+      /* The watch's own read: the server hashes the stored bytes, and this counter moves for the same reason. */
+      if (target === "/api/projects/fixture/revision") { revisionReads.count++; return respond({ revision: rev() }); }
       if (target === "/api/project") {
         if (enrolls.length) projectReadsAfterEnroll.push(generation());
         /* A concurrent writer, declared the only way any of them is declared, in the one window where a
            refresh can be overtaken: after its ticket is taken and before its refusal is read. */
         if (plan.advanceDuringRefresh > 0 && live.context) { plan.advanceDuringRefresh--; vm.runInContext("noteCurrentProjectDurableAdvance(ACTIVE_PROJECT_SLUG)", live.context); }
+        /* The shipped watch, started and not awaited, at the moment the stored revision has moved
+           and this window's has not - which is when its own write looks exactly like a foreign one. */
+        if (plan.watchDuringRefresh > 0 && live.context) { plan.watchDuringRefresh--; vm.runInContext("globalThis.__ev27Watch = watchProjectRevision();", live.context); }
         return respond(server, 200, { "x-cinebraid-project-slug": "fixture", "x-cinebraid-project-revision": rev(), etag: rev() });
       }
       if (target === "/api/scan") {
@@ -1082,7 +1088,9 @@ async function ev27Draw(mutateSource, { enroll = [], scanMisses = 0, advanceDuri
     vm.runInContext(mutateSource ? String(mutateSource(file, source) ?? source) : source, rendered.context, { filename: file });
     if (file === "reference-coverage-build.js") vm.runInContext("document.addEventListener = globalThis.__ev27Add;", rendered.context);
   }
-  return { rendered, uploaded, enrolls, jobs, projectReadsAfterEnroll, inventoryReads, server: () => server };
+  return { rendered, uploaded, enrolls, jobs, projectReadsAfterEnroll, inventoryReads, revisionReads, server: () => server,
+    watchOutcome: () => vm.runInContext("globalThis.__ev27Watch || Promise.resolve(\"never-started\")", rendered.context),
+    conflicted: () => vm.runInContext("!!PROJECT_CONFLICT", rendered.context) };
 }
 const EV27_CROP = (assign) => `(async () => {
   const realCreate = document.createElement.bind(document);
@@ -1373,6 +1381,27 @@ controlAsync({
   },
   reason: "retry-went-on-about-a-crop-the-reference-no-longer-holds",
   explain: "A retry that does not re-check its own crop is a retry that can assign against something other than the image the filmmaker saved.",
+});
+
+controlAsync({
+  label: "N29 the revision watch does not read this window's own enrollment as a foreign change",
+  mutateSource: only("app.js", (text) => mutate(
+    text,
+    "      await PROJECT_SERVER_WRITE.catch(() => {});\n",
+    "",
+    "N29")),
+  probe: async (mutateSource) => {
+    const drawn = await ev27Draw(mutateSource, { watchDuringRefresh: 1 });
+    const state = await vm.runInContext(EV27_CROP(true), drawn.rendered.context);
+    if (!state || drawn.enrolls.length !== 1 || drawn.revisionReads.count === 0)
+      return { reached: false, held: false, reason: `enrollments(${drawn.enrolls.length}) revisionReads(${drawn.revisionReads.count})` };
+    const outcome = await drawn.watchOutcome();
+    const own = outcome === null && drawn.conflicted() === false;
+    return { reached: true, held: own,
+      reason: own ? "the-watch-recognised-this-windows-own-write" : "the-watch-treated-this-windows-own-enrollment-as-foreign" };
+  },
+  reason: "the-watch-treated-this-windows-own-enrollment-as-foreign",
+  explain: "A content hash cannot say who moved the stored revision, so an enrollment this window asked for reads as somebody else's change - and over an unsaved edit that raises the conflict surface on top of the assignment.",
 });
 
 /* ---------------------------------------------------------------------------
