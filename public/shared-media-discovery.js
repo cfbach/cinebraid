@@ -39,7 +39,11 @@
   /* A headline from the first recorded library link: its target and role, e.g. "SH010 · Planning reference". */
   function linkTitle(links,project={}){for(const l of arr(links)){const type=String(l?.targetType||''),id=String(l?.targetId||'');if(!id)continue;const list={character:'characters',location:'locations',prop:'props',vehicle:'vehicles'}[type],target=list&&arr(project?.[list]).find(e=>String(e.id)===id),role=String(l.role||'').replace(/-/g,' ').trim();return [target?.name||id,role?role[0].toLocaleUpperCase()+role.slice(1):''].filter(Boolean).join(' · ');}return '';}
   const plainLink=l=>({targetType:val(l.targetType),targetId:val(l.targetId),role:val(l.role)});
-  function defaults(selector=false){return {query:'',category:'all',decision:selector?'all':'current',type:'all',related:'all',availability:'all',source:'all',sort:'recent',group:'none',view:'grid',page:0,selected:'',showUnavailable:!selector,showRejected:false};}
+  /* EV2-7 — a coverage target's own category. The picker opens on the list the target belongs to; the filmmaker can still choose All or any other category. */
+  function targetCategory(target){return ENTITY_CATEGORY[String(target?.list||'')]||'all';}
+  /* One label per context, with a repeated owner name removed: ["Kai","Kai · Default"] reads "Kai · Default", never "Kai · Kai · Default". Presentation only. */
+  function contextLine(labels,limit=0){const out=[];for(const raw of arr(labels)){const l=String(raw==null?'':raw).trim();if(l&&!out.includes(l))out.push(l);}const kept=out.filter(l=>!out.some(o=>o!==l&&o.startsWith(l+' · ')));return (limit>0?kept.slice(0,limit):kept).join(' · ');}
+  function defaults(selector=false,target=null){const contextual=!!(selector&&target&&target.list&&target.id);return {query:'',category:contextual?targetCategory(target):'all',decision:selector?'all':'current',type:'all',related:'all',availability:'all',source:'all',sort:'recent',group:contextual?'target':'none',view:'grid',page:0,selected:'',showUnavailable:!selector,showRejected:false};}
   function relationship(use,project){
     const c=use.context||{}, related=[], sceneIds=[];
     const add=(type,id,label)=>{type=({character:'characters',location:'locations',prop:'props',vehicle:'vehicles',audio:'audio'})[type]||type;if(id)related.push({key:type+':'+id,type,id,label:label||id});};
@@ -59,7 +63,10 @@
     for(const link of arr(c.links)){const type=val(link.targetType),id=val(link.targetId),norm=({character:'characters',location:'locations',prop:'props',vehicle:'vehicles'})[type]||type;if(!id)continue;const key=norm+':'+id,linkedShot=norm==='shot'&&arr(project.shots).find(s=>String(s.id)===id);if(!usedMap.has(key))usedMap.set(key,{key,type:norm,id,label:linkedShot?[id,linkedShot.title].filter(Boolean).join(' · '):labelOf(key)||id,role:val(link.role)});}
     for(const id of unique(sceneIds)){const key='scene:'+id;if(!usedMap.has(key))usedMap.set(key,{key,type:'scene',id,label:labelOf(key)||id,role:'',inherited:true});}
     const selectedFor=slotSelection(use);
-    return {raw:use,related,categories:useCategories(use),belongsTo,usedIn:[...usedMap.values()],sceneIds:unique(sceneIds),label:related.filter(r=>r.type!=='scene').map(r=>r.label).join(' · ')||'Project media',decision:selectedFor?'selected':use.disposition?.role||'candidate',selectedFor:selectedFor||[],decidable:arr(use.actions).some(a=>['approve','reject','restore'].includes(a)),candidateName:use.file?.name||'',context:c};
+    /* EV2-7 — the recorded view this use fills, read from the entity's own coverage slot. Display only: it names the use, it never grants authority. */
+    const slot=entity&&arr(entity.coverageSlots).find(s=>String(s.id)===val(c.coverageSlotId)),view=slot?String(slot.label||slot.id):'';
+    const line=contextLine(related.filter(r=>r.type!=='scene').map(r=>r.label));
+    return {raw:use,related,categories:useCategories(use),belongsTo,usedIn:[...usedMap.values()],sceneIds:unique(sceneIds),view,label:[line,view].filter(Boolean).join(' · ')||'Project media',decision:selectedFor?'selected':use.disposition?.role||'candidate',selectedFor:selectedFor||[],decidable:arr(use.actions).some(a=>['approve','reject','restore'].includes(a)),candidateName:use.file?.name||'',context:c};
   }
   function compose(project={},records=[],inventory=[]){
     project=project||{};
@@ -94,7 +101,62 @@
     }
     return result;
   }
-  function decisionLabel(row){if(row.decision==='selected'&&arr(row.selectedFor).length)return 'Selected for '+row.selectedFor.join(' · ');return row.decision==='mixed'?'Different decisions by use':decisions[row.decision]||'Not recorded';}
+  /* EV2-7 — READABLE USE-SPECIFIC TRUTH, in place of "Different decisions by use". Every word comes from a recorded disposition on a recorded use; nothing is
+     derived from a filename, and nothing here can create, move or imply a decision. The card carries a capped sentence; the Inspector carries the whole list. */
+  const DECISION_RANK={approved:0,selected:1,rejected:2,historic:3,candidate:4};
+  const ELSEWHERE={approved:'approved elsewhere',selected:'selected for a view elsewhere',rejected:'rejected elsewhere',historic:'a historic selection elsewhere',candidate:'candidate elsewhere'};
+  function singleWord(decision,selectedFor){return decision==='selected'&&arr(selectedFor).length?'Selected for '+selectedFor.join(' · '):decisions[decision]||'Not recorded';}
+  function meaningfulUses(row){const rels=arr(row.relationships),meaningful=rels.filter(u=>u.raw?.scope!=='project'&&u.raw?.kind!=='shot-blocking');return meaningful.length?meaningful:rels;}
+  /* One row per recorded use, in decision precedence then recorded order. The Inspector prints this whole list; the card prints the summary below it. */
+  function decisionUses(row){return meaningfulUses(row).map((u,i)=>({label:u.label||'',view:u.view||'',decision:u.decision,words:singleWord(u.decision,u.selectedFor),order:i})).sort((a,b)=>((DECISION_RANK[a.decision]??9)-(DECISION_RANK[b.decision]??9))||a.order-b.order);}
+  function joinNames(names){return names.length<3?names.join(' and '):names.slice(0,2).join(', ')+' and '+(names.length-2)+' more';}
+  function decisionSummary(row,limit=84){
+    const uses=decisionUses(row);
+    if(row.decision!=='mixed')return {text:singleWord(row.decision,row.selectedFor),lead:row.decision,uses};
+    if(uses.length<2){/* Roles disagree but the uses did not travel with the row: say which words are recorded, still without inventing a target for them. */
+      const roles=unique(arr(row.roles)).sort((a,b)=>(DECISION_RANK[a]??9)-(DECISION_RANK[b]??9)),first=roles[0]||'candidate';
+      return {text:[singleWord(first),joinNames(roles.slice(1).map(r=>ELSEWHERE[r]||'recorded differently elsewhere'))].filter(Boolean).join('; '),lead:first,uses};}
+    const lead=uses[0],named=uses.filter(u=>u.decision===lead.decision),rest=unique(uses.filter(u=>u.decision!==lead.decision).map(u=>ELSEWHERE[u.decision]||'recorded differently elsewhere'));
+    const tail=rest.length?'; '+joinNames(rest):'';
+    const build=names=>lead.words+(names?' for '+names:'')+tail;
+    const labels=named.map(u=>u.label).filter(Boolean);
+    let text=build(joinNames(labels));
+    if(text.length>limit&&labels.length>1)text=build(labels.length+' recorded uses');
+    if(text.length>limit&&labels.length===1)text=build(labels[0].slice(0,Math.max(8,labels[0].length-(text.length-limit)-1)).trim()+'…');
+    return {text,lead:lead.decision,uses};
+  }
+  function decisionLabel(row){return decisionSummary(row).text;}
+  /* The status word carries at most a small dot. Its tone is the leading recorded decision — never an AI recommendation and never a filename. */
+  function decisionTone(row){const lead=decisionSummary(row).lead;if(lead==='approved')return 'approved';if(lead==='rejected')return 'rejected';return row.needsDecision?'attention':'neutral';}
+  /* EV2-7 — SINGLE VIEW vs SHEET, from the recorded artifact structure (referenceArtifactStructure through the projection's workflow fact, or the ledger's
+     directory-proven role). A filename never answers this, and an undeclared structure says nothing rather than guessing. */
+  const STRUCTURE_WORDS={sheet:'Sheet · crop in Build coverage',single:'Single view'};
+  function artifactStructure(row){
+    for(const use of arr(row?.relationships)){const workflow=val(use.context?.workflow);if(workflow==='reference-sheet')return 'sheet';if(workflow==='coverage-view')return 'single';}
+    const role=String(row?.inventory?.ledgerRole||'');return role==='coverage-sheet'?'sheet':role==='coverage-crop'?'single':'';
+  }
+  function structureLabel(row){return STRUCTURE_WORDS[artifactStructure(row)]||'';}
+  /* EV2-7 — CONTEXTUAL ORDER FOR A COVERAGE TARGET. 0 the exact target (this entity, this state, this requested view), 1 the same identity elsewhere
+     (other states, other views, or media linked to it), 2 everything else in the chosen category. Ordering only: no row is hidden by rank. */
+  function targetRank(row,target){
+    const list=String(target?.list||''),id=String(target?.id||'');if(!list||!id)return 2;
+    const uses=arr(row?.relationships).filter(u=>val(u.context?.entityList)===list&&val(u.context?.entityId)===id);
+    const state=String(target.stateId||''),slot=String(target.slotId||''),fallback=String(target.defaultStateId||'');
+    /* A row that records no continuity state of its own belongs to the default state, which is the same fallback the Desk and the candidate readers use.
+       It is therefore exact for the default state and merely identity-related for any other one — the distinction the Desk words as an earlier selection. */
+    const stateOk=s=>!state||(s?s===state:fallback===state);
+    /* The view is recorded either on the row (its target slot) or by the slot edge that selected this media for that view. */
+    const viewOk=u=>!slot||val(u.context?.coverageSlotId)===slot||arr(u.raw?.disposition?.targets).some(t=>SLOT_EDGE_KINDS.includes(String(t?.kind||''))&&String(t?.id||'')===slot);
+    if(uses.some(u=>stateOk(val(u.context?.stateId))&&viewOk(u)))return 0;
+    if(uses.length)return 1;
+    return arr(row?.related).some(r=>r.key===list+':'+id)?1:2;
+  }
+  function targetGroupLabel(rank,target,category='all'){
+    const name=String(target?.entityName||target?.id||'this reference');
+    if(rank===0)return 'For '+[name,String(target?.stateName||''),String(target?.slotLabel||'')].filter(Boolean).join(' · ');
+    if(rank===1)return 'Other '+name+' media';
+    return 'Other '+(category&&category!=='all'?categoryLabel(category).toLocaleLowerCase():'production media');
+  }
   function rejectedFor(row,target){
     const relevant=row.relationships.filter(u=>val(u.context.entityList)===target?.list&&val(u.context.entityId)===target?.id&&(!val(u.context.stateId)||val(u.context.stateId)===target?.stateId));
     if(relevant.length)return relevant.some(u=>u.decision==='rejected');
@@ -117,15 +179,15 @@
   }
   /* One pass over the same predicate as query(): counts[c] === query({...state,category:c}).total. */
   function categoryCounts(records,state={},options={}){const base={...state,category:'all'},counts=Object.fromEntries(CATEGORIES.map(([k])=>[k,0]));for(const r of arr(records)){if(!matches(r,base,options))continue;counts.all++;for(const c of unique(arr(r.categories)))if(c in counts)counts[c]++;}return counts;}
-  function groupLabel(row,group){if(group==='category')return categoryLabel(row.category);if(group==='type')return {image:'Images',video:'Video',audio:'Audio',document:'Documents & other'}[row.type]||'Documents & other';if(group==='decision')return decisionLabel(row);if(group==='scene')return row.sceneIds.length>1?'Shared across scenes':row.sceneIds.length?row.related.find(r=>r.type==='scene')?.label||row.sceneIds[0]:'No recorded scene';return '';}
+  function groupLabel(row,group,options={}){if(group==='category')return categoryLabel(row.category);if(group==='type')return {image:'Images',video:'Video',audio:'Audio',document:'Documents & other'}[row.type]||'Documents & other';if(group==='decision')return decisionLabel(row);if(group==='target')return targetGroupLabel(targetRank(row,options.target),options.target,options.state?.category||'all');if(group==='scene')return row.sceneIds.length>1?'Shared across scenes':row.sceneIds.length?row.related.find(r=>r.type==='scene')?.label||row.sceneIds[0]:'No recorded scene';return '';}
   function query(records,state={},options={}){
     const all=records.filter(r=>matches(r,state,options));const sort=state.sort||'recent',group=state.group||'none';
-    all.sort((a,b)=>{const g=group==='none'?0:group==='category'?ORDER.indexOf(a.category)-ORDER.indexOf(b.category):groupLabel(a,group).localeCompare(groupLabel(b,group));if(g)return g;
+    all.sort((a,b)=>{const g=group==='none'?0:group==='category'?ORDER.indexOf(a.category)-ORDER.indexOf(b.category):group==='target'?targetRank(a,options.target)-targetRank(b,options.target):groupLabel(a,group,options).localeCompare(groupLabel(b,group,options));if(g)return g;
       if(sort==='name')return a.title.localeCompare(b.title,undefined,{numeric:true})||a.key.localeCompare(b.key);
       if(sort==='production'){const scene=(a.sceneOrder??Infinity)-(b.sceneOrder??Infinity);if(scene)return scene;}
       return (a.addedAt&&b.addedAt?b.addedAt.localeCompare(a.addedAt):a.addedAt?-1:b.addedAt?1:0)||a.title.localeCompare(b.title,undefined,{numeric:true})||a.key.localeCompare(b.key);
     });
     const page=Math.min(Math.max(0,Number(state.page)||0),Math.max(0,Math.ceil(all.length/48)-1));return {all,rows:all.slice(page*48,(page+1)*48),total:all.length,page,pages:Math.ceil(all.length/48)};
   }
-  return {defaults,compose,query,matches,groupLabel,decisionLabel,rejectedFor,eligibility,sources,val,CATEGORIES,categoryLabel,categoryCounts,linkCategory,ledgerRoleCategory,ownerTitle,recordedTitle,linkTitle,slotSelection,typeLabel};
+  return {defaults,compose,query,matches,groupLabel,decisionLabel,decisionSummary,decisionUses,decisionTone,rejectedFor,eligibility,sources,val,CATEGORIES,categoryLabel,categoryCounts,linkCategory,ledgerRoleCategory,ownerTitle,recordedTitle,linkTitle,slotSelection,typeLabel,targetCategory,targetRank,targetGroupLabel,contextLine,artifactStructure,structureLabel};
 });

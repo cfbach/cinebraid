@@ -291,6 +291,72 @@ control("C27 the Inspector omits an unrecorded outcome instead of stating it", "
   "Silence is not a third answer. A category row showing its name and nothing else, beside rows that carry findings, reads as 'checked, fine' -- the distinction the projection preserved has to survive the renderer.");
 
 /* ===========================================================================
+   EV2-7 — THE CONTEXTUAL PICKER, THE DECISION WORDS AND THE INSPECTOR'S DENSITY.
+
+   Each of these reintroduces one of the four things the human review actually saw: a
+   general library where a contextual one was needed, an order that buried the exact
+   target, a filename deciding what a picture IS or what was DECIDED about it, and one
+   destination rendered as two buttons nobody could tell apart.
+   =========================================================================== */
+notes.push("Contextual picker, decision words and Inspector density:");
+
+control("C29 the coverage picker opens on the general library", "checkContextualPicker",
+  { discovery: mutate(SOURCES.discovery,
+      "const contextual=!!(selector&&target&&target.list&&target.id);",
+      "const contextual=false;",
+      "C29") },
+  "This is the reviewed defect itself: filling Kai's Profile view opened everything, dominated by unrelated Blocking & previs media. The target's own list is what makes the picker contextual.");
+
+control("C30 the exact target is not ordered first", "checkContextualPicker",
+  { discovery: mutate(SOURCES.discovery,
+      "if(uses.some(u=>stateOk(val(u.context?.stateId))&&viewOk(u)))return 0;",
+      "if(false)return 0;",
+      "C30") },
+  "Media already recorded for this entity, this state and this requested view is the first thing a filmmaker is looking for. Ranking it with everything else puts it on page two of its own picker.");
+
+control("C31 a sheet is identified from its filename", "checkContextualPicker",
+  { discovery: mutate(SOURCES.discovery,
+      "  function artifactStructure(row){\n    for(const use of arr(row?.relationships)){const workflow=val(use.context?.workflow);if(workflow==='reference-sheet')return 'sheet';if(workflow==='coverage-view')return 'single';}\n    const role=String(row?.inventory?.ledgerRole||'');return role==='coverage-sheet'?'sheet':role==='coverage-crop'?'single':'';\n  }",
+      "  function artifactStructure(row){\n    const name=String(row?.fileName||'');return /turnaround|sheet/i.test(name)?'sheet':/single|view/i.test(name)?'single':'';\n  }",
+      "C31") },
+  "A filename is not a declaration about what an image contains. The fixture's recorded sheet is called SINGLE and its recorded crop is called TURNAROUND, so a filename reader prints both labels backwards and invites a multi-view sheet into a single view.");
+
+control("C32 the opaque phrase returns", "checkDecisionWords",
+  { discovery: mutate(SOURCES.discovery,
+      "  function decisionLabel(row){return decisionSummary(row).text;}",
+      "  function decisionLabel(row){return row.decision==='mixed'?'Different decisions by use':decisionSummary(row).text;}",
+      "C32") },
+  "\"Different decisions by use\" tells a filmmaker that something is recorded and refuses to say what. The recorded uses are right there; the sentence is built from them.");
+
+control("C33 a filename supplies the decision's tone", "checkDecisionWords",
+  { discovery: mutate(SOURCES.discovery,
+      "  function decisionTone(row){const lead=decisionSummary(row).lead;",
+      "  function decisionTone(row){if(/APPROVED/.test(String(row.fileName||'')))return 'approved';const lead=decisionSummary(row).lead;",
+      "C33") },
+  "Making the decision more authoritative than the filename is worth nothing if the filename can reach the decision's own status colour. An unreviewed candidate called ..._APPROVED_FINAL_ would wear the approved tone.");
+
+control("C34 the filename is printed above the decision", "checkDecisionWords",
+  { browser: mutate(SOURCES.browser,
+      "<b>${e(r.title)}</b><span class=\"md-decision\"",
+      "<b>${e(r.title)}</b>${file?`<small class=\"md-file\" title=\"${a(file)}\">File · ${e(file)}</small>`:''}<span class=\"md-decision\"",
+      "C34") },
+  "Order is authority on a card. Putting the stored filename above the recorded decision is how a name that reads APPROVED becomes the first thing a filmmaker believes.");
+
+control("C35 one destination is rendered as two identical buttons", "checkInspectorDensity",
+  { inspector: mutate(SOURCES.inspector,
+      "const key=destinationKey(use);if(!seen.has(key))",
+      "const key=destinationKey(use)+index;if(!seen.has(key))",
+      "C35") },
+  "This is the pair of identical 'Review in Reference Desk' buttons the review found. Two buttons that go to the same place under the same words are one button rendered twice, and the reader is left choosing between them.");
+
+control("C36 the entity name is printed twice", "checkInspectorDensity",
+  { discovery: mutate(SOURCES.discovery,
+      "const kept=out.filter(l=>!out.some(o=>o!==l&&o.startsWith(l+' · ')));",
+      "const kept=out;",
+      "C36") },
+  "\"Gary Miller · Gary Miller · Primary — v3 / Slice B\" is the defect verbatim: the entity facet and the state facet each carry the owner's name, and only one of them should print it.");
+
+/* ===========================================================================
    STYLE.
    =========================================================================== */
 notes.push("Style:");

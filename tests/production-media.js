@@ -59,6 +59,9 @@ const SOURCES = {
   projection: readSource(path.join(PUBLIC, "shared-production-media.js")),
   inspector: readSource(path.join(PUBLIC, "media-inspector.js")),
   browser: readSource(path.join(PUBLIC, "media-browser.js")),
+  /* EV2-7: the shared read model both surfaces render from. Built from the source RECORD like the rest, so a negative control can hand the discovery
+     defaults, the contextual order, the structure reader or the decision wording to a check in a broken state and require the check to notice. */
+  discovery: readSource(path.join(PUBLIC, "shared-media-discovery.js")),
   results: readSource(path.join(PUBLIC, "media-results.js")),
   disposition: readSource(path.join(PUBLIC, "shared-media-disposition.js")),
   stageSurfaces: readSource(path.join(PUBLIC, "stage-surfaces.js")),
@@ -117,42 +120,50 @@ function loadResults(sources, PM) {
   return context.window.CineBraidResults;
 }
 
-function loadInspector(sources, PM) {
+function loadDiscovery(source) {
+  const context = vm.createContext({ module: { exports: {} }, console });
+  context.globalThis = context;
+  vm.runInContext(source, context, { filename: "shared-media-discovery.js" });
+  return context.module.exports;
+}
+
+function loadInspector(sources, PM, D) {
   const context = vm.createContext({ console, esc, attr, document: { querySelector: () => null, getElementById: () => null } });
   context.window = context;
   context.globalThis = context;
   Object.assign(context, PM);
-  context.CineBraidMediaDiscovery = require("../public/shared-media-discovery");
+  context.CineBraidMediaDiscovery = D;
   vm.runInContext(sources.inspector, context, { filename: "media-inspector.js" });
   return context.window.CineBraidMediaInspector;
 }
 
 /* EV2-7: the shared discovery presentation, with the listeners it registers at load stubbed. markup() is a pure function of the mount config. */
-function loadBrowser(sources) {
+function loadBrowser(sources, D) {
   const context = vm.createContext({ console, esc, attr, CSS: { escape: (v) => String(v) }, document: { addEventListener: () => {}, querySelector: () => null } });
   context.window = context;
   context.globalThis = context;
-  context.CineBraidMediaDiscovery = require("../public/shared-media-discovery");
+  context.CineBraidMediaDiscovery = D;
   vm.runInContext(sources.browser, context, { filename: "media-browser.js" });
   return context.window.CineBraidMediaBrowser;
 }
 
 /* The inventory-only Inspector opens a modal; the realm captures the markup instead. */
-function loadInventoryInspector(sources, PM) {
+function loadInventoryInspector(sources, PM, D) {
   const opened = [];
   const context = vm.createContext({ console, esc, attr, document: { querySelector: () => null, getElementById: () => null },
     openModal: (html) => opened.push(html), updateOpenModal: (html) => opened.push(html), CineBraidMediaReturn: { capture: () => ({}) } });
   context.window = context;
   context.globalThis = context;
   Object.assign(context, PM);
-  context.CineBraidMediaDiscovery = require("../public/shared-media-discovery");
+  context.CineBraidMediaDiscovery = D || require("../public/shared-media-discovery");
   vm.runInContext(sources.inspector, context, { filename: "media-inspector.js" });
   return { Inspector: context.window.CineBraidMediaInspector, opened };
 }
 
 function build(sources = SOURCES) {
   const PM = loadProjection(sources.projection);
-  return { sources, PM, Results: loadResults(sources, PM), Inspector: loadInspector(sources, PM), Browser: loadBrowser(sources) };
+  const D = loadDiscovery(sources.discovery);
+  return { sources, PM, D, Results: loadResults(sources, PM), Inspector: loadInspector(sources, PM, D), Browser: loadBrowser(sources, D) };
 }
 
 /* =========================================================================
@@ -994,7 +1005,7 @@ function loadShell(source) {
 
 /* =========================================================================
    12. RENDERING RULES -- the destination and the Inspector print truth. */
-function checkRendering({ PM, Results, Inspector, Browser, sources }) {
+function checkRendering({ PM, Results, Inspector, Browser, sources, D: DISCOVERY }) {
   const built = project(PM);
 
   /* CURRENT PINS APPROVED FIRST and never hides rejected behind a wall. */
@@ -1094,21 +1105,29 @@ function checkRendering({ PM, Results, Inspector, Browser, sources }) {
 
   /* EV2-7 — THE DISCOVERY MARKUP. Category chips lead the page with the shared query's counts; exactly one Decision field per mount; the
      reference picker has no chips; each card's accessible name carries decision and file; the filename is a small caption. */
-  const D = require("../public/shared-media-discovery");
+  const D = DISCOVERY || require("../public/shared-media-discovery");
   const source = fixture(), composed = D.compose(source.project, PM.productionMediaRecords({ project: withAuthority(source.project), scan: source.scan, jobs: source.jobs }).records);
   const pageState = D.defaults(), page = Browser.mount("ev2-7-page", { state: pageState, records: () => composed });
   const chips = [...page.matchAll(/<button data-md-category="([^"]+)" aria-pressed="(true|false)">[^<]*<small>(\d+)<\/small><\/button>/g)];
   const counts = D.categoryCounts(composed, pageState, {});
-  assert.deepStrictEqual(chips.map((m) => m[1]), D.CATEGORIES.map((c) => c[0]), "nine category chips lead the page, in production order");
+  assert.deepStrictEqual(chips.map((m) => m[1]), hostArray(D.CATEGORIES).map((c) => c[0]), "nine category chips lead the page, in production order");
   for (const [, token, pressed, count] of chips) {
     assert.strictEqual(Number(count), counts[token], `the ${token} chip count equals the shared query count`);
     assert.strictEqual(pressed, String(token === "all"), "only All is pressed by default");
   }
   assert(counts.all > 0 && chips.some((m) => m[1] !== "all" && Number(m[3]) > 0), "the fixture must put media under a real category, or the counts prove nothing");
-  const picker = Browser.mount("ev2-7-picker", { state: D.defaults(true), selector: true, target: { list: "characters", id: "KAI" }, records: () => composed });
+  const pickerTarget = { list: "characters", id: "KAI", entityName: "Kai", stateId: "state-default", stateName: "Default", slotId: "front", slotLabel: "Front" };
+  const picker = Browser.mount("ev2-7-picker", { state: D.defaults(true, pickerTarget), selector: true, target: pickerTarget, records: () => composed });
   for (const [label, html] of [["page", page], ["picker", picker]])
     assert.strictEqual((html.match(/data-md-field="decision"/g) || []).length, 1, `the ${label} mount has exactly one Decision field`);
-  assert(!/data-md-category="/.test(picker), "the reference picker mount has no category chips");
+  /* EV2-7 — the picker's chips are CONTEXTUAL: it opens on its target's own category, and offers All and the categories that actually hold media. */
+  const pickerChips = [...picker.matchAll(/<button data-md-category="([^"]+)" aria-pressed="(true|false)">[^<]*<small>(\d+)<\/small><\/button>/g)]
+    .map((m) => ({ token: m[1], pressed: m[2] === "true", count: Number(m[3]) }));
+  assert.deepStrictEqual(pickerChips.filter((chip) => chip.pressed).map((chip) => chip.token), ["characters"],
+    "the reference picker opens on the target's own category, not on the general library");
+  assert(pickerChips.some((chip) => chip.token === "all"), "...and All stays one click away");
+  assert(pickerChips.every((chip) => chip.token === "all" || chip.pressed || chip.count > 0),
+    `...and no chip offers a category that holds nothing here (${pickerChips.map((chip) => chip.token + ":" + chip.count).join(", ")})`);
   /* EV2-7 phone density — Sort, Group and Grid/List sit in one View options panel after a closed toggle on the count row; Media type and Decision stay outside it. */
   const panel = /<div class="md-arrange"><p role="status">[^<]*<\/p><button type="button" class="md-view-toggle" data-md-view-options aria-expanded="false" aria-controls="md-view-options-ev2-7-page">View options <span aria-hidden="true">▾<\/span><\/button><div class="md-view-options" id="md-view-options-ev2-7-page">(.*?)<\/div><\/div><\/div><div class="md-collection/.exec(page);
   assert(panel, "the page mount renders a closed View options toggle controlling its panel on the asset-count row");
@@ -1138,7 +1157,7 @@ function checkRendering({ PM, Results, Inspector, Browser, sources }) {
   assert(/<button type="button" data-md-clear="related" aria-label="Clear filter: related to Kai">Clear<\/button>/.test(summary[1]), "the related filter has its own labelled Clear button");
   const relatedChips = Object.fromEntries([...relatedHtml.matchAll(/<button data-md-category="([^"]+)" aria-pressed="(?:true|false)">[^<]*<small>(\d+)<\/small><\/button>/g)].map((m) => [m[1], Number(m[2])]));
   const relatedCounts = D.categoryCounts(composed, relatedState, {});
-  assert.deepStrictEqual(relatedChips, relatedCounts, "category counts still follow the one query with the hidden filter applied");
+  assert.deepStrictEqual(relatedChips, { ...relatedCounts }, "category counts still follow the one query with the hidden filter applied");
   assert(relatedCounts.all < D.categoryCounts(composed, { ...relatedState, related: "all" }, {}).all, "the related filter really narrows, or the summary proves nothing");
   const many = Browser.mount("ev2-7-many", { state: { ...D.defaults(), related: "unlinked", availability: "missing", source: "generated" }, records: () => composed });
   assert.deepStrictEqual([...many.matchAll(/data-md-clear="([^"]+)"/g)].map((m) => m[1]), ["related", "availability", "source"], "every hidden filter gets one Clear, in disclosure order");
@@ -1152,8 +1171,8 @@ function checkRendering({ PM, Results, Inspector, Browser, sources }) {
 
   /* EV2-7 — AN INVENTORY-ONLY ASSET READS ONE DECISION on the card and in the Inspector. */
   const inventoryRow = D.compose({}, [], [{ assetId: LEDGER("d"), mediaType: "image", available: true, url: "/assets/media/x.png", sourceName: "MEDIA-KAI-1.png", title: "MEDIA-KAI-1", ledgerRole: "entity-reference", links: [] }])[0];
-  const cardWords = /<span class="md-decision">([^<]*)<\/span>/.exec(Browser.mount("ev2-7-inventory", { state: { ...D.defaults(), decision: "all" }, records: () => [inventoryRow] }))[1];
-  const { Inspector: InventoryInspector, opened } = loadInventoryInspector(sources, PM);
+  const cardWords = /<span class="md-decision" data-md-decision="[a-z]+"><i class="md-dot" aria-hidden="true"><\/i>([^<]*)<\/span>/.exec(Browser.mount("ev2-7-inventory", { state: { ...D.defaults(), decision: "all" }, records: () => [inventoryRow] }))[1];
+  const { Inspector: InventoryInspector, opened } = loadInventoryInspector(sources, PM, D);
   InventoryInspector.inspectInventory(inventoryRow);
   const factWords = /<div data-md-fact="decision"><dt>Decision<\/dt><dd>([^<]*)<small>([^<]*)<\/small>/.exec(opened[0] || "");
   assert(factWords && factWords[1] === cardWords && cardWords === "Candidate", `the Inspector Decision fact reads the card's word (card ${cardWords}, Inspector ${factWords && factWords[1]})`);
@@ -1238,13 +1257,238 @@ function checkStyle({ sources }) {
   return "style: O5 surfaces are token-only; .focused-inspector's frozen dark literal corrected";
 }
 
+/* =========================================================================
+   16. EV2-7 — THE CONTEXTUAL COVERAGE PICKER, THE DECISION WORDS AND THE INSPECTOR'S DENSITY.
+
+   THE DEFECT THE HUMAN REVIEW NAMED: filling one character's Profile view opened a general
+   library dominated by unrelated Blocking & previs media; the card said "Different decisions
+   by use", which is not a fact about anything; and the Inspector printed the entity name
+   twice, two identical destination buttons and a wall of competing actions.
+
+   THE FIXTURE IS LOCAL, for the reason checkReviewAssessment's is: the shared one carries a
+   counted population that other checks pin. It adds what none of them needed — a second
+   continuity state, two coverage views, a recorded sheet, a recorded crop, two more
+   characters, and ONE DURABLE ASSET CLAIMED BY TWO OF THEM with two different recorded
+   decisions, which is the only shape that can produce a use-specific decision sentence.
+
+   THE TWO MISLEADING NAMES ARE DELIBERATE. The file called ...SINGLE_FRONT is the recorded
+   SHEET and the file called ...TURNAROUND is the recorded CROP, so a reader that answered
+   from the filename prints both labels backwards and is caught here rather than in a review. */
+function coverageFixture() {
+  const f = fixture();
+  const kai = f.project.characters[0];
+  kai.continuityStates.push({ id: "state-night", name: "Night shift — v2 / Slice A", isDefault: false });
+  /* `side` holds a legacy SELECTION whose row records no continuity state — the shape the Reference Desk words as an earlier selection. */
+  kai.coverageSlots = [{ id: "front", label: "Front", approvedFile: "KAI_DEFAULT_V001.png" }, { id: "profile", label: "Profile" },
+    { id: "side", label: "Side", selectedFile: "KAI_LEGACY_SIDE.png", status: "selected" }];
+  Object.assign(kai.candidateFiles[0], { targetStateId: "state-default", targetCoverageSlotId: "front" });
+  kai.candidateFiles[1].targetStateId = "state-night";
+  kai.candidateFiles.push(
+    { stored: "KAI_SINGLE_FRONT.png", addedAt: ISO(5), decision: "unreviewed", coverageJobType: "sheet", coverageSheetType: "angles" },
+    { stored: "KAI_TURNAROUND_V009.png", addedAt: ISO(6), decision: "unreviewed", targetStateId: "state-default", targetCoverageSlotId: "profile", coverageCrop: { sourceSheet: "KAI_SINGLE_FRONT.png" } },
+    /* Unreviewed, whatever its name says. */
+    { stored: "KAI_APPROVED_FINAL_V9.png", addedAt: ISO(9), decision: "unreviewed" },
+    { stored: "KAI_LEGACY_SIDE.png", addedAt: ISO(4), decision: "unreviewed" });
+  f.project.characters.push(
+    { id: "OREN", name: "Oren Hale", prefix: "OREN", continuityStates: [{ id: "state-default", name: "Default", isDefault: true }], coverageSlots: [],
+      candidateFiles: [{ stored: "OREN_SHARED_V001.png", addedAt: ISO(7), decision: "rejected", decidedAt: ISO(7) }] },
+    { id: "RUNE", name: "Rune", prefix: "RUNE", continuityStates: [{ id: "state-default", name: "Default", isDefault: true }], coverageSlots: [],
+      candidateFiles: [{ stored: "RUNE_V001.png", addedAt: ISO(8), decision: "unreviewed" }] });
+  for (const [name, assetId] of [["KAI_SINGLE_FRONT.png", ""], ["KAI_TURNAROUND_V009.png", ""], ["KAI_APPROVED_FINAL_V9.png", ""], ["KAI_LEGACY_SIDE.png", ""],
+    /* The same durable identity as KAI's approved reference: one asset, two recorded uses. */
+    ["OREN_SHARED_V001.png", LEDGER("a")], ["RUNE_V001.png", ""]])
+    f.scan.anchors.push(assetId ? { name, url: `/assets/anchors/${name}`, assetId } : { name, url: `/assets/anchors/${name}` });
+  return f;
+}
+
+const COVERAGE_TARGET = { list: "characters", id: "KAI", entityName: "Kai", stateId: "state-default", stateName: "Default", defaultStateId: "state-default", slotId: "profile", slotLabel: "Profile" };
+
+function coverageRows(PM, D) {
+  const f = coverageFixture();
+  const built = PM.productionMediaRecords({ project: withAuthority(f.project), scan: f.scan, jobs: f.jobs });
+  return { f, built, rows: D.compose(f.project, built.records) };
+}
+
+/* The Inspector reads the OPEN PROJECT for its headline and its context line — `P` is a lexical binding in public/app.js, which is why the shipped file
+   reaches it through typeof. A realm without one composes against {} and every use reads "Project media", so these checks give the realm the project. */
+function inspectorWithProject(sources, PM, D, project) {
+  const context = vm.createContext({ console, esc, attr, document: { querySelector: () => null, getElementById: () => null }, P: project, SCAN: { mediaInventory: [] } });
+  context.window = context;
+  context.globalThis = context;
+  Object.assign(context, PM);
+  context.CineBraidMediaDiscovery = D;
+  vm.runInContext(sources.inspector, context, { filename: "media-inspector.js" });
+  return context.window.CineBraidMediaInspector;
+}
+
+function checkContextualPicker({ PM, D, Browser }) {
+  const { rows } = coverageRows(PM, D);
+  const byFile = (name) => rows.find((row) => row.fileName === name);
+
+  /* 1. THE DEFAULT CATEGORY IS THE TARGET'S OWN LIST, and only a selector with a target gets one. */
+  for (const [list, category] of [["characters", "characters"], ["locations", "locations"], ["props", "props"], ["vehicles", "vehicles"], ["audio", "audio"]])
+    assert.strictEqual(D.defaults(true, { list, id: "X" }).category, category, `a ${list} target opens the picker on ${category}`);
+  assert.strictEqual(D.defaults(true).category, "all", "a selector with no target still opens on All");
+  assert.strictEqual(D.defaults().category, "all", "and the Production Media page is unchanged");
+  assert.strictEqual(D.defaults(true, COVERAGE_TARGET).group, "target", "a contextual selector orders by target relevance");
+  assert.strictEqual(D.defaults().group, "none", "...and the page still groups by nothing");
+
+  const state = D.defaults(true, COVERAGE_TARGET), options = { selector: true, target: COVERAGE_TARGET, state };
+  const q = D.query(rows, state, options), names = hostArray(q.rows.map((row) => row.fileName));
+
+  /* 2. UNRELATED CATEGORIES ARE NOT SHOWN, AND ARE ONE CLICK AWAY. */
+  assert(names.length > 3, `the contextual picker must still offer this character's media, got ${names}`);
+  assert(q.all.every((row) => hostArray(row.categories).includes("characters")), `only Characters media is offered by default, got ${names}`);
+  assert(!names.some((name) => /BLOCKING|animatic|SH0|TOOL/.test(name)), `no blocking, shot render or prop media reaches the default picker, got ${names}`);
+  const blocking = D.query(rows, { ...state, category: "blocking-previs" }, options);
+  assert(blocking.total > 0 && blocking.all.some((row) => row.fileName === "SH010_BLOCKING_FAL_1.png"),
+    "...and choosing Blocking & previs still reaches every blocking asset");
+
+  /* 3. EXACT TARGET, THEN IDENTITY, THEN THE REST — ordered, and labelled in plain words. */
+  assert.strictEqual(D.targetRank(byFile("KAI_TURNAROUND_V009.png"), COVERAGE_TARGET), 0, "the crop recorded for this state and this view is the exact target");
+  assert.strictEqual(D.targetRank(byFile("KAI_ALT_V002.png"), COVERAGE_TARGET), 1, "another continuity state of the same character is identity-related");
+  assert.strictEqual(D.targetRank(byFile("KAI_DEFAULT_V001.png"), COVERAGE_TARGET), 1, "...as is the same state recorded against a different view");
+  assert.strictEqual(D.targetRank(byFile("RUNE_V001.png"), COVERAGE_TARGET), 2, "another character is the rest of the category");
+  const ranks = hostArray(q.rows.map((row) => D.targetRank(row, COVERAGE_TARGET)));
+  assert.deepStrictEqual(ranks, [...ranks].sort((a, b) => a - b), `exact target, then identity, then the rest (${names})`);
+  assert(ranks.includes(0) && ranks.includes(1) && ranks.includes(2), `the fixture must reach all three groups, got ${ranks}`);
+  for (const [name, label] of [["KAI_TURNAROUND_V009.png", "For Kai · Default · Profile"], ["KAI_ALT_V002.png", "Other Kai media"], ["RUNE_V001.png", "Other characters"]])
+    assert.strictEqual(D.groupLabel(byFile(name), "target", options), label, `${name} is grouped under ${label}`);
+  /* THE VIEW IS ALSO RECORDED BY THE SLOT EDGE THAT SELECTED THE MEDIA, and a row with no continuity state of its own belongs to the DEFAULT state —
+     the same fallback the Reference Desk reads, which is why it words that row as an earlier selection under any other state. */
+  const sideDefault = { ...COVERAGE_TARGET, slotId: "side", slotLabel: "Side" }, sideNight = { ...sideDefault, stateId: "state-night", stateName: "Night shift — v2 / Slice A" };
+  assert.strictEqual(D.targetRank(byFile("KAI_LEGACY_SIDE.png"), sideDefault), 0, "a slot's own selection is recorded for that view, even with no slot id on the row");
+  assert.strictEqual(D.targetRank(byFile("KAI_LEGACY_SIDE.png"), sideNight), 1, "...and under another continuity state it is identity-related, not the exact target");
+  assert.strictEqual(D.groupLabel(byFile("KAI_LEGACY_SIDE.png"), "target", { ...options, target: sideNight }), "Other Kai media", "...and it is grouped as that");
+  assert.strictEqual(D.groupLabel(byFile("RUNE_V001.png"), "target", { ...options, state: { ...state, category: "all" } }), "Other production media",
+    "...and the third group names whatever category the filmmaker chose");
+
+  const html = Browser.mount("ev2-7-contextual", { selector: true, target: COVERAGE_TARGET, state, records: () => rows });
+  assert.deepStrictEqual([...html.matchAll(/<h3 class="md-group">([^<]*)<small>/g)].map((m) => m[1].trim()),
+    ["For Kai · Default · Profile", "Other Kai media", "Other characters"], "the picker prints the three groups in plain words, in order");
+
+  /* 4. SINGLE VIEW vs SHEET COMES FROM THE RECORDED STRUCTURE. The two misleading filenames are the whole point. */
+  assert.strictEqual(D.structureLabel(byFile("KAI_SINGLE_FRONT.png")), "Sheet · crop in Build coverage", "a recorded sheet is a sheet however it is named");
+  assert.strictEqual(D.structureLabel(byFile("KAI_TURNAROUND_V009.png")), "Single view", "a recorded crop is a single view however it is named");
+  assert.strictEqual(D.structureLabel(byFile("RUNE_V001.png")), "", "an undeclared structure says nothing rather than guessing");
+  assert(/data-md-structure="sheet">Sheet · crop in Build coverage</.test(html) && /data-md-structure="single">Single view</.test(html),
+    "both structure words reach the card from the record, not from the filename");
+
+  /* 5. A NARROWED CATEGORY THAT MATCHES NOTHING SAYS SO AND OFFERS THE ONE CLICK THAT WIDENS IT. */
+  const missed = Browser.mount("ev2-7-miss", { selector: true, target: COVERAGE_TARGET, state: { ...state, query: "animatic" }, records: () => rows });
+  assert(/Nothing in Characters matches\. All categories hold 1 matching asset\./.test(missed),
+    "an empty contextual result states how many matches the other categories hold");
+  assert(/<button data-md-category="all">Search all categories<\/button>/.test(missed), "...and offers one click to all of them");
+  return `contextual picker: opens on Characters, ${names.length} rows in exact/identity/rest order, structure from the record`;
+}
+
+function checkDecisionWords({ PM, D, Browser, sources }) {
+  const { f, built, rows } = coverageRows(PM, D), Inspector = inspectorWithProject(sources, PM, D, f.project);
+  const shared = rows.find((row) => row.relationships.length > 1 && hostArray(row.roles).includes("approved") && hostArray(row.roles).includes("rejected"));
+  assert(shared, "the fixture must carry one asset with two recorded uses carrying two different decisions");
+  assert.strictEqual(shared.decision, "mixed", "...which the projection reports as disagreeing roles");
+
+  /* 1. THE READABLE SENTENCE, built from the recorded uses and nothing else. */
+  assert.strictEqual(D.decisionLabel(shared), "Approved for Kai · Default · Front; rejected elsewhere",
+    `the card names the approved use and summarises the rest, got ${D.decisionLabel(shared)}`);
+  /* Comments stripped for the reason checkActions gives: this file's own code explains what it replaced, and a naive search would match the explanation. */
+  for (const [name, source] of [["discovery", sources.discovery], ["browser", sources.browser], ["inspector", sources.inspector], ["results", sources.results]])
+    assert(!/Different decisions by use/.test(stripComments(source)), `${name} must no longer be able to print the opaque phrase`);
+
+  /* 2. THE LENGTH IS CAPPED, and the cap never changes which word leads. */
+  const long = D.decisionLabel({ decision: "mixed", roles: ["approved", "candidate"], selectedFor: [], relationships: [
+    { label: "Oren Hale · A continuity state with a very long recorded name indeed · Profile", decision: "approved", selectedFor: [], raw: { scope: "entity" } },
+    { label: "Rune · Default", decision: "candidate", selectedFor: [], raw: { scope: "entity" } }] });
+  assert(long.length <= 84 && long.startsWith("Approved for ") && long.endsWith("; candidate elsewhere"), `a long use list is capped, got ${long} (${long.length})`);
+  assert(D.decisionSummary({ decision: "mixed", roles: ["approved", "rejected"], selectedFor: [], relationships: [] }).text === "Approved; rejected elsewhere",
+    "a row whose uses did not travel with it still says which words are recorded");
+
+  /* 3. THE DECISION IS MORE AUTHORITATIVE THAN THE FILENAME — printed first, and carrying its own tone. */
+  const named = rows.find((row) => row.fileName === "KAI_APPROVED_FINAL_V9.png");
+  assert(named && /APPROVED/.test(named.fileName), "precondition: a candidate whose stored filename says APPROVED");
+  assert.strictEqual(named.decision, "candidate", "an APPROVED-looking filename creates no approval");
+  assert.strictEqual(D.decisionLabel(named), "Candidate", "...and the card says what was recorded");
+  assert.strictEqual(D.decisionTone(named), "attention", "...as a decision still awaiting a person");
+  assert(!D.query(rows, { ...D.defaults(), decision: "approved" }).rows.some((row) => row.key === named.key), "...and it is not found under Approved");
+  const card = Browser.mount("ev2-7-words", { state: { ...D.defaults(), decision: "all", query: "KAI_APPROVED_FINAL" }, records: () => rows });
+  assert.strictEqual((card.match(/class="md-card/g) || []).length, 1, "precondition: one card to read");
+  assert(card.indexOf('class="md-decision"') < card.indexOf('class="md-file"'), "the recorded decision is printed before the filename, not after it");
+  assert(/<span class="md-decision" data-md-decision="attention"><i class="md-dot" aria-hidden="true"><\/i>Candidate<\/span>/.test(card),
+    "the decision word carries its own recorded tone and at most a dot");
+  assert(/<small class="md-file" title="KAI_APPROVED_FINAL_V9.png">File · KAI_APPROVED_FINAL_V9.png<\/small>/.test(card), "...and the filename stays, quietly, as a file");
+  assert.strictEqual(D.decisionTone(rows.find((row) => row.fileName === "KAI_BAD_V003.png")), "rejected", "a rejection reads as one");
+  assert.strictEqual(D.decisionTone(shared), "approved", "and a mixed row takes the tone of the decision it leads with");
+
+  /* 4. THE WHOLE LIST IS IN THE INSPECTOR, one line per recorded use. */
+  const record = built.records.find((row) => row.key === shared.key);
+  const inspector = Inspector.inspectorMarkup(record);
+  assert(inspector.includes("Approved for Kai · Default · Front; rejected elsewhere"), "the Inspector leads with the same sentence");
+  assert(inspector.includes("One line per recorded use below."), "...and says the full list is below it");
+  assert(inspector.includes("Approved by you") && inspector.includes("Rejected by you"), "...where each use states its own recorded decision");
+  assert.strictEqual((inspector.match(/data-md-fact="use-decision"/g) || []).length, 2, "one Decision fact per recorded use");
+  return `decision words: "${D.decisionLabel(shared)}", filename secondary, APPROVED-named candidate still a candidate`;
+}
+
+function checkInspectorDensity({ PM, D, sources }) {
+  const { f, built } = coverageRows(PM, D), Inspector = inspectorWithProject(sources, PM, D, f.project);
+  const record = built.records.find((row) => row.relationships.length > 1);
+  assert(record, "the fixture must carry an asset with more than one recorded use");
+  const html = Inspector.inspectorMarkup(record);
+  const repeated = (text) => { const parts = String(text).split(" · ").map((p) => p.trim()); return parts.some((p, i) => p && parts.indexOf(p) !== i); };
+
+  /* 1. NEVER THE SAME NAME TWICE. */
+  const header = /<h3>([^<]*)<\/h3><p>([^<]*)<\/p>/.exec(html);
+  assert(header, "the Inspector header must render a title and a context line");
+  assert(!repeated(header[2]) && !/^(.+) · \1( ·|$)/.test(header[2]), `the header context must not repeat a name: ${header[2]}`);
+  const headings = [...html.matchAll(/<article class="md-use" data-mi-use-row="\d+"><b>([^<]*)<\/b>/g)].map((m) => m[1]);
+  /* The second use records no continuity state of its own, so it names the entity and stops — it does not borrow the first use's state. */
+  assert.deepStrictEqual(headings, ["Kai · Default · Front", "Oren Hale"], `each use names itself once, got ${JSON.stringify(headings)}`);
+  for (const heading of headings) assert(!repeated(heading), `a use heading must not repeat a name: ${heading}`);
+  assert(!/Belongs to<\/dt><dd>Kai · Default</.test(html), "a use whose heading already names its owner does not repeat it as a fact");
+
+  /* 2. ONE ACTION PER DISTINCT USE, AND NEVER TWO BUTTONS A READER CANNOT TELL APART. */
+  const actions = [...html.matchAll(/<button class="rd-button[^"]*" data-mi-action="open-owner"[^>]*>([^<]*)<\/button>/g)].map((m) => m[1]);
+  assert.strictEqual(actions.length, 2, `two distinct recorded destinations produce two actions, got ${JSON.stringify(actions)}`);
+  assert.strictEqual(new Set(actions).size, actions.length, `no two actions may read the same words: ${JSON.stringify(actions)}`);
+  assert((html.match(/data-mi-use-row="0"[\s\S]*?data-mi-action="open-owner"/) || [])[0], "each action sits on the use row it belongs to");
+
+  /* The same destination recorded twice is ONE action: this is the pair of identical buttons the review found. */
+  const twin = { ...record, relationships: [record.relationships[0], { ...record.relationships[0], file: { ...record.relationships[0].file, name: "KAI_DUPLICATE.png" } }] };
+  const twinHtml = Inspector.inspectorMarkup(twin);
+  const twinActions = [...twinHtml.matchAll(/data-mi-action="open-owner"[^>]*>([^<]*)<\/button>/g)].map((m) => m[1]);
+  assert.deepStrictEqual(twinActions, ["Review in Reference Desk"], `two uses returning to one place are one action, got ${JSON.stringify(twinActions)}`);
+
+  /* 3. SHORT BOTTOM ACTIONS. */
+  const footer = /<footer class="modal-actions mi-actions">([\s\S]*)<\/footer>/.exec(html);
+  assert(footer, "the Inspector must render an action bar");
+  const bottom = [...footer[1].matchAll(/<button[^>]*>([^<]*)<\/button>/g)].map((m) => m[1]);
+  assert(bottom.length <= 3, `at most three bottom actions, got ${JSON.stringify(bottom)}`);
+  for (const label of bottom) assert(label.length <= 28, `a bottom action must stay short, got "${label}" (${label.length})`);
+  assert(!bottom.some((label) => label.includes("Kai") || label.includes("Oren")), "the exact use belongs to the row above, not to a long bottom button");
+  const singleUse = Inspector.inspectorMarkup(built.records.find((row) => row.file.name === "KAI_ALT_V002.png"));
+  const singleBottom = [...(/<footer class="modal-actions mi-actions">([\s\S]*)<\/footer>/.exec(singleUse) || ["", ""])[1].matchAll(/<button[^>]*>([^<]*)<\/button>/g)].map((m) => m[1]);
+  assert.deepStrictEqual(singleBottom, ["Review in Reference Desk", "Open full preview"], `one recorded use puts its one action in the bar, got ${JSON.stringify(singleBottom)}`);
+  assert.strictEqual((singleUse.match(/data-mi-action="open-owner"/g) || []).length, 1, "...and nowhere else");
+
+  /* 4. DECISION AND AI RECOMMENDATION STAY SEPARATE, LABELLED FACTS, and the technical record stays quiet. */
+  assert(/<div data-md-fact="decision"><dt>Decision<\/dt>/.test(html) && /<div data-md-fact="ai"><dt>AI recommendation<\/dt>/.test(html),
+    "Decision and AI recommendation are two labelled facts");
+  const decisionFact = /<div data-md-fact="decision">([\s\S]*?)<\/div>/.exec(html);
+  assert(decisionFact && !/AI|Suggest/.test(decisionFact[1]), "the Decision fact never carries the recommendation");
+  for (const quiet of ["type", "source", "rights"])
+    assert(html.indexOf(`data-md-fact="${quiet}"`) > html.indexOf("<summary>Details</summary>"), `${quiet} is a quiet detail, not part of the reading path`);
+  assert(html.indexOf('data-mi-section="uses"') < html.indexOf("<summary>Review &amp; AI recommendation</summary>"), "the recorded uses come before the disclosures");
+  assert(html.indexOf('data-mi-domain="ledger"') > html.indexOf("<summary>Details · origin, cost and file identifiers</summary>"), "hashes and paths live inside the Details disclosure");
+  return `inspector: ${headings.length} use rows, ${actions.length} distinct actions, ${bottom.length} short bottom actions`;
+}
+
 const CHECKS = {
   checkPopulation, checkIdentity, checkDisposition, checkAuthority, checkSemanticSafety,
   checkReviews, checkReviewAssessment, checkProvenance, checkDeduplication, checkPurity, checkActions,
-  checkDestination, checkRendering, checkScale, checkStyle,
+  checkDestination, checkRendering, checkContextualPicker, checkDecisionWords, checkInspectorDensity, checkScale, checkStyle,
 };
 
-module.exports = { ...CHECKS, SOURCES, fixture, build, byName, LEDGER, ISO };
+module.exports = { ...CHECKS, SOURCES, fixture, coverageFixture, COVERAGE_TARGET, build, byName, LEDGER, ISO };
 
 if (require.main === module) {
   const deps = build();

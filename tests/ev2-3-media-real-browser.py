@@ -312,12 +312,28 @@ try:
         check('The stored filename is never the card headline',named.count()==1 and 'APPROVED' not in named.first.locator('.md-caption b').inner_text() and 'KAI_APPROVED_TURNAROUND_V034.png' in named.first.locator('.md-file').get_attribute('title'))
         label=named.first.locator('.md-open').get_attribute('aria-label') if named.count()==1 else ''
         check('The card accessible name carries its decision and file',label.startswith('Inspect ') and ' · Candidate · ' in label and label.endswith('KAI_APPROVED_TURNAROUND_V034.png'))
+        # EV2-7 — the recorded decision is more authoritative than the filename: printed first, larger and heavier, with at most a small dot for its tone.
+        prominence=page.evaluate("""()=>{const c=document.querySelector('#main .md-card'),d=c.querySelector('.md-decision'),f=c.querySelector('.md-file'),cs=el=>getComputedStyle(el);
+          return {decisionTop:d.getBoundingClientRect().top,fileTop:f.getBoundingClientRect().top,decisionSize:parseFloat(cs(d).fontSize),fileSize:parseFloat(cs(f).fontSize),
+            decisionWeight:Number(cs(d).fontWeight),fileWeight:Number(cs(f).fontWeight),tone:d.dataset.mdDecision,dots:d.querySelectorAll('.md-dot').length,dotText:d.querySelector('.md-dot').textContent};}""")
+        check('The recorded decision is printed above the filename and is the louder of the two',
+              prominence['decisionTop']<prominence['fileTop'] and prominence['decisionSize']>=prominence['fileSize'] and prominence['decisionWeight']>prominence['fileWeight'])
+        check('An APPROVED-looking filename never reaches the decision tone, and the status is a word with at most one small dot',
+              prominence['tone']!='approved' and prominence['dots']==1 and prominence['dotText']=='')
         page.locator('#main [data-md-field="query"]').fill('')
         page.locator('#main [data-md-field="decision"]').select_option('all')
         page.locator('#main [data-md-field="type"]').select_option('image')
         category('shot-renders')
         seen=page.evaluate(read_discovery)
         check('Combined category, decision and type filters match the shared query',seen['keys']==seen['expected'] and seen['chips']==seen['counts'] and all(r['type']=='image' and 'shot-renders' in r['categories'] for r in seen['all']))
+        # EV2-7 — the Inspector is a detour, not a reset: the category the filmmaker chose survives it, with the card selected and focused.
+        inspected=page.locator('#main .md-open').first.get_attribute('data-md-open')
+        page.locator('#main .md-open').first.click();page.locator('[data-media-inspector]').wait_for()
+        page.locator('[data-media-inspector] .cancel').click();page.wait_for_timeout(150)
+        check('Closing the Inspector restores the chosen category, the selected card and its focus',
+              page.evaluate('CineBraidMediaBrowser.instances.get("production").state.category')=='shot-renders'
+              and page.locator('#main .md-card.is-selected').get_attribute('data-md-key')==inspected
+              and page.evaluate('document.activeElement?.dataset.mdOpen')==inspected)
         category('all')
         page.locator('[data-md-page="1"]').click()
         page.locator('#main [data-md-field="type"]').select_option('all')
@@ -457,6 +473,16 @@ try:
         page.locator('[data-md="reference-picker"]').wait_for()
         check('Selector shares browser controls',page.locator('#modal [data-md-field="query"]').count()==1)
         check('Unavailable hidden with visible count',not page.locator('[data-md-field="showUnavailable"]').is_checked())
+        # EV2-7 — the coverage picker is contextual: it opens on the target's own category, names the exact target in a header that stays visible,
+        # groups what it offers by relevance to that target, and keeps every other category one click away.
+        check('The picker opens on the target category',page.locator('#modal [data-md-category="characters"]').get_attribute('aria-pressed')=='true')
+        check('The picker header names the entity, state and view and says an assignment approves nothing',
+              'Kai · Default · Front' in page.locator('#modal [data-rd-picker-target]').inner_text() and 'approves nothing' in page.locator('#modal [data-rd-picker-target]').inner_text())
+        groups=[g.inner_text().strip() for g in page.locator('#modal .md-group').all()]
+        check('The picker groups the library by relevance to that target',
+              bool(groups) and groups[0].startswith('For Kai · Default · Front') and any(g.startswith('Other Kai media') for g in groups))
+        check('Unrelated planning media is not offered by default',page.locator('#modal .md-card').count()>0 and not any('Harbor' in c.inner_text() for c in page.locator('#modal .md-card').all()))
+        page.locator('#modal [data-md-category="all"]').click()
         page.locator('#modal [data-md-field="query"]').fill('Harbor')
         page.locator('#modal .md-open').first.click()
         page.locator('#modal [data-md-inspect]').first.click()
@@ -475,13 +501,19 @@ try:
         selected=page.locator('#modal .md-card.is-selected').get_attribute('data-md-key')
         second=page.locator('#modal [data-md-inspect]').nth(1)
         second.scroll_into_view_if_needed()
-        inner_scroll=page.locator('.rd-picker-library').evaluate('(el)=>el.scrollTop')
+        # EV2-7 — the dialog scrolls once. The library is no longer a scroll box inside it, so the position to restore is the dialog's own.
+        check('The picker library is not a scroll box inside the scrolling dialog',
+              page.locator('.rd-picker-library').evaluate('(el)=>getComputedStyle(el).overflowY!=="auto"&&getComputedStyle(el).overflowY!=="scroll"'))
+        category=page.evaluate('CineBraidMediaBrowser.instances.get("reference-picker").state.category')
+        inner_scroll=page.locator('#modal .modal-box').evaluate('(el)=>el.scrollTop')
         second.click()
         check('Selector Inspector receives keyboard focus',page.evaluate('!!document.activeElement.closest("[data-media-inspector]")'))
         page.locator('[data-media-inspector] .cancel').click()
         check('Inspect B preserves selected A',page.locator('#modal .md-card.is-selected').get_attribute('data-md-key')==selected)
-        page.wait_for_timeout(60)
-        check('Selector Inspector retains library scroll',abs(page.locator('.rd-picker-library').evaluate('(el)=>el.scrollTop')-inner_scroll)<2)
+        page.wait_for_timeout(120)
+        check('Selector Inspector retains the dialog scroll and the chosen category',
+              abs(page.locator('#modal .modal-box').evaluate('(el)=>el.scrollTop')-inner_scroll)<4
+              and page.evaluate('CineBraidMediaBrowser.instances.get("reference-picker").state.category')==category)
         page.locator('#modal [data-md-field="query"]').fill('KAI_FAL_CANDIDATE_2')
         page.locator('#modal [data-md-inspect]').first.click()
         page.locator('[data-mi-action="open-full-preview"]').click()
@@ -523,6 +555,7 @@ try:
         (project_root/'media'/'contact-000.png').unlink()
         page.locator('[data-bc-method="media"]').click()
         page.locator('[data-md="reference-picker"]').wait_for()
+        page.locator('#modal [data-md-category="all"]').click()
         page.locator('#modal [data-md-field="query"]').fill('contact-000.png')
         check('Missing original hidden from selector',page.locator('#modal .md-card').count()==0)
         page.locator('[data-md-field="showUnavailable"]').check()
@@ -573,6 +606,7 @@ try:
         check('A view opens Build coverage with its exact target',page.locator('#bc-target').inner_text()=='Target: Kai · Default · Front')
         page.locator('[data-bc-method="media"]').click()
         page.locator('[data-md="reference-picker"]').wait_for()
+        page.locator('#modal [data-md-category="all"]').click()
         page.locator('#modal [data-md-field="query"]').fill('contact-001.png')
         page.locator('#modal .md-open').click()
         selected_id=page.locator('#modal .md-card.is-selected').get_attribute('data-md-key').removeprefix('asset:')
