@@ -615,7 +615,7 @@ async function main() {
   assert.strictEqual(t2v.locked, false,
     "t2v must not be locked behind a start frame it never begins from");
   assert.strictEqual(t2v.saysApproveFirst, false, "and must not ask for one in words either");
-  assert.strictEqual(t2v.pill, "NO FRAMES NEEDED",
+  assert.strictEqual(String(t2v.pill).toUpperCase(), "NO FRAMES NEEDED",
     "an open panel must stop claiming a start frame is ready when none exists and none is needed");
 
   /* 5 — AND EVERY OTHER ROUTE IS EXACTLY AS IT WAS. Each still receives its start frame,
@@ -698,7 +698,7 @@ async function main() {
   assert.strictEqual(imported.effectiveMode, "t2v", "the unit's own kind is the route when nothing else states one");
   assert.strictEqual(imported.panelLocked, false, "an imported t2v shot must open");
   assert.strictEqual(imported.saysApproveFirst, false, "and must not ask for a frame it never begins from");
-  assert.strictEqual(imported.pill, "NO FRAMES NEEDED", "and must say so truthfully");
+  assert.strictEqual(String(imported.pill).toUpperCase(), "NO FRAMES NEEDED", "and must say so truthfully");
   assert.strictEqual(imported.unitKind, "t2v", "the unit stays t2v");
   assert.strictEqual(imported.unitFromFrame, "", "and stays frameless");
 
@@ -812,7 +812,7 @@ async function main() {
   /* SINGLE-UNIT BEHAVIOUR IS UNCHANGED, in both directions. */
   const soloT2v = multi("t2v", "t2v", 0), soloI2v = multi("i2v", "i2v", 0);
   assert.strictEqual(soloT2v.panelLocked, false, "a single t2v unit still opens");
-  assert.strictEqual(soloT2v.pill, "NO FRAMES NEEDED");
+  assert.strictEqual(String(soloT2v.pill).toUpperCase(), "NO FRAMES NEEDED");
   assert.strictEqual(soloI2v.panelLocked, true, "a single i2v unit is still gated");
   assert.strictEqual(soloI2v.saysApproveFirst, false);
 

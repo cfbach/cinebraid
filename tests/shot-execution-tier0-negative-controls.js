@@ -508,7 +508,7 @@ control("NC-4f", "deriving Motion frame wording from the picker default", async 
     return { locked: html.includes("guided-motion-card locked"), pill: /guided-mode-pill[^>]*>([^<]*)</.exec(html)?.[1] || "" };
   })()`, page.context);
   assert.strictEqual(result.locked, false, "canonical readiness must still open description-only Motion");
-  assert.notStrictEqual(result.pill, "NO FRAMES NEEDED", "the control must make the open panel contradict its canonical route");
+  assert.notStrictEqual(String(result.pill).toUpperCase(), "NO FRAMES NEEDED", "the control must make the open panel contradict its canonical route");
 });
 
 /* Active clip focus is allowed to choose editor context, never shot availability. */

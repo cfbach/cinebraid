@@ -748,7 +748,10 @@ async function renderCheck(payload, options = {}) {
   assert(bible.html.includes("+ Add continuity state"), "state authoring must remain available");
   assert(bible.html.includes("Continuity-state chain"), "state-chain automation must remain available");
   const shot = await render("#/shot/L1-01", project, { storage: FRAMES_STORAGE });
-  for (const text of ["FRAMES", "Import or prepare images", "＋ Add frame"])
+  /* The stage LABEL is read without case: EV2-7 sentence-cased the workspace kickers, and the claim here is that
+     the Frames stage still leads with its own name — not that it still shouts it. */
+  assert(shot.html.toLowerCase().includes("<span>frames</span>"), "the Frames stage lost its own label");
+  for (const text of ["Import or prepare images", "＋ Add frame"])
     assert(shot.html.includes(text), `the Frames stage lost "${text}"`);
   pass("the Project Bible state workflow and the rest of the Frames stage are unchanged");
 }
