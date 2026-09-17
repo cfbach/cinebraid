@@ -31,6 +31,14 @@ function geometry() {
     controls:controls.map(el=>({box:rect(el),height:getComputedStyle(el).minHeight})),
     markup:panel.innerHTML,
     mobileSelector:!!document.querySelector('.studio-compact-nav') && visible(document.querySelector('.studio-compact-nav')),
+    // EV2-7 one index: absolute layout facts, measured in the corrected document only.
+    panels:document.querySelectorAll('.settings-selected-tab').length, navs:document.querySelectorAll('nav.studio-nav').length,
+    indexOutsidePanel:!panel.querySelector('.studio-nav,.studio-compact-nav'),
+    navLinksVisible:!!document.querySelector('.studio-nav-links') && visible(document.querySelector('.studio-nav-links')),
+    currentLink:document.querySelector('.studio-nav-links a[aria-current=page]') && visible(document.querySelector('.studio-nav-links a[aria-current=page]')) ? rect(document.querySelector('.studio-nav-links a[aria-current=page]')) : null,
+    nav:rect(document.querySelector('nav.studio-nav')), panelBox:rect(panel),
+    select:document.querySelector('.studio-compact-nav select') && visible(document.querySelector('.studio-compact-nav select')) ? { box:rect(document.querySelector('.studio-compact-nav select')), value:document.querySelector('.studio-compact-nav select').value } : null,
+    headTrailing:(() => { const head=document.querySelector('.view-head'); if(!head) return 0; const box=rect(head), children=[...head.children].filter(visible); return children.length ? box.y+box.h-Math.max(...children.map(x=>{const r=rect(x);return r.y+r.h;})) : 0; })(),
   };
 }
 (async () => { try {
@@ -70,8 +78,17 @@ function geometry() {
       check(`${panel}/${width}: DOM/control order unchanged`,JSON.stringify(old.order)===JSON.stringify(now.order));
       check(`${panel}/${width}: touch-target heights retained`,old.controls.every((x,i)=>now.controls[i].box.h>=x.box.h-.5));
       check(`${panel}/${width}: natural header height`,now.headers.every(h=>h.direction!=='column'||h.trailing<=2));
-      if(width>900)check(`${panel}/${width}: desktop geometry unchanged`,JSON.stringify(old.headers)===JSON.stringify(now.headers)&&JSON.stringify(old.controls)===JSON.stringify(now.controls));
-      if(panel!=='project'&&panel!=='project-recovery')check(`${panel}/${width}: compact section selector preserved`,now.mobileSelector===(width<=760));
+      // EV2-7 replaced the parent desktop geometry on purpose: one index column beside one capped panel.
+      check(`${panel}/${width}: one panel and one index, index outside the panel`,now.panels===1&&now.navs===1&&now.indexOutsidePanel);
+      check(`${panel}/${width}: view head has no reserved trailing space`,now.headTrailing<=2);
+      if(width>760){
+        check(`${panel}/${width}: desktop index visible with a 44px current entry`,now.navLinksVisible&&!!now.currentLink&&now.currentLink.h>=44-.5);
+        check(`${panel}/${width}: panel sits beside the index`,now.panelBox.x>=now.nav.x+now.nav.w-.5);
+        check(`${panel}/${width}: panel keeps a readable measure`,now.panelBox.w<=1040+.5&&(width!==1280||now.panelBox.w>=600));
+      } else {
+        check(`${panel}/${width}: compact select is a 44px target showing this panel`,!!now.select&&now.select.box.h>=44-.5&&now.select.value===panel);
+      }
+      check(`${panel}/${width}: compact section selector preserved`,now.mobileSelector===(width<=760));
       if(width===390&&reported.includes(panel))check(`${panel}: regression reproduced in parent`,old.headers.some(h=>h.trailing>100));
       // Non-mutating pointer and keyboard reachability, including long panels below fold.
       const interactive=page.locator('.settings-selected-tab input:not([disabled]):visible,.settings-selected-tab select:not([disabled]):visible,.settings-selected-tab textarea:not([disabled]):visible');

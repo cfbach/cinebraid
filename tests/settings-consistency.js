@@ -206,8 +206,8 @@ async function main() {
     assert(generation.includes('href="#/settings/fal"'), "defaults must link to the owning connection");
     const nav = generation.match(/<div class="studio-nav-links">([\s\S]*?)<\/div>/)[1];
     const targets = [...nav.matchAll(/href="#\/settings\/([^"]+)"/g)].map((row) => row[1]);
-    assert.deepStrictEqual(targets, ["overview", "connections", "generation", "assistant", "appearance", "files", "naming", "access", "recovery", "project"],
-      "application navigation must separate connection setup and use, with project context explicitly linked");
+    assert.deepStrictEqual(targets, ["overview", "appearance", "generation", "assistant", "naming", "access", "setup", "connections", "files", "project", "project-recovery", "recovery"],
+      "one Settings index lists every group in order (Studio, Connections, Storage, Project, Recovery & export), separating connection setup from use, with connection details collapsed outside Connections");
     assert(panels.connections.html.includes('href="#/settings/integrations"'));
     assert(panels.connections.html.includes('href="#/settings/accounts"'));
     for (const kind of ["ollama", "openai", "anthropic", "custom"])
@@ -230,6 +230,116 @@ async function main() {
       "an environment-owned key must also be omitted by the writer, not merely disabled visually");
     const direct = await render("#/settings/accounts", buildFixture());
     assert(direct.html.includes('data-settings-tab="accounts"'), "direct legacy detail route must win over default selection");
+  }
+
+  /* EV2-7: ONE SETTINGS INDEX. Project and project recovery used to replace the index
+     with a second navigation of stacked full-width links, connection details stacked a
+     breadcrumb above their own return link, and the project title was repeated as the
+     view title. Every destination now shares one grouped index that sits outside and
+     before the single mounted panel, and the index itself reads nothing. */
+  {
+    const ALL = [...TABS, "setup"];
+    const CONNECTION_IDS = ["integrations", "accounts", "fal", "assistant-ollama", "assistant-openai", "assistant-anthropic", "assistant-custom"];
+    const title = buildFixture().meta.title;
+    const GROUP_OF = { connections: "Connections", files: "Storage", project: "Project", "project-recovery": "Recovery &amp; export", recovery: "Recovery &amp; export" };
+    for (const id of CONNECTION_IDS) GROUP_OF[id] = "Connections";
+    const setupView = await settingsView("setup");
+    const views = { ...panels, setup: setupView };
+    for (const tab of ALL) {
+      const html = views[tab].html;
+      const panelAt = html.indexOf('class="settings-selected-tab"');
+      const head = html.slice(0, panelAt);
+      assert.strictEqual(html.split('class="settings-selected-tab"').length - 1, 1, `${tab}: exactly one Settings panel is mounted`);
+      assert.strictEqual(html.split("<nav").length - 1, 1, `${tab}: exactly one Settings index`);
+      assert(head.includes('<nav class="studio-nav" aria-label="Settings sections">'), `${tab}: the index renders before, and outside, the panel`);
+      assert(!/<(input|textarea|button)\b/.test(head) && head.split("<select").length - 1 === 1, `${tab}: the only control outside the panel is the compact section select`);
+      const headings = [...head.matchAll(/<p class="studio-nav-heading"[^>]*>([^<]+)<\/p>/g)].map((m) => m[1]);
+      assert.deepStrictEqual(headings, ["Studio", "Connections", "Storage", "Project", "Recovery &amp; export"], `${tab}: group headings keep their order`);
+      const select = head.slice(head.indexOf("<select"), head.indexOf("</select>"));
+      const options = [...select.matchAll(/<option value="([^"]+)"/g)].map((m) => m[1]);
+      assert.deepStrictEqual([...options].sort(), [...ALL].sort(), `${tab}: the compact select lists every destination exactly once`);
+      assert.deepStrictEqual([...select.matchAll(/<option value="([^"]+)" selected>/g)].map((m) => m[1]), [tab], `${tab}: the compact select shows the open destination`);
+      assert.deepStrictEqual([...head.matchAll(/href="#\/settings\/([^"]+)" aria-current="page"/g)].map((m) => m[1]), [tab], `${tab}: exactly the open destination is current in the index`);
+      assert.strictEqual(head.includes('class="studio-nav-details"'), CONNECTION_IDS.includes(tab) || tab === "connections", `${tab}: connection details are listed only while a connection is open`);
+      assert(!html.includes("studio-breadcrumb") && !html.includes('aria-label="Project settings"'), `${tab}: no breadcrumb or second navigation stacked on the index`);
+      assert.deepStrictEqual([...head.matchAll(/<h1 class="view-title">([^<]*)<\/h1>/g)].map((m) => m[1]), [GROUP_OF[tab] || "Studio"], `${tab}: the one view title names the open group; the project title is never repeated as a heading`);
+      assert(head.includes('<div class="eyebrow">Settings</div>') && head.split("view-title").length - 1 === 1, `${tab}: the eyebrow says Settings once, above the group title`);
+      const scopeTitles = [...head.matchAll(/<b data-settings-project-title>([^<]*)<\/b>/g)].map((m) => m[1]);
+      assert.strictEqual(scopeTitles.length, tab === "project" || tab === "project-recovery" ? 1 : 0, `${tab}: the scope line marks its project title so an in-progress edit can follow it`);
+      for (const [, attrs] of head.matchAll(/<a ([^>]*)href="#\/settings\/[^"]+"(?! aria-current)/g))
+        assert(/^onclick="studioSettingsIndexIntent\(event,'[^']+'\)" onkeydown="studioSettingsIndexIntent\(event,'[^']+'\)" $/.test(attrs), `${tab}: an index link records only a keyboard intent, never focus on its own`);
+      assert(!/STUDIO_SETTINGS_INDEX_FOCUS/.test(head), `${tab}: the index never sets the focus hint unconditionally`);
+      const projectScoped = tab === "project" || tab === "project-recovery";
+      assert(head.includes(`data-settings-scope="${projectScoped ? "project" : "application"}"`), `${tab}: the head states its scope`);
+      assert.strictEqual(head.split(title).length - 1, projectScoped ? 1 : 0, `${tab}: the project is named once for project scope and not at all for application settings`);
+    }
+    const detailHrefs = (html) => [...html.slice(0, html.indexOf('class="settings-selected-tab"')).matchAll(/<ul class="studio-nav-details"[^>]*>([\s\S]*?)<\/ul>/g)].flatMap((m) => [...m[1].matchAll(/href="#\/settings\/([^"]+)"/g)].map((row) => row[1]));
+    assert.deepStrictEqual(detailHrefs(panels.fal.html), CONNECTION_IDS, "connection details list every implemented connection in index order");
+    assert(!/Export project|Download JSON backup/.test(panels.project.html), "project preferences hold no copy or export actions");
+    const exportPanel = panels["project-recovery"].html;
+    assert(/onclick="doExport\(\)">Write saved project as Markdown/.test(exportPanel) && /onclick="downloadJSON\(\)">Download this window's project JSON/.test(exportPanel),
+      "project backups & export offers both copies under accurate names");
+    assert(/not a restore point/.test(exportPanel) && /id="export-note"[^>]*role="status"/.test(exportPanel), "the JSON download is not presented as a backup, and export status is announced");
+
+    /* The index adds no reads. Every request is recorded in order with its method, so an
+       extra read on the shared route shows up as a changed list, not a set that still matches.
+       The Settings route itself reads exactly config and accounts; only project recovery adds
+       its health and backup reads. Rendering the index and running its hooks read nothing. */
+    const reads = async (tab) => {
+      const urls = [];
+      const view = await settingsView(tab, { fetch: async (url, options = {}) => { urls.push(`${options.method || "GET"} ${url.split("?")[0]}`); return null; } });
+      return { urls, view };
+    };
+    const overviewReads = await reads("overview"), projectReads = await reads("project"), falReads = await reads("fal"), recoveryReads = await reads("project-recovery");
+    assert.deepStrictEqual(projectReads.urls, overviewReads.urls, "the project destination reads exactly what the overview reads, in order");
+    assert.deepStrictEqual(falReads.urls, overviewReads.urls, "a connection detail reads exactly what the overview reads, in order");
+    assert(overviewReads.urls.every((url) => url.startsWith("GET ")), "opening Settings sends no write");
+    assert.deepStrictEqual(overviewReads.urls.slice(-2), ["GET /api/config", "GET /api/accounts"], "the Settings route reads exactly config and accounts");
+    assert.deepStrictEqual(recoveryReads.urls, [...overviewReads.urls.slice(0, -1), "GET /api/system/health", "GET /api/projects/fixture/backups", "GET /api/accounts"],
+      "project recovery adds only its own health and backup reads");
+    {
+      const { view } = falReads, before = falReads.urls.length;
+      const again = view.context.studioSettingsRender({ selected: "assistant-custom", panels: {}, config: {}, health: {}, accountData: {}, panelState: () => "" });
+      assert(again.includes('<nav class="studio-nav"') && again.includes('class="studio-nav-details"'), "the index renders on its own");
+      vm.runInContext("studioSettingsIndexIntent({type:'keydown',key:'Enter'},'fal');initSettingsPanel()", view.context);
+      assert.strictEqual(falReads.urls.length, before, "rendering the index and running its focus and title hooks sends no request");
+    }
+
+    /* The scope line follows a project title edit that has not been committed yet, and the
+       follow-up neither writes nor reads. The existing autosave owner is untouched. */
+    {
+      const listeners = {}, requests = [], writes = [];
+      const titleInput = { id: "cfg-project-title", type: "text", value: title, dataset: {}, addEventListener: (type, fn) => { (listeners[type] = listeners[type] || []).push(fn); } };
+      const scopeTitle = { textContent: title };
+      const panel = { dataset: { settingsTab: "project", settingsProject: "fixture" }, querySelectorAll: (selector) => /input/.test(selector) ? [titleInput] : [] };
+      const context = {
+        document: { activeElement: null, getElementById: (id) => id === "cfg-project-title" ? titleInput : null,
+          querySelector: (selector) => selector === ".settings-selected-tab" ? panel : selector === "[data-settings-project-title]" ? scopeTitle : null, querySelectorAll: () => [] },
+        fetch: async (url) => { requests.push(url); return {}; }, setProjectTitle: (value) => writes.push(value), dirty: () => writes.push("dirty"),
+      };
+      context.window = context;
+      vm.createContext(context);
+      vm.runInContext(settingsSource, context, { filename: "public/settings.js" });
+      context.initSettingsPanel();
+      titleInput.value = "Retitled while typing";
+      listeners.input.forEach((fn) => fn());
+      assert.strictEqual(scopeTitle.textContent, "Retitled while typing", "the scope line follows the project title while it is edited");
+      titleInput.value = "";
+      listeners.change.forEach((fn) => fn());
+      assert.strictEqual(scopeTitle.textContent, "Untitled project", "a cleared title reads as an untitled project, as the head renders it");
+      assert.deepStrictEqual([requests, writes], [[], []], "following the title sends no request and calls no writer");
+    }
+
+    const studioCss = fs.readFileSync(path.join(ROOT, "public", "settings-studio.css"), "utf8").replace(/\r\n/g, "\n");
+    assert(studioCss.includes("@media(max-width:900px){\n  .studio-settings-layout .settings-block>.settings-title-row>div:not(.settings-inline-actions){flex-basis:auto}\n}"),
+      "the accepted mobile header correction is kept verbatim");
+    assert(/\.studio-nav-links a\{[^}]*min-height:44px/.test(studioCss), "index links are 44px targets");
+    assert(/\.studio-settings-layout>\.settings-selected-tab\{[^}]*max-width:1040px/.test(studioCss), "the panel keeps a readable measure on wide displays");
+    assert(/\.studio-settings-layout \.capability-configure>summary,\.studio-settings-layout \.capability-advanced>summary\{[^}]*min-height:44px/.test(studioCss), "capability disclosures are 44px targets in Settings");
+    assert(/\.studio-settings-layout \.capability-configure>summary::after,\.studio-settings-layout \.capability-advanced>summary::after\{font:600 13px\/1\.4 var\(--body\)/.test(studioCss)
+      && /\.studio-settings-layout \.capability-configure>summary small,\.studio-settings-layout \.capability-advanced>summary small\{font:400 13px/.test(studioCss), "capability Show/Hide and notes use readable 13px sans");
+    assert(/\.studio-settings-layout \.capability-name,\.studio-settings-layout \.settings-subheading span\{font:600 12px/.test(studioCss) && /\.studio-settings-layout \.capability-detail,[^{]*\{font:400 13px/.test(studioCss),
+      "capability names, details and settings subheadings are readable sans in Settings");
   }
 
   /* An explicit-save panel declares its save model so the shared state line can use
@@ -509,7 +619,11 @@ async function main() {
   /* ---- 8. project recovery is separate from application connection setup ---- */
   {
     const recovery = panels["project-recovery"].html;
-    assert(recovery.includes('aria-label="Project settings"'), "project recovery must name its project context");
+    const recoveryHead = recovery.slice(0, recovery.indexOf('class="settings-selected-tab"'));
+    assert(recoveryHead.includes('data-settings-scope="project"'), "project recovery must name its project scope");
+    assert.strictEqual(recoveryHead.split(buildFixture().meta.title).length - 1, 1,
+      "project recovery names its project exactly once before the panel, not as a repeated heading");
+    assert(!recovery.includes('aria-label="Project settings"'), "project recovery must not replace the Settings index with a second project navigation");
     assert(recovery.includes("Project backups & recovery"));
     assert(panels.recovery.html.includes('href="#/settings/project-recovery"'), "application diagnostics link to the named project's recovery owner");
     const access = panels.access.html;

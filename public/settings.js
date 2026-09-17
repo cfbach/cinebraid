@@ -78,6 +78,10 @@ function settingsCheckBlocked(note) {
   return Boolean(reason);
 }
 window.initSettingsPanel = () => {
+  /* The index focus hint is read and cleared before anything can return early, so a panel
+     that never mounts cannot leave it behind for an unrelated later Settings render. */
+  const indexFocus = typeof window.STUDIO_SETTINGS_INDEX_FOCUS === "string" ? window.STUDIO_SETTINGS_INDEX_FOCUS : "";
+  window.STUDIO_SETTINGS_INDEX_FOCUS = "";
   const panel = document.querySelector(".settings-selected-tab");
   if (!panel) return;
   if (typeof studioDraftKey === "function") studioDraftKey(panel);
@@ -96,6 +100,16 @@ window.initSettingsPanel = () => {
     window.studioRestoreSettingsDraft();
     if (settingsPanelStateElement()?.dataset.state !== "error") refreshSettingsPanelState();
   }
+  /* The head names the project; it follows an in-progress title edit without writing. */
+  const titleInput = document.getElementById("cfg-project-title"), scopeTitle = document.querySelector("[data-settings-project-title]");
+  if (titleInput && scopeTitle) ["input", "change"].forEach((type) => titleInput.addEventListener(type, () => { scopeTitle.textContent = titleInput.value || "Untitled project"; }));
+  /* After a keyboard move through the Settings index, focus returns to the index entry for
+     the panel that move opened, unless a restored draft already placed it. It never scrolls:
+     route() has just put the new panel's head at the top. */
+  const split = indexFocus.indexOf(":"), focusKind = indexFocus.slice(0, split), focusId = indexFocus.slice(split + 1);
+  const active = document.activeElement;
+  if (split > 0 && focusId === panel.dataset.settingsTab && active !== undefined && (!active || active === document.body))
+    document.querySelector(focusKind === "select" ? ".studio-compact-nav select" : ".studio-nav-links a[aria-current=page]")?.focus?.({ preventScroll: true });
 };
 /* Accepts the values the server confirmed as the new baseline, so a saved panel
    reports itself clean without being re-rendered from scratch. */
@@ -627,10 +641,18 @@ window.testFalGenerationConnection = async () => {
 window.doExport = async () => {
   const note = $("#export-note");
   if (note) note.textContent = "Exporting…";
-  const r = await (await fetch("/api/export", { method: "POST" })).json();
+  let r = {};
+  try {
+    const response = await fetch("/api/export", { method: "POST" });
+    r = await response.json().catch(() => null);
+    if (!r || typeof r !== "object") r = { error: response.ok ? "the CineBraid server's answer could not be read" : `the CineBraid server answered ${response.status}` };
+    else if (!response.ok) r = { error: r.error || `the CineBraid server answered ${response.status}` };
+  } catch {}
+  /* The server writes to the configured output folder when one is set and names the
+     file it wrote; it is not always docs/. */
   if (note) note.textContent = r.ok
-    ? "Exported to docs/" + r.name
-    : "Export failed: " + r.error;
+    ? "Markdown export written to " + (r.path || r.name || "the project's export folder")
+    : "Export failed: " + (r.error || "the CineBraid server did not respond");
 };
 window.downloadJSON = () => {
   const blob = new Blob([JSON.stringify(P, null, 2)], {

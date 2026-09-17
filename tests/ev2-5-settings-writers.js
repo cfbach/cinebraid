@@ -68,6 +68,40 @@ function navigationFixture(initial, config, tab = "assistant-openai") {
   mount(initial, tab);
   return { ...f, active: () => active, navigate(fields, selected) { f.context.studioCaptureSettingsDraft(); return mount(fields, selected); } };
 }
+/* A Settings mount with focus on the page body, the index's current link and compact select,
+   and optionally a stored draft whose focused field the restore puts back first. */
+function indexFocusFixture({ tab, flag = "", draftFocus = false, activeIsControl = false, noPanel = false }) {
+  const studio = fs.readFileSync(path.join(__dirname, "..", "public", "settings-studio.js"), "utf8");
+  const focusCalls = [], requests = [];
+  const body = { tagName: "BODY" };
+  const target = name => ({ focus(options) { focusCalls.push(options === undefined ? [name] : [name, options]); context.document.activeElement = this; } });
+  const control = { ...target("control"), id: "cfg-index-draft", tagName: "INPUT", type: "text", value: "saved", checked: false, disabled: false, dataset: {}, addEventListener() {}, setAttribute() {} };
+  const link = target("link"), select = target("select");
+  const state = { dataset: { saveModel: "manual" }, textContent: "" };
+  const panel = { dataset: { settingsTab: tab }, querySelectorAll: selector => selector.startsWith("details") ? [] : [control] };
+  let mounted = !noPanel;
+  const context = {
+    URL, CONFIG: {}, location: { hash: `#/settings/${tab}` },
+    document: {
+      body, activeElement: activeIsControl ? control : body,
+      getElementById: id => id === "settings-panel-state" ? state : id === control.id ? control : null,
+      querySelector: selector => selector === ".settings-selected-tab" ? (mounted ? panel : null)
+        : selector === ".studio-nav-links a[aria-current=page]" ? link : selector === ".studio-compact-nav select" ? select : null,
+      querySelectorAll: () => [],
+    },
+    fetch: async (url, options = {}) => { requests.push({ url, ...options }); return { ok: true, json: async () => ({}) }; },
+    activeProjectSlug: () => "fixture", toast() {}, route() {},
+  };
+  context.window = context;
+  context.$ = selector => context.document.querySelector(selector);
+  vm.createContext(context);
+  vm.runInContext(source, context, { filename: "public/settings.js" });
+  vm.runInContext(studio, context, { filename: "public/settings-studio.js" });
+  if (draftFocus) vm.runInContext(`STUDIO_SETTINGS_DRAFTS.set('fixture:${tab}', { values: [{ id: 'cfg-index-draft', index: 0, type: 'text', value: 'draft', checked: false }], baseline: ['saved'], focus: 'cfg-index-draft', open: [] })`, context);
+  context.STUDIO_SETTINGS_INDEX_FOCUS = flag;
+  context.initSettingsPanel();
+  return { context, focusCalls, requests, mountPanel() { mounted = true; context.document.activeElement = body; context.initSettingsPanel(); } };
+}
 async function main() {
   {
     const f = fixture({ "cfg-fal-text-model": "chosen-model" }, { generation: { fal: { apiKey: "••••saved", enabled: true, keySource: "settings" } } });
@@ -340,6 +374,69 @@ async function main() {
     assert(f.call("STUDIO_SETTINGS_DRAFTS.has('fixture:assistant-openai')"), "A project switch cannot relabel the still-mounted panel's draft owner");
     assert(!f.call("STUDIO_SETTINGS_DRAFTS.has('another-project:assistant-openai')"));
   }
-  console.log("EV2-5 Settings writers: granular ownership, environment key precedence, safe reread failure, preserved errors/focus, test disclosure and draft hooks passed.");
+  /* EV2-7: the index focus hook. It only answers a recorded keyboard intent for the panel
+     that intent opened, never scrolls, never takes focus from a restored draft, and the
+     hint is spent by the first Settings mount whether or not a panel is there. */
+  {
+    const intent = indexFocusFixture({ tab: "fal" });
+    const record = (event, id, kind) => { intent.context.STUDIO_SETTINGS_INDEX_FOCUS = ""; intent.context.studioSettingsIndexIntent(event, id, kind); return intent.context.STUDIO_SETTINGS_INDEX_FOCUS; };
+    assert.strictEqual(record({ type: "click", detail: 1 }, "fal"), "", "A pointer click leaves focus where the pointer put it");
+    assert.strictEqual(record({ type: "click", detail: 0 }, "fal"), "link:fal", "A keyboard-generated click records its destination");
+    assert.strictEqual(record({ type: "keydown", key: "Enter" }, "fal"), "link:fal", "Enter records its destination");
+    assert.strictEqual(record({ type: "keydown", key: "Tab" }, "fal"), "", "Moving through the index records nothing");
+    for (const modifier of ["ctrlKey", "metaKey", "shiftKey", "altKey"])
+      assert.strictEqual(record({ type: "keydown", key: "Enter", [modifier]: true }, "fal"), "", `A ${modifier} activation opens elsewhere and records nothing`);
+    assert.strictEqual(record({ type: "change" }, "fal", "select"), "select:fal", "The compact select always records its destination");
+  }
+  for (const [kind, target] of [["link", "link"], ["select", "select"]]) {
+    const f = indexFocusFixture({ tab: "fal", flag: `${kind}:fal` });
+    assert.deepStrictEqual(plain(f.focusCalls), [[target, { preventScroll: true }]], `${kind}: focus returns to the index without scrolling the new panel`);
+    assert.strictEqual(f.context.STUDIO_SETTINGS_INDEX_FOCUS, "", `${kind}: the focus hint is one-shot`);
+  }
+  {
+    const f = indexFocusFixture({ tab: "generation", flag: "link:generation", draftFocus: true });
+    assert.deepStrictEqual(f.focusCalls.map(([name]) => name), ["control"], "A restored draft keeps its focus; the index does not take it");
+    assert.strictEqual(f.context.document.activeElement.id, "cfg-index-draft");
+    assert.strictEqual(f.context.STUDIO_SETTINGS_INDEX_FOCUS, "", "The hint is spent even when a draft placed focus");
+  }
+  {
+    const f = indexFocusFixture({ tab: "fal", flag: "link:accounts" });
+    assert.deepStrictEqual(f.focusCalls, [], "A hint for another destination never moves focus on this panel");
+    assert.strictEqual(f.context.STUDIO_SETTINGS_INDEX_FOCUS, "", "A mismatched hint is discarded");
+    const legacy = indexFocusFixture({ tab: "fal", flag: "link" });
+    assert.deepStrictEqual(legacy.focusCalls, [], "A hint without a destination is ignored");
+    const elsewhere = indexFocusFixture({ tab: "fal", flag: "link:fal", activeIsControl: true });
+    assert.deepStrictEqual(elsewhere.focusCalls, [], "Focus the user already placed is left alone");
+    const missing = indexFocusFixture({ tab: "fal", flag: "link:fal", noPanel: true });
+    assert.deepStrictEqual(missing.focusCalls, [], "No panel, no focus move");
+    assert.strictEqual(missing.context.STUDIO_SETTINGS_INDEX_FOCUS, "", "A mount without a panel still spends the hint, so it cannot pull focus later");
+    missing.mountPanel();
+    assert.deepStrictEqual(missing.focusCalls, [], "A later Settings render does not act on a hint left by a navigation that never mounted");
+    assert.strictEqual(missing.requests.length, 0, "The focus hook sends no request");
+  }
+  /* EV2-7: doExport names what the server wrote, or why nothing was written. */
+  {
+    const exportNote = async (reply) => {
+      const f = fixture();
+      const note = { textContent: "" };
+      f.notes.set("export-note", note);
+      let pending = "";
+      f.context.fetch = async (url, options = {}) => { f.requests.push({ url, ...options }); pending = note.textContent; return reply(); };
+      await f.context.doExport();
+      assert.deepStrictEqual(f.requests.map(({ url, method }) => [url, method]), [["/api/export", "POST"]], "Export uses the existing endpoint once");
+      assert.strictEqual(pending, "Exporting…", "Export announces that it is running");
+      return note.textContent;
+    };
+    const answer = (status, body) => ({ ok: status < 400, status, json: async () => body });
+    const unreadable = status => ({ ok: status < 400, status, json: async () => { throw new SyntaxError("Unexpected token <"); } });
+    assert.strictEqual(await exportNote(() => answer(200, { ok: true, name: "signal-house.md", path: "D:\\Output\\signal-house\\signal-house.md" })), "Markdown export written to D:\\Output\\signal-house\\signal-house.md");
+    assert.strictEqual(await exportNote(() => answer(200, { ok: true, name: "signal-house.md" })), "Markdown export written to signal-house.md");
+    assert.strictEqual(await exportNote(() => answer(500, { error: "Output folder is not writable" })), "Export failed: Output folder is not writable");
+    assert.strictEqual(await exportNote(() => answer(500, {})), "Export failed: the CineBraid server answered 500");
+    assert.strictEqual(await exportNote(() => unreadable(502)), "Export failed: the CineBraid server answered 502");
+    assert.strictEqual(await exportNote(() => unreadable(200)), "Export failed: the CineBraid server's answer could not be read");
+    assert.strictEqual(await exportNote(() => { throw new TypeError("Failed to fetch"); }), "Export failed: the CineBraid server did not respond");
+  }
+  console.log("EV2-5 Settings writers: granular ownership, environment key precedence, safe reread failure, preserved errors/focus, test disclosure, draft hooks, index focus hook and export result passed.");
 }
 main().catch(error => { console.error(error.stack || error); process.exitCode = 1; });

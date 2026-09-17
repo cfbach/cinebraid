@@ -53,7 +53,7 @@ assert(creation.includes("OPEN SHOTS"), "Create must hand the complete shot list
 assert(!creation.includes('class="creation-scene-list"'), "Create must not render every scene description");
 
 const studioSettings = fs.readFileSync(path.join(root, "public/settings-studio.js"), "utf8");
-for (const label of ["Project", "Braidy & assistance", "Generation defaults", "Recovery & advanced"])
+for (const label of ["Project", "Braidy & assistance", "Generation defaults", "Recovery & export"])
   assert(studioSettings.includes(label), `missing ${label} settings destination`);
 assert(views.includes('provider === "ollama"'));
 assert(studioSettings.includes('kind === "anthropic"'));
