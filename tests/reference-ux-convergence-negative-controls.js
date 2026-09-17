@@ -1214,6 +1214,75 @@ controlAsync({
   explain: "The server refuses every post that names a revision it has moved past, so a retry with the same If-Match can never assign the crop.",
 });
 
+/* ===========================================================================
+   EV2-7 HUMAN DOGFOOD CORRECTION — PAID GENERATION SAFETY, BROKEN IN MEMORY.
+
+   The observed defect: a request for ONE view opened the confirmation holding
+   three, priced as "Submit 3 paid requests", with the price unavailable. N24 and
+   N25 are the two halves of the correction — what is selected, and what it takes
+   to send it. Both probes drive the shipped dialog; neither contacts a provider
+   (the coverage route is the local stub above, which records what it was asked).
+   =========================================================================== */
+const EV27_GENERATE = (slotId) => `(async () => {
+  CONFIG.generation = CONFIG.generation || {};
+  CONFIG.generation.fal = { ...(CONFIG.generation.fal || {}), enabled: true, keySource: "environment" };
+  /* The receipted Default image is a single view, so generation is genuinely available and the
+     refusal under test is the confirmation boundary itself, not an ineligible source. */
+  const approved = P.characters.find((x) => x.id === 'CHAR-NC').candidateFiles.find((r) => r.stored === 'CHAR-NC-PRIMARY.png');
+  approved.coverageJobType = 'single-reference';
+  CineBraidBuildCoverage.open({ list: 'characters', id: 'CHAR-NC', stateId: 'state-default', slotId: ${JSON.stringify(slotId)} });
+  return !!CineBraidBuildCoverage.state();
+})()`;
+const ev27Generation = (drawn) => JSON.parse(vm.runInContext("JSON.stringify(CineBraidBuildCoverage.state().generation)", drawn.rendered.context));
+
+controlAsync({
+  label: "N24 a generate flow launched for one view holds exactly that one paid request",
+  mutateSource: only("reference-coverage-build.js", (text) => mutate(
+    text,
+    "if(ctx.available&&!g.jobIds.length)g.slotIds=requestedSlotIds(b,ctx);",
+    "if(ctx.available&&!g.jobIds.length)g.slotIds=ctx.missing.map(s=>s.id);",
+    "N24")),
+  probe: async (mutateSource) => {
+    const drawn = await ev27Draw(mutateSource);
+    if (!await vm.runInContext(EV27_GENERATE("profile"), drawn.rendered.context)) return { reached: false, held: false, reason: "build-coverage-did-not-open" };
+    await ev27Click(drawn.rendered, { bcMethod: "generate" });
+    const g = ev27Generation(drawn);
+    const missing = JSON.parse(vm.runInContext(`JSON.stringify(__CINEBRAID_COVERAGE_AUTOMATION.stateCoverageContext('characters', P.characters.find((x) => x.id === 'CHAR-NC'), 'state-default').missing.map((s) => s.id))`, drawn.rendered.context));
+    if (missing.length < 2 || !missing.includes("profile")) return { reached: false, held: false, reason: `fixture-missing(${missing.join("|")})` };
+    if (drawn.jobs.length) return { reached: false, held: false, reason: `jobs-posted(${drawn.jobs.length})` };
+    const one = g.slotIds.length === 1 && g.slotIds[0] === "profile";
+    return { reached: true, held: one, reason: one ? "one-requested-view-selected" : "one-requested-view-expanded-into-every-missing-view" };
+  },
+  reason: "one-requested-view-expanded-into-every-missing-view",
+  explain: "A filmmaker asking for Profile was shown a confirmation for three paid requests they never chose.",
+});
+
+controlAsync({
+  label: "N25 nothing is submitted before the confirmation press",
+  mutateSource: only("reference-coverage-build.js", (text) => mutate(
+    text,
+    "    // A press that arrives without the confirmation on screen shows it instead of submitting.\n    if(!g.confirm){g.confirm=true;return render();}",
+    "",
+    "N25")),
+  probe: async (mutateSource) => {
+    const drawn = await ev27Draw(mutateSource);
+    /* The fixture's owed migration save lands first, so an unsettled project is not what refuses the send. */
+    await new Promise((resolve) => setTimeout(resolve, 80));
+    await vm.runInContext("flushPendingProjectSave()", drawn.rendered.context);
+    if (!await vm.runInContext(EV27_GENERATE("profile"), drawn.rendered.context)) return { reached: false, held: false, reason: "build-coverage-did-not-open" };
+    await ev27Click(drawn.rendered, { bcMethod: "generate" });
+    if (ev27Generation(drawn).slotIds.length !== 1) return { reached: false, held: false, reason: "selection-did-not-reach-one-view" };
+    await ev27Click(drawn.rendered, { bcAction: "generate-submit" });
+    const after = ev27Generation(drawn);
+    /* Neither sent nor confirmed means the page refused for some other reason: reported as a
+       distinct failure so the control names the cause instead of a silent "did not reach". */
+    if (!drawn.jobs.length && !after.confirm) return { reached: true, held: false, reason: `no-send-and-no-confirmation(${after.error || "silent"})` };
+    return { reached: true, held: drawn.jobs.length === 0, reason: drawn.jobs.length === 0 ? "confirmation-shown-and-nothing-sent" : "paid-request-sent-on-the-first-press" };
+  },
+  reason: "paid-request-sent-on-the-first-press",
+  explain: "The press that names the work must never also be the press that pays for it.",
+});
+
 /* ---------------------------------------------------------------------------
    NO CATCH-AS-SUCCESS. Enforced, not promised. */
 function testNoCatchAsSuccess() {

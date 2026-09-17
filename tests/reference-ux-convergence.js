@@ -261,7 +261,9 @@ async function testExtractionProgressiveDisclosure() {
   for (const [needle, why] of [
     ['id="coverage-crop-slot"', "which view this crop becomes is the first question"],
     ['id="coverage-crop-stage"', "the draggable crop is the interaction"],
-    ["Previous panel", "moving between panels is normal work"],
+    /* EV2-7 dogfood correction: nothing detects panels, so the control that steps an assumed
+       grid is named for what it offers — a suggested crop. */
+    ["Previous suggested crop", "stepping between suggested crops is normal work"],
     ['<div class="coverage-review-gate">', "what each save actually does stays on the surface"],
   ]) ok(normal.includes(needle), `the normal extractor surface must keep: ${why}`);
   ok(normal.includes("Review is optional"),
@@ -288,8 +290,10 @@ async function testExtractionProgressiveDisclosure() {
     ok(advanced.includes(`id="${id}"`), `${why} must move behind Fine tune, not disappear (${id})`);
     ok(!normal.includes(`id="${id}"`), `${why} must not also lead the surface (${id})`);
   }
-  ok(advanced.includes("Reset to panel") && advanced.includes("Use full image"),
+  ok(advanced.includes("Reset to suggested crop") && advanced.includes("Use full image"),
     "recovery actions move behind Fine tune too");
+  ok(!/Previous panel|Next panel|Panel position|Reset to panel|>Panel \d/.test(modal),
+    "and no control claims CineBraid found a panel: the grid is offered as suggested crops");
   ok(advanced.includes("Source sheet") && advanced.includes("CHAR-UX-SHEET.png"),
     "and so does the technical source-sheet statement, which is a fact and not a control");
 
@@ -2171,18 +2175,34 @@ async function testReceiptChangeDuringDialogRefuses() {
   vm.runInContext(`CONFIG.generation = CONFIG.generation || {}; CONFIG.generation.fal = { ...(CONFIG.generation.fal || {}), enabled: true, keySource: "environment" };
     CineBraidBuildCoverage.open({ list: 'characters', id: 'CHAR-UX', stateId: 'state-soaked', slotId: 'profile' });`, rendered.context);
   await clickBuild(rendered, { bcMethod: "generate" });
-  const quote = vm.runInContext("document.getElementById('modal').innerHTML", rendered.context);
-  /* Every missing required view of this state is offered, checked by default (project normalisation seeds a template 3/4 view). */
-  ok(quote.includes("2 paid requests · up to 6 images") && quote.includes("Each request is paid.") && quote.includes("Submit 2 paid requests") && quote.includes("Approved Soaked reference"),
-    "EV2-7 C6: the dialog quotes the paid work from the state's own approved source before anything is sent");
+  const modalNow = () => vm.runInContext("document.getElementById('modal').innerHTML", rendered.context);
+  const chosen = () => JSON.parse(vm.runInContext("JSON.stringify(CineBraidBuildCoverage.state().generation.slotIds)", rendered.context));
+  /* PAID GENERATION SAFETY: the flow was launched for Profile, so Profile alone is selected and the
+     main action names it. Every other missing view is offered unchecked. */
+  const opened = modalNow();
+  eq(JSON.stringify(chosen()), JSON.stringify(["profile"]), "EV2-7 C6: a flow launched for one view selects that view alone");
+  ok(opened.includes("1 paid request · up to 3 images") && opened.includes("Generate Profile") && opened.includes("Approved Soaked reference"),
+    "EV2-7 C6: the dialog quotes one paid request for the requested view from the state's own approved source");
+  ok(!/Submit \d+ paid request/.test(opened), "EV2-7 C6: and never opens holding a submit for requests nobody chose");
   eq(harness.jobs.length, 0, "EV2-7 C6: opening the quote sends nothing");
+  await clickBuild(rendered, { bcAction: "generate-all" });
+  const all = modalNow();
+  eq(JSON.stringify(chosen().slice().sort()), JSON.stringify(["front-three-quarter", "profile"]), "EV2-7 C6: Select all missing views is the explicit way to add the rest");
+  ok(all.includes("2 paid requests · up to 6 images") && all.includes("Each request is paid.") && all.includes("Generate 2 views"),
+    "EV2-7 C6: and only then does the action say two");
+  await clickBuild(rendered, { bcAction: "generate-review" });
+  const confirm = modalNow();
+  ok(confirm.includes("Submit 2 paid requests") && confirm.includes("Nothing has been sent yet.") && /<li>Profile · requested<\/li>/.test(confirm) && /<li>3\/4 front<\/li>/.test(confirm),
+    "EV2-7 C6: the confirmation names the exact targets and the paid count");
+  eq(harness.jobs.length, 0, "EV2-7 C6: reaching the confirmation sends nothing");
   vm.runInContext(`(() => { const r = P.productionAuthority.receipts.find((x) => x.stateId === 'state-soaked' && x.status === 'current'); r.id = 'authority-replaced-while-open'; })()`, rendered.context);
   await clickBuild(rendered, { bcAction: "generate-submit" });
   const refused = JSON.parse(vm.runInContext("JSON.stringify(CineBraidBuildCoverage.state().generation)", rendered.context));
   eq(harness.jobs.length, 0, "EV2-7 C6: an approval replaced while the dialog was open refuses the submission");
   ok(/The Soaked approval changed while this was open\. Review the new source/.test(refused.error), "EV2-7 C6: and says why");
+  await clickBuild(rendered, { bcAction: "generate-review" });
   await clickBuild(rendered, { bcAction: "generate-submit" });
-  eq(harness.jobs.length, 2, "EV2-7 C6: once the new source has been shown, a deliberate second press submits");
+  eq(harness.jobs.length, 2, "EV2-7 C6: once the new source has been shown, a deliberate review and press submits");
   eq(harness.jobs.map((job) => `${job.continuityStateId}:${job.targetCoverageSlotId}:${job.coverageMode}`).sort().join("|"), "state-soaked:front-three-quarter:individual|state-soaked:profile:individual", "EV2-7 C6: one individual request per chosen view, each for the exact state");
   ok(harness.jobs.every((job) => job.references[0].sourceFile === "CHAR-UX-SOAKED.png" && job.clientRequestId.includes("state-soaked:")), "EV2-7 C6: from the state's own approved source, with state-scoped idempotency keys");
   ok(vm.runInContext("document.getElementById('modal').innerHTML", rendered.context).includes("2 requests submitted for Soaked."), "EV2-7 C6: and the dialog says what was submitted");
@@ -2338,6 +2358,156 @@ async function testPickerDismissalReturnsToBuildCoverage() {
 }
 
 /* ==========================================================================
+   EV2-7 HUMAN DOGFOOD CORRECTION — THE DESK SAYS WHAT TO DO NEXT, AND ONE
+   REQUESTED VIEW IS ONE PAID REQUEST.
+
+   The filmmaker assigned a crop, approved the reference, and the page then showed
+   a count, a small footer and four live "Review results" buttons for views with
+   nothing to review. These checks hold the correction: a derived next action beside
+   the status, empty views that say they are empty, approval said in words, and a
+   generate flow that never turns one requested view into several paid requests.
+   ========================================================================== */
+const DESK_RENDER = (stateId, extra = "") => `(() => {
+  const e = P.characters.find((x) => x.id === 'CHAR-UX');
+  SCAN.references = { characters: { 'CHAR-UX': e.candidateFiles.map((r) => ({ name: r.stored, assetId: '', available: true, url: '/assets/anchors/' + r.stored })) } };
+  ${extra}
+  CineBraidReferenceDesk.selectForResults({ list: 'characters', id: 'CHAR-UX', stateId: '${stateId}' });
+  const before = JSON.stringify(P);
+  const html = CineBraidReferenceDesk.view('characters', 'CHAR-UX');
+  const media = CineBraidReferenceMedia.listing(SCAN, 'characters', 'CHAR-UX', true);
+  const required = CineBraidReferenceMedia.requiredSlots(e);
+  const missing = required.filter((s) => !CineBraidReferenceMedia.viewStatus(e, s, '${stateId}', media).filled);
+  return JSON.stringify({ html, wroteNothing: before === JSON.stringify(P), required: required.map((s) => s.label || s.id),
+    missing: missing.map((s) => ({ id: s.id, label: s.label || s.id })),
+    summary: CineBraidReferenceMedia.coverageSummary(CineBraidReferenceMedia.coverage(e, media, '${stateId}')) });
+})()`;
+const NEXT_ACTION = /<button type="button" class="rd-button ([a-z-]*)" data-rd-action="build" data-rd-build-slot="([^"]+)" data-rd-coverage-next="[^"]*"\s*>([^<]+)<\/button><small class="rd-coverage-remaining">([^<]*)<\/small>/;
+const REMAIN_WORDS = ["No", "One", "Two", "Three", "Four", "Five", "Six", "Seven", "Eight", "Nine", "Ten"];
+
+/* EV2-7 C13 — the next action is derived from recorded coverage, names the exact view, and writes nothing. */
+async function testCoverageContinuationIsDerived() {
+  const harness = guidedHarness(convergenceFixture());
+  const rendered = await bootGuided(harness);
+  const out = JSON.parse(vm.runInContext(DESK_RENDER("state-default"), rendered.context));
+  eq(out.wroteNothing, true, "EV2-7 C13: painting the Desk writes nothing to the project");
+  ok(out.missing.length > 0, `EV2-7 C13: baseline — the fixture owes views (${JSON.stringify(out.missing)})`);
+  const next = NEXT_ACTION.exec(out.html) || [];
+  eq(next[2], out.missing[0].id, "EV2-7 C13: the next action names the exact next missing required view");
+  eq(next[3], `Continue coverage — ${out.missing[0].label}`, "EV2-7 C13: in the filmmaker's words, beside the status");
+  eq(next[4], out.missing.length === 1 ? "One required view remains." : `${REMAIN_WORDS[out.missing.length] || out.missing.length} required views remain.`,
+    "EV2-7 C13: with a one-line count of what is left");
+  eq(next[1], "rd-primary", "EV2-7 C13: and it is the one primary control of the coverage surface");
+  const summary = (/<section class="rd-coverage"><header><h2>Required views<\/h2><span>([^<]*)<\/span>/.exec(out.html) || [])[1] || "";
+  eq(summary, out.summary, "EV2-7 C13: the status it stands beside is the shared coverage summary, unchanged");
+  ok(new RegExp(`^${out.required.length - out.missing.length} of ${out.required.length} required views filled`).test(summary),
+    `EV2-7 C13: and the count and the next action agree (${summary})`);
+  /* The press opens Build coverage on that exact entity, state and view. */
+  vm.runInContext(`__ev27DeskClick({ target: { id: '', closest: (sel) => /data-rd-action/.test(String(sel)) ? { dataset: { rdAction: 'build', rdBuildSlot: ${JSON.stringify(out.missing[0].id)} }, disabled: false, hasAttribute: () => false } : null } })`, rendered.context);
+  const opened = JSON.parse(vm.runInContext("JSON.stringify({ state: CineBraidBuildCoverage.state(), target: (document.getElementById('bc-target') || {}).innerHTML || '' })", rendered.context));
+  eq(`${opened.state.list}:${opened.state.id}:${opened.state.stateId}:${opened.state.slotId}`, `characters:CHAR-UX:state-default:${out.missing[0].id}`,
+    "EV2-7 C13: pressing it opens Build coverage on that exact target");
+  eq(opened.state.requested, out.missing[0].id, "EV2-7 C13: and the view it named is the requested view");
+  vm.runInContext("closeModal(); CineBraidBuildCoverage.state() && (CineBraidBuildCoverage.open === CineBraidBuildCoverage.open);", rendered.context);
+  /* Complete coverage says so and offers no false next step. */
+  const done = JSON.parse(vm.runInContext(DESK_RENDER("state-default", "e.coverageSlots.forEach((s) => { if (s.id !== 'front') s.requirement = 'planned'; });"), rendered.context));
+  eq(done.missing.length, 0, "EV2-7 C13: baseline — every required view is filled now");
+  ok(/<p class="rd-coverage-state" data-rd-coverage-next="complete">All 1 required view is filled for Default\.<\/p>/.test(done.html),
+    "EV2-7 C13: complete coverage says so in words");
+  ok(!NEXT_ACTION.test(done.html) && !/Continue coverage|Start coverage/.test(done.html), "EV2-7 C13: and offers no next view that does not exist");
+  ok(/data-rd-action="build"[^>]*>Build coverage</.test(done.html), "EV2-7 C13: Build coverage stays reachable as the coverage entry");
+}
+
+/* EV2-7 C14 — a view with no results offers no Review button that opens nothing, approval is said in
+   words beside the state, and a sheet's missing record is about the sheet. */
+async function testEmptyViewsApprovalAndSheetWording() {
+  const harness = guidedHarness(convergenceFixture());
+  const rendered = await bootGuided(harness);
+  const projection = `globalThis.CineBraidMediaInspector = { projection: () => ({ records: [
+    { kind: 'entity-reference', key: 'use-front', file: { name: 'CHAR-UX-FRONT.png' }, context: { entityList: { state: 'known', value: 'characters' }, entityId: { state: 'known', value: 'CHAR-UX' }, coverageSlotId: { state: 'known', value: 'front' } } },
+  ], unresolvedReferences: [] }) };`;
+  const out = JSON.parse(vm.runInContext(DESK_RENDER("state-default", projection), rendered.context));
+  ok(/data-rd-results-slot="front" data-rd-results-state="available"[^>]*>Review Front results<\/button>/.test(out.html),
+    "EV2-7 C14: a view with results keeps its Review button");
+  for (const view of out.missing) {
+    ok(!out.html.includes(`data-rd-results-slot="${view.id}"`), `EV2-7 C14: ${view.label} has no results, so no control offers to open an empty page`);
+    ok(out.html.includes(`data-rd-results-empty="${view.id}">No ${view.label} results yet<`), `EV2-7 C14: and the reason stands in its place`);
+  }
+  /* Unknown is not empty: with no projection to read, nothing is hidden. */
+  const blind = JSON.parse(vm.runInContext(DESK_RENDER("state-default", "delete globalThis.CineBraidMediaInspector;"), rendered.context));
+  ok(!/data-rd-results-state="empty"/.test(blind.html), "EV2-7 C14: with no projection to read, no Review control is suppressed on a guess");
+  /* Approved, in words, beside the state — and never an oversized banner. */
+  ok(/<p class="rd-approval-status" id="rd-approval-status" data-rd-approval="approved"><span class="rd-dot rd-dot-approved" aria-hidden="true"><\/span>Approved · Default<\/p>/.test(out.html),
+    "EV2-7 C14: the approved state is stated in words with one small dot, beside the state selector");
+  ok(out.html.indexOf('id="rd-approval-status"') < out.html.indexOf('class="rd-body'), "EV2-7 C14: and it sits in the toolbar, not over the work");
+  const unapproved = JSON.parse(vm.runInContext(DESK_RENDER("state-default", "P.productionAuthority = { version: 1, receipts: [] };"), rendered.context));
+  ok(/data-rd-approval="none"[^>]*>[\s\S]{0,80}Not approved · Default<\/p>/.test(unapproved.html), "EV2-7 C14: and an unapproved state says that, rather than nothing");
+  /* One warm action per surface: an open approval decision keeps the accent, and coverage continues beside it. */
+  const warm = (html) => (html.match(/class="rd-button rd-primary"/g) || []).length;
+  eq(warm(unapproved.html), 1, "EV2-7 C14: while approval is still open, exactly one control carries the warm accent");
+  ok(/class="rd-button rd-primary" data-rd-action="approve"/.test(unapproved.html) && /class="rd-button " data-rd-action="build" data-rd-build-slot=/.test(unapproved.html),
+    "EV2-7 C14: and it is the approval decision, with coverage continuing as a secondary control");
+  eq(warm(out.html), 1, "EV2-7 C14: once the state is approved, the one warm action is the coverage continuation");
+  /* The sheet's own missing record, never the selected state's. */
+  const sheet = JSON.parse(vm.runInContext(DESK_RENDER("state-default", "CineBraidReferenceDesk.selectContext({ list: 'characters', id: 'CHAR-UX', stateId: 'state-default', candidateName: 'CHAR-UX-SHEET.png' });"), rendered.context));
+  ok(sheet.html.includes("Reference sheet · a source for views · no state recorded on the sheet"), "EV2-7 C14: a sheet with no recorded state says so about the sheet");
+  ok(sheet.html.includes("The sheet records no continuity state of its own; that does not change Default."), "EV2-7 C14: and says plainly that it does not change the selected state");
+  ok(!/state not recorded/.test(sheet.html) && !/state not recorded/.test(out.html), "EV2-7 C14: no surface says 'state not recorded' beside a selected state");
+}
+
+/* EV2-7 C15 — PAID GENERATION SAFETY. One requested view is one paid request; more is always an
+   explicit act; and nothing is submitted before the confirmation press. */
+async function testGenerationNeverExpandsOneRequest() {
+  const { project } = soakedFixture();
+  const harness = guidedHarness(project);
+  const rendered = await bootGuided(harness);
+  const enable = `CONFIG.generation = CONFIG.generation || {}; CONFIG.generation.fal = { ...(CONFIG.generation.fal || {}), enabled: true, keySource: "environment" };`;
+  const modalNow = () => vm.runInContext("document.getElementById('modal').innerHTML", rendered.context);
+  const generation = () => JSON.parse(vm.runInContext("JSON.stringify(CineBraidBuildCoverage.state().generation)", rendered.context));
+  /* a. Launched with no view: nothing is selected and the main action cannot send. */
+  vm.runInContext(`${enable} CineBraidBuildCoverage.open({ list: 'characters', id: 'CHAR-UX', stateId: 'state-soaked' });`, rendered.context);
+  await clickBuild(rendered, { bcMethod: "generate" });
+  const blank = modalNow();
+  eq(JSON.stringify(generation().slotIds), "[]", "EV2-7 C15: a flow opened with no view selects no paid request at all");
+  ok(blank.includes("Nothing is selected. Choose each view you want to pay for.") && /data-bc-action="generate-review"[^>]*disabled/.test(blank),
+    "EV2-7 C15: and says so, with the action unavailable");
+  await clickBuild(rendered, { bcAction: "generate-review" });
+  eq(harness.jobs.length, 0, "EV2-7 C15: pressing it anyway sends nothing");
+  /* b. Launched for one view: that view alone, named, first, and priced as one request. */
+  vm.runInContext(`CineBraidBuildCoverage.open({ list: 'characters', id: 'CHAR-UX', stateId: 'state-soaked', slotId: 'profile' });`, rendered.context);
+  await clickBuild(rendered, { bcMethod: "generate" });
+  const one = modalNow();
+  eq(JSON.stringify(generation().slotIds), JSON.stringify(["profile"]), "EV2-7 C15: the requested view is the whole selection");
+  ok(one.indexOf('id="bc-gen-profile"') < one.indexOf('id="bc-gen-front-three-quarter"'), "EV2-7 C15: and is listed first");
+  ok(/<label class="rd-check bc-gen-target"><input type="checkbox" id="bc-gen-profile" data-bc-gen-slot="profile" checked/.test(one)
+    && /<input type="checkbox" id="bc-gen-front-three-quarter" data-bc-gen-slot="front-three-quarter"\s+(disabled)?\s*>/.test(one),
+    "EV2-7 C15: every other missing view is offered unchecked");
+  ok(one.includes("Only Profile is selected. Other missing views are added only if you choose them."), "EV2-7 C15: the dialog says what is and is not selected");
+  ok(one.includes("This is a paid request. The total cannot be shown because pricing is unavailable.") && one.includes("1 paid request · up to 3 images"),
+    "EV2-7 C15: with no rate recorded it still says the request is paid and names the count");
+  /* c. More than one is an explicit act, and it can be taken back. */
+  await clickBuild(rendered, { bcAction: "generate-all" });
+  eq(JSON.stringify(generation().slotIds.slice().sort()), JSON.stringify(["front-three-quarter", "profile"]), "EV2-7 C15: Select all missing views adds the rest");
+  await clickBuild(rendered, { bcAction: "generate-only" });
+  eq(JSON.stringify(generation().slotIds), JSON.stringify(["profile"]), "EV2-7 C15: and Select only <view> comes straight back to one");
+  /* d. Nothing is sent before the confirmation press. */
+  await clickBuild(rendered, { bcAction: "generate-submit" });
+  const shown = modalNow();
+  eq(harness.jobs.length, 0, "EV2-7 C15: a submit press with no confirmation on screen sends nothing");
+  eq(generation().confirm, true, "EV2-7 C15: it shows the confirmation instead");
+  ok(shown.includes("Generate Profile for Nora · Soaked") && shown.includes("Nothing has been sent yet. The next press submits 1 paid request and may return up to 3 images.")
+    && shown.includes("Submit 1 paid request"), "EV2-7 C15: which names the exact target, the paid count and the images");
+  await clickBuild(rendered, { bcAction: "generate-submit" });
+  eq(harness.jobs.length, 1, "EV2-7 C15: only the confirmed press submits, and it submits one request");
+  eq(`${harness.jobs[0].continuityStateId}:${harness.jobs[0].targetCoverageSlotId}:${harness.jobs[0].coverageRequestCount}:${harness.jobs[0].coverageMaximumImages}`,
+    "state-soaked:profile:1:3", "EV2-7 C15: for the exact state and view, bounded at one request and three images");
+  /* e. Re-entering the generate step never re-expands the selection. */
+  await clickBuild(rendered, { bcAction: "back" });
+  await clickBuild(rendered, { bcMethod: "generate" });
+  eq(JSON.stringify(generation().slotIds), JSON.stringify(["profile"]), "EV2-7 C15: re-entering keeps one requested view, never every missing one");
+  eq(harness.jobs.length, 1, "EV2-7 C15: and sends nothing more");
+}
+
+/* ==========================================================================
    NOTHING PERSISTED, NOTHING DISPATCHED.
    ========================================================================== */
 function testNoNewPersistenceAndNoDispatch() {
@@ -2398,13 +2568,16 @@ async function main() {
   await testRefreshTargetIsARead();
   await testGuidedOpenRecordsNoOverride();
   await testPickerDismissalReturnsToBuildCoverage();
+  await testCoverageContinuationIsDerived();
+  await testEmptyViewsApprovalAndSheetWording();
+  await testGenerationNeverExpandsOneRequest();
   testNoNewPersistenceAndNoDispatch();
   console.log(`References UX convergence suite passed ${checks} checks across the provenance chooser, the lightbox backdrop, `
     + `extraction disclosure, the save/assign hand-off, unreviewed factors, the compact production-needs summary, `
     + `requirement-vs-demand legibility, staged preview, the visual chooser, continuity-state authoring, single-state `
     + `approval, dropdown readability and Details disclosure, plus the alpha blockers: dormant coverage claiming no `
     + `attention, the fail-closed direction, Save crop & use converging in one action, Save as candidate assigning `
-    + `nothing, the retired stale-assign action and strip/board agreement, plus the two residual surfaces this pass found: the provenance chooser on the generation-record fold, and the target lists and the batch-approval confirmation that described an occupied slot through the key the writer deletes; and EV2-7 Build coverage: exact state/view crop enrollment, refused and unknown assignment outcomes without duplicates, other-state sheets refused, state-scoped generation requests and receipt revalidation, one wording for earlier selections across the Desk and the dialog, revision conflicts and Refresh target answered by a re-read before an explicit assignment, no override recorded on open, and picker dismissal returning to Build coverage. Provider calls made: 0.`);
+    + `nothing, the retired stale-assign action and strip/board agreement, plus the two residual surfaces this pass found: the provenance chooser on the generation-record fold, and the target lists and the batch-approval confirmation that described an occupied slot through the key the writer deletes; and EV2-7 Build coverage: exact state/view crop enrollment, refused and unknown assignment outcomes without duplicates, other-state sheets refused, state-scoped generation requests and receipt revalidation, one wording for earlier selections across the Desk and the dialog, revision conflicts and Refresh target answered by a re-read before an explicit assignment, no override recorded on open, and picker dismissal returning to Build coverage; and the EV2-7 human dogfood correction: a derived next action beside the coverage status that names the exact next missing view and writes nothing, empty views whose Review control says it is empty, approval stated in words beside its state, a sheet's missing record described as the sheet's, and a generate flow that selects only the requested view, expands only by an explicit press, and submits nothing before the confirmation. Provider calls made: 0.`);
 }
 
 main().catch((error) => { console.error(error); process.exit(1); });

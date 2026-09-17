@@ -3,8 +3,10 @@
 
 What a person does on the Reference Desk, end to end, against the real server:
   * a view opens Build coverage with the exact entity/state/view target;
+  * the coverage status carries a derived next action that names the exact next missing view and opens it;
+  * a view with no results says so instead of offering an empty Review page, and approval is stated in words;
   * a nondefault enrollment keeps the Default state's legacy selection on disk;
-  * a selected declared sheet offers "Use this sheet to fill views" and no approval;
+  * a selected declared sheet offers to crop views from it (a secondary action) and no approval;
   * guided crop -> exact assignment binds the crop's own asset, with one crop file;
   * an enrollment the server saved but whose response is lost (a 500) is re-read on retry and reused: one request, one binding, one crop;
   * an edit still waiting to save when the picker opens is saved, and the picker still adds;
@@ -130,13 +132,27 @@ try:
         page.locator('[data-reference-desk] .rd-coverage').wait_for()
         # Project normalisation may seed template views beside the fixture's own, so the required total is not asserted.
         desk_summary=page.locator('.rd-coverage header span').inner_text().strip()
-        check('Weathered counts no unscoped legacy selection as filled',re.fullmatch(r'0 of \d+ required views filled · 1 earlier selection, state not recorded',desk_summary) is not None)
-        check('The Desk Front button names the earlier selection',page.locator('[data-rd-slot="front"] small').inner_text().strip()=='Earlier selection · state not recorded')
+        check('Weathered counts no unscoped legacy selection as filled',re.fullmatch(r'0 of \d+ required views filled · 1 earlier selection, no state recorded on the image',desk_summary) is not None)
+        check('The Desk Front button names the earlier selection',page.locator('[data-rd-slot="front"] small').inner_text().strip()=='Earlier selection · no state recorded on the image')
+        check('No surface says "state not recorded" beside the selected state','state not recorded' not in page.locator('[data-reference-desk]').inner_text())
+        # EV2-7 dogfood correction: a derived next action stands beside the status and names the exact view it opens.
+        nxt=page.locator('[data-reference-desk] .rd-coverage-next [data-rd-build-slot]')
+        check('The coverage status offers the next missing required view',nxt.count()==1 and nxt.get_attribute('data-rd-build-slot')=='front' and nxt.inner_text().strip()=='Start coverage — Front')
+        remaining=page.locator('[data-reference-desk] .rd-coverage-remaining').inner_text().strip()
+        check('And says in one line what is left',re.fullmatch(r'(One required view remains\.|[A-Z][a-z]+ required views remain\.)',remaining) is not None)
+        check('Approval is stated in words beside the state, not as a banner',page.locator('#rd-approval-status').inner_text().strip()=='Not approved · Weathered')
+        check('Empty views do not offer a Review page with nothing on it',page.locator('[data-rd-results-slot="side"]').count()==0
+              and page.locator('[data-rd-results-empty="side"]').inner_text().strip()=='No Side results yet')
+        nxt.click()
+        page.locator('[data-build-coverage]').wait_for()
+        check('The derived next action opens Build coverage on that exact view',page.locator('#bc-target').inner_text()=='Target: Kai · Weathered · Front')
+        page.locator('[data-build-coverage] [data-bc-action="close"]').first.click()
+        page.wait_for_selector('#modal.hidden',state='attached',timeout=15000)
         page.locator('[data-rd-slot="front"]').click()
         page.locator('[data-build-coverage]').wait_for()
         check('Build coverage names the exact target',page.locator('#bc-target').inner_text()=='Target: Kai · Weathered · Front')
         check('The views table discloses the unscoped selection',page.locator('.bc-views [data-bc-status="earlier"]').count()==1)
-        check('The views table and the Desk use the same wording and count',page.locator('.bc-views [data-bc-status="earlier"]').inner_text().strip()=='Earlier selection · state not recorded' and page.locator('#bc-views-summary').inner_text().strip()==desk_summary)
+        check('The views table and the Desk use the same wording and count',page.locator('.bc-views [data-bc-status="earlier"]').inner_text().strip()=='Earlier selection · no state recorded on the image' and page.locator('#bc-views-summary').inner_text().strip()==desk_summary)
         check('Approval is stated as separate','approval is a separate decision' in page.locator('.bc-approval').inner_text())
         check('Generate is unavailable without a Weathered approval',page.locator('[data-bc-method="generate"]').is_disabled() and 'Approve a Weathered reference first' in page.locator('#bc-why-generate').inner_text())
         for width,height in ((390,844),(1280,720),(1920,1080),(1440,900)):
@@ -150,13 +166,25 @@ try:
         check('An edit is pending as the picker opens',not page.evaluate('projectSaveSettled().settled'))
         page.locator('[data-bc-method="media"]').click()
         page.locator('[data-md="reference-picker"]').wait_for()
+        # EV2-7: the picker is contextual. It opens on this target's own category with a header naming the exact target, and it groups what it offers by
+        # relevance to that target. Nothing is recorded for Weathered Front yet, so the exact-target group is honestly absent.
+        groups=[g.inner_text().strip() for g in page.locator('#modal .md-group').all()]
+        check('The picker opens on the target category with its groups in plain words',
+              page.locator('#modal [data-md-category="characters"]').get_attribute('aria-pressed')=='true' and bool(groups) and groups[0].startswith('Other Kai media'))
+        check('The picker header names the exact target and says an assignment approves nothing',
+              'Kai · Weathered · Front' in page.locator('#modal [data-rd-picker-target]').inner_text() and 'approves nothing' in page.locator('#modal [data-rd-picker-target]').inner_text())
         page.locator('#modal [data-md-field="query"]').fill('weathered-front')
+        # The planning image is Other, not Characters: the contextual category says so and offers the one click that widens the search.
+        check('A contextual category that matches nothing says so and offers all categories',
+              'All categories hold 1 matching asset' in page.locator('#modal .md-empty').inner_text() and page.locator('#modal .md-empty [data-md-category="all"]').count()==1)
+        page.locator('#modal .md-empty [data-md-category="all"]').click()
         page.locator('#modal .md-open').first.click()
         page.locator('#rd-single').check()
         page.wait_for_function('!document.getElementById("rd-add-candidate").disabled')
         page.locator('#rd-add-candidate').click()
         page.locator('[data-build-coverage][data-bc-step="done"]').wait_for(timeout=20000)
         check('Done says Weathered Front is filled and approval is unchanged','Front is filled for Weathered. Approval is unchanged.' in page.locator('[data-build-coverage]').inner_text())
+        check('A filled view now offers its results',page.locator('[data-rd-results-slot="front"]').get_attribute('data-rd-results-state')=='available')
         front=slot(kai(),'front')
         check('Disk: the Default legacy selection is unchanged',front.get('selectedFile')=='KAI_FRONT_LEGACY.png')
         check('Disk: Weathered Front has its own binding',str((front.get('referenceBindings') or {}).get('state-weathered','')).startswith('ref-'))
@@ -171,9 +199,15 @@ try:
         # 3. A declared sheet is a source for views, never an approvable image.
         page.locator('#rd-state').select_option('state-default')
         page.locator('[data-rd-candidate="KAI_TURNAROUND.png"]').click()
-        check('The sheet footer offers to fill views',page.locator('[data-rd-action="sheet"]').inner_text()=='Use this sheet to fill views')
+        # Cropping a sheet is an option inside Build coverage, offered as a secondary action beside the coverage entry.
+        check('The sheet footer offers to crop views from it',page.locator('[data-rd-action="sheet"]').inner_text()=='Crop views from this sheet')
+        check('And is secondary, not a second warm primary','rd-primary' not in (page.locator('[data-rd-action="sheet"]').get_attribute('class') or ''))
         check('The sheet footer offers no approval',page.locator('[data-rd-action="approve"]').count()==0)
         check('The canvas says what a sheet is','Reference sheet · a source for views' in page.locator('.rd-sheet-caption').inner_text())
+        decision=page.locator('[data-reference-desk] .rd-decision').inner_text()
+        check('A sheet with no recorded state says so about the sheet','no state recorded on the sheet' in decision and 'The sheet records no continuity state of its own; that does not change Default.' in decision)
+        check('The Default state reads as approved, in words',page.locator('#rd-approval-status').inner_text().strip()=='Approved · Default'
+              and page.locator('#rd-approval-status .rd-dot-approved').count()==1)
         page.screenshot(path=str(OUT/'sheet-selected.png'))
 
         # 4. Guided crop -> exact assignment, with one injected enrollment failure checked and retried once.
@@ -183,6 +217,10 @@ try:
         page.locator('#coverage-crop-source').evaluate('(img)=>img.complete||new Promise(r=>img.onload=r)')
         page.locator('#coverage-crop-slot').select_option('side')
         check('The crop names its exact target',page.locator('#bc-crop-target').inner_text()=='Crop for Default · Side')
+        # Nothing detects panels, so the grid steppers are named for what they offer.
+        crop_text=page.locator('[data-bc-crop]').inner_text()
+        check('The crop steppers offer suggested crops, not detected panels','Previous suggested crop' in crop_text and 'Next suggested crop' in crop_text and 'Previous panel' not in crop_text)
+        check('And the acknowledgment still says CineBraid does not detect panels','CineBraid does not detect panels' in crop_text)
         check('Saving is disabled until the view is acknowledged',page.locator('#coverage-crop-guided-assign').is_disabled())
         page.locator('#coverage-crop-ack').check()
         enroll_failures['remaining']=1

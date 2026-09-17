@@ -59,10 +59,14 @@ check("nondefault enrollment into an empty view leaves the global slot selection
 });
 check("a nondefault state does not count an unscoped legacy selection as filled",()=>{
   const p=legacyProject(),e=legacyOf(p),media=Reference.resolver({...opts(),project:p}).listing("props",e);
-  assert.deepEqual(Shared.coverage(e,media,"weathered"),{required:2,filled:0,unscoped:1,earlier:{"state not recorded":1}});
+  /* EV2-7 dogfood correction: the qualifier is about the IMAGE, so it can never be read as
+     "the state you selected is not recorded". */
+  assert.deepEqual(Shared.coverage(e,media,"weathered"),{required:2,filled:0,unscoped:1,earlier:{"no state recorded on the image":1}});
   assert.deepEqual(Shared.coverage(e,media,"state-default"),{required:2,filled:1,unscoped:0,earlier:{}});
-  assert.equal(Shared.viewStatus(e,e.coverageSlots[0],"weathered",media).label,"Earlier selection · state not recorded");
-  assert.equal(Shared.coverageSummary(Shared.coverage(e,media,"weathered")),"0 of 2 required views filled · 1 earlier selection, state not recorded");
+  assert.equal(Shared.viewStatus(e,e.coverageSlots[0],"weathered",media).label,"Earlier selection · no state recorded on the image");
+  assert.equal(Shared.coverageSummary(Shared.coverage(e,media,"weathered")),"0 of 2 required views filled · 1 earlier selection, no state recorded on the image");
+  for(const text of [Shared.viewStatus(e,e.coverageSlots[0],"weathered",media).label,Shared.coverageSummary(Shared.coverage(e,media,"weathered"))])
+    assert.equal(/state not recorded/.test(text),false,"no reader may say 'state not recorded' beside a selected state: "+text);
 });
 check("an earlier selection recorded for the default state is named for it, not called unrecorded or unavailable",()=>{
   const p=legacyProject(),e=legacyOf(p);e.candidateFiles[0].targetStateId="state-default";

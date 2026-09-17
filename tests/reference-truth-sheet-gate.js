@@ -894,7 +894,10 @@ async function testGuidedCropKeepsTheSheetASource() {
   })()`, rendered.context);
   const sheetDesk = desk("CHAR-IREN-SHEET.png");
   ok(sheetDesk.includes("Reference sheet · a source for views. Views are filled only when you assign a crop."), "EV2-7: a selected sheet says what it is on the canvas");
-  ok(sheetDesk.includes('data-rd-action="sheet"') && sheetDesk.includes("Use this sheet to fill views"), "EV2-7: the sheet's footer offers to fill views from it");
+  /* EV2-7 dogfood correction: cropping a sheet is an option inside Build coverage, offered as a
+     secondary action — never a second primary workflow competing with the coverage entry. */
+  ok(sheetDesk.includes('data-rd-action="sheet"') && sheetDesk.includes("Crop views from this sheet"), "EV2-7: the sheet's footer offers to crop views from it");
+  ok(/<button type="button" class="rd-button " data-rd-action="sheet"/.test(sheetDesk), "EV2-7: and that offer is secondary, not a warm primary");
   ok(!sheetDesk.includes('data-rd-action="approve"'), "EV2-7: a selected sheet is never offered approval");
   ok(/<li><b>Front<\/b><span>assigned to Front<\/span><\/li>/.test(sheetDesk), "EV2-7: the views cropped from the sheet say where they are assigned");
   ok(!sheetDesk.includes('data-rd-candidate="CHAR-IREN-COVERAGE-FRONT-X.png"') && sheetDesk.includes(`data-rd-candidate="${bindingId}"`),

@@ -4,7 +4,9 @@
   const R=CineBraidReferenceMedia, states=new Map(), types={characters:"Character",locations:"Location",props:"Prop",vehicles:"Vehicle"};
   let active=null, picker=null, nextFocus="", destinationFocus="";
   const e=esc,a=attr, routeFor=(list,id)=>"#/"+ENTITY_ROUTE[list]+"/"+encodeURIComponent(id);
-  const button=(id,label,cls="")=>'<button type="button" class="rd-button '+cls+'" data-rd-action="'+id+'">'+label+'</button>';
+  const button=(id,label,cls="",extra="")=>'<button type="button" class="rd-button '+cls+'" data-rd-action="'+id+'" '+extra+'>'+label+'</button>';
+  const COUNT_WORDS=["No","One","Two","Three","Four","Five","Six","Seven","Eight","Nine","Ten"];
+  const remainingWords=n=>(n===1?"One required view remains.":(COUNT_WORDS[n]||String(n))+" required views remain.");
   const collection = (entity)=>entityStateListRead(entity,true);
   const modalOpen=()=>!!document.querySelector("#modal:not(.hidden)");
   function local(list,id) {
@@ -31,12 +33,38 @@
     // Views and counts read every state's rows: a view's selection recorded for another state is still that view's image (Build coverage reads the same).
     return {list,id,entity,state,currentState,allStates,media,all,strip,selected,row,truth,approved,linkedAvailable,coverage:R.coverage(entity,all,state.stateId)};
   }
+  // EV2-7 — an image with no recorded continuity state says so ABOUT ITSELF; the selected state is never the thing "not recorded".
   function words(m,item) {
     if(!item?.available)return "Image unavailable";
     if(m.truth.standing==="canon" && m.truth.file===item.name)return "Approved reference";
-    if(item.structure==="sheet")return "Reference sheet · a source for views"+(item.recordedState?"":" · state not recorded");
+    if(item.structure==="sheet")return "Reference sheet · a source for views"+(item.recordedState?"":" · no state recorded on the sheet");
     const row=entityCandidateRow(m.entity,item.name,false);
-    return (row?.decision==="rejected" ? "Rejected candidate" : "Candidate · not approved")+(item.recordedState?"":" · state not recorded");
+    return (row?.decision==="rejected" ? "Rejected candidate" : "Candidate · not approved")+(item.recordedState?"":" · no state recorded on this image");
+  }
+  // The same sentence everywhere an unrecorded source could be mistaken for the selected state.
+  const unrecorded=(m,item,what)=>item&&!item.recordedState&&item.available?" "+what+" records no continuity state of its own; that does not change "+(m.currentState?.name||"this continuity state")+".":"";
+  /* Which required views already have results for this state, read from the shipped media
+     projection Results itself reads. Unknown (no projection) never hides a control. */
+  function resultSlots(m) {
+    let projection=null;
+    try{projection=typeof CineBraidMediaInspector==="object"&&CineBraidMediaInspector?.projection?CineBraidMediaInspector.projection():null;}catch{projection=null;}
+    if(!projection||typeof entityCandidateTargetStateId!=="function")return {known:false,has:new Set()};
+    const value=x=>x?.state==="known"?x.value:"";
+    const uses=[...(projection.records||[]).flatMap(r=>r.relationships?.length?r.relationships:[r]),...(projection.unresolvedReferences||[])];
+    const has=new Set();
+    for(const u of uses){
+      if(u?.kind!=="entity-reference"||value(u.context?.entityList)!==m.list||value(u.context?.entityId)!==m.id)continue;
+      if(entityCandidateTargetStateId(m.entity,u.file?.name)!==m.state.stateId)continue;
+      const slotId=value(u.context?.coverageSlotId);if(slotId)has.add(slotId);
+    }
+    return {known:true,has};
+  }
+  // The state's own approval, in words, beside the state selector.
+  function approvalStatus(m) {
+    const name=m.currentState?.name||"Default", standing=m.truth.standing;
+    if(standing==="unavailable")return {tone:"unknown",text:"Approval status unavailable"};
+    if(standing!=="canon")return {tone:"none",text:"Not approved · "+name};
+    return m.approved&&m.approved.available!==false?{tone:"approved",text:"Approved · "+name}:{tone:"attention",text:"Approved · "+name+" · image unavailable"};
   }
   // "Crop from <sheet>": the crop row that shares this image's identity carries the sheet provenance.
   function cropSource(m,item) {
@@ -60,15 +88,30 @@
     // A composite sheet is a source: it names the views cropped from it for this state and never offers approval.
     const derived=sheet?derivedViews(m,selected):[];
     const canvas=selected?.available?'<img id="rd-image" src="'+a(selected.url)+'" alt="'+a(m.entity.name+' — '+(m.currentState?.name||'Default'))+'"><p class="rd-image-error" hidden role="alert">This exact image is unavailable. It cannot be approved or used.</p>'+(sheet?'<figcaption class="rd-sheet-caption">Reference sheet · a source for views. Views are filled only when you assign a crop.</figcaption>':''):selected?'<div class="rd-empty"><span class="rd-empty-mark">◇</span><h2>Image unavailable</h2><p>The recorded candidate is preserved. CineBraid will not substitute another image.</p>'+button('refresh','Check availability')+'</div>':'<div class="rd-empty"><span class="rd-empty-mark">◇</span><h2>No image assigned yet</h2><p>'+e(m.linkedAvailable.length===1?'An image is available in Production media but has not been added as a reference candidate.':m.linkedAvailable.length?m.linkedAvailable.length+' linked images are available in Production media. Choose which view each represents.':'Choose an existing production image, or upload a new one to establish this reference.')+'</p><div>'+button('build','Build coverage','rd-primary')+'</div></div>';
-    const slots=R.requiredSlots(m.entity).map(slot=>{
-      // Every view opens Build coverage aimed at it. A nondefault state counts only its own bindings; the wording is the shared viewStatus label.
-      const v=R.viewStatus(m.entity,slot,m.state.stateId,m.all),img=v.item,present=v.present,note=v.label;
-      return '<div class="rd-slot-pair"><button class="rd-slot'+(v.earlier?' rd-slot-earlier':'')+'" data-rd-slot="'+a(slot.id)+'" data-rd-slot-status="'+a(v.status)+'" aria-label="'+a((slot.label||slot.id)+' — '+note+'. Build coverage for this view')+'">'+(present?'<img src="'+a(img.url)+'" alt="">':'<span class="rd-slot-empty">＋</span>')+'<span><b>'+e(slot.label||slot.id)+'</b><small>'+e(note)+'</small></span></button><button class="rd-button" data-rd-results-slot="'+a(slot.id)+'">Review '+e(slot.label||slot.id)+' results</button></div>';
+    // Every view opens Build coverage aimed at it. A nondefault state counts only its own bindings; the wording is the shared viewStatus label.
+    const views=R.requiredSlots(m.entity).map(slot=>({slot,v:R.viewStatus(m.entity,slot,m.state.stateId,m.all)}));
+    const results=resultSlots(m);
+    const slots=views.map(({slot,v})=>{
+      const label=slot.label||slot.id, img=v.item, present=v.present, note=v.label, hasResults=!results.known||results.has.has(slot.id);
+      // A view with nothing to review says so in place of a control that would open an empty page.
+      return '<div class="rd-slot-pair"><button class="rd-slot'+(v.earlier?' rd-slot-earlier':'')+'" data-rd-slot="'+a(slot.id)+'" data-rd-slot-status="'+a(v.status)+'" aria-label="'+a(label+' — '+note+'. Build coverage for this view')+'">'+(present?'<img src="'+a(img.url)+'" alt="">':'<span class="rd-slot-empty">＋</span>')+'<span><b>'+e(label)+'</b><small>'+e(note)+'</small></span></button>'+(hasResults?'<button class="rd-button" data-rd-results-slot="'+a(slot.id)+'" data-rd-results-state="available">Review '+e(label)+' results</button>':'<small class="rd-slot-note" id="rd-why-results-'+a(slot.id)+'" data-rd-results-state="empty" data-rd-results-empty="'+a(slot.id)+'">No '+e(label)+' results yet</small>')+'</div>';
     }).join('');
+    /* THE DERIVED NEXT ACTION. Read from the same recorded coverage the status counts; nothing is written by painting it.
+       One warm action per surface: while this state's own approval decision is still open, that decision keeps the
+       accent and coverage continues as a secondary control. */
+    const missingViews=views.filter(x=>!x.v.filled), nextView=missingViews[0]?.slot||null;
+    const decisionPending=!!selected?.available&&!sheet&&(m.row?.decision==='rejected'||!(m.truth.standing==='canon'&&m.truth.file===selected.name));
+    const coverageNext=!views.length
+      ?'<p class="rd-coverage-state" data-rd-coverage-next="none">No required views are defined for this reference.</p>'+button('build','Build coverage')
+      :nextView
+      ?button('build',(m.coverage.filled?'Continue coverage — ':'Start coverage — ')+e(nextView.label||nextView.id),decisionPending?'':'rd-primary','data-rd-build-slot="'+a(nextView.id)+'" data-rd-coverage-next="'+a(nextView.id)+'"')+'<small class="rd-coverage-remaining">'+e(remainingWords(missingViews.length))+'</small>'
+      :'<p class="rd-coverage-state" data-rd-coverage-next="complete">All '+views.length+' required view'+(views.length===1?' is':'s are')+' filled for '+e(m.currentState?.name||'this continuity state')+'.</p>'+button('build','Build coverage');
+    const approval=approvalStatus(m);
     const strip=m.strip.map((item,i)=>{const from=item.structure==='sheet'?'':cropSource(m,item);return '<button data-rd-candidate="'+a(item.name)+'" aria-pressed="'+(item.name===m.state.selected)+'" aria-label="Review candidate '+(i+1)+' — '+a(words(m,item)+(from?' · Crop from '+from:''))+'">'+(item.available?'<img src="'+a(item.url)+'" alt="">':'<span>Unavailable</span>')+'<small>Image '+(i+1)+(item.structure==='sheet'?' · <b class="rd-sheet-tag">Sheet</b>':'')+'</small>'+(from?'<small class="rd-crop-from">Crop from '+e(from)+'</small>':'')+'</button>';}).join('');
     const derivedList=sheet?'<section class="rd-derived" aria-label="Views from this sheet"><h2>Views from this sheet · '+e(m.currentState?.name||'Default')+'</h2>'+(derived.length?'<ul>'+derived.map(d=>'<li><b>'+e(d.label)+'</b><span>'+e(d.assigned?'assigned to '+d.label:'crop saved, not assigned')+'</span></li>').join('')+'</ul>':'<p>No views have been cropped from this sheet for this state yet.</p>')+'</section>':'';
-    const decision=selected?.available && m.row?.decision==='rejected'?button('restore','Restore candidate','rd-primary'):sheet&&selected?.available?button('sheet','Use this sheet to fill views','rd-primary'):selected?.available && !(m.truth.standing==='canon'&&m.truth.file===selected.name)?button('approve','Approve reference…','rd-primary'):'';
-    return '<section class="reference-desk" data-reference-desk>'+context(m)+'<header class="rd-heading"><div><p class="rd-eyebrow">'+e(types[list])+' reference</p><h1 id="rd-title" tabindex="-1">'+e(m.entity.name||id)+'</h1></div><div class="rd-heading-actions">'+(m.media.length?button('build','Build coverage','rd-primary'):'')+'</div></header><div class="rd-toolbar"><label>Continuity state <select id="rd-state">'+m.allStates.map(s=>'<option value="'+a(s.id)+'" '+(s.id===m.state.stateId?'selected':'')+'>'+e(s.name||s.id)+'</option>').join('')+'</select></label>'+button('results','Review results')+button('inspect','Reference details')+'</div><div class="rd-body '+(show?'rd-inspection-open':'')+'"><div class="rd-working"><figure class="rd-canvas">'+canvas+'</figure>'+(m.media.length?'<div class="rd-candidates" aria-label="Reference candidates">'+strip+'</div>':'')+derivedList+'<section class="rd-coverage"><header><h2>Required views</h2><span>'+e(R.coverageSummary(m.coverage))+'</span></header><div class="rd-slots">'+slots+'</div><p>Filling a view records coverage. Approval remains a separate decision.</p></section></div>'+(show?'<aside class="rd-inspection"><header><h2>Reference details</h2>'+button('inspect','Close')+'</header>'+inspect(m)+'</aside>':'')+'</div><footer class="rd-decision"><div><strong id="rd-status" role="status" tabindex="-1">'+e(selected?words(m,selected):'Choose an image for this reference')+'</strong><small>'+e(sheet&&selected?.available?'A sheet is never this reference’s approved image. Crop and assign its views; approval stays a separate decision.':selected?.available?'Approval sets the visual authority for '+(m.currentState?.name||'this continuity state')+'.':'Adding a candidate will not approve it or mark the design complete.')+'</small></div>'+decision+'</footer></section>';
+    // Cropping a sheet is one way into Build coverage, not a workflow competing with it.
+    const decision=selected?.available && m.row?.decision==='rejected'?button('restore','Restore candidate','rd-primary'):sheet&&selected?.available?button('sheet','Crop views from this sheet'):selected?.available && !(m.truth.standing==='canon'&&m.truth.file===selected.name)?button('approve','Approve reference…','rd-primary'):'';
+    return '<section class="reference-desk" data-reference-desk>'+context(m)+'<header class="rd-heading"><div><p class="rd-eyebrow">'+e(types[list])+' reference</p><h1 id="rd-title" tabindex="-1">'+e(m.entity.name||id)+'</h1></div></header><div class="rd-toolbar"><label>Continuity state <select id="rd-state">'+m.allStates.map(s=>'<option value="'+a(s.id)+'" '+(s.id===m.state.stateId?'selected':'')+'>'+e(s.name||s.id)+'</option>').join('')+'</select></label><p class="rd-approval-status" id="rd-approval-status" data-rd-approval="'+a(approval.tone)+'"><span class="rd-dot rd-dot-'+a(approval.tone)+'" aria-hidden="true"></span>'+e(approval.text)+'</p><span class="rd-toolbar-actions">'+button('results','Review results')+button('inspect','Reference details')+'</span></div><div class="rd-body '+(show?'rd-inspection-open':'')+'"><div class="rd-working"><figure class="rd-canvas">'+canvas+'</figure>'+(m.media.length?'<div class="rd-candidates" aria-label="Reference candidates">'+strip+'</div>':'')+derivedList+'<section class="rd-coverage"><header><h2>Required views</h2><span>'+e(R.coverageSummary(m.coverage))+'</span><div class="rd-coverage-next">'+coverageNext+'</div></header><div class="rd-slots">'+slots+'</div><p>Filling a view records coverage. Approval remains a separate decision.</p></section></div>'+(show?'<aside class="rd-inspection"><header><h2>Reference details</h2>'+button('inspect','Close')+'</header>'+inspect(m)+'</aside>':'')+'</div><footer class="rd-decision"><div><strong id="rd-status" role="status" tabindex="-1">'+e(selected?words(m,selected):'Choose an image for this reference')+'</strong><small>'+e((sheet&&selected?.available?'A sheet is never this reference’s approved image. Crop and assign its views; approval stays a separate decision.':selected?.available?'Approval sets the visual authority for '+(m.currentState?.name||'this continuity state')+'.':'Adding a candidate will not approve it or mark the design complete.')+unrecorded(m,selected,sheet?'The sheet':'This image'))+'</small></div>'+decision+'</footer></section>';
   }
   // Crops saved from this sheet for this state, and whether each is the view's current assignment.
   function derivedViews(m,sheetItem) {
@@ -277,12 +320,13 @@
     document.querySelector('#modal .modal-box').classList.add('rd-confirm-box');
     document.querySelector('#modal .cancel').focus({preventScroll:true});syncEntityApprovalModal();
   }
-  function action(id) {
+  function action(id,slotId='') {
     if(id==='new')return openGlobalAdd();
     if(!active)return;
     const m=model(active.list,active.id);if(!m)return;
     if(id==='results')return CineBraidResults.open({list:m.list,id:m.id,stateId:m.state.stateId,slotId:''});
-    if(id==='build')return window.CineBraidBuildCoverage?.open({list:m.list,id:m.id,stateId:m.state.stateId,slotId:''});
+    // The derived next action carries the exact view it named; Build coverage opens on that view.
+    if(id==='build')return window.CineBraidBuildCoverage?.open({list:m.list,id:m.id,stateId:m.state.stateId,slotId:slotId&&(m.entity.coverageSlots||[]).some(s=>s.id===slotId)?slotId:''});
     if(id==='sheet'&&m.selected?.structure==='sheet'&&m.selected.available)return window.CineBraidBuildCoverage?.open({list:m.list,id:m.id,stateId:m.state.stateId,slotId:'',method:'sheet',source:{kind:'entity',name:m.selected.name}});
     if(id==='choose'||id==='upload')return openPicker('',id==='upload');
     if(id==='restore'&&m.selected?.available&&m.row?.decision==='rejected'){setEntityCandidateDecision(m.list,m.id,m.selected.name,'unreviewed');return;}
@@ -328,7 +372,7 @@
       if(!event.target.closest?.('[data-rd-picker-cancel]')?.disabled)cancelPicker();
       return;
     }
-    const t=event.target.closest('[data-rd-action],[data-rd-results-slot],[data-rd-candidate],[data-rd-slot],[data-rd-asset],#rd-add-candidate,#rd-picker-retry,#rd-picker-refresh,#rd-use-as-sheet');if(!t)return;
+    const t=event.target.closest('[data-rd-action],[data-rd-results-slot],[data-rd-candidate],[data-rd-slot],[data-rd-asset],#rd-add-candidate,#rd-picker-retry,#rd-picker-refresh,#rd-use-as-sheet');if(!t||t.disabled)return;
     if(t.id==='rd-use-as-sheet')return useAsSheet();
     if(['rd-picker-refresh','rd-picker-retry'].includes(t.id)&&picker){const p=picker;refreshPickerInventory(p).then(()=>{if(picker===p){renderPicker();syncPicker();}});return;}
     if(t.id==='rd-add-candidate')return commitPicker();
@@ -336,7 +380,7 @@
     if(t.hasAttribute('data-rd-candidate')&&active){local(active.list,active.id).selected=t.dataset.rdCandidate;repaint('rd-status');return;}
     if(t.hasAttribute('data-rd-results-slot')&&active){const m=model(active.list,active.id);return CineBraidResults.open({list:m.list,id:m.id,stateId:m.state.stateId,slotId:t.dataset.rdResultsSlot});}
     if(t.hasAttribute('data-rd-slot')&&active){const m=model(active.list,active.id);return m&&window.CineBraidBuildCoverage?.open({list:m.list,id:m.id,stateId:m.state.stateId,slotId:t.dataset.rdSlot});}
-    action(t.dataset.rdAction);
+    action(t.dataset.rdAction,t.dataset.rdBuildSlot||'');
   },true);
   document.addEventListener('change',event=>{
     const t=event.target;

@@ -56,7 +56,9 @@
     const filled = present && (a.basis === "binding" || isDefault), earlier = present && !filled;
     const recordedStateId = earlier ? String(rows(entity?.candidateFiles).find(r => keyOf(r) === a.key)?.targetStateId || item.stateId || "") : "";
     const recordedStateName = recordedStateId ? String(rows(entity?.continuityStates).find(s => s.id === recordedStateId)?.name || (recordedStateId === "state-default" ? "Default" : recordedStateId)) : "";
-    const qualifier = earlier ? (recordedStateId ? "recorded for " + recordedStateName : "state not recorded") : "";
+    /* EV2-7 — the qualifier names the IMAGE's missing record, never the selected state:
+       "state not recorded" beside a Rain-soaked selector was read as "Rain-soaked is not recorded". */
+    const qualifier = earlier ? (recordedStateId ? "recorded for " + recordedStateName : "no state recorded on the image") : "";
     const status = filled ? "filled" : earlier ? "earlier" : a.key ? "unavailable" : "missing";
     const label = filled ? "View filled" : earlier ? "Earlier selection · " + qualifier : a.key ? "Image unavailable" : "Missing";
     return {...a, item, present, filled, earlier, recordedStateId, recordedStateName, qualifier, status, label};

@@ -208,7 +208,11 @@ def assert_surface_polish(page, label):
           return Math.abs(parseFloat(reserve||'0') - dock.getBoundingClientRect().height) <= 1; }""",
         timeout=20000)
     desk=reference_desk_ready(page)
-    action=desk.get_by_role('button', name='Build coverage', exact=True)
+    # EV2-7: the coverage entry is derived, so its LABEL depends on what the state still owes
+    # ("Continue coverage - <view>", "Start coverage - <view>", or "Build coverage" when nothing
+    # is missing). The control is the same one in every case, so this reads it by its stable hook.
+    action=desk.locator('[data-rd-action="build"]').locator('visible=true').first
+    action.wait_for(state='visible', timeout=20000)
     action.scroll_into_view_if_needed()
     settled_floor=page.evaluate("() => document.querySelector('#cb-shell-dock')?.getBoundingClientRect().top ?? innerHeight")
     bounds=action.bounding_box()
