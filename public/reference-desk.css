@@ -244,3 +244,21 @@ body:is(.reference-desk-active,.production-media-active) #modal .rd-confirm-box{
   .rd-coverage-next { width: 100%; justify-content: flex-start; }
   .rd-coverage-next .rd-button { flex: 1 1 100%; }
 }
+/* CONTINUITY_CREATION_TOOLS_CLARITY_V1 — the reference tools page, and nothing else.
+   Every rule is scoped to the tools pane (or the desk's own toolbar) so the Shot Desk stage
+   bar and the other .focused-taskbar consumers are untouched. */
+/* The task bar pins FLUSH to the top of the pane it scrolls in, which is itself flush under the
+   global top bar. It used to inherit the window-level offset (the header's height) inside this
+   nested scroller, so it stuck ~88px down with content scrolling through the gap above it and
+   faintly through its 97% background. Full pane width, opaque, one clear lower edge. The sticky
+   inset is the pane's own 24px padding, so -24px is flush with the pane's top edge. */
+.rd-existing-tools>.bounded-entity-page>.bounded-entity-taskbar { position:sticky; top:-24px; z-index:30; margin:0 -24px 18px; padding:10px 24px; border:0; border-bottom:1px solid #3a3f45; border-radius:0; background:#111315; box-shadow:0 8px 12px -10px rgba(0,0,0,.8); }
+#app[data-surf="light"] .rd-existing-tools>.bounded-entity-page>.bounded-entity-taskbar { background:var(--panel); border-bottom-color:var(--line); }
+@media (max-width:720px) {
+  /* Three tasks on one row: a two-row bar pinned on a phone covered a fifth of the screen. */
+  .rd-existing-tools>.bounded-entity-page>.bounded-entity-taskbar { grid-template-columns:repeat(3,minmax(0,1fr))!important; gap:6px; padding:8px 24px; }
+  .rd-existing-tools .bounded-entity-taskbar .focused-task-button { padding:7px 8px!important; align-items:start; }
+  .rd-existing-tools .bounded-entity-taskbar .focused-task-button b { white-space:normal; overflow-wrap:anywhere; line-height:1.25; }
+  .rd-existing-tools .bounded-entity-taskbar .focused-task-button small { display:none; }
+}
+
