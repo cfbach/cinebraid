@@ -1132,10 +1132,17 @@ controlAsync({
       require(${JSON.stringify(path.join(ROOT, "tests/reference-enrollment.js"))});`;
     const run = spawnSync(process.execPath, ["-e", hook], { cwd: ROOT, encoding: "utf8", env: { ...process.env, EV27_REFERENCE_MEDIA: replacement }, timeout: 120000 });
     const out = String(run.stdout || ""), err = String(run.stderr || "");
-    if (!out.includes("PASS independent views resolve their exact selected assets")) return { reached: false, held: false, reason: "enrollment-suite-did-not-reach-the-check" };
-    const held = run.status === 0 && out.includes("PASS nondefault enrollment preserves the default state's legacy selection");
-    const overwrote = !held && !out.includes("PASS nondefault enrollment preserves") && /old\.png/.test(err);
-    return { reached: true, held, reason: held ? "legacy-selection-preserved" : overwrote ? "nondefault-enrollment-overwrote-the-legacy-selection" : "enrollment-suite-failed-elsewhere" };
+    /* THE VERDICT IS THIS INVARIANT'S OWN CHECK, NOT THE SUITE'S EXIT CODE. On PR #74's Windows runner the suite printed
+       this check's PASS and then failed a later path check (os.tmpdir() carries an 8.3 alias there), and reading that
+       exit code as `held: false` reported a property that holds as one that does not exist. A suite broken elsewhere is
+       a fixture this control cannot vouch for, and says so as a receipt, never as a verdict on the invariant. */
+    const passed = out.split(/\r?\n/).filter((line) => line.startsWith("PASS ")).map((line) => line.slice(5));
+    if (!passed.includes("independent views resolve their exact selected assets")) return { reached: false, held: false, reason: "enrollment-suite-did-not-reach-the-check" };
+    if (passed.includes("nondefault enrollment preserves the default state's legacy selection")) {
+      if (run.status !== 0) throw new Error(`probe receipt: N19's own check passed, then the enrollment suite failed elsewhere (exit ${run.status}${run.signal ? `, ${run.signal}` : ""}), so N19 cannot vouch for its fixture:\n${err.split(/\r?\n/).slice(0, 12).join("\n")}`);
+      return { reached: true, held: true, reason: "legacy-selection-preserved" };
+    }
+    return { reached: true, held: false, reason: /old\.png/.test(err) ? "nondefault-enrollment-overwrote-the-legacy-selection" : "enrollment-suite-failed-elsewhere" };
   },
   reason: "nondefault-enrollment-overwrote-the-legacy-selection",
   explain: "A Weathered binding written over the global slot erases the Default state's selection for every reader that still reads it.",
