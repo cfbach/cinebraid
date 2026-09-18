@@ -137,13 +137,16 @@ const QUARANTINED = [
   },
   {
     suite: "check:h3-motion-handoff",
-    expect: "the frames-to-motion hand-off is disabled",
+    expect: 'resolved to hidden <section class="frames-to-motion-cta state-pass">',
     why: "UNPROVEN: that the Frames workspace hands off into Motion & sound once the required frames are " +
-      "approved. FIRST FAILURE: the CTA renders disabled because no passing frameSequenceReview matches the " +
-      "approved anchors - and approving a frame RENAMES its file to production naming, so a review seeded " +
-      "before the approvals can never match and one written after does not survive to the Frames render. " +
-      "check:h3-browser proves the keyframe panel itself against the same real fixture and five real " +
-      "approvals. Manufacturing the review by hand would mean stamping state the product never produced.",
+      "approved. FIRST FAILURE, re-read for PR #74: the hand-off is no longer held shut - with the required " +
+      "frames approved the section now renders state-pass, its button enabled - but it sits inside the " +
+      "Frames workflow disclosure, which folds once the frames step is complete (the accepted EV2-7 Shot " +
+      "Desk ruling, f8bbde2), so the suite's wait for a VISIBLE .frames-to-motion-cta times out. The " +
+      "hand-off itself stays reachable as the visible \"Continue to Motion & sound\". The claim stays " +
+      "unproven until the suite opens the completed section the way a filmmaker would and presses the " +
+      "hand-off it now finds enabled; that rewrite, and promotion out of quarantine, are follow-up F2. " +
+      "check:h3-browser still proves the keyframe panel itself against the same real fixture.",
   },
 ];
 
