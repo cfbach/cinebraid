@@ -629,7 +629,9 @@ try:
         assert header, "7c. the reference header must still carry its workflow control"
         assert header["labelText"], "7c. the lifecycle control must be labelled, not a bare verdict"
         assert header["labelVisible"], "7c. and the label must be visible, not only an accessible name"
-        assert header["labelText"] == "Design status", "7c. design workflow must be distinguished from image approval"
+        # CONTINUITY_CREATION_TOOLS_CLARITY_V1: "Design status: Signed off" beside "CANON IMAGES 0/2" still
+        # read as a contradiction; the sign-off is the record's design lifecycle, never image approval.
+        assert header["labelText"] == "Design brief", "7c. design workflow must be distinguished from image approval"
         assert header["storedValue"] == header["workflow"]["key"], "7c. visible status must retain the live workflow token"
         assert header["selected"].lower() == header["workflow"]["label"].lower(), "7c. the header must describe the live entity workflow"
         # AND THE STORED TOKEN IS UNTOUCHED. The whole contract is that only the word a
