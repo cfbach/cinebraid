@@ -132,7 +132,16 @@ try:
         # ---- A. the shot workspace loads --------------------------------
         page.goto(f"{base}/#/shot/{SHOT}", wait_until="domcontentloaded")
         page.wait_for_selector("#main", timeout=15000)
-        page.wait_for_timeout(1500)
+        # AT LEAST 1500ms, AND UNTIL THE WORKSPACE HAS PAINTED. #main is in the static page, so
+        # the wait above returns at once; the shot workspace paints only after the project open
+        # commits (/api/project, /api/scan and four more reads, all awaited) and the shot route's
+        # own folder POST answers. PR #74 run #94 read it at 1500ms and found it bare; holding
+        # /api/scan 3s reproduces that exactly. The 1500ms floor stays, so the error checks below
+        # observe at least as long as they always did, and L below is unchanged.
+        settle_from = time.time()
+        while time.time() - settle_from < 15 and len(page.locator("#main").inner_text()) <= 400:
+            page.wait_for_timeout(100)
+        page.wait_for_timeout(max(0, int((1.5 - (time.time() - settle_from)) * 1000)))
         assert not page_errors, f"A: the shot workspace raised uncaught errors: {page_errors}"
         assert not console_errors, \
             f"A: the shot workspace logged console errors: {console_errors}; failed requests: {failed_requests}"
