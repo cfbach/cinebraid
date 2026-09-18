@@ -222,7 +222,19 @@ try:
                     break
             assert found is not None, "the shot's next-action card offered no Add motion control to click"
             found.click()
-            page.wait_for_timeout(1500)
+            # AT LEAST 1500ms, AND UNTIL THE CLICK HAS LANDED - the Motion task showing, or the app's
+            # own refusal. The shot route repaints only after its folder POST answers
+            # (public/views.js), so a slow server keeps Frames on screen: PR #74 run #94 read it at
+            # 1500ms and found Frames, and holding that POST 2s after this suite's save reproduces it
+            # exactly. The 1500ms floor stays, so case 2's refusal check observes at least as long
+            # as it always did, and NC-A still settles on its own "Could not find" toast.
+            clicked_at = time.time()
+            while time.time() - clicked_at < 15:
+                landed = workspace_state()
+                if landed["task"] == "motion" or any("Could not find" in t or "Could not open" in t for t in landed["toasts"]):
+                    break
+                page.wait_for_timeout(100)
+            page.wait_for_timeout(max(0, int((1.5 - (time.time() - clicked_at)) * 1000)))
 
         # ---- the checks, written once so a negative control can demand the
         # ---- same assertion FAIL rather than a paraphrase of it ---------------
