@@ -247,6 +247,7 @@ body:is(.reference-desk-active,.production-media-active) #modal .rd-confirm-box{
 /* CONTINUITY_CREATION_TOOLS_CLARITY_V1 — the reference tools page, and nothing else.
    Every rule is scoped to the tools pane (or the desk's own toolbar) so the Shot Desk stage
    bar and the other .focused-taskbar consumers are untouched. */
+.rd-toolbar-actions a.rd-button { display:inline-flex; align-items:center; justify-content:center; text-decoration:none; color:var(--sd-ink,#edeef0); }
 /* The task bar pins FLUSH to the top of the pane it scrolls in, which is itself flush under the
    global top bar. It used to inherit the window-level offset (the header's height) inside this
    nested scroller, so it stuck ~88px down with content scrolling through the gap above it and
@@ -262,3 +263,61 @@ body:is(.reference-desk-active,.production-media-active) #modal .rd-confirm-box{
   .rd-existing-tools .bounded-entity-taskbar .focused-task-button small { display:none; }
 }
 
+/* Continuity states: a section of Production needs, not a fold inside Coverage detail. */
+.rd-existing-tools .continuity-states { display:grid; gap:12px; margin:18px 0; }
+.rd-existing-tools .continuity-states-lead { display:flex; align-items:center; justify-content:space-between; gap:12px; flex-wrap:wrap; }
+.rd-existing-tools .continuity-states-lead h3 { margin:0; font:600 16px/1.3 var(--body); letter-spacing:0; text-transform:none; color:var(--ink); }
+.rd-existing-tools .continuity-states-lead button { width:auto; }
+.rd-existing-tools .continuity-states-empty { margin:0; font-size:13px; line-height:1.5; color:var(--muted); }
+.rd-existing-tools .continuity-state-rail { margin:0; }
+.rd-existing-tools .continuity-state-rail small { white-space:normal; overflow-wrap:anywhere; }
+
+/* One state, one workspace: name and status, what changes, the next action, the prompt, candidates. */
+.rd-existing-tools .cs-workspace { display:grid; gap:14px; padding:18px; border:1px solid var(--line); border-radius:12px; background:var(--surface-2,var(--panel)); scroll-margin-top:100px; }
+.rd-existing-tools .cs-head { display:flex; gap:14px; align-items:center; min-width:0; }
+.rd-existing-tools .cs-head>div { display:grid; gap:2px; flex:1; min-width:0; }
+.rd-existing-tools .cs-thumb { flex:0 0 auto; width:96px; height:72px; padding:0; border:1px solid var(--line); border-radius:8px; overflow:hidden; background:#08090a; cursor:zoom-in; }
+.rd-existing-tools .cs-thumb img,.rd-existing-tools .cs-thumb video { display:block; width:100%; height:100%; object-fit:contain; }
+.rd-existing-tools .cs-name { width:100%; min-width:0; margin:0 0 0 -7px; padding:2px 6px; border:1px solid transparent; border-radius:6px; background:transparent; color:var(--ink); font:600 20px/1.3 var(--body); letter-spacing:-.01em; }
+.rd-existing-tools .cs-name:hover { border-color:var(--line); }
+.rd-existing-tools .cs-name:focus { border-color:var(--line-2,var(--line)); background:var(--panel); }
+.rd-existing-tools .cs-status { display:flex; align-items:center; gap:7px; margin:0; font-size:13px; line-height:1.4; color:var(--muted); }
+.rd-existing-tools .cs-status::before { content:""; flex:0 0 7px; height:7px; border-radius:50%; background:var(--muted); }
+.rd-existing-tools .cs-status.tone-complete::before { background:var(--green); }
+.rd-existing-tools .cs-status.tone-pending::before { background:var(--blue); }
+.rd-existing-tools .cs-status.tone-attention::before { background:var(--amber); }
+.rd-existing-tools .cs-parent { margin:0; font-size:13px; line-height:1.55; color:var(--text); }
+.rd-existing-tools .cs-workspace .continuity-state-delta { display:grid; gap:6px; }
+.rd-existing-tools .cs-workspace .continuity-state-delta>span { font:500 13px/1.4 var(--body); letter-spacing:0; text-transform:none; color:var(--text); }
+.rd-existing-tools .cs-next { display:flex; flex-wrap:wrap; align-items:center; justify-content:space-between; gap:10px 16px; padding:10px 12px; border-left:3px solid var(--amber); border-radius:0 8px 8px 0; background:color-mix(in srgb,var(--amber) 7%,transparent); }
+.rd-existing-tools .cs-next p { margin:0; flex:1 1 260px; font-size:13px; line-height:1.5; color:var(--ink); }
+.rd-existing-tools .cs-next b { margin-right:6px; }
+.rd-existing-tools .cs-next button { width:auto; }
+.rd-existing-tools .cs-workspace .entity-state-generation { display:grid; gap:12px; border:0; border-radius:0; background:none; overflow:visible; }
+.rd-existing-tools .cs-workspace .creation-actions { justify-content:flex-start; margin:0; }
+.rd-existing-tools .cs-workspace .creation-actions button { width:auto; min-height:40px; font:600 13px/1.3 var(--body); letter-spacing:0; text-transform:none; }
+.rd-existing-tools .cs-workspace .continuity-candidate-tray { margin:0; border-radius:10px; }
+.rd-existing-tools .continuity-candidate-tray>header { align-items:center; padding:10px 14px; }
+.rd-existing-tools .continuity-candidate-tray>header h4 { display:flex; align-items:center; gap:8px; margin:0; font:600 14px/1.3 var(--body); letter-spacing:0; color:var(--ink); }
+.rd-existing-tools .continuity-candidate-tray>header h4 span { font:600 12px/1 var(--mono); letter-spacing:0; color:var(--muted); }
+.rd-existing-tools .continuity-candidate-tray>header button { width:auto; }
+.rd-existing-tools .continuity-candidate-empty { margin:0; padding:12px 14px; font-size:13px; line-height:1.5; color:var(--muted); }
+
+/* Everything specialist, behind one disclosure. */
+.rd-existing-tools .continuity-advanced { border:1px solid var(--line); border-radius:10px; background:var(--panel-2,var(--panel)); }
+.rd-existing-tools .continuity-advanced>summary { padding:12px 14px; cursor:pointer; font:600 14px/1.3 var(--body); color:var(--text); }
+.rd-existing-tools .continuity-advanced[open]>summary { border-bottom:1px solid var(--line); }
+.rd-existing-tools .continuity-advanced-body { display:grid; gap:20px; padding:14px; }
+.rd-existing-tools .continuity-advanced-group { display:grid; gap:10px; min-width:0; }
+.rd-existing-tools .continuity-advanced-group>h4 { margin:0; font:600 13px/1.3 var(--body); letter-spacing:0; text-transform:none; color:var(--muted); }
+.rd-existing-tools .continuity-advanced-group>button { justify-self:start; width:auto; }
+.rd-existing-tools .state-prompt-options { display:grid; grid-template-columns:repeat(auto-fit,minmax(240px,1fr)); gap:12px; align-items:start; }
+.rd-existing-tools .state-prompt-options>.field { display:grid; gap:6px; min-width:0; align-content:start; }
+/* One label convention across the workspace and its options: sentence case, body font. */
+.rd-existing-tools .state-prompt-options>.field>label,.rd-existing-tools .continuity-advanced .continuity-state-scope>label { font:500 13px/1.4 var(--body); letter-spacing:0; text-transform:none; color:var(--text); margin:0; }
+@media (max-width:720px) {
+  .rd-existing-tools .cs-workspace { padding:14px; }
+  .rd-existing-tools .cs-thumb { width:72px; height:54px; }
+  .rd-existing-tools .cs-name { font-size:18px; }
+  .rd-existing-tools .continuity-state-rail { grid-template-columns:1fr 1fr; }
+}

@@ -301,9 +301,13 @@ try:
         assert outcome_count(page, 'expected') == 2
 
         # 14. an entity tracking choice persists too
-        page.goto(f'{BASE}/?audit=prop#/prop/PROP-WATCH', wait_until='domcontentloaded', timeout=30000)
+        # CONTINUITY_CREATION_TOOLS_CLARITY_V1 — tracking lives in the reference tools' Production
+        # needs, inside the continuity section's one Advanced disclosure.
+        page.goto(f'{BASE}/?audit=prop#/prop/PROP-WATCH/tools', wait_until='domcontentloaded', timeout=30000)
         page.wait_for_function("document.body.dataset.renderReady === '1'", timeout=30000)
-        page.evaluate("selectBoundedItem('entity-coverage-view','props:PROP-WATCH','states')")
+        page.evaluate("selectBoundedTask('entity-task','props:PROP-WATCH','coverage')")
+        page.wait_for_selector('details.continuity-advanced > summary', timeout=10000)
+        page.locator('details.continuity-advanced > summary').first.click()
         page.wait_for_selector('.continuity-tracking', timeout=10000)
         page.locator('.continuity-tracking').first.click()
         page.wait_for_timeout(120)

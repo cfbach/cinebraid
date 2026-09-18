@@ -199,23 +199,21 @@ try:
         page.evaluate("closeModal()")
         if SCREENSHOT_DIR:
             page.screenshot(path=str(pathlib.Path(SCREENSHOT_DIR) / "reference-builder-after-generate.png"), full_page=True)
-        # Continuity-state prompt actions use a second nested disclosure stack.
+        # Continuity-state prompt actions: the chosen state's workspace, directly under Production needs.
         page.evaluate("""() => {
           boundedWriteState('selected:entity-coverage-view','props:PROP-PARCEL','states');
           boundedWriteState('selected:continuity-state','props:PROP-PARCEL','state-open');
           selectBoundedTask('entity-task','props:PROP-PARCEL','coverage');
         }""")
-        page.wait_for_timeout(350)
-        continuity = page.locator("details.continuity-states")
-        state_builder = page.locator("details.entity-state-generation")
-        continuity.evaluate("e=>e.open=true"); state_builder.evaluate("e=>e.open=true"); page.wait_for_timeout(70)
+        state_builder = page.locator('[data-reference-tools] .entity-state-generation[data-entity-state-generation="state-open"]')
+        state_builder.wait_for(state="visible")
         state_builder.evaluate("e=>e.scrollIntoView({block:'start'})"); page.wait_for_timeout(70)
         # Keep the 18px stability contract, separating deliberate result reveal
         # from restoration. Baseline only after the real button is actionable.
         def state_measure():
             return page.evaluate("""() => {
               const pane=document.querySelector('[data-reference-tools]');
-              return {top:document.querySelector('details.entity-state-generation').getBoundingClientRect().top,
+              return {top:document.querySelector('.entity-state-generation').getBoundingClientRect().top,
                 scroll:pane.scrollTop, route:location.hash};
             }""")
 
@@ -225,7 +223,7 @@ try:
             assert abs(after['scroll']-before['scroll']-reveal)<=18, "State prompt reset its scrolling container"
 
         def state_prompt_action(name, prove_reset=False):
-            target=page.locator('details.entity-state-generation').get_by_role('button',name=name,exact=True)
+            target=state_builder.get_by_role('button',name=name,exact=True)
             target.evaluate("e=>e.scrollIntoView({block:'center'})")
             page.evaluate("() => new Promise(r=>requestAnimationFrame(()=>requestAnimationFrame(r)))")
             before=state_measure()
@@ -251,7 +249,7 @@ try:
                   const top=Math.max(bounds.top,bar&&bar.top<=bounds.top+bar.height?bar.bottom:bounds.top);
                   const bottom=Math.min(bounds.bottom,innerHeight),a=this.getBoundingClientRect(),b=pre.getBoundingClientRect();
                   const start=Math.min(a.top,b.top),end=Math.max(a.bottom,b.bottom);
-                  window.__statePromptReveals.push({top:document.querySelector('details.entity-state-generation').getBoundingClientRect().top,
+                  window.__statePromptReveals.push({top:document.querySelector('.entity-state-generation').getBoundingClientRect().top,
                     scroll:pane.scrollTop,route:location.hash,
                     reveal:start<top?start-top:end>bottom?Math.min(end-bottom,start-top):0});
                 }
@@ -265,8 +263,7 @@ try:
                 restored=page.evaluate("window.__statePromptReveals.at(-1)")
                 assert_state_anchor(before,restored)
                 assert_state_anchor(before,state_measure(),restored['reveal'])
-                assert page.locator('details.continuity-states').evaluate('e=>e.open')
-                assert page.locator('details.entity-state-generation').evaluate('e=>e.open')
+                assert page.locator('[data-continuity-state-id="state-open"] .entity-state-generation').is_visible()
                 assert page.evaluate("document.activeElement.textContent.trim().toUpperCase()==='COPY'")
                 assert page.locator('.entity-state-prompt-result pre').evaluate("""e=>{
                   const r=e.getBoundingClientRect(),p=e.closest('[data-reference-tools]').getBoundingClientRect();

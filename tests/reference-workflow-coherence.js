@@ -443,31 +443,30 @@ function testActiveRunIsVisible() {
 /* ---- H1 — the derived-state screen leads with the creation task ---------- */
 function testDerivedStateLeadsWithCreation() {
   const entities = code(source("entities.js"));
-  ok(/const stateAdminMarkup = st && !st\.isDefault/.test(entities),
-    "H1: a derived state files its state-management controls under one disclosure");
-  ok(/<details class="continuity-state-admin"><summary>State details, requirements and validation<\/summary>/.test(entities),
-    "H1: named for what it holds, so nothing is hidden by accident");
-  /* NOTHING IS DELETED. The same validation markup and the same applies-to /
-     requirement writers are still rendered, just inside the disclosure. */
-  /* C10 added state deletion to the same disclosure; validation and the scope
-     fields are still there, in the same place, which is what this checks. */
-  ok(/<div>\$\{continuityStateValidationMarkup\(list, it, st, media, false\)\}\$\{stateScopeFields\}/.test(entities),
-    "H1: parent-to-state validation and the scope fields are still present, one rank down");
-  ok(/setContinuityState\('\$\{list\}','\$\{it\.id\}',\$\{selectedIndex\},'appliesTo'/.test(entities)
+  /* CONTINUITY_CREATION_TOOLS_CLARITY_V1 — the "state details, requirements and
+     validation" fold became part of the continuity section's ONE Advanced disclosure,
+     alongside the other specialist controls. What H1 protects is unchanged: the
+     creation task leads, and management is one rank down, nothing removed. */
+  ok(/function continuityStatesAdvancedMarkup\(list, it, st, index, media\)/.test(entities)
+    && /<details class="continuity-advanced" [^`]*<summary>Advanced<\/summary>/.test(entities),
+    "H1: a state files its state-management controls under one disclosure");
+  ok(/group\("Approval and validation", `\$\{choose\}\$\{st\.isDefault \? "" : continuityStateValidationMarkup\(list, it, st, media, false\)\}`\)/.test(entities)
+    && /group\("State details", `\$\{scope\}\$\{remove\}`\)/.test(entities),
+    "H1: parent-to-state validation and the scope fields are still present, one rank down, named for what they hold");
+  ok(/setContinuityState\('\$\{list\}','\$\{it\.id\}',\$\{index\},'appliesTo'/.test(entities)
     && /'referenceRequirement',this\.value/.test(entities),
     "H1: and still write through exactly the writers they wrote through before");
-  /* THE DEFAULT STATE IS OUT OF SCOPE AND STAYS FLAT. */
-  ok(/: `\$\{continuityStateValidationMarkup\(list, it, st, media\)\}\$\{stateScopeFields\}\$\{stateDeltaField\}`/.test(entities),
-    "H1: the Default state keeps the flat composition it shipped with");
-  /* ONE DELTA EDITOR. The lead owns it once a source exists; before that the
-     standalone field does, because a derived run is refused without a delta. */
-  ok(/\$\{stateLeadMarkup\}\$\{stateLeadMarkup \? "" : stateDeltaField\}/.test(entities),
-    "H1: exactly one delta editor exists, wherever the task currently is");
-  ok(/class="state-source-delta"/.test(entities),
-    "H1: and inside the lead it is editable, not a read-only restatement");
+  /* Validation compares a state with its parent; the Default has none, so it is never offered it. */
+  ok(/st\.isDefault \? "" : continuityStateValidationMarkup\(list, it, st, media, false\)/.test(entities),
+    "H1: the Default state is not offered parent validation");
+  /* ONE DELTA EDITOR, in the workspace, for every state. */
+  ok((entities.match(/class="state-source-delta"/g) || []).length === 1
+    && /onchange="setContinuityState\('\$\{list\}','\$\{it\.id\}',\$\{index\},'notes',this\.value\)"/.test(entities),
+    "H1: exactly one delta editor exists, and it is editable, not a read-only restatement");
   /* The lineage question is the task when it is unanswered, so it is not filed away. */
-  ok(/const stateLineagePrompt = st && !st\.isDefault \? continuityStateDerivationMarkup\(list, it, st\) : "";/.test(entities),
-    "H1: recording the source stays at full rank, because it is the next task");
+  ok(/const lineage = st\.isDefault \? "" : continuityStateDerivationMarkup\(list, it, st\);/.test(entities)
+    && /\$\{lineage\}\$\{delta\}\$\{next\}/.test(entities),
+    "H1: recording the source stays at full rank, ahead of the change, because it is the next task");
 }
 
 /* ---- H2 — readable note, subordinate provenance, honest editor ---------- */
@@ -1177,10 +1176,10 @@ function testStateDeletionIsFiledUnderAdmin() {
   const entities = code(source("entities.js"));
   ok(!/continuity-state-head-actions[\s\S]{0,1600}?removeContinuityState/.test(entities),
     "C10: deleting a state is no longer a bare glyph in the state header");
-  ok(/const stateDeleteMarkup = st && !st\.isDefault/.test(entities),
+  ok(/const remove = st\.isDefault \? "" : `<div class="continuity-state-destructive">/.test(entities),
     "C10: it is built as its own labelled control");
-  ok(/\$\{stateScopeFields\}\$\{stateDeleteMarkup\}<\/div><\/details>/.test(entities),
-    "C10: and rendered inside the state details / validation disclosure");
+  ok(/group\("State details", `\$\{scope\}\$\{remove\}`\)/.test(entities),
+    "C10: and rendered with the state details, inside the Advanced disclosure");
   /* SAME HANDLER, SAME SEMANTICS — only its rank moved. */
   const calls = (entities.match(/removeContinuityState\(/g) || []).length;
   ok(calls === 1, "C10: there is exactly one call site, and it is the shipped handler");

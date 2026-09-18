@@ -76,8 +76,8 @@ assert(app.includes('normalizedCoverageAlias'));
 assert(app.includes('Imported view detail:'), 'descriptive imported coverage requirements must become slot notes rather than duplicate required slots');
 
 assert(entities.includes('Generate continuity-state variant'), 'optional assisted tools must expose alternate costume/state generation');
-assert(entities.includes('GENERATE FROM ${esc(parentInfo.label.toUpperCase())}'), 'empty state cards must expose parent-derived generation');
-assert(entities.includes('UPLOAD STATE REFERENCE'), 'empty state cards must expose targeted state upload');
+assert(entities.includes('assetStatePromptStudio(list, it, st)') && entities.includes('Use approved ${esc(row.parentLabel)} reference to generate'), 'empty state cards must expose parent-derived generation');
+assert(entities.includes(`openStateReferenceUpload('\${attr(list)}','\${attr(entity.id)}','\${attr(state.id)}')">Upload image</button>`), 'empty state cards must expose targeted state upload');
 assert(entities.includes('openContinuityStateVariantHub'), 'state variant chooser must be available from the creation hub');
 assert(coverage.includes('No automatic guess'), 'character primary references must require explicit angle assignment');
 /* The legacy silent angle is still detected on load — that has not changed —

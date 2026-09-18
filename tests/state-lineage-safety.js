@@ -386,7 +386,10 @@ ok(!/continuityStates\.splice\(/.test(entitiesSource.replace(/\/\*[\s\S]*?\*\//g
 
 const studioSource = read("public/creation-studio.js");
 ok(!/entityStateParentOptions/.test(studioSource), "the reparent dropdown is gone");
-ok(/entityStateDerivationSummary/.test(studioSource),
+/* CONTINUITY_CREATION_TOOLS_CLARITY_V1 — the separate DERIVES FROM block became the
+   workspace's delta label and its one derivation sentence; the parent is still named, and
+   still not a control. */
+ok(/function assetStateDerivationSentence\(/.test(studioSource) && /What changes from \$\{parentName\}/.test(entitiesSource),
   "replaced by a statement of what the state derives from — production truth stays on screen, it just stops being editable");
 
 console.log(`State-lineage suite passed ${checks} checks: ancestry and descendants including on already-damaged data, ancestors never offered as continuations, a finished chain completing instead of wrapping to the root, navigation refusing to reparent, every permitted write proven cycle-free by exhaustion, derivation direction read from the graph, and the reveal opening the workspace that contains the editor.`);

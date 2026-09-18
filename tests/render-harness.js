@@ -1061,10 +1061,11 @@ async function main() {
   assert(stateCandidateRender.html.includes("Rejected candidates"), "rejected generations must collapse outside the active candidate grid");
   assert(stateCandidateRender.html.includes("CONTINUITY · DAMAGED"), "state-generated candidates must visibly name their intended approval target");
   const stateRender = await render("#/prop/PR-TOOL", stateFixture, { scan: stateScan, storage: { "cinebraid-focused:fixture:entity-task:props:PR-TOOL": "states", "cinebraid-bounded:fixture:selected:continuity-state:props:PR-TOOL": "state-damaged" } });
-  assert(stateRender.html.includes("STATE REFERENCE GENERATION"), "state task must expose each continuity-state generation workflow");
-  assert(stateRender.html.includes("GENERATED FOR THIS STATE") && stateRender.html.includes("Damaged candidates"), "continuity-state tab must show candidates targeted to the selected state");
+  assert(stateRender.html.includes('<section class="entity-state-generation" data-entity-state-generation="state-damaged">'), "state task must expose the chosen continuity-state's generation workflow");
+  const stateTray = stateRender.html.slice(stateRender.html.indexOf('<section class="continuity-candidate-tray">'));
+  assert(stateTray.startsWith('<section class="continuity-candidate-tray"><header><h4>Candidates') && stateTray.includes("CONTINUITY · DAMAGED"), "continuity-state workspace must show candidates targeted to the selected state");
   assert(stateRender.html.includes("Build state prompt"), "continuity-state workflow must expose prompt compilation");
-  assert(stateRender.html.includes("DERIVE FROM DEFAULT"), "non-default continuity states should visibly derive from their approved parent");
+  assert(stateRender.html.includes("Generation edits the approved Default image"), "non-default continuity states should visibly derive from their approved parent");
   assert(stateRender.html.includes("Continuity-state chain"), "entity pages must expose durable continuity-state chain automation");
   assert(stateRender.html.includes("PLAN STATE CHAIN"), "entity state chains must have an explicit planning action");
   const dependencyOrder = vm.runInContext(`(() => { const e=P.props.find((item)=>item.id==='PR-TOOL'); const d=e.continuityStates.find((state)=>state.isDefault); e.approvedFile=''; d.approvedFile=''; return v626StateOrder(e,['state-damaged']); })()`, stateRender.context);

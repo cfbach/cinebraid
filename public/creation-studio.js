@@ -734,25 +734,33 @@ function assetStatePromptProfile(list, entity, state) {
     || entity.assetPromptProfile || P.meta?.promptDefaults?.imageProfile || "";
   return preferredCreationProfile(mode, selected);
 }
-/* WHAT THIS STATE DERIVES FROM. A STATEMENT, NOT A CONTROL.
+/* CONTINUITY_CREATION_TOOLS_CLARITY_V1 — ONE STATEMENT OF HOW THIS STATE WILL BE MADE.
 
-   BATCH 1C: there was a dropdown here, and choosing a descendant from it closed
-   a cycle in the derivation graph. Rather than filter the list and validate the
-   write, alpha removes the operation — a state's derivation is chosen when the
-   state is created and does not change afterwards. The creator still sees what
-   it derives from, because that is production truth and belongs on screen; they
-   simply cannot rewrite it here. To derive differently, create a state from the
-   parent you want. */
-function entityStateDerivationSummary(entity, state) {
-  const states = entityStateListRead(entity, true);
-  const parent = states.find((item) => item.id === state.parentStateId && item.id !== state.id) || null;
-  if (state.isDefault) {
-    return `<div class="entity-state-derivation is-root"><span>BASE REFERENCE</span><b>The root of this chain</b><small>Every other state derives from this one, directly or through another.</small></div>`;
-  }
-  return `<div class="entity-state-derivation"><span>DERIVES FROM</span><b>${esc(parent?.name || "No declared parent")}</b><small>${parent
-    ? "Chosen when this state was created. To derive from a different reference, create a new state from that one."
-    : "This state records no parent. Create a new state from the reference it should derive from."}</small></div>`;
+   The panel used to say it three ways at once, and they disagreed: the mode select
+   read "Derive from approved state", a banner said PARENT NOT APPROVED … will create
+   independently, and the summary badge said INDEPENDENT. All three are the same fact,
+   and assetStateDerivation() above already owns it — `requested` is the creator's
+   stored choice, `canDerive` is whether the approved parent exists to honour it.
+   This is that one answer in words. It decides nothing and writes nothing.
+
+   The derivation itself is still chosen when a state is created and is not
+   rewritten here (Batch 1C): the parent is named, never offered as a control. */
+function assetStateDerivationSentence(list, entity, state) {
+  if (!state || state.isDefault) return "";
+  const derivation = assetStateDerivation(list, entity, state);
+  const parent = derivation.parent?.name || "";
+  if (!parent) return "";
+  if (derivation.canDerive) return `Generation edits the approved ${parent} image and applies only this change.`;
+  if (derivation.reason === "independent-by-choice") return `Set to create independently, without editing the ${parent} image.`;
+  return derivation.reason === "parent-not-canon"
+    ? `${parent} is not approved, so this state will be created independently.`
+    : `${parent} has no approved image, so this state will be created independently.`;
 }
+/* The prompt controls that stay in the ordinary workspace: build, improve, the
+   result. Same writers, same compile route, same reveal — the element that carries
+   `data-entity-state-generation` is what preservePreparedReferenceContext() finds,
+   so the prepared-prompt reveal and COPY focus are unchanged. It is a section now,
+   not a disclosure: the owner's route ended on a closed fold, one click short. */
 function assetStatePromptStudio(list, entity, state) {
   if (!state || list === "audio") return "";
   const builds = assetStatePromptBuilds(state);
@@ -760,33 +768,30 @@ function assetStatePromptStudio(list, entity, state) {
   const operation = guidedPromptOp("asset-state", `${list}:${entity.id}`, state.id);
   const busy = operation?.status === "busy";
   const action = operation?.action || "compile";
-  const derivation = assetStateDerivation(list, entity, state);
-  const mode = derivation.requested;
-  const parentInfo = assetStateParentMedia(list, entity, state);
-  const deriveReady = derivation.canDerive;
-  const effectiveMode = derivation.mode;
-  const promptMode = assetStatePromptMode(list, entity, state);
-  const selected = assetStatePromptProfile(list, entity, state);
-  const sectionKey = `entity:${list}:${entity.id}:state-generation:${state.id}`;
   const progress = busy
     ? assistantWorkingCard(action === "improve" ? `Improving the ${state.name || "continuity"} state prompt…` : `Compiling the ${state.name || "continuity"} state prompt…`, action === "improve" ? "The assistant may take up to three minutes per attempt. It is checking the state delta against the parent reference and validating a complete response." : "The rules-based compiler is assembling the state prompt without calling the assistant.", { mode: action === "improve" ? "assistant" : "compile" })
     : operation?.status === "error"
       ? guidedPromptErrorMarkup(operation.error, `buildEntityStatePrompt('${list}','${entity.id}','${state.id}',${action === "improve" ? "true" : "false"})`)
       : "";
-  const derivationNote = state.isDefault
-    ? `<div class="entity-state-generation-status independent"><b>BASE REFERENCE</b><span>Creates the main approved design from the reference’s canon description.</span></div>`
-    : deriveReady
-      ? `<div class="entity-state-generation-status derive"><b>DERIVE FROM ${esc((parentInfo.parent?.name || "PARENT").toUpperCase())}</b><span>${esc(parentInfo.file)} is used as the editable identity/design base.</span></div>`
-      : mode === "derive" && derivation.reason === "parent-not-canon"
-        ? `<div class="entity-state-generation-status warning"><b>PARENT NOT APPROVED</b><span>${esc(derivation.contextFile)} is on ${esc(parentInfo.parent?.name || "the parent state")} but nobody has approved it as canon, so CineBraid will create independently. Approve it to derive from it.</span></div>`
-      : mode === "derive"
-        ? `<div class="entity-state-generation-status warning"><b>PARENT REFERENCE MISSING</b><span>CineBraid will create independently until ${esc(parentInfo.parent?.name || "the parent state")} has an approved image.</span></div>`
-        : `<div class="entity-state-generation-status independent"><b>CREATE INDEPENDENTLY</b><span>Uses the reference’s canon description and this state’s changes, with no parent image to edit.</span></div>`;
-  const modeNote = `<div class="state-generation-guidance"><div><b>Manual generate</b><span>Returns one candidate batch only.</span></div><div><b>Automate state</b><span>Runs review → revise → retry. Quick actions can also generate three more candidates or improve the prompt and regenerate.</span></div></div>`;
-  const explicitlyOpened = workspaceSectionOpen(sectionKey, false);
-  const assistedOpen = busy || operation?.status === "error" || explicitlyOpened || (!manualFirstWorkflow() && !!(latest || !state.approvedFile));
-  const heading = manualFirstWorkflow() ? `Optional assisted creation for ${state.name || "this state"}` : `Build, improve and generate ${state.name || "this state"}`;
-  return `<details class="entity-state-generation" data-entity-state-generation="${attr(state.id)}" ${assistedOpen ? "open" : ""} ontoggle="rememberWorkspaceSection('${attr(sectionKey)}',this.open)"><summary><div><span>STATE REFERENCE GENERATION</span><b>${esc(heading)}</b></div><span>${effectiveMode === "derive" ? "PARENT EDIT" : "INDEPENDENT"}</span></summary><div class="entity-state-generation-body">${derivationNote}${modeNote}<div class="two-col">${state.isDefault ? "" : `<label><span>Generation mode</span><select onchange="setContinuityStateGeneration('${list}','${entity.id}','${state.id}','generationMode',this.value)"><option value="derive" ${mode === "derive" ? "selected" : ""}>Derive from approved state</option><option value="independent" ${mode === "independent" ? "selected" : ""}>Create independently</option></select></label>${entityStateDerivationSummary(entity, state)}`}${field("Prompt target", `<select onchange="setContinuityStateGeneration('${list}','${entity.id}','${state.id}','assetPromptProfile',this.value)">${creationProfileOptions(promptMode, selected)}</select>`)}${field("Additional state direction", `<textarea placeholder="Optional framing or state-specific instructions beyond the delta above" onchange="setContinuityStateGeneration('${list}','${entity.id}','${state.id}','assetPromptNotes',this.value)">${esc(state.assetPromptNotes || "")}</textarea>`)}</div><div class="creation-actions"><button class="assemble-btn" ${busy ? "disabled" : ""} onclick="buildEntityStatePrompt('${list}','${entity.id}','${state.id}',false)">${busy && action === "compile" ? `<span class="spin">◌</span> Compiling…` : "Build state prompt"}</button><button class="ghost-btn" ${busy ? "disabled" : ""} onclick="buildEntityStatePrompt('${list}','${entity.id}','${state.id}',true)"${aiDisabledAttrs("text")}>${busy && action === "improve" ? `<span class="spin">◌</span> Improving…` : "Improve"}</button></div>${typeof entityStateAutomationPanel === "function" ? entityStateAutomationPanel(list, entity, state) : ""}${progress}${latest ? assetStatePromptResult(list, entity, state, latest) : `<div class="creation-empty-result">No ${esc(state.name || "state")} prompt compiled yet. The state changes above are combined with the reference’s canon description.</div>`}</div></details>`;
+  return `<section class="entity-state-generation" data-entity-state-generation="${attr(state.id)}"><div class="creation-actions"><button class="assemble-btn" ${busy ? "disabled" : ""} onclick="buildEntityStatePrompt('${list}','${entity.id}','${state.id}',false)">${busy && action === "compile" ? `<span class="spin">◌</span> Compiling…` : "Build state prompt"}</button><button class="ghost-btn" ${busy ? "disabled" : ""} onclick="buildEntityStatePrompt('${list}','${entity.id}','${state.id}',true)"${aiDisabledAttrs("text")}>${busy && action === "improve" ? `<span class="spin">◌</span> Improving…` : "Improve"}</button></div>${progress}${latest ? assetStatePromptResult(list, entity, state, latest) : ""}</section>`;
+}
+/* The prompt OPTIONS, for the workspace's Advanced disclosure. Every control writes
+   through setContinuityStateGeneration exactly as before. The mode select states its
+   condition in its own words, so it cannot read "derive" beside a parent that cannot
+   be derived from: the stored choice is shown as the choice it is, and the sentence
+   above says what will actually happen. */
+function assetStatePromptOptions(list, entity, state) {
+  if (!state || list === "audio") return "";
+  const derivation = assetStateDerivation(list, entity, state);
+  const parent = derivation.parent?.name || "the parent state";
+  const deriveLabel = derivation.canDerive || derivation.reason === "independent-by-choice"
+    ? `Derive from ${parent}`
+    : derivation.reason === "parent-not-canon" ? `Derive from ${parent} once it is approved`
+      : derivation.parent ? `Derive from ${parent} once it has an approved image` : "Derive from a parent state";
+  const promptMode = assetStatePromptMode(list, entity, state);
+  const selected = assetStatePromptProfile(list, entity, state);
+  const mode = state.isDefault ? "" : field("Generation mode", `<select onchange="setContinuityStateGeneration('${list}','${entity.id}','${state.id}','generationMode',this.value)"><option value="derive" ${derivation.requested === "derive" ? "selected" : ""}>${esc(deriveLabel)}</option><option value="independent" ${derivation.requested === "independent" ? "selected" : ""}>Create independently</option></select>`);
+  return `<div class="state-prompt-options">${field("Prompt target", `<select onchange="setContinuityStateGeneration('${list}','${entity.id}','${state.id}','assetPromptProfile',this.value)">${creationProfileOptions(promptMode, selected)}</select>`)}${mode}${field("Additional state direction", `<textarea placeholder="Optional framing or state-specific instructions beyond the change above" onchange="setContinuityStateGeneration('${list}','${entity.id}','${state.id}','assetPromptNotes',this.value)">${esc(state.assetPromptNotes || "")}</textarea>`)}</div>`;
 }
 function assetStatePromptResult(list, entity, state, build) {
   const manual = `<button class="chip" onclick="downloadAssetStatePrompt('${list}','${entity.id}','${state.id}','${build.id}')">Download</button>`;

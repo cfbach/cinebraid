@@ -31,7 +31,7 @@ for (const label of ["Primary reference", "Production needs", "Details & history
   assert(entities.includes(`label:"${label}"`), `missing ${label} reference workspace`);
 assert(!entities.includes('label:manualFirstWorkflow()?"Choose & approve":"Review"'), "Choose & approve must no longer be a peer top-level reference stage");
 assert(entities.includes('review:"reference"'), "a stored or handed-off `review` selection must resolve onto the reference that owns candidate review");
-assert(entities.includes("bounded-single-state"), "continuity states must render one editor at a time");
+assert(entities.includes("const workspace = st ? continuityStateWorkspaceMarkup(list, it, st, selectedIndex, media, stateTruth, demand) : \"\";"), "continuity states must render one editor at a time");
 assert(entities.includes("selected:continuity-state"), "continuity state selection must persist");
 assert(!entities.includes('label:"Approved",detail:'), "Approved must be a status, not a workspace");
 

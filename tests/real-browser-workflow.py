@@ -280,23 +280,19 @@ try:
         coverage_task = page.locator(".bounded-entity-taskbar button", has_text="Production needs")
         assert coverage_task.count(), "Production needs workspace is missing"
         coverage_task.first.click()
-        page.wait_for_timeout(250)
-        open_coverage_detail()
-        states_tab = page.locator(".entity-subworkspace-tabs button", has_text="Continuity states")
-        assert states_tab.count(), "Continuity states subworkspace is missing"
-        states_tab.first.click()
-        page.wait_for_timeout(300)
+        page.wait_for_selector('[data-bounded-task="coverage"] [data-entity-continuity="characters:CHAR-AUDIT"]', timeout=10000)
+        # CONTINUITY_CREATION_TOOLS_CLARITY_V1 — continuity states are a section of Production
+        # needs, not a Coverage detail tab: choose the state on its rail, and its workspace
+        # (with Build state prompt) opens. The prompt target lives in its Advanced disclosure.
+        page.locator(".continuity-state-rail button", has_text="After the night's work").first.click()
         state_panel = page.locator('.entity-state-generation[data-entity-state-generation="state-night"]')
-        assert state_panel.count(), "derived continuity-state panel is missing"
-        # Manual-first keeps assisted state creation collapsed until deliberately opened.
-        state_panel.evaluate("node => { node.open = true; node.dispatchEvent(new Event('toggle')); }")
-        page.wait_for_timeout(100)
-        assert state_panel.locator("option:checked", has_text="GPT Image 2 — Reference Edit").count(), "derived state did not default to the edit/reference profile"
+        state_panel.wait_for(state="visible", timeout=10000)
+        assert page.locator("details.continuity-advanced option:checked", has_text="GPT Image 2 — Reference Edit").count(), "derived state did not default to the edit/reference profile"
         state_panel.get_by_text("Build state prompt", exact=True).click()
         page.wait_for_selector('.entity-state-generation[data-entity-state-generation="state-night"] .entity-state-prompt-result', timeout=10000)
         assert audit_mode["compiledProfile"] == "gpt-image-2/edit", f"real-browser state prompt compiled with {audit_mode['compiledProfile']}"
-        assert page.locator('[data-entity-continuity="characters:CHAR-AUDIT"][open]').count(), "Continuity States collapsed after prompt build"
-        assert page.locator('[data-entity-state-generation="state-night"][open]').count(), "selected state generation panel collapsed after prompt build"
+        assert page.locator('[data-entity-continuity="characters:CHAR-AUDIT"]').is_visible(), "Continuity States left the page after prompt build"
+        assert state_panel.is_visible(), "selected state's prompt controls left the page after prompt build"
         checkpoint("state prompt complete")
         page.evaluate("""() => {
           const entity=P.characters.find(x=>x.id==='CHAR-AUDIT');

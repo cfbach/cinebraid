@@ -51,8 +51,8 @@ async function testDerivedProfilePromptAndPersistence() {
     scan: scan(),
     storage: {
       "cinebraid-focused:fixture:entity-task:characters:CHAR-NORA": "states",
-      "cinebraid-section:fixture:entity:characters:CHAR-NORA:continuity-states": "1",
-      "cinebraid-section:fixture:entity:characters:CHAR-NORA:state-generation:state-night": "1",
+      /* The state workspace opens on a chosen state (CONTINUITY_CREATION_TOOLS_CLARITY_V1). */
+      "cinebraid-bounded:fixture:selected:continuity-state:characters:CHAR-NORA": "state-night",
     },
     fetch: async (url, options, respond) => {
       if (url === "/api/prompt/asset-compile") {
@@ -68,13 +68,14 @@ async function testDerivedProfilePromptAndPersistence() {
       return null;
     },
   });
-  assert(rendered.html.includes("GPT Image 2 — Reference Edit"), "derived-state prompt target must visibly default to GPT Image 2 Reference Edit");
-  assert(rendered.html.includes('data-entity-continuity="characters:CHAR-NORA" open'), "Continuity States must restore its open state");
-  assert(rendered.html.includes('data-entity-state-generation="state-night" open'), "the exact state generation panel must restore its open state");
+  assert(rendered.html.includes("GPT Image 2 — Reference Edit"), "derived-state prompt target must default to GPT Image 2 Reference Edit");
+  assert(rendered.html.includes('data-entity-continuity="characters:CHAR-NORA"'), "Continuity States must render in Production needs");
+  assert(rendered.html.includes('<section class="entity-state-generation" data-entity-state-generation="state-night">'), "the chosen state's prompt controls must be on screen, not behind a disclosure");
   assert(rendered.html.includes("Automate After the night&#39;s work</b><small>") || rendered.html.includes("Automate After the night's work</b><small>"), "automation title and explanation must be separate elements");
-  assert(rendered.html.includes('class="state-generation-guidance"'), "state generation guidance must use explicit semantic rows instead of overlapping raw text");
-  assert(rendered.html.includes("<b>Manual generate</b><span>Returns one candidate batch only.</span>"), "manual generation guidance must keep its label and description separate");
-  assert(rendered.html.includes("<b>Automate state</b><span>Runs review"), "automation guidance must keep its label and description separate");
+  /* CONTINUITY_CREATION_TOOLS_CLARITY_V1 — how the state will be generated is ONE sentence,
+     read from assetStateDerivation(), in place of the mode banner, guidance rows and badge. */
+  assert(rendered.html.includes("Generation edits the approved Clean overall image and applies only this change."), "the derive/independent answer must be stated once, in words");
+  assert(!rendered.html.includes('class="state-generation-guidance"') && !rendered.html.includes("entity-state-generation-status"), "the retired guidance rows and mode banner must not return beside it");
 
   await rendered.context.buildEntityStatePrompt("characters", "CHAR-NORA", "state-night", false);
   await delay(40);

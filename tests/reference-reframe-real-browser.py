@@ -393,14 +393,12 @@ try:
         page.locator('.entity-demand-row[data-demand-id="state-soot"] button', has_text="Use approved").first.click()
         # WAIT FOR EACH REQUESTED THING IN TURN, so a failure names the step that broke
         # rather than timing out on a symptom three steps downstream. The selection is
-        # written first, the disclosure opens because of it, and only then is the card a
-        # thing a person could look at.
+        # written first, and only then is the card a thing a person could look at.
+        # CONTINUITY_CREATION_TOOLS_CLARITY_V1: the states are their own section under the
+        # needs list now, so no Coverage detail disclosure has to open on the way.
         page.wait_for_function(
             """(id) => localStorage.getItem(`cinebraid-bounded:${ACTIVE_PROJECT_SLUG}:selected:continuity-state:characters:${id}`) === 'state-soot'""",
             arg=ENTITY, timeout=10000)
-        page.wait_for_function(
-            """() => { const n = document.querySelector('.entity-coverage-detail'); return !!n && n.dataset.coverageDetailOpen === '1'; }""",
-            timeout=10000)
         page.wait_for_selector('[data-continuity-state-id="state-soot"]', state="visible", timeout=10000)
         page.wait_for_function("()=>window.__variantRevealToken>0&&ROUTE_REQUEST_TOKEN===window.__variantRevealToken&&document.body.dataset.renderReady==='1'&&CURRENT_RENDER_ROUTE_KEY===currentRouteKey()")
         after = page.evaluate(LINEAGE_SNAPSHOT)
@@ -949,9 +947,11 @@ try:
                         "parent, so its absence in section 4 is a measurement rather than a missing element")
 
         # ---- N2. the disclosure CAN open, so "closed" means something -------------------
+        # CONTINUITY_CREATION_TOOLS_CLARITY_V1: continuity states left Coverage detail, so the
+        # sub-view that proves it can open is one of its own boards.
         install()
         page.evaluate("""() => {
-            localStorage.setItem(`cinebraid-bounded:${ACTIVE_PROJECT_SLUG}:selected:entity-coverage-view:characters:%s`, 'states');
+            localStorage.setItem(`cinebraid-bounded:${ACTIVE_PROJECT_SLUG}:selected:entity-coverage-view:characters:%s`, 'expressions');
         }""" % ENTITY)
         page.locator(".bounded-entity-taskbar .focused-task-button", has_text="Production needs").click()
         opened = detail_open()
@@ -959,8 +959,7 @@ try:
             "N2: an explicitly selected sub-view MUST open the coverage detail — section 3's `closed` is vacuous otherwise"
         assert opened["tabsVisible"] is True, "N2: and its boards must then occupy real space"
         findings.append("N2. the same detector reports the coverage detail OPEN once a sub-view is explicitly "
-                        "selected, which is also the Slice 1 hand-off path — so section 3's `closed` is a "
-                        "measurement, and a completed state run never lands on a shut door")
+                        "selected — so section 3's `closed` is a measurement, not a missing element")
 
         assert not page_errors, f"the audit raised uncaught page errors: {page_errors}"
         assert not offsite, f"requests attempted to leave the machine: {offsite}"

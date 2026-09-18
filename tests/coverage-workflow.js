@@ -288,8 +288,10 @@ async function testLegacySilentThreeQuarterMigrationAndStateVariantFlow() {
   assert(migrated.warnings.some((row) => /automatically|not chosen/i.test(row) && row.includes("CHAR-IREN-PRIMARY.png")), "the legacy condition must be reported rather than silently corrected");
 
   const html = rendered.context.document.getElementById("main").innerHTML;
-  assert(html.includes("GENERATE FROM CLEAN OVERALL"), "empty alternate-state cards must provide a direct generation action");
-  assert(html.includes("UPLOAD STATE REFERENCE"), "empty alternate-state cards must provide a targeted upload path");
+  /* CONTINUITY_CREATION_TOOLS_CLARITY_V1 — the chosen state's own prompt controls are the
+     workspace now, not a head button that opened them; upload lives with its candidates. */
+  assert(html.includes('data-entity-state-generation="state-night"') && html.includes(">Build state prompt<"), "empty alternate-state cards must put the state's own generation path on screen");
+  assert(html.includes("openStateReferenceUpload('characters','CHAR-IREN','state-night')\">Upload image<"), "empty alternate-state cards must provide a targeted upload path");
   assert.strictEqual(typeof rendered.context.openContinuityStateVariantHub, "function", "the Reference workspace must retain the state-variant chooser");
 
   rendered.context.openContinuityStateVariantHub("characters", "CHAR-IREN");

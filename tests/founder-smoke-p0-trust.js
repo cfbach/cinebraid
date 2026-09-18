@@ -412,10 +412,13 @@ async function testLineageRuntimeSurfaces() {
     "the demand surface must name the missing-lineage decision without the filmmaker going looking for it");
   assert(/Source not recorded/.test(demandHtml),
     "and must say why that state is blocked");
-  assert(!/SOURCE STATE NOT RECORDED[\s\S]*Rooftop working state/.test(demandHtml.split("entity-coverage-detail")[0] || demandHtml),
-    "while the full chooser stays behind the coverage detail rather than leading the surface");
+  /* CONTINUITY_CREATION_TOOLS_CLARITY_V1 — the states moved out of Coverage detail into their
+     own section under the demand list; the chooser still does not lead: it appears only in
+     the workspace of a state the filmmaker has chosen. */
+  assert(!/SOURCE STATE NOT RECORDED[\s\S]*Rooftop working state/.test(demandHtml),
+    "while the full chooser stays out of the surface until a state is chosen");
 
-  vm.runInContext(`selectBoundedItem('entity-coverage-view','locations:LOC-ROOF','states')`, app.context);
+  vm.runInContext(`selectBoundedItem('continuity-state','locations:LOC-ROOF','state-soot')`, app.context);
   await app.context.route();
   assert(app.context.document.getElementById("main").innerHTML.includes("SOURCE STATE NOT RECORDED"),
     "the continuity state card must offer the same decision");

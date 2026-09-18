@@ -447,13 +447,18 @@ async function demandSection(options = {}) {
 
   /* E/F · the boards do not arrive uninvited — they are not even rendered. */
   assert.ok(html.includes('data-coverage-detail-open="0"'),
-    "F: angles, expressions and continuity-state boards must not be dumped into the default workflow");
+    "F: angle and expression boards must not be dumped into the default workflow");
   assert.ok(!/data-entity-subworkspace=/.test(html),
     "F: and while closed they must not be rendered at all, not merely hidden");
+  /* CONTINUITY_CREATION_TOOLS_CLARITY_V1 — continuity states left Coverage detail for a
+     section of their own; its state list is on screen, but no state's workspace unfolds
+     until one is chosen. */
+  assert.ok(!html.includes("data-continuity-state-id="),
+    "F: nor is a continuity-state workspace unfolded before a state is chosen");
   /* ...and they are not deleted either: the way in is present and says what it opens. */
   assert.ok(/class="entity-coverage-detail-toggle" aria-expanded="false"/.test(html),
     "E: the deeper coverage capability must remain reachable, not removed");
-  assert.ok(html.includes("Angles, expressions and continuity states"),
+  assert.ok(html.includes("Angles and expressions"),
     "E: and the control must name what it opens");
 
   /* E · and OPENING it renders the boards in full. Without this the assertion
@@ -462,16 +467,27 @@ async function demandSection(options = {}) {
     ...options,
     storage: {
       "cinebraid-focused:fixture:entity-task:characters:CHAR-REFRAME": "coverage",
-      "cinebraid-bounded:fixture:selected:entity-coverage-view:characters:CHAR-REFRAME": "states",
+      "cinebraid-bounded:fixture:selected:entity-coverage-view:characters:CHAR-REFRAME": "expressions",
     },
   });
   assert.ok(opened.html.includes('data-coverage-detail-open="1"'),
-    "E: an explicitly selected sub-view must open the coverage detail — this is also the Slice 1 hand-off path");
-  assert.ok(/data-entity-subworkspace="states"/.test(opened.html),
+    "E: an explicitly selected sub-view must open the coverage detail");
+  assert.ok(/data-entity-subworkspace="expressions"/.test(opened.html),
     "E: and render the board that was selected");
   for (const label of ["Angles / views", "Expressions", "Continuity states"]) {
     assert.ok(opened.html.includes(label), `E: every coverage board must remain reachable (${label})`);
   }
+  /* The Slice 1 hand-off still writes the `states` sub-view it always wrote. Continuity
+     states are their own section now, already on screen, so that write opens no board. */
+  const handedOff = await renderReference(referenceFixture(), {
+    ...options,
+    storage: {
+      "cinebraid-focused:fixture:entity-task:characters:CHAR-REFRAME": "coverage",
+      "cinebraid-bounded:fixture:selected:entity-coverage-view:characters:CHAR-REFRAME": "states",
+    },
+  });
+  assert.ok(handedOff.html.includes('data-coverage-detail-open="0"') && handedOff.html.includes('data-entity-continuity="characters:CHAR-REFRAME"'),
+    "E: a stored `states` sub-view lands on the continuity states section, not on a board");
 
   /* E · THE TRUTHFULNESS CLAIM, and it is asserted against an INDEPENDENT
      recomputation rather than against hard-coded numbers.
@@ -592,7 +608,10 @@ async function continuitySection(options = {}) {
   const unguessable = [
     ["state-orphan", "records no parent at all", "Record what this state derives from", "Source not recorded"],
     ["state-dangling", "records a parent that does not exist", "Record what this state derives from", "Source not recorded"],
-    ["state-unapproved", "records a parent that is not canon", "Approve the parent state first", "Heavy soot is not approved"],
+    /* CONTINUITY_CREATION_TOOLS_CLARITY_V1 — this button opens the state, so it says so; it
+       used to read "Approve the parent state first" while opening the child. The obstacle
+       is still stated, on the row, where the next assertion reads it. */
+    ["state-unapproved", "records a parent that is not canon", "Open state", "Heavy soot is not approved"],
   ];
   for (const [stateId, why, expectedAction, expectedStatus] of unguessable) {
     assert.strictEqual(detectors.generateFromParent(html, stateId), null,

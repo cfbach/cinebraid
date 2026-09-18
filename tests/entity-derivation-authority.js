@@ -241,16 +241,21 @@ async function main() {
   /* =========================================================================
      5 — READINESS COPY. PARENT EDIT / READY TO DERIVE / "Derived from approved". */
   {
+    /* CONTINUITY_CREATION_TOOLS_CLARITY_V1 — the banner, the badge and the mode select
+       used to answer this three times and could disagree. It is one sentence now, read
+       from assetStateDerivation(), and the select names its own condition. */
     const historic = await page({ canon: false });
     const html = evaluate(historic, `document.getElementById("main").innerHTML`);
-    ok(!/DERIVE FROM /.test(html), "a historic parent produces no DERIVE FROM banner");
-    ok(/PARENT NOT APPROVED/.test(html), "it says the parent has not been approved");
+    ok(!/Generation edits the approved/.test(html), "a historic parent produces no derive statement");
+    ok(/Default is not approved, so this state will be created independently\./.test(html), "it says the parent has not been approved, and what that means");
     ok(!/Derived from approved/.test(html), "and no tray claims the state derives from an approved parent");
+    ok(!/>Derive from approved state</.test(html) && />Derive from Default once it is approved</.test(html),
+      "and the mode select does not claim derivation from an approved state that does not exist");
 
     const canon = await page({ canon: true });
     const canonHtml = evaluate(canon, `document.getElementById("main").innerHTML`);
-    ok(/DERIVE FROM /.test(canonHtml), "an approved parent DOES produce the derive banner");
-    ok(!/PARENT NOT APPROVED/.test(canonHtml), "and no not-approved warning");
+    ok(/Generation edits the approved Default image/.test(canonHtml), "an approved parent DOES produce the derive statement");
+    ok(!/will be created independently/.test(canonHtml), "and no not-approved warning");
   }
 
   /* =========================================================================
@@ -510,28 +515,35 @@ async function main() {
     ok(/Validate the approved state against its parent/.test(validationHtml),
       "CONTROL H3: reverting validation readiness to media presence must frame two unapproved images as approved");
 
-    /* H4 — the hero's accessibility text. */
+    /* H4 — the state image's accessibility text (CONTINUITY_CREATION_TOOLS_CLARITY_V1: the
+       hero became the workspace thumbnail; the guard moved with it). */
     const heroAlt = await page({
       canon: false, stateFile: HELD,
       mutateSource: revert(
-        'alt="${selectedIsCanon ? `Approved canon image for ${attr(st.name || "state")}` : `Historic image for ${attr(st.name || "state")}, not approved`}"',
-        'alt="Approved ${attr(st.name || "state")}"',
+        'aria-label="View the ${isCanon ? "canon" : "historic, not approved"} image larger"',
+        'aria-label="View the canon image larger"',
       ),
     });
     const heroHtml = evaluate(heroAlt, 'document.getElementById("main").innerHTML');
-    ok(/alt="Approved Worn"/.test(heroHtml),
-      "CONTROL H4: reverting the hero alt text must describe an unapproved image as approved to a screen reader");
+    ok(/aria-label="View the canon image larger"/.test(heroHtml),
+      "CONTROL H4: reverting the thumbnail label must describe an unapproved image as canon to a screen reader");
 
-    /* H5 — the head action offered on the state. */
+    /* H5 — what the state says generation will do. The head action that used to offer
+       GENERATE FROM <parent> is gone; the one derivation statement now carries that claim. */
+    const revertIn = (target, needle, replacement) => (file, source) => {
+      if (file !== target) return source;
+      if (source.indexOf(needle) < 0) throw new Error("CONTROL could not find the guard it must break: " + needle.slice(0, 60));
+      return source.split(needle).join(replacement);
+    };
     const headAction = await page({
       canon: false,
-      mutateSource: revert(
-        '${selectedIsCanon ? "EDIT / REGENERATE" : selectedParentIsCanon ? `GENERATE FROM ${esc(parentInfo.label.toUpperCase())}` : "OPEN STATE WORKFLOW"}',
-        '${st.approvedFile ? "EDIT / REGENERATE" : `GENERATE FROM ${esc(parentInfo.label.toUpperCase())}`}',
+      mutateSource: revertIn("creation-studio.js",
+        "if (derivation.canDerive) return `Generation edits the approved",
+        "if (derivation.parent) return `Generation edits the approved",
       ),
     });
-    ok(/GENERATE FROM DEFAULT/.test(evaluate(headAction, 'document.getElementById("main").innerHTML')),
-      "CONTROL H5: reverting the head action must offer generation from a parent that was never approved");
+    ok(/Generation edits the approved Default image/.test(evaluate(headAction, 'document.getElementById("main").innerHTML')),
+      "CONTROL H5: reverting the derivation statement to parent presence must promise an edit of a parent that was never approved");
   }
   console.log(`Entity derivation authority suite passed ${checks} checks: prompt mode, more-candidates, paid dispatch, generation references, readiness copy, validation, correction, row semantics, compiler request and the automation dispatch boundary — every one through the shipped path, with fifteen source-mutation controls. Provider calls made: 0.`);
 }

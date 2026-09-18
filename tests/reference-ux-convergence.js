@@ -755,31 +755,30 @@ async function testContinuityStateAddIsObvious() {
   const rendered = await surface(convergenceFixture(), storage);
   const html = rendered.html;
 
-  const lead = within(html, '<div class="continuity-states-lead">', "</div>\n") || within(html, '<div class="continuity-states-lead">', "<nav");
-  ok(lead.includes("+ Add continuity state"),
+  const lead = within(html, '<header class="continuity-states-lead">', "</header>");
+  ok(lead.includes("<h3>Continuity states</h3>") && lead.includes("+ Add continuity state"),
     "the add action sits beside the section heading");
   ok(/addContinuityState\('characters','CHAR-UX'\)/.test(lead),
     "wired to the same writer it was wired to before");
-  ok(html.indexOf('<div class="continuity-states-lead">') < html.indexOf('<nav class="continuity-state-rail"'),
-    "and above the state list rather than below it");
-  ok(html.indexOf("+ Add continuity state") < html.indexOf('<details class="state-chain-tools">'),
-    "no longer buried inside the tools disclosure");
+  ok(html.indexOf('<header class="continuity-states-lead">') < html.indexOf('<details class="continuity-advanced"'),
+    "and above the section's tools rather than inside them");
 
-  /* One Default state is presented as one state, not as an administration form. */
-  ok(/<b>Default only<\/b>/.test(html), "a reference with one state says so plainly");
+  /* CONTINUITY_CREATION_TOOLS_CLARITY_V1 — a reference with only its Default state has no
+     variant to choose, so it gets no one-item rail and no unfolded workspace: the section
+     says what a continuity state is for, and offers to add one. The Default's image and
+     prompt belong to the Primary reference task. */
   ok(/glasses on, wet, damaged, older/.test(html),
-    "and the section says what a continuity state is for, in story words");
+    "the section says what a continuity state is for, in story words");
+  ok(!html.includes('<nav class="continuity-state-rail"') && !html.includes("data-continuity-state-id="),
+    "and presents no one-item rail or unrequested workspace");
 
-  /* THE POWER IS KEPT, DEMOTED. */
-  ok(html.includes('<details class="state-chain-tools"><summary><span>Advanced state tools</span>'),
-    "parent-first automation moves to an Advanced disclosure");
-  ok(html.includes("Continuity-state chain"), "and is still there");
-  ok(!/<details class="state-chain-tools"[^>]*\bopen\b/.test(html), "closed by default");
-  /* Tracking keeps its own visible fold — a real-browser suite clicks it open. */
-  ok(html.includes('class="fold continuity-tracking"'),
-    "continuity tracking stays a visible disclosure of its own");
-  ok(html.indexOf('class="fold continuity-tracking"') > html.indexOf('<nav class="continuity-state-rail"'),
-    "below the states it configures rather than in front of them");
+  /* THE POWER IS KEPT, DEMOTED — behind the section's one Advanced disclosure. */
+  const advanced = within(html, '<details class="continuity-advanced"', "</details></section>");
+  ok(advanced.includes("<summary>Advanced</summary>"), "parent-first automation moves to the Advanced disclosure");
+  ok(advanced.includes("Continuity-state chain"), "and is still there");
+  ok(!/<details class="continuity-advanced"\s+open[\s>]/.test(html), "closed by default");
+  ok(advanced.includes('class="fold continuity-tracking"'),
+    "continuity tracking is there too, still its own disclosure once Advanced is open");
 }
 
 /* ==========================================================================

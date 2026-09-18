@@ -183,7 +183,7 @@ try:
             if state["mutate_entities"]:
                 before = source
                 source = source.replace(
-                    '<span>${selectedIsCanon ? "Canon image" : selectedApprovedFile ? "Historic image · not approved" : "Canon image"}</span>',
+                    '<span>${isCanon ? "Canon image" : file ? "Historic image · not approved" : "Canon image"}</span>',
                     '<span>Approved image</span>')
                 if source == before:
                     failures.append("MUTATION CONTROL could not find the readout it was supposed to break")
@@ -239,18 +239,21 @@ try:
         load()
         historic = surfaces()
 
-        check("Historic image for Opened, not approved" in historic["main"],
-              "HISTORIC hero: the image's alt text still claims approval")
-        check("Approved canon image" not in historic["main"],
+        # CONTINUITY_CREATION_TOOLS_CLARITY_V1 — the hero became the workspace thumbnail; its
+        # accessible name carries the standing now.
+        check('aria-label="View the historic, not approved image larger"' in historic["main"],
+              "HISTORIC hero: the image's accessible name still claims approval")
+        check("View the canon image larger" not in historic["main"],
               "HISTORIC hero: something on the page calls an unapproved image approved canon")
         check("Opened historic image · " + STATE_FILE in historic["text"],
               "HISTORIC hero: the theatre caption does not name the image as historic")
         check("Historic image · not approved" in historic["main"],
               "HISTORIC readout: the label does not report the standing")
-        check("Previously selected. Approve it to make it canon." in historic["main"],
+        check("Chosen for this state, never approved." in historic["main"] and "Approve existing image" in historic["main"],
               "HISTORIC readout: no route from historic to canon is offered")
-        check("OPEN STATE WORKFLOW" in historic["main"],
-              "HISTORIC head action: it offered EDIT / REGENERATE or GENERATE FROM an unapproved parent")
+        check("Closed is not approved, so this state will be created independently." in historic["main"]
+              and "Generation edits the approved" not in historic["main"],
+              "HISTORIC generation: it promised to derive from an unapproved parent")
         check("Approve both sides before validating" in historic["main"],
               "HISTORIC validation: the heading still frames the pair as approved")
         check("Validate the approved state against its parent" not in historic["main"],
@@ -283,16 +286,16 @@ try:
         load()
         canon = surfaces()
 
-        check("Approved canon image for Opened" in canon["main"],
+        check('aria-label="View the canon image larger"' in canon["main"],
               "CANON hero: an approved image is not described as approved")
-        check("Historic image for Opened" not in canon["main"],
+        check("historic, not approved image larger" not in canon["main"],
               "CANON hero: an approved image is described as historic")
         check("Opened canon image · " + STATE_FILE in canon["text"],
               "CANON hero: the theatre caption does not name the image as canon")
         check(">Canon image<" in canon["main"], "CANON readout: the label does not say Canon image")
         check("Approved by you as this state’s production truth." in canon["main"],
               "CANON readout: the hint does not attribute the approval to the creator")
-        check("EDIT / REGENERATE" in canon["main"], "CANON head action: approved work cannot be edited")
+        check(">Build state prompt<" in canon["main"], "CANON prompt: approved work cannot be regenerated")
         check("Validate the approved state against its parent" in canon["main"],
               "CANON validation: two approved images are still refused")
         check("Approve both sides before validating" not in canon["main"],

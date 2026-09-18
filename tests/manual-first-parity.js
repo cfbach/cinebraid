@@ -141,7 +141,14 @@ const ROUTES = [
   { name: "approved library", hash: "#/library/approved" },
   { name: "character", hash: "#/character/CHAR-COURIER" },
   { name: "location coverage", hash: "#/location/LOC-PLATFORM", storage: { "cinebraid-focused:fixture:entity-task:locations:LOC-PLATFORM": "coverage" } },
-  { name: "prop states", hash: "#/prop/PROP-PARCEL", storage: { "cinebraid-focused:fixture:entity-task:props:PROP-PARCEL": "states", "cinebraid-bounded:fixture:selected:entity-coverage-view:props:PROP-PARCEL": "states", "cinebraid-bounded:fixture:selected:continuity-state:props:PROP-PARCEL": "state-open" } },
+  /* CONTINUITY_CREATION_TOOLS_CLARITY_V1 — THE ONE NARROW EXCEPTION, AND ITS BOUNDARY.
+     The owner's route to a continuity state's prompt is four deliberate clicks: open the
+     reference, Production needs, choose the state, Build state prompt. Choosing the state
+     IS the opt-in, so inside a state the filmmaker chose, the rules-compiled Build state
+     prompt is on screen (Improve still needs the assistant and stays disabled here).
+     Arriving on Production needs with no state chosen must still expose nothing assisted. */
+  { name: "prop needs", hash: "#/prop/PROP-PARCEL", storage: { "cinebraid-focused:fixture:entity-task:props:PROP-PARCEL": "coverage" } },
+  { name: "prop states", hash: "#/prop/PROP-PARCEL", allow: [/^Build state prompt$/i], storage: { "cinebraid-focused:fixture:entity-task:props:PROP-PARCEL": "states", "cinebraid-bounded:fixture:selected:entity-coverage-view:props:PROP-PARCEL": "states", "cinebraid-bounded:fixture:selected:continuity-state:props:PROP-PARCEL": "state-open" } },
   { name: "reports", hash: "#/reports" },
   { name: "settings", hash: "#/settings" },
 ];
@@ -182,7 +189,8 @@ async function renderSet(project, emphasis) {
     });
     const rendered = await render(spec.hash, copy, { storage: spec.storage || {}, scan: SAMPLE_SCAN, agentStatus: disabledAgents() });
     const labels = visibleButtonLabels(rendered.html);
-    rows.push({ route: spec.name, labels, allLabels: allButtonLabels(rendered.html), violations: assistedViolations(labels) });
+    const allowed = spec.allow || [];
+    rows.push({ route: spec.name, labels, allLabels: allButtonLabels(rendered.html), violations: assistedViolations(labels).filter((label) => !allowed.some((pattern) => pattern.test(label))) });
   }
   return rows;
 }
