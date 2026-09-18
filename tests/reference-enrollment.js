@@ -11,6 +11,11 @@ function check(label,body){body();checks++;console.log("PASS "+label);}
 const entity=id=>({id,name:id,coverageSlots:[{id:"front",label:"Front",requirement:"required"},{id:"side",label:"Side",requirement:"required"}],continuityStates:[{id:"state-default",name:"Clean",isDefault:true},{id:"weathered",name:"Weathered"}],candidateFiles:[]});
 let project={meta:{id:"film-a"},props:[entity("tool"),entity("other-tool")],locations:[],characters:[],vehicles:[],mediaAssets:[{id:"library-a",file:"source.png",links:[{targetType:"prop",targetId:"tool"}]}]};
 const slug="film-a",dir=path.join(w.projectsRoot,slug);fs.mkdirSync(path.join(dir,"media"),{recursive:true});fs.mkdirSync(path.join(dir,"props"));
+/* A returned path is measured against where the file PHYSICALLY is. The resolver answers under realDir, the
+   fs.realpathSync.native spelling (src/media/media-asset-service.js resolvePhysicalProjectDir), and os.tmpdir() need not
+   be spelled that way: on a GitHub Windows runner it reaches the profile through RUNNER~1, the 8.3 alias of the runner
+   account. Inputs keep the configured spelling, as a server passes them. */
+const realDir=fs.realpathSync.native(dir);
 fs.writeFileSync(path.join(dir,"project.json"),JSON.stringify(project));
 const png=Buffer.from("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+jK1sAAAAASUVORK5CYII=","base64");
 function record(file,type="image") {fs.writeFileSync(path.join(dir,file),png);const st=fs.statSync(path.join(dir,file));return {assetId:Assets.mintAssetId(),contentHash:null,hashState:"unhashed",scope:{},mediaType:type,role:"import",source:"imported",lifecycle:"candidate",storage:{path:file,bytes:st.size,mtimeMs:st.mtimeMs},legacy:{},indexedAt:"2026-09-14T00:00:00Z"};}
@@ -89,7 +94,7 @@ const cropEnrolled=enrollOn(cropProject,{slotId:"side",assetId:cropAsset.assetId
 check("a derived crop enrolls into an exact nondefault view and keeps its own row",()=>{
   const e=legacyOf(cropEnrolled.project),r=Reference.resolver({...opts(),project:cropEnrolled.project});
   assert.deepEqual(e.candidateFiles.find(x=>x.stored===cropRow.stored),cropRow);
-  assert.equal(r.resolve("props",e,cropBinding).path,path.join(dir,"props/legacy-tool-COVERAGE-SIDE-X.png"));
+  assert.equal(r.resolve("props",e,cropBinding).path,path.join(realDir,"props/legacy-tool-COVERAGE-SIDE-X.png"));
   assert.equal(r.resolve("props",e,cropRow.stored).available,true);
   assert.equal(Shared.selectedKey(e,e.coverageSlots[1],"state-default"),"");assert.equal(Shared.selectedKey(e,e.coverageSlots[1],"weathered"),cropBinding);
   assert.equal(cropEnrolled.project.productionAuthority,undefined);
@@ -111,7 +116,7 @@ const foreign=path.join(w.projectsRoot,"film-b");fs.mkdirSync(foreign);fs.mkdirS
 check("an identity from another project cannot resolve",()=>assert.equal(Reference.resolver({projectsRoot:w.projectsRoot,slug:"film-b",project}).asset(image.assetId).available,false));
 check("a malformed binding retains its identity and cannot resolve",()=>{const bad=structuredClone(project);bad.props[0].candidateFiles[0].referenceBinding.entityId="another";const m=Reference.resolver({...opts(),project:bad}).resolve("props",bad.props[0],fixed);assert.equal(m.available,false);assert.equal(m.assetId,image.assetId);});
 fs.writeFileSync(path.join(dir,"project.json"),JSON.stringify(project));
-check("downstream URL resolution receives the enrolled source file",()=>{const item=resolve().resolve("props",project.props[0],fixed);assert.equal(Reference.resolveUrl({...opts(),url:item.url}).path,path.join(dir,"media/source.png"));assert.equal(Reference.resolveUrl({...opts(),slug:"film-b",url:item.url}).available,false);});
+check("downstream URL resolution receives the enrolled source file",()=>{const item=resolve().resolve("props",project.props[0],fixed);assert.equal(Reference.resolveUrl({...opts(),url:item.url}).path,path.join(realDir,"media/source.png"));assert.equal(Reference.resolveUrl({...opts(),slug:"film-b",url:item.url}).available,false);});
 // The two adapters deliberately have different caller contracts. Fal consumes
 // a filename; ComfyUI spreads a record into preparation before reading its file.
 const adapters={};
@@ -126,7 +131,7 @@ for (const [file,name,next] of [["../src/generation/fal/fal-generation.js","loca
 }
 const enrolledUrl=resolve().resolve("props",project.props[0],fixed).url;
 check("Fal keeps its string-oriented enrolled reference contract",()=>{
-  assert.equal(adapters.localAssetFile({dir},enrolledUrl),path.join(dir,"media/source.png"));
+  assert.equal(adapters.localAssetFile({dir},enrolledUrl),path.join(realDir,"media/source.png"));
   assert.throws(()=>adapters.localAssetFile({dir:foreign},enrolledUrl),/unavailable/);
 });
 check("ComfyUI prepares enrolled and legacy references without submitting or approving",()=>{
@@ -139,7 +144,8 @@ check("ComfyUI prepares enrolled and legacy references without submitting or app
     for(const url of [enrolledUrl,"/assets/props/old.png"]){
       const resolved=adapters.resolveOwnedMedia({dir},url),reference={key:"startImage",role:"first-frame",...resolved};
       const relative=url===enrolledUrl?"media/source.png":"props/old.png";
-      assert.equal(reference.file,path.join(dir,relative));assert.equal(reference.relativePath,relative);assert.equal(reference.assetUrl,url);
+      // The file IS the expected one: the enrolled branch answers under realDir, the legacy /assets/ branch in the configured spelling.
+      assert.equal(fs.realpathSync.native(reference.file),path.join(realDir,relative));assert.equal(reference.relativePath,relative);assert.equal(reference.assetUrl,url);
       if(url===enrolledUrl){assert.equal(reference.assetId,image.assetId);assert.equal(reference.storagePath,image.storage.path);assert.equal(reference.bindingId,fixed);assert.equal(reference.stateId,"state-default");assert.equal(reference.slotId,"front");}
       const job=contractJob({jobId:"prepare-only",shotId:"shot",frameId:"frame",prompt:"Synthetic reference",references:[reference],recipeId:"fixture.json",status:"preparing_inputs"});
       assert.equal(job.inputs.references[0].source.path,relative);
