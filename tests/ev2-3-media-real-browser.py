@@ -239,7 +239,9 @@ project_root=workspace.projects_root/slug
 import wave
 with wave.open(str(project_root/'audio'/'room-tone.wav'),'wb') as wav:
     wav.setnchannels(1);wav.setsampwidth(2);wav.setframerate(8000);wav.writeframes(b'\x00\x00'*16000)
-subprocess.run(['ffmpeg','-hide_banner','-loglevel','error','-y','-f','lavfi','-i','color=c=0x334d57:s=320x200:d=2','-c:v','libx264','-pix_fmt','yuv420p',str(project_root/'shots/SH010/takes/SH010_MOTION_H3_1.mp4')],check=True)
+# The playable video is the committed synthetic EV2-6 loop, not one encoded here: ffmpeg is not part of the
+# browser runtime setup:browser-tests provisions, and the windows-latest runner image ships none.
+(project_root/'shots/SH010/takes/SH010_MOTION_H3_1.mp4').write_bytes((ROOT/'tests/fixtures/ev2-6/motion-0.mp4').read_bytes())
 project=json.loads((project_root/'project.json').read_text())
 project['meta']['title']='The Last Signal · EV2-3 synthetic production'
 project['shots'][1]['keyframes'][0]['id']='kf-c'
