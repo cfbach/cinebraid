@@ -4880,8 +4880,12 @@ function restoreReferenceToolsContext(state, result = null) {
   const taskbar = pane.querySelector(".bounded-entity-taskbar")?.getBoundingClientRect();
   const top = Math.max(bounds.top, taskbar && taskbar.top <= bounds.top + taskbar.height ? taskbar.bottom : bounds.top);
   const bottom = Math.min(bounds.bottom, window.innerHeight);
-  if (start < top) pane.scrollTop += start - top;
-  else if (end > bottom) pane.scrollTop += Math.min(end - bottom, start - top);
+  /* SCROLL POSITIONS ARE WHOLE PIXELS AND LAYOUT IS NOT. A correction of 12.3px lands wherever the
+     browser rounds it, and after the 48px shell geometry moved this pane from 52px to 64px the
+     prepared prompt settled 0.3px below the pane's edge — revealed, but not fully. Round the
+     correction outward, toward fully visible, in both directions. */
+  if (start < top) pane.scrollTop += Math.floor(start - top);
+  else if (end > bottom) pane.scrollTop += Math.ceil(Math.min(end - bottom, start - top));
 }
 function captureRouteViewState(targetRouteKey = currentRouteKey()) {
   try {
