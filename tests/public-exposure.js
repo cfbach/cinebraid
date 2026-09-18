@@ -497,11 +497,17 @@ function testPublicationPreflight() {
   assert.strictEqual(noBaseline.status, 2, `the preflight must refuse without a baseline, got ${noBaseline.status}`);
   assert(/name the baseline/.test(noBaseline.output), "the refusal must say what is missing");
 
-  /* HEAD~1 exists in any clone with history and is never HEAD or main, so the
-     binding refusal is reachable everywhere. */
+  /* HEAD~1 exists in any clone with history and is never HEAD, so a refusal is
+     reachable everywhere - but which one depends on the checkout. The binding
+     compares against local main, and a pull-request checkout (actions/checkout on
+     refs/pull/N/merge) is detached with remote-tracking refs only, so there the
+     preflight refuses first, on the local main it cannot resolve. The reason this
+     checkout earns is asserted exactly; the negative suite's throwaway
+     repositories prove both shapes in every checkout. */
+  const localMain = spawnSync("git", ["rev-parse", "--verify", "-q", "refs/heads/main"], { cwd: ROOT, encoding: "utf8" }).status === 0;
   const mismatched = runPreflight(["--first-publication", "--candidate", "HEAD~1"]);
   assert.strictEqual(mismatched.status, 2, `publishing a commit that is not the checkout and not main must be refused, got ${mismatched.status}`);
-  assert(/REFUSED/.test(mismatched.output) && /must be the same commit/.test(mismatched.output),
+  assert(/REFUSED/.test(mismatched.output) && (localMain ? /must be the same commit/ : /local refs\/heads\/main/).test(mismatched.output),
     `the refusal must name its reason: ${mismatched.output.split("\n").slice(-2).join(" ")}`);
   assert(!/git push/.test(mismatched.output), "a refused preflight must not print the push command");
 
