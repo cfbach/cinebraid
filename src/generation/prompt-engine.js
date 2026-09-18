@@ -1302,6 +1302,9 @@ function validateSpec(raw, fallback) {
   out.references = fallback.references;
   out.visualStyle = fallback.visualStyle;
   out.world = fallback.world;
+  /* Whether this is a shot or an entity reference is the route's fact, not the advisor's. */
+  if (fallback.referenceSubject) out.referenceSubject = { ...fallback.referenceSubject };
+  else delete out.referenceSubject;
   out.aspectRatio = fallback.aspectRatio || fallback.world?.aspectRatio || "";
   out.mediaAnalysis = fallback.mediaAnalysis;
   out.blockingEntities = Array.isArray(s.blockingEntities) ? s.blockingEntities : fallback.blockingEntities || [];
@@ -2279,12 +2282,24 @@ function blockingLayoutBlock(spec) {
   return unique(lines).join("\n");
 }
 
+/* An entity reference is not a shot. The asset-compile route names what it is building
+   in `spec.referenceSubject`; a shot spec never carries one, so every shot keeps its
+   own wording. */
+function imageObjective(spec, purposeLabel) {
+  const subject = spec.referenceSubject;
+  if (!subject) return `Create the ${purposeLabel} for shot ${spec.shotId}.`;
+  const state = cleanText(subject.stateName);
+  const possessive = subject.type === "character" ? "their" : "its";
+  return `Create a ${subject.type} reference for ${cleanText(subject.name)}${state ? ` in ${possessive} ${state} state` : ""}.`;
+}
+
 function compileImage(profile, spec, refs) {
   const legend = refLegend(profile, refs);
   const guide = compositionGuideBlock(profile, spec, refs);
   const base = (refs || []).find((r) => r.role === "composition") || (refs || []).find((r) => r.role === "base" || r.role === "first-frame") || refs?.[0];
   const baseToken = base ? tokenFor(profile, refs.indexOf(base) + 1, base.token) : "#image1";
   const purposeLabel = IMAGE_PURPOSE_LABELS[spec.purpose] || "production frame";
+  const objective = imageObjective(spec, purposeLabel);
   const camera = [spec.camera?.framing, spec.camera?.lensIntent].map(clause).filter(Boolean).join(". ");
   const staging = stagingBlock(spec);
   const canon = canonBlock(spec);
@@ -2354,7 +2369,7 @@ function compileImage(profile, spec, refs) {
     return [
       legend ? `REFERENCE LEGEND\n${legend}` : "",
       guide,
-      `PURPOSE\nCreate the ${purposeLabel} for shot ${spec.shotId}.`,
+      `PURPOSE\n${objective}`,
       canon ? `IDENTITY CANON\n${canon}` : "",
       drift ? `VERIFY DRIFT-PRONE DETAILS\n${drift}` : "",
       spec.narrativePurpose ? `SUBJECT AND PERFORMANCE\n${sentence(spec.narrativePurpose)}` : "",
@@ -2374,7 +2389,7 @@ function compileImage(profile, spec, refs) {
     return [
       legend ? `REFERENCE ASSIGNMENT\n${legend}` : "",
       guide,
-      `PRODUCTION OBJECTIVE\nCreate the ${purposeLabel} for shot ${spec.shotId}. ${sentence(spec.narrativePurpose || spec.initialState?.subject || "")}`.trim(),
+      `PRODUCTION OBJECTIVE\n${objective} ${sentence(spec.narrativePurpose || spec.initialState?.subject || "")}`.trim(),
       canon ? `CANON CONSTRAINTS\n${canon}` : "",
       staging ? `COMPOSITION\n${staging}` : "",
       camera ? `CAMERA\n${sentence(camera)}` : "",
@@ -2391,7 +2406,7 @@ function compileImage(profile, spec, refs) {
     return [
       legend ? `REFERENCE ROLES\n${legend}` : "",
       guide,
-      `SCENE\n${sentence(spec.initialState?.subject || spec.narrativePurpose || `Create the ${purposeLabel} for shot ${spec.shotId}`)}`,
+      `SCENE\n${sentence(spec.initialState?.subject || spec.narrativePurpose || objective)}`,
       staging ? `SPATIAL COMPOSITION\n${staging}` : "",
       include ? `SUBJECTS AND REQUIRED OBJECTS\n${include}` : "",
       spec.initialState?.environment ? `MATERIALS AND ENVIRONMENT\n${sentence(spec.initialState.environment)}` : "",
@@ -2409,7 +2424,7 @@ function compileImage(profile, spec, refs) {
     return [
       legend ? `REFERENCE ASSIGNMENT\n${legend}` : "",
       guide,
-      `OBJECTIVE\nCreate the ${purposeLabel} for shot ${spec.shotId}.`,
+      `OBJECTIVE\n${objective}`,
       spec.initialState?.subject ? `SUBJECTS\n${sentence(spec.initialState.subject)}` : "",
       staging ? `LAYOUT\n${staging}` : "",
       camera ? `CAMERA\n${sentence(camera)}` : "",
@@ -2440,7 +2455,7 @@ function compileImage(profile, spec, refs) {
   }
 
   const common = [
-    `Create the ${purposeLabel} for shot ${spec.shotId}.`,
+    objective,
     guide,
     canon ? `IDENTITY CANON\n${canon}` : "",
     drift ? `RESTATE (drift-prone, verify in output)\n${drift}` : "",

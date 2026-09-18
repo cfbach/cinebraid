@@ -28,7 +28,9 @@
      E  the resolver and the contradiction detector themselves
      F  the workspace's own automation flow, three passes, against the real
         compiler — including what Reports reads back afterwards
-     G  the derived-edit prompt the workspace assembles for itself             */
+     G  the derived-edit prompt the workspace assembles for itself
+     H  a reference is named as its entity, never as a shot, and its subject
+        carries no doubled full stop                                           */
 
 const assert = require("assert");
 const crypto = require("crypto");
@@ -110,10 +112,28 @@ const PROJECT = {
     creationDescription: "Scuffed aluminium case with a stencilled inventory number.",
     workflowStatus: "DRAFT",
     candidateFiles: [],
+  }, {
+    /* The sample project's parcel, as H below names it. */
+    id: "PROP-PARCEL",
+    name: "Blue parcel",
+    creationDescription: "Medium blue parcel with pale straps.",
+    workflowStatus: "DRAFT",
+    candidateFiles: [],
+    continuityStates: [
+      { id: "state-closed", name: "Closed", isDefault: true, approvedFile: "", notes: "Flaps taped shut." },
+      { id: "state-open", name: "Opened", isDefault: false, approvedFile: "", notes: "Flaps open; the blue box and pale straps remain the same object.", parentStateId: "state-closed", generationMode: "independent" },
+    ],
   }],
-  vehicles: [],
-  scenes: [],
-  shots: [],
+  /* No closing full stop, deliberately: H proves the subject still gets one. */
+  vehicles: [{
+    id: "VEH-TRAM",
+    name: "Night tram",
+    creationDescription: "Two-car articulated tram in faded green livery",
+    workflowStatus: "DRAFT",
+    candidateFiles: [],
+  }],
+  scenes: [{ id: "SC01", title: "Arrival", beat: "Mara steps onto the platform." }],
+  shots: [{ id: "S01-01", scene: "SC01", title: "Arrival", description: "Mara steps off the tram onto the wet platform." }],
   mediaAssets: [],
 };
 
@@ -570,6 +590,66 @@ function testResolverAndDetector() {
     "a timecode is not a format");
 }
 
+/* H — an entity reference is not a shot.
+
+   The sample's Blue parcel compiled as "Create the shot still for shot
+   PROP-PARCEL." and its subject read "changed by this state.. Isolated hero prop
+   reference". The route handed the shot compiler an entity id as a shot id, and
+   appended ". " after a description that already ended in one. */
+async function testReferenceWording() {
+  const cases = [
+    { list: "props", id: "PROP-PARCEL", stateId: "state-open", line: "Create a prop reference for Blue parcel in its Opened state." },
+    { list: "props", id: "PROP-PARCEL", line: "Create a prop reference for Blue parcel in its Closed state." },
+    { list: "props", id: "PROP-CASE", line: "Create a prop reference for Evidence case." },
+    { list: "characters", id: "CHAR-MARA", line: "Create a character reference for Mara Venn in their Rain-soaked arrival state." },
+    { list: "characters", id: "CHAR-MARA", stateId: "state-dry", generationMode: "independent", line: "Create a character reference for Mara Venn in their Dried off state." },
+    { list: "locations", id: "LOC-PLATFORM", line: "Create a location reference for Commuter platform." },
+    { list: "vehicles", id: "VEH-TRAM", line: "Create a vehicle reference for Night tram." },
+  ];
+  for (const item of cases) {
+    const { line, ...payload } = item;
+    const prompt = await compile({ ...payload, profileId: "gpt-image-2/t2i" });
+    assert(prompt.includes(`PURPOSE\n${line}`), `${item.id}${item.stateId ? `#${item.stateId}` : ""}: expected "${line}" in:\n${prompt}`);
+    assert(!/for shot|shot still|reference sheet/i.test(prompt), `${item.id}: a reference prompt must not describe itself as a shot:\n${prompt}`);
+    assert(!/\.\./.test(prompt), `${item.id}: doubled full stop in:\n${prompt}`);
+  }
+
+  /* Every text-to-image family has its own objective branch; none may fall back to shot wording. */
+  const families = ["gpt-image-2/t2i", "nano-banana-2/t2i", "nano-banana-pro/t2i", "flux-2/t2i", "seedream-5-pro/t2i", "krea-2/t2i"];
+  for (const profileId of families) {
+    const prompt = await compile({ list: "props", id: "PROP-PARCEL", stateId: "state-open", profileId });
+    assert(!/for shot|shot still/i.test(prompt), `${profileId}: reference prompt uses shot wording:\n${prompt}`);
+    assert(!/\.\./.test(prompt), `${profileId}: doubled full stop in:\n${prompt}`);
+  }
+
+  /* The boundary itself: terminated once when the description already ends in a
+     full stop, and still terminated when it does not. */
+  const parcel = await compile({ list: "props", id: "PROP-PARCEL", stateId: "state-open", profileId: "gpt-image-2/t2i" });
+  assert.match(parcel, /not explicitly changed by this state\. Isolated hero prop reference/);
+  const tram = await compile({ list: "vehicles", id: "VEH-TRAM", profileId: "gpt-image-2/t2i" });
+  assert.match(tram, /faded green livery\. Clean vehicle design reference/);
+
+  /* A genuine shot keeps shot language, through the real shot route. */
+  const shot = await post("/api/prompt/compile", { useLLM: false, shotId: "S01-01", purpose: "shot-still", profileId: "gpt-image-2/t2i" });
+  assert.strictEqual(shot.response.status, 200, `shot compile failed: ${JSON.stringify(shot.body)}`);
+  assert(String(shot.body.compiledPrompt).includes("PURPOSE\nCreate the shot still for shot S01-01."),
+    `a shot prompt must keep its shot wording:\n${shot.body.compiledPrompt}`);
+  assert(!/ reference for /.test(shot.body.compiledPrompt), "a shot prompt must not be named as an entity reference");
+
+  /* Whether a spec is a shot is the route's fact: the prompt advisor can neither
+     add entity wording to a shot nor strip it from a reference. */
+  const PromptEngine = require("../src/generation/prompt-engine");
+  const shotSpec = shot.body.spec;
+  assert(shotSpec && !("referenceSubject" in shotSpec), "the shot route must not name an entity reference");
+  const forged = PromptEngine.validateSpec({ referenceSubject: { type: "prop", name: "Forged" } }, shotSpec);
+  assert(!("referenceSubject" in forged), "an advisor must not turn a shot spec into an entity reference");
+  const parcelSpec = (await post("/api/prompt/asset-compile", { useLLM: false, list: "props", id: "PROP-PARCEL", stateId: "state-open", profileId: "gpt-image-2/t2i" })).body.spec;
+  assert.deepStrictEqual(parcelSpec.referenceSubject, { type: "prop", name: "Blue parcel", stateName: "Opened" });
+  const kept = PromptEngine.validateSpec({ referenceSubject: null }, parcelSpec);
+  assert.deepStrictEqual(kept.referenceSubject, parcelSpec.referenceSubject, "an advisor must not strip the entity a reference names");
+  console.log("  reference wording · prop/character/location/vehicle references are named as entities in every t2i family, a shot keeps shot wording, and no subject carries a doubled full stop");
+}
+
 /* -------------------------------------------------------------------- main */
 
 
@@ -667,6 +747,7 @@ async function main() {
   await startServer();
   try {
     testResolverAndDetector();
+    await testReferenceWording();
     await testBaseReferences();
     await testStateReference();
     await testDerivedEdit();

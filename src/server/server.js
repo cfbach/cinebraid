@@ -5831,14 +5831,18 @@ function assetPromptContext(P, list, entity, state = null, parentState = null, g
       : []),
   ];
   const purpose = type === "character" ? "reference-sheet" : "shot-still";
+  /* The description is built from whole sentences and usually already ends in one.
+     A bare ". " after it is what wrote "changed by this state.. Isolated hero prop
+     reference" into the compiled prompt, so it is terminated only when it is not. */
+  const describedSentence = /[.!?]$/.test(description.trim()) ? description.trim() : `${description.trim()}.`;
   const subject =
     type === "character"
       ? `${entity.name || entity.id}. ${description}`
       : type === "location"
-        ? `${entity.name || entity.id}. ${description}. Empty environment plate with no people or characters.`
+        ? `${entity.name || entity.id}. ${describedSentence} Empty environment plate with no people or characters.`
         : type === "vehicle"
-          ? `${entity.name || entity.id}. ${description}. Clean vehicle design reference with no driver, passengers, people, or unrelated objects.`
-          : `${entity.name || entity.id}. ${description}. Isolated hero prop reference with no hands or people.`;
+          ? `${entity.name || entity.id}. ${describedSentence} Clean vehicle design reference with no driver, passengers, people, or unrelated objects.`
+          : `${entity.name || entity.id}. ${describedSentence} Isolated hero prop reference with no hands or people.`;
   const staging =
     type === "character"
       ? "One production-ready full-body character anchor, neutral stance, readable silhouette, consistent proportions and wardrobe."
@@ -6013,6 +6017,16 @@ app.post("/api/prompt/asset-compile", async (req, res) => {
     );
     fallback.shotId = entity.id;
     fallback.purpose = purpose;
+    /* This compile builds an entity reference, not a shot. Naming the entity, its type
+       and its continuity state here is what lets the compiler say so instead of
+       writing "Create the shot still for shot PROP-PARCEL". A base state is still a
+       named state, unless its name is literally "Default". */
+    const referenceStateName = String(state?.name || "").trim();
+    fallback.referenceSubject = {
+      type: context.assetType,
+      name: String(entity.name || entity.id),
+      stateName: referenceStateName.toLowerCase() === "default" ? "" : referenceStateName,
+    };
     fallback.initialState.subject = context.shot.description;
     fallback.initialState.staging = context.shot.positioning;
     fallback.initialState.camera =
