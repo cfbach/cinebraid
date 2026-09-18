@@ -681,7 +681,8 @@ function defaultSpec(context, purpose, mode, references, mediaAnalysis) {
      not save S01-01, because the Sweep was not unrequested — the compiled prompt
      had asked for him. */
   const mustAvoid = unique([
-    context.project.world?.reject ? `world violations: ${context.project.world.reject}` : "",
+    /* One item of a "; " list: the project's reject sentence loses its own full stop. */
+    context.project.world?.reject ? `world violations: ${clause(context.project.world.reject)}` : "",
     ...FramePresence.absenceRequirements(absentEntities),
     "unrequested characters, props, text or camera moves",
     "identity drift, anatomy deformation and geometry warping",

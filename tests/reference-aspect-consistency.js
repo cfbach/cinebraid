@@ -84,7 +84,8 @@ const PROJECT = {
     title: "Aspect Fixture",
     format: "Short film · 16:9",
     aspectRatio: "16:9",
-    world: { setting: "A wet commuter platform at night." },
+    /* The reject sentence ends in a full stop on purpose: H proves it does not become ".;". */
+    world: { setting: "A wet commuter platform at night.", reject: "No logos or on-screen text." },
   },
   qcChecklist: [],
   characters: [{
@@ -595,8 +596,14 @@ function testResolverAndDetector() {
    The sample's Blue parcel compiled as "Create the shot still for shot
    PROP-PARCEL." and its subject read "changed by this state.. Isolated hero prop
    reference". The route handed the shot compiler an entity id as a shot id, and
-   appended ". " after a description that already ended in one. */
+   appended ". " after a description that already ended in one. Its lists joined an
+   empty preserve item ("features; .") and a reject sentence with its own full stop
+   ("material.; hands"). */
 async function testReferenceWording() {
+  const assertCleanJoins = (label, prompt) => {
+    for (const [pattern, name] of [[/\.\./, "doubled full stop"], [/;\s*\./, "'; .'"], [/\.;/, "'.;'"]])
+      assert(!pattern.test(prompt), `${label}: ${name} in:\n${prompt}`);
+  };
   const cases = [
     { list: "props", id: "PROP-PARCEL", stateId: "state-open", line: "Create a prop reference for Blue parcel in its Opened state." },
     { list: "props", id: "PROP-PARCEL", line: "Create a prop reference for Blue parcel in its Closed state." },
@@ -611,7 +618,7 @@ async function testReferenceWording() {
     const prompt = await compile({ ...payload, profileId: "gpt-image-2/t2i" });
     assert(prompt.includes(`PURPOSE\n${line}`), `${item.id}${item.stateId ? `#${item.stateId}` : ""}: expected "${line}" in:\n${prompt}`);
     assert(!/for shot|shot still|reference sheet/i.test(prompt), `${item.id}: a reference prompt must not describe itself as a shot:\n${prompt}`);
-    assert(!/\.\./.test(prompt), `${item.id}: doubled full stop in:\n${prompt}`);
+    assertCleanJoins(`${item.id}${item.stateId ? `#${item.stateId}` : ""}`, prompt);
   }
 
   /* Every text-to-image family has its own objective branch; none may fall back to shot wording. */
@@ -619,7 +626,7 @@ async function testReferenceWording() {
   for (const profileId of families) {
     const prompt = await compile({ list: "props", id: "PROP-PARCEL", stateId: "state-open", profileId });
     assert(!/for shot|shot still/i.test(prompt), `${profileId}: reference prompt uses shot wording:\n${prompt}`);
-    assert(!/\.\./.test(prompt), `${profileId}: doubled full stop in:\n${prompt}`);
+    assertCleanJoins(profileId, prompt);
   }
 
   /* The boundary itself: terminated once when the description already ends in a
@@ -629,12 +636,21 @@ async function testReferenceWording() {
   const tram = await compile({ list: "vehicles", id: "VEH-TRAM", profileId: "gpt-image-2/t2i" });
   assert.match(tram, /faded green livery\. Clean vehicle design reference/);
 
+  /* The list joins keep their delimiters: a lone preserve item ends the sentence, two
+     are still separated by "; ", and the reject sentence is one "; " item among several. */
+  const mara = await compile({ list: "characters", id: "CHAR-MARA", profileId: "gpt-image-2/t2i" });
+  assert.match(mara, /Preserve exactly: the described identity, age, proportions, wardrobe, materials and distinguishing features\.\n/);
+  assert.match(parcel, /screen content; the exact camera, crop, perspective/);
+  assert.match(parcel, /Do not include or change: world violations: No logos or on-screen text; hands, people, duplicate objects/);
+
   /* A genuine shot keeps shot language, through the real shot route. */
   const shot = await post("/api/prompt/compile", { useLLM: false, shotId: "S01-01", purpose: "shot-still", profileId: "gpt-image-2/t2i" });
   assert.strictEqual(shot.response.status, 200, `shot compile failed: ${JSON.stringify(shot.body)}`);
   assert(String(shot.body.compiledPrompt).includes("PURPOSE\nCreate the shot still for shot S01-01."),
     `a shot prompt must keep its shot wording:\n${shot.body.compiledPrompt}`);
   assert(!/ reference for /.test(shot.body.compiledPrompt), "a shot prompt must not be named as an entity reference");
+  assertCleanJoins("shot S01-01", shot.body.compiledPrompt);
+  assert.match(shot.body.compiledPrompt, /world violations: No logos or on-screen text; unrequested characters/);
 
   /* Whether a spec is a shot is the route's fact: the prompt advisor can neither
      add entity wording to a shot nor strip it from a reference. */
@@ -647,7 +663,7 @@ async function testReferenceWording() {
   assert.deepStrictEqual(parcelSpec.referenceSubject, { type: "prop", name: "Blue parcel", stateName: "Opened" });
   const kept = PromptEngine.validateSpec({ referenceSubject: null }, parcelSpec);
   assert.deepStrictEqual(kept.referenceSubject, parcelSpec.referenceSubject, "an advisor must not strip the entity a reference names");
-  console.log("  reference wording · prop/character/location/vehicle references are named as entities in every t2i family, a shot keeps shot wording, and no subject carries a doubled full stop");
+  console.log("  reference wording · prop/character/location/vehicle references are named as entities in every t2i family, a shot keeps shot wording, and no prompt carries '..', '; .' or '.;'");
 }
 
 /* -------------------------------------------------------------------- main */

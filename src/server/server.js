@@ -6054,10 +6054,11 @@ app.post("/api/prompt/asset-compile", async (req, res) => {
       state && !state.isDefault
         ? `the exact camera, crop, perspective, identity, design, proportions, materials, layout, embedded content and details from ${parentState?.name || "the base entity"} that the ${state.name || "target"} state does not explicitly change`
         : "",
-    ];
+    ].filter(Boolean);
     fallback.mustAvoid = [
+      /* One item of a "; " list: the project's reject sentence loses its own full stop. */
       context.project.world?.reject
-        ? `world violations: ${context.project.world.reject}`
+        ? `world violations: ${String(context.project.world.reject).trim().replace(/[.!?,;:]+$/, "")}`
         : "",
       context.assetType === "location"
         ? "people, characters, crowds, foreground bodies or unexplained props"
