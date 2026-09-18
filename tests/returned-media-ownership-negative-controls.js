@@ -32,7 +32,8 @@ const path = require("path");
 const vm = require("vm");
 
 const ROOT = path.join(__dirname, "..");
-const { render, rawFixture, withCanon } = require("./render-harness");
+const { render, rawFixture, withCanon, harnessAssetId } = require("./render-harness");
+const { memoryStore, confirmationDOM, settleOwedWrites } = require("./helpers/result-confirmation");
 
 const notes = [];
 const note = (line) => notes.push(line);
@@ -1452,6 +1453,112 @@ async function ncRM25() {
   note("NC-RM25 restored the generic sentence: a candidate whose file is on disk and whose FRAME was removed was told its media no longer existed");
 }
 
+/* ===========================================================================
+   NC-RM26 / NC-RM27 — WHAT "OPENING APPROVAL WRITES NOTHING ON ITS OWN" MUST STILL CATCH.
+
+   PR #74's windows-latest run failed RM4 with 1 !== 0, and it was not the review writing.
+   Every harness fixture is an older-schema project, so its load owes one migration
+   write-back: scheduleSaveTrigger(() => dirty(), 50), then the ordinary 500ms autosave.
+   Opening a result confirmation deliberately flushes pending saves, so a measurement that
+   started inside that window charged the owed write to Approve — on a slow runner only.
+   The fix settles what the open already owes (settleOwedWrites) before measuring.
+
+   A settle step is exactly the kind of change that can quietly blind a check, so these
+   two controls prove it did not:
+     NC-RM26  an autonomous write that ESCAPES the trigger registry — the reproduced cause,
+              arriving where the settle cannot see it — is still charged and caught;
+     NC-RM27  opening the confirmation writing BY ITSELF is still caught.
+   Both run the RM4 scenario under identical timing on the shipped build first, where the
+   guarantee holds, so the timing is not what makes them fire.
+   =========================================================================== */
+
+const RM26_FILE = "public/app.js";
+const RM26_ANCHOR = "if (schemaWasOlder && migratedV5) scheduleSaveTrigger(() => dirty(), 50);";
+const RM26_BREAK = "if (schemaWasOlder && migratedV5) setTimeout(() => dirty(), 50);";
+const RM27_FILE = "public/result-decisions.js";
+const RM27_ANCHOR = "    await flushPendingProjectSave();\n    if(prepared!==own";
+/* A bare dirty() would prove nothing: the seam accepts an identical successor without writing, so the
+   defect has to be the real one — opening the confirmation RECORDS something in the project. */
+const RM27_BREAK = "    P.meta.decisionOpenedAt=new Date().toISOString();dirty();await flushPendingProjectSave();\n    if(prepared!==own";
+
+/* RM4, reduced to the measurement: a returned motion result, opened in Results, Approve
+   pressed. Answers how many writes the press itself produced. */
+async function motionApprovalWrites(mutateSource, { waitAfterSettleMs = 0 } = {}) {
+  const project = projectOf([{
+    id: "L1-01",
+    frames: [{ id: "frame-a", label: "A", winner: "FRAME_A.png" }],
+    clips: [{ id: "motion-a", label: "A", suffix: "a", title: "Panel check", kind: "i2v", fromFrame: "frame-a", toFrame: "", dur: 5, motionPrompt: "He checks the panel.", generationPackages: [] }],
+    candidates: [candidate("FRAME_A.png"), candidate("SHOT_MOTION_1.mp4", { frameId: "", addedAt: "2026-08-20T12:00:00.000Z" })],
+  }]);
+  for (const list of ["characters", "locations", "props"])
+    for (const entity of project[list] || [])
+      if (!entity.continuityStates?.length)
+        entity.continuityStates = [{ id: "state-default", name: "Default", isDefault: true, approvedFile: entity.approvedFile || "", notes: "" }];
+  const scan = scanWith(project, { "L1-01": ["FRAME_A.png", "SHOT_MOTION_1.mp4"] });
+  scan.shots["L1-01"].takes.find((take) => take.name === "SHOT_MOTION_1.mp4").assetId = harnessAssetId("shots/L1-01/takes/SHOT_MOTION_1.mp4");
+  const store = memoryStore(project);
+  const page = await render("#/shot/L1-01", project, { scan, fetch: store.fetch, ...(mutateSource ? { mutateSource } : {}) });
+  const key = evaluate(page.context, "return returnedReviewProjectionForBrowser().queue.find((row) => row.candidate.name === 'SHOT_MOTION_1.mp4').key;");
+  const seam = mountResults(page);
+  await page.context.openReturnedResultReview("L1-01", key);
+  confirmationDOM(page);
+  const settled = await settleOwedWrites(page);
+  if (waitAfterSettleMs) await new Promise((resolve) => setTimeout(resolve, waitAfterSettleMs));
+  const before = store.writes();
+  const statusLine = page.context.document.getElementById("rx-confirm-status");
+  statusLine.textContent = "";
+  const target = { closest: (selector) => (selector === "[data-rx-job]" ? null : { dataset: { rx: "approve" }, hasAttribute: (name) => name === "data-rx" }) };
+  page.gesture.act(() => seam.listener({ type: "click", isTrusted: true, target }));
+  for (let i = 0; i < 200 && statusLine.textContent === ""; i += 1) await new Promise((resolve) => setTimeout(resolve, 10));
+  const modal = page.context.document.getElementById("modal").innerHTML;
+  return { settled, during: store.writes() - before, confirmationOpened: /Approve this motion result\?/.test(modal) };
+}
+
+async function ncRM26() {
+  anchorIn(RM26_FILE, RM26_ANCHOR, "NC-RM26");
+  /* The shipped build, under the control's own timing: the owed write is registered, so the
+     settle waits for it and nothing is left for Approve. */
+  const shipped = await motionApprovalWrites(null, { waitAfterSettleMs: 60 });
+  equal(shipped.settled, true, "NC-RM26: the shipped build reaches a settled baseline");
+  equal(shipped.confirmationOpened, true, "NC-RM26: and Approve opens the motion confirmation");
+  equal(shipped.during, 0, "NC-RM26: and, 60ms after settling, Approve writes nothing");
+
+  /* 1. THE LITERAL BAD STATE: the migration write-back fires from a timer the registry cannot
+        see, so the settle finds nothing owed, the write lands 50ms later, and opening approval
+        flushes it — the exact shape PR #74's runner hit. */
+  const broken = await motionApprovalWrites(replacing(RM26_FILE, RM26_ANCHOR, RM26_BREAK), { waitAfterSettleMs: 60 });
+  equal(broken.settled, true, "NC-RM26: the settle sees nothing owed, because the write escaped the registry");
+  equal(broken.confirmationOpened, true, "NC-RM26: Approve still opens the motion confirmation");
+  equal(broken.during, 1, "NC-RM26: and one write is charged to opening approval");
+
+  /* 2. RM4'S GUARANTEE GOES RED FOR IT. */
+  await mustFail("NC-RM26", "writes nothing on its own", () => {
+    assert.strictEqual(broken.during, 0, "RM4: which writes nothing on its own");
+  });
+
+  note("NC-RM26 moved the migration write-back off the trigger registry: the settle found nothing owed, the write landed 50ms later inside the no-write window, and opening approval was charged with it — PR #74's failure, reproduced and caught");
+}
+
+async function ncRM27() {
+  anchorIn(RM27_FILE, RM27_ANCHOR, "NC-RM27");
+  const shipped = await motionApprovalWrites(null);
+  equal(shipped.during, 0, "NC-RM27: on the shipped build opening approval writes nothing");
+
+  /* 1. THE LITERAL BAD STATE: opening the confirmation records when it was opened in the project,
+        then flushes — a write the filmmaker never asked for, made by looking at a decision. */
+  const broken = await motionApprovalWrites(replacing(RM27_FILE, RM27_ANCHOR, RM27_BREAK));
+  equal(broken.settled, true, "NC-RM27: the baseline was settled before the press");
+  equal(broken.confirmationOpened, true, "NC-RM27: the motion confirmation opened");
+  equal(broken.during, 1, "NC-RM27: and opening it wrote the project by itself");
+
+  /* 2. RM4'S GUARANTEE GOES RED FOR IT — the settle step did not blind the check. */
+  await mustFail("NC-RM27", "writes nothing on its own", () => {
+    assert.strictEqual(broken.during, 0, "RM4: which writes nothing on its own");
+  });
+
+  note("NC-RM27 made opening the motion confirmation record itself in the project and save it: with the baseline settled first, RM4's no-write guarantee still went red");
+}
+
 /* =========================================================================== */
 
 async function main() {
@@ -1479,6 +1586,8 @@ async function main() {
   await ncRM23();
   await ncRM24();
   await ncRM25();
+  await ncRM26();
+  await ncRM27();
   await shippedBuildIsGreen();
 
   for (const line of notes) console.log(line);

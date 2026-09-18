@@ -531,7 +531,7 @@ function returnedVideoScan(project) {
    open() here records the exact scope and key and goes to the same address without it.
    =========================================================================== */
 const { harnessAssetId } = require("./render-harness");
-const { memoryStore, confirmationDOM, confirmDecision } = require("./helpers/result-confirmation");
+const { memoryStore, confirmationDOM, confirmDecision, settleOwedWrites } = require("./helpers/result-confirmation");
 const readProjectFile = (file) => require("fs").readFileSync(require("path").join(__dirname, "..", file), "utf8");
 const mainOf = (page) => page.context.document.getElementById("main").innerHTML;
 function mountResults(page) {
@@ -750,6 +750,9 @@ async function returnedMediaOutlivesGenerationReadiness() {
 
   /* OPENING APPROVAL ESTABLISHES NOTHING; ONLY THE SHIPPED CONFIRMATION WRITES. */
   const dom = confirmationDOM(page);
+  /* Settle the migration write-back the older-schema fixture owes, so the count below measures
+     opening approval and nothing that load had already scheduled. */
+  ok(await settleOwedWrites(page), "the page owes no write before approval is opened");
   const writes = store.writes();
   await pressResults(page, seam, "approve");
   ok(page.context.document.getElementById("modal").innerHTML.includes("Choose the motion approval target"),

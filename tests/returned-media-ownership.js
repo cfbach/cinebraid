@@ -44,7 +44,7 @@ const vm = require("vm");
 
 const ROOT = path.join(__dirname, "..");
 const { render, rawFixture, withCanon, harnessAssetId } = require("./render-harness");
-const { memoryStore, confirmationDOM, confirmDecision } = require("./helpers/result-confirmation");
+const { memoryStore, confirmationDOM, confirmDecision, settleOwedWrites } = require("./helpers/result-confirmation");
 const RR = require("../public/shared-returned-review.js");
 
 let checks = 0;
@@ -469,6 +469,9 @@ async function rm4_returnedMotionOwnsReview() {
 
   /* AND THE PRESS STILL REACHES THE SHIPPED CONFIRMATION, AND ONLY IT WRITES. */
   const dom = confirmationDOM(page);
+  /* The fixture is an older-schema project, so its load owes one migration write-back. Settle it
+     first: otherwise this measures how fast the machine reached this line, not what Approve writes. */
+  ok(await settleOwedWrites(page), "RM4: the page owes no write before Approve is pressed");
   const writes = store.writes();
   await pressResults(page, seam, "approve");
   const modal = page.context.document.getElementById("modal").innerHTML;
