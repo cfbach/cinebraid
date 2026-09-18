@@ -256,8 +256,46 @@ function generationCoverageMarkup(coverage, mode) {
 /* The whole shared shell. A surface supplies its own control markup for the active mode
    and gets everything else from here, so "Simple" means the same thing on the blocking
    dialog and on the scene planner. */
-function generationViewMarkup({ mode, plan, option, recommendation, rate, quantity, limits, controlsMarkup, coverage }) {
+/* Price and time in ONE line, for the compact Simple view below. The same two answers the
+   Provider cost and Estimated time cards give — generationPriceLine() and
+   generationTimeEstimate() — so this is a shorter statement of them, never a second one.
+   Unavailable is said, not implied, and a request with no verified rate is still called
+   paid. */
+function generationCompactCostLine({ rate, quantity, local }) {
+  const price = generationPriceLine({ rate, quantity, local });
+  const time = generationTimeEstimate();
+  if (price.kind === "unavailable" && !time.available)
+    return "Price and time unavailable: no verified rate or timing is recorded. This is still a paid request.";
+  const priceWords = price.kind === "unavailable" ? "Price unavailable (no verified rate) · still a paid request" : price.headline;
+  return `${priceWords} · ${time.available ? time.headline : "time unavailable"}`;
+}
+
+/* THE COMPACT SIMPLE VIEW. A surface that can state its whole request in one line —
+   model, route, method and the numbers that matter — passes that line as `summary`, and
+   Simple becomes: the summary, the controls a filmmaker can change, one price-and-time
+   line, and any refusal. The Model / Via / Mode / Where-it-runs / cost / time cards, the
+   limits and the coverage record stay exactly where they are, in Advanced, which is
+   rendered unchanged. Route and price remain visible in both modes, as above: the summary
+   names the route and the cost line states the price. A SUMMARY MUST NAME EVERY VALUE
+   SIMPLE DOES NOT RENDER (a size, a resolution): that is what replaces the saved-defaults
+   sentence here, so a hidden setting is stated rather than dropped silently. A surface
+   that passes no summary renders exactly what it always did. */
+function generationCompactSimpleMarkup({ option, rate, quantity, controlsMarkup, coverage, summary }) {
+  const placement = routePlacement(option);
+  const unsupported = (Array.isArray(coverage) ? coverage : []).some((entry) => entry && String(entry.state) === "unsupported");
+  return `<section class="gen-view gen-view-compact" data-gen-view="simple">`
+    + `<header class="gen-view-head"><b class="gen-view-summary" data-gen-view-summary="1">${esc(summary)}</b>${generationViewSwitchMarkup("simple")}</header>`
+    + `<div class="gen-view-controls" id="gen-view-controls" role="tabpanel" aria-labelledby="gen-view-tab-simple">${controlsMarkup || ""}</div>`
+    + `<p class="gen-view-cost-line" data-gen-view-cost-line="1">${esc(generationCompactCostLine({ rate, quantity, local: placement.local }))}</p>`
+    /* The one coverage state that is a consequence rather than a record: direction this
+       model cannot carry. It stays visible; everything else is in Advanced. */
+    + (unsupported ? generationCoverageMarkup(coverage, "simple") : "")
+    + '</section>';
+}
+
+function generationViewMarkup({ mode, plan, option, recommendation, rate, quantity, limits, controlsMarkup, coverage, summary }) {
   const view = generationViewMode(mode);
+  if (summary && view === "simple") return generationCompactSimpleMarkup({ option, rate, quantity, controlsMarkup, coverage, summary });
   return `<section class="gen-view" data-gen-view="${attr(view)}">`
     + `<header class="gen-view-head"><div><b>Generation settings</b><small>${esc(view === "simple" ? "The facts that decide this request. Open Advanced for the machine settings." : "Every setting this model and provider actually support.")}</small></div>${generationViewSwitchMarkup(view)}</header>`
     + generationAlwaysVisibleMarkup({ option, recommendation, rate, quantity })

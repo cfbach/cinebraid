@@ -33,6 +33,7 @@ const H3Pack = require("../../model-packs/minimax-h3");
 const { resolveH3FalCapability, FAL_H3_MODES } = require("./fal/fal-h3-backend");
 const { h3AspectSupport } = require("../../public/shared-aspect");
 const { checkRequestAgainstCapability } = require("../../public/shared-generation-capability");
+const { styleOnlyRefusal } = require("./broll-package");
 
 /* Quoted in refusals so a filmmaker can see that the limit they hit is the backend's
    and not the model's. Read from the pack rather than restated. */
@@ -81,11 +82,14 @@ function readSourceIntent(project, shotId, buildId) {
 
   const brief = isRecord(shot.creationBrief) ? shot.creationBrief : {};
   const entries = Array.isArray(brief.motionPromptBuilds) ? brief.motionPromptBuilds : [];
+  /* B-roll packages are kept apart so they never become the Motion workflow's latest
+     package; they are reachable only by the id the B-roll panel names. */
+  const brollEntries = buildId && Array.isArray(brief.brollBuilds) ? brief.brollBuilds : [];
   /* Containment: a build id is only usable through the shot that owns it. Resolving
      straight out of the project-wide store would let one shot's request compile
      another shot's approved package. */
   const entry = buildId
-    ? entries.find((row) => String(row?.buildId || row?.id || row) === String(buildId))
+    ? [...entries, ...brollEntries].find((row) => String(row?.buildId || row?.id || row) === String(buildId))
     : entries[entries.length - 1];
   if (!entry)
     throw new H3ExecutionError(
@@ -185,6 +189,12 @@ function compileH3ExecutionPlan(request = {}) {
       { mode, supported: FAL_H3_MODES },
       400,
     );
+  /* A style-only package is text-to-video with nothing attached, or it is not sent: an
+     image-to-video, first-last-frame or reference-to-video mode would need an input a
+     B-roll shot does not have, and CineBraid never invents one. */
+  const styleOnly = styleOnlyRefusal(build, mode, Array.isArray(build.references) ? build.references : [], "video");
+  if (styleOnly) throw new H3ExecutionError(styleOnly.code, styleOnly.message, styleOnly.detail);
+  const referenceMode = text(build.referenceMode) === "style-only" ? "style-only" : "";
 
   const surface = text(request.surface) || "api";
   const capability = resolveH3FalCapability(mode, H3Pack.capabilityLayer(mode, surface));
@@ -300,12 +310,15 @@ function compileH3ExecutionPlan(request = {}) {
     mode,
     modelId: H3_MODEL_IDS[mode],
     surface,
+    /* "style-only" for a B-roll package, "" otherwise — see image-execution.js. */
+    referenceMode,
     profile: { id: text(profile.id), name: text(profile.name), mode, family: text(profile.family), version: text(profile.profileVersion) },
     source: {
       shotId: text(shot.id),
       buildId: text(build.id || build.buildId || request.buildId),
       packageId: text(build.packageId),
       builtAt: text(build.date),
+      ...(referenceMode ? { referenceMode } : {}),
     },
     compiledPrompt,
     submittedPrompt,

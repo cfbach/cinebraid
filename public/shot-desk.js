@@ -50,7 +50,8 @@
     if (panel === "provenance") {
       const record = window.CineBraidMediaInspector?.recordFor(m.item.key);
       const p = record?.provenance;
-      return `<p>This image keeps its production identity and recorded source through approval.</p><dl><dt>Provider</dt><dd>${e(envelope(p?.provider))}</dd><dt>Model</dt><dd>${e(envelope(p?.model))}</dd><dt>Decision</dt><dd>${e(m.decisionLabel)}</dd></dl><details><summary>Original prompt</summary><pre>${e(envelope(p?.prompt))}</pre></details><details><summary>File &amp; durable identity</summary><dl><dt>File</dt><dd>${e(m.item.candidate.name)}</dd><dt>Media ID</dt><dd>${e(record?.identity?.ledger?.state === "known" ? record.identity.ledger.value : m.item.candidate.assetId || "Legacy file; no durable ID recorded")}</dd></dl></details>${button("sd-full-record", "Open full media record")}`;
+      const styleOnly = p?.referenceMode?.value === "style-only" ? `<dt>References</dt><dd data-sd-reference-mode="style-only">B-roll · no reference</dd>` : "";
+      return `<p>This image keeps its production identity and recorded source through approval.</p><dl><dt>Provider</dt><dd>${e(envelope(p?.provider))}</dd><dt>Model</dt><dd>${e(envelope(p?.model))}</dd>${styleOnly}<dt>Decision</dt><dd>${e(m.decisionLabel)}</dd></dl><details><summary>Original prompt</summary><pre>${e(envelope(p?.prompt))}</pre></details><details><summary>File &amp; durable identity</summary><dl><dt>File</dt><dd>${e(m.item.candidate.name)}</dd><dt>Media ID</dt><dd>${e(record?.identity?.ledger?.state === "known" ? record.identity.ledger.value : m.item.candidate.assetId || "Legacy file; no durable ID recorded")}</dd></dl></details>${button("sd-full-record", "Open full media record")}`;
     }
     const frame = m.frame || {};
     const brief = m.shot.creation?.frameWorkflows?.[frame.id]?.action || frame.description || m.shot.desc || "";

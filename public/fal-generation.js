@@ -21,6 +21,23 @@ function falGenerationReady() {
   const cfg = falGenerationConfig();
   return cfg.enabled === true && Boolean(cfg.apiKey || cfg.keySource === "environment");
 }
+/* A PAID CONFIRMATION IS NEVER OVERLAID BY NEWS ABOUT AN EARLIER REQUEST.
+   The toast sits above every dialog by design (toast > dialog in the overlay ladder), so
+   "2 FAL images returned" from the last generation lingered over the next paid dialog. A
+   dialog asking for money clears whatever notice is already showing when it opens, and a
+   generation that completes while one is open says so in its job strip and Results rather
+   than over the dialog. Notices the dialog raises itself — a refusal, a validation — are
+   untouched. `#modal` is asked whether it is hidden because closeModal() only hides it. */
+function dismissStaleNotice() {
+  const notice = document.getElementById("toast");
+  if (!notice) return;
+  clearTimeout(notice._h);
+  notice.classList.add("hidden");
+}
+function paidConfirmationOpen() {
+  const modal = document.getElementById("modal");
+  return !!modal && !modal.classList.contains("hidden") && !!modal.querySelector(".h3-generation-modal");
+}
 /* WHICH JOBS ARE FAL'S.
  *
  * The browser holds ONE generation ledger because the project has one — a ComfyUI job
@@ -997,7 +1014,10 @@ window.refreshFalGeneration = async (jobId, manual = false) => {
          left it, the project on screen did not change because of this ingest and
          there is nothing here for a refresh to collect. */
       if (noteCurrentProjectDurableAdvance(owner)) await load({ intent: "refresh" });
-      toast(`${(data.job.outputs || []).length} FAL image${(data.job.outputs || []).length === 1 ? "" : "s"} returned`);
+      /* A MiniMax H3 job returns a video; saying "image" about it was a leftover of the
+         image-only days of this poller. */
+      const returnedNoun = data.job.purpose === "motion-h3" ? "video" : "image";
+      if (!paidConfirmationOpen()) toast(`${(data.job.outputs || []).length} FAL ${returnedNoun}${(data.job.outputs || []).length === 1 ? "" : "s"} returned`);
       if (blockingIds.length) setTimeout(() => openBlockingNamingModal(data.job.shotId, blockingIds), 0);
       return data.job;
     }
@@ -1321,8 +1341,11 @@ function renderFalH3PlanPanels() {
      the only executable motion path today and this is where a filmmaker finds that
      out — beside the models that cannot yet generate and the sentence saying why. */
   const options = document.getElementById("fal-h3-options");
+  /* Not for a style-only package: its one method is prompt-only text-to-video, fixed by
+     the package, and the endpoint family's catalogue name ("first/last frame") would
+     suggest an input a B-roll request does not have. */
   if (options && typeof renderGenerationOptions === "function")
-    options.innerHTML = renderGenerationOptions(request.options, "animate-shot", request.selectedOptionId);
+    options.innerHTML = request.styleOnly ? "" : renderGenerationOptions(request.options, "animate-shot", request.selectedOptionId);
   const sequence = document.getElementById("fal-h3-sequence");
   if (sequence) {
     const rows = falH3BindingRows(request);
@@ -1345,9 +1368,12 @@ window.openFalH3MotionModal = async (shotId, buildId = "") => {
     openModal(`<h3>Connect FAL first</h3><p class="modal-confirm-message">Enable FAL generation and add the API key in Settings. The key remains on the CineBraid server.</p><div class="modal-actions"><button class="cancel" onclick="closeModal()">Close</button><button class="approve-btn" onclick="closeModal();location.hash='#/settings'">OPEN SETTINGS</button></div>`);
     return;
   }
-  const builds = resolvePromptBuildList(P, c.motionPromptBuilds || []);
-  const build = builds.find((item) => item.id === buildId) || builds.at(-1);
+  /* A B-roll package is found only by the id its panel names, exactly as the server finds
+     it; with no id, the Motion workflow's own latest package is the answer, as always. */
+  const builds = resolvePromptBuildList(P, [...(c.motionPromptBuilds || []), ...(buildId ? c.brollBuilds || [] : [])]);
+  const build = builds.find((item) => item.id === buildId) || resolvePromptBuildList(P, c.motionPromptBuilds || []).at(-1);
   if (!build?.prompt) return toast("Build the MiniMax H3 prompt first");
+  const styleOnly = build.referenceMode === "style-only";
   const profile = typeof profileById === "function" ? profileById(build.profileId || "") : (PROMPT_LIBRARY?.profiles || []).find((item) => item.id === build.profileId);
   if (profile?.family !== "minimax-h3") return toast("Select and build a MiniMax H3 motion profile first");
   /* SLICE 5b EXECUTION GATE — THE PAID DIALOG WILL NOT OPEN.
@@ -1400,6 +1426,7 @@ window.openFalH3MotionModal = async (shotId, buildId = "") => {
     packageId: build.packageId || "",
     prompt: preview.compiledPrompt,
     clientRequestId,
+    styleOnly,
   };
   window._falH3Submitting = false;
   const request = window._falH3MotionRequest;
@@ -1450,11 +1477,29 @@ window.openFalH3MotionModal = async (shotId, buildId = "") => {
      preview a few lines up, and reading it before its `const` is a temporal-dead-zone
      ReferenceError that takes the whole dialog with it. */
   request.durationNote = durationNote;
-  const durationBanner = durationChanged
+  const durationBanner = durationChanged && styleOnly
+    ? `<p id="fal-h3-duration-notice" class="broll-duration-note">This shot is ${esc(String(askedDuration))} seconds; this route supports ${durationLow}–${durationHigh} seconds. A ${esc(String(preview.durationSeconds))}-second result is selected.</p>`
+    : durationChanged
     ? `<div id="fal-h3-duration-notice" class="guided-prompt-error"><div><b>This shot is written as ${esc(String(askedDuration))} seconds, which this backend cannot render</b><small>MiniMax H3 renders from ${preview.modelDurationRange[0]}s, but fal accepts ${durationLow}–${durationHigh}s. ${preview.durationSeconds}s is selected below — confirm it or choose another length. CineBraid will not change the length of your shot for you: submitting ${esc(String(askedDuration))}s is refused, not adjusted.</small></div></div>`
     : "";
 
-  openModal(`<div class="h3-generation-modal"><header class="h3-generation-head"><div><span>MINIMAX H3 · PAID GENERATION</span><h3>Generate with ${esc(request.profileName)}</h3><p>This is the request CineBraid compiled from the approved package. Confirm the inputs, the prompt and the estimated spend before submission.</p></div><button class="cancel" onclick="closeModal()">Close</button></header><div class="h3-generation-scroll"><div class="modal-sub">FAL · ${esc(preview.dispatch?.model || "minimax/h3")} · compiled by ${esc(preview.compiler?.packId || "minimax-h3")} ${esc(preview.compiler?.packVersion || "")}</div><div class="candidate-evidence-facts"><span>${images.length} image${images.length === 1 ? "" : "s"}</span><span>${videos.length} video${videos.length === 1 ? "" : "s"}</span><span>${audio.length} audio</span><span id="fal-h3-prompt-fact">${preview.compiledPrompt.length.toLocaleString()}/${limit.toLocaleString()} prompt characters</span><span>Native stereo audio</span></div><div id="fal-h3-refusal" class="guided-prompt-error" hidden></div><div id="fal-h3-options"></div><section id="fal-h3-sequence" class="h3-submit-sequence" hidden></section>${freshnessBanner}${durationBanner}<div id="fal-h3-generation-view"></div><div id="fal-h3-aspect-warning" class="guided-prompt-error" ${aspectGate.ok ? "hidden" : ""}>${aspectGate.ok ? "" : `<div><b>MiniMax H3 cannot deliver ${esc(ratio)}</b><small>${esc(aspectGate.message)}</small></div>`}</div><div id="fal-h3-cost-estimate" class="h3-cost-estimate"></div><div id="fal-h3-plan-warnings"></div><div id="fal-h3-prompt-warning" class="guided-prompt-error" ${promptReady ? "hidden" : ""}><div><b>Prompt is not ready for submission</b><small>${promptReady ? "" : `Shorten this prompt to ${limit.toLocaleString()} characters before a paid submission.`}</small></div></div><section class="h3-prompt-editor"><header><div><b>Edit prompt before generation</b><small>This is the prompt CineBraid compiled and the exact text that will be sent. ${esc(limitNote)} The compiled package is preserved; any change is saved as a linked manual revision and recorded beside the compiled original.</small></div><span id="fal-h3-prompt-count">${preview.compiledPrompt.length.toLocaleString()}/${limit.toLocaleString()}</span></header><textarea id="fal-h3-prompt-editor" oninput="updateFalH3PromptEditor()" onchange="reviewFalH3PromptEdit()">${esc(preview.compiledPrompt)}</textarea><div id="fal-h3-edit-coverage" class="h3-edit-coverage" hidden></div><div class="h3-prompt-editor-actions"><label><span>Revision note · optional</span><input id="fal-h3-prompt-edit-reason" placeholder="Clarified timing, removed duplicate action…"></label><button class="ghost-btn" onclick="resetFalH3PromptEditor()">Reset compiled prompt</button></div></section><p class="hint">This submits one paid MiniMax H3 request through FAL. The returned MP4 is saved as an unapproved video candidate in this shot. The request uses an idempotency key to prevent an accidental double submission from this dialog.</p></div><footer class="modal-actions h3-generation-actions"><button class="cancel" onclick="closeModal()">Cancel</button><button id="fal-h3-submit" class="approve-btn large" onclick="startFalH3MotionGeneration()" ${promptReady && aspectGate.ok && !preview.refusal && !packageStale ? "" : "disabled"}>START H3 GENERATION</button></footer></div>`);
+  /* A style-only package names what it is instead of describing an approved package it
+     does not have: no reference travels, and the facts line says so in the same place the
+     reference counts would be. */
+  const headline = styleOnly
+    ? `<h3>Create B-roll video</h3><p>Uses the project look and this shot’s prompt. No reference required.</p>`
+    : `<h3>Generate with ${esc(request.profileName)}</h3><p>This is the request CineBraid compiled from the approved package. Confirm the inputs, the prompt and the estimated spend before submission.</p>`;
+  const inputFacts = styleOnly
+    ? `<span data-h3-style-only="1">B-roll · no reference</span>`
+    : `<span>${images.length} image${images.length === 1 ? "" : "s"}</span><span>${videos.length} video${videos.length === 1 ? "" : "s"}</span><span>${audio.length} audio</span>`;
+  /* B-ROLL SIMPLE. The compiler line, the facts row, the cost block, the plan notes, the
+     prompt editor and the accounting paragraph are Advanced-only for a B-roll package: its
+     Simple view states the request in one summary line, the controls, and one price line
+     (generationViewMarkup's compact view). Refusals and blocking banners are never marked,
+     so they show in both modes. A reference-led package renders exactly as before. */
+  const advancedOnly = styleOnly ? ' data-broll-advanced="1"' : "";
+  dismissStaleNotice();
+  openModal(`<div class="h3-generation-modal${styleOnly ? " broll-confirmation" : ""}"><header class="h3-generation-head"><div><span>MINIMAX H3 · PAID GENERATION</span>${headline}</div><button class="cancel" onclick="closeModal()">Close</button></header><div class="h3-generation-scroll"><div class="modal-sub"${advancedOnly}>FAL · ${esc(preview.dispatch?.model || "minimax/h3")} · compiled by ${esc(preview.compiler?.packId || "minimax-h3")} ${esc(preview.compiler?.packVersion || "")}</div><div class="candidate-evidence-facts"${advancedOnly}>${inputFacts}<span id="fal-h3-prompt-fact">${preview.compiledPrompt.length.toLocaleString()}/${limit.toLocaleString()} prompt characters</span><span>Native stereo audio</span></div><div id="fal-h3-refusal" class="guided-prompt-error" hidden></div><div id="fal-h3-options"></div><section id="fal-h3-sequence" class="h3-submit-sequence" hidden></section>${freshnessBanner}${durationBanner}<div id="fal-h3-generation-view"></div><div id="fal-h3-aspect-warning" class="guided-prompt-error" ${aspectGate.ok ? "hidden" : ""}>${aspectGate.ok ? "" : `<div><b>MiniMax H3 cannot deliver ${esc(ratio)}</b><small>${esc(aspectGate.message)}</small></div>`}</div><div id="fal-h3-cost-estimate" class="h3-cost-estimate"${advancedOnly}></div><div id="fal-h3-plan-warnings"${advancedOnly}></div><div id="fal-h3-prompt-warning" class="guided-prompt-error" ${promptReady ? "hidden" : ""}><div><b>Prompt is not ready for submission</b><small>${promptReady ? "" : `Shorten this prompt to ${limit.toLocaleString()} characters before a paid submission.`}</small></div></div><section class="h3-prompt-editor"${advancedOnly}><header><div><b>Edit prompt before generation</b><small>This is the prompt CineBraid compiled and the exact text that will be sent. ${esc(limitNote)} The compiled package is preserved; any change is ${styleOnly ? "" : "saved as a linked manual revision and "}recorded beside the compiled original.</small></div><span id="fal-h3-prompt-count">${preview.compiledPrompt.length.toLocaleString()}/${limit.toLocaleString()}</span></header><textarea id="fal-h3-prompt-editor" oninput="updateFalH3PromptEditor()" onchange="reviewFalH3PromptEdit()">${esc(preview.compiledPrompt)}</textarea><div id="fal-h3-edit-coverage" class="h3-edit-coverage" hidden></div><div class="h3-prompt-editor-actions">${styleOnly ? "" : `<label><span>Revision note · optional</span><input id="fal-h3-prompt-edit-reason" placeholder="Clarified timing, removed duplicate action…"></label>`}<button class="ghost-btn" onclick="resetFalH3PromptEditor()">Reset compiled prompt</button></div></section><p class="hint"${advancedOnly}>This submits one paid MiniMax H3 request through FAL. The returned MP4 is saved as an unapproved video candidate in this shot. The request uses an idempotency key to prevent an accidental double submission from this dialog.</p></div><footer class="modal-actions h3-generation-actions"><button class="cancel" onclick="closeModal()">Cancel</button><button id="fal-h3-submit" class="approve-btn large" onclick="startFalH3MotionGeneration()" ${promptReady && aspectGate.ok && !preview.refusal && !packageStale ? "" : "disabled"}>${styleOnly ? "Generate" : "START H3 GENERATION"}</button></footer></div>`);
   /* One slot, and this dialog now owns it: switching Simple/Advanced redraws THIS view.
      Registered before the first paint so the very first toggle has somewhere to go. */
   window._generationViewRefresh = () => renderFalH3GenerationView();
@@ -1479,7 +1524,7 @@ function falH3ControlsMarkup(plan, request) {
     const options = Array.from({ length: Math.max(1, high - low + 1) }, (_, i) => low + i);
     parts.push(`<label><span>Duration</span><select id="fal-h3-duration" onchange="refreshFalH3Plan()">${
       options.map((n) => `<option value="${n}" ${n === Number(request.durationSeconds) ? "selected" : ""}>${n} seconds</option>`).join("")
-    }</select><small>${esc(String(request.durationNote || ""))}</small></label>`);
+    }</select>${request.styleOnly ? "" : `<small>${esc(String(request.durationNote || ""))}</small>`}</label>`);
   }
   if (rendered.has("resolution")) {
     const values = Array.isArray(request.resolutions) && request.resolutions.length ? request.resolutions : [];
@@ -1527,6 +1572,22 @@ function falH3ControlPlan(mode) {
   });
 }
 
+/* THE WHOLE B-ROLL VIDEO REQUEST IN ONE LINE — model and route, method, length,
+   resolution, format — read from the plan the dialog is showing. Resolution is the value
+   Simple does not render, so the line is where it is stated. An edit made under Advanced is named here,
+   so Simple never hides that the prompt being sent is not the compiled one. */
+function falH3BrollSummary(request, selected) {
+  const editor = document.getElementById("fal-h3-prompt-editor");
+  const edited = !!editor && editor.value.trim() !== String(request.compiledPrompt || "").trim();
+  return [
+    `${String(request.profileName || "").split(" — ")[0] || "MiniMax H3"} via ${String(selected?.surfaceName || "fal")}`,
+    "Text to video",
+    Number(request.durationSeconds) ? `${Number(request.durationSeconds)}s` : "",
+    String(request.resolution || ""),
+    request.carriesAspectRatio ? String(request.aspectRatio || "") : "",
+    edited ? "edited prompt" : "",
+  ].filter(Boolean).join(" · ");
+}
 function renderFalH3GenerationView(mode) {
   const host = document.getElementById("fal-h3-generation-view");
   if (!host) return;
@@ -1534,10 +1595,16 @@ function renderFalH3GenerationView(mode) {
   const view = generationViewMode(mode || generationViewPreference());
   const plan = falH3ControlPlan(view);
   const resolved = request.options || null;
+  const selected = selectedGenerationOption(resolved, request.selectedOptionId);
+  host.closest(".h3-generation-modal")?.classList.toggle("broll-simple", !!request.styleOnly && view === "simple");
   host.innerHTML = generationViewMarkup({
+    summary: request.styleOnly ? falH3BrollSummary(request, selected) : "",
     mode: view,
     plan,
-    option: selectedGenerationOption(resolved, request.selectedOptionId),
+    /* A style-only package names the profile it was compiled for ("MiniMax H3 — Text to
+       Video"). The endpoint family's catalogue name ("first/last frame") would describe
+       an input this request does not have. */
+    option: request.styleOnly && selected ? { ...selected, modelName: request.profileName || selected.modelName } : selected,
     recommendation: generationRecommendationFor(resolved),
     rate: generationRateFor("video"),
     /* Seconds, because the motion rate is per second. The quantity a price multiplies and
@@ -1585,7 +1652,7 @@ window.startFalH3MotionGeneration = async () => {
      falH3MotionPromptAction. Refusing on an absence would block every package
      compiled before dependencies were captured, on evidence nobody has. */
   const gateBuilds = gateShot && typeof resolvePromptBuildList === "function"
-    ? resolvePromptBuildList(P, ensureShotCreation(gateShot).motionPromptBuilds || [])
+    ? resolvePromptBuildList(P, [...(ensureShotCreation(gateShot).motionPromptBuilds || []), ...(ensureShotCreation(gateShot).brollBuilds || [])])
     : [];
   const gateBuild = gateBuilds.find((item) => item.id === request.buildId) || null;
   const gateFreshness = gateShot && gateBuild && typeof packageFreshness === "function" ? packageFreshness(gateShot, gateBuild) : null;
@@ -1610,7 +1677,10 @@ window.startFalH3MotionGeneration = async () => {
      and the text the filmmaker chose to send both survive. The build the SERVER
      compiles from is deliberately left as the original: an edit changes the prompt
      that is dispatched, never the structured direction it was compiled from. */
-  if (editedPrompt !== String(request.compiledPrompt || "").trim() && typeof createManualMotionPromptRevision === "function") {
+  /* A style-only package keeps no separate Motion revision: it is not in the Motion
+     workflow's list, and the job records the compiled and the submitted prompt side by
+     side whether or not they differ. */
+  if (!request.styleOnly && editedPrompt !== String(request.compiledPrompt || "").trim() && typeof createManualMotionPromptRevision === "function") {
     try {
       const revised = createManualMotionPromptRevision(request.shotId, request.buildId, editedPrompt, revisionReason);
       if (revised?.id) request.revisionBuildId = revised.id;

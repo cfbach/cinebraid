@@ -958,6 +958,11 @@
       removedKeys: deepFreeze(list(job.removedPayloadKeys).map(text).filter(Boolean)),
       selectedOptionId: known(job.selectedOptionId),
       selectedModelId: known(job.selectedModelId),
+      /* B-ROLL / STYLE-ONLY, from the job only: "style-only" means the request carried no
+         reference, identity or continuity input by construction. Its absence is NOT a
+         claim that references were used — older jobs never recorded the question, and
+         `not-recorded` says exactly that. */
+      referenceMode: known(job.referenceMode),
       prompt: promptOf(row, libraryRow),
       submittedPrompt: known(job.prompt),
       cost: costOf(resolved.job, resolved.state),

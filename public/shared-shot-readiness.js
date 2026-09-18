@@ -432,6 +432,7 @@
   const resolveApprovalMediaOwner = requireOwner(DISPOSITION && DISPOSITION.resolveApprovalMedia, "resolveApprovalMedia", "shared-media-disposition.js");
   const shotDependencyRecordsOwner = requireOwner(ENTITIES && ENTITIES.shotDependencyRecords, "shotDependencyRecords", "shared-entities.js");
   const shotStateBearingEntityRecordsOwner = requireOwner(ENTITIES && ENTITIES.shotStateBearingEntityRecords, "shotStateBearingEntityRecords", "shared-entities.js");
+  const shotIsStyleOnlyOwner = requireOwner(ENTITIES && ENTITIES.shotIsStyleOnly, "shotIsStyleOnly", "shared-entities.js");
   const lossyShotCodeTokensOwner = requireOwner(ENTITIES && ENTITIES.lossyShotCodeTokens, "lossyShotCodeTokens", "shared-entities.js");
   const resolveStateRecordOwner = requireOwner(CONTINUITY && CONTINUITY.resolveStateRecord, "resolveStateRecord", "shared-continuity.js");
   const stateIdBelongsToEntityOwner = requireOwner(BINDING && BINDING.stateIdBelongsToEntity, "stateIdBelongsToEntity", "shared-continuity-binding.js");
@@ -826,6 +827,10 @@
      a two-frame shot look twice as broken as a one-frame shot. */
   function relationshipRequirements(project, shot, context) {
     const rows = [];
+    /* A style-only shot consumes none of its relationships, so none of them is a
+       decision it owes. Its declared states are DORMANT, not stale: they are kept on the
+       record untouched and come back the moment the shot is reference-led again. */
+    if (context.styleOnly) return rows;
     /* A known entity reached only through a shot declaration has no state-bearing
        relationship. The declaration gets one explicit cleanup decision here and is
        excluded from unit inputs above, so it can neither bootstrap a relationship nor
@@ -1690,7 +1695,13 @@
       ? "resolveApprovalMedia"
       : typeof oracle.fileExists === "function" ? "file-name-only" : "not-checked";
     const routeNeeds = shotRouteInputNeeds(record(shot).deliveryRoute);
-    const attachedIds = new Set(list(shotStateBearingEntityRecordsOwner(project, shot))
+    /* B-ROLL / STYLE-ONLY OWES NO REFERENCE. It generates from the project look and the
+       shot's own prompt, so no entity it names is an input to any of its units and no
+       approval of one is owed. The relationship itself is untouched (see
+       shotReferenceMode() in shared-entities.js), which is why this is answered here, in
+       what the shot OWES, and not by pretending the shot names nobody. */
+    const styleOnly = shotIsStyleOnlyOwner(shot);
+    const attachedIds = new Set(styleOnly ? [] : list(shotStateBearingEntityRecordsOwner(project, shot))
       .filter((dependency) => record(dependency).resolved === true)
       .map((dependency) => text(record(record(dependency).entity).id))
       .filter(Boolean));
@@ -1700,6 +1711,7 @@
       truthProblem: projectTruth === undefined ? projectTruthProblem(project) : projectTruth,
       dependencies: list(shotDependencyRecordsOwner(project, shot)),
       attachedIds,
+      styleOnly,
       routeNeeds,
       /* Derived once and carried, because the rollup asks the same question
          declaredUnits() already answered and re-deriving it is how two readings of one

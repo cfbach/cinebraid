@@ -200,6 +200,10 @@
       brief.motionPromptBuilds = Array.isArray(brief.motionPromptBuilds) ? brief.motionPromptBuilds : [];
       visitor(brief, "promptBuilds", { kind: "guided-frame" });
       visitor(brief, "motionPromptBuilds", { kind: "guided-motion" });
+      /* B-roll / style-only packages. Visited so retention keeps what they reference and
+         their ids stay in the store; visited ONLY where the list exists, so a project
+         that has never made B-roll gains no empty key by being loaded. */
+      if (Array.isArray(brief.brollBuilds)) visitor(brief, "brollBuilds", { kind: "broll" });
       brief.frameWorkflows = brief.frameWorkflows && typeof brief.frameWorkflows === "object" ? brief.frameWorkflows : {};
       for (const workflow of Object.values(brief.frameWorkflows)) {
         if (!workflow || typeof workflow !== "object") continue;

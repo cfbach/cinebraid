@@ -1572,6 +1572,10 @@ function registerFalGeneration(app, context) {
     job.profileName = compiled.profile.name || job.profileName;
     job.sourceBuildId = compiled.source.buildId || job.sourceBuildId;
     job.packageId = compiled.source.packageId || job.packageId;
+    /* B-ROLL PROVENANCE. Written only when the compiled package is style-only, so a
+       reference-led job's record is byte-for-byte what it always was, and a returned
+       clip can say it was made from the project look and the prompt, with no reference. */
+    if (compiled.referenceMode) job.referenceMode = compiled.referenceMode;
     /* Both prompts, always. They are identical unless the filmmaker edited one, and a
        reader must never have to guess which of the two a shot was made from. */
     job.compiledPrompt = compiled.compiledPrompt;
@@ -1631,6 +1635,8 @@ function registerFalGeneration(app, context) {
     job.profileFamily = "gpt-image-2";
     job.sourceBuildId = compiled.source.buildId || job.sourceBuildId;
     job.packageId = compiled.source.packageId || job.packageId;
+    /* B-ROLL PROVENANCE — see applyCompilationToJob. */
+    if (compiled.referenceMode) job.referenceMode = compiled.referenceMode;
     /* Both prompts, always. They are identical unless the filmmaker edited one, and a
        reader must never have to guess which of the two a frame was made from. */
     job.compiledPrompt = compiled.compiledPrompt;

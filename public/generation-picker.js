@@ -175,6 +175,9 @@ async function fetchFalImagePlan(purpose, shotId, buildId, extra = {}) {
    own manifest rather than from the shot, because the plan is what will be sent. */
 function falFrameReferenceRows(request) {
   const references = request?.references || [];
+  /* A B-roll package carries nothing by construction. The heading and the facts line
+     already say so, so a third statement of it would only be repetition. */
+  if (request?.source?.referenceMode === "style-only") return "";
   if (!references.length) return `<section class="h3-submit-sequence"><b>No approved references</b><small>This frame will be created from the written direction alone.</small></section>`;
   const rows = references.map((ref) => `<li><b>${esc(String(ref.role || "reference").replace(/-/g, " "))}</b><span>${esc(ref.label || ref.refId)}${ref.purpose ? ` · ${esc(ref.purpose)}` : ""}</span></li>`).join("");
   return `<section class="h3-submit-sequence"><b>Approved references CineBraid will use</b><small>Each one and what it is carrying. Bound by its production role, not by list order.</small><ol>${rows}</ol></section>`;
@@ -193,7 +196,7 @@ function falFrameWarningRows(request) {
 function falFrameFacts(request) {
   const references = request.references || [];
   return [
-    `${references.length} approved reference${references.length === 1 ? "" : "s"}`,
+    request.source?.referenceMode === "style-only" ? "B-roll · no reference" : `${references.length} approved reference${references.length === 1 ? "" : "s"}`,
     request.size || "auto",
     request.aspectRatio || "",
     `${String(request.compiledPrompt || "").length.toLocaleString()} characters`,
@@ -206,7 +209,10 @@ function renderFalFramePanels() {
   const facts = document.getElementById("fal-frame-facts");
   if (facts) facts.innerHTML = falFrameFacts(request);
   const options = document.getElementById("fal-frame-options");
-  if (options) options.innerHTML = renderGenerationOptions(request.options, request.task, request.selectedOptionId);
+  /* A style-only package has exactly one method — prompt-only text-to-image — and the
+     B-roll panel already named the model it runs on. A list of other models, most of
+     which cannot run at all, is a choice this request does not have. */
+  if (options) options.innerHTML = request.source?.referenceMode === "style-only" ? "" : renderGenerationOptions(request.options, request.task, request.selectedOptionId);
   const references = document.getElementById("fal-frame-references");
   if (references) references.innerHTML = falFrameReferenceRows(request);
   const notes = document.getElementById("fal-frame-warnings");
@@ -340,6 +346,12 @@ window.openFalFrameGenerationModal = async (purpose, shotId, frameId = "", build
   if (!preview) return;
 
   const task = preview.mode === "edit" || preview.mode === "inpaint" ? "edit-frame" : kind.task;
+  /* A B-roll package says what it is in the heading, not "built from the approved
+     references" — it has none, and the dialog must not imply otherwise. */
+  const styleOnly = preview.source?.referenceMode === "style-only";
+  const heading = styleOnly
+    ? { title: "Create B-roll image", lead: "Uses the project look and this shot’s prompt. No reference required." }
+    : { title: kind.title, lead: kind.lead };
   const options = await fetchGenerationOptions(task, (preview.references || []).map((row) => ({ role: row.role, mediaType: row.mediaType })));
   const ready = (options?.options || []).filter((option) => option.actionable);
   const planOption = ready.find((option) => option.modelId === (preview.compiler?.packId === "gpt-image-2" ? "gpt-image-2/standard" : ""));
@@ -371,8 +383,13 @@ window.openFalFrameGenerationModal = async (purpose, shotId, frameId = "", build
      ReferenceError that takes the whole dialog with it. */
   window._falFrameRequest.sizes = sizes;
   window._falFrameRequest.qualityTiers = qualities;
-  const frameLabel = preview.source?.frameLabel ? ` ${preview.source.frameLabel}` : "";
-  openModal(`<div class="h3-generation-modal"><header class="h3-generation-head"><div><span>PAID GENERATION</span><h3>${esc(kind.title)}${esc(frameLabel)}</h3><p>${esc(kind.lead)}</p></div><button class="cancel" onclick="closeModal()">Close</button></header><div class="h3-generation-scroll"><div class="modal-sub">${esc(preview.dispatch?.model || "fal")} · compiled by ${esc(preview.compiler?.packId || "gpt-image-2")} ${esc(preview.compiler?.packVersion || "")}</div><div id="fal-frame-facts" class="candidate-evidence-facts"></div><div class="gen-prompt-count" id="fal-frame-prompt-count">${preview.compiledPrompt.length.toLocaleString()} characters</div><div id="fal-frame-refusal" class="guided-prompt-error" hidden></div><div id="fal-frame-model-note" class="guided-prompt-error" hidden></div><div id="fal-frame-options"></div><div id="fal-frame-references"></div><div id="fal-frame-generation-view"></div><div id="fal-frame-warnings"></div><section class="h3-prompt-editor"><header><div><b>Edit prompt before generation</b><small>This is the prompt CineBraid compiled and the exact text that will be sent. The compiled package is preserved; any change is recorded beside the compiled original.</small></div></header><textarea id="fal-frame-prompt-editor" oninput="updateFalFramePrompt()" onchange="reviewFalFramePromptEdit()">${esc(preview.compiledPrompt)}</textarea><div id="fal-frame-edit-coverage" class="h3-edit-coverage" hidden></div><div class="h3-prompt-editor-actions"><button class="ghost-btn" onclick="resetFalFramePrompt()">Reset compiled prompt</button></div></section><p class="hint">This submits one paid fal request. Returned images are saved as unapproved candidates in this shot and do not become canon until you approve one. The request uses an idempotency key to prevent an accidental double submission from this dialog.</p></div><footer class="modal-actions h3-generation-actions"><button class="cancel" onclick="closeModal()">Cancel</button><button id="fal-frame-submit" class="approve-btn large" onclick="startFalFrameGeneration()" disabled>GENERATE</button></footer></div>`);
+  const frameLabel = !styleOnly && preview.source?.frameLabel ? ` ${preview.source.frameLabel}` : "";
+  /* B-ROLL SIMPLE — the image twin of the MiniMax H3 dialog: the compiler line, the facts
+     row, the character count, the plan notes, the prompt editor and the accounting
+     paragraph are Advanced-only for a B-roll package. Refusals are never marked. */
+  const advancedOnly = styleOnly ? ' data-broll-advanced="1"' : "";
+  dismissStaleNotice();
+  openModal(`<div class="h3-generation-modal${styleOnly ? " broll-confirmation" : ""}"><header class="h3-generation-head"><div><span>PAID GENERATION</span><h3>${esc(heading.title)}${esc(frameLabel)}</h3><p>${esc(heading.lead)}</p></div><button class="cancel" onclick="closeModal()">Close</button></header><div class="h3-generation-scroll"><div class="modal-sub"${advancedOnly}>${esc(preview.dispatch?.model || "fal")} · compiled by ${esc(preview.compiler?.packId || "gpt-image-2")} ${esc(preview.compiler?.packVersion || "")}</div><div id="fal-frame-facts" class="candidate-evidence-facts"${advancedOnly}></div><div class="gen-prompt-count" id="fal-frame-prompt-count"${advancedOnly}>${preview.compiledPrompt.length.toLocaleString()} characters</div><div id="fal-frame-refusal" class="guided-prompt-error" hidden></div><div id="fal-frame-model-note" class="guided-prompt-error" hidden></div><div id="fal-frame-options"></div><div id="fal-frame-references"></div><div id="fal-frame-generation-view"></div><div id="fal-frame-warnings"${advancedOnly}></div><section class="h3-prompt-editor"${advancedOnly}><header><div><b>Edit prompt before generation</b><small>This is the prompt CineBraid compiled and the exact text that will be sent. The compiled package is preserved; any change is recorded beside the compiled original.</small></div></header><textarea id="fal-frame-prompt-editor" oninput="updateFalFramePrompt()" onchange="reviewFalFramePromptEdit()">${esc(preview.compiledPrompt)}</textarea><div id="fal-frame-edit-coverage" class="h3-edit-coverage" hidden></div><div class="h3-prompt-editor-actions"><button class="ghost-btn" onclick="resetFalFramePrompt()">Reset compiled prompt</button></div></section><p class="hint"${advancedOnly}>This submits one paid fal request. Returned images are saved as unapproved candidates in this shot and do not become canon until you approve one. The request uses an idempotency key to prevent an accidental double submission from this dialog.</p></div><footer class="modal-actions h3-generation-actions"><button class="cancel" onclick="closeModal()">Cancel</button><button id="fal-frame-submit" class="approve-btn large" onclick="startFalFrameGeneration()" disabled>${styleOnly ? "Generate" : "GENERATE"}</button></footer></div>`);
   window._generationViewRefresh = () => renderFalFrameGenerationView();
   setTimeout(() => { renderFalFramePanels(); updateFalFramePrompt(); }, 0);
 };
@@ -432,6 +449,20 @@ function falFrameControlPlan(mode) {
   });
 }
 
+/* THE WHOLE B-ROLL IMAGE REQUEST IN ONE LINE — model and route, method, size, format —
+   read from the plan the dialog is showing. The count and quality are the controls just
+   below it, so they are not repeated here. An edit made under Advanced is named. */
+function falFrameBrollSummary(request, selected) {
+  const editor = document.getElementById("fal-frame-prompt-editor");
+  const edited = !!editor && editor.value.trim() !== String(request.compiledPrompt || "").trim();
+  return [
+    `${String(selected?.modelName || request.planModelName || "GPT Image 2")} via ${String(selected?.surfaceName || "fal")}`,
+    "Text to image",
+    String(request.size || "").replace("x", "×"),
+    String(request.aspectRatio || ""),
+    edited ? "edited prompt" : "",
+  ].filter(Boolean).join(" · ");
+}
 function renderFalFrameGenerationView(mode) {
   const host = document.getElementById("fal-frame-generation-view");
   if (!host) return;
@@ -440,10 +471,14 @@ function renderFalFrameGenerationView(mode) {
   const plan = falFrameControlPlan(view);
   const resolved = request.options || null;
   const count = Math.max(1, Number(request.outputCount) || 1);
+  const styleOnly = request.source?.referenceMode === "style-only";
+  const selected = selectedGenerationOption(resolved, request.selectedOptionId);
+  host.closest(".h3-generation-modal")?.classList.toggle("broll-simple", styleOnly && view === "simple");
   host.innerHTML = generationViewMarkup({
+    summary: styleOnly ? falFrameBrollSummary(request, selected) : "",
     mode: view,
     plan,
-    option: selectedGenerationOption(resolved, request.selectedOptionId),
+    option: selected,
     recommendation: generationRecommendationFor(resolved),
     rate: generationRateFor("image"),
     /* Images, because the image rate is per image — and the count the PLAN settled on

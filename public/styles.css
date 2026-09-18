@@ -7699,3 +7699,66 @@ body[data-focused-route="library"]:has(.library-grid .library-card) #app[data-su
   .entity-review-braidy{flex-direction:column}
   .entity-review-braidy button{width:100%}
 }
+
+/* ==========================================================================
+   B-ROLL / STYLE-ONLY — the generation-mode choice and its one panel.
+   Native radios, styled as a segmented control, so arrow keys, Tab and screen readers
+   work without a line of script; the focus ring is drawn on the visible segment. */
+.shot-reference-mode{display:flex;align-items:center;flex-wrap:wrap;gap:8px 12px;min-width:0;margin:0 0 12px;padding:0;border:0}
+.shot-reference-mode>legend{float:left;padding:0;margin:0;font:700 8px var(--mono);letter-spacing:.08em;text-transform:uppercase;color:var(--muted)}
+.shot-reference-mode-options,.broll-output-options{display:inline-flex;gap:2px;padding:3px;border:1px solid var(--line-2);border-radius:var(--r-pill);background:var(--panel)}
+.shot-reference-mode-option,.broll-output-option{position:relative;display:inline-flex;margin:0;cursor:pointer}
+.shot-reference-mode-option input,.broll-output-option input{position:absolute;inset:0;margin:0;opacity:0;cursor:pointer}
+.shot-reference-mode-option span,.broll-output-option span{display:inline-flex;align-items:center;min-height:30px;padding:0 14px;border-radius:var(--r-pill);font-size:12.5px;font-weight:600;color:var(--muted);white-space:nowrap}
+.shot-reference-mode-option input:checked+span,.broll-output-option input:checked+span{background:var(--acc-soft);color:var(--ink);box-shadow:inset 0 0 0 1px color-mix(in srgb,var(--acc) 45%,transparent)}
+.shot-reference-mode-option input:focus-visible+span,.broll-output-option input:focus-visible+span{outline:2px solid var(--acc);outline-offset:2px}
+.shot-reference-mode-option:hover span,.broll-output-option:hover span{color:var(--ink)}
+.broll-panel{display:grid;gap:12px;margin:0 0 14px;padding:16px 18px;border:1px solid var(--line-2);border-radius:12px;background:var(--panel)}
+.broll-head h2{margin:0;font:600 20px/1.2 var(--display);color:var(--ink)}
+.broll-head p{margin:4px 0 0;color:var(--muted);font-size:13px}
+.broll-prompt-label{font:700 8px var(--mono);letter-spacing:.08em;text-transform:uppercase;color:var(--muted);margin-bottom:-6px}
+.broll-prompt{width:100%;min-height:96px;resize:vertical;box-sizing:border-box;font:14px/1.5 var(--body)}
+.broll-look{display:flex;gap:10px;align-items:baseline;margin:0;font-size:12.5px;color:var(--muted);min-width:0}
+.broll-look b{flex:none;font:700 8px var(--mono);letter-spacing:.08em;text-transform:uppercase;color:var(--faint)}
+.broll-look span{min-width:0;overflow:hidden;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical}
+.broll-controls{display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:10px 16px}
+.broll-output{display:flex;align-items:center;gap:10px;min-width:0;margin:0;padding:0;border:0}
+.broll-output>legend{float:left;padding:0;margin:0;font:700 8px var(--mono);letter-spacing:.08em;text-transform:uppercase;color:var(--muted)}
+#main .broll-panel .broll-generate{min-height:44px;padding:0 20px;border:1px solid var(--cb-action-warm);border-radius:8px;background:var(--cb-action-warm);color:var(--bg);font:650 15px/1.2 var(--body);letter-spacing:normal;text-transform:none;cursor:pointer}
+#main .broll-panel .broll-generate:hover:not(:disabled){background:color-mix(in srgb,var(--cb-action-warm) 84%,var(--ink));border-color:color-mix(in srgb,var(--cb-action-warm) 84%,var(--ink))}
+#main .broll-panel .broll-generate:focus-visible{outline:2px solid var(--cb-focus);outline-offset:2px}
+#main .broll-panel .broll-generate:disabled{background:transparent;border-color:var(--line-2);color:var(--muted);cursor:not-allowed}
+.broll-target{margin:-4px 0 0;font:11px var(--mono);color:var(--faint)}
+.broll-blocked{display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:8px 12px;margin:0}
+.broll-panel .broll-job-strip{margin:0}
+@media(max-width:700px){
+  .broll-panel{padding:12px}
+  .shot-reference-mode{flex-direction:column;align-items:stretch;gap:6px}
+  .shot-reference-mode-options,.broll-output-options{display:flex}
+  .shot-reference-mode-option,.broll-output-option{flex:1}
+  .shot-reference-mode-option span,.broll-output-option span{flex:1;justify-content:center;padding:0 10px}
+  .broll-controls{flex-direction:column;align-items:stretch}
+  .broll-output{flex-direction:column;align-items:stretch;gap:6px}
+  .broll-generate{width:100%}
+  .broll-look{flex-direction:column;gap:2px}
+}
+/* `hidden` must win over the panel's own display:grid. An H3 request with no reference
+   (any text-to-video, and every B-roll clip) otherwise drew an empty bordered bar where
+   the provider-input list would be. */
+.h3-submit-sequence[hidden]{display:none}
+/* B-ROLL SIMPLE CONFIRMATION. In Simple, the paid dialog for a B-roll package shows its
+   one-line request summary, the controls a filmmaker can change and one price-and-time
+   line; everything marked data-broll-advanced waits in Advanced. Refusals carry no mark. */
+.h3-generation-modal.broll-simple [data-broll-advanced]{display:none!important}
+.gen-view-compact{display:grid;gap:12px}
+.gen-view-compact .gen-view-head{display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:8px 12px}
+.gen-view-summary{font:600 14px/1.4 var(--body);color:var(--ink);min-width:0}
+.gen-view-compact .gen-view-controls{margin:0}
+.gen-view-cost-line{margin:0;font-size:12.5px;line-height:1.45;color:var(--muted)}
+.broll-duration-note{margin:0 0 12px;padding:8px 11px;border:1px solid color-mix(in srgb,var(--amber) 45%,transparent);border-radius:8px;background:color-mix(in srgb,var(--amber) 10%,transparent);color:var(--ink);font-size:13px;line-height:1.45}
+/* On a desktop the compact B-roll confirmation is as tall as what it says, not a fixed
+   860px frame around three lines. The phone sheet keeps its full height. */
+@media(min-width:621px){.modal-box:has(.h3-generation-modal.broll-simple){width:min(760px,calc(100vw - 32px));height:auto}.h3-generation-modal.broll-simple{height:auto}}
+/* A phone hides the paid dialogs' lead sentence to save height. The B-roll one is the
+   no-reference explanation, one short line, so it stays. */
+.h3-generation-modal.broll-confirmation .h3-generation-head p{display:block}

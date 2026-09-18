@@ -28,6 +28,7 @@ const {
 const TestIsolation = require("./test-isolation");
 const ConfigLocation = require("./config-location");
 const PromptEngine = require("../generation/prompt-engine");
+const BrollPackage = require("../generation/broll-package");
 const { annotateProfileLibraryExecution } = require("../generation/generation-options");
 const { httpStatusForError } = require("./http-errors");
 /* WHICH APPLICATION, AND WHICH BUILD OF IT. Two questions, two authorities, and
@@ -5928,6 +5929,27 @@ function assetPromptContext(P, list, entity, state = null, parentState = null, g
       : null,
   };
 }
+
+/* B-ROLL / STYLE-ONLY. Compiles the package a B-roll shot generates from: the project
+   look and the shot's own prompt, with no reference, identity or continuity input. The
+   browser stores the result as an ordinary prompt build and generates from it through
+   the ordinary compiled image and motion paths. Deterministic; no assistant is asked,
+   nothing is written and no provider is contacted. */
+app.post("/api/prompt/broll-compile", (req, res) => {
+  try {
+    const compiled = BrollPackage.compileBrollPackage({
+      project: readProject(),
+      shotId: String(req.body?.shotId || ""),
+      output: String(req.body?.output || ""),
+      prompt: String(req.body?.prompt || ""),
+    });
+    res.json(compiled);
+  } catch (error) {
+    if (error instanceof BrollPackage.BrollPackageError)
+      return res.status(error.status || 400).json({ error: error.message, code: error.code, detail: error.detail });
+    res.status(httpStatusForError(error)).json({ error: error.message });
+  }
+});
 
 app.post("/api/prompt/asset-compile", async (req, res) => {
   try {

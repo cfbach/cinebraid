@@ -38,6 +38,7 @@ const { resolvePromptBuild } = require("../../public/shared-build-history");
 const { compileValidatedGenerationPlan, checkPromptCoverage } = require("./generation-compiler");
 const ImagePack = require("../../model-packs/gpt-image-2");
 const { resolveImageFalCapability, FAL_IMAGE_MODES } = require("./fal/fal-image-backend");
+const { styleOnlyRefusal } = require("./broll-package");
 
 /* Registering the pack is a side effect of requiring it; naming it here makes the
    dependency explicit rather than incidental. */
@@ -98,7 +99,11 @@ function readSourceIntent(project, shotId, buildId, purpose) {
   if (!shot)
     throw new ImageExecutionError("IMAGE_SHOT_NOT_FOUND", "That shot no longer exists in this project.", { shotId }, 404);
 
-  const entries = shotBuildEntries(shot, purpose);
+  /* B-roll packages live in their own list so they never become the "latest" package
+     of the reference-led Frames workflow. They are reachable only by the id the B-roll
+     panel names, which is exactly how that panel asks for them. */
+  const brief = isRecord(shot.creationBrief) ? shot.creationBrief : {};
+  const entries = [...shotBuildEntries(shot, purpose), ...(buildId && purpose !== "blocking" ? listOf(brief.brollBuilds) : [])];
   const resolved = entries.map((entry) => resolvePromptBuild(project, entry)).filter(isRecord);
   const usable = resolved.filter((build) => !build.missing);
   const build = buildId
@@ -185,6 +190,12 @@ function compileImageExecutionPlan(request = {}) {
       `CineBraid cannot dispatch GPT Image 2 ${mode || "generation"} through fal.`,
       { mode, supported: FAL_IMAGE_MODES },
     );
+  /* A style-only package is prompt-only in fact, or it is not sent. Every stored
+     reference row counts here, addressed or not: a style-only request must not carry
+     one, and must not quietly drop one either. */
+  const styleOnly = styleOnlyRefusal(build, mode, listOf(build.references), "image");
+  if (styleOnly) throw new ImageExecutionError(styleOnly.code, styleOnly.message, styleOnly.detail);
+  const referenceMode = text(build.referenceMode) === "style-only" ? "style-only" : "";
 
   const surface = text(request.surface) || "api";
   const capability = resolveImageFalCapability(mode, ImagePack.capabilityLayer(mode, surface));
@@ -260,6 +271,10 @@ function compileImageExecutionPlan(request = {}) {
     purpose,
     modelId: IMAGE_MODEL_ID,
     surface,
+    /* "style-only" for a B-roll package, "" otherwise. Carried to the job so the
+       returned media can say it was made with no reference, rather than leaving a
+       reader to infer that from an empty list. */
+    referenceMode,
     profile: {
       id: text(build.profileId),
       name: text(build.profileName) || text(build.profileId),
@@ -274,6 +289,7 @@ function compileImageExecutionPlan(request = {}) {
       frameId: text(build.frameId),
       frameLabel: text(build.frameLabel),
       builtAt: text(build.date),
+      ...(referenceMode ? { referenceMode } : {}),
     },
     compiledPrompt,
     submittedPrompt,

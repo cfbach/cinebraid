@@ -372,6 +372,26 @@ function shotStateBearingEntityRecords(project, shot) {
   );
 }
 
+/* HOW THIS SHOT USES REFERENCES: reference-led (the default, and every shot that says
+   nothing) or B-roll / style-only, which generates from the project look and the shot's
+   own prompt with no reference image, no identity reference and no continuity state.
+
+   It says nothing about which entities the shot NAMES. The relationship above stays
+   exactly what it is, because clearDetachedShotStateDeclaration() reads it to decide
+   whether a declaration may be deleted — a style-only shot must keep its cast and its
+   declared states so switching back to reference-led loses nothing. What a style-only
+   shot changes is what it OWES, and readiness asks this function for that. A stored
+   value this build does not recognise reads as reference-led, the behaviour every
+   existing shot already has. */
+function shotReferenceMode(shot) {
+  return shot && typeof shot === "object" && String(shot.referenceMode || "").trim() === "style-only"
+    ? "style-only"
+    : "reference-led";
+}
+function shotIsStyleOnly(shot) {
+  return shotReferenceMode(shot) === "style-only";
+}
+
 function unresolvedShotDependencies(project, shot) {
   return shotDependencyRecords(project, shot).filter((row) => !row.resolved);
 }
@@ -672,6 +692,8 @@ if (typeof window !== "undefined") {
   window.shotDependencyTokenType = shotDependencyTokenType;
   window.shotDependencyRecords = shotDependencyRecords;
   window.shotStateBearingEntityRecords = shotStateBearingEntityRecords;
+  window.shotReferenceMode = shotReferenceMode;
+  window.shotIsStyleOnly = shotIsStyleOnly;
   window.shotEntityCodeTokens = shotEntityCodeTokens;
   window.shotEntityRelationIsLossyCodeBacked = shotEntityRelationIsLossyCodeBacked;
   window.shotDependencyReadingIsWellFormed = shotDependencyReadingIsWellFormed;
@@ -700,6 +722,8 @@ if (typeof module !== "undefined" && module.exports) {
     SHOT_STATE_BEARING_RELATIONSHIP_SOURCES,
     shotDependencySourceIsStateBearing,
     shotStateBearingEntityRecords,
+    shotReferenceMode,
+    shotIsStyleOnly,
     shotEntityCodeTokens,
     shotEntityRelationIsLossyCodeBacked,
     SHOT_DEPENDENCY_COLLECTIONS,

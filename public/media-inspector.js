@@ -349,6 +349,7 @@
         ${factRow("Provider", provenance.provider)}
         ${factRow("Model", provenance.model)}
         ${factRow("Mode", provenance.mode)}
+        ${provenance.referenceMode?.value === "style-only" ? `<article data-mi-reference-mode="style-only"><span>References</span><b>B-roll · no reference</b></article>` : ""}
         <article><span>Generation job</span>${jobWords}</article>
         ${factRow("Provider request", provenance.requestId)}
         ${factRow("Resolution", provenance.resolution)}

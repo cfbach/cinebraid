@@ -5341,6 +5341,243 @@ window.setShotIntent = (shotId, value) => {
    than a second one. It opens the control; it never changes it. */
 window.openShotIntent = (shotId) => focusGuidedWorkspaceTarget(`.shot-intent-control[data-shot-id="${shotId}"]`);
 
+/* ==========================================================================
+   B-ROLL / STYLE-ONLY — the second generation mode, beside reference-led.
+
+   A style-only shot is generated from the project look and its own prompt, with no
+   reference image, identity reference or continuity state. It is a MODE of this desk
+   rather than a page of its own, and everything it produces goes through the shipped
+   machinery: the compiled GPT Image 2 and MiniMax H3 paths, their paid dialogs, the job
+   ledger, candidate ingest and Results. What this section adds is the choice, the
+   prompt, the output and one button.
+
+   The mode is `shot.referenceMode = "style-only"`; reference-led is its absence, which is
+   every shot nobody has switched. Switching writes that one field and nothing else — the
+   cast, declared states, frames and references all stay where they are, so switching
+   back loses nothing. Readiness reads the same field (shared-shot-readiness.js), which
+   is why a style-only shot owes no reference anywhere in the app, not only here. */
+function brollTarget(output) {
+  /* The same two targets src/generation/broll-package.js compiles for, named here so
+     the panel can say what will run before anything is compiled. tests/broll-generation.js
+     holds the two lists equal. */
+  const id = output === "video" ? "minimax-h3/t2v" : "gpt-image-2/t2i";
+  const profile = (typeof PROMPT_LIBRARY === "object" && PROMPT_LIBRARY ? PROMPT_LIBRARY.profiles || [] : []).find((row) => row.id === id) || null;
+  return {
+    id,
+    profile,
+    runnable: profile?.execution?.dispatchable === true,
+    /* The model, not the profile: the profile name repeats the method ("GPT Image 2 —
+       Text to Image"), and the panel states the method once beside it. */
+    name: String(profile?.name || "").split(" — ")[0] || (output === "video" ? "MiniMax H3" : "GPT Image 2"),
+  };
+}
+function brollOutput(s) {
+  return s && ensureShotCreation(s).brollOutput === "video" ? "video" : "image";
+}
+function brollPromptValue(s) {
+  const written = ensureShotCreation(s).brollPrompt;
+  return typeof written === "string" ? written : String(s.desc || "");
+}
+function brollProjectLook() {
+  const blocks = Array.isArray(P.meta?.styleBlocks) ? P.meta.styleBlocks : [];
+  return globalStylePrompt() || String(blocks.map((block) => String(block?.text || "").trim()).find(Boolean) || "");
+}
+/* Why this output cannot be generated right now, or "". Said BEFORE the button, never
+   discovered after it. */
+function brollOutputBlocker(s, output) {
+  const target = brollTarget(output);
+  if (!target.runnable)
+    return output === "video"
+      ? "No text-to-video model can run in this build, so B-roll video is unavailable. Models that start from an image or a reference cannot make B-roll."
+      : "No text-to-image model can run in this build, so B-roll images are unavailable.";
+  /* A declared route that animates from frames or references cannot be satisfied by a
+     prompt-only clip. The same predicate every paid motion boundary asks. */
+  if (output === "video" && typeof guidedMotionProfileExecutable === "function" && !guidedMotionProfileExecutable(s, target.profile)) {
+    const intent = typeof readShotIntent === "function" ? readShotIntent(s) : { label: "" };
+    return `This shot is set to “${intent.label || declaredShotRoute(s)}”, which needs frames or references. B-roll video is made from the prompt alone.`;
+  }
+  return "";
+}
+function shotReferenceModeControl(s) {
+  const styleOnly = shotIsStyleOnly(s);
+  const name = `shot-reference-mode-${s.id}`;
+  const option = (value, label) => `<label class="shot-reference-mode-option"><input type="radio" name="${attr(name)}" value="${value}" data-focus-key="${attr(`${name}:${value}`)}" ${(value === "style-only") === styleOnly ? "checked" : ""} onchange="setShotReferenceMode('${attr(s.id)}',this.value)"><span>${label}</span></label>`;
+  return `<fieldset class="shot-reference-mode" data-shot-reference-mode="${styleOnly ? "style-only" : "reference-led"}" data-shot-id="${attr(s.id)}"><legend>Generation mode</legend><div class="shot-reference-mode-options">${option("reference-led", "Reference-led")}${option("style-only", "B-roll")}</div></fieldset>`;
+}
+/* The latest generation this shot made in style-only mode, whichever output it was. */
+function brollLatestJob(s) {
+  return [...(typeof FAL_GENERATION_JOBS !== "undefined" && Array.isArray(FAL_GENERATION_JOBS) ? FAL_GENERATION_JOBS : [])]
+    .filter((job) => job.shotId === s.id && job.referenceMode === "style-only")
+    .sort((a, b) => String(b.createdAt || "").localeCompare(String(a.createdAt || "")))[0] || null;
+}
+/* The same strip the frame and motion paths draw, for this shot's latest B-roll job. When
+   it is done it says where the results are rather than adding a second button for them:
+   the Results card directly beneath is that control. */
+function brollJobStrip(s) {
+  const job = brollLatestJob(s);
+  if (!job) return "";
+  const video = job.purpose === "motion-h3";
+  const unknown = falJobUnresolved(job), active = falJobActive(job), done = job.status === "COMPLETED", failed = job.status === "FAILED";
+  const delivered = (job.outputs || []).length || (done && video ? 1 : 0);
+  const where = video ? "Motion Results" : `Frame ${(guidedFrames(s).find((frame) => frame.id === job.frameId) || {}).label || "A"} Results`;
+  const title = done && delivered ? `${plural(delivered, video ? "video" : "image")} returned · review in ${where} below` : falJobStatusLabel(job);
+  const detail = unknown ? falUnresolvedExplanation(job) : [video ? "B-roll video" : "B-roll image", brollTarget(video ? "video" : "image").name, job.error || ""].filter(Boolean).join(" · ");
+  const actions = unknown
+    ? `<button class="chip" onclick="openFalUnresolvedModal('${attr(job.id)}')">Check and resolve</button>`
+    : active
+      ? `<button class="chip" onclick="refreshFalGeneration('${attr(job.id)}',true)">Refresh</button><button class="chip danger" onclick="cancelFalGeneration('${attr(job.id)}')">Cancel</button>`
+      : "";
+  return `<div class="fal-job-strip broll-job-strip ${unknown ? "unresolved" : active ? "active" : done ? "done" : failed ? "failed" : ""}" data-broll-job="${attr(job.id)}"><div><span>${unknown ? "?" : active ? '<i class="spin">◌</i>' : done ? "✓" : failed ? "!" : "·"}</span><div><b>${esc(title)}</b><small>${esc(detail)}</small></div></div><div>${actions}</div></div>`;
+}
+function brollPanel(s) {
+  const id = attr(s.id);
+  const output = brollOutput(s);
+  const blocker = brollOutputBlocker(s, output);
+  const target = brollTarget(output);
+  const aspect = typeof shotAspectLabel === "function" ? shotAspectLabel(P, s) : "";
+  const planned = typeof shotPlannedDuration === "function" ? shotPlannedDuration(s) : { known: false, seconds: 0 };
+  const facts = [target.name, output === "video" ? "text to video" : "text to image", output === "video" && planned.known ? plural(planned.seconds, "second") : "", aspect]
+    .filter(Boolean).join(" · ");
+  const look = brollProjectLook();
+  const outputOption = (value, label) => `<label class="broll-output-option"><input type="radio" name="broll-output-${id}" value="${value}" data-focus-key="broll-output-${id}:${value}" ${value === output ? "checked" : ""} onchange="setBrollOutput('${id}',this.value)"><span>${label}</span></label>`;
+  /* A route that excludes prompt-only video is the one blocker the filmmaker can clear
+     from here, and the way to clear it is the route CineBraid already names for it. */
+  const routeFix = output === "video" && blocker && target.runnable
+    ? `<button type="button" class="ghost-btn broll-route-fix" onclick="setShotIntent('${id}','t2v')">Make this shot from the prompt</button>`
+    : "";
+  return `<section class="broll-panel" data-broll-panel="${id}" data-broll-output="${output}" aria-labelledby="broll-heading-${id}">`
+    + `<header class="broll-head"><h2 id="broll-heading-${id}">B-roll</h2><p>Uses the project look and this shot’s prompt. No reference required.</p></header>`
+    + `<label class="broll-prompt-label" for="broll-prompt-${id}">Shot prompt</label>`
+    + `<textarea id="broll-prompt-${id}" class="broll-prompt" rows="4" oninput="setBrollPrompt('${id}',this.value)">${esc(brollPromptValue(s))}</textarea>`
+    + `<p class="broll-look"><b>Project look</b><span>${look ? esc(look) : "Not written yet — the prompt alone will guide the result."}</span></p>`
+    + `<div class="broll-controls"><fieldset class="broll-output"><legend>Output</legend><div class="broll-output-options">${outputOption("image", "Image")}${outputOption("video", "Video")}</div></fieldset>`
+    + `<button type="button" class="broll-generate" data-broll-generate="${id}" ${blocker ? "disabled" : ""} onclick="generateBroll('${id}')">Generate ${output}…</button></div>`
+    + `<p class="broll-target">${esc(facts)}</p>`
+    + (blocker ? `<div class="prompt-check warn broll-blocked" data-broll-blocked="${output}"><span>${esc(blocker)}</span>${routeFix}</div>` : "")
+    + brollJobStrip(s)
+    + `</section>`;
+}
+/* Redraws only the panel, so choosing an output or typing never re-renders the desk or
+   moves the keyboard. A window without the panel on screen routes as before. */
+function refreshBrollPanel(s, focusSelector = "") {
+  const current = document.querySelector(`[data-broll-panel="${typeof CSS !== "undefined" && CSS.escape ? CSS.escape(s.id) : s.id}"]`);
+  if (!current) return route();
+  const holder = document.createElement("div");
+  holder.innerHTML = brollPanel(s);
+  const next = holder.firstElementChild;
+  current.replaceWith(next);
+  if (focusSelector) next.querySelector(focusSelector)?.focus({ preventScroll: true });
+}
+window.setShotReferenceMode = (shotId, mode) => {
+  const s = shotById(shotId);
+  if (!s) return;
+  const styleOnly = mode === "style-only";
+  if (styleOnly === shotIsStyleOnly(s)) return;
+  if (styleOnly) s.referenceMode = "style-only";
+  else delete s.referenceMode;
+  dirty();
+  /* The desk re-renders around the choice. Each option carries its own data-focus-key, so
+     the app's shipped focus restoration returns the keyboard to the option just chosen
+     rather than to the first radio sharing its name. */
+  route();
+};
+window.setBrollOutput = (shotId, output) => {
+  const s = shotById(shotId);
+  if (!s) return;
+  const next = output === "video" ? "video" : "image";
+  if (ensureShotCreation(s).brollOutput === next || (next === "image" && !ensureShotCreation(s).brollOutput)) return refreshBrollPanel(s, `.broll-output input[value="${next}"]`);
+  ensureShotCreation(s).brollOutput = next;
+  dirty();
+  refreshBrollPanel(s, `.broll-output input[value="${next}"]`);
+};
+window.setBrollPrompt = (shotId, value) => {
+  const s = shotById(shotId);
+  if (!s) return;
+  ensureShotCreation(s).brollPrompt = String(value ?? "");
+  dirty();
+};
+/* THE ONE BUTTON. Compiles the style-only package, stores it as an ordinary prompt build
+   in the shot's own B-roll list, and opens the shipped paid dialog for it — which
+   confirms the compiled request and the spend before anything is sent. Nothing is
+   submitted from here. */
+window.generateBroll = async (shotId) => {
+  const s = shotById(shotId);
+  if (!s || window._brollPreparing) return;
+  const output = brollOutput(s);
+  const blocker = brollOutputBlocker(s, output);
+  if (blocker) return toast(blocker);
+  const editor = document.getElementById(`broll-prompt-${s.id}`);
+  if (editor) ensureShotCreation(s).brollPrompt = String(editor.value);
+  const prompt = brollPromptValue(s).trim();
+  if (!prompt) {
+    editor?.focus();
+    return toast("Write the shot prompt first");
+  }
+  /* No connection: the shipped dialogs already say how to connect, and nothing is
+     compiled for a request that cannot be made. */
+  if (typeof falGenerationReady === "function" && !falGenerationReady())
+    return output === "video" ? openFalH3MotionModal(s.id) : openFalGenerationModal("frame", s.id);
+  const button = document.querySelector(`[data-broll-generate="${typeof CSS !== "undefined" && CSS.escape ? CSS.escape(s.id) : s.id}"]`);
+  window._brollPreparing = true;
+  if (button) { button.disabled = true; button.textContent = "Preparing…"; }
+  try {
+    if (typeof flushPendingProjectSave === "function") await flushPendingProjectSave();
+    const response = await fetch("/api/prompt/broll-compile", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ shotId: s.id, output, prompt }),
+    });
+    const data = await response.json().catch(() => ({}));
+    if (!response.ok) throw new Error(data.error || "CineBraid could not prepare this B-roll request.");
+    const c = ensureShotCreation(s);
+    c.brollBuilds = Array.isArray(c.brollBuilds) ? c.brollBuilds : [];
+    const frame = guidedFrames(s)[0] || null;
+    const kind = output === "video" ? "broll-video" : "broll-image";
+    const sequence = c.brollBuilds.length + 1;
+    const build = {
+      id: `${kind}-${Date.now().toString(36)}`,
+      packageId: `${s.id}-BROLL-${output === "video" ? "VIDEO" : "IMAGE"}-R${String(sequence).padStart(2, "0")}`,
+      date: new Date().toISOString(),
+      kind,
+      /* The package's own statement, which the execution modules enforce: nothing is
+         attached, and the only admissible method is the prompt-only one. */
+      referenceMode: "style-only",
+      mode: data.profile?.mode || "",
+      profileId: data.profile?.id || "",
+      profileName: data.profile?.name || "",
+      profileVersion: data.profile?.profileVersion || "",
+      prompt: data.compiledPrompt,
+      spec: data.spec,
+      references: [],
+      warnings: data.warnings || [],
+      ...(output === "video"
+        ? { durationSeconds: data.durationSeconds || undefined }
+        : { frameId: frame?.id || "", frameLabel: frame?.label || "A" }),
+      inputs: { brollPrompt: prompt, globalStyle: globalStylePrompt(), world: P.meta?.world?.setting || "" },
+      revision: sequence,
+    };
+    const buildId = registerPromptBuild(P, build);
+    c.brollBuilds.push(promptBuildRef(buildId, { kind }));
+    applyPromptBuildRetention(P);
+    dirty();
+    if (typeof flushPendingProjectSave === "function") await flushPendingProjectSave();
+    if (output === "video") await openFalH3MotionModal(s.id, buildId);
+    else await openFalFrameGenerationModal("frame", s.id, frame?.id || "", buildId);
+  } catch (error) {
+    toast("B-roll could not be prepared: " + error.message);
+  } finally {
+    window._brollPreparing = false;
+    /* The SAME button is restored rather than the panel redrawn: the paid dialog recorded
+       it as the place to return focus to, and a redraw would leave that pointing at a
+       detached node. The job strip is redrawn by the dialog's own route() on submit. */
+    if (button?.isConnected) {
+      const current = shotById(shotId);
+      button.disabled = !current || !!brollOutputBlocker(current, output);
+      button.textContent = `Generate ${output}…`;
+    }
+  }
+};
+
 function shotStageModelFacts(s, takes) {
   const progress = guidedFrameProgress(s, takes), life = guidedShotLifecycle(s, takes);
   const routeNeeds = typeof shotRouteInputNeeds === "function"
@@ -5992,7 +6229,8 @@ function guidedShotWorkspaceView(s, takes, sc, state, refs, planningMedia, neigh
      statement of which stage it rendered — public/focused-workspaces.js reads it, and
      so does every suite that checks the two agree. A second navigator built here
      would fail tests/stage-surfaces.js rather than merely look redundant. */
-  const selectedMarkup = (renderers[selectedTask] || renderers.frames)();
+  /* Not rendered at all for a style-only shot, which shows the B-roll panel instead. */
+  const selectedMarkup = typeof shotIsStyleOnly === "function" && shotIsStyleOnly(s) ? "" : (renderers[selectedTask] || renderers.frames)();
   /* Slice 5b. The intent line is rendered on EVERY stage of the shot, because the
      declared intent governs which stages are relevant and a control reachable from only
      one of them could not be found from the others. It directly follows the shot's
@@ -6013,8 +6251,21 @@ function guidedShotWorkspaceView(s, takes, sc, state, refs, planningMedia, neigh
   const traversal = `<nav class="shot-head-nav" aria-label="Shot order">${neighbors.prev ? `<a href="#/shot/${neighbors.prev.id}" title="Previous shot" aria-label="Previous shot: ${attr(neighbors.prev.title || neighbors.prev.id)}">‹</a>` : '<span aria-hidden="true">‹</span>'}${neighbors.next ? `<a href="#/shot/${neighbors.next.id}" title="Next shot" aria-label="Next shot: ${attr(neighbors.next.title || neighbors.next.id)}">›</a>` : '<span aria-hidden="true">›</span>'}</nav>`;
   const header = `<header class="shot-workspace-head guided-shot-head"><div class="shot-head-main"><h1 class="shot-title-display">${esc(s.title || "Untitled shot")}</h1><div class="record-meta">${esc(meta.join(" · "))}</div></div><div class="shot-head-controls">${traversal}<button type="button" class="ghost-btn shot-import-open" data-shot-import-open="${attr(s.id)}" aria-haspopup="dialog" onclick="openShotImportChooser('${attr(s.id)}')">Import existing…</button><details class="guided-inline-actions" data-ui-state-key="shot-actions:${attr(s.id)}"><summary>Shot actions</summary><button class="ghost-btn" onclick="openRenameShotModal('${s.id}')">Rename shot</button><button class="ghost-btn" onclick="duplicateShot('${s.id}')">Duplicate shot</button><button class="danger-btn" onclick="delShot('${s.id}')">Delete shot</button></details></div></header>`;
   const activity = shotActiveOperationMarkup(s);
+  const modeControl = shotReferenceModeControl(s);
+  const crumb = `<div class="crumb"><a href="#/shots/board">Shots</a> / <a href="#/scene/${s.scene}">${esc(sc ? sc.title : s.scene)}</a> / ${esc(s.id)}</div>`;
+  const refusal = typeof actionRefusalMarkup === "function" ? actionRefusalMarkup(`shot-delete:${s.id}`) : "";
+  /* B-ROLL / STYLE-ONLY: one panel instead of the reference-led stages. The intent
+     control, the facts line, the next-action card and the stage workspaces all describe
+     how a reference-led shot is assembled — inputs, frames to approve, a route to
+     choose — and none of it is a step this mode takes. Results stay: that is where every
+     B-roll candidate lands and is reviewed, exactly as any other. Nothing above is
+     deleted; switching back renders the full desk from the same record. */
+  if (typeof shotIsStyleOnly === "function" && shotIsStyleOnly(s)) {
+    const brollRail = shotResultsRailMarkup(s, takes, typeof returnedReviewProjectionForBrowser === "function" ? returnedReviewProjectionForBrowser() : null, null);
+    return `<div class="shot-shell guided-shot-shell focused-workspace-shell bounded-shot-workspace clarity-shot-workspace broll-shot-workspace" data-bounded="1" data-selected-task="${attr(selectedTask)}" data-shot-reference-mode="style-only">${projectNavigator(s)}<div class="shot-main">${refusal}${crumb}${header}${modeControl}${brollPanel(s)}${activity}${brollRail}${shotDetailsMarkup(s, takes, state, activity)}</div></div>`;
+  }
   const rail = shotResultsRailMarkup(s, takes, typeof returnedReviewProjectionForBrowser === "function" ? returnedReviewProjectionForBrowser() : null, leading);
-  return `<div class="shot-shell guided-shot-shell focused-workspace-shell bounded-shot-workspace clarity-shot-workspace" data-bounded="1" data-selected-task="${attr(selectedTask)}">${projectNavigator(s)}<div class="shot-main">${typeof actionRefusalMarkup === "function" ? actionRefusalMarkup(`shot-delete:${s.id}`) : ""}<div class="crumb"><a href="#/shots/board">Shots</a> / <a href="#/scene/${s.scene}">${esc(sc ? sc.title : s.scene)}</a> / ${esc(s.id)}</div>${header}${intentControl}${facts}${guidedShotStatusCard(s,takes,neighbors,leading)}${activity}${typeof v642RelatedShotActivityMarkup === "function" ? v642RelatedShotActivityMarkup(s.id) : ""}${rail}<div class="guided-work-stack bounded-selected-task" data-bounded-task="${attr(selectedTask)}">${selectedMarkup}</div>${shotDetailsMarkup(s, takes, state, activity)}</div></div>`;
+  return `<div class="shot-shell guided-shot-shell focused-workspace-shell bounded-shot-workspace clarity-shot-workspace" data-bounded="1" data-selected-task="${attr(selectedTask)}">${projectNavigator(s)}<div class="shot-main">${refusal}${crumb}${header}${modeControl}${intentControl}${facts}${guidedShotStatusCard(s,takes,neighbors,leading)}${activity}${typeof v642RelatedShotActivityMarkup === "function" ? v642RelatedShotActivityMarkup(s.id) : ""}${rail}<div class="guided-work-stack bounded-selected-task" data-bounded-task="${attr(selectedTask)}">${selectedMarkup}</div>${shotDetailsMarkup(s, takes, state, activity)}</div></div>`;
 }
 
 window.setComposerConstraint = (id, key, value) => {

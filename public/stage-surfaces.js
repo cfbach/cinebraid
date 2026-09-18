@@ -182,6 +182,11 @@
     if (typeof shotStageProgress !== "function" || typeof stageActions !== "function") return null;
     const shot = shotById(context.shotId);
     if (!shot) return null;
+    /* A B-roll / style-only shot is made in one panel, not through the five reference-led
+       stages, so there are no stages to navigate and no stage action to offer. Null is
+       the existing "no bar" answer; switching the shot back to reference-led brings the
+       strip back from the same record. */
+    if (typeof shotIsStyleOnly === "function" && shotIsStyleOnly(shot)) return null;
     try {
       const takes = typeof takesFor === "function" ? takesFor(shot.id) : [];
       const facts = shotStageModelFacts(shot, takes);

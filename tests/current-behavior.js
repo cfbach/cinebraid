@@ -48,6 +48,10 @@ function shotControlCounts(html) {
   const stack = [];
   const voidTags = new Set(["area","base","br","col","embed","hr","img","input","link","meta","param","source","track","wbr"]);
   let visible = 0, total = 0, match;
+  /* A native radio group is ONE control: one Tab stop, one decision, arrow keys between its
+     options. Counting each option would price a two-way choice as two controls and a
+     three-way choice as three, which is not what this budget measures. */
+  const radioGroups = new Set();
   const token = /<\/?([a-z][\w-]*)\b[^>]*>/gi;
   while ((match = token.exec(html))) {
     const raw = match[0], tag = match[1].toLowerCase(), closing = raw.startsWith("</");
@@ -62,7 +66,10 @@ function shotControlCounts(html) {
     const closedDetails = tag === "details" && !/\sopen(?:\s|>|=)/i.test(raw);
     const control = ["button","select","input","textarea"].includes(tag) || /role=["']listbox["']/i.test(raw);
     if (control) {
-      if (!(tag === "input" && /type=["']?(?:hidden|file)/i.test(raw))) {
+      const radioName = tag === "input" && /type=["']?radio/i.test(raw) ? (raw.match(/\sname=["']([^"']+)["']/i) || [])[1] || "" : "";
+      const repeatedRadio = !!radioName && radioGroups.has(radioName);
+      if (radioName) radioGroups.add(radioName);
+      if (!repeatedRadio && !(tag === "input" && /type=["']?(?:hidden|file)/i.test(raw))) {
         total++;
         const disabled = /\sdisabled(?:\s|>|=)/i.test(raw);
         if (!disabled && !hidden && !stack.some((row) => row.hidden || row.closedDetails)) visible++;
@@ -369,6 +376,8 @@ async function main() {
     "braidy-rail.js",
     "brand-logo-asset.js",
     "brand-logo-real-browser.py",
+    "broll-generation-real-browser.py",
+    "broll-generation.js",
     "browser-requirements.txt",
     "browser-workflow-exit.js",
     "browser-workflow.js",
@@ -937,7 +946,11 @@ async function main() {
 
   const shotRender = await render("#/shot/L1-01", fixture);
   const controls = shotControlCounts(shotRender.html);
-  assert(controls.visible <= 10, `default-visible shot controls: ${controls.visible}`);
+  /* 11, not 10: the desk gained ONE first-class decision — Generation mode, reference-led
+     or B-roll / style-only — as a single native radio group beside the shot's identity.
+     It is the control a style-only shot is chosen with, so it cannot sit in a closed menu,
+     and nothing else was added to the default desk. */
+  assert(controls.visible <= 11, `default-visible shot controls: ${controls.visible}`);
   assert(controls.total <= 30, `total reachable shot controls: ${controls.total}`);
 
   const activityRender = await render("#/shot/L1-01", fixture, { creatorSurfaces: true });
