@@ -1,13 +1,23 @@
 /* EV2-5 mobile header regression: geometry against the accepted parent, all panels.
    Disposable server/settings/projects; provider traffic blocked; fresh browser profile. */
-const fs = require('fs'), path = require('path'), os = require('os'), net = require('net'), assert = require('assert');
-const { spawn, execFileSync } = require('child_process');
+const fs = require('fs'), path = require('path'), os = require('os'), net = require('net'), assert = require('assert'), crypto = require('crypto');
+const { spawn, spawnSync } = require('child_process');
 const { disposableRoot } = require('./helpers/disposable-root');
 const playwright = require('./helpers/playwright-module').requirePlaywright('ev2-5-settings-mobile');
 const ROOT = path.resolve(__dirname, '..');
 const OUT = process.env.EV2_ACCEPTANCE_DIR || fs.mkdtempSync(path.join(os.tmpdir(), 'cinebraid-ev2-5-mobile-'));
 fs.mkdirSync(OUT, { recursive: true });
-const parentCss = execFileSync('git', ['show', 'fa8a09e2057a8b896ce6dadf65595c1e2b7671f1:public/settings-studio.css'], { cwd: ROOT, encoding: 'utf8' });
+/* THE ACCEPTED PARENT'S STYLESHEET TRAVELS WITH THE SUITE. It was read with `git show`, and the browser job
+   checks out one commit (actions/checkout, fetch-depth 1), so fa8a09e was never there to read - git then says
+   the path "exists on disk, but not in" the commit it cannot open. The copy is proved, not trusted: its git
+   blob id must be the one fa8a09e records for public/settings-studio.css, and wherever that commit is present,
+   git must agree. */
+const PARENT = { commit: 'fa8a09e2057a8b896ce6dadf65595c1e2b7671f1', path: 'public/settings-studio.css', blob: '1a6bb40cf6a61081f558e3a2145cd973e3ba395e' };
+const parentCss = fs.readFileSync(path.join(__dirname, 'fixtures', 'ev2-5', 'settings-studio.fa8a09e.css'), 'utf8').split('\r\n').join('\n');
+assert.strictEqual(crypto.createHash('sha1').update(`blob ${Buffer.byteLength(parentCss)}\0`).update(parentCss).digest('hex'), PARENT.blob,
+  `tests/fixtures/ev2-5/settings-studio.fa8a09e.css must be ${PARENT.path} exactly as ${PARENT.commit.slice(0, 7)} records it`);
+const recorded = spawnSync('git', ['rev-parse', '--verify', '-q', `${PARENT.commit}:${PARENT.path}`], { cwd: ROOT, encoding: 'utf8' });
+if (recorded.status === 0) assert.strictEqual(recorded.stdout.trim(), PARENT.blob, `git records a different ${PARENT.path} at ${PARENT.commit.slice(0, 7)} than the fixture`);
 const currentCss = fs.readFileSync(path.join(ROOT, 'public/settings-studio.css'), 'utf8');
 const panels = ['overview','connections','appearance','files','access','naming','project','assistant','generation','integrations','accounts','fal','assistant-ollama','assistant-openai','assistant-anthropic','assistant-custom','recovery','project-recovery','setup'];
 const widths = [390,759,760,761,899,900,901,1280,1440];
