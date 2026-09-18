@@ -77,6 +77,13 @@ const LAUNCH_SCRIPT = [
   "browser.close(); pw.stop()",
 ].join("; ");
 
+/* The Node browser suites use the driver this same package ships (tests/helpers/playwright-module.js),
+   so the runtime is only READY when that resolves as well. */
+function nodeDriver() {
+  delete require.cache[require.resolve("../tests/helpers/playwright-module")];
+  return require("../tests/helpers/playwright-module").locatePlaywright(ROOT);
+}
+
 function reportState() {
   const present = fs.existsSync(venvPython());
   if (!present) return { present: false };
@@ -99,10 +106,13 @@ if (CHECK_ONLY) {
     process.exit(1);
   }
   const launch = pythonReports(LAUNCH_SCRIPT);
+  const driver = nodeDriver();
   console.log(`  playwright      ${state.playwright}`);
   console.log(launch.ok ? `  chromium        ${launch.out}` : `  chromium        UNAVAILABLE\n${launch.out}`);
-  console.log(`\n  status          ${launch.ok ? "READY" : "INCOMPLETE — Chromium could not be launched."}`);
-  process.exit(launch.ok ? 0 : 1);
+  console.log(driver.error ? `  node driver     UNAVAILABLE — ${driver.error}` : `  node driver     ${driver.source}: ${driver.from}`);
+  const ready = launch.ok && !driver.error;
+  console.log(`\n  status          ${ready ? "READY" : launch.ok ? "INCOMPLETE — the Node browser suites have no Playwright driver." : "INCOMPLETE — Chromium could not be launched."}`);
+  process.exit(ready ? 0 : 1);
 }
 
 if (!fs.existsSync(REQUIREMENTS)) fail(`${REQUIREMENTS} is missing.`);

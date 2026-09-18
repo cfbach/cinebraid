@@ -26,7 +26,7 @@ async function capture(name){await page.mouse.move(1,1);await page.screenshot({p
 const port=await new Promise(resolve=>{const s=net.createServer();s.listen(0,'127.0.0.1',()=>{const n=s.address().port;s.close(()=>resolve(n));});});assert.notEqual(port,4477);base='http://127.0.0.1:'+port;
 const log=fs.openSync(path.join(OUT,'fixture-server.log'),'w');server=spawn(process.execPath,['-r','./tests/helpers/ev2-6-no-network.js','server.js'],{cwd:ROOT,env:w.serverEnv(port),stdio:['ignore',log,log]});
 for(let i=0;i<150;i++){try{if((await fetch(base+'/api/project')).ok)break;}catch{}await new Promise(r=>setTimeout(r,100));}
-const pw=require(process.env.CINEBRAID_PLAYWRIGHT_MODULE||'playwright');
+const pw=require('./helpers/playwright-module').requirePlaywright('ev2-6-review-real-browser');
 browser=await pw.chromium.launch({headless:true,...(process.env.CINEBRAID_BROWSER_EXECUTABLE?{executablePath:process.env.CINEBRAID_BROWSER_EXECUTABLE}:{})});
 console.log('[browser-runtime] ev2-6-results: launched Chromium '+browser.version()+' (Node Playwright)');
 const context=await browser.newContext({viewport:{width:1440,height:900},reducedMotion:'reduce',serviceWorkers:'block'});

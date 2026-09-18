@@ -9,6 +9,7 @@ const SOURCES = [
   "tests/ev2-5-settings-real-browser.js",
   "tests/ev2-5-settings-mobile.js",
   "tests/helpers/result-confirmation.js",
+  "tests/helpers/playwright-module.js",
   "tests/helpers/reference-fixture.js",
   "tests/helpers/identity-fixture.js",
 

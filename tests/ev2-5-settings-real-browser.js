@@ -6,7 +6,7 @@ const {disposableRoot}=require('./helpers/disposable-root');
 const ROOT=path.resolve(__dirname,'..');
 const OUT=process.env.EV2_ACCEPTANCE_DIR || fs.mkdtempSync(path.join(os.tmpdir(),'cinebraid-ev2-5-captures-'));
 fs.mkdirSync(OUT,{recursive:true});
-const playwright=require(process.env.CINEBRAID_PLAYWRIGHT_MODULE || 'playwright');
+const playwright=require('./helpers/playwright-module').requirePlaywright('ev2-5-settings-real-browser');
 const w=disposableRoot('ev2-5-browser',{withSample:true,config:{activeProject:'cinebraid-sample'}});
 const fixture=path.join(w.projectsRoot,'cinebraid-sample','project.json');
 const p=JSON.parse(fs.readFileSync(fixture));p.meta.title='Signal House · Synthetic studio';fs.writeFileSync(fixture,JSON.stringify(p));

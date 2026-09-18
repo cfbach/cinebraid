@@ -109,7 +109,7 @@ const quiet = () => page.evaluate(() => {
     for (let i = 0; i < 200 && !up; i++) { try { up = (await fetch(base + '/api/project')).ok; } catch { /* retry */ } if (!up) await sleep(100); if (server.exitCode !== null) throw new Error('server exited ' + server.exitCode); }
     assert.ok(up, 'the server must start');
 
-    const pw = require(process.env.CINEBRAID_PLAYWRIGHT_MODULE || 'playwright');
+    const pw = require('./helpers/playwright-module').requirePlaywright('ev2-7-shell-utilities-browser');
     browser = await pw.chromium.launch({ headless: true, ...(process.env.CINEBRAID_BROWSER_EXECUTABLE ? { executablePath: process.env.CINEBRAID_BROWSER_EXECUTABLE } : {}) });
     console.log('[browser-runtime] ev2-7-shell-utilities: launched Chromium ' + browser.version() + ' (Node Playwright)');
     const context = await browser.newContext({ viewport: { width: 1440, height: 900 }, reducedMotion: 'reduce', serviceWorkers: 'block' });

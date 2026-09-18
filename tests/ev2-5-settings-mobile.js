@@ -3,7 +3,7 @@
 const fs = require('fs'), path = require('path'), os = require('os'), net = require('net'), assert = require('assert');
 const { spawn, execFileSync } = require('child_process');
 const { disposableRoot } = require('./helpers/disposable-root');
-const playwright = require(process.env.CINEBRAID_PLAYWRIGHT_MODULE || 'playwright');
+const playwright = require('./helpers/playwright-module').requirePlaywright('ev2-5-settings-mobile');
 const ROOT = path.resolve(__dirname, '..');
 const OUT = process.env.EV2_ACCEPTANCE_DIR || fs.mkdtempSync(path.join(os.tmpdir(), 'cinebraid-ev2-5-mobile-'));
 fs.mkdirSync(OUT, { recursive: true });
