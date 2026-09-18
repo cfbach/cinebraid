@@ -722,6 +722,9 @@ try:
             paidButtons: document.querySelectorAll('#main .h3-generate-btn').length,
             paidBlocked: document.querySelectorAll('#main [data-h3-intent-blocked]').length,
             builds: creation ? (creation.motionPromptBuilds || []).length : -1,
+            /* The page's own record of a compile in flight or failed: busy, or error with its message. */
+            compile: (() => { const op = (window.__cinebraidPromptOps || new Map()).get(`motion:${shot}:`);
+              return op ? { status: op.status || '', error: op.error || '' } : null; })(),
             executable: row && typeof guidedMotionProfileExecutable === 'function'
               ? guidedMotionProfileExecutable(row, guidedVideoProfiles().find((p) => p.id === (unit && unit.motionProfileId) || '') || null)
               : null,
@@ -737,14 +740,25 @@ try:
 
         # It really builds while nothing is declared — the accepted baseline, and what
         # makes every refusal below a change rather than a product that never worked.
-        before_compiles = len(compile_calls)
+        #
+        # SETTLED, NOT SLEPT ON. This read the package after a fixed 3000ms, and PR #74's Windows
+        # runner once found none there with the compile request already sent; here the package is
+        # stored about 0.1s after the click. It now waits until the page has either stored a package
+        # or recorded the compile as failed, bounded by the page's own 30s compile timeout, and says
+        # which in the page's own words.
+        before_compiles, before_builds = len(compile_calls), chosen["builds"]
         page.locator("#main button.assemble-btn", has_text="Build prompt").first.click()
-        page.wait_for_timeout(3000)
+        settle_by = time.time() + 30
+        while time.time() < settle_by:
+            state = page.evaluate(MOTION_STATE)
+            if state["builds"] > before_builds or (state["compile"] or {}).get("status") == "error": break
+            page.wait_for_timeout(100)
         expand_all()
         compatible = page.evaluate(MOTION_STATE)
         assert len(compile_calls) > before_compiles, \
             "8. precondition: an undeclared shot must really compile, or the refusals below prove nothing"
-        assert compatible["builds"] >= 1, "8. precondition: and the compiled package must exist"
+        assert compatible["builds"] >= 1, \
+            f"8. precondition: and the compiled package must exist (the page's compile state: {compatible['compile']!r})"
         assert compatible["paidButtons"] == 1, \
             f"8. precondition: the paid GENERATE H3 VIDEO button must be drawn, got {compatible['paidButtons']}"
         findings.append(f"8. baseline: {H3_T2V} stored with nothing declared compiles a package and draws the paid "
