@@ -288,8 +288,10 @@ async function n13() {
     id: "N13",
     defect: "the derived demand tier is persisted onto the slot beside the fact it came from",
     run: () => patchedFile("public/entities.js", [[
-      `    const demand = coverageDemand(slot);\n    rows.push({ family: "coverage", id: slot.id, label: slot.label || slot.id, tier: demand.tier, confirmed: demand.confirmed, requirement: demand.requirement, satisfied: !!slotSelectedFile(slot) });`,
-      `    const demand = coverageDemand(slot);\n    slot.tier = demand.tier;\n    rows.push({ family: "coverage", id: slot.id, label: slot.label || slot.id, tier: demand.tier, confirmed: demand.confirmed, requirement: demand.requirement, satisfied: !!slotSelectedFile(slot) });`,
+      /* The anchor moved with the seam: the row's label is the view named in words
+         (REFERENCE_FIRST_CANON_SIMPLIFICATION_V1). The mutation is unchanged. */
+      `    const demand = coverageDemand(slot);\n    rows.push({ family: "coverage", id: slot.id, label: referenceViewLabel(slot), tier: demand.tier, confirmed: demand.confirmed, requirement: demand.requirement, satisfied: !!slotSelectedFile(slot) });`,
+      `    const demand = coverageDemand(slot);\n    slot.tier = demand.tier;\n    rows.push({ family: "coverage", id: slot.id, label: referenceViewLabel(slot), tier: demand.tier, confirmed: demand.confirmed, requirement: demand.requirement, satisfied: !!slotSelectedFile(slot) });`,
     ]], async () => {
       assert.ok(/slot\.tier = demand\.tier;/.test(readLF("public/entities.js")),
         "N13 probe: the rollup write was expected to be in place");

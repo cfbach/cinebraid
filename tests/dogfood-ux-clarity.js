@@ -254,14 +254,18 @@ async function main() {
   const pathButtons = [...pathsBlock.matchAll(/<button class="([^"]+)"[^>]*onclick="([^"]+)"[^>]*>([^<]*)</g)];
   eq(pathButtons.length, 2, "U5: exactly two paths are offered");
   const labels = pathButtons.map(([, , , text]) => text.trim());
-  ok(labels.includes("Generate reference"), "U5: Generate reference is one of them");
+  ok(labels.includes("Generate primary reference"), "U5: Generate primary reference is one of them");
   ok(labels.includes("Upload existing"), "U6: Upload existing is the other");
-  /* U5's whole point: this routes to the workflow that already existed rather
-     than to anything new. `openEntityCreationSection` is the same handler the
-     assisted-tools fold's "Build primary prompt" has always called. */
-  const generate = pathButtons.find(([, , , text]) => text.trim() === "Generate reference");
-  ok(generate[2].includes("openEntityCreationSection"),
-    "U5: Generate routes to the existing reference builder, not to new machinery");
+  /* U5's whole point was that this routes to the workflow that already existed rather
+     than to anything new. REFERENCE_FIRST_CANON_SIMPLIFICATION_V1 keeps that and removes
+     the stop in the middle: generatePrimaryReference() runs the SAME rules-based builder
+     (buildAssetCreationPrompt) and then opens the SAME paid preflight
+     (openFalEntityGenerationModal), which is where the old route ended after four more
+     presses. tests/reference-first-canon.js proves the composition and that nothing is
+     submitted by it. */
+  const generate = pathButtons.find(([, , , text]) => text.trim() === "Generate primary reference");
+  ok(generate[2].includes("generatePrimaryReference("),
+    "U5: Generate runs the existing builder and the existing paid preflight, not new machinery");
   const upload = pathButtons.find(([, , , text]) => text.trim() === "Upload existing");
   ok(upload[2].includes("entity-file"), "U6: Upload keeps the existing file-import handler");
   /* U6 — the upload is a standard control, and its explanation is not inside it. */

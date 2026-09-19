@@ -511,8 +511,16 @@ function testPrimaryCreationSubordinatesAfterApproval() {
     "H3: the card knows whether a primary has already been approved");
   ok(/<summary>Replace or create another primary reference<\/summary>/.test(studio),
     "H3: and after approval its creation surface becomes a named disclosure");
-  ok(/const bodyEnd = replaceOnly \? `<\/div><\/details>` : "";/.test(studio),
-    "H3: before approval the surface is exactly what it was, with no disclosure at all");
+  /* REFERENCE_FIRST_CANON_SIMPLIFICATION_V1 moved the pre-approval paths (Braidy, Guide
+     it myself, the manual controls) into ONE named "More options" disclosure, because the
+     hero's "Generate primary reference" is now the task and they are specialist choices.
+     They are unchanged inside it, and the same live-work rule forces it open. */
+  ok(/<details class="reference-create-more"[\s\S]{0,400}?<summary>More options <span>Edit the prompt, Braidy, manual controls<\/span><\/summary>/.test(studio),
+    "H3: before approval the specialist paths are one named More options disclosure");
+  ok(/const moreForced = !replaceOnly && liveWork;/.test(studio) && /const moreOpen = moreForced \|\| workspaceSectionOpen\(moreKey, false\);/.test(studio),
+    "H3: which live work forces open and history does not");
+  ok(/const bodyEnd = `<\/div><\/details>`;/.test(studio),
+    "H3: and both shapes close the one disclosure they opened");
   /* IT MUST STILL OPEN ITSELF FOR LIVE WORK, or a running Braidy run's status and
      its review handoff — which live inside this card — would be hidden. */
   ok(/const runIsLive = !!run/.test(studio)

@@ -71,6 +71,7 @@ const SUITES = [
   "check:shot-intent-browser",
   "check:shot-intent-front-browser",
   "check:broll-browser",
+  "check:reference-first-canon-browser",
   "check:authority-browser",
   /* The post-AT1 shot-side removal slice. It sits beside check:authority-browser
      because it asks the same boundary the same question from the other side: what a

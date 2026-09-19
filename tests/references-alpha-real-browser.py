@@ -372,7 +372,8 @@ try:
             f"1. the headline must say so, got {summary['headline']!r}"
         assert summary["needed"].strip().lower() == "none", \
             f"1. and the compact strip must agree, got {summary['needed']!r}"
-        assert "Views" in summary["coverage"], f"1. the strip must summarise the plan, got {summary['coverage']!r}"
+        # The plan is named as planned coverage (REFERENCE_FIRST_CANON_SIMPLIFICATION_V1): "0/3 planned views".
+        assert "planned view" in summary["coverage"], f"1. the strip must summarise the plan, got {summary['coverage']!r}"
         assert summary["rows"] >= 4, f"1. the plan is still listed in full, got {summary['rows']} rows"
         assert summary["compact"] >= 4, \
             f"1. and coverage rows are drawn compact rather than as a second board, got {summary['compact']}"
@@ -921,7 +922,8 @@ try:
         assert after["tone"] == "tone-attention", f"11. in the attention tone, got {after['tone']!r}"
         assert after["outstanding"] == "1", f"11. the board reports one outstanding, got {after['outstanding']!r}"
         assert after["strip"] == "1", f"11. and the compact strip reports the same one, got {after['strip']!r}"
-        assert "1 required reference" in after["needed"], \
+        # Named for what is owed (REFERENCE_FIRST_CANON_SIMPLIFICATION_V1): a continuity state.
+        assert "1 continuity state" in after["needed"], \
             f"11. in words, on the strip read first, got {after['needed']!r}"
         assert after["dot"] != before["dot"], (
             f"11. and the dot changed colour, got {before['dot']} -> {after['dot']}")

@@ -787,7 +787,9 @@ try:
             f"7d. exactly one filled recommended action, got {paint['primaryActions']}")
         assert paint["primaryRole"] and "Front" in paint["primaryRole"], (
             f"7d. the decision must name the state and view it settles: {paint['primaryRole']!r}")
-        assert paint["primaryRemaining"] and "3/4 front" in paint["primaryRemaining"], (
+        # The stored label is "3/4 front"; the coverage surfaces spell the fraction out
+        # (REFERENCE_FIRST_CANON_SIMPLIFICATION_V1), so the view reads in words beside the counts.
+        assert paint["primaryRemaining"] and "Three-quarter front" in paint["primaryRemaining"], (
             f"7d. and what remains after it: {paint['primaryRemaining']!r}")
         # SCOPED, so it cannot be read as everything outstanding: `What this production
         # needs` counts views, states AND expressions, and this line counts views.

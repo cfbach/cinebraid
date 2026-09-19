@@ -74,9 +74,14 @@
     }
     return {required:required.length, filled, unscoped, earlier};
   }
+  /* REFERENCE_FIRST_CANON_SIMPLIFICATION_V1 — the count is the coverage PLAN (the structurally
+     required views); `value.word` is its effective requirement, "planned" when the production is
+     not waiting on any of it. Absent, it keeps the word it always had, so a caller that never
+     learned the demand answer fails closed and keeps saying "required". */
   function coverageSummary(value) {
     const notes = Object.entries(value?.earlier || {}).map(([qualifier, n]) => " · " + n + (n === 1 ? " earlier selection, " : " earlier selections, ") + qualifier);
-    return (value?.filled || 0) + " of " + (value?.required || 0) + " required views filled" + notes.join("");
+    const word = value?.word === "planned" ? "planned" : "required";
+    return (value?.filled || 0) + " of " + (value?.required || 0) + " " + word + " views filled" + notes.join("");
   }
   // The retry idempotency check: this exact asset already bound to this exact state and view.
   function findExactBinding(entity, {assetId, stateId, slotId} = {}) {

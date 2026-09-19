@@ -1540,7 +1540,7 @@ function referenceRequirementSelect(value, onchange) {
 function referenceSlotRailMarkup(scope, entityId, slots, selectedId, demand = null) {
   return `<nav class="bounded-slot-rail" aria-label="Reference coverage slots">${slots.map((slot) => {
     const state = referenceSlotStatus(slot, demand);
-    return `<button type="button" class="tone-${state.tone} ${slot.id === selectedId ? "selected" : ""}" data-slot-state="${attr(state.state)}" onclick="selectBoundedItem('${attr(scope)}','${attr(entityId)}','${attr(slot.id)}')"><i></i><span>${esc(slot.label)}</span><small>${state.label}</small></button>`;
+    return `<button type="button" class="tone-${state.tone} ${slot.id === selectedId ? "selected" : ""}" data-slot-state="${attr(state.state)}" onclick="selectBoundedItem('${attr(scope)}','${attr(entityId)}','${attr(slot.id)}')"><i></i><span>${esc(referenceViewLabel(slot))}</span><small>${state.label}</small></button>`;
   }).join("")}</nav>`;
 }
 function expressionBoardMarkup(entity, mediaByName, media, demand = null) {
@@ -1915,7 +1915,7 @@ function coverageBoardMarkup(list, entity, mediaByName, media, demand = null) {
      the structural word; the header and the empty state describe now. */
   const requirement = slot ? referenceRequirement(slot) : "planned";
   const effective = slot ? effectiveReferenceRequirement(slot, demand) : "planned";
-  const editor = slot ? `<article class="coverage-slot-card focused-slot-selected ${slotSelectedFile(slot) ? "is-ready" : slotState.tone === "attention" ? "needs-attention" : ""}"><header><div><span>${esc(effectiveRequirementLabel(slot, demand).toUpperCase())} SLOT</span><b>${esc(slot.label)}</b></div><span class="coverage-slot-state tone-${slotState.tone}" data-slot-state="${attr(slotState.state)}">${slotState.label}</span></header><div id="coverage-slot-preview" class="coverage-slot-preview" data-slot-preview="committed">${mediaItem ? (isVideo(mediaItem.name) ? `<video muted src="${attr(mediaItem.url)}"></video>` : `<img src="${attr(mediaItem.url)}" alt="">`) : `<div class="coverage-slot-empty">${effective === "not-required" ? "No reference needed" : "No reference selected"}</div>`}</div><div class="coverage-slot-staged-note">PREVIEWING — nothing is written to this view until you use it</div><label><span>Project need</span>${referenceRequirementSelect(requirement, `setCoverageSlotRequirement('${list}','${entity.id}',${selectedIndex},this.value)`)}</label><div class="slot-commit-row"><button type="button" class="approve-btn" onclick="openReferenceMediaChooser('${attr(list)}','${attr(entity.id)}','coverage',${selectedIndex})">Browse visually</button><button type="button" id="coverage-slot-use" class="approve-btn" disabled onclick="useCoverageSlotSelection('${attr(list)}','${attr(entity.id)}',${selectedIndex})">${slotSelectedFile(slot) ? "IN USE" : "SELECT AN IMAGE"}</button><small>Choosing an image previews it above. Nothing is written to this view until you use it.</small></div><details class="coverage-slot-filename"><summary>Choose by filename</summary><label><span>Selected file</span><select id="coverage-slot-file" data-committed="${attr(slotSelectedFile(slot))}" data-slot-list="${attr(list)}" data-slot-entity="${attr(entity.id)}" onchange="stageSlotSelection('coverage-slot-file','coverage-slot-use')">${coverageSlotOptions(media, slotSelectedFile(slot), entity)}</select></label></details>${slotSelectedFile(slot) ? `<div class="approval-provenance-note">Supporting reference${String(slot.provenance?.source || "").includes("human") ? " chosen by you" : ""} — context for generation, not production truth.</div>` : ""}<label><span>Notes</span><textarea placeholder="When to use this slot, framing constraints, or what makes this view the right one to approve." onchange="setCoverageSlotField('${list}','${entity.id}',${selectedIndex},'notes',this.value)">${esc(slot.notes || "")}</textarea></label></article>` : `<div class="entity-candidate-empty"><b>No coverage slots configured</b><span>Add only the views this project actually needs.</span></div>`;
+  const editor = slot ? `<article class="coverage-slot-card focused-slot-selected ${slotSelectedFile(slot) ? "is-ready" : slotState.tone === "attention" ? "needs-attention" : ""}"><header><div><span>${esc(effectiveRequirementLabel(slot, demand).toUpperCase())} SLOT</span><b>${esc(referenceViewLabel(slot))}</b></div><span class="coverage-slot-state tone-${slotState.tone}" data-slot-state="${attr(slotState.state)}">${slotState.label}</span></header><div id="coverage-slot-preview" class="coverage-slot-preview" data-slot-preview="committed">${mediaItem ? (isVideo(mediaItem.name) ? `<video muted src="${attr(mediaItem.url)}"></video>` : `<img src="${attr(mediaItem.url)}" alt="">`) : `<div class="coverage-slot-empty">${effective === "not-required" ? "No reference needed" : "No reference selected"}</div>`}</div><div class="coverage-slot-staged-note">PREVIEWING — nothing is written to this view until you use it</div><label><span>Project need</span>${referenceRequirementSelect(requirement, `setCoverageSlotRequirement('${list}','${entity.id}',${selectedIndex},this.value)`)}</label><div class="slot-commit-row"><button type="button" class="approve-btn" onclick="openReferenceMediaChooser('${attr(list)}','${attr(entity.id)}','coverage',${selectedIndex})">Browse visually</button><button type="button" id="coverage-slot-use" class="approve-btn" disabled onclick="useCoverageSlotSelection('${attr(list)}','${attr(entity.id)}',${selectedIndex})">${slotSelectedFile(slot) ? "IN USE" : "SELECT AN IMAGE"}</button><small>Choosing an image previews it above. Nothing is written to this view until you use it.</small></div><details class="coverage-slot-filename"><summary>Choose by filename</summary><label><span>Selected file</span><select id="coverage-slot-file" data-committed="${attr(slotSelectedFile(slot))}" data-slot-list="${attr(list)}" data-slot-entity="${attr(entity.id)}" onchange="stageSlotSelection('coverage-slot-file','coverage-slot-use')">${coverageSlotOptions(media, slotSelectedFile(slot), entity)}</select></label></details>${slotSelectedFile(slot) ? `<div class="approval-provenance-note">Supporting reference${String(slot.provenance?.source || "").includes("human") ? " chosen by you" : ""} — context for generation, not production truth.</div>` : ""}<label><span>Notes</span><textarea placeholder="When to use this slot, framing constraints, or what makes this view the right one to approve." onchange="setCoverageSlotField('${list}','${entity.id}',${selectedIndex},'notes',this.value)">${esc(slot.notes || "")}</textarea></label></article>` : `<div class="entity-candidate-empty"><b>No coverage slots configured</b><span>Add only the views this project actually needs.</span></div>`;
   const manualActions = `<div class="compact-section-actions coverage-board-actions manual-coverage-actions"><button class="approve-btn" onclick="openImportedReferenceMapper('${list}','${entity.id}')">Map imported references</button><button class="ghost-btn" onclick="openCoverageSheetPicker('${list}','${entity.id}')">Crop reference sheet</button><button class="add-btn" onclick="addCoverageSlot('${list}','${entity.id}')">+ Add custom slot</button></div>`;
   const assistedActions = `<details class="coverage-assisted-actions" ${manualFirstWorkflow() ? "" : "open"}><summary>Optional assisted creation</summary><div class="compact-section-actions coverage-board-actions"><button class="approve-btn" onclick="openCoverageAutomationModal('${list}','${entity.id}','hybrid')">Generate missing angles</button></div></details>`;
   const owed = coverageBoardOutstanding(slots, demand);
@@ -2118,7 +2118,7 @@ function referencePrimaryHeroMarkup(list, entity, media, mediaByName, activeCand
   const heroState = heroStates.find((state) => state.id === it.primaryId) || heroStates.find((state) => state.isDefault) || null;
   const heroSlots = typeof ensureCoverageSlots === "function" ? ensureCoverageSlots(list, entity) : (entity.coverageSlots || []);
   const heroViews = it.file ? heroSlots.filter((slot) => !slot.retired && slotSelectedFile(slot) === it.file) : [];
-  const roleLine = [heroState ? heroState.name || heroState.id : "", ...heroViews.map((slot) => slot.label || slot.id)]
+  const roleLine = [heroState ? heroState.name || heroState.id : "", ...heroViews.map((slot) => referenceViewLabel(slot))]
     .filter(Boolean).join(" · ");
   /* AND WHAT IS STILL OUTSTANDING AFTERWARDS. Deliberately not phrased as a
      consequence of the decision above: approving a primary does not fill a view
@@ -2146,7 +2146,7 @@ function referencePrimaryHeroMarkup(list, entity, media, mediaByName, activeCand
    * known-no-demand. */
   const heroDemand = entityDemandContext(list, entity);
   const heroOwed = heroMissing.filter((slot) => effectiveReferenceRequirement(slot, heroDemand) === "required").length;
-  const heroNames = `${heroMissing.slice(0, 3).map((slot) => esc(slot.label || slot.id)).join(", ")}${heroMissing.length > 3 ? ` and ${heroMissing.length - 3} more` : ""}.`;
+  const heroNames = `${heroMissing.slice(0, 3).map((slot) => esc(referenceViewLabel(slot))).join(", ")}${heroMissing.length > 3 ? ` and ${heroMissing.length - 3} more` : ""}.`;
   const remainingLine = !heroMissing.length
     ? ""
     : heroOwed
@@ -2176,11 +2176,20 @@ function referencePrimaryHeroMarkup(list, entity, media, mediaByName, activeCand
   const afterPrimary = heroMissing.length
     ? `After the primary is approved: ${heroNames.replace(/\.$/, "")}.`
     : "";
-  const firstTaskMarkup = `<div class="reference-primary-task"><p>${firstTaskCopy}</p><div class="reference-primary-paths"><button class="${generationReady ? "approve-btn recommended" : "ghost-btn"} reference-generate-btn" onclick="openEntityCreationSection('${attr(list)}','${attr(entity.id)}')">Generate reference</button><button class="${generationReady ? "ghost-btn" : "approve-btn recommended"} reference-upload-btn" onclick="document.getElementById('entity-file').click()">Upload existing</button></div><small class="reference-path-note">${generationReady ? "Generate opens this reference's prompt, then submits it. Upload brings in an image or video you already have on disk." : "Generate opens this reference's prompt so you can compile it and use it in the tool you generate with — no generation provider is configured here yet. Upload brings in an image or video you already have on disk."}</small></div>`;
-  if (firstTask) return `<section class="reference-primary-hero is-missing" data-primary-standing="${attr(it.standing)}" data-first-task="primary"><div class="reference-primary-visual"><div class="reference-primary-empty">No primary image</div></div><div class="reference-primary-copy"><span>${band}</span><h2>${esc(entity.name || entity.id)}</h2>${roleLine ? `<small class="reference-primary-role">${esc(roleLine)}</small>` : ""}${firstTaskMarkup}${afterPrimary ? `<small class="reference-primary-after">${afterPrimary}</small>` : ""}</div></section>`;
+  /* REFERENCE_FIRST_CANON_SIMPLIFICATION_V1 — THE FIRST TASK IS ONE PRESS.
+     "Generate reference" used to open the prompt builder and stop there: Show manual
+     controls, Prepare prompt, GENERATE, then the paid dialog. It now runs
+     generatePrimaryReference(). That compiles this reference's rules-based prompt and
+     opens the same paid confirmation, with nothing sent before START GENERATION.
+     Without a provider it still only prepares the prompt, and it says so. The builder
+     itself is unchanged, one "More options" disclosure below. */
+  const heroBusy = typeof guidedPromptOp === "function" && guidedPromptOp("asset", `${list}:${entity.id}`, "")?.status === "busy";
+  const firstTaskMarkup = `<div class="reference-primary-task"><p>${firstTaskCopy}</p><div class="reference-primary-paths"><button class="${generationReady ? "approve-btn recommended" : "ghost-btn"} reference-generate-btn" data-primary-generate${heroBusy ? ` aria-disabled="true"` : ""} onclick="generatePrimaryReference('${attr(list)}','${attr(entity.id)}',{resolveReturnFocus:()=>document.querySelector('[data-primary-generate]')})">${heroBusy ? "Preparing the prompt…" : "Generate primary reference"}</button><button class="${generationReady ? "ghost-btn" : "approve-btn recommended"} reference-upload-btn" onclick="document.getElementById('entity-file').click()">Upload existing</button></div><small class="reference-path-note">${generationReady ? "Generate primary reference prepares this reference's prompt and opens the paid confirmation, which shows the prompt, model and settings. Nothing is sent or charged until you confirm there. Upload brings in an image or video you already have on disk." : "Generate primary reference prepares this reference's prompt so you can use it in the tool you generate with — no generation provider is configured here yet. Upload brings in an image or video you already have on disk."}</small></div>`;
+  const needMarkup = entityImmediateNeedMarkup(list, entity);
+  if (firstTask) return `<section class="reference-primary-hero is-missing" data-primary-standing="${attr(it.standing)}" data-first-task="primary"><div class="reference-primary-visual"><div class="reference-primary-empty">No primary image</div></div><div class="reference-primary-copy"><span>${band}</span><h2>${esc(entity.name || entity.id)}</h2>${roleLine ? `<small class="reference-primary-role">${esc(roleLine)}</small>` : ""}${needMarkup}${firstTaskMarkup}${afterPrimary ? `<small class="reference-primary-after">${afterPrimary}</small>` : ""}</div></section>`;
   return `<section class="reference-primary-hero ${it.isCanon ? "is-canon" : it.file ? "is-historic" : "is-missing"}" data-primary-standing="${attr(it.standing)}"><div class="reference-primary-visual">${heroMedia
     ? `<button type="button" class="reference-primary-preview" onclick="inspectMediaFile('${attr(encodeURIComponent(heroMedia.url))}','${attr(heroMedia.assetId || "")}','${attr(encodeURIComponent(`${entity.name || entity.id} primary reference · ${it.file}`))}','${isVideo(heroMedia.name) ? "video" : "image"}')" aria-label="${it.isCanon ? "Inspect the approved primary reference" : "Inspect the selected but unapproved primary reference"}">${isVideo(heroMedia.name) ? `<video muted src="${attr(heroMedia.url)}"></video>` : `<img src="${attr(heroMedia.url)}" alt="">`}<span>INSPECT</span></button>`
-    : `<div class="reference-primary-empty">No primary image</div>`}</div><div class="reference-primary-copy"><span>${band}</span><h2>${esc(entity.name || entity.id)}</h2>${roleLine ? `<small class="reference-primary-role">${esc(roleLine)}</small>` : ""}<p>${line}</p>${usage ? `<small class="reference-primary-usage">${usage}</small>` : ""}<div class="reference-primary-actions"><button class="${next.primary ? "approve-btn recommended" : "ghost-btn"}" onclick="${next.run}"><span>${esc(next.label)}</span><small>${next.hint}</small></button></div>${remainingLine ? `<small class="reference-primary-remaining">${remainingLine}</small>` : ""}${entityNextRequiredStateMarkup(list, entity)}</div></section>`;
+    : `<div class="reference-primary-empty">No primary image</div>`}</div><div class="reference-primary-copy"><span>${band}</span><h2>${esc(entity.name || entity.id)}</h2>${roleLine ? `<small class="reference-primary-role">${esc(roleLine)}</small>` : ""}${needMarkup}<p>${line}</p>${usage ? `<small class="reference-primary-usage">${usage}</small>` : ""}<div class="reference-primary-actions"><button class="${next.primary ? "approve-btn recommended" : "ghost-btn"}" onclick="${next.run}"><span>${esc(next.label)}</span><small>${next.hint}</small></button></div>${remainingLine ? `<small class="reference-primary-remaining">${remainingLine}</small>` : ""}${entityNextRequiredStateMarkup(list, entity)}</div></section>`;
 }
 
 function referenceCreationHub(list, entity) {
@@ -2196,7 +2205,11 @@ function referenceCreationHub(list, entity) {
   const coverage = typeof ensureCoverageSlots === "function" ? ensureCoverageSlots(list, entity) : (entity.coverageSlots || []);
   const selectedViews = coverage.filter((slot) => slotSelectedFile(slot)).length;
   const approvedStates = states.filter((state) => hubTruth.of(state).standing === "canon").length;
-  return `<section class="reference-manual-hub"><header><div><span>UPLOAD & ORGANIZE</span><h2>Build the reference pack</h2><p>Import work made anywhere, choose which images are approved, split reference sheets into usable angles, then attach them to shots. AI review and generation are optional.</p></div><span class="reference-manual-status">${primaryIsCanon ? "PRIMARY CANON" : primaryFile ? "PRIMARY HISTORIC · APPROVE IT" : "PRIMARY NEEDED"} · ${selectedViews}/${coverage.length || 0} VIEWS · ${approvedStates}/${states.length || 0} STATES</span></header><div class="reference-manual-actions"><button class="ghost-btn" onclick="document.getElementById('entity-file').click()"><span>Upload reference files</span><small>Add existing images or video from disk</small></button><button class="ghost-btn" onclick="openImportedReferenceMapper('${attr(list)}','${attr(entity.id)}')"><span>Map imported references</span><small>Assign a single image to primary, state, angle, or expression</small></button><button class="ghost-btn" ${mediaCount ? "" : "disabled"} onclick="openCoverageSheetPicker('${attr(list)}','${attr(entity.id)}')"><span>Crop reference sheet</span><small>Cut a turnaround or contact sheet into individual angle files</small></button><button class="ghost-btn" ${mediaCount ? "" : "disabled"} onclick="approveEntityFile('${attr(list)}','${attr(entity.id)}','${attr(primaryFile)}','${attr(primary?.id || "state-default")}')"><span>Choose the main approved image</span><small>${primaryFile ? `${primaryIsCanon ? "Currently" : "Historic, not approved:"} ${esc(primaryFile)}` : mediaCount ? "Select one uploaded image" : "Upload a reference first"}</small></button></div><div class="reference-manual-principle"><b>CineBraid stores the production truth.</b><span>Human approval is enough. Optional AI checks can be run later without changing the image you approved.</span></div></section>`;
+  /* REFERENCE_FIRST_CANON_SIMPLIFICATION_V1: the same coverage phrase the Desk and
+     Production needs print, counted over the plan, not a third fraction over every slot. */
+  const hubNeed = entityImmediateNeed(list, entity);
+  const hubCoverage = hubNeed ? entityCoveragePhrase(hubNeed.coverage.views, "view") : "";
+  return `<section class="reference-manual-hub"><header><div><span>UPLOAD & ORGANIZE</span><h2>Build the reference pack</h2><p>Import work made anywhere, choose which images are approved, split reference sheets into usable angles, then attach them to shots. AI review and generation are optional.</p></div><span class="reference-manual-status">${primaryIsCanon ? "PRIMARY CANON" : primaryFile ? "PRIMARY HISTORIC · APPROVE IT" : "PRIMARY NEEDED"} · ${hubCoverage ? `COVERAGE ${esc(hubCoverage.toUpperCase())}` : `${selectedViews}/${coverage.length || 0} VIEWS`} · ${approvedStates}/${states.length || 0} STATES</span></header><div class="reference-manual-actions"><button class="ghost-btn" onclick="document.getElementById('entity-file').click()"><span>Upload reference files</span><small>Add existing images or video from disk</small></button><button class="ghost-btn" onclick="openImportedReferenceMapper('${attr(list)}','${attr(entity.id)}')"><span>Map imported references</span><small>Assign a single image to primary, state, angle, or expression</small></button><button class="ghost-btn" ${mediaCount ? "" : "disabled"} onclick="openCoverageSheetPicker('${attr(list)}','${attr(entity.id)}')"><span>Crop reference sheet</span><small>Cut a turnaround or contact sheet into individual angle files</small></button><button class="ghost-btn" ${mediaCount ? "" : "disabled"} onclick="approveEntityFile('${attr(list)}','${attr(entity.id)}','${attr(primaryFile)}','${attr(primary?.id || "state-default")}')"><span>Choose the main approved image</span><small>${primaryFile ? `${primaryIsCanon ? "Currently" : "Historic, not approved:"} ${esc(primaryFile)}` : mediaCount ? "Select one uploaded image" : "Upload a reference first"}</small></button></div><div class="reference-manual-principle"><b>CineBraid stores the production truth.</b><span>Human approval is enough. Optional AI checks can be run later without changing the image you approved.</span></div></section>`;
 }
 function referenceAssistedToolsMarkup(list, entity) {
   if (list === "audio") return "";
@@ -2262,11 +2275,16 @@ window.openEntityCreationSection = (list, id) => {
   window.selectBoundedTask?.("entity-task", `${list}:${id}`, "reference");
   const section = document.querySelector(`.reference-create-section`);
   if (!section) return toast("Primary reference builder is unavailable");
-  const manual = section.querySelector("details.reference-create-manual");
-  if (manual) {
-    manual.open = true;
-    rememberWorkspaceSection(`asset-prompt:${list}:${id}:manual`, true);
+  /* The builder's paths now sit in one "More options" disclosure, and the manual panel
+     is a hidden region with its own toggle (W7). Open both through their own writers,
+     so the remembered values and the toggle label agree with what is on screen. */
+  const more = section.querySelector("details.reference-create-more");
+  if (more && !more.open) {
+    more.open = true;
+    rememberWorkspaceSection(`asset-prompt:${list}:${id}:more`, true);
   }
+  const manual = section.querySelector(".reference-create-manual");
+  if (manual && manual.hasAttribute("hidden")) window.toggleReferenceManualPath?.(list, id);
   section.hidden = false;
   section.scrollIntoView({ behavior: "smooth", block: "start" });
   section.classList.add("focus-flash");
@@ -2536,12 +2554,12 @@ function entityDemandRows(list, entity, production = entityReferenceDemandFor(li
   for (const slot of ensureCoverageSlots(list, entity)) {
     if (!slot || slot.retired) continue;
     const demand = coverageDemand(slot);
-    rows.push({ family: "coverage", id: slot.id, label: slot.label || slot.id, tier: demand.tier, confirmed: demand.confirmed, requirement: demand.requirement, satisfied: !!slotSelectedFile(slot) });
+    rows.push({ family: "coverage", id: slot.id, label: referenceViewLabel(slot), tier: demand.tier, confirmed: demand.confirmed, requirement: demand.requirement, satisfied: !!slotSelectedFile(slot) });
   }
   if (list === "characters") for (const slot of ensureExpressionSlots(entity)) {
     if (!slot || slot.retired) continue;
     const demand = coverageDemand(slot);
-    rows.push({ family: "expression", id: slot.id, label: slot.label || slot.id, tier: demand.tier, confirmed: demand.confirmed, requirement: demand.requirement, satisfied: !!slotSelectedFile(slot) });
+    rows.push({ family: "expression", id: slot.id, label: referenceViewLabel(slot), tier: demand.tier, confirmed: demand.confirmed, requirement: demand.requirement, satisfied: !!slotSelectedFile(slot) });
   }
   /* THE SECOND AXIS, applied in ONE place over all three families, so no family
      can acquire its own idea of what "needed now" means. Every `tier` above is
@@ -2635,6 +2653,182 @@ function entityObligationRows(list, entity, rows, obligations) {
     }));
 }
 
+/* REFERENCE_FIRST_CANON_SIMPLIFICATION_V1 — WHAT THIS REFERENCE NEEDS NOW, ONE ANSWER.
+ *
+ * The Last Seat run met four figures for one prop on the way to its first canon:
+ * "Prepare 5 required references" (a SHOT's total, printed beside the chair's name),
+ * "0 of 4 required views", "1 required reference" and "Views 0/6". Each was true about
+ * something. Only one was the chair's immediate need, and nothing said which.
+ *
+ * This is that answer, and it derives nothing. `now` is exactly the set the Production
+ * needs panel has led with since Slice 5: the readiness obligations naming this reference
+ * (entityReadinessObligations() through entityObligationRows()), plus the demand rows
+ * whose second axis says required-now. Every reference surface counts these same rows.
+ * Readiness raises obligations only for continuity states, so while it can answer a
+ * coverage view is never in `now`. It is reported as COVERAGE instead, using the word
+ * effectiveReferenceRequirement() already gives it.
+ *
+ * IT FAILS CLOSED, as every reader of these owners already does. With no readiness
+ * answer, required-tier rows stay required-now (referenceDemandResolution() keeps them),
+ * and an unapproved primary is counted, because the primary is the identity and nothing
+ * softens it.
+ *
+ * `action` is the next step, read off the same standing and the same rows. There is no
+ * second state machine:
+ *   generate-primary  no canon, and nothing on the primary to decide about
+ *   review-primary    no canon, and a candidate or an unconfirmed selection is waiting
+ *   open-state        the primary is canon and a continuity state is owed now
+ *   build-coverage    only when readiness cannot answer and required views stand
+ *   complete          nothing is owed now; coverage stays available and says so */
+function entityPrimaryCandidateNames(list, entity, primaryId) {
+  if (typeof entityMedia !== "function" || typeof partitionEntityMedia !== "function") return [];
+  const disposition = partitionEntityMedia(entity, entityMedia(list, entity), { states: entityStateListRead(entity, true) });
+  return disposition.candidates.map((row) => row.name).filter((name) => {
+    const row = typeof entityCandidateRow === "function" ? entityCandidateRow(entity, name, false) : null;
+    /* A single view filled for the primary state is a candidate for it: the Desk may approve it
+       as the primary (artifactMayHoldPrimaryAuthority). A sheet never is, and a rejection is final. */
+    if (row && row.decision === "rejected") return false;
+    if (typeof entityCandidateIsCoverageSheet === "function" && entityCandidateIsCoverageSheet(entity, name)) return false;
+    const target = typeof entityCandidateTargetStateId === "function" ? entityCandidateTargetStateId(entity, name) : "";
+    return !target || target === primaryId;
+  });
+}
+function entityImmediateNeed(list, entity, context = null) {
+  const kind = entityKindLabel(list).toLowerCase();
+  if (list === "audio" || !entity) return null;
+  const demand = context && typeof context === "object" ? context : entityDemandContext(list, entity);
+  const production = demand.production || { known: false, demanded: false, shotIds: [] };
+  const obligations = demand.obligations || { known: false, rows: [] };
+  const known = obligations.known === true;
+  const rows = entityDemandRows(list, entity, production, obligations);
+  const standing = entityPrimaryStanding(list, entity);
+  const obligationRows = entityObligationRows(list, entity, rows, obligations);
+  /* Fail closed on the primary only when readiness gave no answer at all. */
+  const unanswered = !known && !standing.isCanon
+    ? [{ family: "primary", id: standing.primaryId, label: entity.name || entity.id, tier: "required", requirement: "required", satisfied: false,
+      standing: standing.standing, demandState: "required-now", demandBasis: "readiness-unavailable", productionDemanded: false, obligationReason: "", shotIds: [] }]
+    : [];
+  const now = [...obligationRows, ...unanswered, ...rows.filter((row) => row.demandState === "required-now")];
+  const primary = now.filter((row) => row.family === "primary" && row.id === standing.primaryId);
+  const states = now.filter((row) => row.family === "state" || (row.family === "primary" && row.id !== standing.primaryId));
+  const views = now.filter((row) => row.family === "coverage" || row.family === "expression");
+  const shotIds = [...new Set(obligationRows.flatMap((row) => row.shotIds || []).map(String))];
+  const candidates = standing.isCanon ? [] : entityPrimaryCandidateNames(list, entity, standing.primaryId);
+  const action = !standing.isCanon
+    ? (standing.file || candidates.length ? { kind: "review-primary", stateId: standing.primaryId } : { kind: "generate-primary", stateId: standing.primaryId })
+    : states.length ? { kind: "open-state", stateId: String(states[0].id), label: String(states[0].label || states[0].id) }
+      : views.length ? { kind: "build-coverage" } : { kind: "complete" };
+  /* COVERAGE, COUNTED OVER THE PLAN AND NAMED BY ITS EFFECTIVE REQUIREMENT. The plan is
+     the structurally required views (the set the Desk and Build coverage draw); the word
+     is "required" only for the views readiness could not clear. */
+  const tally = (family) => {
+    const plan = rows.filter((row) => row.family === family && row.tier === "required");
+    return { filled: plan.filter((row) => row.satisfied).length, total: plan.length,
+      word: views.some((row) => row.family === family) ? "required" : "planned" };
+  };
+  const stateRows = rows.filter((row) => row.family === "state");
+  return {
+    list, entityId: entity.id, kind, known,
+    production: { known: production.known === true, demanded: production.demanded === true, shotIds: (production.shotIds || []).map(String) },
+    now, primary, states, views, shotIds, candidates, standing, action,
+    coverage: {
+      views: tally("coverage"), expressions: list === "characters" ? tally("expression") : null,
+      recommended: rows.filter((row) => (row.family === "coverage" || row.family === "expression") && row.tier === "recommended").length,
+      word: views.some((row) => row.family === "coverage") ? "required" : "planned",
+    },
+    stateTally: { approved: stateRows.filter((row) => row.satisfied).length, total: stateRows.length },
+  };
+}
+/* THE WORDS, ONCE. Every surface prints what this returns, so "Needed now" cannot mean
+   one thing on the Desk and another in Production needs. A count names its own scope:
+   primary references, continuity states and required views are never summed into one
+   anonymous "references" number. */
+function entityNeedPhrase(count, singular, plural) {
+  return `${count} ${count === 1 ? singular : plural}`;
+}
+/* A VIEW'S NAME, NOT A FRACTION. "Continue coverage — 3/4 view" beside "1/4 planned views"
+   read as two progress figures. The coverage surfaces print the view with the fraction spelled
+   out; the stored label and the slot id are untouched, so nothing is migrated and nothing that
+   keys on either changes. Capitalised only where the label starts with it. */
+function referenceViewLabel(slotOrLabel) {
+  const raw = slotOrLabel && typeof slotOrLabel === "object" ? String(slotOrLabel.label || slotOrLabel.id || "") : String(slotOrLabel || "");
+  return raw.replace(/\b3\s*\/\s*4\b/g, (match, offset) => (offset === 0 ? "Three-quarter" : "three-quarter"));
+}
+window.referenceViewLabel = referenceViewLabel;
+function entityCoveragePhrase(tally, noun = "view") {
+  if (!tally || !tally.total) return "";
+  return `${tally.filled}/${tally.total} ${tally.word} ${tally.total === 1 ? noun : `${noun}s`}`;
+}
+function entityImmediateNeedWords(need) {
+  if (!need) return null;
+  const parts = [
+    need.primary.length ? entityNeedPhrase(need.primary.length, "primary reference", "primary references") : "",
+    need.states.length ? entityNeedPhrase(need.states.length, "continuity state", "continuity states") : "",
+    need.views.length ? entityNeedPhrase(need.views.length, "required view", "required views") : "",
+  ].filter(Boolean);
+  const shots = need.shotIds.length ? `required by ${need.shotIds.length <= 2 ? need.shotIds.map((id) => `Shot ${id}`).join(" and ") : plural(need.shotIds.length, "shot")}` : "";
+  const candidates = need.candidates.length;
+  const line = (...bits) => bits.filter(Boolean).join(" · ");
+  const detail = !need.known
+    ? "Readiness could not be checked here, so this stays required."
+    : need.action.kind === "generate-primary" && parts.length ? line("No image yet", shots)
+      : need.action.kind === "review-primary" && parts.length
+        ? line(candidates ? `${plural(candidates, "candidate")} waiting for your decision` : "An image is selected but has never been approved", shots)
+        : need.action.kind === "open-state" ? line(need.action.label, shots)
+          : !need.production.demanded ? `No shot uses this ${need.kind} yet`
+            : `Every current shot requirement on this ${need.kind} is met`;
+  const coverage = [entityCoveragePhrase(need.coverage.views, "view"), entityCoveragePhrase(need.coverage.expressions, "expression")].filter(Boolean).join(" · ");
+  return {
+    now: parts.length ? parts.join(" · ") : "None",
+    count: parts.length ? need.now.length : 0,
+    detail,
+    coverage: coverage || "Nothing planned beyond the primary reference",
+    recommended: need.coverage.recommended ? `${need.coverage.recommended} recommended` : "",
+    states: need.stateTally.total ? `${need.stateTally.approved}/${need.stateTally.total} approved` : "",
+  };
+}
+window.entityImmediateNeed = entityImmediateNeed;
+window.entityImmediateNeedWords = entityImmediateNeedWords;
+/* The same three lines wherever a reference states its need outside the Desk: what is
+   needed now, then coverage under its own name, then continuity states under theirs. */
+function entityImmediateNeedMarkup(list, entity, need = entityImmediateNeed(list, entity)) {
+  const words = entityImmediateNeedWords(need);
+  if (!words) return "";
+  return `<div class="reference-need" data-need-now="${words.count}" data-need-action="${attr(need.action.kind)}" data-need-known="${need.known ? "readiness" : "unknown"}"><p class="reference-need-now"><span>Needed now</span><b>${esc(words.now)}</b><small>${esc(words.detail)}</small></p><p class="reference-need-coverage"><span>Coverage</span><b>${esc(words.coverage)}</b>${words.recommended ? `<small>${esc(words.recommended)}</small>` : ""}</p>${words.states ? `<p class="reference-need-states"><span>Continuity states</span><b>${esc(words.states)}</b></p>` : ""}</div>`;
+}
+/* THE TWO PLACES A NEED LEADS THAT ARE NOT ON THE DESK, reached from it without a
+   second workflow. The prompt workspace is the reference's own builder, opened on
+   the More options disclosure and its manual panel. An owed continuity state opens
+   the workspace Production needs already gives it. Both write the same focused-task
+   and selection keys their own controls write, then navigate. */
+function referenceToolsRoute(list, id) {
+  return `#/${ENTITY_ROUTE[list] || "library"}/${encodeURIComponent(id)}/tools`;
+}
+function afterReferenceToolsRender(list, id, then) {
+  const target = referenceToolsRoute(list, id);
+  if (location.hash === target) return Promise.resolve(window.route?.()).then(() => setTimeout(then, 0));
+  const reveal = () => { window.removeEventListener("cinebraid:route-rendered", reveal); setTimeout(then, 0); };
+  window.addEventListener("cinebraid:route-rendered", reveal);
+  location.hash = target;
+}
+window.openPrimaryPromptWorkspace = (list, id) => {
+  const key = `asset-prompt:${list}:${id}`;
+  rememberWorkspaceSection(`${key}:more`, true);
+  rememberWorkspaceSection(`${key}:manual`, true);
+  const here = [...document.querySelectorAll("section.reference-create-section")].some((node) => node.getAttribute("data-create-target") === `${list}:${id}`);
+  if (here) return window.openEntityCreationSection(list, id);
+  window.boundedWriteFocusedTask?.("entity-task", `${list}:${id}`, "reference");
+  afterReferenceToolsRender(list, id, () => window.openEntityCreationSection(list, id));
+};
+window.openEntityStateNeed = (list, id, stateId) => {
+  window.boundedWriteFocusedTask?.("entity-task", `${list}:${id}`, "coverage");
+  window.boundedWriteState?.("selected:continuity-state", `${list}:${id}`, stateId);
+  afterReferenceToolsRender(list, id, () => {
+    [...document.querySelectorAll("[data-continuity-state-id]")].find((item) => item.dataset.continuityStateId === stateId)
+      ?.scrollIntoView({ block: "start" });
+  });
+};
+
 /* SECTION F — the contextual action, and the four answers it can give.
 
    Only the first one generates, and it can only appear when a parent is BOTH
@@ -2694,7 +2888,8 @@ function entityDemandRowMarkup(list, entity, row, options = {}) {
   /* THE PRIMARY'S OBLIGATION SAYS WHAT READINESS SAYS, in readiness's own words
      rather than in a second vocabulary invented here. */
   const status = row.family === "primary"
-    ? (row.obligationReason === "historic-selection-unconfirmed" ? "Chosen but never approved — confirm it"
+    ? (row.demandBasis === "readiness-unavailable" ? "Readiness could not be checked, so this stays required"
+      : row.obligationReason === "historic-selection-unconfirmed" ? "Chosen but never approved — confirm it"
       : row.obligationReason === "authority-revoked-pointer-remains" ? "Its approval was withdrawn — decide again"
         : "This production is waiting on it")
     : row.satisfied
@@ -2738,7 +2933,11 @@ function entityDemandMarkup(list, entity, production = entityReferenceDemandFor(
      requirements naming this reference, plus — carried separately because the
      panel deliberately skips the default state — the obligation on the primary.
      Everything else the entity can hold is the COVERAGE PLAN. */
-  const now = [...entityObligationRows(list, entity, rows, obligations), ...rows.filter((row) => row.demandState === "required-now")];
+  /* REFERENCE_FIRST_CANON_SIMPLIFICATION_V1: the same set, read through the one reader
+     every reference surface now asks, so this panel and the Desk cannot count apart. */
+  const need = entityImmediateNeed(list, entity, { production, obligations });
+  const needWords = entityImmediateNeedWords(need);
+  const now = need.now;
   const plan = missing.filter((row) => row.demandState === "available");
   const dormant = plan.filter((row) => row.demandBasis === "no-current-production-demand");
   const kind = entityKindLabel(list).toLowerCase();
@@ -2805,21 +3004,20 @@ function entityDemandMarkup(list, entity, production = entityReferenceDemandFor(
    * project to produce them. What it publishes is the shape of the plan and
    * whether anything is owed; the ONE editable slot workspace is still the
    * Coverage board, and the button goes there. */
-  const familyTally = (family) => {
-    const items = rows.filter((row) => row.family === family);
-    return { total: items.length, satisfied: items.filter((row) => row.satisfied).length };
-  };
-  const views = familyTally("coverage"), expressionTally = familyTally("expression"), stateTally = familyTally("state");
-  const fractions = [
-    views.total ? `Views ${views.satisfied}/${views.total}` : "",
-    expressionTally.total ? `Expressions ${expressionTally.satisfied}/${expressionTally.total}` : "",
-    stateTally.total ? `States ${stateTally.satisfied}/${stateTally.total}` : "",
-  ].filter(Boolean).join(" · ");
+  /* REFERENCE_FIRST_CANON_SIMPLIFICATION_V1 — EACH COUNT NAMES ITS OWN SCOPE.
+     Coverage is counted over the PLAN (the structurally required views the Desk and
+     Build coverage draw) in its effective word, so this reads "0/4 planned views" where
+     the Desk reads "0 of 4 planned views filled" rather than "Views 0/6" beside it.
+     Recommended views stay beside it, counted. Continuity states are STATES, and the
+     immediate need names what it is ("1 primary reference") rather than an anonymous
+     number of references. */
+  const fractions = [needWords.coverage === "Nothing planned beyond the primary reference" ? "" : needWords.coverage,
+    needWords.states ? `States ${needWords.states}` : ""].filter(Boolean).join(" · ");
   const asides = [
     recommended.length ? `${recommended.length} recommended` : "",
     notNeeded.length ? `${notNeeded.length} not currently needed` : "",
   ].filter(Boolean).join(" · ");
-  const summaryMarkup = `<div class="entity-demand-summary${now.length ? " has-blockers" : ""}" data-demand-summary="1" data-demand-summary-now="${now.length}"><div><span>COVERAGE</span><b>${esc(fractions || "Nothing planned beyond the primary reference")}</b>${asides ? `<small>${esc(asides)}</small>` : ""}</div><div class="entity-demand-summary-now"><span>NEEDED NOW</span><b>${esc(now.length ? plural(now.length, "required reference") : "None")}</b></div><button type="button" onclick="selectBoundedItem('entity-coverage-view','${attr(`${list}:${entity.id}`)}','coverage')">Open coverage</button></div>`;
+  const summaryMarkup = `<div class="entity-demand-summary${now.length ? " has-blockers" : ""}" data-demand-summary="1" data-demand-summary-now="${now.length}"><div><span>COVERAGE</span><b>${esc(fractions || "Nothing planned beyond the primary reference")}</b>${asides ? `<small>${esc(asides)}</small>` : ""}</div><div class="entity-demand-summary-now"><span>NEEDED NOW</span><b>${esc(needWords.now)}</b></div><button type="button" onclick="selectBoundedItem('entity-coverage-view','${attr(`${list}:${entity.id}`)}','coverage')">Open coverage</button></div>`;
   const leading = now.length ? now : plan;
   const leadingState = now.length ? "required-now" : plan.length ? "available" : "";
   const leadCaption = leadingState === "available"

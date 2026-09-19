@@ -321,3 +321,51 @@ body:is(.reference-desk-active,.production-media-active) #modal .rd-confirm-box{
   .rd-existing-tools .cs-name { font-size:18px; }
   .rd-existing-tools .continuity-state-rail { grid-template-columns:1fr 1fr; }
 }
+/* REFERENCE_FIRST_CANON_SIMPLIFICATION_V1 — what this reference needs now, then coverage, then continuity
+   states, each on its own line and named for what it counts. One warm action; the rest stays reachable. */
+.rd-needs{display:flex;flex-wrap:wrap;align-items:center;gap:10px 28px;padding:12px 14px;border:1px solid #2f3337;border-radius:7px;background:#15171a;flex:0 0 auto}
+.rd-needs.is-owed{border-color:#5a4a37}
+.rd-need{display:flex;flex-direction:column;gap:2px;margin:0;min-width:0}
+.rd-need span{font:600 10px/1.3 var(--body);letter-spacing:.08em;text-transform:uppercase;color:#9da5ad}
+.rd-need b{font:600 15px/1.35 var(--body);color:#edeef0}
+.rd-needs.is-owed .rd-need-now b{color:#eed1b1}
+.rd-need small{font:12px/1.4 var(--body);color:#a4a9af;overflow-wrap:anywhere}
+.rd-needs>.rd-button{margin-left:auto;min-height:44px;font:500 14px/1.3 var(--body);padding:10px 16px}
+/* The first canon sizes to its content; the working column scrolls rather than the canvas clipping it. */
+.reference-desk .rd-canvas:has(.rd-first-canon){flex:0 0 auto;min-height:0;overflow:visible}
+.rd-empty.rd-first-canon{padding:22px 24px 12px}
+.rd-first-canon .rd-empty-mark{font-size:28px}
+.rd-first-canon h2{margin:10px 0 8px}
+.rd-first-canon>p{margin:0 0 16px}
+.rd-first-actions{display:flex;flex-wrap:wrap;justify-content:center;gap:10px}
+.rd-empty .rd-first-actions .rd-button{min-height:48px;font:600 15px/1.3 var(--body);padding:12px 20px;margin:0}
+.reference-desk .rd-button[aria-disabled="true"]{opacity:.7;cursor:progress}
+.rd-empty .rd-first-note{font:12px/1.5 var(--body);color:#a4a9af;margin:14px 0 0}
+.rd-empty .rd-first-error{font:13px/1.5 var(--body);color:#f0b3a4;margin:10px 0 0}
+.rd-more{margin:16px auto 0;max-width:440px;border-top:1px solid #2b2e32;padding-top:6px}
+.rd-more summary{cursor:pointer;color:#a6c9cf;font:500 13px/1.4 var(--body);min-height:44px;display:flex;align-items:center;justify-content:center}
+.rd-more-body{display:flex;flex-wrap:wrap;gap:8px;justify-content:center;padding:6px 0 4px}
+.rd-more-body .rd-button{margin:0}
+.rd-library-card .rd-card-need{display:block;font-size:12px;color:#cfd4da;margin:0 0 4px}
+.rd-library-card .rd-card-need.is-owed{color:#eed1b1}
+.rd-library-card .rd-card-coverage{display:block}
+.reference-need{display:flex;flex-wrap:wrap;gap:8px 22px;margin:8px 0 12px}
+.reference-need p{display:flex;flex-direction:column;gap:2px;margin:0;min-width:0}
+.reference-need span{font:600 10px/1.3 var(--body);letter-spacing:.08em;text-transform:uppercase;color:var(--muted)}
+.reference-need b{font:600 14px/1.35 var(--body);color:var(--ink)}
+.reference-need small{font:12px/1.4 var(--body);color:var(--muted);overflow-wrap:anywhere}
+.reference-generate-btn[aria-disabled="true"]{opacity:.7;cursor:progress}
+.reference-create-more{margin-top:14px;border-top:1px solid var(--line);padding-top:4px}
+.reference-create-more>summary{cursor:pointer;min-height:44px;display:flex;align-items:center;flex-wrap:wrap;gap:4px 10px;font:600 14px/1.4 var(--body)}
+.reference-create-more>summary span{font-weight:400;font-size:12px;color:var(--muted)}
+.fal-entity-prompt{margin:12px 0;border:1px solid var(--line);border-radius:8px;padding:4px 12px}
+.fal-entity-prompt summary{cursor:pointer;min-height:44px;display:flex;align-items:center;flex-wrap:wrap;gap:4px 10px;font:600 13px/1.4 var(--body)}
+.fal-entity-prompt summary span{font-weight:400;color:var(--muted);font-size:12px}
+.fal-entity-prompt pre{max-height:260px;overflow:auto;white-space:pre-wrap;overflow-wrap:anywhere;font:12px/1.5 var(--mono,monospace);margin:4px 0 10px}
+@media (max-width:767px){
+  .rd-needs{gap:10px 16px}
+  .rd-needs>.rd-button{margin-left:0;flex:1 1 100%}
+  .rd-empty .rd-first-actions .rd-button{flex:1 1 100%}
+  /* The paid confirmation's two controls are touch targets at phone width. */
+  .fal-entity-actions button{min-height:44px}
+}

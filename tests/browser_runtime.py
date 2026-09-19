@@ -502,7 +502,9 @@ def reference_desk_ready(page, timeout=20000):
     desk.get_by_role("heading", level=1).wait_for(state="visible", timeout=timeout)
     page.wait_for_function(r"() => /^#\/(character|location|prop|vehicle)\/[^/?#]+\/?$/.test(location.hash)", timeout=timeout)
     desk.get_by_role("navigation", name="Production context", exact=True).wait_for(state="visible", timeout=timeout)
-    desk.get_by_role("heading", name="Required views", exact=True).wait_for(state="visible", timeout=timeout)
+    # REFERENCE_FIRST_CANON_SIMPLIFICATION_V1: the Desk's view plan is headed Coverage (its views are
+    # "planned" unless readiness keeps them required), so the section is found by that name.
+    desk.get_by_role("heading", name="Coverage", exact=True).wait_for(state="visible", timeout=timeout)
     desk.get_by_role("button", name="Reference details", exact=True).wait_for(state="visible", timeout=timeout)
     return desk
 

@@ -296,6 +296,8 @@ const nodeSuites = [
   "check:shot-intent-front-negative",
   "check:reference-convergence",
   "check:reference-convergence-negative",
+  "check:reference-first-canon",
+  "check:reference-first-canon-negative",
   "check:paid-request-truth",
   "check:paid-request-truth-negative",
   "check:sheet-gate",
@@ -341,6 +343,7 @@ const browserSuites = [
   "check:save-truth-browser",
   "check:ev2-6-browser", "check:bible-canon-browser", "check:returned-review-browser", "check:launch-language-browser",
   "check:reference-demand-browser", "check:shot-intent-front-browser", "check:broll-browser",
+  "check:reference-first-canon-browser",
   "check:references-alpha-browser"];
 const releaseSuites = ["check:environment", "check:package"];
 /* How a suite is launched, without a shell.

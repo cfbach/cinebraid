@@ -21,7 +21,9 @@
     return entity&&A?.stateCoverageContext?A.stateCoverageContext(b.list,entity,b.stateId):{available:false,reason:'Build coverage is unavailable on this page. Reload CineBraid.'};
   }
   const slotOf=(b,entity=entityOf(b))=>(entity?.coverageSlots||[]).find(s=>s.id===b.slotId)||null;
-  const viewName=(b,entity)=>{const slot=slotOf(b,entity);return slot?slot.label||slot.id:'';};
+  // A view's name on the coverage surfaces, with its fraction spelled out (referenceViewLabel in entities.js).
+  const viewWord=slot=>typeof referenceViewLabel==='function'?referenceViewLabel(slot):String(slot?.label||slot?.id||'');
+  const viewName=(b,entity)=>{const slot=slotOf(b,entity);return slot?viewWord(slot):'';};
   function defaultName(entity){const R=Ref(),id=R?R.defaultStateId(entity):'state-default';return (entityStateListRead(entity,true).find(s=>s.id===id)?.name)||'Default';}
 
   function open({list,id,stateId,slotId='',method='',source=null}={}) {
@@ -48,9 +50,11 @@
   // The Desk's header and view buttons read the same viewStatus/coverageSummary, so the three agree word for word.
   function viewsTable(b,ctx) {
     const R=Ref();
-    return '<p class="bc-views-summary" id="bc-views-summary">'+e(R&&ctx.coverage?R.coverageSummary(ctx.coverage):'')+'</p><table class="bc-views" aria-describedby="bc-views-summary"><caption>Required views for '+e(b.stateName)+'</caption><thead><tr><th scope="col">View</th><th scope="col">Status</th></tr></thead><tbody>'+ctx.views.map(v=>{
+    // REFERENCE_FIRST_CANON_SIMPLIFICATION_V1: the Desk's coverage word (planned unless readiness keeps it required), so the two still agree word for word.
+    const need=typeof entityImmediateNeed==='function'?entityImmediateNeed(b.list,entityOf(b)):null;
+    return '<p class="bc-views-summary" id="bc-views-summary">'+e(R&&ctx.coverage?R.coverageSummary({...ctx.coverage,word:need?need.coverage.word:'required'}):'')+'</p><table class="bc-views" aria-describedby="bc-views-summary"><caption>Required views for '+e(b.stateName)+'</caption><thead><tr><th scope="col">View</th><th scope="col">Status</th></tr></thead><tbody>'+ctx.views.map(v=>{
       const target=v.slot.id===b.slotId;
-      return '<tr'+(target?' aria-current="true" class="bc-view-target"':'')+'><th scope="row">'+e(v.slot.label||v.slot.id)+(target?' <small>· target</small>':'')+'</th><td data-bc-status="'+a(v.status)+'">'+e(v.label)+'</td></tr>';
+      return '<tr'+(target?' aria-current="true" class="bc-view-target"':'')+'><th scope="row">'+e(viewWord(v.slot))+(target?' <small>· target</small>':'')+'</th><td data-bc-status="'+a(v.status)+'">'+e(v.label)+'</td></tr>';
     }).join('')+'</tbody></table>';
   }
   function header(b,entity,ctx) {
@@ -61,7 +65,7 @@
   }
   function viewSelect(b,ctx,entity) {
     const slots=(entity.coverageSlots||[]).filter(s=>!s.retired&&(ctx.views.some(v=>v.slot.id===s.id)||s.id===b.slotId));
-    return '<label class="bc-field">View to fill<select id="bc-view" '+(b.busy||b.pendingCrop?'disabled':'')+'><option value="">Choose a view</option>'+slots.map(s=>{const v=ctx.views.find(x=>x.slot.id===s.id);return '<option value="'+a(s.id)+'" '+(s.id===b.slotId?'selected':'')+'>'+e((s.label||s.id)+(v?.filled?' · filled':v?.earlier?' · earlier selection':''))+'</option>';}).join('')+'</select></label>';
+    return '<label class="bc-field">View to fill<select id="bc-view" '+(b.busy||b.pendingCrop?'disabled':'')+'><option value="">Choose a view</option>'+slots.map(s=>{const v=ctx.views.find(x=>x.slot.id===s.id);return '<option value="'+a(s.id)+'" '+(s.id===b.slotId?'selected':'')+'>'+e(viewWord(s)+(v?.filled?' · filled':v?.earlier?' · earlier selection':''))+'</option>';}).join('')+'</select></label>';
   }
   function generateReason(b,ctx,entity) {
     if(!Ref())return 'Reference readers are unavailable. Reload CineBraid.';
@@ -135,20 +139,20 @@
   }
   function stepGenerate(b,ctx,entity) {
     const reason=generateReason(b,ctx,entity),g=b.generation,order=genOrder(b,ctx);
-    const requested=(entity.coverageSlots||[]).find(s=>s.id===b.requested)||null,requestedName=requested?(requested.label||requested.id):'';
+    const requested=(entity.coverageSlots||[]).find(s=>s.id===b.requested)||null,requestedName=requested?viewWord(requested):'';
     const requestedMissing=!!b.requested&&ctx.missing.some(s=>s.id===b.requested);
-    const chosen=order.filter(s=>g.slotIds.includes(s.id)),n=chosen.length,names=chosen.map(s=>s.label||s.id);
+    const chosen=order.filter(s=>g.slotIds.includes(s.id)),n=chosen.length,names=chosen.map(s=>viewWord(s));
     const sent=chosen.filter(s=>g.jobIds.some(j=>j.slotId===s.id)).length;
     const onlyRequested=n===1&&chosen[0]?.id===b.requested;
     if(g.status==='submitted')return '<div class="bc-done" role="status"><p><b>'+plural(g.jobIds.length,'request')+' submitted for '+e(b.stateName)+'.</b> Results return as candidates for '+e(b.stateName)+'. Nothing is assigned or approved until you choose.</p></div><div class="bc-row">'+button('data-bc-action="results"','Review results','rd-primary')+button('data-bc-action="close"','Close')+'</div>';
-    if(g.confirm)return '<div class="bc-confirm" role="alert"><p id="bc-confirm-target" tabindex="-1"><b>'+(n===1?'Generate '+e(names[0]):'Generate '+n+' views')+' for '+e(entity.name||entity.id)+' · '+e(b.stateName)+'</b></p><ul class="bc-confirm-views">'+chosen.map(s=>'<li>'+e(s.label||s.id)+(s.id===b.requested?' · requested':'')+'</li>').join('')+'</ul><p>Nothing has been sent yet. The next press submits '+e(plural(n,'paid request'))+' and may return up to '+e(plural(3*n,'image'))+'.</p></div>'
+    if(g.confirm)return '<div class="bc-confirm" role="alert"><p id="bc-confirm-target" tabindex="-1"><b>'+(n===1?'Generate '+e(names[0]):'Generate '+n+' views')+' for '+e(entity.name||entity.id)+' · '+e(b.stateName)+'</b></p><ul class="bc-confirm-views">'+chosen.map(s=>'<li>'+e(viewWord(s))+(s.id===b.requested?' · requested':'')+'</li>').join('')+'</ul><p>Nothing has been sent yet. The next press submits '+e(plural(n,'paid request'))+' and may return up to '+e(plural(3*n,'image'))+'.</p></div>'
       +quoteLine(n,{sent})
       +(g.error?'<p class="bc-error" role="alert">'+e(g.error)+'</p>':'')
       +'<div class="bc-row">'+button('data-bc-action="generate-back"','Back','',b.busy?'disabled':'')+button('data-bc-action="generate-submit"',b.busy?'Submitting…':'Submit '+plural(n,'paid request'),'rd-primary',b.busy?'disabled':'')+'</div>';
     return (reason?'<p class="bc-error" role="alert">'+e(reason)+'</p>':'')
       +'<div class="bc-source">'+(ctx.primary?.url?'<img src="'+a(ctx.primary.url)+'" alt="Approved '+a(b.stateName)+' reference">':'')+'<p><b>Approved '+e(b.stateName)+' reference</b><small>Each request asks for one view of this approved image. Supporting views are only those assigned for '+e(b.stateName)+'.</small></p></div>'
       +'<fieldset class="bc-gen-views"><legend>'+(requestedMissing?'Generate '+e(requestedName)+' for '+e(b.stateName):'Choose the views to generate for '+e(b.stateName))+'</legend>'
-      +order.map(s=>{const target=s.id===b.requested;return '<label class="rd-check'+(target?' bc-gen-target':'')+'"><input type="checkbox" id="bc-gen-'+a(s.id)+'" data-bc-gen-slot="'+a(s.id)+'" '+(g.slotIds.includes(s.id)?'checked':'')+' '+(b.busy?'disabled':'')+'> '+e(s.label||s.id)+(target?' <small>· requested</small>':'')+'</label>';}).join('')
+      +order.map(s=>{const target=s.id===b.requested;return '<label class="rd-check'+(target?' bc-gen-target':'')+'"><input type="checkbox" id="bc-gen-'+a(s.id)+'" data-bc-gen-slot="'+a(s.id)+'" '+(g.slotIds.includes(s.id)?'checked':'')+' '+(b.busy?'disabled':'')+'> '+e(viewWord(s))+(target?' <small>· requested</small>':'')+'</label>';}).join('')
       +'<p class="bc-gen-note">'+(requestedMissing?'Only '+e(requestedName)+' is selected. Other missing views are added only if you choose them.':'Nothing is selected. Choose each view you want to pay for.')+'</p></fieldset>'
       +(ctx.missing.length>1?'<div class="bc-row bc-gen-scope">'+(n<ctx.missing.length?button('data-bc-action="generate-all" id="bc-gen-all"','Select all missing views','',b.busy?'disabled':''):'')+(requestedMissing&&!onlyRequested?button('data-bc-action="generate-only" id="bc-gen-only"','Select only '+e(requestedName),'',b.busy?'disabled':''):'')+'</div>':'')
       +(n?quoteLine(n,{sent}):'<p class="bc-gen-empty">No view is selected, so nothing would be sent.</p>')
@@ -337,7 +341,7 @@
         const clientRequestId=g.clientRequestIds[slot.id]||(g.clientRequestIds[slot.id]=A.coverageClientRequestId(b.list,b.id,'slot',b.stateId+':'+slot.id));
         const job=await A.submitCoverageJob(b.list,entity,{prompt:A.coverageSlotPrompt(b.list,entity,slot,direction),outputCount:3,resolution:'4k',aspectRatio:referenceAspectLabel(b.list),coverageJobType:'slot',coverageMode:'individual',requestCount:count,maximumImages:3*count,slot,stateId:b.stateId,stateName:b.stateName,clientRequestId});
         // The server reuses an active job for the same view regardless of state; a reused job for another state is not this request.
-        if((job?.continuityStateId||R.defaultStateId(entity))!==b.stateId||job?.targetCoverageSlotId!==slot.id)throw Object.assign(Error('An active request for '+(slot.label||slot.id)+' in another state is still running; nothing new was submitted for '+b.stateName+'.'),{stop:true});
+        if((job?.continuityStateId||R.defaultStateId(entity))!==b.stateId||job?.targetCoverageSlotId!==slot.id)throw Object.assign(Error('An active request for '+viewWord(slot)+' in another state is still running; nothing new was submitted for '+b.stateName+'.'),{stop:true});
         g.jobIds.push({slotId:slot.id,jobId:job.id});
       }
       g.status='submitted';

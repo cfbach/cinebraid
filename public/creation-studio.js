@@ -484,10 +484,27 @@ function assetPromptStudio(list, x) {
       <p>${approved ? `${owner} ${stateName} appearance is established. This is where you replace it or add another primary candidate.` : `This establishes ${owner} ${stateName} appearance for the production. You approve the final reference.`}</p></div>
       ${approved ? `<a class="reference-download" href="${attr(approved.url)}" download>Download approved reference ↓</a>` : ""}
     </header>`;
+  /* REFERENCE_FIRST_CANON_SIMPLIFICATION_V1 — THE SPECIALIST PATHS ARE ONE DISCLOSURE.
+   *
+   * With no approved primary, the hero above now carries the one dominant action:
+   * "Generate primary reference" compiles this same rules-based prompt and opens the
+   * paid confirmation directly. The two paths below, Braidy and Guide it myself, stay
+   * exactly as they were: prompt editing, the manual controls, Refine with Braidy and a
+   * Braidy run. They sit behind one closed, clearly named disclosure instead of
+   * competing at full weight with the action that advances the reference.
+   *
+   * Live work outranks the remembered preference, for the reason C12 gives below: an
+   * in-flight compile, an error to act on, or a running Braidy run is rendered in here
+   * and must not be hidden. A prompt prepared earlier is history, not live work. Once a
+   * primary is approved, the card is already the "Replace or create another" disclosure,
+   * so it gets no second wrapper. */
+  const moreKey = `${sectionKey}:more`;
+  const moreForced = !replaceOnly && liveWork;
+  const moreOpen = moreForced || workspaceSectionOpen(moreKey, false);
   const bodyStart = replaceOnly
     ? `${head}<details class="reference-create-replace" data-live-work="${liveWork ? "1" : "0"}"${liveWork ? ` data-disclosure-forced="open"` : ""} ${bodyOpen ? "open" : ""} ontoggle="if(!this.hasAttribute('data-disclosure-forced'))rememberWorkspaceSection('${attr(bodyOpenKey)}',this.open)"><summary>Replace or create another primary reference</summary><div class="reference-create-replace-body">`
-    : head;
-  const bodyEnd = replaceOnly ? `</div></details>` : "";
+    : `${head}<details class="reference-create-more" data-more-key="${attr(moreKey)}"${moreForced ? ` data-disclosure-forced="open"` : ""} ${moreOpen ? "open" : ""} ontoggle="if(!this.hasAttribute('data-disclosure-forced'))rememberWorkspaceSection('${attr(moreKey)}',this.open)"><summary>More options <span>Edit the prompt, Braidy, manual controls</span></summary><div class="reference-create-more-body">`;
+  const bodyEnd = `</div></details>`;
   return `<section class="reference-create-section asset-creation-card${replaceOnly ? " is-replacement" : ""}" data-ui-state-key="${attr(sectionKey)}" data-create-target="${attr(`${list}:${x.id}`)}">
     ${bodyStart}
     <div class="reference-create-paths">
@@ -1011,7 +1028,7 @@ window.buildAssetCreationPrompt = async (list, id, useLLM = false) => {
   );
   const action = useLLM ? "improve" : "compile";
   const finishContext = preservePreparedReferenceContext(list, id);
-  let outcome = "error";
+  let outcome = "error", prepared = null;
   setGuidedPromptOp("asset", `${list}:${id}`, "", { status: "busy", action, startedAt: Date.now() });
   route();
   try {
@@ -1052,6 +1069,7 @@ window.buildAssetCreationPrompt = async (list, id, useLLM = false) => {
     };
     assetPromptBuilds(x).push(build);
     outcome = "success";
+    prepared = build;
     setGuidedPromptOp("asset", `${list}:${id}`, "", null);
     dirty();
     toast(useLLM ? "Reference prompt improved" : "Reference prompt compiled");
@@ -1060,7 +1078,49 @@ window.buildAssetCreationPrompt = async (list, id, useLLM = false) => {
     toast("Prompt compile failed: " + error.message);
   }
   finishContext?.(outcome);
-  route();
+  /* The build it appended, or null when it refused or failed and has already said why.
+     Returned so a caller can act on exactly this build rather than looking up "latest". */
+  await route();
+  return prepared;
+};
+
+/* REFERENCE_FIRST_CANON_SIMPLIFICATION_V1 — ONE PRESS FROM "NO CANON" TO THE PAID CONFIRMATION.
+ *
+ * The Last Seat chair's first canon took Show manual controls → Prepare prompt →
+ * GENERATE → options → START GENERATION. Every step already existed, and none was a
+ * decision the filmmaker needed to make before seeing the request. This composes two
+ * shipped actions and adds no third:
+ *
+ *   1. buildAssetCreationPrompt(list, id, false). This is the rules-based compiler.
+ *      `useLLM` is false, so the assistant is never consulted and an unreachable Braidy
+ *      cannot block or slow it.
+ *   2. openFalEntityGenerationModal(). This is the one preflight every paid entity
+ *      reference already passes through. It shows the model, the settings, the cost and
+ *      the exact prompt. NOTHING IS SUBMITTED HERE: the request is sent only by that
+ *      dialog's own START GENERATION, and startFalEntityGeneration() still re-derives
+ *      the references and gates the payload exactly as before.
+ *
+ * With no generation provider configured it stops after step 1 and shows the prepared
+ * prompt where the manual path shows it, which is all "Generate reference" could do
+ * there before. A description is the compiler's input; without one the filmmaker is
+ * taken to the field that holds it rather than shown a refusal they cannot act on. */
+window.generatePrimaryReference = async (list, id, options = {}) => {
+  const x = P[list]?.find((e) => e.id === id);
+  if (!x) return toast("This reference is no longer in the project");
+  if (guidedPromptOp("asset", `${list}:${id}`, "")?.status === "busy") return null;
+  if (!creationAssetDescription(list, x).trim()) {
+    toast(`Describe ${x.name || id} first, then generate`);
+    return window.openPrimaryPromptWorkspace?.(list, id);
+  }
+  const project = P, from = location.hash;
+  const build = await window.buildAssetCreationPrompt(list, id, false);
+  if (!build) return null;
+  /* The filmmaker moved on while it compiled: a paid dialog must not open over a
+     different project or page. The prepared prompt is kept, as any prepared prompt is. */
+  if (P !== project || location.hash !== from) return null;
+  if (!(typeof falGenerationReady === "function" && falGenerationReady())) return window.openPrimaryPromptWorkspace?.(list, id);
+  if (typeof options.beforeConfirm === "function") options.beforeConfirm();
+  return openFalEntityGenerationModal(list, id, build.id, "", { resolveReturnFocus: options.resolveReturnFocus });
 };
 
 window.compareAssetCreationPrompts = async (list, id) => {

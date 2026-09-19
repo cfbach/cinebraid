@@ -132,14 +132,15 @@ try:
         page.locator('[data-reference-desk] .rd-coverage').wait_for()
         # Project normalisation may seed template views beside the fixture's own, so the required total is not asserted.
         desk_summary=page.locator('.rd-coverage header span').inner_text().strip()
-        check('Weathered counts no unscoped legacy selection as filled',re.fullmatch(r'0 of \d+ required views filled · 1 earlier selection, no state recorded on the image',desk_summary) is not None)
+        # The word is the plan's effective requirement (planned unless readiness keeps it required); tests/reference-first-canon.js pins it.
+        check('Weathered counts no unscoped legacy selection as filled',re.fullmatch(r'0 of \d+ (required|planned) views filled · 1 earlier selection, no state recorded on the image',desk_summary) is not None)
         check('The Desk Front button names the earlier selection',page.locator('[data-rd-slot="front"] small').inner_text().strip()=='Earlier selection · no state recorded on the image')
         check('No surface says "state not recorded" beside the selected state','state not recorded' not in page.locator('[data-reference-desk]').inner_text())
         # EV2-7 dogfood correction: a derived next action stands beside the status and names the exact view it opens.
         nxt=page.locator('[data-reference-desk] .rd-coverage-next [data-rd-build-slot]')
         check('The coverage status offers the next missing required view',nxt.count()==1 and nxt.get_attribute('data-rd-build-slot')=='front' and nxt.inner_text().strip()=='Start coverage — Front')
         remaining=page.locator('[data-reference-desk] .rd-coverage-remaining').inner_text().strip()
-        check('And says in one line what is left',re.fullmatch(r'(One required view remains\.|[A-Z][a-z]+ required views remain\.)',remaining) is not None)
+        check('And says in one line what is left',re.fullmatch(r'(One (required|planned) view remains\.|[A-Z][a-z]+ (required|planned) views remain\.)',remaining) is not None)
         check('Approval is stated in words beside the state, not as a banner',page.locator('#rd-approval-status').inner_text().strip()=='Not approved · Weathered')
         check('Empty views do not offer a Review page with nothing on it',page.locator('[data-rd-results-slot="side"]').count()==0
               and page.locator('[data-rd-results-empty="side"]').inner_text().strip()=='No Side results yet')

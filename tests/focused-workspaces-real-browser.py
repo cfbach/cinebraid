@@ -211,7 +211,8 @@ try:
                 return {text:document.querySelector('.rd-coverage header span')?.textContent,
                     canonical:[value.filled,value.required,stats.planned,stats.notRequired]};
             }""", location_id)
-            match=re.search(r'(\d+) of (\d+) required views filled',seen['text'] or '')
+            # The count is the owner's; the word is its effective requirement (planned unless owed now).
+            match=re.search(r'(\d+) of (\d+) (?:required|planned) views filled',seen['text'] or '')
             assert match, f"case 4: missing required-view summary {seen}"
             rendered=tuple(map(int,match.groups()))
             assert rendered==tuple(seen['canonical'][:2]), f"case 4: coverage disagrees with shared owner: {seen}"
@@ -389,8 +390,10 @@ try:
         assert module_loaded(), 'NC-D keeps the renderer script loaded'
         expect_red("NC-D", "a loaded renderer that never produces its surface", check_execution)
 
-        arm("NC-E", ("coverage:R.coverage(entity,all,state.stateId)",
-            "coverage:{...R.coverage(entity,all,state.stateId),required:(entity.coverageSlots||[]).filter(s=>s.required!==false).length}"))
+        # The anchor moved with the seam (REFERENCE_FIRST_CANON_SIMPLIFICATION_V1 names the Desk's coverage
+        # with its effective word); the mutation is the same retired-boolean count it always was.
+        arm("NC-E", ("const coverage={...R.coverage(entity,all,state.stateId),word:need?need.coverage.word:'required'};",
+            "const coverage={...R.coverage(entity,all,state.stateId),required:(entity.coverageSlots||[]).filter(s=>s.required!==false).length,word:need?need.coverage.word:'required'};"))
         settle(f"#/location/{location_id}")
         check_execution()
         expect_red("NC-E", "retired boolean semantics count planned and not-required views as required", check_coverage_agreement)

@@ -493,19 +493,24 @@ async function testProductionNeedsIsSummarised() {
   /* Derived, not pinned: project normalisation seeds template slots beside the
      fixture's own, so the invariant is that the strip prints the OWNER'S answer
      — the same slots the list below is built from — not a magic number. */
+  /* REFERENCE_FIRST_CANON_SIMPLIFICATION_V1: the strip counts the coverage PLAN, the views
+     and expressions the requirement owner calls required, and names them by their effective
+     requirement ("planned" when nothing is waiting on them). That is the set the Desk and
+     Build coverage count, so the three read the same fraction. Recommended material is
+     still counted beside it. */
   const owner = vm.runInContext(`(() => {
     const e = P.characters.find(x => x.id === 'CHAR-UX');
-    const live = (rows) => (rows || []).filter(s => s && !s.retired);
+    const live = (rows) => (rows || []).filter(s => s && !s.retired && coverageRequirement(s) === 'required');
     const cov = live(ensureCoverageSlots('characters', e)), exp = live(ensureExpressionSlots(e));
     const held = (rows) => rows.filter(s => slotSelectedFile(s)).length;
     return { views: held(cov) + '/' + cov.length, expressions: held(exp) + '/' + exp.length };
   })()`, rendered.context);
   ok(/^\d+\/[1-9]/.test(owner.views) && /^\d+\/[1-9]/.test(owner.expressions),
     `baseline: the fixture carries both families (${owner.views}, ${owner.expressions})`);
-  ok(html.includes(`Views ${owner.views}`),
-    `the strip counts the views the coverage owner counts (${owner.views})`);
-  ok(html.includes(`Expressions ${owner.expressions}`),
-    `and the expressions the expression owner counts (${owner.expressions})`);
+  ok(html.includes(`${owner.views} planned view`),
+    `the strip counts the views the coverage owner plans (${owner.views})`);
+  ok(html.includes(`${owner.expressions} planned expression`),
+    `and the expressions the expression owner plans (${owner.expressions})`);
   ok(/data-demand-summary-now="0"/.test(html),
     "and publishes how much is actually owed right now");
   ok(/NEEDED NOW<\/span><b>None<\/b>/.test(html),
@@ -550,8 +555,10 @@ async function testProductionNeedsIsSummarised() {
   const cast = await surface(convergenceFixture({ cast: true, primaryApproved: false }), COVERAGE_STORAGE);
   const owed = Number((/data-demand-summary-now="(\d+)"/.exec(cast.html) || [])[1] || 0);
   ok(owed >= 1, `baseline: a reference a shot uses with no approved primary owes something (${owed})`);
-  ok(/NEEDED NOW<\/span><b>\d+ required reference/.test(cast.html),
-    "the summary counts real blockers when there are some");
+  /* Named for what it is (REFERENCE_FIRST_CANON_SIMPLIFICATION_V1): the obligation here is
+     the primary reference, so the strip says so rather than "N required references". */
+  ok(/NEEDED NOW<\/span><b>1 primary reference<\/b>/.test(cast.html),
+    "the summary counts real blockers when there are some, by what they are");
   ok(/class="entity-demand-summary has-blockers"/.test(cast.html),
     "and says so on the strip itself");
   const castLead = within(cast.html, '<div class="entity-demand-rows entity-demand-open">', "</div><details");
@@ -1328,8 +1335,10 @@ async function testKnownCurrentDemandStillReadsRequired() {
   ok(/tone-attention/.test(rail), "in the attention tone");
   eq((/data-demand-summary-now="(\d+)"/.exec(demanded.html) || [])[1], "1",
     "and the compact strip reports the same single real gap");
-  ok(/NEEDED NOW<\/span><b>1 required reference/.test(demanded.html),
-    "in words, on the strip the filmmaker reads first");
+  /* By its scope (REFERENCE_FIRST_CANON_SIMPLIFICATION_V1): what is owed is a continuity
+     state, so the strip names a continuity state, not an anonymous "required reference". */
+  ok(/NEEDED NOW<\/span><b>1 continuity state<\/b>/.test(demanded.html),
+    "in words, on the strip the filmmaker reads first, named for what is owed");
 
   /* THE WORD IS STILL EARNED, NOT ISSUED. Approve the state and it stops. */
   const settled = vm.runInContext(`(() => {
@@ -1618,6 +1627,7 @@ async function referenceSurfaces(project) {
       opened: modal.includes('COVERAGE AUTOMATION'),
       copy: (/id="coverage-missing-summary">([^<]*)</.exec(modal) || [])[1] || '',
       structural: slots.filter(s => isRequiredCoverage(s) && !slotSelectedFile(s)).map(s => s.label || s.id),
+      structuralWords: slots.filter(s => isRequiredCoverage(s) && !slotSelectedFile(s)).map(s => referenceViewLabel(s)),
       production: (() => { const p = entityReferenceDemandFor('characters', e);
         return p.known ? (p.demanded ? 'demanded' : 'dormant') : 'unknown'; })(),
     };
@@ -1651,7 +1661,8 @@ async function testEveryReferenceSurfaceAgreesAboutWhatIsOwed() {
     ok(!/still needed/.test(seen.hero),
       `${label}: and never as an obligation, got ${JSON.stringify(seen.hero)}`);
     /* AND IT STILL NAMES THE PLAN. What the hero contains did not change. */
-    ok(seen.hero.includes(seen.structural[0]),
+    /* Named in words (REFERENCE_FIRST_CANON_SIMPLIFICATION_V1): "3/4 front" reads "Three-quarter front". */
+    ok(seen.hero.includes(seen.structuralWords[0]),
       `${label}: the hero still names the plan's own views, got ${JSON.stringify(seen.hero)}`);
 
     ok(/none needed now/.test(seen.fold), `${label}: the fold says nothing is needed now, got ${JSON.stringify(seen.fold)}`);
@@ -2386,7 +2397,8 @@ async function testReceiptChangeDuringDialogRefuses() {
     "EV2-7 C6: and only then does the action say two");
   await clickBuild(rendered, { bcAction: "generate-review" });
   const confirm = modalNow();
-  ok(confirm.includes("Submit 2 paid requests") && confirm.includes("Nothing has been sent yet.") && /<li>Profile · requested<\/li>/.test(confirm) && /<li>3\/4 front<\/li>/.test(confirm),
+  /* The stored label is "3/4 front"; Build coverage names the view in words (REFERENCE_FIRST_CANON_SIMPLIFICATION_V1). */
+  ok(confirm.includes("Submit 2 paid requests") && confirm.includes("Nothing has been sent yet.") && /<li>Profile · requested<\/li>/.test(confirm) && /<li>Three-quarter front<\/li>/.test(confirm),
     "EV2-7 C6: the confirmation names the exact targets and the paid count");
   eq(harness.jobs.length, 0, "EV2-7 C6: reaching the confirmation sends nothing");
   vm.runInContext(`(() => { const r = P.productionAuthority.receipts.find((x) => x.stateId === 'state-soaked' && x.status === 'current'); r.id = 'authority-replaced-while-open'; })()`, rendered.context);
@@ -2443,8 +2455,10 @@ async function testEarlierSelectionReadsTheSameEverywhere() {
   eq(front[1], "earlier", "EV2-7 C8: from Alternate, a Front selection recorded for Default is an earlier selection on the Desk, not an unavailable image");
   eq(front[2], "Earlier selection · recorded for Default", "EV2-7 C8: and the Desk's Front button names the state it was recorded for");
   ok(!out.alternate.includes("Image unavailable"), "EV2-7 C8: nothing on the Desk calls the available image unavailable");
-  const header = (/<section class="rd-coverage"><header><h2>Required views<\/h2><span>([^<]*)<\/span>/.exec(out.alternate) || [])[1] || "";
-  ok(/^0 of \d+ required views filled · 1 earlier selection, recorded for Default$/.test(header), `EV2-7 C8: the Desk header counts it as an earlier selection recorded for Default (${header})`);
+  /* The section is "Coverage" and its word is the effective requirement (REFERENCE_FIRST_CANON_SIMPLIFICATION_V1,
+     pinned in tests/reference-first-canon.js); what C8 holds is the earlier-selection count and that both surfaces agree. */
+  const header = (/<section class="rd-coverage"><header><h2>Coverage<\/h2><span>([^<]*)<\/span>/.exec(out.alternate) || [])[1] || "";
+  ok(/^0 of \d+ (planned|required) views filled · 1 earlier selection, recorded for Default$/.test(header), `EV2-7 C8: the Desk header counts it as an earlier selection recorded for Default (${header})`);
   const summary = (/<p class="bc-views-summary" id="bc-views-summary">([^<]*)<\/p>/.exec(out.modal) || [])[1] || "";
   eq(summary, header, "EV2-7 C8: Build coverage counts it in the same words as the Desk header");
   ok(/<th scope="row">Front<\/th><td data-bc-status="earlier">Earlier selection · recorded for Default<\/td>/.test(out.modal), "EV2-7 C8: and its views table uses the Desk button's exact wording");
@@ -2572,8 +2586,9 @@ const DESK_RENDER = (stateId, extra = "") => `(() => {
   const required = CineBraidReferenceMedia.requiredSlots(e);
   const missing = required.filter((s) => !CineBraidReferenceMedia.viewStatus(e, s, '${stateId}', media).filled);
   return JSON.stringify({ html, wroteNothing: before === JSON.stringify(P), required: required.map((s) => s.label || s.id),
-    missing: missing.map((s) => ({ id: s.id, label: s.label || s.id })),
-    summary: CineBraidReferenceMedia.coverageSummary(CineBraidReferenceMedia.coverage(e, media, '${stateId}')) });
+    missing: missing.map((s) => ({ id: s.id, label: referenceViewLabel(s) })),
+    word: entityImmediateNeed('characters', e).coverage.word,
+    summary: CineBraidReferenceMedia.coverageSummary({ ...CineBraidReferenceMedia.coverage(e, media, '${stateId}'), word: entityImmediateNeed('characters', e).coverage.word }) });
 })()`;
 const NEXT_ACTION = /<button type="button" class="rd-button ([a-z-]*)" data-rd-action="build" data-rd-build-slot="([^"]+)" data-rd-coverage-next="[^"]*"\s*>([^<]+)<\/button><small class="rd-coverage-remaining">([^<]*)<\/small>/;
 const REMAIN_WORDS = ["No", "One", "Two", "Three", "Four", "Five", "Six", "Seven", "Eight", "Nine", "Ten"];
@@ -2588,12 +2603,17 @@ async function testCoverageContinuationIsDerived() {
   const next = NEXT_ACTION.exec(out.html) || [];
   eq(next[2], out.missing[0].id, "EV2-7 C13: the next action names the exact next missing required view");
   eq(next[3], `Continue coverage — ${out.missing[0].label}`, "EV2-7 C13: in the filmmaker's words, beside the status");
-  eq(next[4], out.missing.length === 1 ? "One required view remains." : `${REMAIN_WORDS[out.missing.length] || out.missing.length} required views remain.`,
+  /* REFERENCE_FIRST_CANON_SIMPLIFICATION_V1: no shot uses this fixture's character, so its plan is
+     "planned", not "required" (effectiveReferenceRequirement, read through entityImmediateNeed). */
+  eq(out.word, "planned", "EV2-7 C13: baseline — nothing is waiting on this dormant reference's views");
+  eq(next[4], out.missing.length === 1 ? "One planned view remains." : `${REMAIN_WORDS[out.missing.length] || out.missing.length} planned views remain.`,
     "EV2-7 C13: with a one-line count of what is left");
-  eq(next[1], "rd-primary", "EV2-7 C13: and it is the one primary control of the coverage surface");
-  const summary = (/<section class="rd-coverage"><header><h2>Required views<\/h2><span>([^<]*)<\/span>/.exec(out.html) || [])[1] || "";
+  /* REFERENCE_FIRST_CANON_SIMPLIFICATION_V1: with nothing needed now, planned coverage is optional work, so the
+     continuation stays in its section as a secondary control rather than carrying the warm accent. */
+  eq(next[1], "", "EV2-7 C13: and, with nothing needed now, it is a secondary control, not a warm one");
+  const summary = (/<section class="rd-coverage"><header><h2>Coverage<\/h2><span>([^<]*)<\/span>/.exec(out.html) || [])[1] || "";
   eq(summary, out.summary, "EV2-7 C13: the status it stands beside is the shared coverage summary, unchanged");
-  ok(new RegExp(`^${out.required.length - out.missing.length} of ${out.required.length} required views filled`).test(summary),
+  ok(new RegExp(`^${out.required.length - out.missing.length} of ${out.required.length} planned views filled`).test(summary),
     `EV2-7 C13: and the count and the next action agree (${summary})`);
   /* The press opens Build coverage on that exact entity, state and view. */
   vm.runInContext(`__ev27DeskClick({ target: { id: '', closest: (sel) => /data-rd-action/.test(String(sel)) ? { dataset: { rdAction: 'build', rdBuildSlot: ${JSON.stringify(out.missing[0].id)} }, disabled: false, hasAttribute: () => false } : null } })`, rendered.context);
@@ -2605,7 +2625,7 @@ async function testCoverageContinuationIsDerived() {
   /* Complete coverage says so and offers no false next step. */
   const done = JSON.parse(vm.runInContext(DESK_RENDER("state-default", "e.coverageSlots.forEach((s) => { if (s.id !== 'front') s.requirement = 'planned'; });"), rendered.context));
   eq(done.missing.length, 0, "EV2-7 C13: baseline — every required view is filled now");
-  ok(/<p class="rd-coverage-state" data-rd-coverage-next="complete">All 1 required view is filled for Default\.<\/p>/.test(done.html),
+  ok(/<p class="rd-coverage-state" data-rd-coverage-next="complete">All 1 planned view is filled for Default\.<\/p>/.test(done.html),
     "EV2-7 C13: complete coverage says so in words");
   ok(!NEXT_ACTION.test(done.html) && !/Continue coverage|Start coverage/.test(done.html), "EV2-7 C13: and offers no next view that does not exist");
   ok(/data-rd-action="build"[^>]*>Build coverage</.test(done.html), "EV2-7 C13: Build coverage stays reachable as the coverage entry");
@@ -2640,7 +2660,10 @@ async function testEmptyViewsApprovalAndSheetWording() {
   eq(warm(unapproved.html), 1, "EV2-7 C14: while approval is still open, exactly one control carries the warm accent");
   ok(/class="rd-button rd-primary" data-rd-action="approve"/.test(unapproved.html) && /class="rd-button " data-rd-action="build" data-rd-build-slot=/.test(unapproved.html),
     "EV2-7 C14: and it is the approval decision, with coverage continuing as a secondary control");
-  eq(warm(out.html), 1, "EV2-7 C14: once the state is approved, the one warm action is the coverage continuation");
+  /* REFERENCE_FIRST_CANON_SIMPLIFICATION_V1: once the state is approved and nothing is needed now, nothing on
+     the Desk is warm; the coverage continuation is still there, as a secondary control. */
+  eq(warm(out.html), 0, "EV2-7 C14: once the state is approved and nothing is needed now, no control carries the warm accent");
+  ok(/class="rd-button " data-rd-action="build" data-rd-build-slot=/.test(out.html), "EV2-7 C14: and coverage continues as a secondary control");
   /* The sheet's own missing record, never the selected state's. */
   const sheet = JSON.parse(vm.runInContext(DESK_RENDER("state-default", "CineBraidReferenceDesk.selectContext({ list: 'characters', id: 'CHAR-UX', stateId: 'state-default', candidateName: 'CHAR-UX-SHEET.png' });"), rendered.context));
   ok(sheet.html.includes("Reference sheet · a source for views · no state recorded on the sheet"), "EV2-7 C14: a sheet with no recorded state says so about the sheet");
