@@ -27,7 +27,7 @@ const path = require("path");
 const express = require("express");
 
 const { registerFalGeneration } = require("../src/generation/fal/fal-generation");
-const { GENERATION_BINDING_VERSION, readGenerationBinding } = require("../src/generation/generation-binding");
+const { GENERATION_BINDING_VERSION, buildGenerationBinding, readGenerationBinding } = require("../src/generation/generation-binding");
 const { addMotionPromptBuild } = require("./h3-execution-fixture");
 const { addFramePromptBuild } = require("./image-execution-fixture");
 const { baseSpec, KAI, HANGAR } = require("./generation-compiler-fixture");
@@ -894,6 +894,81 @@ async function main() {
       /* The legacy job plainly USED a reference. Reporting [] would assert it used none. */
       assert.strictEqual(legacy.references.length, 1);
       note("legacy: a job with no record reads as not-recorded, not as a confirmed empty set");
+    }
+
+    /* ===================================================================
+       9b. A REFERENCE SENT THROUGH /api/references/image IS COMPARED BY THE
+           APPROVAL IT CARRIES, NOT BY ITS URL.
+           An approved reference reaches a plan as `…&assetId=A` or, when it was enrolled,
+           as `…&list=…&id=…&key=K`. Neither has a file name of its own, and reducing the
+           address to its basename (`image`) recorded every such input as "unmatched" —
+           including the exact bytes the state authorises (GENERATION_INTEGRATION_PROOF_V1).
+       =================================================================== */
+    {
+      const dir = fs.mkdtempSync(path.join(os.tmpdir(), "cinebraid-binding-asset-"));
+      const ASSET_KAI = "asset-" + "a".repeat(32), ASSET_OTHER = "asset-" + "b".repeat(32);
+      try {
+        fs.writeFileSync(path.join(dir, "KAI.png"), BYTES["KAI.png"]);
+        fs.writeFileSync(path.join(dir, "KAI-RAIN.png"), BYTES["KAI-RAIN.png"]);
+        fs.mkdirSync(path.join(dir, "elsewhere"));
+        fs.writeFileSync(path.join(dir, "elsewhere", "KAI.png"), BYTES["KAI-RAIN.png"]);
+        /* The default state's approval, optionally with the asset identity the authority
+           kernel records beside the file name. */
+        const projectWith = (approval) => {
+          const p = makeProject();
+          Object.assign(p.characters[0].continuityStates.find((row) => row.isDefault), approval);
+          return p;
+        };
+        const bindingFor = (address, resolved, project) => buildGenerationBinding({
+          plan: { inputs: { references: [{ refId: "id-kai", role: "identity", mediaType: "image", source: { kind: "project-asset", path: address } }] } },
+          serialized: { bindings: [{ refId: "id-kai", role: "identity", mediaType: "image", field: "image_urls", index: 0, order: 0 }] },
+          sourceReferences: [{ refId: "id-kai", entityId: KAI }],
+          project,
+          shot: project.shots[1],
+          frameId: "",
+          resolveFile: (requested) => (requested === address ? resolved : ""),
+        })[0];
+        const byAsset = (assetId) => `/api/references/image?project=generation-binding&assetId=${assetId}`;
+
+        /* THE ONE THE PROOF RAN: the approved asset, identified on both sides. */
+        const exact = bindingFor(byAsset(ASSET_KAI), path.join(dir, "KAI.png"), projectWith({ approvedAssetId: ASSET_KAI }));
+        assert.strictEqual(exact.stateId, "state-default");
+        assert.strictEqual(exact.fileHash, sha256(BYTES["KAI.png"]), "the default state's own bytes were sent");
+        assert.strictEqual(exact.stateAuthority, "matched",
+          "an asset address naming the state's approved asset is that state's authority");
+        /* A DIFFERENT ASSET IS DIFFERENT AUTHORITY even when its file shares the approved
+           name — an earlier approval, or another folder's KAI.png. */
+        const earlier = bindingFor(byAsset(ASSET_OTHER), path.join(dir, "elsewhere", "KAI.png"), projectWith({ approvedAssetId: ASSET_KAI }));
+        assert.strictEqual(earlier.stateAuthority, "unmatched",
+          "a different asset stays unmatched, whatever its file is called");
+        /* AN APPROVAL RECORDED BEFORE ASSET IDENTITIES answers by the file the address named. */
+        assert.strictEqual(bindingFor(byAsset(ASSET_KAI), path.join(dir, "KAI.png"), makeProject()).stateAuthority, "matched",
+          "with no approved identity recorded, the resolved file's name is compared with the approved name");
+        assert.strictEqual(bindingFor(byAsset(ASSET_KAI), path.join(dir, "KAI-RAIN.png"), makeProject()).stateAuthority, "unmatched",
+          "and a different file is still different");
+        /* AN ENROLLED REFERENCE carries its candidate key, which is what the approval stores. */
+        const byKey = `/api/references/image?project=generation-binding&list=characters&id=${KAI}&key=ref-kai-enrolled`;
+        const upload = path.join(dir, "KAI.png");
+        assert.strictEqual(bindingFor(byKey, upload, projectWith({ approvedFile: "ref-kai-enrolled", approvedAssetId: "" })).stateAuthority, "matched",
+          "an enrolled reference is compared by its key, which is the approved name");
+        assert.strictEqual(bindingFor(byKey, upload, projectWith({ approvedFile: "ref-kai-other", approvedAssetId: "" })).stateAuthority, "unmatched",
+          "and another key is another approval");
+        /* ORDINARY ADDRESSES ARE UNTOUCHED: sections 5–7 above assert matched/unmatched on
+           /assets/… addresses through the real route; this is the same rule, directly. */
+        assert.strictEqual(bindingFor(KAI_PNG, path.join(dir, "KAI.png"), makeProject()).stateAuthority, "matched");
+        assert.strictEqual(bindingFor(KAI_RAIN_PNG, path.join(dir, "KAI-RAIN.png"), makeProject()).stateAuthority, "unmatched");
+
+        /* NO LOCAL PATH REACHES THE RECEIPT. */
+        for (const row of [exact, earlier]) {
+          assert.strictEqual(Object.prototype.hasOwnProperty.call(row, "resolved"), false, "the resolved path is never a field");
+          assert(!JSON.stringify(row).includes(dir) && !JSON.stringify(row).includes(os.tmpdir()),
+            "no absolute local path is written anywhere on the row");
+        }
+        assert.strictEqual(exact.file, byAsset(ASSET_KAI), "the record keeps the address it was given");
+        note("reference address: /api/references/image is compared by asset identity, then by key or resolved name — never by its URL");
+      } finally {
+        fs.rmSync(dir, { recursive: true, force: true });
+      }
     }
 
     /* ===================================================================

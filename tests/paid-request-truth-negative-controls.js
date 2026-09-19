@@ -473,6 +473,42 @@ async function main() {
     });
 
   /* =======================================================================
+     1c. THE REFERENCE DIALOG'S SIMPLE SIZE, STRIPPED AT THE BOUNDARY.
+
+     The mirror image of control 1. The reference dialog promotes Resolution into Simple;
+     a boundary that rebuilds its plan WITHOUT that promotion strips the size the
+     filmmaker picked and saw, and buys Settings' default instead
+     (GENERATION_INTEGRATION_PROOF_V1, D2). */
+  await control("a money boundary that rebuilds the reference dialog's plan without its Simple Resolution",
+    "the reference dialog's Simple Resolution reaches the provider", async (phase) => {
+      const falGeneration = loadModified("src/generation/fal/fal-generation.js", [[
+        '    const force = expected === "fixed-image" && purpose === "entity-reference" ? ["resolution"] : undefined;',
+        "    const force = undefined;",
+      ]]);
+      phase("MUTATION_LANDED");
+      const h = await harness(falGeneration);
+      try {
+        const project = h.project();
+        project.props = [{ id: "PROP-CHAIR", name: "Folding Chair", continuityStates: [] }];
+        h.saveProject(project);
+        const result = await h.post({
+          purpose: "entity-reference", entityList: "props", entityId: "PROP-CHAIR", entityType: "prop",
+          artifactStructure: "single-reference", sourceBuildId: "asset-prompt-chair",
+          prompt: "Folding Chair. Isolated hero prop reference.", references: [],
+          outputCount: 1, quality: "low", aspectRatio: "4:3", resolution: "4k",
+          generationRequest: Presentation.generationRequestDeclaration({ surface: "fixed-image", viewMode: "simple" }),
+        });
+        assert.strictEqual(result.status, 200, `the unsafe path must actually run: ${JSON.stringify(result.data)}`);
+        assert.strictEqual(h.calls.length, 1, "and must actually reach the provider");
+        phase("UNSAFE_PATH_EXECUTED");
+        const row = h.ledger()[0];
+        observeHarm(JSON.stringify(h.calls[0].body.image_size) !== JSON.stringify({ width: 4096, height: 3072 }),
+          `THE DEFECT: the reference dialog showed and sent 4k in Simple, the adapter received image_size ${JSON.stringify(h.calls[0].body.image_size)} `
+          + `and the row recorded resolution "${row.resolution}" with removedPayloadKeys ${JSON.stringify(row.removedPayloadKeys)}`);
+      } finally { h.close(); }
+    });
+
+  /* =======================================================================
      2. AN UNDECLARED BODY, DEFAULTED INSTEAD OF REFUSED.
 
      The tempting wrong answer. Defaulting an absent declaration to Advanced is what a

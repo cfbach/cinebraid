@@ -152,7 +152,7 @@ async function harness(options = {}) {
     readConfig: () => ({ generation: { fal: {
       enabled: true, apiKey: "fal-secret-test-key", baseUrl: mockOrigin,
       textModel: "openai/gpt-image-2", editModel: "openai/gpt-image-2/edit",
-      maxConcurrent: 8, frameResolution: "1k", blockingResolution: "1k",
+      maxConcurrent: 8, frameResolution: options.frameResolution || "1k", blockingResolution: "1k",
       frameQuality: "high", blockingQuality: "low", frameOutputs: 1, blockingOutputs: 1,
       estimatedCostPerImage: options.ratePerImage === undefined ? 0.06 : options.ratePerImage,
     } } }),
@@ -463,6 +463,89 @@ async function main() {
         "and it must differ from the one Simple landed on");
       note(`4. the identical body under an Advanced declaration keeps it — the adapter received ${JSON.stringify(advancedSize)} — so the gate removes what the VIEW hides, not what the route dislikes`);
     } finally { h.close(); }
+  }
+
+  /* =======================================================================
+     4a. THE ONE SIMPLE VIEW THAT DOES SHOW A SIZE: the reference dialog.
+
+     openFalEntityGenerationModal() promotes Resolution into Simple, because a reference
+     has no shot to size itself from. The boundary used to rebuild the plan without that
+     promotion, so the size the filmmaker picked and saw was stripped HERE and Settings'
+     default was bought instead (GENERATION_INTEGRATION_PROOF_V1, D2). Asserted at the
+     adapter: each selected tier must reach the provider, against a saved default that
+     differs from it, and nothing may be recorded as removed. */
+  {
+    const chairBody = (id, resolution, extra = {}) => ({
+      purpose: "entity-reference", entityList: "props", entityId: "PROP-CHAIR", entityType: "prop",
+      artifactStructure: "single-reference", sourceBuildId: "asset-prompt-chair",
+      prompt: "Folding Chair. Isolated hero prop reference with no hands or people.", references: [],
+      /* 4:3, what the shipped dispatcher sends for a prop: referenceAspectLabel("props"). */
+      outputCount: 1, quality: "low", aspectRatio: "4:3", clientRequestId: id,
+      ...(resolution ? { resolution } : {}),
+      generationRequest: Presentation.generationRequestDeclaration({ surface: "fixed-image", viewMode: "simple" }),
+      ...extra,
+    });
+    const withChair = (h) => {
+      const project = h.project();
+      project.props = [{ id: "PROP-CHAIR", name: "Folding Chair", continuityStates: [] }];
+      h.saveProject(project);
+    };
+    /* The legacy entity path sizes by aspectSize(): 4:3 at each tier's long edge. */
+    const SIZE = { "1k": { width: 1024, height: 768 }, "2k": { width: 2048, height: 1536 }, "4k": { width: 4096, height: 3072 } };
+    const sent = async (h, id, resolution) => {
+      const before = h.calls.length;
+      const result = await h.post(chairBody(id, resolution));
+      assert.strictEqual(result.status, 200, `${id}: ${JSON.stringify(result.data)}`);
+      assert.strictEqual(h.calls.length, before + 1, `${id}: exactly one provider call`);
+      const row = h.ledger().find((item) => item.clientRequestId === id);
+      await h.settle(result.data.job.id);
+      return { size: h.calls[before].body.image_size, row };
+    };
+
+    const low = await harness({ frameResolution: "1k" });
+    try {
+      withChair(low);
+      assert.deepStrictEqual((await sent(low, "chair-default", "")).size, SIZE["1k"], "the saved default, when nothing was chosen");
+      for (const tier of ["2k", "4k"]) {
+        const { size, row } = await sent(low, `chair-${tier}`, tier);
+        assert.deepStrictEqual(size, SIZE[tier], `a ${tier} chosen in Simple must reach the provider, not the saved 1k`);
+        assert.strictEqual(row.resolution, tier, "and be the size the receipt records");
+        assert.deepStrictEqual(row.removedPayloadKeys, [], "with nothing recorded as removed");
+        assert.strictEqual(row.generationViewMode, "simple");
+      }
+    } finally { low.close(); }
+
+    const high = await harness({ frameResolution: "4k" });
+    try {
+      withChair(high);
+      assert.deepStrictEqual((await sent(high, "chair-default", "")).size, SIZE["4k"], "the saved default here is 4k");
+      const { size, row } = await sent(high, "chair-1k", "1k");
+      assert.deepStrictEqual(size, SIZE["1k"], "a 1k chosen in Simple must reach the provider, not the saved 4k");
+      assert.strictEqual(row.resolution, "1k");
+      assert.deepStrictEqual(row.removedPayloadKeys, []);
+
+      /* AND ONLY THERE. The same surface and view under a purpose whose dialog does not
+         show a size keeps stripping it, and lands on the saved default as before. */
+      const blocking = await high.post({
+        purpose: "blocking", shotId: "SH-1", prompt: "Wide blocking of the hangar.", references: [],
+        outputCount: 1, quality: "low", aspectRatio: "16:9", resolution: "1k", clientRequestId: "blocking-simple",
+        generationRequest: Presentation.generationRequestDeclaration({ surface: "fixed-image", viewMode: "simple" }),
+      });
+      assert.strictEqual(blocking.status, 200, JSON.stringify(blocking.data));
+      const blockingRow = high.ledger().find((item) => item.clientRequestId === "blocking-simple");
+      assert.deepStrictEqual(blockingRow.removedPayloadKeys, ["resolution"],
+        "a fixed-image purpose whose Simple view shows no size still has it stripped");
+      assert.strictEqual(blockingRow.resolution, "1k", "and lands on the saved BLOCKING default, which is 1k here");
+      await high.settle(blocking.data.job.id);
+    } finally { high.close(); }
+
+    /* THE PLAN ITSELF: no other surface or purpose gained a control. */
+    const sized = { qualityTiers: ["low", "medium", "high"], resolutions: ["1k", "2k", "4k"], durationSeconds: null,
+      flags: { seed: false, candidateBatching: true, referenceWeights: false, cfgScale: false, steps: false } };
+    for (const surface of ["fixed-image", "compiled-frame", "reference-automation", "automation-run"])
+      assert(!Presentation.generationRequestPlan({ surface, mode: "simple", capability: sized }).rendered.includes("resolution"),
+        `${surface}: Simple renders no size unless a dialog promotes it`);
+    note("4a. the reference dialog's Simple Resolution reaches the provider — 2k and 4k against a saved 1k, 1k against a saved 4k, nothing recorded as removed — while a blocking request on the same surface and view is still stripped to its default");
   }
 
   /* =======================================================================
@@ -1215,8 +1298,11 @@ async function main() {
       assert.strictEqual(JSON.stringify(survived.coverageAutomation), RUN_JSON, "the legitimate run survives an ordinary save");
       assert.strictEqual(survived.name, "Kai (renamed)", "and the filmmaker's own edit is saved");
 
-      /* E. THE ORDINARY REQUEST ON ITS OWN SURFACE, accepted — 4K stripped, because on
-            `fixed-image` under Simple that is exactly a control the view did not render. */
+      /* E. THE ORDINARY REQUEST ON ITS OWN SURFACE, accepted — and its 4K kept, because the
+            reference dialog DOES render Resolution in Simple (section 4a). This used to
+            assert the size was stripped as "never offered"; the dialog had always offered
+            it, and the strip was GENERATION_INTEGRATION_PROOF_V1's D2. What this section
+            is about is unchanged: the privileged coverage surface below is refused to it. */
       character(null);
       const honest = await h.post(entityBody({
         clientRequestId: "honest",
@@ -1224,7 +1310,8 @@ async function main() {
       }));
       assert.strictEqual(honest.status, 200, `the same request on its own surface is accepted: ${JSON.stringify(honest.data)}`);
       const honestRow = h.ledger().find((row) => row.clientRequestId === "honest");
-      assert.deepStrictEqual(honestRow.removedPayloadKeys, ["resolution"], "and Simple strips the size it never offered");
+      assert.deepStrictEqual(honestRow.removedPayloadKeys, [], "and keeps the size the reference dialog showed");
+      assert.strictEqual(honestRow.resolution, "4k");
       await h.settle(honest.data.job.id);
 
       /* G. THE SERVER'S OWN COVERAGE OPERATION. It establishes the run and dispatches

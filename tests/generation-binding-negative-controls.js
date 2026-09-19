@@ -93,6 +93,8 @@ function sandbox() {
   fs.writeFileSync(path.join(SANDBOX, "anchors", "KAI-RAIN.png"), BYTES["KAI-RAIN.png"]);
   fs.writeFileSync(path.join(SANDBOX, "shots", "SH-1", "takes", "KAI-STORM.png"), BYTES["KAI-STORM.png"]);
   fs.writeFileSync(path.join(SANDBOX, "media", "track.mp4"), MP4);
+  /* The approved name on different bytes: another asset NC-15 must never call Kai's. */
+  fs.writeFileSync(path.join(SANDBOX, "media", "KAI.png"), BYTES["KAI-RAIN.png"]);
   return SANDBOX;
 }
 function resolveFile(address) {
@@ -418,6 +420,26 @@ function statelessEntityCase() {
     shot: project().shots[0],
     frameId: "FR-A",
     resolveFile,
+  };
+}
+
+/* An approved reference sent the way the live app sends one: by asset identity through
+   /api/references/image, which has no file name of its own. The Default state's approval
+   records the identity beside its file name, as the authority kernel does. */
+const ASSET_KAI = "asset-" + "a".repeat(32);
+const ASSET_OTHER = "asset-" + "b".repeat(32);
+function assetAddressedCase(assetId, resolvedAddress) {
+  const address = `/api/references/image?project=nc&assetId=${assetId}`;
+  const p = project();
+  Object.assign(p.characters[0].continuityStates.find((row) => row.isDefault), { approvedAssetId: ASSET_KAI });
+  return {
+    plan: planFor([planRef("id-kai", "identity", "image", address, 0)]),
+    serialized: { bindings: [bound("id-kai", "identity", "image", "image_urls", 0, 0)] },
+    sourceReferences: [{ refId: "id-kai", entityId: KAI }],
+    project: p,
+    shot: p.shots[0],
+    frameId: "",
+    resolveFile: (requested) => (requested === address ? resolveFile(resolvedAddress) : ""),
   };
 }
 
@@ -935,8 +957,8 @@ control("NC-11", "collapsing a new zero-input uncompiled dispatch into no record
 control("NC-12", "resolving state against the target frame instead of the consumed frame", () => {
   const source = mutated("src/generation/generation-binding.js", (text) =>
     text.replace(
-      /: resolveConsumedState\(project, shot, consumed\.frameId \|\| frameId, list, entityId, identity\.file\);/,
-      ": resolveConsumedState(project, shot, frameId, list, entityId, identity.file);",
+      /: resolveConsumedState\(project, shot, consumed\.frameId \|\| frameId, list, entityId,/,
+      ": resolveConsumedState(project, shot, frameId, list, entityId,",
     ));
   assert(/resolveConsumedState\(project, shot, frameId, list/.test(source));
 
@@ -1016,6 +1038,60 @@ control("NC-13", "collapsing two same-keyed inputs by correlating on refId alone
   }, /must not end up describing one file/);
 });
 
+/* ===========================================================================
+   NC-14 — reduce an /api/references/image address to its basename.
+
+   The shape GENERATION_INTEGRATION_PROOF_V1 found in a real paid receipt: the address
+   has no file name, its basename is `image`, and the chair the Default state authorises
+   was recorded as "unmatched". */
+control("NC-14", "comparing an /api/references/image URL by its basename", () => {
+  const source = mutated("src/generation/generation-binding.js", (text) =>
+    text.replace('if (raw.startsWith("/api/references/image?")) {', "if (false && raw) {"));
+  const Binding = compileModule("src/generation/generation-binding.js", source);
+  const real = require("../src/generation/generation-binding");
+  const input = assetAddressedCase(ASSET_KAI, KAI_PNG);
+
+  const shipped = real.buildGenerationBinding(input)[0];
+  const broken = Binding.buildGenerationBinding(input)[0];
+
+  /* RECEIPT — THE LIVE DEFECT: the approved asset's own bytes, called someone else's. */
+  assert.strictEqual(shipped.fileHash, sha256(BYTES["KAI.png"]));
+  assert.strictEqual(broken.fileHash, shipped.fileHash, "both rows describe the same consumed bytes");
+  assert.strictEqual(shipped.stateAuthority, "matched");
+  assert.strictEqual(broken.stateAuthority, "unmatched", "the control must reproduce the recorded defect");
+
+  assert.throws(() => {
+    assert.strictEqual(broken.stateAuthority, "matched",
+      "an asset address naming the state's approved asset is that state's authority");
+  }, /approved asset is that state's authority/);
+});
+
+/* ===========================================================================
+   NC-15 — compare approved NAMES when both sides carry an asset identity.
+
+   A different asset whose file happens to share the approved name — an earlier
+   approval, another folder's KAI.png — would then read as the current authority. */
+control("NC-15", "letting a same-named different asset read as the approved one", () => {
+  const source = mutated("src/generation/generation-binding.js", (text) =>
+    text.replace("const matched = consumed.assetId && authorityAsset", "const matched = false && consumed.assetId && authorityAsset"));
+  const Binding = compileModule("src/generation/generation-binding.js", source);
+  const real = require("../src/generation/generation-binding");
+  const input = assetAddressedCase(ASSET_OTHER, "/assets/media/KAI.png");
+
+  const shipped = real.buildGenerationBinding(input)[0];
+  const broken = Binding.buildGenerationBinding(input)[0];
+
+  /* RECEIPT — THE LIVE DEFECT: other bytes under the approved name, called Kai's. */
+  assert.strictEqual(shipped.fileHash, sha256(BYTES["KAI-RAIN.png"]), "these are not the approved bytes");
+  assert.strictEqual(shipped.stateAuthority, "unmatched");
+  assert.strictEqual(broken.stateAuthority, "matched", "the control must let the file name decide");
+
+  assert.throws(() => {
+    assert.strictEqual(broken.stateAuthority, "unmatched",
+      "a different asset stays unmatched, whatever its file is called");
+  }, /whatever its file is called/);
+});
+
 async function main() {
   /* THE NO-VACUOUS-CONTROL GUARD, SELF-TESTED. It is the one piece of this harness that
      must not rot: a `mutated()` that stopped refusing a no-op would turn every control
@@ -1067,6 +1143,9 @@ async function main() {
     assert.deepStrictEqual(dup.map((row) => row.file), [KAI_PNG, KAI_RAIN_PNG],
       "two same-keyed inputs keep one truthful row each");
     assert.notStrictEqual(dup[0].fileHash, dup[1].fileHash);
+    /* The asset-addressed identity rule, green on the real module. */
+    assert.strictEqual(Binding.buildGenerationBinding(assetAddressedCase(ASSET_KAI, KAI_PNG))[0].stateAuthority, "matched");
+    assert.strictEqual(Binding.buildGenerationBinding(assetAddressedCase(ASSET_OTHER, "/assets/media/KAI.png"))[0].stateAuthority, "unmatched");
     const live = await dispatchLegacyOnce(require("../src/generation/fal/fal-generation"), LEGACY_ZERO_INPUT_BODY);
     assert.strictEqual(live.status, 200, JSON.stringify(live.data));
     assert.deepStrictEqual(Binding.readGenerationBinding(live.stored).bindings, [],
@@ -1082,8 +1161,9 @@ async function main() {
       + "minted for an entity that declares none, the uncompiled path's binding writer removed so a new job backdates "
       + "itself, a capture failure allowed through to the provider, a reference the final uncompiled limit dropped "
       + "recorded as consumed, a zero-input uncompiled dispatch collapsed into no record, the continuity state "
-      + "resolved against the target frame instead of the consumed one, and two same-keyed inputs collapsed onto one "
-      + "file by correlating on refId alone — every one detected by the "
+      + "resolved against the target frame instead of the consumed one, two same-keyed inputs collapsed onto one "
+      + "file by correlating on refId alone, an /api/references/image address compared by its basename, and a "
+      + "same-named different asset read as the approved one — every one detected by the "
       + "property that guards it, with the real modules green afterwards. Nothing was written to disk and nothing was "
       + "reverted with git. Provider calls made: 0.",
     );

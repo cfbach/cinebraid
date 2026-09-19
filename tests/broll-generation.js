@@ -28,6 +28,8 @@ const PromptEngine = require("../src/generation/prompt-engine");
 const BrollPackage = require("../src/generation/broll-package");
 const { compileImageExecutionPlan } = require("../src/generation/image-execution");
 const { compileH3ExecutionPlan } = require("../src/generation/h3-execution");
+const { serializeH3PlanForFal } = require("../src/generation/fal/fal-h3-backend");
+const { serializeImagePlanForFal } = require("../src/generation/fal/fal-image-backend");
 const BuildHistory = require("../public/shared-build-history");
 const Readiness = require("../public/shared-shot-readiness");
 const Media = require("../public/shared-production-media");
@@ -446,8 +448,114 @@ async function testDesk() {
   console.log("  F · the desk: one panel, no reference step, the same targets the server compiles for");
 }
 
+/* =========================================================================== G */
+/* THE PROJECT'S CONTINUITY LANGUAGE DOES NOT BECOME THE SHOT'S CONTENT.
+
+   GENERATION_INTEGRATION_PROOF_V1 sent an "empty swamp, no one present" B-roll to MiniMax
+   H3 and got an armored figure on a walk cycle beside a chair. The package carried no
+   reference — but its text named the cast: the world's exclusions ("no redesign of Rex or
+   the folding chair"), the world premise as the environment, the scene's feeling as
+   performance direction. A Last Seat–shaped fixture, with those exact kinds of text. */
+const LAST_SEAT = {
+  setting: "A dead-serious fantasy quest whose visual treatment transforms from bargain-bin limited television fantasy into lavish overcooked 1980s fantasy/VHS excess while the underlying production entities remain the same.",
+  include: "Absurd comedy played completely straight; mundane folding chair treated with total seriousness; same Rex, chair and gate identity across radically different rendering regimes.",
+  reject: "No self-aware Rex, no magical chair, no chair used as shield or weapon.",
+  negative: "No self-aware comedy mugging, no magical chair effects, no redesign of Rex or the folding chair across Looks, no generic plastic chair unless it is an intentionally rejected wrong candidate, no fake software UI.",
+  global: "Absurd fantasy comedy played completely straight. Preserve the same underlying character, prop and location identities while scene-scoped rendering treatments change radically.",
+  limitedTv: "Bargain-bin 1960s limited-animation television fantasy: flat colors, simplified armor, awkward proportions, sparse facial shapes, held poses, limited depth, repeated backgrounds, locked wides/mediums, lateral pans and visibly reused 4–6 frame walk cycles.",
+  transition: "At the monumental gate, transform from Limited TV Fantasy into Lavish Fantasy while preserving Rex identity, black sunglasses, armor layout, chair identity and label.",
+  lavish: "Gorgeous overcooked 1980s fantasy/VHS-cover animation: rich cel shading, impossible muscles, heroic rendering, golden sunset.",
+  feeling: "Intentionally cheap production language played with sincere heroic stakes.",
+};
+const EMPTY_SWAMP = "Empty cheap swamp atmosphere, no one present: repeated dead trees, a repeated rock formation, still mud pools and simple reeds under a flat sky.";
+const RIDER = "A lone hooded rider on a grey horse crosses the swamp at dusk.";
+const MEDIA_FIELDS = ["image_url", "end_image_url", "image_urls", "mask_url", "reference_image_urls", "reference_video_urls", "reference_audio_urls"];
+function lastSeatProject() {
+  const P = clone(SAMPLE);
+  P.meta.world = { setting: LAST_SEAT.setting, include: LAST_SEAT.include, reject: LAST_SEAT.reject };
+  P.meta.globalNegativePrompt = LAST_SEAT.negative;
+  P.meta.globalStylePrompt = LAST_SEAT.global;
+  P.meta.styleBlocks = [
+    { id: "look-limited-tv", name: "Limited TV Fantasy", stage: "limited-tv", text: LAST_SEAT.limitedTv },
+    { id: "look-transition", name: "Threshold", stage: "transition", text: LAST_SEAT.transition },
+    { id: "look-lavish", name: "Lavish Fantasy", stage: "lavish", text: LAST_SEAT.lavish },
+  ];
+  const base = P.shots.find((row) => row.id === "SAMPLE-01");
+  Object.assign(P.scenes.find((row) => row.id === base.scene), { stage: "limited-tv", howItFeels: LAST_SEAT.feeling });
+  P.characters.push({ id: "CHAR-REX", name: "Rex Vandar", visualDescription: "Barbarian with a mullet, black sunglasses, one oversized shoulder pad and a giant sword.",
+    continuityStates: [{ id: "state-default", name: "Default", isDefault: true }] });
+  P.props = [...(P.props || []), { id: "PROP-CHAIR", name: "Folding Chair", visualDescription: "Battered dull-gray metal folding chair with a HALL PROPERTY label.",
+    approvedFile: "PROP-CHAIR.png", continuityStates: [{ id: "state-default", name: "Default", isDefault: true, approvedFile: "PROP-CHAIR.png" }] }];
+  const shot = clone(base);
+  Object.assign(shot, { id: "SWAMP-BROLL", title: "TEMP B-roll - empty swamp", desc: EMPTY_SWAMP, characters: [], codes: [], continuityStateSelections: {},
+    risks: [], referenceMode: "style-only", keyframes: [{ id: "swamp-a", label: "A", title: "Primary frame", description: EMPTY_SWAMP, required: true }],
+    clips: [], promptBuilds: [], creationBrief: { composition: { camera: { shotSize: "wide" } }, brollPrompt: EMPTY_SWAMP } });
+  P.shots.push(shot);
+  return P;
+}
+function brollRequest(P, output, prompt) {
+  const pkg = BrollPackage.compileBrollPackage({ project: P, shotId: "SWAMP-BROLL", output, ...(prompt ? { prompt } : {}) });
+  const withBuild = clone(P);
+  const buildId = registerBroll(withBuild, "SWAMP-BROLL", pkg, { id: `g-${output}-${prompt ? "explicit" : "empty"}` });
+  const plan = output === "video"
+    ? compileH3ExecutionPlan({ project: withBuild, shotId: "SWAMP-BROLL", buildId, durationSeconds: 5, aspectRatio: "16:9", resolution: "768P" })
+    : compileImageExecutionPlan({ project: withBuild, purpose: "frame", shotId: "SWAMP-BROLL", buildId, aspectRatio: "16:9" });
+  const refuse = () => { throw new Error("a B-roll request resolved a reference"); };
+  const serialized = output === "video"
+    ? serializeH3PlanForFal(plan.plan, plan.capability, { resolveReference: refuse, config: { h3TextModel: "minimax/h3/text-to-video", h3ImageModel: "minimax/h3/image-to-video", h3ReferenceModel: "minimax/h3/reference-to-video" } })
+    : serializeImagePlanForFal(plan.plan, plan.capability, { resolveReference: refuse, config: { textModel: "openai/gpt-image-2", editModel: "openai/gpt-image-2/edit" } });
+  return { pkg, plan, serialized };
+}
+function testContinuityLanguageStaysOut() {
+  const P = lastSeatProject();
+  for (const output of ["image", "video"]) {
+    const { pkg, plan, serialized } = brollRequest(P, output);
+    const style = pkg.spec.visualStyle || [];
+    /* THE LOOK, AS TREATMENT, SCOPED TO THIS SCENE. */
+    equal(style[0], BrollPackage.BROLL_LOOK_AUTHORITY, `G ${output}: the Look is led by the statement that it renders and does not add content`);
+    ok(style.includes(LAST_SEAT.limitedTv) && style.includes(LAST_SEAT.global), `G ${output}: the scene's Look and the global style are carried`);
+    ok(!style.includes(LAST_SEAT.transition) && !style.includes(LAST_SEAT.lavish), `G ${output}: other scenes' Looks are not`);
+    ok(style.includes(`Tone: ${LAST_SEAT.feeling}`), `G ${output}: the scene's feeling is the Look's tone`);
+    equal(pkg.spec.performance.emotion, "", `G ${output}: and is no longer performance direction, which presumes a performer`);
+    /* THE WORLD'S CONTINUITY LANGUAGE IS NOT CARRIED. */
+    equal(pkg.spec.initialState.environment, "", `G ${output}: the world premise is not the shot's environment`);
+    ok(!(pkg.spec.mustAvoid || []).some((item) => /^world violations/.test(item)), `G ${output}: nor are the world's entity exclusions`);
+    ok((pkg.spec.mustAvoid || []).includes("unrequested characters, props, text or camera moves"), `G ${output}: the generic exclusions stay`);
+    for (const key of ["promptEntities", "identityCanon", "visualGrounding", "driftRestatements"])
+      deepEqual(pkg.spec[key] || [], [], `G ${output}: no ${key}`);
+    /* WHAT THE PROVIDER IS SENT. */
+    const sent = plan.compiledPrompt;
+    ok(sent.includes(BrollPackage.BROLL_LOOK_AUTHORITY), `G ${output}: the provider is told the Look adds nothing`);
+    ok(sent.includes(LAST_SEAT.limitedTv), `G ${output}: and is given the Look`);
+    equal(sent.split(EMPTY_SWAMP).length - 1, 1, `G ${output}: the empty-shot prompt is the content, stated once`);
+    for (const [label, text] of [["package prompt", pkg.compiledPrompt], ["provider prompt", sent], ["package spec", JSON.stringify(pkg.spec)]]) {
+      ok(!/\bRex\b/.test(text), `G ${output}: Rex is not in the ${label}`);
+      ok(!/folding chair|plastic chair/i.test(text), `G ${output}: nor is the folding chair`);
+      ok(!text.includes(LAST_SEAT.setting) && !text.includes(LAST_SEAT.include) && !text.includes("world violations"), `G ${output}: nor the world's premise or rules`);
+    }
+    /* NO REFERENCE, NO BINDING, NO MEDIA FIELD. */
+    equal(plan.plan.inputs.references.length, 0, `G ${output}: no reference in the plan`);
+    deepEqual(serialized.bindings, [], `G ${output}: no provider binding`);
+    for (const field of MEDIA_FIELDS) equal(serialized.input[field], undefined, `G ${output}: no ${field} in the request`);
+    equal(serialized.model, output === "video" ? "minimax/h3/text-to-video" : "openai/gpt-image-2", `G ${output}: a prompt-only endpoint`);
+
+    /* B-ROLL MEANS NO REFERENCE, NOT AN EMPTY SCENE: a subject the filmmaker writes is kept. */
+    const explicit = brollRequest(P, output, RIDER);
+    equal(explicit.plan.compiledPrompt.split(RIDER).length - 1, 1, `G ${output}: an explicitly written subject is the content`);
+    ok(!/\bRex\b|folding chair/i.test(explicit.plan.compiledPrompt), `G ${output}: and still brings no project entity with it`);
+    deepEqual(explicit.serialized.bindings, [], `G ${output}: and still no reference`);
+  }
+  /* REFERENCE-LED IS UNTOUCHED: the same project compiles its world, rules and feeling as before. */
+  const referenceLed = PromptEngine.defaultSpec(PromptEngine.buildContext(P, "SAMPLE-01"), "shot-still", "t2i", [], null);
+  ok(referenceLed.mustAvoid.some((item) => item.startsWith("world violations: ") && /\bRex\b/.test(item)), "G: a reference-led shot still carries the world's exclusions");
+  equal(referenceLed.performance.emotion, LAST_SEAT.feeling, "G: and the scene's feeling as performance");
+  ok(!referenceLed.visualStyle.includes(BrollPackage.BROLL_LOOK_AUTHORITY), "G: and no B-roll framing");
+  console.log("  G · project continuity language stays out of B-roll: the Look renders, the shot's own content decides, no reference travels");
+}
+
 async function main() {
   testPackage();
+  testContinuityLanguageStaysOut();
   testReferenceLedUnchanged();
   await testDesk();
   await startMockProvider();

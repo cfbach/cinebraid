@@ -647,7 +647,15 @@ function registerFalGeneration(app, context) {
          relabelled, so a missing package reads as a missing package. */
       return { ok: false, throwable: error };
     }
-    const plan = Presentation.generationRequestPlan({ surface: expected, mode: declaration.viewMode, capability });
+    /* THE ONE PROMOTION A DIALOG MAKES, MADE HERE TOO. The reference dialog shows
+       Resolution in Simple (falFixedImageControlPlan with `reference: true`, in
+       public/fal-generation.js), because a reference has no shot to size itself from. It
+       is the only fixed-image surface that dispatches `entity-reference` — the automation
+       runner and coverage declare surfaces of their own — so purpose and surface together
+       name exactly that screen. Without this the size a filmmaker picked and was shown in
+       Simple was stripped here, and Settings' default was bought instead. */
+    const force = expected === "fixed-image" && purpose === "entity-reference" ? ["resolution"] : undefined;
+    const plan = Presentation.generationRequestPlan({ surface: expected, mode: declaration.viewMode, capability, force });
     if (!plan)
       return {
         ok: false,

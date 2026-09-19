@@ -209,6 +209,39 @@ function resolveConsumedFrame(shot, file) {
   return none;
 }
 
+/* The asset identity a state's approval recorded, read from the SAME record
+   stateApprovedFile() reads its file from, so the name and the identity always describe
+   one approval. "" when that approval predates asset identities. */
+function approvedAssetIdFor(entity, state) {
+  if (!entity) return "";
+  if (!state) return text(entity.approvedAssetId);
+  if (text(state.approvedFile)) return text(state.approvedAssetId);
+  return state.isDefault ? text(entity.approvedAssetId) : "";
+}
+
+/* What a consumed address says about WHICH approval it carries.
+
+     /api/references/image?…&key=K      K is the candidate key an approval stores as its
+                                        approvedFile, so the key is the name.
+     /api/references/image?…&assetId=A  A is the durable identity. The address has no
+                                        file name of its own, so the name is the file
+                                        it resolved to, for approvals recorded before
+                                        asset identities existed.
+     anything else                      its basename, exactly as before.
+
+   Before this, the whole address was reduced to its basename — `image` — and every
+   reference sent through /api/references/image was recorded as "unmatched", including
+   the exact bytes the state authorises. */
+function consumedApprovalIdentity(address, resolved) {
+  const raw = text(address);
+  if (raw.startsWith("/api/references/image?")) {
+    const query = new URL(raw, "http://local").searchParams;
+    if (text(query.get("key"))) return { name: text(query.get("key")), assetId: "" };
+    return { name: resolved ? path.basename(resolved) : "", assetId: text(query.get("assetId")) };
+  }
+  return { name: baseName(raw), assetId: "" };
+}
+
 /* ---------------------------------------------------------------------------
    Which continuity state was resolved for this input.
 
@@ -246,8 +279,11 @@ function resolveConsumedFrame(shot, file) {
 
    The resolver THROWS when the shared binding contract has not loaded. That is caught,
    because a provenance defect must not refuse a filmmaker's generation, and it is
-   reported as an unresolved field rather than swallowed as "no state declared". */
-function resolveConsumedState(project, shot, frameId, list, entityId, file) {
+   reported as an unresolved field rather than swallowed as "no state declared".
+
+   `resolved` is the local file the address was resolved to for hashing, when there was
+   one. It is read for identity and never returned. */
+function resolveConsumedState(project, shot, frameId, list, entityId, file, resolved = "") {
   const empty = { stateId: "", stateName: "", stateDeclared: false, stateAuthority: "", unresolved: "" };
   const kind = KIND_FOR_LIST[text(list)] || "";
   const entity = entityRecordFor(project, list, entityId);
@@ -268,14 +304,21 @@ function resolveConsumedState(project, shot, frameId, list, entityId, file) {
   if (!stateId || !own) return empty;
 
   const authorityFile = baseName(Continuity.stateApprovedFile(entity, state));
-  const consumed = baseName(file);
+  const authorityAsset = approvedAssetIdFor(entity, state);
+  const consumed = consumedApprovalIdentity(file, resolved);
+  /* An asset identity on both sides decides it; two different assets are different
+     authority even when their files share a name. Otherwise the approved name decides,
+     which is how every address without an identity has always been compared. */
+  const matched = consumed.assetId && authorityAsset
+    ? consumed.assetId === authorityAsset
+    : authorityFile === consumed.name;
   return {
     stateId,
     stateName: text(state?.name),
     stateDeclared: Boolean(declaredId),
     stateAuthority: !authorityFile
       ? STATE_AUTHORITY.NONE
-      : authorityFile === consumed
+      : matched
         ? STATE_AUTHORITY.MATCHED
         : STATE_AUTHORITY.UNMATCHED,
     unresolved: "",
@@ -318,7 +361,12 @@ function resolveFileIdentity(source, options) {
   }
   if (!absolute) return { file: address, fileHash: "", fileHashStatus: HASH_STATUS.UNREADABLE };
   try {
-    return { file: address, fileHash: text(options.hashFile(absolute)), fileHashStatus: HASH_STATUS.HASHED };
+    /* `resolved` is the file the address named, for the state-authority comparison only.
+       An asset address (`/api/references/image?…&assetId=…`) carries no file name of its
+       own, so comparing the ADDRESS against a state's approved file name could never
+       match, and every reference sent that way was recorded as "unmatched". It is not
+       written onto the row: the record keeps the address it was given. */
+    return { file: address, resolved: absolute, fileHash: text(options.hashFile(absolute)), fileHashStatus: HASH_STATUS.HASHED };
   } catch (error) {
     /* An unreadable file at the moment of dispatch is a fact worth keeping. It cannot
        be recovered later and inventing a digest for it would be worse than an absence
@@ -440,7 +488,8 @@ function buildGenerationBinding(input = {}) {
     const consumed = resolveConsumedFrame(shot, identity.file);
     const state = consumed.ambiguous
       ? { stateId: "", stateName: "", stateDeclared: false, stateAuthority: "", unresolved: "consumed-frame-ambiguous" }
-      : resolveConsumedState(project, shot, consumed.frameId || frameId, list, entityId, identity.file);
+      : resolveConsumedState(project, shot, consumed.frameId || frameId, list, entityId,
+        identity.file, identity.resolved);
     const consumedFrameId = consumed.frameId;
 
     return {

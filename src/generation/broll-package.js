@@ -6,16 +6,27 @@
  * and says so, in `referenceMode: "style-only"`, which the image and motion execution
  * modules enforce and the job ledger records.
  *
- * WHAT IS KEPT. The project style blocks, the world setting and its exclusions, the
- * scene's feeling, the shot's composition and camera direction, its motion plan and its
- * duration — the same context every shot compiles from, read through the same
- * buildContext() and defaultSpec().
+ * WHO DECIDES WHAT, in this order:
+ *   1. the shot's written prompt decides which subjects, objects and actions are present;
+ *   2. the project and scene LOOK decide the visual treatment, and nothing else;
+ *   3. project continuity and identity language never adds anything the prompt did not
+ *      ask for — B-roll means no reference input, not that the project's cast may walk in.
+ *
+ * WHAT IS KEPT. The Look — the global style and the scene's own style blocks — framed as
+ * treatment only; the scene's feeling, as the Look's tone; the shot's composition and
+ * camera direction, its motion plan and its duration; and the generic exclusions every
+ * shot carries. Read through the same buildContext() and defaultSpec() as every shot.
  *
  * WHAT IS REMOVED, and only this. The entity descriptors, the entities' canon text and
  * the frame's presence declarations: the inputs that make a prompt reference-led. The
- * scene beat goes too, because it is written about the cast and would re-introduce them
- * by name; the shot's own prompt is the intent here. So does dialogue — a style-only
- * package has no speaker to voice.
+ * scene beat, because it is written about the cast and would re-introduce them by name;
+ * the shot's own prompt is the intent here. Dialogue — a style-only package has no
+ * speaker to voice. And the project WORLD: its premise and its exclusions exist to keep
+ * named production entities consistent ("no redesign of Rex or the folding chair…"),
+ * so in a reference-free package they did the opposite — they named the cast into an
+ * empty shot, and a real MiniMax H3 B-roll of an empty swamp came back with an armored
+ * figure and a chair (GENERATION_INTEGRATION_PROOF_V1, D3). Decided by SOURCE, never by
+ * reading the text for names.
  *
  * The package is an ordinary prompt build. It compiles through the ordinary GenerationPlan
  * path (image-execution.js / h3-execution.js) as text-to-image or text-to-video, and its
@@ -31,6 +42,12 @@ const STYLE_ONLY = "style-only";
    or reference input, which B-roll by definition does not have. */
 const BROLL_PROFILE_IDS = Object.freeze({ image: "gpt-image-2/t2i", video: "minimax-h3/t2v" });
 const BROLL_PROMPT_ONLY_MODES = Object.freeze({ image: "t2i", video: "t2v" });
+/* Leads the Look in every B-roll package: treatment only, and the shot's own content —
+   including an empty scene — outranks anything the style text happens to mention. */
+const BROLL_LOOK_AUTHORITY = "Treatment only: the look below changes how this shot is rendered, never what is in it. "
+  + "The shot prompt alone decides which people, creatures, objects, vehicles and actions appear; "
+  + "if it asks for an empty scene or for no one to be present, keep it empty. "
+  + "Any figure, object or motif named in the look is an example of the style, not content to add.";
 const MODE_WORDS = Object.freeze({
   t2i: "text-to-image", t2v: "text-to-video", edit: "Image editing", inpaint: "Inpainting",
   "multi-reference": "Multi-reference image generation", i2v: "Image-to-video",
@@ -67,6 +84,10 @@ function styleOnlyContext(project, shotId, prompt) {
     promptEntities: [],
     references: [],
     framePresence: { frameId: "", declarations: [], absent: [], withheldNarrative: [] },
+    /* No world: its setting would become this shot's environment and its reject list its
+       exclusions, both written to keep the production's entities consistent. The Look
+       (project.styleBlocks) is untouched. */
+    project: { ...context.project, world: {} },
     scene: { ...context.scene, beat: "" },
     shot: {
       ...context.shot,
@@ -116,6 +137,15 @@ function compileBrollPackage(request = {}) {
     spec.initialState = { ...spec.initialState, subject: prompt };
     spec.actions = [];
   }
+  /* THE LOOK RENDERS; THE SHOT DECIDES. The Look is carried whole, led by one sentence
+     that says what it is for, because a style block written for a scene with a cast
+     ("simplified armor … walk cycles") reads to a video model as a request for one. The
+     scene's feeling moves from performance direction, which presumes a performer, to the
+     Look's tone. Nothing is parsed out of any of this text. */
+  const tone = text(spec.performance?.emotion);
+  spec.performance = { ...spec.performance, emotion: "" };
+  spec.visualStyle = [BROLL_LOOK_AUTHORITY, ...(Array.isArray(spec.visualStyle) ? spec.visualStyle : []), tone ? `Tone: ${tone}` : ""]
+    .filter(Boolean);
   spec.referenceMode = STYLE_ONLY;
   const built = PromptEngine.compile(profile, spec, []);
   return {
@@ -154,6 +184,7 @@ function styleOnlyRefusal(build, mode, references, output) {
 
 module.exports = {
   STYLE_ONLY,
+  BROLL_LOOK_AUTHORITY,
   BROLL_PROFILE_IDS,
   BROLL_PROMPT_ONLY_MODES,
   BrollPackageError,
