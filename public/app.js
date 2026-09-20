@@ -50,11 +50,6 @@ let P = null,
      ordinary same-project refresh is the SAME open reading a newer copy of its
      own record, so it must not move this. See the project load transaction. */
   PROJECT_OPEN_EPOCH = 0,
-  /* And how the refreshes WITHIN one open are ordered against each other. The
-     sequence is taken when a refresh starts; the watermark moves only when a
-     refresh COMMITS, so a later request merely starting disqualifies nothing. */
-  PROJECT_REFRESH_SEQUENCE = 0,
-  PROJECT_REFRESH_COMMITTED = 0,
   /* THE SUCCESSFUL-SAVE GENERATION. Advanced once by every write THIS WINDOW made
      that storage ACCEPTED, and by a rebase that re-points the saved baseline at a
      different stored document. A refresh captures it when it starts and must find
@@ -63,11 +58,11 @@ let P = null,
      document the server no longer has.
 
      WHY NOT PROJECT_REVISION. The revision cannot answer that question, because a
-     refresh COMMIT legitimately moves it — so requiring the revision to be
-     unchanged would discard the second of two overlapping refreshes, which is the
-     ordering the sequence and the watermark exist to get right. This counter moves
-     only for the one event a prepared snapshot can be behind. Two tokens, two
-     questions; neither substitutes for the other.
+     durable advance this window only DECLARES — an ingest the server committed
+     into the open project — moves the stored revision without moving this
+     window's, so nothing local would differ. This counter moves only for the
+     events a prepared snapshot can be behind. Two tokens, two questions; neither
+     substitutes for the other.
 
      Compared for EQUALITY and never for order. "Newer" is not a thing a client can
      ask of it or of an opaque revision string: a prepared snapshot is either from
@@ -1675,16 +1670,12 @@ function renderProjectFailureScreen(failure, message) {
      COMMIT    one synchronous, await-free mutation section. Everything it
                installs is already in hand.
 
-   WHAT ORDERS TWO REFRESHES IS NEITHER THE EPOCH NOR A REVISION STRING.
-   `PROJECT_OPEN_EPOCH` answers "which explicit open is this window", and an
-   ordinary refresh is not a new open — advancing it there would make the refresh
-   behind the one that just committed look like work from a previous open.
-   Refreshes are ordered against each other by `PROJECT_REFRESH_SEQUENCE`, taken
-   when the request STARTS, against `PROJECT_REFRESH_COMMITTED`, which moves only
-   when a refresh actually COMMITS. So a later request merely being started
-   disqualifies nothing: a response that is still the newest thing anyone
-   installed may commit, however many requests were begun behind it. Revision
-   tokens are opaque server strings and are never compared for order.
+   NOTHING ORDERS TWO REFRESHES, BECAUSE THERE ARE NEVER TWO. Every refresh is
+   scheduled by requestProjectRefresh(), which runs one at a time and queues the
+   rest behind it — see THE TWO LIFECYCLES below. `PROJECT_OPEN_EPOCH` still
+   answers "which explicit open is this window", and an ordinary refresh is not a
+   new open. Revision tokens are opaque server strings and are never compared for
+   order.
    =========================================================================== */
 
 /* The requested intent, frozen here and read nowhere else. Anything that is not
@@ -1701,7 +1692,7 @@ async function load(options = {}) {
      own record, and purging there would delete the verdicts describing the very
      work that just completed. */
   return requestedProjectIntent(options) === "refresh"
-    ? runProjectRefresh()
+    ? requestProjectRefresh()
     : runProjectReplacement();
 }
 
@@ -1711,7 +1702,7 @@ async function load(options = {}) {
 /* EVERY ASYNCHRONOUS INPUT, GATHERED BEFORE ANYTHING AUTHORITATIVE MOVES.
    Nothing here writes `P`, the active slug, the project revision, the save
    counters, the saved baseline, the save latches, the save indicator, the
-   continuity workspace, the project-open epoch or the refresh watermark. The
+   continuity workspace or the project-open epoch. The
    return value is a candidate snapshot and nothing else. */
 async function prepareProjectSnapshot({ claimRecovery = false, slug = "" } = {}) {
   /* SCOPED, WHEN A CALLER NEEDS TO PREPARE A PROJECT THAT IS NOT ACTIVE YET.
@@ -2044,6 +2035,12 @@ window.watchProjectRevision = async () => {
          exists; it must not be applied to the one that does. */
       if (owner.epoch !== PROJECT_OPEN_EPOCH || owner.slug !== ACTIVE_PROJECT_SLUG) return null;
       if (owner.revision !== PROJECT_REVISION) return null;
+      /* THIS WINDOW IS ALREADY RE-READING. A refresh in flight is about to replace the
+         revision this compared against, so the mismatch is not evidence of anybody
+         else's write. Declaring an advance here would make that refresh stale,
+         and the next tick would do the same to its follow-up — for as long as reads
+         take longer than a tick. The next tick asks again once it has landed. */
+      if (PROJECT_REFRESH_RUN) return null;
       if (serverRevision === PROJECT_REVISION) return null;
       return applyForeignProjectRevision(owner);
     } catch { return null; }
@@ -2075,6 +2072,10 @@ async function applyForeignProjectRevision(owner) {
   /* CLEAN, so the honest thing is to go and get it. */
   setSaveState("loading", "Project changed — updating…");
   const outcome = await load({ intent: "refresh" }).catch(() => null);
+  /* STILL BOUND TO THE OPEN THAT ASKED. If that open was replaced while the refresh
+     was queued or reading, the answer is about a record that is no longer on screen,
+     and the open that is has its own indicator to keep. */
+  if (owner.epoch !== PROJECT_OPEN_EPOCH) return null;
   /* A committed refresh settles the indicator itself, and only then is Saved true
      again. Anything else leaves a window that is known to be behind the record,
      saying so and naming what would fix it. */
@@ -2109,8 +2110,6 @@ function projectRefreshRefusal(ticket, prepared) {
     return "the project this refresh was started for is no longer the one open";
   if (!prepared.slug || prepared.slug !== ACTIVE_PROJECT_SLUG)
     return "the response describes a different project than the one open";
-  if (ticket.sequence <= PROJECT_REFRESH_COMMITTED)
-    return "a newer refresh of this open has already installed its snapshot";
   /* THE PREPARED SNAPSHOT MUST STILL BE FRESH.
 
      A refresh is several awaits long, and a save can be authored, dispatched and
@@ -2145,12 +2144,10 @@ function projectRefreshRefusal(ticket, prepared) {
 
 /* A NEW OPEN. The only place the project-open epoch moves, and the only place
    the session-scoped continuity workspace is discarded — both are replacement
-   acts. Refresh ordering is per-open, so the watermark starts again here; a
-   refresh left over from the previous open is refused by the epoch check long
-   before the watermark is consulted. */
+   acts. A refresh left over from the previous open is refused by the epoch
+   check, and its callers are told the open they asked about has gone. */
 function beginProjectOpen() {
   PROJECT_OPEN_EPOCH += 1;
-  PROJECT_REFRESH_COMMITTED = 0;
   /* The record on screen is being replaced, so derived display state computed
      against it goes with it. The continuity map is additionally keyed by
      project, so a leak is structurally impossible either way; this also covers
@@ -2161,18 +2158,15 @@ function beginProjectOpen() {
      being replaced, so it goes with the record — including on a reopen of the
      same project, which the scoped key alone would let through. */
   if (typeof resetActionRefusals === "function") resetActionRefusals();
-  return { intent: "open", epoch: PROJECT_OPEN_EPOCH, sequence: 0, slug: "" };
+  return { intent: "open", epoch: PROJECT_OPEN_EPOCH, slug: "" };
 }
-/* A refresh's ticket, taken when the request STARTS. The sequence orders it
-   against the other refreshes of this open; the epoch and slug record which open
-   it was started under, so a response that outlived that open can be recognised
-   however many times the same project has been opened since. */
+/* A refresh's ticket, taken when the refresh STARTS. The epoch and slug record
+   which open it was started under, so a response that outlived that open can be
+   recognised however many times the same project has been opened since. */
 function beginProjectRefresh() {
-  PROJECT_REFRESH_SEQUENCE += 1;
   return {
     intent: "refresh",
     epoch: PROJECT_OPEN_EPOCH,
-    sequence: PROJECT_REFRESH_SEQUENCE,
     slug: ACTIVE_PROJECT_SLUG,
     /* The record this refresh is reading AGAINST. Captured here so that a write
        this window lands while the snapshot is still in flight can be recognised
@@ -2277,9 +2271,6 @@ function commitPreparedProject(prepared, ticket) {
   const schemaWasOlder = storedSchemaIsOlder(P.meta);
   const migratedV5 = normalizeProjectV5();
   SAVED_PROJECT_BASELINE = structuredClone(P);
-  /* This refresh becomes the one later arrivals are ordered against. A
-     replacement does not touch the watermark; beginProjectOpen() reset it. */
-  if (ticket.intent === "refresh") PROJECT_REFRESH_COMMITTED = ticket.sequence;
   /* The project on screen is the project on disk, so the resting indicator is
      honest again. Nothing after this point may say otherwise. */
   setSaveState("saved", "Saved");
@@ -2336,7 +2327,7 @@ function applyProjectRecordDefaults() {
    hand anything to. Its body is synchronous and presentational. It READS the
    committed record to label the chrome and WRITES none of it: not `P`, the slug,
    the revision, the save counters, the saved baseline, the save latches, the save
-   indicator, the open epoch, the refresh watermark or the continuity workspace.
+   indicator, the open epoch, the refresh owner or the continuity workspace.
    Anything else it needs was gathered in PREPARE.
 
    EVERYTHING IT DEFERS CALLS ONE OF THREE NAMED FUNCTIONS, and
@@ -2416,8 +2407,83 @@ async function runProjectReplacement() {
   decorateProjectCommit(prepared);
   return { intent: "open", committed: true, reason: "" };
 }
-/* A REFRESH. Every ending other than the commit is a discard, and a discard
-   mutates nothing. */
+/* ONE OWNER FOR EVERY REFRESH OF THE OPEN PROJECT.
+
+   INVARIANT. At most one refresh is reading or committing at any moment, and
+   there is no other way to start one: load({ intent: "refresh" }) is this, and
+   runProjectRefresh() is called from startProjectRefreshRun() and nowhere else.
+   Callers only say THAT the record needs re-reading — a completion ingested, the
+   revision watch saw the stored bytes move, a coverage run was recorded — and
+   none of them keeps a busy flag or a refusal of its own.
+
+   THE SCHEDULING CONTRACT, whole:
+     - a request made while nothing is running starts a refresh now;
+     - a request made while one IS running is never dropped and never started
+       beside it. It joins THE follow-up — one refresh shared by every request
+       that arrives during the run — which starts the moment the run settles, so
+       its read always begins after the request was made;
+     - a caller is answered by the first refresh that COMMITS after its request.
+       A refusal is the answer only when nothing newer has been asked for: a run
+       found to be behind the record because somebody declared a durable advance
+       while it was reading hands its callers on to that somebody's follow-up,
+       rather than telling them results the server holds are unavailable;
+     - a caller whose open has since been replaced is told so and is never
+       handed another open's commit, and a follow-up nobody in the current open
+       still wants is not started.
+
+   IT CANNOT LOOP. A follow-up exists only because somebody asked during a run,
+   and nothing in here asks: requests come from events outside this seam. A run
+   that settles with nobody waiting ends the burst.
+
+   IT DOES NOT DECIDE WHAT MAY BE INSTALLED. Freshness, the open a snapshot
+   belongs to, unsaved work and a paused window are VALIDATE's questions, answered
+   in projectRefreshRefusal() exactly as before. This decides only WHEN a refresh
+   runs and WHAT each caller is told. Overlapping refreshes used to be ordered by
+   a sequence against a committed watermark; with one at a time there is nothing
+   left to order, and that pair is gone. */
+let PROJECT_REFRESH_RUN = null;       // the callers of the refresh in flight
+let PROJECT_REFRESH_FOLLOW_UP = null; // the callers of the one that runs next
+const PROJECT_REFRESH_LEFT = Object.freeze({
+  intent: "refresh", committed: false,
+  reason: "the project open this refresh was requested for has since been replaced",
+});
+function requestProjectRefresh() {
+  return new Promise((resolve, reject) => {
+    const caller = { epoch: PROJECT_OPEN_EPOCH, resolve, reject };
+    if (!PROJECT_REFRESH_RUN) return startProjectRefreshRun([caller]);
+    if (!PROJECT_REFRESH_FOLLOW_UP) PROJECT_REFRESH_FOLLOW_UP = [];
+    PROJECT_REFRESH_FOLLOW_UP.push(caller);
+  });
+}
+function startProjectRefreshRun(callers) {
+  const run = { callers };
+  PROJECT_REFRESH_RUN = run;
+  runProjectRefresh().then(
+    (outcome) => settleProjectRefreshRun(run, outcome, null),
+    (error) => settleProjectRefreshRun(run, null, error),
+  );
+}
+/* Synchronous from the run settling to the follow-up starting, so no request can
+   slip in between and start a second refresh beside it. */
+function settleProjectRefreshRun(run, outcome, error) {
+  const current = (caller) => caller.epoch === PROJECT_OPEN_EPOCH;
+  const waiting = PROJECT_REFRESH_FOLLOW_UP || [];
+  PROJECT_REFRESH_RUN = null;
+  PROJECT_REFRESH_FOLLOW_UP = null;
+  for (const caller of waiting) if (!current(caller)) caller.resolve(PROJECT_REFRESH_LEFT);
+  const wanted = waiting.filter(current);
+  const handOn = !error && !outcome?.committed && wanted.length > 0;
+  const carried = [];
+  for (const caller of run.callers) {
+    if (handOn && current(caller)) carried.push(caller);
+    else if (error) caller.reject(error);
+    else caller.resolve(outcome);
+  }
+  const next = [...carried, ...wanted];
+  if (next.length) startProjectRefreshRun(next);
+}
+/* A REFRESH, ONE RUN OF IT, started only by the owner above. Every ending other
+   than the commit is a discard, and a discard mutates nothing. */
 async function runProjectRefresh() {
   /* NOTHING TO REFRESH. There is no installed project for this refresh to
      re-read, so it returns. It does not open one, it does not clear anything and

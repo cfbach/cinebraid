@@ -39,6 +39,8 @@ const SUITES = [
   "check:manual-browser",
   "check:browser-real",
   "check:reference-loop-browser",
+  "check:refresh-race-browser",
+  "check:run-binding-browser",
   "check:h3-browser",
   "check:preview-layout",
   "check:ui-state",

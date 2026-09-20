@@ -3747,7 +3747,10 @@ function registerFalGeneration(app, context) {
          arrive at ingest. A record that already exists is untouched. */
       if (result.job) await repairCoverageProjection(owner, result.job);
       if (result.ok) return res.json({ ok: true, job: publicJob(result.job) });
-      if (result.outcome === "not-found") return res.status(404).json({ error: result.error });
+      /* WHICH LEDGER THIS ANSWER IS ABOUT. A caller whose work belongs to another project
+         - an automation run still settling after the filmmaker switched - can only tell
+         that this 404 is about somebody else's ledger if the answer says whose it is. */
+      if (result.outcome === "not-found") return res.status(404).json({ error: result.error, projectSlug: owner.slug });
       if (result.outcome === "no-handle")
         return res.status(409).json({ error: result.error, code: result.code, job: publicJob(result.job) });
       await repairCoverageProjection(owner, result.job);

@@ -388,6 +388,7 @@ async function v640RunSceneReview(run, round = 0) {
   await v641SetStepActivity(run, key, "waiting for vision model", "The scene sequence was sent to the vision model for whole-scene, adjacent-shot, and shot-specific continuity analysis.", { system: "VISION AI · SCENE CONTINUITY", model: CONFIG?.ai?.vision?.model || CONFIG?.ai?.model || "Configured vision model" });
   const response = await fetch("/api/llm/review-scene", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ sceneId: run.targetId, expectedChanges }) });
   const data = await response.json();
+  v626AssertRunProjectOpen(run);
   if (!response.ok) throw new Error(data.error || "Scene continuity review failed.");
   scene.continuityReview = { ...(data.review || {}), overrides: scene.continuityReview?.overrides || { intentional: {}, notes: {} }, automationRunId: run.id, automationRound: round };
   run.result = run.result || {}; run.result.sceneReview = data.review; run.result.continuityRounds = [...(run.result.continuityRounds || []), { round, review: data.review, at: v626Now() }];
@@ -628,6 +629,7 @@ async function v641ReviewSceneCorrectionIncremental(run, step, payload) {
     await v626SaveRun(run, false);
     const response = await fetch("/api/llm/review-scene-correction", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ ...payload, fileNames: [file] }) });
     const data = await response.json();
+    v626AssertRunProjectOpen(run);
     if (!response.ok) throw new Error(data.error || `Scene correction review failed for ${file}`);
     const row = Array.isArray(data?.review?.reviews) ? data.review.reviews[0] || {} : {};
     reviews.push({ ...row, n: index + 1 });
@@ -880,7 +882,7 @@ async function runSceneAutomation(runId) {
   if (V626_ACTIVE_AUTOMATION_RUNS.has(runId)) return;
   let run;
   try { run = await v627AcquireAutomationLease(runId); }
-  catch (error) { toast(error.code === "RUN_LEASED" ? "This scene run is active in another CineBraid window" : error.message); return; }
+  catch (error) { v626RunToast(run, error.code === "RUN_LEASED" ? "This scene run is active in another CineBraid window" : error.message); return; }
   try {
     const scene = sceneById(run.targetId); if (!scene) throw new Error("Scene no longer exists.");
     const approvedShotIds = v640SceneShots(run.targetId).filter((shot) => v640SceneApprovedStill(shot)).map((shot) => shot.id);
@@ -894,7 +896,7 @@ async function runSceneAutomation(runId) {
       }
       const review = await v640RunSceneReview(run, 0);
       await v626FinishRun(run, "completed", v640SceneReviewPass(review, run.config.strictness) ? "Correction approved and the scene continuity review now passes." : "Correction approved. The scene review was re-run and still contains continuity notes for director review.");
-      return toast("Scene correction automation completed");
+      return v626RunToast(run, "Scene correction automation completed");
     }
     if (run.config.reviewOnly) {
       await v626Log(run, `Starting review-only scene automation with ${approvedShotIds.length} approved stills and a ${run.config.maxImages}-image correction cap.`, "info");
@@ -909,23 +911,23 @@ async function runSceneAutomation(runId) {
     }
     if (!run.config.continuityReview) {
       await v626FinishRun(run, "completed", `${approvedShotIds.length} scene shot${approvedShotIds.length === 1 ? "" : "s"} processed. Continuity review was disabled.`);
-      return toast("Scene still automation completed");
+      return v626RunToast(run, "Scene still automation completed");
     }
     for (let cycle = 0; cycle <= Number(run.config.maxCorrectionRounds || 0); cycle++) {
       await v626SetStage(run, `Continuity review ${cycle + 1}`, "scene-review", "Reviewing the approved sequence for viewer-facing continuity breaks.");
       const review = await v640RunSceneReview(run, cycle);
       if (v640SceneReviewPass(review, run.config.strictness)) {
         await v626FinishRun(run, "completed", `Scene continuity passed after ${cycle + 1} review pass${cycle ? "es" : ""}. ${run.usage.imagesGenerated} images generated within the ${run.config.maxImages}-image cap.`);
-        return toast("Scene automation completed with continuity pass");
+        return v626RunToast(run, "Scene automation completed with continuity pass");
       }
       if (!run.config.correctionLoop || cycle >= Number(run.config.maxCorrectionRounds || 0)) {
         await v626FinishRun(run, "completed", `Scene stills are approved, but continuity review still has flagged issues after ${cycle + 1} pass${cycle ? "es" : ""}. Open the scene report for director decisions.`);
-        return toast("Scene automation completed with continuity flags");
+        return v626RunToast(run, "Scene automation completed with continuity flags");
       }
       const packages = v640SceneCorrectionPackages(run, review, cycle + 1);
       if (!packages.length) {
         await v626FinishRun(run, "completed", "Continuity review found issues, but no safe automatic correction target could be selected. Use the scene report to choose a repair strategy.");
-        return toast("Scene needs a correction target decision");
+        return v626RunToast(run, "Scene needs a correction target decision");
       }
       await v626SaveRun(run, false); await flushPendingProjectSave();
       for (const pkg of packages) {
@@ -936,15 +938,15 @@ async function runSceneAutomation(runId) {
       }
     }
   } catch (error) {
-    if (error?.reviewRequired || error?.childAttention) toast(error?.childAttention ? "A shot needs director approval before the scene can continue" : "Scene correction paused for your approval");
+    if (error?.reviewRequired || error?.childAttention) v626RunToast(run, error?.childAttention ? "A shot needs director approval before the scene can continue" : "Scene correction paused for your approval");
     else {
-      const interrupted = error?.cancelled || error?.leaseLost || error?.pollDeferred || v626RunCancelled(run);
+      const interrupted = error?.cancelled || error?.leaseLost || error?.pollDeferred || v626RunLeft(run, error) || v626RunCancelled(run);
       if (!interrupted && run.current?.stepKey) await v626FailStep(run, run.current.stepKey, error);
-      const summary = error?.leaseLost ? "Scene automation lease was lost. Progress is preserved; choose Resume Run." : error?.pollDeferred ? "Provider work is still active. Resume later without resubmitting." : interrupted ? "Scene run stopped safely. Resume later without repeating completed work." : `${error.message || "Scene automation stopped"} Use Retry Failed Step to retry only the failed operation.`;
+      const summary = v626RunLeft(run, error) ? v626ProjectLeftError(run).message : error?.leaseLost ? "Scene automation lease was lost. Progress is preserved; choose Resume Run." : error?.pollDeferred ? "Provider work is still active. Resume later without resubmitting." : interrupted ? "Scene run stopped safely. Resume later without repeating completed work." : `${error.message || "Scene automation stopped"} Use Retry Failed Step to retry only the failed operation.`;
       await v628FinishRunAfterError(run, interrupted ? "interrupted" : "failed", summary, error);
-      toast(interrupted ? "Scene automation paused safely" : `Scene automation stopped: ${error.message}`);
+      v626RunToast(run, interrupted ? "Scene automation paused safely" : `Scene automation stopped: ${error.message}`);
     }
-  } finally { await v627ReleaseAutomationLease(run); route(); }
+  } finally { await v627ReleaseAutomationLease(run); if (v626RunProjectOpen(run)) route(); }
 }
 window.runSceneAutomation = runSceneAutomation;
 

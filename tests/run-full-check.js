@@ -229,6 +229,7 @@ const nodeSuites = [
   "check:save-revision-race-negative",
   "check:save-truth",
   "check:load-transaction",
+  "check:refresh-owner",
   "check:generation-job-durability",
   "check:approval-references",
   "check:voice-ownership",
@@ -344,6 +345,8 @@ const browserSuites = [
   "check:ev2-6-browser", "check:bible-canon-browser", "check:returned-review-browser", "check:launch-language-browser",
   "check:reference-demand-browser", "check:shot-intent-front-browser", "check:broll-browser",
   "check:reference-first-canon-browser",
+  "check:refresh-race-browser",
+  "check:run-binding-browser",
   "check:references-alpha-browser"];
 const releaseSuites = ["check:environment", "check:package"];
 /* How a suite is launched, without a shell.

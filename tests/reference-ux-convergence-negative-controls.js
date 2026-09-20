@@ -1390,26 +1390,23 @@ controlAsync({
   explain: "A retry that does not re-check its own crop is a retry that can assign against something other than the image the filmmaker saved.",
 });
 
-controlAsync({
-  label: "N29 the revision watch does not read this window's own enrollment as a foreign change",
-  mutateSource: only("app.js", (text) => mutate(
-    text,
-    "      await PROJECT_SERVER_WRITE.catch(() => {});\n",
-    "",
-    "N29")),
-  probe: async (mutateSource) => {
-    const drawn = await ev27Draw(mutateSource, { watchDuringRefresh: 1 });
-    const state = await vm.runInContext(EV27_CROP(true), drawn.rendered.context);
-    if (!state || drawn.enrolls.length !== 1 || drawn.revisionReads.count === 0)
-      return { reached: false, held: false, reason: `enrollments(${drawn.enrolls.length}) revisionReads(${drawn.revisionReads.count})` };
-    const outcome = await drawn.watchOutcome();
-    const own = outcome === null && drawn.conflicted() === false;
-    return { reached: true, held: own,
-      reason: own ? "the-watch-recognised-this-windows-own-write" : "the-watch-treated-this-windows-own-enrollment-as-foreign" };
-  },
-  reason: "the-watch-treated-this-windows-own-enrollment-as-foreign",
-  explain: "A content hash cannot say who moved the stored revision, so an enrollment this window asked for reads as somebody else's change - and over an unsaved edit that raises the conflict surface on top of the assignment.",
-});
+/* N29 IS RETIRED HERE, AND REPLACED RATHER THAN DROPPED.
+ *
+ * It fired the revision watch during the enrolment's CONFIRMATION REFRESH and removed the
+ * declared server write the watch waits on. Since PROJECT_REFRESH_SINGLE_OWNER_V1 that moment
+ * is held by two independent things — the declared server write, and the watch standing aside
+ * for a refresh this window already has in flight — so removing either one alone leaves the
+ * invariant standing, and a control that removed both would prove which of them owns nothing.
+ *
+ * Each half now has a control of its own, at the interval where it is the only protection, in
+ * tests/project-refresh-single-owner.js:
+ *   NC-5  removes the stand-aside          — caught by cases 1 and 3 (a refresh in flight)
+ *   NC-6  removes the declared server write — caught by case 8 (the request still on the wire,
+ *                                             with no refresh running and nothing unsaved)
+ *
+ * The positive claim this control guarded is unchanged and still proven from the enrolment
+ * flow: testTheRevisionWatchKnowsThisWindowsOwnEnrollment() in tests/reference-ux-convergence.js
+ * (EV2-7 C10). */
 
 /* ---------------------------------------------------------------------------
    NO CATCH-AS-SUCCESS. Enforced, not promised. */

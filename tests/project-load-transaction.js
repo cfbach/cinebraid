@@ -27,9 +27,12 @@
  *   VALIDATE  one synchronous decision against the live window.
  *   COMMIT    one synchronous, await-free mutation section.
  *
- * ORDERING RULES CARRIED FORWARD, unchanged from the reproductions:
+ * ORDERING RULES CARRIED FORWARD from the reproductions:
  *   - older response, then newer: the newer may commit afterward
- *   - newer response, then older: the older cannot roll the newer back
+ *   - newer response, then older: the older cannot roll the newer back — and
+ *     since the single refresh owner it cannot even arise: requests made while a
+ *     refresh runs are queued behind it, never read beside it (Part 6, and
+ *     tests/project-refresh-single-owner.js for the scheduling itself)
  *   - a later request merely STARTING does not invalidate an older valid response
  *   - an explicit replacement invalidates every refresh from the old open
  *   - dirty authored work always outranks refresh installation
@@ -497,7 +500,6 @@ const clientState = (context) => ({
   revision: read(context, "PROJECT_REVISION"),
   marks: marks(context),
   epoch: read(context, "PROJECT_OPEN_EPOCH"),
-  refreshCommitted: read(context, "PROJECT_REFRESH_COMMITTED"),
   saveGeneration: read(context, "PROJECT_SAVE_GENERATION"),
   conflict: read(context, "PROJECT_CONFLICT"),
   blocked: read(context, "SAVE_BLOCKED"),
@@ -539,12 +541,51 @@ async function releaseAndSettle(server, context, index, handle) {
   await read(context, handle);
   await settle();
 }
+/* A refresh REQUESTED while another is in flight. Through the one owner it does
+   not read yet: it joins the follow-up, which reads the moment the run in flight
+   settles. With `park` its read is armed to hold, so the section decides when the
+   follow-up lands; without it nothing is armed, for a follow-up that must never
+   be started at all. */
+async function beginQueuedRefresh(server, context, handle, jobId, entry = "fal", { park = true } = {}) {
+  const reading = server.parkedReads;
+  if (park) server.holdNextProjectRead();
+  vm.runInContext(entry === "generic"
+    ? `${handle} = load({ intent: "refresh" });`
+    : entry === "automation"
+      ? `${handle} = v626RefreshFalJob(${JSON.stringify(jobId)});`
+      : `${handle} = refreshFalGeneration(${JSON.stringify(jobId)}, false);`, context);
+  await settle();
+  assert.strictEqual(server.parkedReads, reading,
+    `${handle} was requested while a refresh is in flight, so it must be queued behind it rather than reading beside it`);
+}
+/* Release one parked read WITHOUT awaiting its caller, who may be answered by
+   the follow-up rather than by this read. */
+async function releaseOnly(server, index) {
+  server.releaseRead(index);
+  await settle();
+}
+/* The one follow-up that answers every queued request, once it has started. */
+async function releaseFollowUpAndSettle(server, context, handles) {
+  assert.strictEqual(server.parkedReads, 1, "precondition: exactly one follow-up read is in flight for everything queued");
+  server.releaseProjectReads();
+  for (const handle of handles) await read(context, handle);
+  await settle();
+}
+const projectReads = (server) => server.requests.filter((row) => row === "GET /api/project").length;
 /* Park a refresh INSIDE PREPARE but PAST the project read, so it is holding a
    snapshot of the record as it was when it asked. This is the only place a
-   durable advance can land between a refresh reading and committing. */
+   durable advance can land between a refresh reading and committing.
+
+   IT ENTERS THE TRANSACTION DIRECTLY, NOT THROUGH THE OWNER. Every section that
+   uses it is about VALIDATE: whether a snapshot already in flight may still be
+   installed once something has moved under it. Through the owner, the refresh the
+   section then awaits would queue behind this one; entering runProjectRefresh()
+   directly keeps the held snapshot and that refresh independent, so each outcome
+   can be read on its own. WHEN refreshes run is proven by
+   tests/project-refresh-single-owner.js, which drives only the owner. */
 async function beginScanParkedRefresh(server, context, handle) {
   server.holdNextScanRead();
-  vm.runInContext(`${handle} = load({ intent: "refresh" }).then((result) => JSON.stringify(result));`, context);
+  vm.runInContext(`${handle} = runProjectRefresh().then((result) => JSON.stringify(result));`, context);
   await settle();
   assert.strictEqual(server.parkedScanReads, 1, `precondition: ${handle} must be parked inside PREPARE, past the project read`);
 }
@@ -575,7 +616,7 @@ async function refreshWithNoProjectSection(options = {}) {
     ["the slug is empty", `ACTIVE_PROJECT_SLUG = "";`],
   ]) {
     vm.runInContext(`__saved = { P, slug: ACTIVE_PROJECT_SLUG }; ${setup}`, context);
-    const before = { epoch: read(context, "PROJECT_OPEN_EPOCH"), sequence: read(context, "PROJECT_REFRESH_SEQUENCE") };
+    const before = { epoch: read(context, "PROJECT_OPEN_EPOCH"), reads: projectReads(server) };
     const outcome = JSON.parse(await read(context, `load({ intent: "refresh" }).then((result) => JSON.stringify(result))`));
     await settle();
 
@@ -583,8 +624,9 @@ async function refreshWithNoProjectSection(options = {}) {
     assert.strictEqual(outcome.committed, false, `${label}: and it must have discarded rather than committed`);
     assert.strictEqual(read(context, "PROJECT_OPEN_EPOCH"), before.epoch,
       `${label}: a refresh with nothing to refresh must not advance the project-open epoch`);
-    assert.strictEqual(read(context, "PROJECT_REFRESH_SEQUENCE"), before.sequence,
-      `${label}: and must not even take a refresh ticket`);
+    assert.strictEqual(projectReads(server), before.reads,
+      `${label}: and must not even read the project`);
+    assert.strictEqual(read(context, "PROJECT_REFRESH_RUN"), null, `${label}: leaving the refresh owner idle`);
     assert.strictEqual(read(context, 'document.getElementById("main").innerHTML.includes("WELCOME TO CINEBRAID")'), false,
       `${label}: the first-run screen belongs to an explicit open and must never appear here`);
     vm.runInContext(`P = __saved.P; ACTIVE_PROJECT_SLUG = __saved.slug;`, context);
@@ -824,7 +866,7 @@ function commitIsAwaitFreeSection() {
   const decoration = stripComments(bodyOf("function decorateProjectCommit("));
   for (const forbidden of [
     "SAVED_PROJECT_BASELINE", "SAVE_BLOCKED", "SAVE_REVISION", "SAVED_REVISION",
-    "PROJECT_REVISION", "ACTIVE_PROJECT_SLUG", "PROJECT_OPEN_EPOCH", "PROJECT_REFRESH_COMMITTED",
+    "PROJECT_REVISION", "ACTIVE_PROJECT_SLUG", "PROJECT_OPEN_EPOCH", "PROJECT_REFRESH_RUN",
     "setSaveState", "blockSaving", "dirty(", "commitPreparedProject", "beginProjectOpen",
     "resetContinuityWorkspaceState", "P =",
   ]) {
@@ -893,9 +935,8 @@ function commitIsAwaitFreeSection() {
   /* A revision may be NAMED — the reason a discard is reported in says which
      revision the snapshot was read at, which is the useful half of carrying it —
      but it must never be part of a DECISION. Not ordered, and not used as the
-     freshness token either: a refresh COMMIT legitimately moves PROJECT_REVISION,
-     so requiring it to be unchanged would discard the second of two overlapping
-     refreshes. */
+     freshness token either: a declared ingest moves the stored revision without
+     moving this window's, so the revision cannot say a snapshot is behind it. */
   const comparators = "(===|!==|==|!=|<=|>=|<|>)";
   const revisionTokens = "(PROJECT_REVISION|ticket\\.revision|prepared\\.revision)";
   assert(!new RegExp(`${revisionTokens}\\s*${comparators}`).test(validate)
@@ -903,8 +944,13 @@ function commitIsAwaitFreeSection() {
     `the refresh decision must not compare a revision, and it does:\n${validate}`);
   assert(validate.includes("ticket.saveGeneration !== PROJECT_SAVE_GENERATION"),
     "freshness must be decided on the successful-save generation, which moves only when this window puts something on disk");
-  assert(validate.includes("ticket.sequence <= PROJECT_REFRESH_COMMITTED"),
-    "refreshes must be ordered by their own integer sequence against the committed watermark");
+  /* AND NO REFRESH IS ORDERED AGAINST ANOTHER, because there is only ever one. The
+     sequence and committed watermark that ordered overlapping refreshes are gone
+     with the overlap; every refresh is requested through the single owner. */
+  assert(!/sequence|PROJECT_REFRESH_COMMITTED/.test(validate),
+    `VALIDATE must not order refreshes against each other — there is only ever one:\n${validate}`);
+  assert(/requestedProjectIntent\(options\) === "refresh"\s*\?\s*requestProjectRefresh\(\)/.test(stripComments(appSource)),
+    "because every refresh is requested through the one owner");
 
   /* NO ARBITRARY CLIENT MERGE. A refresh commits the prepared record whole or
      discards it whole; it never reconciles two divergent documents. */
@@ -920,7 +966,7 @@ function commitIsAwaitFreeSection() {
     for (const forbidden of [
       "P =", "ACTIVE_PROJECT_SLUG =", "PROJECT_REVISION =", "SAVE_REVISION", "SAVED_REVISION",
       "SAVED_PROJECT_BASELINE", "SAVE_BLOCKED", "setSaveState", "blockSaving", "dirty(",
-      "PROJECT_OPEN_EPOCH", "PROJECT_REFRESH_COMMITTED", "resetContinuityWorkspaceState",
+      "PROJECT_OPEN_EPOCH", "PROJECT_REFRESH_RUN", "resetContinuityWorkspaceState",
       "v670ScopeActivityToProject", "SCAN =", "CONFIG =", "FAL_GENERATION_JOBS =",
     ]) {
       assert(!body.includes(forbidden), `${signature} is PREPARE and must not write ${forbidden}`);
@@ -1058,10 +1104,9 @@ async function decorationCannotWriteSaveTruthSection(options = {}) {
    the indicator resting on Saved, and nothing in flight to correct it.
 
    The token is a monotonic successful-save generation, compared for EQUALITY.
-   It is deliberately NOT the revision string: a refresh COMMIT legitimately moves
-   PROJECT_REVISION, so requiring the revision to be unchanged would discard the
-   second of two overlapping refreshes — the ordering the sequence and the
-   watermark exist to get right. Two tokens, two questions. */
+   It is deliberately NOT the revision string: a declared ingest moves the stored
+   revision without moving this window's, so the revision cannot say a snapshot
+   is behind it. Two tokens, two questions. */
 async function preparedSnapshotFreshnessSection(options = {}) {
   const server = refreshServer({ a: currentSchemaProject("Project A"), b: currentSchemaProject("Project B") });
   const context = await openFixture(server, currentSchemaProject("Project A"), options);
@@ -1141,14 +1186,14 @@ async function parkedRefreshWithoutSaveSection(options = {}) {
   assert.strictEqual(outcome.committed, true, "with no write inside it, the same parked refresh commits");
   assert.strictEqual(read(context, "PROJECT_SAVE_GENERATION"), generationAtOpen,
     "and a refresh commit is not a save, so the generation does not move");
-  assert.strictEqual(read(context, "PROJECT_REFRESH_COMMITTED") > 0, true, "it takes its place in the refresh order instead");
+  assert.strictEqual(read(context, "PROJECT_REFRESH_RUN"), null, "and the refresh owner is idle again once it has");
   console.log("  parked-refresh-without-save - the same park with no accepted write inside it commits, so the freshness rule is about the write");
 }
 
-/* E8. AND THE FRESHNESS TOKEN IS NOT THE REVISION. Two overlapping refreshes
-   both commit even though the first moves PROJECT_REVISION out from under the
-   second's ticket — which is why the token is a save generation and not the
-   revision string. A NORMAL REFRESH COMMIT MUST NOT ADVANCE THE GENERATION. */
+/* E8. AND THE FRESHNESS TOKEN IS NOT THE REVISION. Two refreshes requested back
+   to back both commit, the second after the first has moved PROJECT_REVISION —
+   which is why the token is a save generation and not the revision string. A
+   NORMAL REFRESH COMMIT MUST NOT ADVANCE THE GENERATION. */
 async function refreshCommitDoesNotBreakFreshnessSection(options = {}) {
   const server = refreshServer({ a: currentSchemaProject("Project A"), b: currentSchemaProject("Project B") });
   const context = await openFixture(server, currentSchemaProject("Project A"), options);
@@ -1161,21 +1206,21 @@ async function refreshCommitDoesNotBreakFreshnessSection(options = {}) {
   server.serverSideIngest();
   const r1 = await beginParkedRefresh(server, context, "__r1", "", "generic");
   server.serverSideIngest();
-  const r2 = await beginParkedRefresh(server, context, "__r2", "", "generic");
+  await beginQueuedRefresh(server, context, "__r2", "", "generic");
 
   await releaseAndSettle(server, context, r1, "__r1");
   assert.notStrictEqual(read(context, "PROJECT_REVISION"), revisionAtOpen,
-    "precondition: R1's commit moved the revision out from under R2's ticket");
+    "precondition: R1's commit moved the revision before R2 reads");
   assert.strictEqual(read(context, "PROJECT_SAVE_GENERATION"), generationAtOpen,
     "E8: a refresh COMMIT must not advance the save generation — it is not a durable write, it is a read being installed");
 
-  await releaseAndSettle(server, context, r2, "__r2");
+  await releaseFollowUpAndSettle(server, context, ["__r2"]);
   assert.strictEqual(read(context, "PROJECT_REVISION"), server.revisionOf(A),
     "R2 must still commit: a revision moved by a refresh commit is not evidence that R2's snapshot is behind");
   assert.deepStrictEqual(marks(context), ["completion-1", "completion-2"], "with the newest snapshot on screen");
   assert.strictEqual(read(context, "PROJECT_SAVE_GENERATION"), generationAtOpen,
     "and two refresh commits still leave the generation exactly where the open left it");
-  console.log("  E8 freshness-token-is-not-the-revision - a refresh commit moves the revision and never the generation, so overlapping refreshes still both commit");
+  console.log("  E8 freshness-token-is-not-the-revision - a refresh commit moves the revision and never the generation, so back-to-back refreshes both commit");
 }
 
 /* ===========================================================================
@@ -1219,12 +1264,11 @@ async function completionOverOldSnapshot({ entry, failFollowUp, options }) {
   return { server, context, R0, R1, generationAtOpen, afterCompletion, oldOutcome };
 }
 
-/* When the follow-up refresh SUCCEEDS, two independent rules would each refuse
-   the old snapshot — it is behind the ingest, and a newer refresh has already
-   installed. Either reason is a correct refusal there. When the follow-up FAILS
-   there is no newer commit and the window is clean, so freshness is the only rule
-   that can catch it: that case demands the freshness reason by name, which is
-   what makes it the proof rather than a coincidence. */
+/* Freshness is the rule that refuses the old snapshot, whether the follow-up
+   refresh succeeded or failed: refreshes are no longer ordered against each
+   other, so "a newer refresh already installed" is not a reason any more. The
+   failed-follow-up case also names the revision it read, which is what makes it
+   the proof rather than a coincidence. */
 function assertOldSnapshotRefused(oldOutcome, R0, { requireFreshness = false } = {}) {
   assert.strictEqual(oldOutcome.committed, false,
     "THE BLOCKER: a snapshot prepared before the ingest must be discarded, not installed");
@@ -1234,7 +1278,7 @@ function assertOldSnapshotRefused(oldOutcome, R0, { requireFreshness = false } =
     assert(oldOutcome.reason.includes(R0), `naming the revision it read: ${JSON.stringify(oldOutcome.reason)}`);
     return;
   }
-  assert(/saved to storage while this refresh was in flight|newer refresh of this open has already installed/.test(oldOutcome.reason),
+  assert(/saved to storage while this refresh was in flight/.test(oldOutcome.reason),
     `and discarded for being behind the record: ${JSON.stringify(oldOutcome.reason)}`);
 }
 
@@ -1330,8 +1374,9 @@ async function completionForLeftProjectSection(options = {}) {
 }
 
 /* E6 — two completions overlapping. Each durable advance is accounted for, and
-   the sequence/watermark ordering is unchanged: no double-count assumption is
-   needed, because the generation is compared for equality and never counted. */
+   the second completion's refresh is queued behind the first rather than reading
+   beside it: no double-count assumption is needed, because the generation is
+   compared for equality and never counted. */
 async function overlappingCompletionIngestsSection(options = {}) {
   const server = refreshServer({ a: currentSchemaProject("Project A"), b: currentSchemaProject("Project B") });
   const context = await openFixture(server, currentSchemaProject("Project A"), options);
@@ -1340,23 +1385,24 @@ async function overlappingCompletionIngestsSection(options = {}) {
   const r1 = await beginParkedRefresh(server, context, "__r1", "job-1");
   assert.strictEqual(read(context, "PROJECT_SAVE_GENERATION"), generationAtOpen + 1,
     "precondition: the first ingest declared one advance");
-  const r2 = await beginParkedRefresh(server, context, "__r2", "job-2");
+  const readsBefore = projectReads(server);
+  await beginQueuedRefresh(server, context, "__r2", "job-2");
   assert.strictEqual(read(context, "PROJECT_SAVE_GENERATION"), generationAtOpen + 2,
     "precondition: and the second, one more — each ingest accounted for exactly once");
   assert.strictEqual(server.completions, 2, "precondition: two distinct snapshots");
 
-  /* Older first. Its snapshot predates the second ingest, so it is behind the
-     record and declines; the newer one installs. The client converges on the
-     newest either way, which is the ordering rule's whole purpose. */
-  await releaseAndSettle(server, context, r1, "__r1");
+  /* The first refresh's snapshot predates the second ingest, so it is behind the
+     record and declines — and its caller is not told so, because a newer
+     refresh has been asked for: both callers are answered by that follow-up. */
+  await releaseOnly(server, r1);
   assert.strictEqual(read(context, "PROJECT_REVISION"), '"rev-project-a-0"',
     "the older completion's refresh is behind the second ingest and does not install");
-  await releaseAndSettle(server, context, r2, "__r2");
+  await releaseFollowUpAndSettle(server, context, ["__r1", "__r2"]);
   assert.strictEqual(read(context, "PROJECT_REVISION"), '"rev-project-a-2"',
-    "and the newer one commits the snapshot that carries both completions");
+    "and the follow-up commits the snapshot that carries both completions");
   assert.deepStrictEqual(marks(context), ["completion-1", "completion-2"], "with every completion present");
   assert.strictEqual(read(context, "PROJECT_REVISION"), server.revisionOf(A), "level with the server");
-  assert.strictEqual(read(context, "PROJECT_REFRESH_COMMITTED") > 0, true, "and the refresh order recorded normally");
+  assert.strictEqual(projectReads(server) - readsBefore, 1, "and the second completion cost exactly one follow-up read");
   assert.strictEqual(read(context, "PROJECT_OPEN_EPOCH"), 1, "with the open's epoch untouched throughout");
   console.log("  E6 overlapping-completion-ingests - each ingest is accounted for once, and the window still converges on the newest snapshot");
 }
@@ -1621,7 +1667,7 @@ async function staleSnapshotAfterWatchSection(options = {}) {
   const oldOutcome = await releaseScanParked(server, context, "__old");
   assert.strictEqual(oldOutcome.committed, false,
     "THE INVARIANT: the R0 snapshot must fail freshness validation, because the watch declared the advance");
-  assert(/saved to storage while this refresh was in flight|newer refresh of this open has already installed/.test(oldOutcome.reason),
+  assert(/saved to storage while this refresh was in flight/.test(oldOutcome.reason),
     `and for a freshness reason: ${JSON.stringify(oldOutcome.reason)}`);
   assert.strictEqual(read(context, "PROJECT_REVISION"), R1, "the window stays on the current record");
   assert.notStrictEqual(R1, R0, "which is not the one the snapshot held");
@@ -1848,7 +1894,7 @@ function durableAdvanceIsSharedSection() {
   assert(/slug !== ACTIVE_PROJECT_SLUG\) return false;/.test(body),
     "it must refuse a mutation that belongs to a project this window no longer owns");
   assert(/PROJECT_SAVE_GENERATION \+= 1;/.test(body), "and advance the generation when it does");
-  for (const [token, what] of [["P =", "the record"], ["PROJECT_REVISION", "the revision"], ["SAVED_PROJECT_BASELINE", "the saved baseline"], ["setSaveState", "the indicator"], ["SAVE_REVISION", "the counters"], ["SAVE_BLOCKED", "the latches"], ["PROJECT_OPEN_EPOCH", "the epoch"], ["PROJECT_REFRESH_COMMITTED", "the watermark"], ["dirty(", "the dirty path"]]) {
+  for (const [token, what] of [["P =", "the record"], ["PROJECT_REVISION", "the revision"], ["SAVED_PROJECT_BASELINE", "the saved baseline"], ["setSaveState", "the indicator"], ["SAVE_REVISION", "the counters"], ["SAVE_BLOCKED", "the latches"], ["PROJECT_OPEN_EPOCH", "the epoch"], ["PROJECT_REFRESH_RUN", "the refresh owner"], ["dirty(", "the dirty path"]]) {
     assert(!body.includes(token), `and must touch nothing else — it names ${what}`);
   }
   /* NOBODY OUTSIDE app.js WRITES THE GENERATION DIRECTLY. One invariant, one
@@ -2428,9 +2474,9 @@ async function heldRefreshWithoutSwitchSection(options = {}) {
   assert.deepStrictEqual(marks(context), ["completion-1"], "and a refresh nothing overtook must install its results normally");
   assert.strictEqual(read(context, "PROJECT_OPEN_EPOCH"), before.epoch,
     "a committing refresh must not advance the open's epoch: it is the same open reading a newer copy of its own record");
-  assert.strictEqual(read(context, "PROJECT_REFRESH_COMMITTED") > 0, true,
-    "it records its place in the refresh order instead, which is the token that orders overlapping refreshes");
-  console.log("  held-refresh-without-switch - a held refresh that nothing overtakes commits, orders itself, and does not advance the open's epoch");
+  assert.strictEqual(read(context, "PROJECT_REFRESH_RUN"), null,
+    "and the refresh owner is idle again, with nothing queued behind it");
+  console.log("  held-refresh-without-switch - a held refresh that nothing overtakes commits, leaves the owner idle, and does not advance the open's epoch");
 }
 
 /* F5. A -> B -> back to A. The old refresh does not become valid again merely
@@ -2464,7 +2510,7 @@ async function repeatedStaleRefreshSection(options = {}) {
   const context = await openFixture(server, currentSchemaProject("Project A"), options);
 
   await beginParkedRefresh(server, context, "__one", "job-1");
-  await beginParkedRefresh(server, context, "__two", "job-2");
+  await beginQueuedRefresh(server, context, "__two", "job-2", "fal", { park: false });
 
   await context.switchProject(B);
   const afterSwitch = projectIdentity(context);
@@ -2502,6 +2548,13 @@ async function automationStaleRefreshSection(options = {}) {
 
 /* ===========================================================================
    PART 6 — OVERLAPPING SAME-PROJECT REFRESHES (F6).
+
+   F6 was two refreshes of one open reading and committing side by side, so the
+   outcome depended on which response landed last. It was closed by ordering them
+   against a committed watermark. It is now closed by construction: one owner
+   runs refreshes one at a time, and anything asked for while one runs is queued
+   behind it and read once it has settled. These sections keep F6's claims and
+   prove them through that queue; the watermark is gone.
    =========================================================================== */
 
 /* O1. Older response first, then newer. Both commit, in order.
@@ -2520,14 +2573,14 @@ async function overlappingOlderThenNewerSection(options = {}) {
 
   const r1 = await beginParkedRefresh(server, context, "__r1", "", "generic");
   server.serverSideIngest();
-  const r2 = await beginParkedRefresh(server, context, "__r2", "", "generic");
+  await beginQueuedRefresh(server, context, "__r2", "", "generic");
   assert.strictEqual(server.completions, 1, "precondition: the two snapshots differ by one server-side ingest");
 
   await releaseAndSettle(server, context, r1, "__r1");
   assert.strictEqual(read(context, "PROJECT_REVISION"), '"rev-project-a-0"', "R1's snapshot is installed when it lands first");
   assert.deepStrictEqual(marks(context), [], "showing the record as it was when it read");
 
-  await releaseAndSettle(server, context, r2, "__r2");
+  await releaseFollowUpAndSettle(server, context, ["__r2"]);
   assert.strictEqual(read(context, "PROJECT_REVISION"), '"rev-project-a-1"', "and R2's newer snapshot commits over it");
   assert.deepStrictEqual(marks(context), ["completion-1"], "with the newer record on screen");
   assert.strictEqual(read(context, "PROJECT_REVISION"), server.revisionOf(A), "client and server agree on the revision");
@@ -2538,54 +2591,55 @@ async function overlappingOlderThenNewerSection(options = {}) {
   console.log("  O1 older-then-newer - both refreshes commit in order, and the client ends level with the server");
 }
 
-/* O2. Newer response first. The older one that follows changes nothing. */
+/* O2. Newer response first — which can no longer happen. The newer request is
+   not read until the older has settled, so no older response can land after a
+   newer commit and roll it back. */
 async function overlappingNewerThenOlderSection(options = {}) {
   const server = refreshServer({ a: currentSchemaProject("Project A"), b: currentSchemaProject("Project B") });
   const context = await openFixture(server, currentSchemaProject("Project A"), options);
 
-  /* Server-side advances, so neither refresh declares anything and the ONLY rule
-     that can stop the older response rolling the record back is the order token
-     — which is what NC-7 removes. */
+  /* Server-side advances, so neither refresh declares anything and the ONLY thing
+     that can stop the older response rolling the record back is that the newer
+     one has not been read yet — which is what NC-7 removes. */
   const r1 = await beginParkedRefresh(server, context, "__r1", "", "generic");
   server.serverSideIngest();
-  const r2 = await beginParkedRefresh(server, context, "__r2", "", "generic");
-
-  await releaseAndSettle(server, context, r2, "__r2");
-  assert.strictEqual(read(context, "PROJECT_REVISION"), '"rev-project-a-1"', "R2's snapshot is installed");
-  assert.deepStrictEqual(marks(context), ["completion-1"], "with the newer record");
-  const afterNewer = clientState(context);
+  await beginQueuedRefresh(server, context, "__r2", "", "generic");
+  assert.strictEqual(server.parkedReads, 1,
+    "THE BLOCKER, structurally: the newer request has not read, so there is no newer response that could land first");
 
   await releaseAndSettle(server, context, r1, "__r1");
-  assert.deepStrictEqual(clientState(context), afterNewer,
-    "THE BLOCKER, from the other side: an older response must not roll the record back over a newer one that already committed");
+  assert.strictEqual(read(context, "PROJECT_REVISION"), '"rev-project-a-0"', "the older snapshot installs first, as the record it read");
+  await releaseFollowUpAndSettle(server, context, ["__r2"]);
+  assert.strictEqual(read(context, "PROJECT_REVISION"), '"rev-project-a-1"', "and the newer one, read afterwards, commits over it");
+  assert.deepStrictEqual(marks(context), ["completion-1"], "with the newer record");
+  const afterNewer = clientState(context);
+  await settle();
+  assert.deepStrictEqual(clientState(context), afterNewer, "and nothing older is left in flight to roll it back");
   assert.strictEqual(read(context, "PROJECT_REVISION"), server.revisionOf(A), "client and server still agree");
-  console.log("  O2 newer-then-older - an older response landing after a newer commit leaves the client byte-identical");
+  console.log("  O2 newer-then-older - a newer request is read only after the older has settled, so no older response can land after a newer commit");
 }
 
-/* O3. Three refreshes, two out-of-order permutations. */
+/* O3. Three refreshes requested across two server-side advances. The two asked
+   for while the first runs share ONE follow-up, which reads the newest record. */
 async function overlappingThreeRefreshesSection(options = {}) {
-  for (const order of [[1, 0, 2], [2, 0, 1]]) {
-    const server = refreshServer({ a: currentSchemaProject("Project A"), b: currentSchemaProject("Project B") });
-    const context = await openFixture(server, currentSchemaProject("Project A"), options);
-    const handles = ["__a", "__b", "__c"];
-    const parked = [];
-    for (let index = 0; index < 3; index += 1) {
-      if (index) server.serverSideIngest();
-      parked.push(await beginParkedRefresh(server, context, handles[index], "", "generic"));
-    }
-    assert.strictEqual(server.completions, 2, "precondition: three snapshots, two server-side advances apart");
+  const server = refreshServer({ a: currentSchemaProject("Project A"), b: currentSchemaProject("Project B") });
+  const context = await openFixture(server, currentSchemaProject("Project A"), options);
+  const readsAtOpen = projectReads(server);
+  const first = await beginParkedRefresh(server, context, "__a", "", "generic");
+  server.serverSideIngest();
+  await beginQueuedRefresh(server, context, "__b", "", "generic");
+  server.serverSideIngest();
+  await beginQueuedRefresh(server, context, "__c", "", "generic", { park: false });
+  assert.strictEqual(server.completions, 2, "precondition: three requests, two server-side advances apart");
 
-    const seen = [];
-    for (const index of order) {
-      await releaseAndSettle(server, context, parked[index], handles[index]);
-      seen.push(read(context, "PROJECT_REVISION"));
-    }
-    assert.strictEqual(read(context, "PROJECT_REVISION"), '"rev-project-a-2"',
-      `release order ${order.join(" -> ")} must end on the newest snapshot, and the client is at ${read(context, "PROJECT_REVISION")} after ${JSON.stringify(seen)}`);
-    assert.deepStrictEqual(marks(context), ["completion-1", "completion-2"], "with every advance present");
-    assert.strictEqual(read(context, "PROJECT_REVISION"), server.revisionOf(A), "and level with the server");
-  }
-  console.log("  O3 three-refreshes - out-of-order responses converge on the newest snapshot, and an older one never rolls a newer commit back");
+  await releaseAndSettle(server, context, first, "__a");
+  assert.strictEqual(read(context, "PROJECT_REVISION"), '"rev-project-a-0"', "the first installs what it read");
+  await releaseFollowUpAndSettle(server, context, ["__b", "__c"]);
+  assert.strictEqual(read(context, "PROJECT_REVISION"), '"rev-project-a-2"', "and the shared follow-up ends on the newest snapshot");
+  assert.deepStrictEqual(marks(context), ["completion-1", "completion-2"], "with every advance present");
+  assert.strictEqual(read(context, "PROJECT_REVISION"), server.revisionOf(A), "and level with the server");
+  assert.strictEqual(projectReads(server) - readsAtOpen, 2, "three requests cost two reads: the first, and one follow-up for the two behind it");
+  console.log("  O3 three-refreshes - requests made while one refresh runs share one follow-up, which reads the newest record");
 }
 
 /* O4. A NEWER REQUEST THAT FAILED must not disqualify a valid older response.
@@ -2597,23 +2651,21 @@ async function newerRefreshFailedSection(options = {}) {
 
   const r1 = await beginParkedRefresh(server, context, "__r1", "", "generic");
   server.serverSideIngest();
-  /* A later refresh that MERELY STARTED and then failed. It carries no durable
+  /* A later refresh that is asked for and then FAILS. It carries no durable
      advance of its own — that is what separates it from a completion, whose
-     ingest genuinely does move the record (E2). It takes a later sequence number
-     and never commits. */
+     ingest genuinely does move the record (E2). It is queued behind R1 and its
+     read fails when it comes. */
   server.failNextProjectRead();
-  await vm.runInContext(`load({ intent: "refresh" })`, context);
-  await settle();
-  assert.strictEqual(read(context, "PROJECT_REFRESH_COMMITTED"), 0,
-    "precondition: the failed refresh must not have recorded itself as committed");
-  assert.strictEqual(read(context, "PROJECT_REFRESH_SEQUENCE") >= 2, true,
-    "precondition: but it must have TAKEN a later sequence number, or the section proves nothing");
+  await beginQueuedRefresh(server, context, "__r2", "", "generic", { park: false });
 
   await releaseAndSettle(server, context, r1, "__r1");
   assert.strictEqual(read(context, "PROJECT_REVISION"), '"rev-project-a-0"',
     "the older but valid response must still commit: a later request that FAILED cannot disqualify it");
   assert.deepStrictEqual(marks(context), [], "installing what it actually read");
-  assert.strictEqual(read(context, "PROJECT_REFRESH_COMMITTED") > 0, true, "and taking its place in the refresh order");
+  const failed = await read(context, "__r2");
+  await settle();
+  assert.strictEqual(failed.committed, false, "precondition: the later request really did fail");
+  assert.strictEqual(read(context, "PROJECT_REVISION"), '"rev-project-a-0"', "and its failure took nothing away from the valid commit");
   console.log("  O4 newer-request-failed - a failed later request does not throw away a valid older response");
 }
 
@@ -2623,21 +2675,25 @@ async function overlappingRefreshesThenSwitchSection(options = {}) {
   const context = await openFixture(server, currentSchemaProject("Project A"), options);
 
   const r1 = await beginParkedRefresh(server, context, "__r1", "job-1");
-  const r2 = await beginParkedRefresh(server, context, "__r2", "job-2");
+  await beginQueuedRefresh(server, context, "__r2", "job-2", "fal", { park: false });
 
   await context.switchProject(B);
   const afterSwitch = projectIdentity(context);
   assert.strictEqual(afterSwitch.slug, B, "precondition: the switch completed");
+  const readsAfterSwitch = projectReads(server);
 
-  await releaseAndSettle(server, context, r2, "__r2");
-  await releaseAndSettle(server, context, r1, "__r1");
+  await releaseOnly(server, r1);
+  await read(context, "__r1");
+  await read(context, "__r2");
   await realDelay(PAST_BOTH_TIMERS_MS);
   await settle();
 
   assert.deepStrictEqual(projectIdentity(context), afterSwitch,
-    "an explicit replacement outranks every refresh of the previous open, in any order");
+    "an explicit replacement outranks every refresh of the previous open, running or queued");
+  assert.strictEqual(projectReads(server), readsAfterSwitch,
+    "and the refresh queued under the previous open is never started");
   assert.strictEqual(server.active, B, "and client and server still agree");
-  console.log("  O5 replacement-dominates - refresh ordering never lets a previous open's read past the epoch check");
+  console.log("  O5 replacement-dominates - a previous open's running refresh fails the epoch check, and its queued one is never read");
 }
 
 /* O6. The dirty-view backstop between two refresh commits. */
@@ -2649,14 +2705,14 @@ async function dirtyBetweenRefreshCommitsSection(options = {}) {
      two refresh commits rather than about freshness — see O1. */
   const r1 = await beginParkedRefresh(server, context, "__r1", "", "generic");
   server.serverSideIngest();
-  const r2 = await beginParkedRefresh(server, context, "__r2", "", "generic");
+  await beginQueuedRefresh(server, context, "__r2", "", "generic");
 
   await releaseAndSettle(server, context, r1, "__r1");
   assert.strictEqual(read(context, "PROJECT_REVISION"), '"rev-project-a-0"', "precondition: R1 committed");
 
   const ownedRevision = read(context, "PROJECT_REVISION");
   vm.runInContext(`P.meta.title = "edited between two refreshes"; dirty();`, context);
-  await releaseAndSettle(server, context, r2, "__r2");
+  await releaseFollowUpAndSettle(server, context, ["__r2"]);
 
   assert.strictEqual(read(context, "P.meta.title"), "edited between two refreshes",
     "R2 must not overwrite an authored edit made since R1 committed");
@@ -2674,50 +2730,51 @@ async function dirtyBetweenRefreshCommitsSection(options = {}) {
   console.log("  O6 dirty-between-commits - an edit made between two refresh commits survives, and its stale save is refused rather than overwriting the newer record");
 }
 
-/* O7. The automation entry path runs the same lifecycle, including ordering. */
+/* O7. The automation entry path runs through the same owner. */
 async function overlappingAutomationRefreshSection(options = {}) {
   const server = refreshServer({ a: currentSchemaProject("Project A"), b: currentSchemaProject("Project B") });
   const context = await openFixture(server, currentSchemaProject("Project A"), options);
   const epoch = read(context, "PROJECT_OPEN_EPOCH");
 
   const r1 = await beginParkedRefresh(server, context, "__r1", "job-1", "automation");
-  const r2 = await beginParkedRefresh(server, context, "__r2", "job-2", "automation");
+  await beginQueuedRefresh(server, context, "__r2", "job-2", "automation");
 
-  await releaseAndSettle(server, context, r2, "__r2");
-  const afterNewer = clientState(context);
-  assert.strictEqual(afterNewer.revision, '"rev-project-a-2"', "the newer automation refresh commits");
-
-  await releaseAndSettle(server, context, r1, "__r1");
-  assert.deepStrictEqual(clientState(context), afterNewer,
-    "and the older one that follows it changes nothing — the ordering lives in the refresh lifecycle, not in either entry path");
+  await releaseOnly(server, r1);
+  assert.strictEqual(read(context, "PROJECT_REVISION"), '"rev-project-a-0"',
+    "the first automation refresh read before the second ingest, so it installs nothing");
+  await releaseFollowUpAndSettle(server, context, ["__r1", "__r2"]);
+  assert.strictEqual(read(context, "PROJECT_REVISION"), '"rev-project-a-2"',
+    "and the one follow-up commits the record carrying both — the scheduling lives in the owner, not in either entry path");
+  assert.deepStrictEqual(marks(context), ["completion-1", "completion-2"], "with both completions present");
   assert.strictEqual(read(context, "PROJECT_OPEN_EPOCH"), epoch, "with the epoch untouched throughout");
-  console.log("  O7 automation-ordering - v626RefreshFalJob inherits the same ordering as refreshFalGeneration, without either being special-cased");
+  console.log("  O7 automation-ordering - v626RefreshFalJob goes through the same owner as refreshFalGeneration, without either being special-cased");
 }
 
 /* ===========================================================================
    PART 7 — A REFRESH'S FAILURE TERMINALS (F7).
    =========================================================================== */
 
-/* L1. A refresh 404 landing after a newer refresh already committed. */
+/* L1. A refresh answered 404 while a newer refresh is queued behind it. */
 async function refreshMissAfterNewerCommitSection(options = {}) {
   const server = refreshServer({ a: currentSchemaProject("Project A"), b: currentSchemaProject("Project B") });
   const context = await openFixture(server, currentSchemaProject("Project A"), options);
 
   server.missNextProjectRead();
   const r1 = await beginParkedRefresh(server, context, "__r1", "job-1");
-  const r2 = await beginParkedRefresh(server, context, "__r2", "job-2");
+  await beginQueuedRefresh(server, context, "__r2", "job-2");
+  const onScreen = workspaceState(context);
+  assert.strictEqual(onScreen.firstRun, false, "precondition: a real workspace is on screen");
 
-  await releaseAndSettle(server, context, r2, "__r2");
-  assert.strictEqual(read(context, "PROJECT_REVISION"), '"rev-project-a-2"', "precondition: R2 committed");
-  const committed = workspaceState(context);
-  assert.strictEqual(committed.firstRun, false, "precondition: a real workspace is on screen");
-
-  await releaseAndSettle(server, context, r1, "__r1");
-  assert.deepStrictEqual(workspaceState(context), committed,
-    "THE BLOCKER: a refresh answered 404 must leave the committed workspace byte-identical, not clear it into first-run");
+  await releaseOnly(server, r1);
+  assert.deepStrictEqual(workspaceState(context), onScreen,
+    "THE BLOCKER: a refresh answered 404 must leave the workspace byte-identical, not clear it into first-run");
   assert.strictEqual(read(context, "P") === null, false, "P must still hold the project");
+
+  await releaseFollowUpAndSettle(server, context, ["__r1", "__r2"]);
+  assert.strictEqual(read(context, "PROJECT_REVISION"), '"rev-project-a-2"', "and the queued refresh then commits the current record");
+  assert.strictEqual(workspaceState(context).firstRun, false, "into the workspace the 404 left alone");
   assert.strictEqual(server.active, A, "and the server still has the project the client is showing");
-  console.log("  F7a refresh-404-after-commit - a delayed 404 cannot clear a workspace a newer refresh already committed");
+  console.log("  F7a refresh-404-then-follow-up - a 404 clears nothing, and the refresh queued behind it still commits");
 }
 
 /* L2. A refresh 404 while the filmmaker has unsaved work. */
@@ -2907,10 +2964,11 @@ const REPAIRED_OPEN_BINDING = `  if (ticket.epoch !== PROJECT_OPEN_EPOCH)
 const REPAIRED_RESPONSE_OWNER = `  if (!prepared.slug || prepared.slug !== ACTIVE_PROJECT_SLUG)
     return "the response describes a different project than the one open";
 `;
-/* The refresh ordering token. */
-const REPAIRED_ORDER_CHECK = `  if (ticket.sequence <= PROJECT_REFRESH_COMMITTED)
-    return "a newer refresh of this open has already installed its snapshot";
-`;
+/* The single owner's queue: a request made while a refresh runs waits for it. */
+const REPAIRED_REFRESH_QUEUE = `    if (!PROJECT_REFRESH_RUN) return startProjectRefreshRun([caller]);
+    if (!PROJECT_REFRESH_FOLLOW_UP) PROJECT_REFRESH_FOLLOW_UP = [];
+    PROJECT_REFRESH_FOLLOW_UP.push(caller);`;
+const EVERY_REFRESH_STARTS_AT_ONCE = `    return startProjectRefreshRun([caller]);`;
 /* The dirty-view backstop. */
 const REPAIRED_DIRTY_CHECK = `  if (projectHasUnsavedEdits())
     return "this view holds unsaved authored work a refresh would overwrite";
@@ -2946,10 +3004,11 @@ const REPAIRED_WATCH_ACTION = `      if (serverRevision === PROJECT_REVISION) re
 const WATCH_OBSERVES_NOTHING = `      if (serverRevision === PROJECT_REVISION) return null;
       return null;`;
 const REPAIRED_WATCH_BINDING = `      if (owner.epoch !== PROJECT_OPEN_EPOCH || owner.slug !== ACTIVE_PROJECT_SLUG) return null;
-      if (owner.revision !== PROJECT_REVISION) return null;
-      if (serverRevision === PROJECT_REVISION) return null;
+      if (owner.revision !== PROJECT_REVISION) return null;`;
+const WATCH_BINDING_REMOVED = "";
+const REPAIRED_WATCH_OWNER = `      if (serverRevision === PROJECT_REVISION) return null;
       return applyForeignProjectRevision(owner);`;
-const WATCH_READS_LIVE_STATE = `      if (serverRevision === PROJECT_REVISION) return null;
+const WATCH_OWNER_IS_LIVE_STATE = `      if (serverRevision === PROJECT_REVISION) return null;
       return applyForeignProjectRevision({ slug: ACTIVE_PROJECT_SLUG, epoch: PROJECT_OPEN_EPOCH, revision: PROJECT_REVISION });`;
 /* THE AUTOMATION 502 FAST PATH, and the response-ordering mistake it corrects. */
 const REPAIRED_AUTOMATION_502 = `  if (!response.ok) {
@@ -3223,12 +3282,13 @@ async function negativeControlsSection() {
     controls.push({ id: "NC-6", defect: "a refresh is not bound to the open it started under, so one that outlived an explicit switch reinstalls the project the filmmaker left", detected });
   }
 
-  /* NC-7 — THE REFRESH ORDER TOKEN IS REMOVED. Overlapping refreshes become
-     response-order dependent: an older response landing after a newer commit
-     rolls the record back, and the view rests on "Saved" a revision behind the
-     server with nothing left in flight to correct it. */
+  /* NC-7 — THE OWNER'S QUEUE IS REMOVED: every request starts its refresh at once.
+     With the old order token gone as well, overlapping refreshes become
+     response-order dependent again: an older response landing after a newer
+     commit rolls the record back, and the view rests on "Saved" a revision behind
+     the server with nothing left in flight to correct it. */
   {
-    const edits = [[REPAIRED_ORDER_CHECK, ""]];
+    const edits = [[REPAIRED_REFRESH_QUEUE, EVERY_REFRESH_STARTS_AT_ONCE]];
     const mutate = sourceMutator(edits);
     const server = refreshServer({ a: currentSchemaProject("Project A"), b: currentSchemaProject("Project B") });
     const context = await openFixture(server, currentSchemaProject("Project A"), { mutateSource: mutate });
@@ -3247,7 +3307,7 @@ async function negativeControlsSection() {
       "NC-7 probe: and the view rests on Saved over a record the server has moved past, which is the silent part");
     assert.strictEqual(read(context, "PROJECT_CONFLICT"), false, "NC-7 probe: with no conflict surface and nothing left in flight to correct it");
     const detected = await expectRed("NC-7", () => overlappingNewerThenOlderSection({ mutateSource: sourceMutator(edits) }));
-    controls.push({ id: "NC-7", defect: "the refresh order token is gone, so overlapping refreshes become response-order dependent and an older response rolls a newer commit back", detected });
+    controls.push({ id: "NC-7", defect: "the refresh owner does not queue, so overlapping refreshes become response-order dependent and an older response rolls a newer commit back", detected });
   }
 
   /* NC-8 — A REFRESH PERFORMS THE FIRST-RUN REPLACEMENT TERMINAL. Answered 404,
@@ -3263,14 +3323,15 @@ async function negativeControlsSection() {
     const context = await openFixture(server, currentSchemaProject("Project A"), { mutateSource: mutate });
     server.missNextProjectRead();
     const r1 = await beginParkedRefresh(server, context, "__r1", "job-1");
-    const r2 = await beginParkedRefresh(server, context, "__r2", "job-2");
-    await releaseAndSettle(server, context, r2, "__r2");
-    const committed = workspaceState(context);
-    assert.strictEqual(committed.revision, '"rev-project-a-2"', "NC-8 probe: R2 must have committed first");
-    await releaseAndSettle(server, context, r1, "__r1");
+    await beginQueuedRefresh(server, context, "__r2", "job-2", "fal", { park: false });
+    assert.strictEqual(workspaceState(context).firstRun, false, "NC-8 probe: a real workspace is on screen first");
+    await releaseOnly(server, r1);
+    await read(context, "__r1");
+    await read(context, "__r2");
+    await settle();
     assert(mutate.applied.has("app.js"), "NC-8: app.js was never evaluated, so the defect never ran");
     assert.strictEqual(read(context, "P"), null,
-      "NC-8 probe: the defect must actually clear the record out from under the committed refresh");
+      "NC-8 probe: the defect must actually clear the record out from under the refresh queued behind it");
     assert.strictEqual(read(context, "ACTIVE_PROJECT_SLUG"), "", "NC-8 probe: and empty the active slug");
     assert.strictEqual(workspaceState(context).firstRun, true, "NC-8 probe: installing the first-run screen over an open project");
     assert.strictEqual(server.active, A, "NC-8 probe: and the server still has that project");
@@ -3559,7 +3620,7 @@ async function negativeControlsSection() {
   /* NC-19 — THE WATCH READS LIVE STATE INSTEAD OF WHAT IT CAPTURED. An answer
      about A, arriving after an explicit switch to B, is applied to B. */
   {
-    const edits = [[REPAIRED_WATCH_BINDING, WATCH_READS_LIVE_STATE]];
+    const edits = [[REPAIRED_WATCH_BINDING, WATCH_BINDING_REMOVED], [REPAIRED_WATCH_OWNER, WATCH_OWNER_IS_LIVE_STATE]];
     const mutate = sourceMutator(edits);
     const server = refreshServer({ a: currentSchemaProject("Project A"), b: currentSchemaProject("Project B") });
     const context = await openFixture(server, currentSchemaProject("Project A"), { mutateSource: mutate });

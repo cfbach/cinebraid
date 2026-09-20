@@ -5730,6 +5730,7 @@ const AutomationRuns = registerAutomationRuns(app, {
   readProject,
   activeSlug,
   projectReadinessIssues,
+  projectDirForSlug,
 });
 /* ---- the server-side ingest reaper -----------------------------------------
  *

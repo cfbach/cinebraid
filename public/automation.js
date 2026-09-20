@@ -211,12 +211,62 @@ function v626LatestRun(type, targetId, scope = "main") {
   return v626Runs().filter((run) => run.type === type && run.targetId === targetId && (run.scope || "main") === (scope || "main") && run.status !== "archived")
     .sort((a, b) => String(b.createdAt || "").localeCompare(String(a.createdAt || "")))[0] || null;
 }
+/* A RUN BELONGS TO THE PROJECT IT STARTED IN.
+
+   INVARIANT. `run.projectSlug` is stamped when this window takes the run's lease - the
+   run is read from, and its record lives in, the project open at that moment - and it
+   is never re-derived from whatever project is open later. Every step the runner takes
+   after an await is bound to it: while it is the open project the runner works; once
+   the filmmaker has opened another one, the runner stops at its next boundary and
+   touches nothing belonging to the project on screen - not its record, not its
+   candidates, not its activity, not its notices. What the run had already produced is
+   A's: a result the provider returns is collected into A by the server (every
+   project's ledger is swept, see generation-poller.js), and the run's own record is
+   written back to A's ledger as interrupted, saying exactly that. */
+function v626RunProject(run) { return String(run?.projectSlug || ""); }
+function v626RunProjectOpen(run) {
+  const origin = v626RunProject(run);
+  return !origin || origin === ACTIVE_PROJECT_SLUG;
+}
+function v626ProjectLeftError(run) {
+  return Object.assign(new Error(`This run belongs to project "${v626RunProject(run)}", which was closed while the run was working. `
+    + `Nothing was written to the project that is open now. Everything this run had already produced is kept in "${v626RunProject(run)}"; `
+    + `reopen it and choose Resume Run to continue from where it stopped, without generating again.`), { projectLeft: true, code: "RUN_PROJECT_NOT_OPEN" });
+}
+function v626AssertRunProjectOpen(run) {
+  if (!v626RunProjectOpen(run)) throw v626ProjectLeftError(run);
+}
+/* Whatever a runner's catch received, a run whose project is no longer open stopped
+   because of that: an in-flight request may have reached the server after the switch
+   and been answered for the wrong project. Recording it as a failure would be untrue. */
+function v626RunLeft(run, error) { return !!error?.projectLeft || !v626RunProjectOpen(run); }
+/* THE RUN'S OWN RECORD, ALWAYS ADDRESSED TO THE RUN'S OWN PROJECT — never to whatever
+   is open. Unconditionally, because there is a moment when those two disagree and this
+   window does not know it yet: the server commits a project switch before the browser
+   finishes installing it, and a request sent in between would be answered by the new
+   project's ledger. A READ says so in its query; a WRITE carries the run record, which
+   names its own project, so its URL never changes (see namedRunsScope in
+   src/automation/automation-runs.js). */
+function v626RunUrl(run, suffix = "") {
+  const url = `/api/automation/runs/${encodeURIComponent(run.id)}${suffix}`;
+  const origin = v626RunProject(run);
+  return origin ? `${url}?slug=${encodeURIComponent(origin)}` : url;
+}
+/* What a write sends beside itself so the server serves the right ledger. */
+function v626RunOwnership(run) {
+  const origin = v626RunProject(run);
+  return origin ? { projectSlug: origin } : {};
+}
+/* Notices a run raises are for the project it belongs to. */
+function v626RunToast(run, message) { if (v626RunProjectOpen(run)) toast(message); }
 function v626ReplaceRun(run) {
+  /* A run of a project that is not open is not this window's to list. */
+  if (!v626RunProjectOpen(run)) return run;
   AUTOMATION_RUNS = [...v626Runs().filter((item) => item.id !== run.id), run];
   if (typeof v641NotifyAutomationActivity === "function") v641NotifyAutomationActivity(run);
   return run;
 }
-async function v626SaveRun(run, create = false, render = true) {
+async function v626SaveRun(run, create = false, render = true, { settling = false } = {}) {
   if (!run) return null;
   const response = await fetch(create ? "/api/automation/runs" : `/api/automation/runs/${encodeURIComponent(run.id)}`, {
     method: create ? "POST" : "PUT",
@@ -227,8 +277,8 @@ async function v626SaveRun(run, create = false, render = true) {
   if (!response.ok) {
     if (data.run) {
       Object.assign(run, data.run);
-      v626ReplaceRun(data.run);
-      if (render) route();
+      v626ReplaceRun(run);
+      if (render && v626RunProjectOpen(run)) route();
     }
     const error = new Error(data.error || "Could not save automation run");
     error.code = data.code || "RUN_SAVE_FAILED";
@@ -236,17 +286,22 @@ async function v626SaveRun(run, create = false, render = true) {
     throw error;
   }
   Object.assign(run, data.run);
-  v626ReplaceRun(data.run);
-  if (render) route();
+  v626ReplaceRun(run);
+  if (render && v626RunProjectOpen(run)) route();
+  /* The runner resumes after almost every await through here, so this is where it
+     learns that its project has been closed. A save that RECORDS an outcome settles
+     and does not throw. */
+  if (!settling) v626AssertRunProjectOpen(run);
   return data.run;
 }
-async function v626RefreshRun(runId, render = true) {
-  const response = await fetch(`/api/automation/runs/${encodeURIComponent(runId)}`);
+async function v626RefreshRun(runId, render = true, bound = null) {
+  const response = await fetch(bound ? v626RunUrl(bound) : `/api/automation/runs/${encodeURIComponent(runId)}`);
   const data = await response.json();
   if (!response.ok) throw new Error(data.error || "Could not load automation run");
-  v626ReplaceRun(data.run);
-  if (render) route();
-  return data.run;
+  const run = bound ? Object.assign(bound, data.run) : data.run;
+  v626ReplaceRun(run);
+  if (render && v626RunProjectOpen(run)) route();
+  return run;
 }
 function v626Now() { return new Date().toISOString(); }
 /* WHAT THE FILMMAKER AUTHORISED IN MONEY, recorded beside what they authorised in
@@ -312,6 +367,7 @@ async function v628MarkAutomationLeaseLost(run, error) {
   run.current = { ...(run.current || {}), leaseLost: true };
   run.summary = `Automation lease lost — progress is preserved. Return to this run and choose Resume Run before any further paid request or approval. ${String(error?.message || "").trim()}`.trim();
   v626ReplaceRun(run);
+  if (!v626RunProjectOpen(run)) return;
   try { route(); } catch {}
   try { toast("Automation lease lost — Resume Run is required"); } catch {}
 }
@@ -319,18 +375,18 @@ async function v628HeartbeatAutomationLease(run, options = {}) {
   if (!run?.id) return false;
   try {
     const heartbeat = await fetch(`/api/automation/runs/${encodeURIComponent(run.id)}/heartbeat`, {
-      method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ runnerId: V627_AUTOMATION_RUNNER_ID }),
+      method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ runnerId: V627_AUTOMATION_RUNNER_ID, ...v626RunOwnership(run) }),
     });
     const payload = await heartbeat.json();
     if (!heartbeat.ok) {
       const error = new Error(payload.error || "Automation lease was lost");
       error.code = payload.code || "LEASE_LOST";
-      if (payload.run) { Object.assign(run, payload.run); v626ReplaceRun(payload.run); }
+      if (payload.run) { Object.assign(run, payload.run); v626ReplaceRun(run); }
       throw error;
     }
     Object.assign(run, payload.run || {});
     run.current = { ...(run.current || {}), leaseLost: false };
-    v626ReplaceRun(payload.run || run);
+    v626ReplaceRun(run);
     V628_AUTOMATION_LEASE_LOST_RUNS.delete(run.id);
     return true;
   } catch (error) {
@@ -339,6 +395,7 @@ async function v628HeartbeatAutomationLease(run, options = {}) {
   }
 }
 async function v628RequireAutomationLease(run) {
+  v626AssertRunProjectOpen(run);
   if (!run?.id || V628_AUTOMATION_LEASE_LOST_RUNS.has(run.id) || !v627LeaseHeldHere(run)) {
     const error = new Error("Automation lease is not held. Progress is preserved; choose Resume Run.");
     error.code = "LEASE_LOST";
@@ -361,6 +418,8 @@ function v628StartAutomationHeartbeat(run, heartbeatMs = V628_AUTOMATION_HEARTBE
   V627_AUTOMATION_HEARTBEATS.set(run.id, timer);
 }
 async function v627AcquireAutomationLease(runId) {
+  /* The project this run is read from is the project it belongs to. */
+  const origin = ACTIVE_PROJECT_SLUG;
   const response = await fetch(`/api/automation/runs/${encodeURIComponent(runId)}/lease`, {
     method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ runnerId: V627_AUTOMATION_RUNNER_ID }),
   });
@@ -372,7 +431,7 @@ async function v627AcquireAutomationLease(runId) {
     error.code = data.code || "RUN_LEASE_FAILED";
     throw error;
   }
-  const run = v626ReplaceRun(data.run);
+  const run = v626ReplaceRun(Object.assign(data.run, { projectSlug: origin }));
   V626_ACTIVE_AUTOMATION_RUNS.add(run.id);
   V628_AUTOMATION_LEASE_LOST_RUNS.delete(run.id);
   v628StartAutomationHeartbeat(run, data.heartbeatMs || Math.min(V628_AUTOMATION_HEARTBEAT_MS, Math.floor(Number(data.leaseMs || 300_000) / 3)));
@@ -380,6 +439,7 @@ async function v627AcquireAutomationLease(runId) {
 }
 
 async function v6211RevalidatePaidStepLease(run, step, scope, stepKey) {
+  v626AssertRunProjectOpen(run);
   if (!run?.id) throw Object.assign(new Error("Automation run is unavailable."), { code: "LEASE_LOST", leaseLost: true });
   const response = await fetch(`/api/automation/runs/${encodeURIComponent(run.id)}/lease/revalidate`, {
     method: "POST",
@@ -396,7 +456,7 @@ async function v6211RevalidatePaidStepLease(run, step, scope, stepKey) {
   });
   const data = await response.json();
   if (!response.ok) {
-    if (data.run) { Object.assign(run, data.run); v626ReplaceRun(data.run); }
+    if (data.run) { Object.assign(run, data.run); v626ReplaceRun(run); }
     const error = new Error(data.error || "Automation lease could not be revalidated before the paid request.");
     error.code = data.code || "LEASE_LOST";
     error.leaseLost = true;
@@ -404,7 +464,7 @@ async function v6211RevalidatePaidStepLease(run, step, scope, stepKey) {
     throw error;
   }
   Object.assign(run, data.run || {});
-  v626ReplaceRun(data.run || run);
+  v626ReplaceRun(run);
   V626_ACTIVE_AUTOMATION_RUNS.add(run.id);
   V628_AUTOMATION_LEASE_LOST_RUNS.delete(run.id);
   /* The permit travels back beside the run, because this call is the only server touch a
@@ -422,12 +482,12 @@ async function v627ReleaseAutomationLease(run) {
   V626_ACTIVE_AUTOMATION_RUNS.delete(run.id);
   try {
     const response = await fetch(`/api/automation/runs/${encodeURIComponent(run.id)}/release`, {
-      method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ runnerId: V627_AUTOMATION_RUNNER_ID, reason: leaseWasLost ? "lease-lost" : String(run.status || "normal") }),
+      method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ runnerId: V627_AUTOMATION_RUNNER_ID, reason: leaseWasLost ? "lease-lost" : String(run.status || "normal"), ...v626RunOwnership(run) }),
     });
     const data = await response.json();
     if (response.ok && data.run) {
       Object.assign(run, data.run);
-      v626ReplaceRun(data.run);
+      v626ReplaceRun(run);
     }
   } catch {}
 }
@@ -528,7 +588,7 @@ async function v626FailStep(run, key, error) {
   step.activity = { ...(step.activity || {}), state: "failed", failureClass: step.failureClass, deterministic, providerContacted: !deterministic, detail: [step.error, step.remediation].filter(Boolean).join(" "), updatedAt: v626Now() };
   step.updatedAt = v626Now();
   run.current = { ...(run.current || {}), stepKey: key, label: step.label || key };
-  return v626SaveRun(run, false);
+  return v626SaveRun(run, false, true, { settling: true });
 }
 async function v626Log(run, message, tone = "info") {
   run.logs = Array.isArray(run.logs) ? run.logs : [];
@@ -549,7 +609,7 @@ async function v626FinishRun(run, status, summary) {
   run.completedAt = status === "completed" ? v626Now() : run.completedAt || "";
   run.current = { ...(run.current || {}), stepKey: "" };
   V626_ACTIVE_AUTOMATION_RUNS.delete(run.id);
-  return v626SaveRun(run, false);
+  return v626SaveRun(run, false, true, { settling: true });
 }
 function v628FinishRunLocally(run, status, summary) {
   run.status = status;
@@ -575,8 +635,10 @@ async function v628FinishRunAfterError(run, status, summary, error) {
 }
 function v626RunCancelled(run) { return !!run?.cancelRequested; }
 async function v626CheckCancelled(run) {
-  const refreshed = await v626RefreshRun(run.id, false).catch(() => run);
+  v626AssertRunProjectOpen(run);
+  const refreshed = await v626RefreshRun(run.id, false, run).catch(() => run);
   Object.assign(run, refreshed || {});
+  v626AssertRunProjectOpen(run);
   if (v626RunCancelled(run)) throw Object.assign(new Error("Automation cancelled"), { cancelled: true });
   if (V626_ACTIVE_AUTOMATION_RUNS.has(run.id) && !v627LeaseHeldHere(run)) {
     const error = Object.assign(new Error("Automation lease expired or moved to another window. Progress is preserved; choose Resume Run."), { code: "LEASE_LOST", leaseLost: true });
@@ -1880,10 +1942,18 @@ window.startPlannedEntityAutomation = async () => {
   runEntityAutomation(saved.id);
 };
 
-async function v626FindFalJob(jobId) {
+async function v626FindFalJob(jobId, run = null) {
+  /* The open project's ledger answers only for a run of the open project. */
+  if (run) v626AssertRunProjectOpen(run);
   let job = (FAL_GENERATION_JOBS || []).find((item) => item.id === jobId) || null;
   if (!job) {
     const data = await fetch("/api/generation/fal/jobs").then((response) => response.ok ? response.json() : { jobs: [] });
+    if (run) v626AssertRunProjectOpen(run);
+    /* THE LEDGER SAYS WHOSE IT IS, AND A RUN READS ONLY ITS OWN. The server resolves
+       this route from the ACTIVE project, which it may have switched a moment before
+       this window heard about it — and reading another project's ledger here would
+       report this run's accepted job missing and buy it a second time. */
+    if (run && data.projectSlug && data.projectSlug !== v626RunProject(run)) throw v626ProjectLeftError(run);
     FAL_GENERATION_JOBS = data.jobs || [];
     job = FAL_GENERATION_JOBS.find((item) => item.id === jobId) || null;
   }
@@ -1898,6 +1968,11 @@ async function v626RefreshFalJob(jobId) {
   const owner = ACTIVE_PROJECT_SLUG;
   const response = await fetch(`/api/generation/fal/jobs/${encodeURIComponent(jobId)}/refresh`, { method: "POST" });
   const data = await response.json().catch(() => ({}));
+  /* The route names the ledger it looked in. If that is not the project this refresh was
+     made for, the active project moved under it and this answer is about somebody else. */
+  if (data.projectSlug && data.projectSlug !== owner)
+    throw Object.assign(new Error(`This generation belongs to project "${owner}", which is no longer the open project. Nothing was collected into the project that is open now.`),
+      { projectLeft: true, code: "RUN_PROJECT_NOT_OPEN" });
   /* A DURABLE MUTATION AND A FAILED REQUEST ARE TWO SEPARATE TRUTHS. This route
      sets the entity's coverage-automation status before answering 502, and says
      so in the body — so the payload is read and acted on BEFORE the failure is
@@ -1929,7 +2004,7 @@ async function v626WaitFalJob(run, step, body) {
     quality: String(body.quality || ""),
     resolution: String(body.resolution || ""),
   });
-  let job = step.childJobId ? await v626FindFalJob(step.childJobId) : null;
+  let job = step.childJobId ? await v626FindFalJob(step.childJobId, run) : null;
   if (!job) {
     const count = Number(body.outputCount || 1);
     const max = Number(run.config?.maxImages);
@@ -2012,7 +2087,10 @@ async function v626WaitFalJob(run, step, body) {
       throw error;
     }
     await new Promise((resolve) => setTimeout(resolve, 3500));
+    /* The poll asks the OPEN project's ledger, so it asks only while that is the run's. */
+    v626AssertRunProjectOpen(run);
     job = await v626RefreshFalJob(job.id);
+    v626AssertRunProjectOpen(run);
     step.activity = { ...(step.activity || {}), state: String(job.status || "in progress").toLowerCase().replace(/_/g, " "), detail: job.status === "IN_QUEUE" ? `FAL is holding the request in queue${job.queuePosition != null ? ` at position ${job.queuePosition}` : ""}.` : job.status === "IN_PROGRESS" ? "FAL is generating the requested candidates." : "Checking the provider job status.", system: "FAL · GPT IMAGE 2", providerAccepted: true, providerStatus: job.status || "", queuePosition: job.queuePosition, providerRequestId: falJobProviderRequestId(job) || step.activity?.providerRequestId || "", model: job.model || step.activity?.model || "GPT Image 2", updatedAt: v626Now() };
     await v626SaveRun(run, false, false);
     if (typeof v641NotifyAutomationActivity === "function") v641NotifyAutomationActivity(run);
@@ -2138,7 +2216,7 @@ async function v627PauseForHumanReview(run, step, label) {
   run.phase = "human-review";
   run.current = { ...(run.current || {}), stepKey: step.key, label: step.label || label, phase: "human-review" };
   run.summary = `CineBraid paused before approval. Review the returned candidates and choose which result becomes canon.`;
-  await v626SaveRun(run, false);
+  await v626SaveRun(run, false, true, { settling: true });
   const error = new Error("Human approval required");
   error.reviewRequired = true;
   throw error;
@@ -2155,6 +2233,7 @@ async function v626ReviewBatch(run, endpoint, body) {
   if (step) await v641SetStepActivity(run, step.key, "waiting for vision model", `Vision review is running for ${files.length || "the returned"} candidate${files.length === 1 ? "" : "s"}.`, step.activity || {});
   const response = await fetch(endpoint, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
   const data = await response.json();
+  v626AssertRunProjectOpen(run);
   if (!response.ok) throw new Error(data.error || "Assistant review failed");
   if (step) {
     const rows = Array.isArray(data?.review?.reviews) ? data.review.reviews : [];
@@ -2282,7 +2361,7 @@ async function v626OpeningBlocking(run, shotId) {
       const job = await v626WaitFalJob(run, genStep, { purpose: "blocking", shotId, frameId: guidedFrames(shotById(shotId))[0]?.id || "", frameLabel: guidedFrames(shotById(shotId))[0]?.label || "A", sourceBuildId: build.id, packageId: build.packageId || "", prompt: falBlockingRevisionPrompt(shotById(shotId), build, sourceAssetId, revision), references: source ? [{ key: `blocking-revision:${source.asset.id}`, label: source.asset.title || source.asset.file, role: "base", url: mediaAssetUrl(source.asset) }] : [], outputCount: v640OutputsPerRequest(run), quality: v6211RunGenerationSettings(run).blockingQuality, resolution: v6211RunGenerationSettings(run).blockingResolution, aspectRatio: shotAspectLabel(P, shotById(shotId)), revisionRequest: revision, revisedFromAssetId: sourceAssetId });
       await v626CompleteStep(run, genKey, { childJobId: job.id, files: (job.outputs || []).map((item) => item.name), result: { ...(genStep.result || {}), outputs: job.outputs || [], usageCounted: true } });
     }
-    const currentGen = v626Step(run, genKey), job = await v626FindFalJob(currentGen.childJobId), rows = v626BlockingRowsFromJob(shotId, job || { outputs: currentGen.result?.outputs || [] });
+    const currentGen = v626Step(run, genKey), job = await v626FindFalJob(currentGen.childJobId, run), rows = v626BlockingRowsFromJob(shotId, job || { outputs: currentGen.result?.outputs || [] });
     if (!rows.length) throw new Error("Opening blocking candidates are unavailable");
     if (prior.status !== "completed") {
       await v626BeginStep(run, reviewKey, "review", `Review opening blocking candidates · round ${round}`, { attempt: round, maxAttempts: run.config.openingBlockingRounds });
@@ -2324,7 +2403,7 @@ async function v626DerivativeBlocking(run, shotId, frameId) {
       const job = await v626WaitFalJob(run, genStep, { purpose: "blocking", shotId, frameId, frameLabel: frame.label || "", sourceBuildId: build.id, packageId: build.packageId || "", prompt, references: refs, outputCount: v640OutputsPerRequest(run), quality: v6211RunGenerationSettings(run).blockingQuality, resolution: v6211RunGenerationSettings(run).blockingResolution, aspectRatio: shotAspectLabel(P, shotById(shotId)), revisionRequest: revision, revisedFromAssetId: sourceAssetId });
       await v626CompleteStep(run, genKey, { childJobId: job.id, frameId, files: (job.outputs || []).map((item) => item.name), result: { ...(genStep.result || {}), outputs: job.outputs || [], usageCounted: true } });
     }
-    const currentGen = v626Step(run, genKey), job = await v626FindFalJob(currentGen.childJobId), rows = v626BlockingRowsFromJob(shotId, job || { outputs: currentGen.result?.outputs || [] });
+    const currentGen = v626Step(run, genKey), job = await v626FindFalJob(currentGen.childJobId, run), rows = v626BlockingRowsFromJob(shotId, job || { outputs: currentGen.result?.outputs || [] });
     if (!rows.length) throw new Error(`Frame ${frame.label} blocking candidates are unavailable`);
     if (prior.status !== "completed") {
       await v626BeginStep(run, reviewKey, "review", `Review Frame ${frame.label} derivative blocking · round ${round}`, { frameId, attempt: round, maxAttempts: run.config.derivativeBlockingRounds });
@@ -2550,7 +2629,7 @@ async function v626AutomateFrame(run, shotId, frameId) {
       await v626CompleteStep(run, genKey, { childJobId: job.id, frameId, files: (job.outputs || []).map((item) => item.name), result: { ...(genStep.result || {}), outputs: job.outputs || [], usageCounted: true } });
     }
     shot = shotById(shotId); frames = guidedFrames(shot); index = frames.findIndex((item) => item.id === frameId); frame = frames[index];
-    const currentGen = v626Step(run, genKey), job = await v626FindFalJob(currentGen.childJobId), rows = v626FrameRowsFromJob(shotId, frameId, job || { outputs: currentGen.result?.outputs || [] });
+    const currentGen = v626Step(run, genKey), job = await v626FindFalJob(currentGen.childJobId, run), rows = v626FrameRowsFromJob(shotId, frameId, job || { outputs: currentGen.result?.outputs || [] });
     if (!rows.length) throw new Error(`Frame ${frame.label} candidates are unavailable`);
     if (prior.status !== "completed") {
       await v626BeginStep(run, reviewKey, "review", `Review Frame ${frame.label} candidates · round ${round}`, { frameId, attempt: round, maxAttempts: run.config.frameRounds });
@@ -2593,6 +2672,7 @@ async function v664ReviewSceneAfterShot(run, shot) {
   const expectedChanges = String(scene.continuityReviewSettings?.expectedChanges || "").split(/\n+/).map((line) => line.trim()).filter(Boolean);
   const response = await fetch("/api/llm/review-scene", { method:"POST", headers:{"Content-Type":"application/json"}, body:JSON.stringify({ sceneId:scene.id, expectedChanges }) });
   const data = await response.json().catch(() => ({}));
+  v626AssertRunProjectOpen(run);
   if (!response.ok) throw new Error(data.error || "Scene continuity review failed");
   const fresh = sceneById(scene.id), priorOverrides = fresh?.continuityReview?.overrides || { intentional:{}, notes:{} };
   if (fresh) fresh.continuityReview = { ...(data.review || {}), overrides:priorOverrides };
@@ -2608,7 +2688,7 @@ async function runShotAutomation(runId) {
   if (V626_ACTIVE_AUTOMATION_RUNS.has(runId)) return;
   let run;
   try { run = await v627AcquireAutomationLease(runId); }
-  catch (error) { toast(error.code === "RUN_LEASED" ? "This run is already active in another CineBraid window" : error.message); return; }
+  catch (error) { v626RunToast(run, error.code === "RUN_LEASED" ? "This run is already active in another CineBraid window" : error.message); return; }
   try {
     const shot = shotById(run.targetId), frames = guidedFrames(shot), ids = run.config?.frameIds || [];
     if (run.config?.blockingOnly || run.scope === "blocking-only") {
@@ -2625,7 +2705,7 @@ async function runShotAutomation(runId) {
       try { selectGuidedPanelTask(currentShot, "blocking"); } catch {}
       dirty(); await flushPendingProjectSave();
       await v626FinishRun(run, "completed", `Blocking guide approved: ${guide?.asset?.title || guide?.asset?.file || "active guide"}. The shot is ready for manual frame work or optional still automation.`);
-      toast("Blocking automation completed — active guide selected");
+      v626RunToast(run, "Blocking automation completed — active guide selected");
       return;
     }
     await v626Log(run, `Starting durable still chain for ${ids.length} frame${ids.length === 1 ? "" : "s"}.`, "info");
@@ -2659,13 +2739,15 @@ async function runShotAutomation(runId) {
        `approved === required.length` said when both were zero. */
     const stillSummary = shotStillAutomationSummary(completedObligation, ids.length, approvedLabels);
     await v626FinishRun(run, "completed", `${stillSummary}${sceneNote} No video was generated.`);
-    toast("Still automation completed — open Motion to generate video manually");
+    v626RunToast(run, "Still automation completed — open Motion to generate video manually");
   } catch (error) {
-    if (error?.reviewRequired) { toast("Automation paused for your approval"); }
+    if (error?.reviewRequired) { v626RunToast(run, "Automation paused for your approval"); }
     else {
-      const interrupted = error?.cancelled || error?.leaseLost || error?.pollDeferred || v626RunCancelled(run);
+      const interrupted = error?.cancelled || error?.leaseLost || error?.pollDeferred || v626RunLeft(run, error) || v626RunCancelled(run);
       if (!interrupted && run.current?.stepKey) await v626FailStep(run, run.current.stepKey, error);
-      const summary = error?.leaseLost
+      const summary = v626RunLeft(run, error)
+        ? v626ProjectLeftError(run).message
+        : error?.leaseLost
         ? "Automation lease was lost. Progress is preserved; choose Resume Run before continuing."
         : error?.pollDeferred
           ? "Provider job is still active. Progress and the accepted job ID are preserved; Resume Run later to check it again without resubmitting."
@@ -2673,9 +2755,9 @@ async function runShotAutomation(runId) {
             ? "Run stopped safely. Resume later without repeating completed paid work."
             : `${error.message || "Automation stopped"} Use Retry Failed Step to retry only the failed operation.`;
       await v628FinishRunAfterError(run, interrupted ? "interrupted" : "failed", summary, error);
-      toast(interrupted ? (error?.pollDeferred ? "Provider is still working — resume later" : error?.leaseLost ? "Lease lost — Resume Run required" : "Automation stopped safely") : `Automation stopped: ${error.message}`);
+      v626RunToast(run, interrupted ? (error?.pollDeferred ? "Provider is still working — resume later" : error?.leaseLost ? "Lease lost — Resume Run required" : "Automation stopped safely") : `Automation stopped: ${error.message}`);
     }
-  } finally { await v627ReleaseAutomationLease(run); route(); }
+  } finally { await v627ReleaseAutomationLease(run); if (v626RunProjectOpen(run)) route(); }
 }
 
 /* THE DURABLE CLAIM A GENERATION LEAVES BEHIND.
@@ -3290,6 +3372,8 @@ async function v626AutomateEntityState(run, list, entityId, stateId) {
          that write having landed before the next read. Without it a generated
          candidate is momentarily indistinguishable from a file somebody dropped
          in the folder, which is a distinction that must never rest on timing. */
+      /* Claimed into the open record only while it is this run's project's record. */
+      v626AssertRunProjectOpen(run);
       v627ClaimGeneratedEntityCandidates(list, entityId, job, { stateId, runId: run.id, stepKey: genKey });
       await v626CompleteStep(run, genKey, { childJobId: job.id, stateId, files: (job.outputs || []).map((item) => item.name), result: { ...(genStep.result || {}), outputs: job.outputs || [], usageCounted: true } });
     }
@@ -3297,7 +3381,7 @@ async function v626AutomateEntityState(run, list, entityId, stateId) {
     /* P4-SEM-C4: identity first, filename second — the same resolution the frame
        reader uses, so an approved reference the rename moved still reads as the
        output of the job that generated it. */
-    const currentGen = v626Step(run, genKey), job = await v626FindFalJob(currentGen.childJobId), delivered = jobOutputMatcher(job || { outputs: currentGen.result?.outputs || [] }), media = entityMedia(list, entity).filter(delivered);
+    const currentGen = v626Step(run, genKey), job = await v626FindFalJob(currentGen.childJobId, run), delivered = jobOutputMatcher(job || { outputs: currentGen.result?.outputs || [] }), media = entityMedia(list, entity).filter(delivered);
     if (!media.length) throw new Error(`${state.name || "State"} candidates are unavailable`);
     if (prior.status !== "completed") {
       await v626BeginStep(run, reviewKey, "review", `Review ${state.name || "state"} candidates · round ${round}`, { stateId, attempt: round, maxAttempts: v668EffectiveStateRounds(run) });
@@ -3352,6 +3436,7 @@ async function v626AutomateEntityState(run, list, entityId, stateId) {
         run.usage.reviewCalls = Number(run.usage.reviewCalls || 0) + 1; await v626SaveRun(run, false);
         const response = await fetch("/api/llm/review-entity-candidate", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ list, id: entityId, fileName: item.name, stateId }) });
         const data = await response.json().catch(() => ({}));
+        v626AssertRunProjectOpen(run);
         entity = P[list]?.find((candidate) => candidate.id === entityId);
         state = entityStateById(entity, stateId);
         let persistedReview;
@@ -3479,7 +3564,7 @@ async function runEntityAutomation(runId) {
   if (V626_ACTIVE_AUTOMATION_RUNS.has(runId)) return;
   let run;
   try { run = await v627AcquireAutomationLease(runId); }
-  catch (error) { toast(error.code === "RUN_LEASED" ? "This run is already active in another CineBraid window" : error.message); return; }
+  catch (error) { v626RunToast(run, error.code === "RUN_LEASED" ? "This run is already active in another CineBraid window" : error.message); return; }
   try {
     const { list, id, entity } = v626EntityTarget(run); if (!entity) throw new Error("Entity no longer exists");
     const stateIds = v626StateOrder(entity, run.config?.stateIds || []);
@@ -3490,13 +3575,15 @@ async function runEntityAutomation(runId) {
       await v626AutomateEntityState(run, list, id, stateId);
     }
     await v626FinishRun(run, "completed", `${stateIds.length} continuity state${stateIds.length === 1 ? "" : "s"} processed parent-first. Approved references are ready for shot use.`);
-    toast("Continuity-state automation completed");
+    v626RunToast(run, "Continuity-state automation completed");
   } catch (error) {
-    if (error?.reviewRequired) { toast("State automation paused for your approval"); }
+    if (error?.reviewRequired) { v626RunToast(run, "State automation paused for your approval"); }
     else {
-      const interrupted = error?.cancelled || error?.leaseLost || error?.pollDeferred || v626RunCancelled(run);
+      const interrupted = error?.cancelled || error?.leaseLost || error?.pollDeferred || v626RunLeft(run, error) || v626RunCancelled(run);
       if (!interrupted && run.current?.stepKey) await v626FailStep(run, run.current.stepKey, error);
-      const summary = error?.leaseLost
+      const summary = v626RunLeft(run, error)
+        ? v626ProjectLeftError(run).message
+        : error?.leaseLost
         ? "Automation lease was lost. Progress is preserved; choose Resume Run before continuing."
         : error?.pollDeferred
           ? "Provider job is still active. Progress and the accepted job ID are preserved; Resume Run later to check it again without resubmitting."
@@ -3504,9 +3591,9 @@ async function runEntityAutomation(runId) {
             ? "Run stopped safely. Resume later without repeating completed generation."
             : `${error.message || "Automation stopped"} Use Retry Failed Step to retry only the failed operation.`;
       await v628FinishRunAfterError(run, interrupted ? "interrupted" : "failed", summary, error);
-      toast(interrupted ? (error?.pollDeferred ? "Provider is still working — resume later" : error?.leaseLost ? "Lease lost — Resume Run required" : "Automation stopped safely") : `State automation stopped: ${error.message}`);
+      v626RunToast(run, interrupted ? (error?.pollDeferred ? "Provider is still working — resume later" : error?.leaseLost ? "Lease lost — Resume Run required" : "Automation stopped safely") : `State automation stopped: ${error.message}`);
     }
-  } finally { await v627ReleaseAutomationLease(run); route(); }
+  } finally { await v627ReleaseAutomationLease(run); if (v626RunProjectOpen(run)) route(); }
 }
 
 window.resumeAutomationRun = async (runId) => {

@@ -96,23 +96,25 @@ function sanitizeLeaseDiagnostics(value, base = {}) {
 }
 
 function registerAutomationRuns(app, deps) {
-  const { projectDir, readProject, activeSlug, projectReadinessIssues } = deps;
+  const { projectDir, readProject, activeSlug, projectReadinessIssues, projectDirForSlug } = deps;
   let lastReadWarning = "";
-  function file() { return path.join(projectDir(), "automation-runs.json"); }
-  function backupFile() { return `${file()}.bak`; }
+  /* `dir` is given only by a route a runner addressed to its own project (see
+     namedRunsScope); every other caller reads and writes the active project's ledger. */
+  function file(dir = projectDir()) { return path.join(dir, "automation-runs.json"); }
+  function backupFile(dir) { return `${file(dir)}.bak`; }
   function parseRuns(target) {
     const parsed = JSON.parse(fs.readFileSync(target, "utf8"));
     return Array.isArray(parsed) ? parsed : Array.isArray(parsed?.runs) ? parsed.runs : [];
   }
-  function read() {
-    const target = file();
+  function read(dir) {
+    const target = file(dir);
     lastReadWarning = "";
     try {
       return parseRuns(target);
     } catch (error) {
       if (error?.code === "ENOENT") return [];
       try {
-        const recovered = parseRuns(backupFile());
+        const recovered = parseRuns(backupFile(dir));
         lastReadWarning = "automation-runs.json was unreadable; CineBraid loaded its backup copy.";
         return recovered;
       } catch {
@@ -126,11 +128,11 @@ function registerAutomationRuns(app, deps) {
     const terminal = runs.filter((run) => !active.includes(run)).slice(-MAX_TERMINAL_RUNS);
     return [...active, ...terminal].filter((run, index, list) => list.findIndex((item) => item.id === run.id) === index);
   }
-  function write(runs) {
-    const target = file();
+  function write(runs, dir) {
+    const target = file(dir);
     fs.mkdirSync(path.dirname(target), { recursive: true });
     const temp = `${target}.${process.pid}.${Date.now()}.${Math.random().toString(36).slice(2, 7)}.tmp`;
-    if (fs.existsSync(target)) fs.copyFileSync(target, backupFile());
+    if (fs.existsSync(target)) fs.copyFileSync(target, backupFile(dir));
     fs.writeFileSync(temp, JSON.stringify({ schemaVersion: 2, updatedAt: now(), runs: retainedRuns(runs) }, null, 2));
     fs.renameSync(temp, target);
   }
@@ -141,6 +143,23 @@ function registerAutomationRuns(app, deps) {
      nothing in the payload to say so, and presents them as its own. Stating the owner
      is what lets the caller refuse them. */
   function runsOwnerSlug() { return typeof activeSlug === "function" ? activeSlug() || "" : ""; }
+  /* A RUN BELONGS TO THE PROJECT IT STARTED IN. The browser's automation runner can
+     still be settling a run after the filmmaker has switched to another project, and
+     every write it makes then - the final interrupted status, the heartbeat, the
+     release - must land in that run's own ledger, never in whichever project is open.
+     It names its project with `?slug=`, and a named project that is not the active one
+     is served from its own directory. It is never reconciled against the active
+     project's record, which is not its record. No slug, or the active slug, is the
+     route exactly as before. */
+  function namedRunsScope(req, res) {
+    /* A write says it in its body, a read in its query: the run record itself carries
+       the project it belongs to, so a PUT needs no new URL. */
+    const requested = String(req.query?.slug ?? req.body?.projectSlug ?? "").trim();
+    if (!requested || requested === runsOwnerSlug() || typeof projectDirForSlug !== "function")
+      return { dir: undefined, slug: runsOwnerSlug(), named: false };
+    try { return { dir: projectDirForSlug(requested).dir, slug: requested, named: true }; }
+    catch { res.status(404).json({ error: "No such project.", code: "PROJECT_NOT_FOUND" }); return null; }
+  }
   function testFeedbackFile() { return path.join(projectDir(), "test-feedback.json"); }
   function readTestFeedback() {
     try {
@@ -916,9 +935,11 @@ function registerAutomationRuns(app, deps) {
     res.json({ runs: runs.map(publicRun), projectSlug: runsOwnerSlug(), warning: lastReadWarning });
   });
   app.get("/api/automation/runs/:id", (req, res) => {
-    const run = readReconciled().find((item) => item.id === req.params.id);
+    const scope = namedRunsScope(req, res);
+    if (!scope) return;
+    const run = (scope.named ? read(scope.dir) : readReconciled()).find((item) => item.id === req.params.id);
     if (!run) return res.status(404).json({ error: "automation run not found" });
-    res.json({ run: publicRun(run), projectSlug: runsOwnerSlug(), warning: lastReadWarning });
+    res.json({ run: publicRun(run), projectSlug: scope.slug, warning: lastReadWarning });
   });
   /* MANUAL RECHECK STATUS. Same boundary, entered on purpose rather than as a
      side effect of reading, and it reports WHAT it found so the creator sees the
@@ -990,7 +1011,9 @@ function registerAutomationRuns(app, deps) {
     res.status(201).json({ run: publicRun(incoming) });
   });
   app.put("/api/automation/runs/:id", (req, res) => {
-    const runs = read(), index = findRun(runs, req.params.id);
+    const scope = namedRunsScope(req, res);
+    if (!scope) return;
+    const runs = read(scope.dir), index = findRun(runs, req.params.id);
     if (index < 0) return res.status(404).json({ error: "automation run not found" });
     const current = runs[index];
     if (!checkRevision(req, current, res) || !checkLease(req, current, res)) return;
@@ -1010,7 +1033,7 @@ function registerAutomationRuns(app, deps) {
       leaseDiagnostics: sanitizeLeaseDiagnostics(body.leaseDiagnostics, current.leaseDiagnostics),
     };
     runs[index] = bump(merged, current);
-    write(runs);
+    write(runs, scope.dir);
     res.json({ run: publicRun(runs[index]) });
   });
   app.post("/api/automation/runs/:id/lease", (req, res) => {
@@ -1042,7 +1065,9 @@ function registerAutomationRuns(app, deps) {
     res.json({ run: publicRun(runs[index]), leaseMs: LEASE_MS, heartbeatMs: HEARTBEAT_MS });
   });
   app.post("/api/automation/runs/:id/heartbeat", (req, res) => {
-    const runs = read(), index = findRun(runs, req.params.id);
+    const scope = namedRunsScope(req, res);
+    if (!scope) return;
+    const runs = read(scope.dir), index = findRun(runs, req.params.id);
     if (index < 0) return res.status(404).json({ error: "automation run not found" });
     const current = runs[index], runnerId = cleanText(req.body?.runnerId, 240);
     if (current.runnerId !== runnerId || leaseExpired(current)) {
@@ -1052,7 +1077,7 @@ function registerAutomationRuns(app, deps) {
         lastFailureCode: "LEASE_LOST",
         lastFailureMessage: "Heartbeat could not confirm the current browser lease.",
       }, current.leaseDiagnostics) }, current, { preserveUpdatedAt: true, revision: current.revision || 1 });
-      write(runs);
+      write(runs, scope.dir);
       return res.status(409).json({ error: "automation run lease is no longer held", code: "LEASE_LOST", run: publicRun(runs[index]) });
     }
     const at = now(), expires = new Date(Date.now() + LEASE_MS).toISOString();
@@ -1060,7 +1085,7 @@ function registerAutomationRuns(app, deps) {
     current.leaseExpiresAt = expires;
     current.leaseDiagnostics = sanitizeLeaseDiagnostics({ lastRunnerId: runnerId, lastHeartbeatAt: at, lastExpiresAt: expires }, current.leaseDiagnostics);
     runs[index] = sanitizeRun(current, current, { preserveUpdatedAt: true, revision: current.revision || 1 });
-    write(runs);
+    write(runs, scope.dir);
     res.json({ run: publicRun(runs[index]), leaseMs: LEASE_MS, heartbeatMs: HEARTBEAT_MS });
   });
   app.post("/api/automation/runs/:id/lease/revalidate", (req, res) => {
@@ -1144,7 +1169,9 @@ function registerAutomationRuns(app, deps) {
     });
   });
   app.post("/api/automation/runs/:id/release", (req, res) => {
-    const runs = read(), index = findRun(runs, req.params.id);
+    const scope = namedRunsScope(req, res);
+    if (!scope) return;
+    const runs = read(scope.dir), index = findRun(runs, req.params.id);
     if (index < 0) return res.status(404).json({ error: "automation run not found" });
     const current = runs[index], runnerId = cleanText(req.body?.runnerId, 240);
     if (current.runnerId && current.runnerId !== runnerId && !leaseExpired(current)) return res.status(409).json({ error: "automation run lease belongs to another window", code: "RUN_LEASED", run: publicRun(current) });
@@ -1153,7 +1180,7 @@ function registerAutomationRuns(app, deps) {
       runnerId: "", leaseAcquiredAt: "", heartbeatAt: "", leaseExpiresAt: "",
       leaseDiagnostics: sanitizeLeaseDiagnostics({ lastReleasedAt: releasedAt, lastReleaseReason: reason }, current.leaseDiagnostics),
     });
-    write(runs);
+    write(runs, scope.dir);
     res.json({ run: publicRun(runs[index]) });
   });
   app.post("/api/automation/runs/:id/cancel", (req, res) => {

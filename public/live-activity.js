@@ -1220,6 +1220,8 @@ window.v670ReconcileAfterApproval = async () => {
   } catch { /* reconciliation is convergent: the next read performs it anyway */ }
 };
 window.v641NotifyAutomationActivity = (run) => {
+  /* A run of a project that is not open does not repaint this window. */
+  if (typeof v626RunProjectOpen === "function" && !v626RunProjectOpen(run)) return;
   if (run) {
     const node = document.querySelector(`[data-automation-live-run="${v641SelectorValue(run.id)}"]`);
     if (node) node.outerHTML = v641LiveActivityMarkup(run);
