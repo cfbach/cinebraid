@@ -39,6 +39,91 @@ sync_playwright=require_browser(LABEL)
 # maintaining that twice is how two fixtures drift into two different situations.
 HANDOFF_CONTRACT = os.environ.get('CINEBRAID_H3_CONTRACT', '') == 'motion-handoff'
 
+# HOW THIS SUITE READS THE KEYFRAME PANEL, AND WHY IT STOPPED SLEEPING.
+#
+# Ticking a keyframe runs setH3KeyframeEnabled() synchronously -- it records the opt-in
+# on the shot and asks for a render -- but route() is ASYNCHRONOUS and awaits the project
+# read and the shot's folder before the panel repaints. The browser ticks the box itself
+# at once, so for that whole interval the DOM holds a ticked box beside the PRE-CLICK
+# sequence numbers. A fixed 200ms wait read exactly that on a loaded CI runner (PR #80,
+# first attempt: three boxes ticked, labels still IMAGE 1 / NOT SENT / NOT SENT / IMAGE 2),
+# and it reads it on any machine once the project read takes 400ms -- identically on this
+# change's base, so the sleep was always the defect, not the refresh owner.
+#
+# So the wait is not longer: it is a DIFFERENT QUESTION. The panel is settled when the
+# boxes, the painted sequence numbers and the product's OWN derivation of the sequence
+# (h3ApprovedFrameRows, the function the panel renders from) all describe the same
+# selection, row for row and in order. Nothing about that question is timing.
+H3_PANEL_READING = r"""
+(() => {
+  /* The product's derivation and the painted panel, read together and compared. A
+     ticked box that the render has not caught up with disagrees with both. */
+  window.__h3Agreement = (shotId) => {
+    const panel = document.querySelector('.h3-keyframe-panel');
+    if (!panel) return { agree: false, why: 'the keyframe panel is not rendered' };
+    /* A repaint restores the motion disclosures' closed default and a span inside a
+       closed <details> measures 0x0, so its own ancestry is reopened before reading. */
+    for (let node = panel; node && node !== document.body; node = node.parentElement) {
+      if (node.tagName === 'DETAILS') node.open = true;
+    }
+    const painted = [];
+    const dom = [...panel.querySelectorAll('.h3-keyframe-sequence article')].map((article) => {
+      const box = article.querySelector('input[type=checkbox]');
+      const span = article.querySelector('.h3-keyframe-image span');
+      const wiring = ((box && box.getAttribute('onchange')) || '').match(/setH3KeyframeEnabled\('([^']*)','([^']*)'/);
+      if (span) {
+        const style = getComputedStyle(span), box2 = span.getBoundingClientRect();
+        painted.push(style.display !== 'none' && style.visibility !== 'hidden' && box2.width > 0 && box2.height > 0);
+      } else painted.push(false);
+      return { frame: wiring ? wiring[2] : null, on: !!(box && box.checked),
+               label: span ? (span.textContent || '').trim() : null };
+    });
+    const shot = typeof shotById === 'function' ? shotById(shotId) : null;
+    const rows = shot && typeof h3ApprovedFrameRows === 'function' ? h3ApprovedFrameRows(shot) : null;
+    if (!rows) return { agree: false, why: 'the shot has no approved keyframe rows', dom };
+    /* The panel's own cap: only the first nine active frames carry a number, and a row
+       without a number renders unticked however it is recorded. Mirrored, not assumed. */
+    const numbers = new Map(rows.filter((row) => row.enabled).slice(0, 9)
+      .map((row, index) => [String(row.frame.id), index + 1]));
+    const wanted = rows.map((row) => {
+      const number = numbers.get(String(row.frame.id));
+      return { frame: String(row.frame.id), on: !!(row.enabled && number),
+               label: number ? 'IMAGE ' + number : 'NOT SENT' };
+    });
+    const agree = dom.length === wanted.length && painted.every(Boolean) &&
+      dom.every((row, index) => row.frame === wanted[index].frame &&
+        row.on === wanted[index].on && row.label === wanted[index].label);
+    return { agree, dom, wanted, painted: painted.every(Boolean),
+             labels: dom.map((row) => row.label), checked: dom.filter((row) => row.on).length,
+             selection: wanted.filter((row) => row.on).map((row) => row.frame),
+             dirty: typeof projectHasUnsavedEdits === 'function' ? projectHasUnsavedEdits() : null };
+  };
+})();
+"""
+
+# FORCED TIMING, ON PURPOSE. The two reads the repaint awaits are held back by
+# CINEBRAID_H3_REQUEST_DELAY_MS (0 by default), and the controlled reproduction below
+# raises it for one opt-in whatever the environment asked for. The server still answers
+# at once -- what is being modelled is a runner that is slow to come back to the render,
+# which is what CI did to this panel.
+REQUEST_DELAY_MS = int(os.environ.get('CINEBRAID_H3_REQUEST_DELAY_MS', '0') or 0)
+H3_FORCED_TIMING = r"""
+(() => {
+  window.__h3RequestDelayMs = __DELAY__;
+  const native = window.fetch;
+  window.fetch = async function (input, init) {
+    const url = String((input && input.url) || input || '').split('?')[0];
+    const answer = await native.apply(this, arguments);
+    const delay = Number(window.__h3RequestDelayMs) || 0;
+    if (delay > 0 && /\/api\/(projects\/[^\/]+\/project|shots\/[^\/]+\/folder)$/.test(url)) {
+      await new Promise((resolve) => setTimeout(resolve, delay));
+    }
+    return answer;
+  };
+})();
+""".replace('__DELAY__', str(REQUEST_DELAY_MS))
+
+
 FRAME_LABELS=['A','B','C','D']
 FRAMES=[{'id':'frame-'+l.lower(),'label':l,'title':'Frame '+l,'winner':'','description':'Beat '+l,
          'required':True,'generationPackages':[]} for l in FRAME_LABELS]
@@ -153,6 +238,8 @@ try:
     with sync_playwright() as pw:
         browser=launch_chromium(pw,label=LABEL)
         page=browser.new_page(viewport={'width':1440,'height':1000})
+        page.add_init_script(H3_PANEL_READING)
+        page.add_init_script(H3_FORCED_TIMING)
         page.evaluate("""() => {
           const data = new Map();
           const storage = {getItem:k=>data.has(String(k))?data.get(String(k)):null,setItem:(k,v)=>data.set(String(k),String(v)),removeItem:k=>data.delete(String(k)),clear:()=>data.clear(),key:i=>[...data.keys()][i]||null,get length(){return data.size;}};
@@ -389,6 +476,52 @@ try:
             assert not unpainted, f"the H3 sequence labels are in the markup but not painted: {unpainted}"
             return [row["text"] for row in rows]
 
+        def h3_agreement():
+            return page.evaluate("() => window.__h3Agreement('H3-01')")
+
+        def h3_settled(what, timeout=20000):
+            """Wait until the boxes, the painted numbers and the shot agree, then read.
+
+            This is the replacement for the fixed sleep. It asks an observable question
+            about the panel -- does it describe the selection the product derives? -- so
+            it is answered as soon as the repaint lands and never before, at any speed.
+            """
+            try:
+                page.wait_for_function("() => { const state = window.__h3Agreement('H3-01');"
+                                       " return !!(state && state.agree); }", timeout=timeout)
+            except Exception as error:  # noqa: BLE001 - report the disagreement, not the timeout
+                state = h3_agreement()
+                raise AssertionError(
+                    f"{what}: the panel never agreed with the shot it paints. "
+                    f"boxes/labels={state.get('dom')} product={state.get('wanted')} "
+                    f"painted={state.get('painted')} why={state.get('why','')}") from error
+            return keyframe_labels()
+
+        def h3_request_delay(ms):
+            page.evaluate("(ms) => { window.__h3RequestDelayMs = ms; }", ms)
+
+        def h3_selection_survives(what, expected):
+            """Render again, then re-read the project, and require the same sequence.
+
+            A ticked checkbox in a stale DOM is not a selection. These two re-reads are
+            what stop one: the repaint rebuilds the panel from the shot, and the refresh
+            rebuilds the shot from what was actually saved.
+            """
+            try:
+                page.wait_for_function(
+                    "() => typeof projectHasUnsavedEdits !== 'function' || !projectHasUnsavedEdits()",
+                    timeout=20000)
+            except Exception as error:  # noqa: BLE001
+                raise AssertionError(f"{what}: the keyframe opt-in was never saved") from error
+            page.evaluate('() => route()')
+            repainted=h3_settled(f"{what}, after a repaint")
+            assert repainted==expected, (what, 'after a repaint', repainted)
+            page.evaluate("async () => { await load({ intent: 'refresh' }); }")
+            reread=h3_settled(f"{what}, after re-reading the project")
+            assert reread==expected, (what, 'after re-reading the project', reread)
+            assert page.locator('.h3-keyframe-panel input[type=checkbox]:checked').count()==len(
+                [label for label in expected if label!='NOT SENT']), (what, 'checkbox count', expected)
+
         labels=keyframe_labels()
         assert labels==['IMAGE 1','NOT SENT','NOT SENT','IMAGE 2'], labels
         assert page.evaluate('document.documentElement.scrollWidth-document.documentElement.clientWidth')<=2
@@ -451,9 +584,40 @@ try:
         box=page.locator('.h3-generation-modal').bounding_box(); assert box and box['y']>=0 and box['y']+box['height']<=1002
         assert page.evaluate('document.querySelector(".h3-generation-scroll").scrollHeight > document.querySelector(".h3-generation-scroll").clientHeight')
         page.evaluate('closeModal()')
-        page.locator('.h3-keyframe-panel input[type=checkbox]').nth(1).check(); page.wait_for_timeout(200)
+        SEQUENCE_WITH_B=['IMAGE 1','IMAGE 2','NOT SENT','IMAGE 3']
+        page.locator('.h3-keyframe-panel input[type=checkbox]').nth(1).check()
+        # No sleep: wait for the panel to agree with the shot (see H3_PANEL_READING).
+        labels=h3_settled('the second frame opted in')
+        assert labels==SEQUENCE_WITH_B, labels
         assert page.locator('.h3-keyframe-panel input[type=checkbox]:checked').count()==3
-        labels=keyframe_labels(); assert labels==['IMAGE 1','IMAGE 2','NOT SENT','IMAGE 3'], labels
+        # And it is a selection, not a ticked box: it survives the next render and a
+        # re-read of the project from the server.
+        h3_selection_survives('the second frame opted in', SEQUENCE_WITH_B)
+
+        # ---- THE RETIRED MECHANISM, REPRODUCED ON DEMAND -------------------------
+        #
+        # The same opt-in once more, on the third row, with the reads the repaint awaits
+        # held back 1500ms. The fixed 200ms wait reads a DOM carrying FOUR ticked boxes
+        # beside the three-image numbering from before the click -- the PR #80 failure
+        # exactly, on any machine -- and the agreement wait then catches up with it. If
+        # the repaint ever stops awaiting those reads this assertion fails and this
+        # control should be retired with it; it must never be softened into a sleep.
+        h3_request_delay(1500)
+        try:
+            page.locator('.h3-keyframe-panel input[type=checkbox]').nth(2).check()
+            page.wait_for_timeout(200)
+            stale=h3_agreement()
+            assert stale['checked']==4 and stale['labels']==SEQUENCE_WITH_B and not stale['agree'], \
+                ('the retired fixed wait no longer reads a half-repainted panel under '
+                 f"forced latency, so it no longer proves anything: {stale}")
+            slow=h3_settled('the third frame opted in under forced latency', timeout=40000)
+            assert slow==['IMAGE 1','IMAGE 2','IMAGE 3','IMAGE 4'], slow
+            page.locator('.h3-keyframe-panel input[type=checkbox]').nth(2).uncheck()
+            back=h3_settled('the third frame withdrawn under forced latency', timeout=40000)
+            assert back==SEQUENCE_WITH_B, back
+        finally:
+            h3_request_delay(REQUEST_DELAY_MS)
+        h3_selection_survives('the third frame withdrawn', SEQUENCE_WITH_B)
         page.set_viewport_size({'width':390,'height':844}); page.wait_for_timeout(250)
         assert page.evaluate('document.documentElement.scrollWidth-document.documentElement.clientWidth')<=2
         assert page.locator('.motion-workflow-map button').count()==3
