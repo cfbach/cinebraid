@@ -86,6 +86,71 @@ SHOT_DESC = "Kai walks through the crowded docking bay while Mara's ship lifts a
 
 ROUTES = ["t2v", "i2v", "flf", "r2v", "hybrid"]
 
+# WHY THIS SUITE STOPPED SLEEPING AT THE COMPLETION BANNER.
+#
+# "STILL AUTOMATION COMPLETE" is drawn by public/creation-studio.js from one derivation,
+# stillAutomationCompletionClaim(shot). Changing what that derivation answers is
+# SYNCHRONOUS; getting the answer onto the screen is not. route() awaits the project read
+# and the shot's folder before it rewrites #main, so between the change and the repaint
+# the DOM holds the PREVIOUS banner beside the NEW derivation. A fixed 400ms wait read
+# exactly that gap on a slow runner -- PR #80 head a222369, the restore half of N5, the
+# first failure in this suite's history -- and it reads it on any machine once those two
+# reads take longer than the sleep.
+#
+# So the wait is not longer, it is a DIFFERENT QUESTION, asked in two parts:
+#
+#   1. the product's own render is AWAITED rather than raced. route() returns a promise
+#      and page.evaluate resolves a returned promise, so `await route()` inside the
+#      callback means the step is over when the repaint is done, not when a timer is.
+#   2. the paint and the derivation are then required to AGREE. A banner that disagrees
+#      with stillAutomationCompletionClaim() is a stale render however it got there, and
+#      no amount of elapsed time can make a disagreement look settled.
+#
+# Neither part has a duration in it. The bounded timeout below is a give-up, not a
+# verdict: every verdict is still the assertion that follows it, in its own words.
+BANNER_AGREEMENT = """(shotId) => {
+  if (typeof shotById !== 'function' || typeof stillAutomationCompletionClaim !== 'function') return false;
+  const shot = shotById(shotId);
+  if (!shot) return false;
+  /* THIS shot's motion workspace, not whichever one is on screen. A shot-to-shot move is
+     a fragment navigation, so the panel being left is still mounted while the next one
+     renders, and an unkeyed selector agrees about the wrong shot. */
+  const panel = document.getElementById('guided-motion-workspace-' + shotId);
+  if (!panel || panel.getAttribute('data-guided-panel') !== 'motion') return false;
+  const main = document.getElementById('main');
+  if (!main || !main.contains(panel)) return false;
+  /* Read exactly the way COMPLETION_STATE reads it: the claim is a block in the emitted
+     markup, and the disclosure is opened so a present claim is genuinely on screen. */
+  if (!panel.open) panel.open = true;
+  const rendered = main.innerHTML.includes('STILL AUTOMATION COMPLETE');
+  /* The locked shell carries no banner block at all, so for a locked panel the only
+     paint that can agree with any derivation is no banner. Mirrored, not assumed. */
+  const expected = panel.classList.contains('locked') ? false : !!stillAutomationCompletionClaim(shot);
+  return rendered === expected;
+}"""
+
+# FORCED TIMING, ON PURPOSE. The two reads the repaint awaits are held back by
+# CINEBRAID_SHOT_INTENT_REQUEST_DELAY_MS (0 by default), so the whole file can be run
+# against a slow runner on demand, and the controlled reproduction in N5 raises it for
+# one step whatever the environment asked for. The server still answers at once: what is
+# modelled is a runner that is slow to come back to the render, which is what CI did.
+REQUEST_DELAY_MS = int(os.environ.get('CINEBRAID_SHOT_INTENT_REQUEST_DELAY_MS', '0') or 0)
+FORCED_TIMING = r"""
+(() => {
+  window.__shotIntentRequestDelayMs = __DELAY__;
+  const native = window.fetch;
+  window.fetch = async function (input, init) {
+    const url = String((input && input.url) || input || '').split('?')[0];
+    const answer = await native.apply(this, arguments);
+    const delay = Number(window.__shotIntentRequestDelayMs) || 0;
+    if (delay > 0 && /\/api\/(projects\/[^\/]+\/project|shots\/[^\/]+\/folder)$/.test(url)) {
+      await new Promise((resolve) => setTimeout(resolve, delay));
+    }
+    return answer;
+  };
+})();
+""".replace('__DELAY__', str(REQUEST_DELAY_MS))
+
 # The shot workspace, read out of the live DOM rather than recomputed.
 SHOT_STATE = """() => {
   const control = document.querySelector('.shot-intent-control');
@@ -263,6 +328,10 @@ try:
             return route.abort("failed")
 
         context.route("**/*", guard)
+        # Installed before the first document, and re-installed by Chromium on every
+        # navigation in this context, so a reload does not quietly drop the timing knob.
+        # It delays nothing while CINEBRAID_SHOT_INTENT_REQUEST_DELAY_MS is unset.
+        context.add_init_script(FORCED_TIMING)
         page = context.new_page()
         page.on("pageerror", lambda e: page_errors.append(str(e)))
 
@@ -859,19 +928,45 @@ try:
         # Motion workspace does with it once the obligation has moved. The receipt is
         # written into local state rather than earned by a run: this suite calls no
         # provider and starts no generation, and the point under test is the RENDER.
+        def banner_settled(shot_id, what, timeout=15000):
+            """THE PAINT AND THE DERIVATION IT IS DRAWN FROM, IN AGREEMENT.
+
+            Not a duration, and not a marker either: a marker can be stale, but a
+            disagreement between the rendered banner and stillAutomationCompletionClaim()
+            cannot be. Callers await route() first, so this normally settles on its first
+            poll — it is proof that the repaint landed, not the thing that waits for it.
+
+            A give-up is NOT a verdict. Timing out records what was seen and returns, so
+            the assertion that follows still fails in its own words about the contract it
+            owns rather than being replaced by a timeout traceback."""
+            try:
+                page.wait_for_function(BANNER_AGREEMENT, arg=shot_id, timeout=timeout)
+                return True
+            except Exception:  # noqa: BLE001 — the assertion below is the verdict
+                findings.append(f"NOTE: {what}: the rendered banner never agreed with the shipped "
+                                f"completion derivation within {timeout}ms; the assertion that follows "
+                                "reports what was actually on screen")
+                return False
+
         def with_receipt(shot_id, declared_route):
             # `declared`, not `route`: the page's own re-render function is called
             # route(), and an argument of that name shadows it inside the callback.
+            #
+            # AWAITED, NOT FIRED AND FORGOTTEN. route() is async — it awaits the project
+            # read and this shot's folder before #main is rewritten — so the callback
+            # returns its promise and page.evaluate resolves only once the repaint has
+            # happened. The agreement check after it then proves the paint matches the
+            # derivation rather than assuming it.
             page.evaluate(
-                """([id, declared]) => {
+                """async ([id, declared]) => {
                   const shot = shotById(id);
                   shot.creationBrief = shot.creationBrief || {};
                   shot.creationBrief.deliveryIntent = 'motion';
                   shot.creationBrief.automationReadyForMotion = true;
                   if (declared) shot.deliveryRoute = declared; else delete shot.deliveryRoute;
-                  route();
+                  await route();
                 }""", [shot_id, declared_route])
-            page.wait_for_timeout(400)
+            banner_settled(shot_id, f"the receipt fixture for {shot_id} on route {declared_route or 'undeclared'}")
             return page.evaluate(COMPLETION_STATE, shot_id)
 
         open_shot(undecided_id, "11")
@@ -978,19 +1073,55 @@ try:
         page.evaluate("() => { const b = document.querySelector('.cb-stage-strip .focused-task-button[data-stage-id=\"motion\"]'); if (b) b.click(); }")
         page.wait_for_timeout(400)
 
-        # N5 -- let the shipped surface trust the receipt alone again.
-        with_receipt(undecided_id, "")
+        # N5c -- THE MECHANISM THAT USED TO SYNCHRONISE N5, MEASURED RATHER THAN DESCRIBED.
+        #
+        # With the two reads the repaint awaits held past the old sleep, the fixed 400ms
+        # wait demonstrably reads the PRE-ROUTE banner: the derivation already answers
+        # true and the screen still says nothing. This is the CI failure in miniature and
+        # it is performed here, so the correction below rests on a reproduction rather
+        # than on an argument. The delay is restored to whatever the environment asked
+        # for immediately afterwards, so it changes nothing for the rest of the file.
+        page.evaluate("(ms) => { window.__shotIntentRequestDelayMs = ms; }", 900)
         page.evaluate("""() => {
           window.__realClaim = window.stillAutomationCompletionClaim;
           window.stillAutomationCompletionClaim = (shot) => !!(shot.creationBrief || {}).automationReadyForMotion;
           route();
         }""")
         page.wait_for_timeout(400)
+        raced = page.evaluate(COMPLETION_STATE, undecided_id)
+        settled_after_race = banner_settled(undecided_id, "N5c the forced-latency control")
+        forced = page.evaluate(COMPLETION_STATE, undecided_id)
+        page.evaluate("(ms) => { window.__shotIntentRequestDelayMs = ms; }", REQUEST_DELAY_MS)
+        assert raced["claim"] is True, \
+            "N5c. fixture check: the broken derivation must already answer true before the repaint"
+        assert raced["banner"] is False, \
+            "N5c. the replaced 400ms wait must be shown reading the screen before route() finished"
+        assert settled_after_race and forced["banner"] is True, \
+            "N5c. and waiting for the paint to agree with the derivation must then find the banner"
+        findings.append("N5c. forced-latency control: with the project and folder reads held 900ms, the 400ms "
+                        "sleep this suite used to synchronise N5 reads banner=False while the derivation "
+                        "already answers claim=True; waiting for agreement instead reads banner=True")
+        page.evaluate("() => { window.stillAutomationCompletionClaim = window.__realClaim; route(); }")
+        banner_settled(undecided_id, "N5c restoring the shipped derivation")
+
+        # N5 -- let the shipped surface trust the receipt alone again.
+        #
+        # Both halves now await the product's own render and then require the paint to
+        # agree with the derivation it is drawn from. Neither half can pass because more
+        # time elapsed, and neither assertion has been weakened: they are the same two
+        # claims, asked of a screen that is provably finished repainting.
+        with_receipt(undecided_id, "")
+        page.evaluate("""async () => {
+          window.__realClaim = window.stillAutomationCompletionClaim;
+          window.stillAutomationCompletionClaim = (shot) => !!(shot.creationBrief || {}).automationReadyForMotion;
+          await route();
+        }""")
+        banner_settled(undecided_id, "N5 the mutation half")
         broken_claim = page.evaluate(COMPLETION_STATE, undecided_id)
         assert broken_claim["banner"] is True, \
             "N5. precondition: the control must genuinely reproduce the reported defect"
-        page.evaluate("() => { window.stillAutomationCompletionClaim = window.__realClaim; route(); }")
-        page.wait_for_timeout(400)
+        page.evaluate("async () => { window.stillAutomationCompletionClaim = window.__realClaim; await route(); }")
+        banner_settled(undecided_id, "N5 the restoration half")
         assert page.evaluate(COMPLETION_STATE, undecided_id)["banner"] is False, \
             "N5. and the assertion section 11 relies on catches it"
         findings.append("N5. negative control: reading the persisted receipt alone puts STILL AUTOMATION "

@@ -340,8 +340,30 @@ try:
             page.wait_for_selector("[data-batch-approval-index]", timeout=10000)
             confirm = page.locator("button.approve-btn", has_text="CONFIRM SELECTED APPROVALS")
             assert confirm.count(), "case 5: the batch approval modal offered no confirmation control"
+            # What the row says BEFORE the confirmation, so the settle below can tell the
+            # record moving from the record already being there.
+            seeded_decision = page.evaluate(
+                """([id, file]) => {
+                  const entity = (P.characters || []).find((row) => row.id === id);
+                  const row = entity && (entity.candidateFiles || []).find((item) => (item.stored || item.name) === file);
+                  return row ? String(row.decision || '') : '';
+                }""", [seeded["id"], seeded["file"]])
             confirm.first.click()
-            page.wait_for_timeout(1200)
+            # THE APPROVAL IS FINISHED WHEN THE PRODUCT SAYS SO, not after 1200ms.
+            # Confirming writes the decision and then submits it; the submission is
+            # asynchronous, and until it settles the record the assertions below read is
+            # still the one from before the click. The settled condition is the product's
+            # own: nothing is pending, and the row this case is about has moved off the
+            # decision it started on. WHAT it moved to is still the assertion's verdict.
+            page.wait_for_function(
+                """([id, file, was]) => {
+                  if (typeof approvalSubmissionPending === 'function' && approvalSubmissionPending()) return false;
+                  const entity = (P.characters || []).find((row) => row.id === id);
+                  if (!entity) return false;
+                  const row = (entity.candidateFiles || []).find((item) => (item.stored || item.name) === file);
+                  return !!row && String(row.decision || '') !== was;
+                }""",
+                arg=[seeded["id"], seeded["file"], seeded_decision], timeout=20000)
             seen = page.evaluate("""([id, file]) => {
                 const entity = P.characters.find((row) => row.id === id);
                 const row = (entity.candidateFiles || []).find((item) => (item.stored || item.name) === file);

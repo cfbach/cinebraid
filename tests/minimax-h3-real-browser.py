@@ -124,6 +124,27 @@ H3_FORCED_TIMING = r"""
 """.replace('__DELAY__', str(REQUEST_DELAY_MS))
 
 
+# WHICH CONTROL ON THE DESK OPENS ONE FRAME'S RESULTS -- and, beside it, the frame-blind
+# reading the approval fixture used to wait on. Both are computed in the SAME evaluate so
+# the two can be compared without a clock: `old` is the predicate that used to stand in
+# for "the rail is ready", `keyed` is the fact the assertion after it actually reads.
+#
+# 'keyed' returns the boolean, for wait_for_function; 'full' returns the parts, for the
+# control that shows the old predicate answering true about the wrong frame.
+OPENER_READING = """([frameId, mode]) => {
+  const old = document.querySelectorAll('#main [data-shot-results-rail] .shot-results-open, #main .guided-next-action .shot-primary-action').length > 0;
+  const rail = document.querySelector('#main [data-shot-results-rail]');
+  const article = rail && rail.querySelector('article[data-results-target="frame"][data-frame-id="' + frameId + '"]');
+  const opener = article && article.querySelector('.shot-results-open');
+  const led = article && article.querySelector('[data-results-led="1"]');
+  const hero = document.querySelector('#main .guided-next-action .shot-primary-action');
+  /* Exactly one way in, which is what the assertion counts: either the rail article has
+     its own opener, or it says the hero is carrying the action and the hero is there. */
+  const keyed = !!article && (!!opener !== !!(led && hero));
+  if (mode === 'keyed') return keyed;
+  return { old, keyed, article: !!article, opener: !!opener, led: !!led, hero: !!hero };
+}"""
+
 FRAME_LABELS=['A','B','C','D']
 FRAMES=[{'id':'frame-'+l.lower(),'label':l,'title':'Frame '+l,'winner':'','description':'Beat '+l,
          'required':True,'generationPackages':[]} for l in FRAME_LABELS]
@@ -336,6 +357,28 @@ try:
             # there changes only what the rail shows; it writes nothing.
             picker = rail.locator('select[data-shot-results-frame]')
             assert picker.count() == 1, 'with four declared frames the Results rail offers a labelled frame selector'
+            # H-CONTROL, NO CLOCK INVOLVED, AND IT COSTS THE FIXTURE NOTHING.
+            #
+            # Put the rail on a DIFFERENT frame and read both predicates in one evaluate.
+            # The replaced wait answers "ready" -- because the Desk always has some
+            # opener on it -- while the rail is demonstrably not showing the frame the
+            # assertion is about. That is the whole defect, shown rather than argued: the
+            # wait could not distinguish this frame from any other, so a run in which the
+            # repaint HAD been late would have read exactly the same "ready" and gone on
+            # to assert against the wrong rail. Done once, for the second frame; the
+            # loop's own selection immediately afterwards puts the rail back.
+            if frame == FRAME_LABELS[1]:
+                picker.select_option('frame-' + FRAME_LABELS[-1].lower())
+                elsewhere = page.evaluate(OPENER_READING, [frame_id, 'full'])
+                assert elsewhere['old'] is True, \
+                    'H-control: the replaced wait must be shown answering ready while the rail shows another frame'
+                assert elsewhere['article'] is False and elsewhere['keyed'] is False, \
+                    'H-control: and the keyed reading must refuse that same state'
+                print(f"H-control: with the rail showing Frame {FRAME_LABELS[-1]}, the frame-blind wait "
+                                f"this fixture used to synchronise on answers ready={elsewhere['old']} for Frame "
+                                f"{frame}, whose target is not on the rail at all (article={elsewhere['article']}); "
+                                f"the keyed reading that replaced it answers {elsewhere['keyed']}. No clock was "
+                                "involved in either reading.")
             picker.select_option(frame_id)
             # EV2-7 dogfood correction — ONE ACTION PER RESULT TARGET. While the hero is leading
             # this frame's returned result, the hero's exact-key review IS that frame's one
@@ -343,9 +386,31 @@ try:
             # Either way exactly one control on the Desk opens this frame's Results.
             entry = page.locator('#main [data-shot-results-rail]').get_by_role('button', name=f'Frame {frame} Results', exact=True)
             hero_entry = page.locator('#main .guided-next-action').get_by_role('button', name=f'Review Frame {frame} result', exact=True)
-            page.wait_for_function(
-                "(label) => document.querySelectorAll('#main [data-shot-results-rail] .shot-results-open, #main .guided-next-action .shot-primary-action')"
-                ".length > 0", arg=frame, timeout=20000)
+            # THE WAIT AND THE ASSERTION ARE NOW ABOUT THE SAME FRAME.
+            #
+            # What used to be here counted `.shot-results-open` and `.shot-primary-action`
+            # ANYWHERE on the Desk. The Desk always has one of those -- the previous
+            # frame's, or the hero's -- so it was satisfied instantly, by a rail that had
+            # not necessarily been repainted for the frame just chosen, and the
+            # frame-specific assertion on the next line read it anyway. It took
+            # `arg=frame` and never looked at it, which is the defect in one line: the
+            # wait was not asking about the frame the assertion is about.
+            #
+            # OPENER_READING asks about THIS frame: the rail is showing this frame's own
+            # target article, and exactly one way into its Results is on screen -- the
+            # article's own opener, or its "Being reviewed above" marker with the hero
+            # carrying the action instead. Those are the same two controls the assertion
+            # counts, so the wait now ends exactly when the assertion can be answered.
+            # The assertion is unchanged, and it is still the verdict.
+            # A GIVE-UP IS NOT A VERDICT: if the Desk never settles on this frame the
+            # assertion below still fails in its own words, naming the contract, rather
+            # than being replaced by a timeout traceback that names nothing.
+            try:
+                page.wait_for_function(OPENER_READING, arg=[frame_id, 'keyed'], timeout=20000)
+            except Exception:  # noqa: BLE001 - the assertion below is the verdict
+                print(f'NOTE: Frame {frame}: the Desk never settled on this frame within 20000ms; '
+                      f'the assertion below reports what was on screen: '
+                      f'{page.evaluate(OPENER_READING, [frame_id, "full"])}')
             assert entry.count() + hero_entry.count() == 1, f'Frame {frame}: exactly one control on the Desk opens its Results'
             if entry.count():
                 press_real(entry, f'Frame {frame} Results')

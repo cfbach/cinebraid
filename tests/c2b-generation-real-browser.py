@@ -162,9 +162,33 @@ try:
 
         # ---- B. the real button opens the dialog ------------------------
         page.locator(".focused-task-button", has_text="Look & blocking").first.click()
-        page.wait_for_timeout(500)
+        # THE WORKSPACE ON SCREEN MUST BE THE ONE THAT WAS ASKED FOR.
+        #
+        # Pressing a stage button records the focused task SYNCHRONOUSLY and then calls
+        # route(), which is async. The 500ms that used to be here therefore opened every
+        # <details> belonging to the PREVIOUS stage, and the repaint that arrived after it
+        # closed them all again -- so GENERATE was looked for on a workspace that had
+        # neither been rendered for this stage nor had its disclosures opened. That is the
+        # CI failure this suite took in PR #74 run #94.
+        #
+        # The settled condition is an agreement: the rendered shot workspace names the
+        # same task the product recorded. Only then are the disclosures opened, and they
+        # are opened on the render the assertion is about.
+        page.wait_for_function(
+            """() => {
+              const shell = document.querySelector('#main [data-bounded="1"][data-selected-task]');
+              if (!shell) return false;
+              if (shell.dataset.selectedTask !== 'look') return false;
+              const pressed = document.querySelector('.focused-task-button[data-stage-id="look"]');
+              /* the strip may live outside #main; when it is there it must agree too */
+              return !pressed || !document.querySelector('.focused-task-button.is-selected[data-stage-id]')
+                || document.querySelector('.focused-task-button.is-selected[data-stage-id]').dataset.stageId === 'look';
+            }""", timeout=20000)
         page.evaluate("() => document.querySelectorAll('#main details').forEach(node => { node.open = true; })")
-        page.wait_for_timeout(300)
+        # The disclosures are opened by script, so the DOM already carries the result;
+        # what the next line reads is the button inside them.
+        page.wait_for_function(
+            "() => [...document.querySelectorAll('#main details')].every(node => node.open)", timeout=20000)
         generate = page.get_by_role("button", name="GENERATE", exact=True)
         assert generate.count() == 1, f"B: expected one Create blocking frame button, found {generate.count()}"
         generate.first.click()

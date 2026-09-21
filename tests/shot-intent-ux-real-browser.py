@@ -867,8 +867,19 @@ try:
         assert restored["buildDisabled"] is False, "8. and Build prompt available again"
         assert restored["paidButtons"] == 1, "8. and the paid button restored from the package that was already there"
         restored_compiles = len(compile_calls)
+        restored_builds = page.evaluate(MOTION_STATE)["builds"]
         page.locator("#main button.assemble-btn", has_text="Build prompt").first.click()
-        page.wait_for_timeout(3000)
+        # THE SAME SETTLE THE PRECONDITION STEP ABOVE ALREADY USES, and for the same
+        # reason: a compile is a real round trip, and 3000ms was a guess about how long
+        # one takes. PR #74 run #94 failed this suite on a runner where the guess was
+        # wrong. The page has either stored a package or recorded the compile as failed;
+        # wait for whichever, bounded by the page's own 30s compile timeout, and let the
+        # assertion below be the verdict about which it was.
+        settle_by = time.time() + 30
+        while time.time() < settle_by:
+            state = page.evaluate(MOTION_STATE)
+            if state["builds"] > restored_builds or (state["compile"] or {}).get("status") == "error": break
+            page.wait_for_timeout(100)
         assert len(compile_calls) > restored_compiles, \
             "8. and the same stored target must really compile again once the intent matches"
         findings.append("8. restored: changing the intent back to t2v makes the SAME preserved target executable "

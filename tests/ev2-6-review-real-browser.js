@@ -19,7 +19,53 @@ const jobs=[{id:'fixture-partial',shotId:'SH-B',frameId:'frame-a',purpose:'frame
 fs.writeFileSync(path.join(dir,'generation-jobs.json'),JSON.stringify(jobs));
 
 fs.writeFileSync(path.join(dir,'project.json'),JSON.stringify(p,null,2));
-let server,browser,page,base,saveMode='',heldSave=null,saveBodies=[],readFails=false,failedMedia='';const checks=[],errors=[],blocked=[];const check=(name,ok)=>{checks.push({name,passed:!!ok});assert(ok,name);};
+/* Media latency for the whole file, so a slow runner can be modelled on demand; 0 by default. */
+const BASE_SLOW_MEDIA_MS=Number(process.env.EV2_SLOW_MEDIA_MS||0)||0;
+let server,browser,page,base,saveMode='',heldSave=null,saveBodies=[],readFails=false,failedMedia='',slowMediaMs=BASE_SLOW_MEDIA_MS;const checks=[],errors=[],blocked=[];const check=(name,ok)=>{checks.push({name,passed:!!ok});assert(ok,name);};
+/* WHY THE MEDIA-RECOVERY STEP STOPPED WAITING ON naturalWidth ALONE.
+
+   The assertion after the retry is a conjunction of five facts: the bytes decoded, the
+   figure no longer carries rx-failed, its .rx-load-error is hidden, #rx-approve is
+   enabled again, and the selected card is still the same binding key. Only the first of
+   those was waited for, and the other four were then read one at a time — each a
+   separate round trip to the browser. public/results-desk.js sets the other four inside
+   mount()'s sync(), which runs again on EVERY render, so an async route() landing between
+   those round trips re-mounts the desk with a fresh <img> that has not decoded yet:
+   sync() sees neither `good` nor `failed`, leaves the classes alone, and disables
+   #rx-approve. The card is on screen, half painted, and the read is spurious. PR #74 run
+   #94 failed this suite exactly there, on a runner where the repaint was late.
+
+   The correction is not a longer wait. It is ONE evaluation, in ONE task, that requires
+   all five facts to be true at the SAME MOMENT — so a stale decode or a partially
+   repainted card can never satisfy it, and the assertion afterwards reads a card that
+   cannot change underneath it. slowMediaMs holds media responses so that repaint can be
+   put exactly where CI put it, and the reproduction below does that before the fix runs.
+
+   `key` is optional: the screening view has no pressed card to name, and asking for one
+   there would be a fact the assertion does not rely on. */
+async function selectedMediaSettled(name,key){
+ /* A GIVE-UP IS NOT A VERDICT. If the five facts never hold together, this returns and
+    the check() after it fails in its own words about the contract it owns, rather than
+    being replaced by a Playwright timeout that names no contract at all. */
+ try{await page.waitForFunction(([name,key])=>{
+  const root=document.querySelector('[data-results-desk]');if(!root)return false;
+  if(key){const card=root.querySelector('[data-rx-key][aria-pressed=true]');if(!card||card.getAttribute('data-rx-key')!==key)return false;}
+  const img=root.querySelector('#rx-primary');if(!img)return false;
+  const fig=img.closest('.rx-media');if(!fig)return false;
+  /* THE EXACT TARGET, not merely some decoded image: a retry that quietly moved to
+     another candidate would satisfy every other fact here. */
+  const src=img.getAttribute('src');if(!src)return false;
+  let shown='';try{shown=decodeURIComponent(img.src);}catch{shown=img.src;}
+  if(!shown.includes(name))return false;
+  if(!img.complete||!img.naturalWidth)return false;
+  /* The product's own reading of that media, not the test's: these three are what
+     results-desk.js writes from the load it just saw. */
+  if(fig.classList.contains('rx-failed'))return false;
+  const note=fig.querySelector('.rx-load-error');if(!note||!note.hidden)return false;
+  const approve=root.querySelector('#rx-approve');if(!approve||approve.disabled)return false;
+  return true;
+ },[name,key||''],{timeout:20000});}catch(e){console.log('NOTE: selected media never settled for '+name+' within 20000ms; the check below reports what was on screen');}
+}
 async function shot(id){await page.evaluate(id=>location.hash='#/shot/'+id,id);await page.locator('#main').getByText(id,{exact:false}).first().waitFor();await page.waitForTimeout(400);}
 async function capture(name){await page.mouse.move(1,1);await page.screenshot({path:path.join(OUT,name+'.png')});}
 (async()=>{try{
@@ -40,6 +86,23 @@ if(['POST','PUT'].includes(r.request().method())&&/\/api\/projects\/returned-pro
 }
 if(readFails&&r.request().method()==='GET'&&u.pathname==='/api/projects/returned-project/project')return r.abort('failed');
 if(failedMedia&&decodeURIComponent(u.pathname).endsWith(failedMedia))return r.fulfill({status:404,body:'Synthetic media unavailable'});
+/* FORCED TIMING, ON PURPOSE, AND A COLD CACHE WITH IT. Media bytes are held so a repaint
+   can be put exactly where a slow runner put it. 0 by default: nothing is slowed unless a
+   step asks.
+
+   THE no-store MATTERS AS MUCH AS THE DELAY. When bytes are already in the browser's list
+   of available images, assigning the same src marks the new <img> completely available
+   SYNCHRONOUSLY -- so a re-rendered card can come back decoded in the same task, and
+   whether it does depends on cache state rather than on anything under test. That is what
+   made the forced-latency control below pass 59 times in 60 and fail once. Serving the
+   held media no-store keeps the image out of that list, so every repaint starts a real
+   load and the freshly mounted card is deterministically undecoded. A cold cache is also
+   the more faithful model of the CI runner being reproduced. */
+if(slowMediaMs>0&&/\.(png|jpe?g|webp|gif|mp4|webm)$/i.test(u.pathname)){
+ const answer=await r.fetch();
+ await new Promise(z=>setTimeout(z,slowMediaMs));
+ return r.fulfill({response:answer,headers:{...answer.headers(),'cache-control':'no-store, no-cache, must-revalidate'}});
+}
 if(/\/api\/(generation|accounts|assistant\/test)/.test(u.pathname)&&r.request().method()!=='GET'){blocked.push(u.pathname);return r.fulfill({status:503,json:{error:'Provider traffic disabled in synthetic acceptance'}});}return r.continue();});
 page=await context.newPage();page.on('pageerror',e=>errors.push(e.message));await page.goto(base);await page.waitForFunction(()=>typeof P!=='undefined'&&P?.shots?.length);await page.waitForTimeout(1200);
 for(const [width,height]of [[390,844],[1280,720],[1440,900],[1920,1080]]){await page.setViewportSize({width,height});await shot('SH-A');await capture('after-shot-'+width);
@@ -112,9 +175,40 @@ const parentKey=await page.evaluate(name=>returnedReviewProjectionForBrowser().i
 const failedCard=page.locator('[data-rx-key][aria-pressed=true]'),cardLabel=await failedCard.getAttribute('aria-label'),cardDecision=await failedCard.locator('.rx-status').innerText();failedMedia=BROWSER_FIXTURE.parentB;for(const img of [failedCard.locator('.rx-thumb img'),page.locator('#rx-primary')])await img.evaluate(img=>{img.src+='?syntheticCardFailure=1';});await failedCard.locator('.rx-thumb-unavailable:not([hidden])').waitFor();await page.locator('.rx-selected .rx-load-error:not([hidden])').waitFor();
 check('Unloadable card shows a neutral placeholder with its exact identity, decision and selection',await failedCard.getAttribute('data-rx-key')===parentKey&&await failedCard.getAttribute('aria-label')===cardLabel&&await failedCard.locator('.rx-status').innerText()===cardDecision&&await page.locator('[data-rx-key][aria-pressed=true]').count()===1&&await failedCard.locator('.rx-thumb img').evaluate(img=>getComputedStyle(img).visibility==='hidden'));
 check('Unloadable selected result shows no media or alt text and cannot approve',await page.locator('#rx-primary').evaluate(img=>getComputedStyle(img).visibility==='hidden')&&await page.locator('#rx-approve').isDisabled());await capture('results-card-load-failure');
-failedMedia='';await page.locator('.rx-selected [data-rx=reload-media]').click();await page.waitForFunction(()=>document.getElementById('rx-primary')?.naturalWidth>0);check('Retry restores the same selected media',await page.locator('.rx-selected .rx-media').evaluate(f=>!f.classList.contains('rx-failed')&&f.querySelector('.rx-load-error').hidden)&&await page.locator('#rx-approve').isEnabled()&&await failedCard.getAttribute('data-rx-key')===parentKey);
+/* THE REPLACED MECHANISM, MEASURED. The retry is made with media held back, the old
+   naturalWidth wait is run to completion, and then the async repaint a slow runner landed
+   mid-assertion is landed here on purpose. What the old reads would have found is
+   recorded: a card that is not marked failed, whose error note is hidden, and whose
+   #rx-approve is disabled by a freshly mounted <img> that has not decoded. */
+failedMedia='';slowMediaMs=800;await page.locator('.rx-selected [data-rx=reload-media]').click();
+await page.waitForFunction(()=>document.getElementById('rx-primary')?.naturalWidth>0);
+/* READ IN ONE TASK, so the reproduction is deterministic rather than merely likely.
+   Everything after `await route()` is read inside the SAME evaluate, in the same task the
+   repaint finished in. A freshly mounted <img> cannot have decoded by then -- an image
+   load always needs at least one more task, cached or not -- so mount()'s sync() has
+   deterministically seen neither `good` nor `failed` and has disabled #rx-approve. Read
+   across separate round trips instead (as this control first did, and as the assertion
+   it is about still does) the answer depends on whether the decode beat the next round
+   trip, which is the very thing being corrected: measured over 30 runs it did not, twice. */
+const raced=await page.evaluate(async()=>{
+ const decodedBefore=!!document.getElementById('rx-primary')?.naturalWidth;
+ await route();
+ const root=document.querySelector('[data-results-desk]');
+ const img=root&&root.querySelector('#rx-primary');
+ const fig=img&&img.closest('.rx-media');
+ const note=fig&&fig.querySelector('.rx-load-error');
+ const approve=root&&root.querySelector('#rx-approve');
+ return {decodedBefore,mounted:!!fig,
+         failed:!!(fig&&fig.classList.contains('rx-failed')),
+         noteHidden:!!(note&&note.hidden),
+         approveDisabled:!!(approve&&approve.disabled)};
+});
+check('Forced latency: the replaced naturalWidth wait admits a partially repainted card',raced.decodedBefore&&raced.mounted&&!raced.failed&&raced.noteHidden&&raced.approveDisabled);
+/* AND THE CORRECTION UNDER THE SAME LATENCY: one evaluation, five facts, true together. */
+await selectedMediaSettled(BROWSER_FIXTURE.parentB,parentKey);slowMediaMs=BASE_SLOW_MEDIA_MS;
+check('Retry restores the same selected media',await page.locator('.rx-selected .rx-media').evaluate(f=>!f.classList.contains('rx-failed')&&f.querySelector('.rx-load-error').hidden)&&await page.locator('#rx-approve').isEnabled()&&await failedCard.getAttribute('data-rx-key')===parentKey);
 await page.locator('#rx-screen').click();await page.locator('#rx-compare').selectOption({index:1});failedMedia=BROWSER_FIXTURE.repairB;await page.locator('.rx-stage img').nth(1).evaluate(img=>{const src=img.src;img.src=src+(src.includes('?')?'&':'?')+'syntheticFailure=1';});await page.locator('.rx-stage .rx-load-error:not([hidden])').waitFor();check('Comparison failure leaves healthy selected approval enabled',await page.locator('#rx-approve').isEnabled());failedMedia='';await page.locator('.rx-stage .rx-load-error:not([hidden]) [data-rx=reload-media]').click();await page.waitForFunction(()=>[...document.querySelectorAll('.rx-stage img')].every(img=>img.complete&&img.naturalWidth>0));
-failedMedia=BROWSER_FIXTURE.parentB;await page.locator('#rx-primary').evaluate(img=>{img.src+='?syntheticFailure=1';});await page.locator('.rx-stage .rx-load-error:not([hidden])').waitFor();check('Selected load failure prevents approval',await page.locator('#rx-approve').isDisabled());await capture('media-load-failure');failedMedia='';await page.locator('.rx-stage .rx-load-error:not([hidden]) [data-rx=reload-media]').click();await page.waitForFunction(()=>document.getElementById('rx-primary')?.naturalWidth>0);check('Loading retry preserves exact target',await page.locator('#rx-primary').getAttribute('src').then(src=>src.includes(BROWSER_FIXTURE.parentB)));
+failedMedia=BROWSER_FIXTURE.parentB;await page.locator('#rx-primary').evaluate(img=>{img.src+='?syntheticFailure=1';});await page.locator('.rx-stage .rx-load-error:not([hidden])').waitFor();check('Selected load failure prevents approval',await page.locator('#rx-approve').isDisabled());await capture('media-load-failure');failedMedia='';await page.locator('.rx-stage .rx-load-error:not([hidden]) [data-rx=reload-media]').click();await selectedMediaSettled(BROWSER_FIXTURE.parentB);check('Loading retry preserves exact target',await page.locator('#rx-primary').getAttribute('src').then(src=>src.includes(BROWSER_FIXTURE.parentB)));
 await page.locator('#rx-reject').click();await page.waitForFunction(()=>!approvalSubmissionPending());check('Rejection saved and retained',disk().shots.find(s=>s.id==='SH-B').candidateFiles.find(r=>r.stored===BROWSER_FIXTURE.parentB).decision==='rejected');await capture('rejected-result');await page.locator('#rx-restore').click();await page.waitForFunction(()=>!approvalSubmissionPending());check('Restore is not approval',!disk().productionAuthority.receipts.some(r=>r.kind==='shot-frame'&&r.shotId==='SH-B'&&r.status==='current'));
 // Finishing creation is a local task save; it never changes authority.
 await results('motion');const motionBefore=JSON.stringify(disk().productionAuthority);await page.locator('#rx-finish').click();await page.locator('#finish-notes').fill('Synthetic finish: preserve timing and crop.');saveMode='refuse';await page.getByRole('button',{name:'SEND TO FINISHING',exact:true}).click();await page.locator('[data-approval-outcome=uncommitted]').waitFor();const finishId=await page.evaluate(()=>approvalSubmissionPending().meta.finishJob.id);await capture('finishing-save-failure');await page.getByRole('button',{name:'RETRY SAVING DECISION'}).click();await page.waitForFunction(()=>!approvalSubmissionPending());check('Finishing retry creates exactly one task',disk().finishJobs.filter(j=>j.id===finishId).length===1);check('Finishing task preserves every authority receipt',JSON.stringify(disk().productionAuthority)===motionBefore);
