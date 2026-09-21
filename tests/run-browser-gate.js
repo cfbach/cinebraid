@@ -67,6 +67,10 @@ const SUITES = [
   /* NO_PROJECT_SHELL_TRUTH_V1. The first minute with no project open, measured with
      its own negative controls served through request interception. */
   "check:no-project-shell-browser",
+  /* ORPHAN_ENTITY_CREATION_REFUSAL_V1. No record form without a record to save into — first
+     run, Recovery, a failed load, a project still opening, and a SAVE whose project went
+     away — with its own negative controls served through request interception. */
+  "check:orphan-entity-creation-browser",
   /* A2. Beside the A1 shell suite: the two measure the same chrome, one for what
      it owns and one for what it says it is. */
   "check:shell-identity-browser",

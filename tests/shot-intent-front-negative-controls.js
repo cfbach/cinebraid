@@ -327,11 +327,12 @@ mustFailAsync("NC-9 the global Add loses the chooser", "must still show the gene
   const page = await render("#/shots/board", project, {
     scan: scanFor(project),
     /* Anchored on the head of openGlobalAdd(), because NO_PROJECT_SHELL_TRUTH_V1 put the
-       no-project filter where `const choices` used to be. The mutation is unchanged:
+       no-project filter where `const choices` used to be (and ORPHAN_ENTITY_CREATION_REFUSAL_V1
+       gave the head an options argument for its in-place redraw). The mutation is unchanged:
        every Add is sent straight to a record type before the chooser can ask. */
     mutateSource: pageMutation("app.js",
-      `window.openGlobalAdd = (preferred = "") => {\n  /* NO_PROJECT_SHELL_TRUTH_V1 — THE CHOOSER OFFERS ONLY WHAT IT CAN DELIVER.`,
-      `window.openGlobalAdd = (preferred = "") => {\n  if (preferred) return runGlobalAdd(preferred);\n  return runGlobalAdd("shot");\n  /* NO_PROJECT_SHELL_TRUTH_V1 — THE CHOOSER OFFERS ONLY WHAT IT CAN DELIVER.`,
+      `window.openGlobalAdd = (preferred = "", options = {}) => {\n  /* NO_PROJECT_SHELL_TRUTH_V1 — THE CHOOSER OFFERS ONLY WHAT IT CAN DELIVER.`,
+      `window.openGlobalAdd = (preferred = "", options = {}) => {\n  if (preferred) return runGlobalAdd(preferred);\n  return runGlobalAdd("shot");\n  /* NO_PROJECT_SHELL_TRUTH_V1 — THE CHOOSER OFFERS ONLY WHAT IT CAN DELIVER.`,
       "NC-9"),
   });
   const generic = run(page.context, `

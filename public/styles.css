@@ -3065,8 +3065,9 @@ body[data-focused-workspace="1"] .coverage-slot-card.focused-slot-selected .cove
 .project-switcher-open small{color:var(--muted);font:9px var(--mono);white-space:nowrap}
 .project-delete-btn{white-space:nowrap}
 .project-switcher-note{color:var(--muted);font-size:10px}.project-switcher-note code{font-family:var(--mono);color:var(--text)}
-.project-switcher-error{display:grid;gap:6px;padding:11px 12px;border:1px solid var(--red);border-radius:10px;background:color-mix(in srgb,var(--red) 12%,transparent);color:var(--ink);font-size:12px;line-height:1.5}
-.project-switcher-error[hidden]{display:none}
+.project-switcher-error,.form-refusal{display:grid;gap:6px;padding:11px 12px;border:1px solid var(--red);border-radius:10px;background:color-mix(in srgb,var(--red) 12%,transparent);color:var(--ink);font-size:12px;line-height:1.5}
+.project-switcher-error[hidden],.form-refusal[hidden]{display:none}
+.form-refusal{margin:0 0 14px}
 .project-switcher-error strong{font-size:13px}
 .project-switcher-error-path{color:var(--muted);font-size:10.5px;word-break:break-all}
 .project-switcher-error code,.project-failure-path code{font-family:var(--mono);color:var(--ink)}

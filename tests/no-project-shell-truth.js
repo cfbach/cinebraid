@@ -335,10 +335,10 @@ check('11. the add chooser offers only what it can deliver, and New project open
 
   const app = read('public/app.js');
   const open = app.slice(app.indexOf('window.openGlobalAdd = '), app.indexOf('/* ADD, WHERE THE SURFACE HAS ALREADY NAMED THE RECORD.'));
-  assert.ok(/GLOBAL_ADD_CHOICES\.filter\(\(\[key\]\) => shellAddChoiceAvailable\(key, \{ hasProject \}\)\)/.test(open),
+  assert.ok(/GLOBAL_ADD_CHOICES\.filter\(\(\[key\]\) => shellAddChoiceAvailable\(key, facts\)\)/.test(open),
     'the chooser filters through the predicate rather than carrying a second list');
   const run = app.slice(app.indexOf('window.runGlobalAdd = '), app.indexOf('/* THE BOARD FILTERS ARE A THIRD READING'));
-  assert.ok(/if \(shellInFirstRun\(\)\) return newProject\(\);/.test(run),
+  assert.ok(/if \(!projectRecordInstalled\(\)\) return newProject\(\);/.test(run),
     'New project with nothing open opens the existing new-project dialog — it used to close the chooser and do nothing');
   assert.ok(/location\.hash = "#\/create";/.test(run),
     'and a window that HAS a project still goes to the start surface, unchanged');

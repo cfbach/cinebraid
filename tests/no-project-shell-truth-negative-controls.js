@@ -126,10 +126,10 @@ control('C6 Sync local folders reports "synced" before it asks whether a project
   patch(dir, 'public/app.js', '  if (shellControlRefused($("#rescan"))) return;\n', '', 'C6'));
 
 control('C7 the ＋ Add chooser offers all eight records with no project again', 11, (dir) =>
-  patch(dir, 'public/app.js', '    ? GLOBAL_ADD_CHOICES.filter(([key]) => shellAddChoiceAvailable(key, { hasProject }))', '    ? GLOBAL_ADD_CHOICES', 'C7'));
+  patch(dir, 'public/app.js', '    ? GLOBAL_ADD_CHOICES.filter(([key]) => shellAddChoiceAvailable(key, facts))', '    ? GLOBAL_ADD_CHOICES', 'C7'));
 
 control('C8 ＋ Add → New project closes the chooser and does nothing again', 11, (dir) =>
-  patch(dir, 'public/app.js', '    if (shellInFirstRun()) return newProject();\n', '', 'C8'));
+  patch(dir, 'public/app.js', '    if (!projectRecordInstalled()) return newProject();\n', '', 'C8'));
 
 control('C9 Activity reports aria-expanded from the stored preference alone again', 12, (dir) =>
   patch(dir, 'public/creator-surfaces.js', '    const open = availability.available && !terminalCollapsed();', '    const open = !terminalCollapsed();', 'C9'));

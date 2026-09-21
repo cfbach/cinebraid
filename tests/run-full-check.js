@@ -174,6 +174,10 @@ const nodeSuites = [
   /* C3: the server refuses a no-project search instead of exiting on it. */
   "check:no-project-search",
   "check:no-project-search-negative",
+  /* ORPHAN_ENTITY_CREATION_REFUSAL_V1: no record is created without a project record to
+     hold it, and no media route writes into a placeholder project. */
+  "check:orphan-entity-creation",
+  "check:orphan-entity-creation-negative",
   "check:shell-ownership",
   /* A2. Named beside the A1 ownership suite because they guard the same shell
      from opposite directions: that one holds Activity and the Assistant where A1
@@ -346,6 +350,7 @@ const browserSuites = [
   "check:focused-browser", "check:alpha-loop-browser", "check:entity-truth-browser",
   "check:shot-readiness-browser", "check:founder-p0-browser", "check:quiet-shell-browser",
   "check:no-project-shell-browser",
+  "check:orphan-entity-creation-browser",
   "check:shell-identity-browser",
   "check:project-entry-browser", "check:reference-reframe-browser", "check:simple-advanced-browser",
   "check:shot-intent-browser", "check:authority-browser", "check:shot-canon-removal-browser",

@@ -48,9 +48,10 @@
  * ---------------------------------------------------------------------------
  * WHAT IS DELIBERATELY NOT HERE.
  *
- *   * WHETHER AN ENTITY FORM OPENED WITHOUT A PROJECT MAY SAVE. That refusal is
- *     `ORPHAN_ENTITY_CREATION_REFUSAL_V1`'s, and it is a write-path question; this
- *     file only decides whether the chooser offers the record at all.
+ *   * HOW A REFUSED ENTITY FORM IS DRAWN. Whether a shot, scene or reference may be
+ *     created at all is decided here (ORPHAN_ENTITY_CREATION_REFUSAL_V1, below the add
+ *     chooser); where the refusal appears — the chooser, the form's own SAVE — is the
+ *     runtime's business, for the same reason the rail's note is.
  *
  *   * WHAT `#/create` LOOKS LIKE, OR WHERE A NEW PROJECT LANDS. The start surface
  *     still says "The one you have open now is not changed", which is not true when
@@ -264,14 +265,97 @@
   }
 
   /* ==========================================================================
+     ORPHAN_ENTITY_CREATION_REFUSAL_V1 — A RECORD IS CREATED INTO A PROJECT, OR NOT AT ALL.
+
+     Every record the add control makes other than a project — shot, scene,
+     character, location, prop, vehicle, audio — is pushed into the open project's
+     record and saved with it. With no record to push into, the shipped forms opened
+     anyway, took the filmmaker's typing, closed on SAVE and threw it away: no
+     request, no message, no error on screen. Measured at 12a338d in four states,
+     not one:
+
+       first run      the chooser was already honest, but every direct creator
+                      (openContextualAdd, runGlobalAdd, addEntity, addScene) still
+                      opened its form;
+       Recovery mode  the chooser offered all seven records and six of them opened
+       load failure   a form that discarded its input;
+       still opening  a form opened before the project arrived discarded its input
+                      if SAVE was pressed before it did.
+
+     THE FACT IS THE RECORD, NOT "IS A PROJECT OPEN". `hasProject` above means "the
+     shell has not confirmed first run", which is deliberately TRUE in the last three
+     states so the rail keeps its shipped behaviour there. A record cannot be written
+     into any of them, so creation asks the narrower question: `projectRecord`, whether
+     this window holds a project record the save path can write. A caller that has
+     not learnt that fact is answered from `hasProject`, exactly as before.
+
+     ONE ANSWER CARRIES EVERYTHING A SURFACE NEEDS: the `state` it is in, the
+     `heading` and `reason` it says, and the one `action` it may offer. A surface
+     renders that answer; it does not decide a second one.
+
+       state        action           when
+       open         —                a project record is installed and nothing is opening
+       opening      wait             a project is being opened or created. Nothing is
+                                     offered — not New project, not Open project, not a
+                                     form — because each would start a second project
+                                     operation beside the one already running
+       no-project   create-project   confirmed first run
+       unopenable   create-project   Recovery mode, a failed load: no record, no open running
+       replaced     none             a form's SAVE, when a DIFFERENT project is installed
+                                     than the one the form was opened for
+       gone         none             a form's SAVE, when the project it was opened for is
+                                     no longer installed and none has replaced it
+
+     THE LAST TWO ARE A FORM'S, AND ONLY A FORM'S. A form is drawn for one project;
+     `projectChanged` is the runtime's report that the project installed at SAVE is
+     not that one. "Both P and a slug are truthy again" is not the same project, and a
+     record saved on that basis lands in whichever project happens to be open.
+
+     THE PRE-OPEN REASON IS THE ONE THE ADD CONTROL ALREADY OWNED.
+     SHELL_NO_PROJECT_REASONS.add was declared for the chooser and ends in the shell's
+     one remedy. The four sentences below end differently on purpose: "create a
+     project" is not true advice while one is opening, or to a form whose own project
+     went away. */
+  const SHELL_RECORD_LABELS = deepFreeze({
+    shot: "Shot", scene: "Scene", character: "Character", location: "Location",
+    prop: "Prop", vehicle: "Vehicle", audio: "Audio",
+  });
+
+  const SHELL_ENTITY_CREATION_TEXT = deepFreeze({
+    openingHeading: "The project is still opening",
+    opening: "Records are added to a project once it has opened. Wait until it finishes before adding records.",
+    replaced: "This form was opened in a different project from the one open now, so nothing was saved — saving here would put the record in the wrong project. Everything you entered is still in the form.",
+    gone: "The project this form was opened in is no longer open, so nothing was saved. Everything you entered is still in the form.",
+  });
+
+  function shellEntityCreationAvailability(key, facts) {
+    const raw = facts && typeof facts === "object" ? facts : {};
+    const record = availabilityText(key);
+    const label = SHELL_RECORD_LABELS[record] || "This record";
+    if (raw.opening)
+      return { record, available: false, state: "opening", action: "wait",
+        heading: SHELL_ENTITY_CREATION_TEXT.openingHeading, reason: SHELL_ENTITY_CREATION_TEXT.opening };
+    const writable = Object.prototype.hasOwnProperty.call(raw, "projectRecord") ? !!raw.projectRecord : !!raw.hasProject;
+    if (raw.projectChanged === true)
+      return writable
+        ? { record, available: false, state: "replaced", action: "none", heading: `${label} was not saved`, reason: SHELL_ENTITY_CREATION_TEXT.replaced }
+        : { record, available: false, state: "gone", action: "none", heading: `${label} was not saved`, reason: SHELL_ENTITY_CREATION_TEXT.gone };
+    if (writable) return { record, available: true, state: "open", action: "", heading: "", reason: "" };
+    return { record, available: false, state: raw.hasProject ? "unopenable" : "no-project", action: "create-project",
+      heading: `${label} needs an open project`, reason: SHELL_NO_PROJECT_REASONS.add };
+  }
+
+  /* ==========================================================================
      THE ADD CHOOSER.
 
      Only the record that can exist without a project. Everything else is a child
-     of one, and offering it is the promise the shipped build could not keep. */
+     of one, and offering it is the promise the shipped build could not keep — so a
+     child record is offered exactly when it could be created, and New project exactly
+     when the answer above permits that action. Both are the answer above, not a
+     second one. */
   function shellAddChoiceAvailable(key, facts) {
-    const raw = facts && typeof facts === "object" ? facts : {};
-    if (raw.hasProject) return true;
-    return availabilityText(key) === "project";
+    if (availabilityText(key) === "project") return shellEntityCreationAvailability("", facts).state !== "opening";
+    return shellEntityCreationAvailability(key, facts).available;
   }
 
   function shellAddChoices(keys, facts) {
@@ -343,6 +427,9 @@
     shellNavPartition,
     shellRouteWithoutProject,
     shellRouteIsKnown,
+    SHELL_RECORD_LABELS,
+    SHELL_ENTITY_CREATION_TEXT,
+    shellEntityCreationAvailability,
     shellAddChoiceAvailable,
     shellAddChoices,
     shellUtilityAvailability,

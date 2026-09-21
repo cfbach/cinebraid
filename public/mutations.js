@@ -156,12 +156,22 @@ async function uploadTakes(id, files) {
   toast(files.length + " candidate(s) added");
 }
 
+/* ORPHAN_ENTITY_CREATION_REFUSAL_V1. Every creator below asks refuseEntityCreation()
+   (public/app.js) before it draws anything, and asks entityCreationRefusal() again at
+   SAVE with the identity of the project it was drawn for, so a record is only ever
+   created into a project record that can be saved — and only into THAT project. The
+   formModal creators have the identity remembered for them by formModal(); this dialog
+   is not a formModal, so it remembers its own. */
 window.duplicateShot = (id) => {
+  if (refuseEntityCreation("shot")) return;
   const s = shotById(id);
   if (!s) return;
+  window._duplicateShotOpenedFor = projectOpenIdentity();
   openModal(`<h3>Duplicate or inherit shot</h3><div class="modal-sub">START THE NEXT SHOT WITHOUT REBUILDING CONTINUITY</div><label>Copy mode<select id="duplicate-shot-mode"><option value="continuity">References, continuity, camera, and motion settings</option><option value="structure">Structure and descriptions only</option><option value="blank-motion">References and continuity, but clear motion</option></select></label><label>New title<input id="duplicate-shot-title" value="${attr(s.title + " — next")}"></label><div class="modal-actions"><button class="cancel" onclick="closeModal()">Cancel</button><button class="approve-btn" onclick="confirmDuplicateShot('${id}')">CREATE SHOT</button></div>`);
 };
 window.confirmDuplicateShot = (id) => {
+  const refusal = entityCreationRefusal("shot", window._duplicateShotOpenedFor || null);
+  if (refusal) return toast(refusal);
   const source = shotById(id);
   if (!source) return;
   const mode = document.getElementById("duplicate-shot-mode")?.value || "continuity";
@@ -243,7 +253,7 @@ window.confirmDuplicateShot = (id) => {
 
 /* ---------- mutations ---------- */
 window.addScene = () =>
-  formModal(
+  refuseEntityCreation("scene") || formModal(
     "New scene",
     [
       { k: "id", label: "Scene code (optional)", ph: "Auto-generated" },
@@ -268,6 +278,7 @@ window.addScene = () =>
       location.hash = "#/scene/" + id;
       route();
     },
+    { refuse: (openedFor) => entityCreationRefusal("scene", openedFor) },
   );
 /* AT1-F — REMOVING A SHOT OR A SCENE WITHDRAWS EVERY RECEIPT FIRST, OR REMOVES NOTHING.
  *
@@ -533,6 +544,7 @@ window.delScene = (id) => {
   }, 0);
 };
 window.addShot = (sceneId) => {
+  if (refuseEntityCreation("shot")) return;
   const hasScenes = !!P.scenes.length;
   const fields = [];
   if (hasScenes)
@@ -659,7 +671,7 @@ window.addShot = (sceneId) => {
     dirty();
     location.hash = "#/shot/" + id;
     route();
-  });
+  }, { refuse: (openedFor) => entityCreationRefusal("shot", openedFor) });
 };
 window.delShot = (id) => {
   const shot = shotById(id);
@@ -775,6 +787,9 @@ window.delOpt = (id, oid) => {
   route();
 };
 window.addEntity = (list) => {
+  /* The add chooser's key for this list, which is what the refusal is headed with. */
+  const record = { characters: "character", locations: "location", props: "prop", vehicles: "vehicle", audio: "audio" }[list] || list;
+  if (refuseEntityCreation(record)) return;
   const singular = { characters: "character", locations: "location", props: "prop", vehicles: "vehicle", audio: "audio item" }[list] || list.slice(0, -1);
   formModal(
     "New " + singular,
@@ -840,6 +855,7 @@ window.addEntity = (list) => {
       location.hash = `#/${ENTITY_ROUTE[list]}/${id}`;
       route();
     },
+    { refuse: (openedFor) => entityCreationRefusal(record, openedFor) },
   );
 };
 function entityDependencyImpact(list, id) {

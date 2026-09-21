@@ -1418,6 +1418,33 @@ function shellHasProject() {
   return !shellInFirstRun();
 }
 
+/* ORPHAN_ENTITY_CREATION_REFUSAL_V1 — A RECORD THE SAVE PATH CAN WRITE.
+ *
+ * Not shellHasProject(), which is true while a project is still opening, on the
+ * load-failure screen and in Recovery mode — three states that hold no record, so a
+ * shot or reference created in them has nowhere to go. This is the exact condition
+ * captureProjectSave() has always refused on, and captureProjectSave() now asks it, so
+ * "is there a record to write into" has one definition for both the save and the
+ * creators that feed it. */
+function projectRecordInstalled() {
+  return !!P && !!ACTIVE_PROJECT_SLUG;
+}
+
+/* WHICH PROJECT A FORM WAS OPENED FOR, AND WHETHER IT IS STILL THE ONE INSTALLED.
+ *
+ * A project's identity here is its slug and the explicit open that installed it — the
+ * same pair creation-studio.js's stillTheSameOpenProject() compares. The slug alone
+ * would call a project reopened over a different record "the same"; the epoch alone
+ * would not name the project. A refresh keeps both, because it is the same open
+ * reading a newer copy of its own record. */
+function projectOpenIdentity() {
+  return projectRecordInstalled() ? { slug: ACTIVE_PROJECT_SLUG, epoch: PROJECT_OPEN_EPOCH } : null;
+}
+function sameProjectOpen(identity) {
+  return !!identity && projectRecordInstalled()
+    && identity.slug === ACTIVE_PROJECT_SLUG && identity.epoch === PROJECT_OPEN_EPOCH;
+}
+
 function shellAvailabilityModule() {
   return typeof shellNavAvailability === "function";
 }
@@ -1995,7 +2022,31 @@ async function load(options = {}) {
      work that just completed. */
   return requestedProjectIntent(options) === "refresh"
     ? requestProjectRefresh()
-    : runProjectReplacement();
+    : trackProjectOpen(() => runProjectReplacement());
+}
+
+/* ORPHAN_ENTITY_CREATION_REFUSAL_V1 — WHETHER AN OPEN IS RUNNING.
+ *
+ * Only this lifecycle knows, so only it says. Every explicit open, switch, creation and
+ * Recovery retry arrives here as a replacement; a refresh never does, and never clears
+ * the record. The count rises before the replacement's first statement runs and falls
+ * when it settles — committed, first run, refused, or thrown into a failure screen — so
+ * "opening" is a fact about this window's own work, not an inference from a null record.
+ * When the last open settles, whatever is showing the "still opening" answer is told, so
+ * it can stop saying something that is no longer true. */
+let PROJECT_OPENS_IN_FLIGHT = 0;
+function trackProjectOpen(start) {
+  PROJECT_OPENS_IN_FLIGHT += 1;
+  let running;
+  try { running = Promise.resolve(start()); } catch (error) { running = Promise.reject(error); }
+  return running.finally(() => {
+    PROJECT_OPENS_IN_FLIGHT -= 1;
+    /* Telling a dialog what is true now must never change what the open itself did. */
+    if (!PROJECT_OPENS_IN_FLIGHT) try { refreshEntityCreationRefusal(); } catch (_) {}
+  });
+}
+function projectOpenInFlight() {
+  return PROJECT_OPENS_IN_FLIGHT > 0 || (typeof manualReplacementBusy === "function" && !!manualReplacementBusy());
 }
 
 /* ---------------------------------------------------------------------------
@@ -3243,7 +3294,7 @@ function projectSlugParam() {
     : "";
 }
 function captureProjectSave() {
-  if (!P || !ACTIVE_PROJECT_SLUG) return null;
+  if (!projectRecordInstalled()) return null;
   const transition = currentAuthorityTransition();
   return {
     slug: ACTIVE_PROJECT_SLUG,
@@ -5079,8 +5130,25 @@ function formModalOption(option, selected) {
   const label = Array.isArray(option) ? String(option[1]) : String(option);
   return `<option value="${attr(value)}" ${value === String(selected == null ? "" : selected) ? "selected" : ""}>${esc(label)}</option>`;
 }
-function formModal(title, fields, onSubmit) {
+/* `options.refuse`, when a caller passes one, is asked at SAVE BEFORE the dialog closes,
+   and is handed the identity of the project this form was DRAWN for — remembered here,
+   at the one save boundary every creator shares, so no creator can forget it. A
+   non-empty answer is shown inside the form, in an alert the press announces, and the
+   form stays exactly as it was — every value still in its field, focus still on SAVE.
+   ORPHAN_ENTITY_CREATION_REFUSAL_V1: this dialog closed first and ran its callback
+   second, so a callback that could not write threw after the typing was already gone;
+   and a callback that COULD write wrote into whichever project was open by then.
+   A caller that passes nothing gets exactly the dialog it always had. */
+function formModal(title, fields, onSubmit, options = {}) {
+  const refuse = typeof options.refuse === "function" ? options.refuse : null;
+  const openedFor = refuse ? projectOpenIdentity() : null;
   window._formSubmit = () => {
+    const refusal = refuse ? refuse(openedFor) : "";
+    if (refusal) {
+      const note = $("#form-modal-refusal");
+      if (note) { note.textContent = refusal; note.hidden = false; }
+      return;
+    }
     const vals = {};
     fields.forEach((f) => (vals[f.k] = $("#ff-" + f.k).value));
     closeModal();
@@ -5098,7 +5166,7 @@ function formModal(title, fields, onSubmit) {
             : `<input id="ff-${f.k}" value="${attr(f.value || "")}" ${f.ph ? `placeholder="${attr(f.ph)}"` : ""}>`
       }${f.hint ? `<span class="hint">${esc(f.hint)}</span>` : ""}</div>`,
       )
-      .join("")}
+      .join("")}${refuse ? `<p id="form-modal-refusal" class="form-refusal" role="alert" hidden></p>` : ""}
     <div class="modal-actions"><button class="cancel" onclick="closeModal()">Cancel</button>
       <button class="lock-btn" onclick="_formSubmit()">SAVE</button></div>`);
   setTimeout(() => $("#ff-" + fields[0].k)?.focus(), 30);
@@ -7650,22 +7718,91 @@ const GLOBAL_ADD_CHOICES = [
   ["audio","Audio","Add dialogue, ambience, music, or timing material."],
   ["project","New project","Start from scratch or import structured material."],
 ];
-window.openGlobalAdd = (preferred = "") => {
+/* ORPHAN_ENTITY_CREATION_REFUSAL_V1 — THE FACTS EVERY RECORD CREATOR IS ANSWERED FROM.
+   Each is read from its one owner: the shell's own first-run answer, whether a record
+   the save path can write is installed, and whether an open is running. A form's SAVE
+   adds one more — whether the project installed now is the one it was drawn for — and a
+   creator asking whether it may draw at all passes no identity and gets no such fact.
+   The DECISION is the shared predicate's. */
+function entityCreationFacts(openedFor) {
+  const facts = { hasProject: shellHasProject(), projectRecord: projectRecordInstalled(), opening: projectOpenInFlight() };
+  if (openedFor !== undefined) facts.projectChanged = !sameProjectOpen(openedFor);
+  return facts;
+}
+/* The shared answer — state, heading, reason, action — or null in a realm that did not
+   load the predicate, where every creator is left exactly as it shipped, as it is for
+   the rest of the shell: tests evaluate this file in realms that do not load it. */
+function entityCreationAnswer(key, openedFor) {
+  if (typeof shellEntityCreationAvailability !== "function") return null;
+  return shellEntityCreationAvailability(key, entityCreationFacts(openedFor));
+}
+/* The sentence a refused record creation says, or "" when it may proceed. */
+function entityCreationRefusal(key, openedFor) {
+  const answer = entityCreationAnswer(key, openedFor);
+  return answer && !answer.available ? answer.reason : "";
+}
+/* THE ONE DOOR EVERY RECORD CREATOR PASSES BEFORE IT DRAWS A FORM.
+ *
+ * Returns true when the creator must stop. It opens no form and writes nothing; it opens
+ * the add chooser instead, headed with the record that was asked for, which says why in
+ * the predicate's sentence and offers the one record that CAN be made — so a direct call,
+ * a contextual Add and a chooser press all end in the same place, with the same words,
+ * and a keyboard user lands on the action that works. */
+function refuseEntityCreation(key) {
+  if (!entityCreationRefusal(key)) return false;
+  openGlobalAdd(key);
+  return true;
+}
+window.openGlobalAdd = (preferred = "", options = {}) => {
   /* NO_PROJECT_SHELL_TRUTH_V1 — THE CHOOSER OFFERS ONLY WHAT IT CAN DELIVER.
      Seven of these eight records are children of a project. With none open the
      shipped chooser offered all eight anyway: one of them did nothing, and six of
-     them opened a full creation form whose SAVE discarded the work. The refusal on
-     that SAVE is ORPHAN_ENTITY_CREATION_REFUSAL_V1's; NOT ASKING is this slice's,
-     and it is the half that stops a filmmaker typing into a form at all. */
-  const hasProject = shellHasProject();
+     them opened a full creation form whose SAVE discarded the work.
+     ORPHAN_ENTITY_CREATION_REFUSAL_V1 — the chooser draws the shared ANSWER. "None
+     open" is the record, not first run: Recovery mode and a load failure offer New
+     project alone, and while a project is opening nothing is offered at all — the only
+     truthful thing to do then is wait, and Cancel is the only control. */
+  const facts = entityCreationFacts();
   const choices = typeof shellAddChoiceAvailable === "function"
-    ? GLOBAL_ADD_CHOICES.filter(([key]) => shellAddChoiceAvailable(key, { hasProject }))
+    ? GLOBAL_ADD_CHOICES.filter(([key]) => shellAddChoiceAvailable(key, facts))
     : GLOBAL_ADD_CHOICES;
-  const sub = hasProject
-    ? "Choose the record you need. CineBraid will take you to its one canonical workspace."
-    : `Everything else CineBraid can add belongs to a project. ${typeof SHELL_NO_PROJECT_REMEDY === "string" ? SHELL_NO_PROJECT_REMEDY : ""}`.trim();
-  openModal(`<div class="global-add-modal"><h3>What are you adding?</h3><div class="modal-sub">${esc(sub)}</div><div class="global-add-grid">${choices.map(([key,label,note]) => `<button class="${preferred === key ? "recommended" : ""}" onclick="runGlobalAdd('${key}')"><b>${label}</b><span>${note}</span></button>`).join("")}</div><div class="modal-actions"><button class="cancel" onclick="closeModal()">Cancel</button></div></div>`);
+  /* Asked about a CHILD record — the one named, or any — never about a project. */
+  const asked = preferred && preferred !== "project" ? preferred : "";
+  const answer = entityCreationAnswer(asked || "shot") || { available: true, state: "open", heading: "", reason: "" };
+  const sub = answer.available ? "Choose the record you need. CineBraid will take you to its one canonical workspace." : answer.reason;
+  /* A refused record asked for by name is named in the heading, so the dialog answers the
+     question the person asked; an open that is running is named whatever was asked. */
+  const heading = !answer.available && (asked || answer.state === "opening") ? answer.heading : "What are you adding?";
+  const grid = choices.length
+    ? `<div class="global-add-grid">${choices.map(([key,label,note]) => `<button class="${preferred === key ? "recommended" : ""}" onclick="runGlobalAdd('${key}')"><b>${label}</b><span>${note}</span></button>`).join("")}</div>`
+    : "";
+  const markup = `<div class="global-add-modal" data-entity-creation-state="${attr(answer.state)}" data-preferred="${attr(preferred)}"><h3>${esc(heading)}</h3><div class="modal-sub" id="global-add-reason">${esc(sub)}</div>${grid}<div class="modal-actions"><button class="cancel" onclick="closeModal()">Cancel</button></div></div>`;
+  /* A REFRESH REDRAWS THE SAME DIALOG IN PLACE — the one that said "still opening" when
+     the open settles — so the person's way back out of it is not rewritten, and focus
+     moves to what the dialog now offers. */
+  if (options.refresh) {
+    if (!updateOpenModal(markup)) return;
+    $("#modal .modal-box [autofocus], #modal .modal-box button")?.focus?.();
+  } else {
+    openModal(markup);
+  }
+  /* The sentence is the dialog's description, so a screen reader reads the reason with
+     the heading when focus enters, not only a sighted person scanning the box. */
+  $("#modal .modal-box")?.setAttribute("aria-describedby", "global-add-reason");
 };
+/* Called when the last running open settles, and after every route render: a chooser
+   still saying "The project is still opening" is redrawn from the answer that is true
+   now — the full chooser, or Recovery's and a failed load's New project. Nothing else is
+   touched, and a dialog that says anything else is left exactly as it is. */
+function refreshEntityCreationRefusal() {
+  const modal = document.getElementById("modal");
+  const box = modal && typeof modal.querySelector === "function" ? modal.querySelector(".global-add-modal") : null;
+  if (!box || typeof box.getAttribute !== "function" || box.getAttribute("data-entity-creation-state") !== "opening") return;
+  if (modal.classList && modal.classList.contains("hidden")) return;
+  if (projectOpenInFlight()) return;
+  openGlobalAdd(box.getAttribute("data-preferred") || "", { refresh: true });
+}
+if (typeof window.addEventListener === "function") window.addEventListener("cinebraid:route-rendered", refreshEntityCreationRefusal);
 /* ADD, WHERE THE SURFACE HAS ALREADY NAMED THE RECORD.
  *
  * A button that says "＋ Add shot", on a page that is only about shots, opened a
@@ -7701,8 +7838,12 @@ window.runGlobalAdd = (key) => {
        broken application on a filmmaker's first minute. `#/create` itself is
        unchanged for a window that HAS a project open; the start surface still says
        "The one you have open now is not changed", which is true there and is
-       PROJECT_CREATION_LANDING_V1's sentence to revisit. */
-    if (shellInFirstRun()) return newProject();
+       PROJECT_CREATION_LANDING_V1's sentence to revisit.
+       ORPHAN_ENTITY_CREATION_REFUSAL_V1 — "nothing open" is the RECORD. Recovery mode
+       and a failed load hold none either, the router draws nothing there, and New
+       project is now the one action a refused record offers in them — so it opens the
+       same dialog the project menu already opens in every state. */
+    if (!projectRecordInstalled()) return newProject();
     location.hash = "#/create";
     return;
   }

@@ -1689,11 +1689,51 @@ function ownedProjectDir(req) {
   const requested = String(
     req.query?.slug ?? req.body?.projectSlug ?? req.query?.projectSlug ?? "",
   ).trim();
-  if (!requested) return PROJECT_DIR();
-  return projectDirForSlug(requested).dir; // throws on unknown or out-of-root
+  const dir = requested
+    ? projectDirForSlug(requested).dir // throws on unknown or out-of-root
+    : PROJECT_DIR();
+  /* ORPHAN_ENTITY_CREATION_REFUSAL_V1 — A MEDIA WRITE GOES ONLY INTO A PROJECT THIS SERVER
+     WOULD OPEN. Two holes, one boundary:
+
+       no project     with nothing named and nothing active, PROJECT_DIR() is
+                      `<projects root>/_none`, and every media route here wrote into it —
+                      a character reference landed in `_none/anchors/` and was answered
+                      {ok:true}, a receipt for a file no project will ever list;
+       unreadable     a project whose record cannot be read, or is not one CineBraid will
+                      serve, is exactly the document Recovery mode promises to leave
+                      untouched — and a write naming no project resolved straight into its
+                      folder anyway.
+
+     The verdict is the open gate's own — inspectProjectFile(), which GET /api/project and
+     the switch already go through — so "a project this server would not open" means one
+     thing everywhere. Its 404 arms (nothing active, or a folder with no project file) are
+     NO_ACTIVE_PROJECT; its 422 arms are PROJECT_UNREADABLE, the status and code POST
+     /api/search already uses. Asked before any directory is made. With a valid project
+     nothing here changes, and a named project that does not exist still answers "No such
+     project" from projectDirForSlug() above, exactly as before. */
+  const inspected = inspectProjectFile(requested || activeSlug() || "");
+  if (!inspected.ok) throw mediaOwnerError(inspected.status === 422 ? "PROJECT_UNREADABLE" : "NO_ACTIVE_PROJECT");
+  return dir;
+}
+/* The two refusals a project-owned media write can meet before it touches the disk.
+   Sentences of their own — never the file system's, the parser's or a path. */
+function mediaOwnerError(code) {
+  const message = code === "PROJECT_UNREADABLE"
+    ? "This project's file cannot be read, so nothing was stored in it. CineBraid does not write into a project it cannot open — recover it or open another project first."
+    : "No project is open, so there is no project to store this in. Open or create a project first.";
+  return Object.assign(new Error(message), { code });
 }
 function mediaOwnerStatus(error) {
+  if (error?.code === "NO_ACTIVE_PROJECT") return 404;
+  if (error?.code === "PROJECT_UNREADABLE") return 422;
   return /No such project|Invalid project slug/.test(String(error?.message || "")) ? 404 : 400;
+}
+/* One answer for every media route's failure: its status, its sentence, and — for the two
+   ownership refusals — the machine-readable code beside it, as POST /api/search answers. */
+function mediaOwnerRefusal(res, error, fallback = "The media request could not be completed.") {
+  const body = { error: error?.message || fallback };
+  if (error?.code === "NO_ACTIVE_PROJECT" || error?.code === "PROJECT_UNREADABLE") body.code = error.code;
+  return res.status(mediaOwnerStatus(error)).json(body);
 }
 function projectAIPolicy() {
   try {
@@ -2891,7 +2931,7 @@ app.post(
       fs.writeFileSync(path.join(dir, final), req.body);
       res.json({ ok: true, name: final });
     } catch (error) {
-      res.status(mediaOwnerStatus(error)).json({ error: error.message });
+      mediaOwnerRefusal(res, error);
     }
   },
 );
@@ -2918,7 +2958,7 @@ app.post(
       const storagePath = `shots/${id}/blocking/${final}`;
       res.json({ ok: true, name: final, storagePath, url: `/assets/${storagePath.split("/").map(encodeURIComponent).join("/")}` });
     } catch (error) {
-      res.status(400).json({ error: error.message || "Could not store blocking frame" });
+      mediaOwnerRefusal(res, error, "Could not store blocking frame");
     }
   },
 );
@@ -2945,7 +2985,7 @@ app.post(
     fs.writeFileSync(path.join(dir, final), req.body);
     res.json({ ok: true, name: final });
     } catch (error) {
-      res.status(mediaOwnerStatus(error)).json({ error: error.message });
+      mediaOwnerRefusal(res, error);
     }
   },
 );
@@ -2988,7 +3028,7 @@ app.post("/api/media/prepare-identity", async (req, res) => {
   try {
     owned = ownedProjectDir(req);
   } catch (error) {
-    return res.status(mediaOwnerStatus(error)).json({ error: error.message });
+    return mediaOwnerRefusal(res, error);
   }
   const slug = path.basename(owned);
   const prepared = await MediaAssetService.prepareAssetIdentity({
@@ -3010,7 +3050,7 @@ app.post("/api/media/rename", async (req, res) => {
   try {
     owned = ownedProjectDir(req);
   } catch (error) {
-    return res.status(mediaOwnerStatus(error)).json({ error: error.message });
+    return mediaOwnerRefusal(res, error);
   }
   const src = path.join(
     owned,
@@ -3104,7 +3144,7 @@ app.post("/api/shots/:id/use-reference", (req, res) => {
       url: `/assets/shots/${encodeURIComponent(id)}/takes/${encodeURIComponent(final)}`,
     });
   } catch (e) {
-    res.status(400).json({ error: e.message || "Could not use reference" });
+    mediaOwnerRefusal(res, e, "Could not use reference");
   }
 });
 
@@ -3116,7 +3156,7 @@ app.post("/api/shots/:id/folder", (req, res) => {
     fs.mkdirSync(path.join(owned, "shots", id, "locked"), { recursive: true });
     res.json({ ok: true });
   } catch (error) {
-    res.status(mediaOwnerStatus(error)).json({ error: error.message });
+    mediaOwnerRefusal(res, error);
   }
 });
 

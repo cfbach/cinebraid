@@ -902,7 +902,7 @@ try:
             ("N4 the inert New project action is restored", "first", contract_add_chooser, {
                 "**/app.js*": lambda: mutate(
                     "public/app.js",
-                    "    if (shellInFirstRun()) return newProject();\n",
+                    "    if (!projectRecordInstalled()) return newProject();\n",
                     "",
                     "N4"),
             }),
