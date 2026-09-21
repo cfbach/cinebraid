@@ -55,10 +55,19 @@
         <button data-view="reports" data-label="Reports" class="nav-btn"><span class="nav-icon">▥</span><span>Reports</span></button>
         <button data-view="settings" data-label="Settings" class="nav-btn"><span class="nav-icon">⚙</span><span>Settings</span></button>
       </div>
+      <!-- NO_PROJECT_SHELL_TRUTH_V1 — WHY THE UNAVAILABLE ITEMS ARE UNAVAILABLE, on
+           screen and not only in a tooltip. Every navigation item the shell marks
+           aria-disabled points its aria-describedby here, so the sentence a keyboard
+           or screen-reader user hears is the same one a sighted user reads. Static
+           markup, empty and hidden on load, for the same reason the rest of the shell
+           is: the page script owns its STATE and never its existence. -->
+      <p id="nav-availability-note" class="nav-availability-note" hidden></p>
     </nav>
     <div class="rail-foot">
       <div id="tally" class="tally"></div>
       <button id="rescan" class="ghost-btn">Sync local folders</button>
+      <!-- The same contract as the navigation note, for the rail foot's own control. -->
+      <p id="rescan-availability-note" class="nav-availability-note" hidden></p>
       <button id="test-note" class="ghost-btn test-note-button" type="button" onclick="openTestNote()">Leave feedback</button>
       <div class="foot-note">Your production, your control. Sync only when files were added outside CineBraid. Records autosave.</div>
       <div class="foot-note brand-note">Production truth · Frombach Studios</div>
@@ -89,7 +98,7 @@
       </div>
       <div class="topbar-actions">
         <button id="global-add" class="topbar-add" type="button">＋ Add</button><button id="automation-activity-toggle" class="automation-activity-toggle" type="button" aria-expanded="false" aria-controls="cb-shell-dock" aria-label="Activity"><span>◉</span><b>Activity</b></button><button id="creator-rail-toggle" class="creator-rail-toggle" type="button" hidden disabled aria-expanded="false" aria-controls="cb-shell-rail" aria-label="Toggle the Braidy rail" onclick="window.CineBraidCreatorSurfaces&&window.CineBraidCreatorSurfaces.toggleRail()"><span class="cb-braidy-presence topbar-braidy-mark" data-braidy-still="1" aria-hidden="true"></span><b>Braidy</b></button><div id="activity-live-region" class="sr-only" role="status" aria-live="polite" aria-atomic="true"></div><div id="save-state" class="save-state" data-state="loading"><span class="save-dot"></span><span>Opening…</span></div>
-        <div class="topbar-search"><input id="global-search" aria-label="Search canon" placeholder="Search canon"><kbd>/</kbd></div>
+        <div class="topbar-search"><input id="global-search" aria-label="Search canon" placeholder="Search canon"><kbd>/</kbd><span id="search-availability-note" class="sr-only"></span></div>
         
       </div>
     </header>
@@ -151,6 +160,13 @@
      workspace and the Production summary both draw the returned-result decision
      through it. -->
 <script src="shared-returned-review.js?v=6.9.0-alpha.1"></script>
+<!-- NO_PROJECT_SHELL_TRUTH_V1. What the shell may offer when no project is open, and
+     which hashes name a view at all. Pure and DOM-free, so Node runs it; loaded before
+     the application script below, because the router, the navigation, the add chooser
+     and the rail foot all read their answer from it on the very first paint. (Comments
+     in this file do not name that script's filename: tests/bounded-rendering.js orders
+     the tags by the first occurrence of it.) -->
+<script src="shared-shell-availability.js?v=6.9.0-alpha.1"></script>
 <script src="shared-workspace-shell.js?v=6.9.0-alpha.1"></script>
 <script src="shared-creator-state.js?v=6.9.0-alpha.1"></script>
 <!-- Braidy's contract: presentation state, the handoff shape, the closed action

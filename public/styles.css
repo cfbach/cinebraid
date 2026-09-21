@@ -2981,6 +2981,10 @@ body[data-focused-workspace="1"] .coverage-slot-card.focused-slot-selected .cove
 .first-run-mark{width:104px;height:104px;display:grid;place-items:center;border:1px solid var(--accent);border-radius:22px;color:var(--accent);font:900 30px var(--mono)}
 .first-run-state>div:last-child{display:grid;gap:12px}.first-run-state span{font:800 10px var(--mono);letter-spacing:.14em;color:var(--accent)}.first-run-state h1{margin:0;font-size:34px}.first-run-state p,.first-run-state small{color:var(--muted);max-width:720px}.first-run-actions{display:flex;gap:10px;flex-wrap:wrap}.first-run-state ol{margin:8px 0 0;padding-left:20px;color:var(--muted);display:grid;gap:7px}
 @media(max-width:720px){.first-run-state{grid-template-columns:1fr;margin:18px;padding:22px}.first-run-mark{width:72px;height:72px;border-radius:16px;font-size:22px}.first-run-state h1{font-size:26px}}
+/* NO_PROJECT_SHELL_TRUTH_V1 — the production logo inside the badge's unchanged box, under the same rules as
+   .brand-logo: a fixed height, a width that follows the asset, and never stretched. */
+.first-run-logo{display:block;height:72px;width:auto;object-fit:contain}
+@media(max-width:720px){.first-run-logo{height:50px}}
 /* WHERE THE WORK IS KEPT. A quiet line on the first-run screen and in Settings, until
    the productions are inside the application folder — then it is the loudest thing on
    the panel, because it is the only state a person has to act on. */

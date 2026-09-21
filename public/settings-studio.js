@@ -148,7 +148,19 @@ function studioSettingsRender({ selected, panels, config: c, health, accountData
   const navigation = `<nav class="studio-nav" aria-label="Settings sections"><label class="studio-compact-nav"><span>Settings section</span><select aria-label="Settings section" onchange="studioSettingsIndexIntent(event,this.value,'select');settingsGo(this.value)">${STUDIO_SETTINGS_INDEX.map((g) => `<optgroup label="${attr(g.label)}">${[...g.items, ...(g.details || [])].map(indexOption).join("")}</optgroup>`).join("")}</select></label><div class="studio-nav-links">${STUDIO_SETTINGS_INDEX.map(indexGroup).join("")}</div></nav>`;
   /* The topbar already names the project; the head names the open group and states only
      whose settings these are. The title follows an in-progress edit (initSettingsPanel). */
-  const scope = projectScope ? `Project · <b data-settings-project-title>${esc(P.meta.title || "Untitled project")}</b> · ${selected === "project" ? "saved with this project" : "backups and export copies of this project"}` : "Application-wide · this CineBraid installation";
+  /* NO_PROJECT_SHELL_TRUTH_V1. This read `P.meta.title` unconditionally, which is one
+     of the two reasons Settings could not be rendered at all before a first project
+     existed: the scope line threw on the project-scoped sections. It still names the
+     project when there is one, and says plainly that there is not when there is not —
+     the same answer the panel beneath it gives, taken from the same predicate. */
+  const projectScopeAvailable = typeof shellSettingsScopeAvailability === "function"
+    ? shellSettingsScopeAvailability(selected, { hasProject: !!P }).available
+    : !!P;
+  const scope = projectScope
+    ? (projectScopeAvailable
+      ? `Project · <b data-settings-project-title>${esc(P.meta.title || "Untitled project")}</b> · ${selected === "project" ? "saved with this project" : "backups and export copies of this project"}`
+      : "Project · no project is open · these settings are stored in a project record")
+    : "Application-wide · this CineBraid installation";
   return `<div class="view-head settings-view-head"><div><div class="eyebrow">Settings</div><h1 class="view-title">${esc(group.label)}</h1><div class="view-sub settings-scope" data-settings-scope="${projectScope ? "project" : "application"}">${scope}</div></div></div><div class="studio-settings-layout">${navigation}<div class="settings-selected-tab" data-settings-tab="${attr(selected)}">${body}</div></div>`;
 }
 

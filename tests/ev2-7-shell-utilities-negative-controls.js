@@ -144,10 +144,14 @@ control('N10 the contextual return goes back to a stacked two-line control', 11,
     '.md-return.cb-return { display:inline-flex; align-items:center;',
     '.cb-return { display:inline-flex; flex-direction:column; align-items:flex-start;', 'N10'));
 
+/* NO_PROJECT_SHELL_TRUTH_V1 moved this seam: syncActivityToggle() now also writes the
+   no-project availability AFTER the two lines this control removes, so the anchor is
+   carried to the new neighbour. The mutation is unchanged — the topbar control still
+   stops writing aria-expanded and the open class. */
 control('N11 the topbar control stops tracking the drawer it opened', 3, (dir) =>
   patch(dir, 'public/creator-surfaces.js',
-    '    button.setAttribute("aria-expanded", open ? "true" : "false");\n    button.classList.toggle("open", open);\n  }\n\n  /* THE ONE PLACE A MARK BECOMES THE SHIPPED BRAIDY.',
-    '  }\n\n  /* THE ONE PLACE A MARK BECOMES THE SHIPPED BRAIDY.', 'N11'));
+    '    button.setAttribute("aria-expanded", open ? "true" : "false");\n    button.classList.toggle("open", open);\n    /* Only what THIS wrote is cleared, and only when it wrote it',
+    '    /* Only what THIS wrote is cleared, and only when it wrote it', 'N11'));
 
 control('N12 the Activity drawer is expanded again with no stored preference', 1, (dir) =>
   patch(dir, 'public/creator-surfaces.js',

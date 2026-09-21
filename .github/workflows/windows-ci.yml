@@ -92,7 +92,12 @@ jobs:
     # Keep this advisory status-check name stable.
     name: Browser validation
     runs-on: windows-latest
-    timeout-minutes: 30
+    # WALL-CLOCK HEADROOM FOR THE JOB, NOT A LOOSER TEST. The gate now runs 56 suites
+    # serially, and green jobs took 23 to 30 minutes on hosted runners (one finished 10s
+    # under the old 30-minute cap). A green run of PR #82 projects to about 30m14s, so
+    # the old cap cancelled green work before check:authority-browser could run. Every
+    # suite's own timeouts and assertions are unchanged; only the job's budget grew.
+    timeout-minutes: 45
 
     steps:
       - name: Check out the branch under test

@@ -50,6 +50,15 @@ let P = null,
      ordinary same-project refresh is the SAME open reading a newer copy of its
      own record, so it must not move this. See the project load transaction. */
   PROJECT_OPEN_EPOCH = 0,
+  /* NO_PROJECT_SHELL_TRUTH_V1 — THE OPEN THAT CONFIRMED THERE IS NO PROJECT.
+     showFirstRunWorkspace() records the epoch of the replacement it performed; the
+     shell is in its first-run state only while that is still the current open. A
+     null `P` alone is NOT that fact: it is also what a window looks like while a
+     project is still OPENING, and behind the load-failure and Recovery screens —
+     and treating those as "no project" refused an Activity request made during a
+     load, and would have routed the welcome card over a failure screen. -1 never
+     matches an epoch. */
+  SHELL_FIRST_RUN_EPOCH = -1,
   /* THE SUCCESSFUL-SAVE GENERATION. Advanced once by every write THIS WINDOW made
      that storage ACCEPTED, and by a rebase that re-points the saved baseline at a
      different stored document. A refresh captures it when it starts and must find
@@ -1290,6 +1299,9 @@ async function showFirstRunWorkspace(message = "") {
      here — a refresh answered 404 discards instead — because entering first-run
      is a replacement and a refresh may not perform one. */
   beginProjectOpen();
+  /* The one place the shell learns it is in first run: this open, and only while
+     no later open has replaced it. See SHELL_FIRST_RUN_EPOCH. */
+  SHELL_FIRST_RUN_EPOCH = PROJECT_OPEN_EPOCH;
   ACTIVE_PROJECT_SLUG = "";
   P = null;
   PROJECT_REVISION = "";
@@ -1311,6 +1323,25 @@ async function showFirstRunWorkspace(message = "") {
   /* The menu describes the open project. There is not one. */
   closeProjectMenu({ returnFocus: false });
   setSaveState("loading", "No project open");
+  /* THE CONTENT IS THE ROUTER'S, EVEN HERE. This used to write the welcome card into
+     `#main` directly, which was correct only while the hash happened to name the home
+     route — open CineBraid on a bookmarked `#/settings` with no project and the URL
+     said Settings while the page said welcome. The replacement above is this
+     function's; what is drawn is routeWithoutProject()'s, and it draws whatever the
+     address bar actually asked for. The list of projects is handed over rather than
+     re-fetched, so this stays one asynchronous input. */
+  await routeWithoutProject({ projectData, message });
+}
+
+/* THE WELCOME SCREEN'S MARKUP, SEPARATED FROM THE REPLACEMENT THAT CLEARS THE RECORD.
+ *
+ * showFirstRunWorkspace() above is an OPEN: it advances the project-open epoch and
+ * discards the record, and it must stay that way. But the welcome screen is also the
+ * shell's home surface while nothing is open — navigating back to it from Settings has
+ * to repaint it WITHOUT performing another open, or returning from Settings would
+ * quietly re-run a replacement every time. So the markup is here and the lifecycle is
+ * there, and routeWithoutProject() draws this one. */
+function firstRunWorkspaceMarkup(projectData, message = "") {
   const existing = (projectData.projects || []).map((project) => `<button class="ghost-btn" onclick="switchProject('${attr(project.slug)}')">Open ${esc(project.title || project.slug)}</button>`).join("");
   /* THE SAMPLE OFFER, KEPT TRUTHFUL.
 
@@ -1326,7 +1357,13 @@ async function showFirstRunWorkspace(message = "") {
     : sample.installed
       ? `<button class="ghost-btn" onclick="switchProject('${attr(sample.slug)}')">Open CineBraid Sample</button>`
       : `<button class="ghost-btn" onclick="installCineBraidSample()">Add the CineBraid sample</button>`;
-  $("#main").innerHTML = `<section class="first-run-state" role="status"><div class="first-run-mark">CB</div><div><span>WELCOME TO CINEBRAID</span><h1>Start with a project—or open the sample.</h1><p>CineBraid keeps approved references, continuity, shots, existing media and final deliveries together. AI and in-app generation are optional.</p>${message ? `<small>${esc(message)}</small>` : ""}<div class="first-run-actions"><button class="assemble-btn" onclick="newProject()">Create a project</button>${sampleAction}${existing}</div>${firstRunWorkspaceLine(projectData.workspace)}<ol><li>Upload or map existing references.</li><li>Approve the production authorities.</li><li>Attach existing stills, video and audio to shots.</li><li>Mark each approved shot final.</li></ol></div></section>`;
+  /* THE REAL MARK, NOT A MONOGRAM. The badge used to print "CB" in a bordered box —
+     the same stand-in the Bible sidebar once drew in the mark's place. It is the
+     shipped production logo now, the one the rail, the login page and the Bible
+     record already use, inside the same box so the card's footprint and alignment do
+     not move. alt="" because "WELCOME TO CINEBRAID" beside it already names the
+     product; announcing the logo too would say it twice. */
+  return `<section class="first-run-state" role="status"><div class="first-run-mark"><img src="/cinebraid-logo-xs.png" alt="" width="80" height="103" class="first-run-logo"></div><div><span>WELCOME TO CINEBRAID</span><h1>Start with a project—or open the sample.</h1><p>CineBraid keeps approved references, continuity, shots, existing media and final deliveries together. AI and in-app generation are optional.</p>${message ? `<small>${esc(message)}</small>` : ""}<div class="first-run-actions"><button class="assemble-btn" onclick="newProject()">Create a project</button>${sampleAction}${existing}</div>${firstRunWorkspaceLine(projectData.workspace)}<ol><li>Upload or map existing references.</li><li>Approve the production authorities.</li><li>Attach existing stills, video and audio to shots.</li><li>Mark each approved shot final.</li></ol></div></section>`;
 }
 /* WHERE THE WORK WILL BE KEPT, said on the screen where it is still cheap to change.
 
@@ -1349,6 +1386,267 @@ function firstRunWorkspaceLine(workspace) {
     : "";
   return `<p class="first-run-workspace" data-workspace-state="${attr(workspace.projectRootSource || "default")}">Projects are kept in <code>${esc(workspace.projectRoot)}</code>.${warning} ${choose}</p>`;
 }
+
+/* ===========================================================================
+   NO_PROJECT_SHELL_TRUTH_V1 — THE SHELL, TOLD WHAT IT CAN DO.
+
+   Everything below reads its answer from public/shared-shell-availability.js and
+   writes it onto the shipped controls. It decides nothing: if a control is dimmed
+   here, the sentence explaining it came from the same call that dimmed it, which
+   is what stops the two drifting apart.
+
+   The guards on the module are not defensive dressing. tests/ evaluate public/app.js
+   in realms that load some shipped files and not others, and a shell that threw
+   when the predicate was absent would take the whole page with it — so an absent
+   predicate leaves every control exactly as the markup shipped it. */
+
+/* THE ONE FACT EVERY REFUSAL BELOW IS ABOUT: the shell has CONFIRMED there is no
+ * project — showFirstRunWorkspace() performed the current open and nothing has
+ * replaced it — and Recovery mode is not what is holding the window.
+ *
+ * Not `!P`. A null record is also a project that is still opening, and the two screens
+ * that stand in for a project that could not be read. In every one of those the shell
+ * keeps exactly the behaviour it shipped with: nothing is refused, nothing is dimmed,
+ * and the router still declines to draw over the screen that is up. */
+function shellInFirstRun() {
+  return !P && !PROJECT_QUARANTINE && SHELL_FIRST_RUN_EPOCH === PROJECT_OPEN_EPOCH;
+}
+
+/* What the availability predicate calls `hasProject`: everything that is NOT a
+   confirmed first run. */
+function shellHasProject() {
+  return !shellInFirstRun();
+}
+
+function shellAvailabilityModule() {
+  return typeof shellNavAvailability === "function";
+}
+
+/* THE ONE WRITER for every "this needs a project" state in the shell.
+ *
+ * Called from the two places the fact can change — the replacement that clears the
+ * record, and every route render — rather than from each control's own code path,
+ * because a control that decides its own availability is a control that can be
+ * right on one route and wrong on the next. */
+function syncShellAvailability() {
+  if (!shellAvailabilityModule()) return;
+  const facts = { hasProject: shellHasProject() };
+  const unavailable = [];
+  for (const button of document.querySelectorAll(".nav-btn[data-view]")) {
+    const answer = shellNavAvailability(button.dataset.view, facts);
+    applyShellControlAvailability(button, answer.available, answer.reason, "nav-availability-note");
+    if (!answer.available) unavailable.push(button.dataset.label || button.dataset.view);
+  }
+  /* THE NOTE IS WRITTEN FROM THE SAME PASS THAT DIMMED THE ITEMS, and it names them.
+     A hand-written list here would be a second place to be wrong about which five
+     they are. */
+  const note = $("#nav-availability-note");
+  if (note) {
+    note.textContent = unavailable.length
+      ? `${listWords(unavailable)} need an open project. ${SHELL_NO_PROJECT_REMEDY}`
+      : "";
+    note.hidden = !unavailable.length;
+  }
+  const rescan = $("#rescan");
+  if (rescan) {
+    const answer = shellUtilityAvailability("rescan", facts);
+    applyShellControlAvailability(rescan, answer.available, answer.reason, "rescan-availability-note");
+    const rescanNote = $("#rescan-availability-note");
+    if (rescanNote) {
+      rescanNote.textContent = answer.available ? "" : answer.reason;
+      rescanNote.hidden = answer.available;
+    }
+  }
+  const search = $("#global-search");
+  if (search) {
+    const answer = shellUtilityAvailability("search", facts);
+    applyShellControlAvailability(search, answer.available, answer.reason, "search-availability-note");
+    applySearchAvailability(search, answer);
+  }
+  /* The Activity control's availability belongs to the same fact, and its state is
+     written by the file that owns whether the drawer is open — one control, one
+     writer, exactly as EV2-7 left it. */
+  window.CineBraidCreatorSurfaces?.syncActivityToggle?.();
+}
+
+/* THE TOPBAR SEARCH, WHICH IS AN INPUT AND SO NEEDS TWO THINGS A BUTTON DOES NOT.
+ *
+ * aria-disabled on an input reports it unavailable but still lets it take keystrokes, so
+ * it is also made read-only: focusable, so its reason can be heard, and incapable of
+ * holding a query it could never run. And its placeholder is where a sighted person
+ * reads before typing, so the short reason goes there — "Open a project to search
+ * canon" — with the full sentence in the accessible description. Everything is put back
+ * exactly as it shipped the moment a project opens, and a window that never lacked one
+ * is never touched. */
+function applySearchAvailability(search, answer) {
+  const note = $("#search-availability-note");
+  if (note) note.textContent = answer.available ? "" : answer.reason;
+  const box = search.closest(".topbar-search");
+  if (!answer.available) {
+    if (search.dataset.shellPlaceholder === undefined) search.dataset.shellPlaceholder = search.placeholder;
+    search.placeholder = answer.state;
+    search.readOnly = true;
+    search.value = "";
+    if (box) box.setAttribute("data-shell-unavailable", "no-project");
+    return;
+  }
+  if (search.dataset.shellPlaceholder === undefined) return;
+  search.placeholder = search.dataset.shellPlaceholder;
+  delete search.dataset.shellPlaceholder;
+  search.readOnly = false;
+  if (box) box.removeAttribute("data-shell-unavailable");
+}
+
+/* aria-disabled RATHER THAN disabled, DELIBERATELY.
+ *
+ * `disabled` takes a control out of the tab order, and a control a keyboard user
+ * cannot reach is a control whose explanation a keyboard user cannot hear. These
+ * stay focusable, report themselves unavailable, and point at the sentence that
+ * says why — and their handlers refuse, so nothing happens if one is pressed
+ * anyway. The visible note and the accessible description are the SAME element,
+ * so they cannot disagree. */
+function applyShellControlAvailability(control, available, reason, noteId) {
+  if (!control) return;
+  if (available) {
+    /* ONLY WHAT THIS WROTE, AND ONLY IF IT WROTE IT. A window that has had a project
+       open all along never reaches past this line, so every render with a project
+       touches the shipped controls exactly as it did before this slice. */
+    if (control.getAttribute("data-shell-unavailable") !== "no-project") return;
+    control.removeAttribute("aria-disabled");
+    control.removeAttribute("data-shell-unavailable");
+    control.removeAttribute("aria-describedby");
+    control.removeAttribute("title");
+    return;
+  }
+  control.setAttribute("aria-disabled", "true");
+  control.setAttribute("data-shell-unavailable", "no-project");
+  control.setAttribute("aria-describedby", noteId);
+  control.title = reason;
+}
+
+/* "Shots, References and Reports" — an Oxford-free list, because this sentence is
+   read aloud as often as it is read. */
+function listWords(items) {
+  const rows = (items || []).map((item) => String(item || "").trim()).filter(Boolean);
+  if (rows.length <= 1) return rows[0] || "";
+  return `${rows.slice(0, -1).join(", ")} and ${rows[rows.length - 1]}`;
+}
+
+/* THE REFUSAL EVERY UNAVAILABLE SHELL CONTROL SHARES.
+ *
+ * Returns true when the gesture must not proceed. It changes no hash, opens no
+ * modal and makes no request — it says the reason out loud, which is the one thing
+ * a control that cannot act still owes the person who pressed it. */
+function shellControlRefused(control) {
+  if (!control || control.getAttribute("aria-disabled") !== "true") return false;
+  const reason = control.getAttribute("title")
+    || (typeof SHELL_NO_PROJECT_REASONS === "object" && SHELL_NO_PROJECT_REASONS ? SHELL_NO_PROJECT_REASONS.nav : "");
+  if (reason && typeof toast === "function") toast(reason);
+  return true;
+}
+
+/* The shell's chrome for the state where no project is open. The project title, the
+   topbar's project line, the format line and the save chip are showFirstRunWorkspace()'s
+   — it is performing an open, they belong to that, and A2 keeps one writer for "which
+   project am I in". This is everything ELSE the shell shows, and it runs on every
+   projectless render so a return from Settings restores it. */
+function markNoProjectHome() {
+  const workBadge = $("#production-nav-count");
+  if (workBadge) { workBadge.textContent = "0"; workBadge.classList.add("hidden"); }
+  /* The tally counts shots and scenes. There are none, and a stale count from a
+     project that has been closed is worse than no count. */
+  const tallyNode = $("#tally");
+  if (tallyNode) tallyNode.innerHTML = "";
+  syncShellAvailability();
+}
+
+/* ===========================================================================
+   THE ROUTER WITH NO PROJECT OPEN.
+
+   route() below returns early when `P` is null and has always done so, which is why
+   seven navigation items could move the hash and leave the welcome card up: nothing
+   ran. This is what runs instead. It is a SEPARATE path rather than a set of guards
+   threaded through route(), so that a build with a project open renders through
+   exactly the code it always did.
+
+   Four surfaces, one per answer from the predicate, and in every one of them the
+   URL, the lit navigation item, the topbar and the content say the same thing. */
+async function routeWithoutProject(prepared = null) {
+  const requestToken = ++ROUTE_REQUEST_TOKEN;
+  if (document.body?.dataset) delete document.body.dataset.renderReady;
+  /* A realm that loaded public/app.js without the predicate still gets the welcome
+     screen rather than a blank one. It cannot get the rest, because the rest IS the
+     predicate. */
+  if (!shellAvailabilityModule()) {
+    if (prepared) $("#main").innerHTML = firstRunWorkspaceMarkup(prepared.projectData, prepared.message);
+    markRouteRenderSettled(requestToken);
+    return;
+  }
+  /* SETTINGS BEHAVES AS IT DOES WITH A PROJECT OPEN. route() captures an unsaved
+     Settings draft before it leaves the panel, and discards an unsaved appearance
+     preview when the destination is not Settings. Settings is now reachable here too,
+     so the same two things happen here too — or an edit typed before a first project
+     would vanish on the way to the welcome screen, and a previewed theme would stay
+     painted over it. */
+  if (typeof studioCaptureSettingsDraft === "function") studioCaptureSettingsDraft();
+  const view = String(location.hash || "").split("?")[0].split("/")[1] || SHELL_HOME_VIEW;
+  const decision = shellRouteWithoutProject(view, { knownRoutes: Object.keys(typeof ROUTES === "undefined" ? {} : ROUTES) });
+  if (decision.kind !== "settings" && APPEARANCE_PREVIEW) {
+    APPEARANCE_PREVIEW = null;
+    applyTheme();
+  }
+  /* THE ADDRESS IS NEVER REWRITTEN HERE. newProject() and switchProject() both set
+     the hash BEFORE they load the project they are opening, so for that moment this
+     router is answering a hash that belongs to the project about to arrive. Drawing
+     at the requested hash and letting the open's own route() supersede it keeps where
+     a new project lands exactly where it always was. */
+  document.querySelectorAll(".nav-btn[data-view]").forEach((b) => b.classList.toggle("active", b.dataset.view === decision.navView));
+  $("#topbar-view").textContent = decision.label;
+  markNoProjectHome();
+  let markup = "", failure = "";
+  try {
+    if (decision.kind === "home") {
+      const projectData = prepared?.projectData
+        || await fetch("/api/projects").then((r) => (r.ok ? r.json() : { projects: [] })).catch(() => ({ projects: [] }));
+      markup = firstRunWorkspaceMarkup(projectData, prepared?.message || "");
+    } else if (decision.kind === "settings") {
+      markup = await ROUTES.settings();
+    } else if (decision.kind === "needs-project") {
+      markup = noProjectSurfaceMarkup(decision);
+    } else {
+      markup = sharedNotFoundView("Workspace", `#/${decision.view}`, `#/${SHELL_HOME_VIEW}`, "the CineBraid welcome screen");
+    }
+  } catch (error) {
+    console.error("CineBraid route render failed:", error);
+    failure = error?.message || String(error);
+    markup = `<section class="empty-state route-recovery"><h2>This workspace could not render</h2><p>${esc(failure)}</p><div class="modal-actions"><button class="add-btn" onclick="route()">Retry</button></div></section>`;
+  }
+  if (requestToken !== ROUTE_REQUEST_TOKEN) return;
+  $("#main").innerHTML = markup;
+  /* The same contract route() keeps: a failed render names itself on the body, and a
+     successful one clears whatever an earlier failure left there. */
+  if (failure) document.body.dataset.routeError = failure;
+  else delete document.body.dataset.routeError;
+  wireSearch();
+  applyProductionFormat();
+  bindIntrinsicAspect($("#main"));
+  window.enhanceFocusedWorkspace?.();
+  if (typeof window.scrollTo === "function") window.scrollTo(0, 0);
+  markRouteRenderSettled(requestToken);
+  if (typeof CustomEvent === "function")
+    window.dispatchEvent(new CustomEvent("cinebraid:route-rendered", { detail: { view: decision.view, id: "" } }));
+}
+
+/* A REAL WORKSPACE, REACHED WITH NOTHING OPEN — refused in words rather than
+   answered with somebody else's screen.
+ *
+ * Nothing in the rail is lit while this is up, because nothing in the rail is what
+ * is being shown. The two actions offered are the two that work: create a project,
+ * or go back to the screen that lists the ones already there. */
+function noProjectSurfaceMarkup(decision) {
+  return `<section class="empty-state no-project-state" role="status" data-no-project-view="${attr(decision.view)}"><div class="empty-mark">◌</div><h2>${esc(decision.label)} needs an open project</h2><p>${esc(decision.reason)}</p><div class="modal-actions"><button class="add-btn" onclick="newProject()">Create a project</button><a class="ghost-btn" href="#/${SHELL_HOME_VIEW}">Back to the welcome screen</a></div><small>Settings, including Connections, is available now — CineBraid can be configured before a first project exists.</small></section>`;
+}
+
 /* Asks the server for an ordinary, editable copy of the bundled sample and opens it.
    The shipped one is never opened for editing — see the route's header. */
 window.installCineBraidSample = async () => {
@@ -1373,6 +1671,10 @@ function projectLoadError(data) {
 /* Nothing loaded, so nothing is saved. Put the chrome into an honest state and keep the
    project switcher labelled — it is the only way out of a failed load. */
 function markProjectLoadFailure(failure) {
+  /* A project that could not be read is not first run, even when it follows one: the
+     failure screen keeps the switcher usable and must not be replaced by the welcome
+     card the next time the address changes. */
+  SHELL_FIRST_RUN_EPOCH = -1;
   const title = (failure && (failure.title || failure.slug)) || "";
   setSaveState("error", "Not loaded");
   const projectTitle = $("#project-title"),
@@ -2013,6 +2315,10 @@ window.watchProjectRevision = async () => {
   if (!P || !ACTIVE_PROJECT_SLUG || !PROJECT_REVISION) return null;
   PROJECT_REVISION_WATCH = (async () => {
     try {
+      /* The save chain as it stands when this asks. queueProjectSave() replaces it
+         for every write this window sends, so a different chain after the answer
+         means a save left while the question was on the wire (see below). */
+      const savesWhenAsked = SAVE_CHAIN;
       /* Let this window's own save settle before asking, so its own accepted
          write is never read back as somebody else's change. */
       await SAVE_CHAIN.catch(() => {});
@@ -2035,6 +2341,14 @@ window.watchProjectRevision = async () => {
          exists; it must not be applied to the one that does. */
       if (owner.epoch !== PROJECT_OPEN_EPOCH || owner.slug !== ACTIVE_PROJECT_SLUG) return null;
       if (owner.revision !== PROJECT_REVISION) return null;
+      /* NOR A SAVE THAT LEFT AFTER THIS ASKED AND HAS NOT LANDED YET. The server can
+         store it and answer this read with the revision it produced before this window
+         has read the save's own reply, so PROJECT_REVISION has not moved and the check
+         above passes. Read as foreign, this window's own accepted edit became "This
+         project changed while this view was open", and the latched conflict stopped
+         every save after it. The next tick asks again once the save has landed; a real
+         foreign write still meets the save's own If-Match refusal meanwhile. */
+      if (SAVE_CHAIN !== savesWhenAsked) return null;
       /* THIS WINDOW IS ALREADY RE-READING. A refresh in flight is about to replace the
          revision this compared against, so the mismatch is not evidence of anybody
          else's write. Declaring an advance here would make that refresh stale,
@@ -4794,11 +5108,32 @@ function formModal(title, fields, onSubmit) {
 document.querySelectorAll(".nav-btn[data-view]").forEach(
   (b) =>
     (b.onclick = () => {
+      /* NO_PROJECT_SHELL_TRUTH_V1. The refusal is BEFORE the hash, not after it: a
+         control that moves the address bar and then declines to render is exactly
+         the three-way disagreement this slice removes. No hash, no modal, no
+         request — the reason, and nothing else. */
+      if (shellControlRefused(b)) return;
       location.hash = "#/" + b.dataset.view;
       document.body.classList.remove("rail-open");
     }),
 );
+/* THE SEARCH BOX, REFUSED AT THE KEYSTROKE. Read-only already keeps a query out of it;
+   this says why, at the moment a person tries, the way every other refused shell control
+   does. Keys that move focus or leave the box are left alone, so Tab and Escape still do
+   exactly what they did. Capture phase, so it runs before the search's own handlers. */
+$("#global-search")?.addEventListener("keydown", (event) => {
+  const search = event.currentTarget;
+  const passes = ["Tab", "Escape", "Shift", "Control", "Alt", "Meta", "ArrowLeft", "ArrowRight", "ArrowUp", "ArrowDown", "Home", "End"];
+  if (search.getAttribute("aria-disabled") !== "true" || passes.includes(event.key)) return;
+  event.preventDefault();
+  event.stopImmediatePropagation();
+  shellControlRefused(search);
+}, true);
 $("#rescan").onclick = async () => {
+  /* Syncing local folders reads the media folders of an OPEN project. With none
+     open it answered anyway and reported "Local folders synced", which is a
+     receipt for work that did not happen. */
+  if (shellControlRefused($("#rescan"))) return;
   SCAN = await (await fetch("/api/scan")).json();
   toast("Local folders synced");
   route();
@@ -4810,7 +5145,7 @@ window.addEventListener("hashchange", route);
 function productionCount() {
   return P ? P.shots.filter((shot) => !shotIsDelivered(shot)).length : 0;
 }
-function updateChrome(view, navName) {
+function updateChrome(view, navName, routeKnown = true) {
   const active = document.querySelector(`.nav-btn[data-view="${navName}"]`);
   const labels = {
     scene: "Scene",
@@ -4829,8 +5164,13 @@ function updateChrome(view, navName) {
     reports: "Reports",
     settings: "Settings",
   };
-  $("#topbar-view").textContent =
-    labels[view] || active?.dataset.label || "CineBraid";
+  /* A hash naming no view is named as that, rather than inheriting the previous
+     screen's word or falling back to the product name — the topbar is one of the
+     four things that must agree with the not-found page the router is about to
+     render. */
+  $("#topbar-view").textContent = routeKnown
+    ? labels[view] || active?.dataset.label || "CineBraid"
+    : (typeof SHELL_NOT_FOUND_LABEL === "string" ? SHELL_NOT_FOUND_LABEL : "Not found");
   $("#topbar-project").textContent = P.meta.title || "Untitled project";
   const work = productionCount();
   const workBadge = $("#production-nav-count");
@@ -4838,6 +5178,10 @@ function updateChrome(view, navName) {
     workBadge.textContent = work;
     workBadge.classList.toggle("hidden", !work);
   }
+  /* The rail's availability is a project fact, and a project fact can change under a
+     route — switching projects, closing one. Re-asserted with the chrome so the two
+     can never describe different worlds. */
+  syncShellAvailability();
 }
 function routeSelectorValue(value) {
   return String(value || "").replace(/\\/g, "\\\\").replace(/"/g, '\\"');
@@ -5063,7 +5407,13 @@ function markRouteRenderSettled(requestToken) {
   if (document.body?.dataset) document.body.dataset.renderReady = "1";
 }
 async function route(recoveryAttempt = false) {
-  if (!P) return;
+  /* NO_PROJECT_SHELL_TRUTH_V1. This used to be a bare `return` for every null record,
+     which is why, on a first run, every navigation item could move the hash and leave
+     the welcome card up: the router declined to run and nothing corrected the rail, the
+     topbar or the content. A CONFIRMED first run has its own render path now. Every
+     other null record — a project still opening, the load-failure screen, Recovery
+     mode — keeps the early return exactly as it shipped, so nothing draws over it. */
+  if (!P) return shellInFirstRun() ? routeWithoutProject() : undefined;
   /* THE MANUAL REPLACEMENT LOCK, HONOURED AT THE ONE PLACE EVERY VIEW CHANGE
      PASSES THROUGH.
 
@@ -5101,34 +5451,41 @@ async function route(recoveryAttempt = false) {
       APPEARANCE_PREVIEW = null;
       applyTheme();
     }
-    const navName =
-      {
-        scene: "shots",
-        shot: "shots",
-        board: "shots",
-        scenes: "shots",
-        queue: "shots",
-        runs: "runs",
-        character: "library",
-        location: "library",
-        prop: "library",
-        vehicle: "library",
-        sound: "library",
-        characters: "library",
-        locations: "library",
-        props: "library",
-        vehicles: "library",
-        audio: "library",
-        sessions: "activity",
-        canon: "sources",
-      }[view] || view;
+    /* NO_PROJECT_SHELL_TRUTH_V1 — A HASH NAMING NO VIEW IS NOT A VIEW.
+       `ROUTES[view] || ROUTES.production` rendered Production for nine hashes that
+       name nothing in this build, and the alias table below lit the Shots item for
+       three of them — so `#/board` showed Production under a Shots rail, which is
+       three surfaces disagreeing at once. The alias table now carries only the views
+       that EXIST (`scene`, `shot` and the five entity routes belong to Shots and
+       References), and an unrecognised hash is answered as what it is. */
+    const routeKnown = typeof shellRouteIsKnown === "function"
+      ? shellRouteIsKnown(view, Object.keys(ROUTES))
+      : !!ROUTES[view];
+    const navName = routeKnown
+      ? {
+          scene: "shots",
+          shot: "shots",
+          character: "library",
+          location: "library",
+          prop: "library",
+          vehicle: "library",
+          sound: "library",
+          characters: "library",
+          locations: "library",
+          props: "library",
+          vehicles: "library",
+          audio: "library",
+        }[view] || view
+      : "";
     document
       .querySelectorAll(".nav-btn[data-view]")
       .forEach((b) => b.classList.toggle("active", b.dataset.view === navName));
-    updateChrome(view, navName);
+    updateChrome(view, navName, routeKnown);
     const routeViewState = captureRouteViewState(targetRouteKey);
-    const fn = ROUTES[view] || ROUTES.production;
-    const out = fn(decodeURIComponent(id || ""));
+    const fn = routeKnown ? ROUTES[view] : null;
+    const out = fn
+      ? fn(decodeURIComponent(id || ""))
+      : sharedNotFoundView("Workspace", `#/${view}`, "#/production", "Production");
     const rendered = out instanceof Promise ? await out : out;
     if (requestToken !== ROUTE_REQUEST_TOKEN || targetRouteKey !== currentRouteKey()) {
       /* Superseded, or the hash moved under us. The render that replaced this one owns
@@ -7294,8 +7651,20 @@ const GLOBAL_ADD_CHOICES = [
   ["project","New project","Start from scratch or import structured material."],
 ];
 window.openGlobalAdd = (preferred = "") => {
-  const choices = GLOBAL_ADD_CHOICES;
-  openModal(`<div class="global-add-modal"><h3>What are you adding?</h3><div class="modal-sub">Choose the record you need. CineBraid will take you to its one canonical workspace.</div><div class="global-add-grid">${choices.map(([key,label,note]) => `<button class="${preferred === key ? "recommended" : ""}" onclick="runGlobalAdd('${key}')"><b>${label}</b><span>${note}</span></button>`).join("")}</div><div class="modal-actions"><button class="cancel" onclick="closeModal()">Cancel</button></div></div>`);
+  /* NO_PROJECT_SHELL_TRUTH_V1 — THE CHOOSER OFFERS ONLY WHAT IT CAN DELIVER.
+     Seven of these eight records are children of a project. With none open the
+     shipped chooser offered all eight anyway: one of them did nothing, and six of
+     them opened a full creation form whose SAVE discarded the work. The refusal on
+     that SAVE is ORPHAN_ENTITY_CREATION_REFUSAL_V1's; NOT ASKING is this slice's,
+     and it is the half that stops a filmmaker typing into a form at all. */
+  const hasProject = shellHasProject();
+  const choices = typeof shellAddChoiceAvailable === "function"
+    ? GLOBAL_ADD_CHOICES.filter(([key]) => shellAddChoiceAvailable(key, { hasProject }))
+    : GLOBAL_ADD_CHOICES;
+  const sub = hasProject
+    ? "Choose the record you need. CineBraid will take you to its one canonical workspace."
+    : `Everything else CineBraid can add belongs to a project. ${typeof SHELL_NO_PROJECT_REMEDY === "string" ? SHELL_NO_PROJECT_REMEDY : ""}`.trim();
+  openModal(`<div class="global-add-modal"><h3>What are you adding?</h3><div class="modal-sub">${esc(sub)}</div><div class="global-add-grid">${choices.map(([key,label,note]) => `<button class="${preferred === key ? "recommended" : ""}" onclick="runGlobalAdd('${key}')"><b>${label}</b><span>${note}</span></button>`).join("")}</div><div class="modal-actions"><button class="cancel" onclick="closeModal()">Cancel</button></div></div>`);
 };
 /* ADD, WHERE THE SURFACE HAS ALREADY NAMED THE RECORD.
  *
@@ -7325,7 +7694,18 @@ window.runGlobalAdd = (key) => {
   if (key === "prop") return addEntity("props");
   if (key === "vehicle") return addEntity("vehicles");
   if (key === "audio") return addEntity("audio");
-  if (key === "project") { location.hash = "#/create"; return; }
+  if (key === "project") {
+    /* WITH NOTHING OPEN, THIS OPENS THE DIALOG THAT ACTUALLY CREATES A PROJECT.
+       It set `#/create` unconditionally, and with no project the router declined to
+       run — so the chooser closed and the screen did not move, which reads as a
+       broken application on a filmmaker's first minute. `#/create` itself is
+       unchanged for a window that HAS a project open; the start surface still says
+       "The one you have open now is not changed", which is true there and is
+       PROJECT_CREATION_LANDING_V1's sentence to revisit. */
+    if (shellInFirstRun()) return newProject();
+    location.hash = "#/create";
+    return;
+  }
 };
 
 

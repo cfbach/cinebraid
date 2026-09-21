@@ -1063,6 +1063,13 @@ function wireSearch() {
   });
 }
 async function runSearch(q) {
+  /* NO_PROJECT_SHELL_TRUTH_V1 — NEVER WITHOUT A LOADED PROJECT. POST /api/search reads
+     the active project's file, and with none open the server does not refuse: it throws
+     outside any handler and the whole local server exits. The box is made unavailable
+     in the shell (public/app.js, syncShellAvailability); this is the second, independent
+     layer, at the one place the request is made, so no caller can reach it without a
+     record to search. It says nothing: the control that could reach it already has. */
+  if (typeof P === "undefined" || !P) return;
   if (!q.trim()) {
     closeModal();
     return;
@@ -1072,14 +1079,25 @@ async function runSearch(q) {
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ q }),
   });
-  const d = await r.json();
+  const d = await r.json().catch(() => ({}));
+  /* C3. The server now REFUSES a search it cannot run (no project open, or one it cannot
+     read) instead of dying on it. A window that still believes a project is open — the
+     project removed from another window — says the server's own sentence rather than
+     reading `results` off a refusal. */
+  if (!r.ok || !Array.isArray(d.results)) return toast(d.error || "Search is unavailable right now.");
   const go = {
     shot: "#/shot/",
     character: "#/character/",
     location: "#/location/",
     prop: "#/prop/",
     style: "#/settings",
-    session: "#/activity",
+    /* NO_PROJECT_SHELL_TRUTH_V1 — THE SESSION ENTRY IS GONE. It aimed at an activity
+       hash this build has no view for. That used to fall through to Production
+       silently; now that an unknown hash is answered as not found, a link the product
+       generates itself must not be left pointing at one. A session has no workspace to
+       open, so it takes the same inert destination every other unmapped result type
+       already takes below. Giving it a real one is a question about the search surface,
+       not about the shell. */
   };
   /* Search is global navigation: a result link clears any contextual return. */
   openModal(`<div data-global-navigation><h3>Search</h3><div class="modal-sub">${esc(d.mode || "").toUpperCase()}</div>
@@ -1089,7 +1107,7 @@ async function runSearch(q) {
             .map(
               (
                 x,
-              ) => `<a class="qc-item" style="text-decoration:none" href="${go[x.type] ? (x.type === "style" || x.type === "session" ? go[x.type] : go[x.type] + x.id) : "#"}" onclick="closeModal()">
+              ) => `<a class="qc-item" style="text-decoration:none" href="${go[x.type] ? (x.type === "style" ? go[x.type] : go[x.type] + x.id) : "#"}" onclick="closeModal()">
       <span class="dur-chip" style="min-width:64px">${esc(x.type.toUpperCase())}</span>
       <span><b>${esc(x.title)}</b><br><span class="hint">${esc(x.snippet)}…</span></span></a>`,
             )

@@ -167,6 +167,13 @@ const nodeSuites = [
   "check:comfy-negative",
   "check:generation-surface",
   "check:quiet-shell",
+  /* NO_PROJECT_SHELL_TRUTH_V1. Beside the other shell suites: what the shell may
+     offer with no project open, and that an unknown hash is answered as one. */
+  "check:no-project-shell",
+  "check:no-project-shell-negative",
+  /* C3: the server refuses a no-project search instead of exiting on it. */
+  "check:no-project-search",
+  "check:no-project-search-negative",
   "check:shell-ownership",
   /* A2. Named beside the A1 ownership suite because they guard the same shell
      from opposite directions: that one holds Activity and the Assistant where A1
@@ -338,6 +345,7 @@ const browserSuites = [
   "check:ui-state", "check:c2b-browser", "check:brand-logo-browser", "check:lan-passcode-browser",
   "check:focused-browser", "check:alpha-loop-browser", "check:entity-truth-browser",
   "check:shot-readiness-browser", "check:founder-p0-browser", "check:quiet-shell-browser",
+  "check:no-project-shell-browser",
   "check:shell-identity-browser",
   "check:project-entry-browser", "check:reference-reframe-browser", "check:simple-advanced-browser",
   "check:shot-intent-browser", "check:authority-browser", "check:shot-canon-removal-browser",

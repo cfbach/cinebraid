@@ -140,6 +140,14 @@
   function activeProject() {
     return typeof P === "undefined" ? null : P;
   }
+  /* NO_PROJECT_SHELL_TRUTH_V1. Whether the shell has CONFIRMED first run — public/app.js's
+     fact (shellInFirstRun), read through typeof like every binding above. It is not the
+     same as a null record: a project that is still opening is null too, and the drawer
+     must stay openable then. A realm without the fact answers false, which is the
+     behaviour this file shipped with. */
+  function firstRunConfirmed() {
+    return typeof shellInFirstRun === "function" ? !!shellInFirstRun() : false;
+  }
   /* Set by public/live-activity.js when the server answers for a DIFFERENT project
      than this window is showing. It is a scalar fact about this window, not activity
      data, and the drawer that used to announce it is gone — so the Terminal says it.
@@ -1289,6 +1297,18 @@
     const activityWas = !terminalCollapsed();
     let railNext = next.rail === undefined ? railWas : !!next.rail;
     let activityNext = next.activity === undefined ? activityWas : !!next.activity;
+    /* NO_PROJECT_SHELL_TRUTH_V1 — OPENING A UTILITY THAT HAS NOTHING TO SHOW IS
+       REFUSED IN THE WRITER, for the same reason the rule above it is: six callers
+       cannot be trusted to remember it, and a preference written here would be read
+       back by syncActivityToggle() as an open drawer. The refusal is silent and
+       total — the control that could reach it already says it is unavailable and
+       already explains why, so a second announcement here would be the same sentence
+       twice. */
+    if (activityNext && !activityWas && typeof shellUtilityAvailability === "function"
+      && !shellUtilityAvailability("activity", { hasProject: !firstRunConfirmed() }).available) {
+      syncActivityToggle();
+      return { rail: railWas, activity: activityWas };
+    }
     if (railNext && activityNext) {
       if (next.rail === true) activityNext = false;
       else railNext = false;
@@ -1449,9 +1469,42 @@
   function syncActivityToggle() {
     const button = document.getElementById(ACTIVITY_TOGGLE_ID);
     if (!button) return;
-    const open = !terminalCollapsed();
+    /* NO_PROJECT_SHELL_TRUTH_V1 — THE CONTROL CANNOT CLAIM AN OPEN DRAWER THERE IS
+       NOT ONE OF. With no project, paint() unmounts the Terminal and the dock
+       collapses to nothing — but a stored "not collapsed" preference from an earlier
+       session still made this button report aria-expanded="true" over zero pixels.
+       Whether the dock has anything to show is the same fact as whether a project is
+       open, so it is asked here rather than inferred from the preference, and the
+       answer is written as unavailable instead of as expanded. The state word goes
+       into the chip's own `.activity-state` line — the one public/live-activity.js
+       writes — so the reason is visible and not only in a tooltip. */
+    const availability = typeof shellUtilityAvailability === "function"
+      ? shellUtilityAvailability("activity", { hasProject: !firstRunConfirmed() })
+      : { available: true, reason: "", state: "" };
+    const open = availability.available && !terminalCollapsed();
     button.setAttribute("aria-expanded", open ? "true" : "false");
     button.classList.toggle("open", open);
+    /* Only what THIS wrote is cleared, and only when it wrote it — so the ordinary
+       repaint with a project open touches no attribute it did not already own, exactly
+       as it did before this slice. */
+    if (availability.available) {
+      if (button.dataset && button.dataset.shellUnavailable) {
+        button.removeAttribute("aria-disabled");
+        button.removeAttribute("data-shell-unavailable");
+        /* The label, title and state word were overwritten with the reason; their
+           owner is public/live-activity.js, so it is asked to repaint them rather than
+           this file guessing what they said. It calls back here, finds nothing marked,
+           and returns. */
+        if (typeof v641UpdateActivityButton === "function") v641UpdateActivityButton();
+      }
+      return;
+    }
+    button.setAttribute("aria-disabled", "true");
+    button.setAttribute("data-shell-unavailable", "no-project");
+    button.title = availability.reason;
+    button.setAttribute("aria-label", `Activity · ${availability.state}. ${availability.reason}`);
+    const state = button.querySelector(".activity-state");
+    if (state) state.textContent = availability.state;
   }
 
   /* THE ONE PLACE A MARK BECOMES THE SHIPPED BRAIDY.

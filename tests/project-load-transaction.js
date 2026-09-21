@@ -176,6 +176,7 @@ function refreshServer({ a, b, replyForWrite = () => ({ status: 200 }), ledger =
   let missNext = 0;
   let missAlways = false;
   let heldWrites = null;
+  let heldReplies = null;
   /* A park point INSIDE PREPARE but AFTER the project read has been answered.
      `/api/project` is awaited first and `/api/scan` rides in the Promise.all
      behind it, so holding the scan stands a refresh still in flight with its
@@ -302,6 +303,13 @@ function refreshServer({ a, b, replyForWrite = () => ({ status: 200 }), ledger =
       heldWrites = null;
       for (const resume of waiting) resume();
     },
+    holdWriteReplies() { heldReplies = []; },
+    get heldWriteReplies() { return (heldReplies || []).length; },
+    releaseWriteReplies() {
+      const waiting = heldReplies || [];
+      heldReplies = null;
+      for (const resume of waiting) resume();
+    },
     releaseRead(index) {
       const row = parked[index];
       assert(row && !row.done, `no parked read at index ${index}`);
@@ -357,7 +365,13 @@ function refreshServer({ a, b, replyForWrite = () => ({ status: 200 }), ledger =
         docs[slug] = body;
         counters[slug] += 1;
         record.status = 200;
-        return response({ ok: true, revision: revisionOf(slug) });
+        /* STORED NOW, ANSWERED LATER. The write above is already the stored document;
+           only the reply that tells the window so is held, which is the one ordering in
+           which a revision read can report this window's own save before the window has
+           heard about it. */
+        const accepted = revisionOf(slug);
+        if (heldReplies) await new Promise((resolve) => heldReplies.push(resolve));
+        return response({ ok: true, revision: accepted });
       }
       if (url === "/api/project") {
         /* Captured at REQUEST time. */
@@ -1785,6 +1799,72 @@ async function saveInFlightWatchSection(options = {}) {
   console.log("  V3-6 save-in-flight - the watch waits for this window's own save rather than racing it into a conflict");
 }
 
+/* V3-6b — this window's own save, sent AFTER the watch asked, is not a foreign change either.
+
+   V3-6 is the save already in flight when the watch fires; the watch waits for it. This
+   is the other order, and the one PR #82's Browser validation met on a hosted runner:
+   the watch's read is already on the wire when the debounced save goes out, the server
+   stores the save and then answers the read with the revision that save produced, and
+   the window hears the read before the save's own reply. PROJECT_REVISION has not moved
+   yet, so the answer looked foreign, and with the save still unanswered the window
+   counted as holding unsaved edits: "This project changed while this view was open"
+   stood over the shot and PROJECT_CONFLICT stopped every save after it. */
+async function saveSentMidWatchSection(options = {}) {
+  const server = refreshServer({ a: currentSchemaProject("Project A"), b: currentSchemaProject("Project B") });
+  const context = await openFixture(server, currentSchemaProject("Project A"), options);
+  const R0 = server.revisionOf(A);
+  const generationAtOpen = read(context, "PROJECT_SAVE_GENERATION");
+
+  /* The watch asks first, with nothing of this window's on the wire. */
+  server.holdNextRevisionRead();
+  vm.runInContext(`__watch = watchProjectRevision();`, context);
+  await settle();
+  assert.strictEqual(server.parkedRevisionReads, 1, "precondition: the watch's revision read is on the wire");
+
+  /* Then this window saves. The server stores it at once and holds only the reply. */
+  server.holdWriteReplies();
+  vm.runInContext(`P.meta.title = "saved while the watch was asking"; dirty(); __save = flushPendingProjectSave();`, context);
+  await settle();
+  const R1 = server.revisionOf(A);
+  assert.strictEqual(server.heldWriteReplies, 1, "precondition: the save's reply is held");
+  assert.notStrictEqual(R1, R0, "precondition: the server has already stored this window's save");
+  assert.strictEqual(read(context, "PROJECT_REVISION"), R0, "precondition: this window has not heard its own reply yet");
+  assert.strictEqual(read(context, "projectHasUnsavedEdits()"), true, "precondition: so the save still counts as unsaved here");
+  const projectReads = server.countRequests("GET /api/project");
+
+  /* The read is answered first, naming the revision this window's own save produced. */
+  server.releaseRevisionReads();
+  await read(context, "__watch");
+  await settle();
+  assert.strictEqual(read(context, "PROJECT_CONFLICT"), false,
+    "THE BLOCKER: a revision answer naming this window's own save, heard before that save's reply, must not be read back as a foreign change");
+  assert.strictEqual(read(context, "PROJECT_SAVE_GENERATION"), generationAtOpen,
+    "no durable advance is declared out of this window's own write");
+  assert.strictEqual(server.countRequests("GET /api/project"), projectReads, "and no refresh is started over it");
+  assert.strictEqual(read(context, "P.meta.title"), "saved while the watch was asking", "the edit is still the one on screen");
+
+  server.releaseWriteReplies();
+  await read(context, "__save");
+  await settle();
+  assert.strictEqual(read(context, "PROJECT_REVISION"), R1, "the save's own reply then moves this window to R1");
+  assert.strictEqual(read(context, "projectHasUnsavedEdits()"), false, "nothing is unsaved");
+  assert.strictEqual(read(context, "PROJECT_CONFLICT"), false, "and no conflict was invented");
+  assert.strictEqual(read(context, "PROJECT_SAVE_GENERATION"), generationAtOpen + 1,
+    "exactly one advance — the save's own");
+  assert.strictEqual(saveIndicator(context), "Saved", "resting truthfully");
+
+  /* THE NEXT COMPARISON AGREES, AND SAVING NEVER STOPPED. */
+  const before = clientState(context);
+  await tickRevisionWatch(context);
+  assert.deepStrictEqual(clientState(context), before, "the next tick finds the two in agreement and does nothing");
+  const writesBefore = server.writes.length;
+  await vm.runInContext(`(async () => { P.meta.title = "and the next edit saves too"; dirty(); await flushPendingProjectSave(); await SAVE_CHAIN; })()`, context);
+  await settle();
+  assert.strictEqual(server.writes.length, writesBefore + 1, "the next edit goes out");
+  assert.strictEqual(server.writes[server.writes.length - 1].status, 200, "and is accepted");
+  console.log("  V3-6b save-sent-mid-watch - a save that leaves after the watch asked is still this window's own write, never a conflict");
+}
+
 /* V3-7 — the revision could not be read. */
 async function revisionReadFailureSection(options = {}) {
   const server = refreshServer({ a: currentSchemaProject("Project A"), b: currentSchemaProject("Project B") });
@@ -3006,6 +3086,9 @@ const WATCH_OBSERVES_NOTHING = `      if (serverRevision === PROJECT_REVISION) r
 const REPAIRED_WATCH_BINDING = `      if (owner.epoch !== PROJECT_OPEN_EPOCH || owner.slug !== ACTIVE_PROJECT_SLUG) return null;
       if (owner.revision !== PROJECT_REVISION) return null;`;
 const WATCH_BINDING_REMOVED = "";
+/* THE WATCH'S OWN-SAVE GUARD FOR A SAVE THAT LEFT AFTER IT ASKED (PR #82 Browser validation). */
+const REPAIRED_WATCH_SAVE_GUARD = `      if (SAVE_CHAIN !== savesWhenAsked) return null;\n`;
+const WATCH_SAVE_GUARD_REMOVED = "";
 const REPAIRED_WATCH_OWNER = `      if (serverRevision === PROJECT_REVISION) return null;
       return applyForeignProjectRevision(owner);`;
 const WATCH_OWNER_IS_LIVE_STATE = `      if (serverRevision === PROJECT_REVISION) return null;
@@ -3681,9 +3764,41 @@ async function negativeControlsSection() {
     controls.push({ id: "NC-20", defect: "the automation refresh throws on 502 before reading projectUpdated, so a durable write goes undeclared — recovered by the universal watch, which is why it is immediacy and not correctness", detected });
   }
 
+  /* NC-21 — THE WATCH READS BACK A SAVE THAT LEFT AFTER IT ASKED. The guard is removed
+     and nothing else: the read is on the wire, the save goes out, the server stores it
+     and answers the read first. The probe proves the defect really stands the conflict
+     up; the section must then fail at its own blocker assertion, not merely somewhere. */
+  {
+    const edits = [[REPAIRED_WATCH_SAVE_GUARD, WATCH_SAVE_GUARD_REMOVED]];
+    const mutate = sourceMutator(edits);
+    const server = refreshServer({ a: currentSchemaProject("Project A"), b: currentSchemaProject("Project B") });
+    const context = await openFixture(server, currentSchemaProject("Project A"), { mutateSource: mutate });
+    server.holdNextRevisionRead();
+    vm.runInContext(`__watch = watchProjectRevision();`, context);
+    await settle();
+    server.holdWriteReplies();
+    vm.runInContext(`P.meta.title = "saved while the watch was asking"; dirty(); __save = flushPendingProjectSave();`, context);
+    await settle();
+    server.releaseRevisionReads();
+    await read(context, "__watch");
+    await settle();
+    assert(mutate.applied.has("app.js"), "NC-21: app.js was never evaluated, so the defect never ran");
+    assert.strictEqual(read(context, "PROJECT_CONFLICT"), true,
+      "NC-21 probe: the defect must actually read this window's own save back as a foreign change");
+    server.releaseWriteReplies();
+    await read(context, "__save");
+    await settle();
+    assert.strictEqual(server.writes[server.writes.length - 1].status, 200,
+      "NC-21 probe: although the save it called a conflict was accepted");
+    const detected = await expectRed("NC-21", () => saveSentMidWatchSection({ mutateSource: sourceMutator(edits) }));
+    assert(detected.startsWith("THE BLOCKER: a revision answer naming this window's own save"),
+      `NC-21: the section must fail at its own blocker assertion, not elsewhere; it failed at: ${detected}`);
+    controls.push({ id: "NC-21", defect: "the revision watch reads back a save that left after it asked, heard before that save's reply, as a foreign change — the false conflict dialog of PR #82's Browser validation", detected });
+  }
+
   console.log("Project load transaction negative controls");
   for (const row of controls) console.log(`  ${row.id} - ${row.defect}\n        detected: ${row.detected}`);
-  assert.strictEqual(controls.length, 19, "every declared control must have produced a receipt");
+  assert.strictEqual(controls.length, 20, "every declared control must have produced a receipt");
   return controls.length;
 }
 
@@ -3706,6 +3821,7 @@ const SECTIONS = [
   dirtyWindowMismatchSection,
   blockedWindowMismatchSection,
   saveInFlightWatchSection,
+  saveSentMidWatchSection,
   revisionReadFailureSection,
   noChangeWatchSection,
   revisionWatchAcrossSwitchSection,

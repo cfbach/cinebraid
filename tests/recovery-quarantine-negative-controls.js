@@ -73,10 +73,13 @@ const EDITS = {
   /* The shape of the mistake: a screen changed, so the mode must be over. */
   "NC-RQ-4": [
     {
+      /* Anchored on the head of route(), because NO_PROJECT_SHELL_TRUTH_V1 replaced the
+         line that followed it (the bare no-project return is now a delegation). The
+         mutation is unchanged: Recovery mode is cleared at the top of every navigation. */
       label: "clear Recovery mode from navigation",
       file: "app.js",
-      from: "async function route(recoveryAttempt = false) {\n  if (!P) return;",
-      to: "async function route(recoveryAttempt = false) {\n  PROJECT_QUARANTINE = null;\n  if (document.body?.dataset) delete document.body.dataset.projectQuarantine;\n  if (!P) return;",
+      from: "async function route(recoveryAttempt = false) {\n  /* NO_PROJECT_SHELL_TRUTH_V1.",
+      to: "async function route(recoveryAttempt = false) {\n  PROJECT_QUARANTINE = null;\n  if (document.body?.dataset) delete document.body.dataset.projectQuarantine;\n  /* NO_PROJECT_SHELL_TRUTH_V1.",
     },
   ],
 };

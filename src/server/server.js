@@ -9968,10 +9968,41 @@ const cos = (a, b) => {
   return d / Math.sqrt(na * nb);
 };
 app.post("/api/search", async (req, res) => {
+  /* NO_PROJECT_SHELL_TRUTH_V1 (C3) — SEARCH REFUSES WITHOUT A PROJECT; IT DOES NOT CRASH.
+
+     This route read `DATA()` unconditionally. With no active project that is
+     `<projects root>/_none/project.json`, which does not exist, so readJsonSync threw
+     ENOENT inside an async express handler — which express does not catch — and the
+     unhandled rejection ENDED THE SERVER PROCESS. One request could stop CineBraid.
+
+     So "is a project open?" is answered first, before any project file or embedding
+     state is touched, in the repository's existing shape for exactly this answer: the
+     404 GET /api/project gives when nothing is open, with the refusal code writeProject()
+     already uses. The body is a sentence for a filmmaker and a code for a program —
+     never a path, an exception message or a stack. The client never asks without a
+     project (public/review.js runSearch, public/app.js syncShellAvailability); this is
+     the server's own defence, not a replacement for either. */
+  if (!activeSlug() || !fs.existsSync(DATA()))
+    return res.status(404).json({
+      error: "No project is open, so there is nothing to search. Create a project or open an existing one first.",
+      code: "NO_ACTIVE_PROJECT",
+    });
   const q = String(req.body.q || "").trim();
   if (!q) return res.json({ mode: "none", results: [] });
-  const P = readJsonSync(DATA());
-  const docs = searchCorpus(P);
+  /* THE SAME CRASH, ONE STEP LATER. A project that is open but cannot be read — the
+     Recovery-mode case: unreadable, not JSON, not a project — threw from the same line.
+     It is refused here with the status the project inspector already gives those files,
+     and again with no path and no parser message. Nothing is written either way. */
+  let P, docs;
+  try {
+    P = readJsonSync(DATA());
+    docs = searchCorpus(P);
+  } catch {
+    return res.status(422).json({
+      error: "The open project could not be read, so it cannot be searched. Nothing was changed.",
+      code: "PROJECT_UNREADABLE",
+    });
+  }
   try {
     if (projectAIPolicy() === "disabled") throw new Error("AI search disabled");
     let cache = {};
