@@ -26,7 +26,7 @@
  *   ORPHAN_ENTITY_SERVER_ROOT      run the server from another tree (12a338d, to reproduce)
  *   ORPHAN_ENTITY_SERVER_MUTATION  a JSON file {file, from, to}: one anchored edit applied to
  *                                  that server source IN MEMORY as node loads it
- *   ORPHAN_ENTITY_PART             "client" or "server": run only checks 1-6 or 7-12. The
+ *   ORPHAN_ENTITY_PART             "client" or "server": run only checks 1-7 or 8-15. The
  *                                  controls use it so a client control does not start a
  *                                  server; every ordinary run leaves it unset and runs both.
  *
@@ -266,6 +266,23 @@ check('6. a refused creator answers in the chooser the shared answer draws — a
   note('6. the chooser draws the shared answer (state, heading, reason, choices); "still opening" is redrawn when the last open settles; New project opens its dialog wherever offered');
 });
 
+check('7. a form queues no focus of its own — openModal() alone places a dialog\'s initial focus', () => {
+  const app = read('public/app.js');
+  const form = app.slice(app.indexOf('function formModal(title, fields, onSubmit, options = {}) {'), app.indexOf('/* ---------- routing ---------- */'));
+  assert.ok(form.length > 100, 'formModal is no longer where this suite expects it');
+  /* A form that focuses its first field AGAIN, later, can take focus from the field someone has
+     moved on to. Typing arrives in two steps — the field is focused, then the text is inserted —
+     and a late move between them carries the text into the first field instead. That is how a
+     Character's description ended up in "Code / id" on a hosted runner (PR #83). */
+  const own = form.match(/^.*\.focus\??\.?\(.*$/m);
+  assert.ok(!own,
+    `formModal must queue no focus of its own — openModal() already focuses the first field, and a second, later move can carry typing out of the field it was typed into: ${own && own[0].trim()}`);
+  const open = app.slice(app.indexOf('function openModal(inner, options = {}) {'), app.indexOf('/* W6 — CHANGING WHAT YOU ARE LOOKING AT IS NOT OPENING A NEW DIALOG.'));
+  assert.ok(open.length > 100 && /const target = m\.querySelector\?\.\("\[autofocus\], input, textarea, select, button, a\[href\], \[tabindex\]:not\(\[tabindex='-1'\]\)"\);\n\s*target\?\.focus\?\.\(\);/.test(open),
+    'openModal() must remain the one owner of a dialog\'s initial focus, on its first focusable control');
+  note('7. formModal queues no focus of its own; openModal() alone moves focus into a new dialog, onto its first field');
+});
+
 /* =========================================================================== SERVER */
 
 const RECORDER = `
@@ -307,7 +324,7 @@ function freePort() {
 function tail(text, lines = 4) { return String(text || '').trim().split(/\r?\n/).slice(-lines).join(' | '); }
 
 async function startServer(label, { config = {}, prepare = null } = {}) {
-  /* A CLOSED loopback port for local embeddings, so the one search check 14 makes to prove
+  /* A CLOSED loopback port for local embeddings, so the one search check 15 makes to prove
      the recorder live takes its plain-text fallback and writes nothing. Not port 9, which is
      on fetch's blocked list and would never open a socket for the recorder to see. */
   const embedPort = await freePort();
@@ -435,7 +452,7 @@ const RECORD_ROUTES = [
 
 const state = {};
 
-check('7. with no project open, every media route refuses — 404, nothing created, no placeholder project — and the process survives', async () => {
+check('8. with no project open, every media route refuses — 404, nothing created, no placeholder project — and the process survives', async () => {
   state.first = await startServer('first');
   state.roots = [state.first.workspace.projectsRoot, state.first.workspace.configPath, path.join(SERVER_ROOT, 'data'), path.join(SERVER_ROOT, 'projects')];
   state.before = snapshot(state.roots);
@@ -460,22 +477,22 @@ check('7. with no project open, every media route refuses — 404, nothing creat
         && answer.json.code === 'NO_ACTIVE_PROJECT',
         `${answer.route} must say what is wrong and what to do, with the NO_ACTIVE_PROJECT code, got ${answer.text.slice(0, 160)}`);
   }
-  note(`7. ${MEDIA_ROUTES.length} media routes with no project: ${state.refusals.map(({ answer }) => answer.status).join('/')} — ` +
+  note(`8. ${MEDIA_ROUTES.length} media routes with no project: ${state.refusals.map(({ answer }) => answer.status).join('/')} — ` +
     `"${state.refusals[0].answer.json && state.refusals[0].answer.json.error}"; nothing created, no _none; alive`);
 });
 
-check('8. the refusals say nothing they should not — no path, exception text, stack or secret', async () => {
-  assert.ok(state.refusals && state.refusals.length, 'check 7 did not obtain responses to inspect');
+check('9. the refusals say nothing they should not — no path, exception text, stack or secret', async () => {
+  assert.ok(state.refusals && state.refusals.length, 'check 8 did not obtain responses to inspect');
   const leaking = [];
   for (const { answer, route } of state.refusals) {
     const found = leaks(answer.text, state.first, route);
     if (found.length) leaking.push(`${answer.route}: ${found.join(', ')} — ${answer.text.slice(0, 140)}`);
   }
   assert.deepStrictEqual(leaking, [], 'a no-project refusal must leak nothing');
-  note(`8. ${state.refusals.length} refusal bodies inspected: no path, exception, stack, secret or placeholder name`);
+  note(`9. ${state.refusals.length} refusal bodies inspected: no path, exception, stack, secret or placeholder name`);
 });
 
-check('9. the routes an entity record is saved through refuse with no project, write nothing, and leak nothing', async () => {
+check('10. the routes an entity record is saved through refuse with no project, write nothing, and leak nothing', async () => {
   const server = state.first;
   const before = snapshot(state.roots);
   const rows = [];
@@ -490,10 +507,10 @@ check('9. the routes an entity record is saved through refuse with no project, w
   assert.deepStrictEqual(snapshotDiff(before, snapshot(state.roots)), [], 'and nothing may be written by any of them');
   const leaking = rows.map(({ answer, route }) => [answer.route, leaks(answer.text, server, route)]).filter(([, found]) => found.length);
   assert.deepStrictEqual(leaking, [], 'and no refusal may leak');
-  note(`9. ${rows.map(({ answer }) => `${answer.route.replace(/^(\w+) /, '$1 ')} ${answer.status}`).join('; ')}`);
+  note(`10. ${rows.map(({ answer }) => `${answer.route.replace(/^(\w+) /, '$1 ')} ${answer.status}`).join('; ')}`);
 });
 
-check('10. repeated and concurrent refusals are side-effect free, and the same process keeps serving', async () => {
+check('11. repeated and concurrent refusals are side-effect free, and the same process keeps serving', async () => {
   const server = state.first;
   const pid = server.child.pid;
   const sequential = [];
@@ -509,10 +526,10 @@ check('10. repeated and concurrent refusals are side-effect free, and the same p
   const settings = await fetch(`${server.base}/api/config`);
   assert.ok(settings.ok, 'and Settings still answers');
   assert.strictEqual(server.child.pid, pid, 'from the SAME process');
-  note(`10. ${sequential.length} sequential + ${concurrent.length} concurrent refusals; ${Object.keys(state.before).length} paths byte-identical; pid ${pid} serving`);
+  note(`11. ${sequential.length} sequential + ${concurrent.length} concurrent refusals; ${Object.keys(state.before).length} paths byte-identical; pid ${pid} serving`);
 });
 
-check('11. with a project open, the same routes still write into THAT project, and nowhere else', async () => {
+check('12. with a project open, the same routes still write into THAT project, and nowhere else', async () => {
   const server = state.first;
   server.workspace.installSample('cinebraid-sample');
   const switched = await fetch(`${server.base}/api/projects/switch`, {
@@ -545,7 +562,7 @@ check('11. with a project open, the same routes still write into THAT project, a
   for (const row of expected) assert.ok(created.includes(row), `expected ${row}; the writes were: ${created.join(' | ')}`);
   assert.deepStrictEqual(unexpected, [], `nothing else may be written, and nothing outside the open project; all writes: ${created.join(' | ')}`);
   assert.ok(!fs.existsSync(path.join(server.workspace.projectsRoot, '_none')), 'and still no placeholder project');
-  note(`11. with cinebraid-sample open: anchors/${unnamed.json.name}, audio/${named.json.name} and the shot folder land in that project and nowhere else`);
+  note(`12. with cinebraid-sample open: anchors/${unnamed.json.name}, audio/${named.json.name} and the shot folder land in that project and nowhere else`);
 });
 
 /* ---------------------------------------------------------------- THE PROJECT THAT CANNOT BE OPENED.
@@ -569,7 +586,7 @@ const DAMAGED_NAMED = DAMAGED_MEDIA.map((route) => route.json
   ? { ...route, json: { ...route.json, projectSlug: DAMAGED } }
   : { ...route, url: `${route.url}${route.url.includes('?') ? '&' : '?'}slug=${DAMAGED}` });
 
-check('12. a project whose record cannot be read is never written into by any media route — PROJECT_UNREADABLE, byte-identical', async () => {
+check('13. a project whose record cannot be read is never written into by any media route — PROJECT_UNREADABLE, byte-identical', async () => {
   state.damaged = await startServer('damaged', {
     config: { activeProject: DAMAGED },
     prepare: (workspace) => {
@@ -595,12 +612,12 @@ check('12. a project whose record cannot be read is never written into by any me
     && /cannot be read/.test(answer.json.error) && /recover it or open another project/.test(answer.json.error)));
   assert.deepStrictEqual(wrong.map(({ answer }) => `${answer.route} → ${answer.status} ${answer.text.slice(0, 100)}`), [],
     'every media write into the unreadable project must be refused 422 PROJECT_UNREADABLE — the status and code POST /api/search already uses for it');
-  note(`12. ${state.damagedRefusals.length} media writes into an unreadable project (${DAMAGED_MEDIA.length} naming no project, ${DAMAGED_NAMED.length} naming it): all 422 PROJECT_UNREADABLE; its folder byte-identical`);
+  note(`13. ${state.damagedRefusals.length} media writes into an unreadable project (${DAMAGED_MEDIA.length} naming no project, ${DAMAGED_NAMED.length} naming it): all 422 PROJECT_UNREADABLE; its folder byte-identical`);
 });
 
-check('13. unreadable-project refusals leak nothing, repeat and overlap without side effects, and the server keeps serving', async () => {
+check('14. unreadable-project refusals leak nothing, repeat and overlap without side effects, and the server keeps serving', async () => {
   const server = state.damaged;
-  assert.ok(server && state.damagedRefusals && state.damagedRefusals.length, 'check 12 did not obtain responses to inspect');
+  assert.ok(server && state.damagedRefusals && state.damagedRefusals.length, 'check 13 did not obtain responses to inspect');
   const leaking = state.damagedRefusals.map(({ answer, route }) => [answer.route, leaks(answer.text, server, route)]).filter(([, found]) => found.length);
   assert.deepStrictEqual(leaking, [], 'an unreadable-project refusal must leak no path, parser message, stack or secret');
   const pid = server.child.pid;
@@ -618,10 +635,10 @@ check('13. unreadable-project refusals leak nothing, repeat and overlap without 
   const settings = await fetch(`${server.base}/api/config`);
   assert.ok(settings.ok, 'and Settings still answers');
   assert.strictEqual(server.child.pid, pid, 'from the SAME process');
-  note(`13. ${sequential.length} sequential + ${concurrent.length} concurrent unreadable-project refusals; no leak; folder byte-identical; pid ${pid} serving`);
+  note(`14. ${sequential.length} sequential + ${concurrent.length} concurrent unreadable-project refusals; no leak; folder byte-identical; pid ${pid} serving`);
 });
 
-check('14. the server connected to nothing but this machine', async () => {
+check('15. the server connected to nothing but this machine', async () => {
   const server = state.first;
   /* THE RECORDER PROVES ITSELF FIRST: a search with the project open tries the local
      embedding endpoint — a closed loopback port — before its plain-text fallback. */
@@ -637,13 +654,13 @@ check('14. the server connected to nothing but this machine', async () => {
     ? fs.readFileSync(state.damaged.connections, 'utf8').split(/\r?\n/).filter(Boolean).map((line) => JSON.parse(line)) : [];
   const offsite = [...rows, ...damaged].filter((row) => !row.path && !/^(127\.\d+\.\d+\.\d+|::1|localhost)$/i.test(row.host));
   assert.deepStrictEqual(offsite, [], `the servers opened connections off this machine: ${JSON.stringify(offsite)}`);
-  note(`14. ${rows.length + damaged.length} outbound connections recorded, including the self-test on 127.0.0.1:${server.embedPort}; all loopback`);
+  note(`15. ${rows.length + damaged.length} outbound connections recorded, including the self-test on 127.0.0.1:${server.embedPort}; all loopback`);
 });
 
 /* =========================================================================== */
 (async () => {
   let failed = 0;
-  const selected = checks.filter(([name]) => !PART || (PART === 'client') === (Number(name.split('.')[0]) <= 6));
+  const selected = checks.filter(([name]) => !PART || (PART === 'client') === (Number(name.split('.')[0]) <= 7));
   try {
     for (const [name, fn] of selected) {
       try { await fn(); console.log('  ok  ' + name); }

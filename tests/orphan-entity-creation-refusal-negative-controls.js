@@ -215,28 +215,38 @@ clientControl('NC13 the refusal\'s one offered action is keyed to first run agai
     '    if (!projectRecordInstalled()) return newProject();\n',
     '    if (shellInFirstRun()) return newProject();\n', 'NC13'));
 
+/* ------------------------------------------------------------- a form's initial focus */
+
+/* Exactly the line that was removed: the form's own second focus of its first field, 30 ms after
+   openModal() had already put focus there. */
+clientControl('NC22 formModal queues its own delayed first-field focus again', 7,
+  'formModal must queue no focus of its own',
+  (dir) => patch(dir, 'public/app.js',
+    '      <button class="lock-btn" onclick="_formSubmit()">SAVE</button></div>`);\n}\n',
+    '      <button class="lock-btn" onclick="_formSubmit()">SAVE</button></div>`);\n  setTimeout(() => $("#ff-" + fields[0].k)?.focus(), 30);\n}\n', 'NC22'));
+
 /* ------------------------------------------------------------- the server */
 
 const GATE = '  if (!inspected.ok) throw mediaOwnerError(inspected.status === 422 ? "PROJECT_UNREADABLE" : "NO_ACTIVE_PROJECT");\n';
 
-serverControl('NC10 the server gate is removed — media lands in <projects root>/_none again', 7,
+serverControl('NC10 the server gate is removed — media lands in <projects root>/_none again', 8,
   'a media write must be REFUSED and create nothing', { from: GATE, to: '' });
 
-serverControl('NC20 only the unreadable-project guard is removed — Recovery\'s damaged project is written into again', 12,
+serverControl('NC20 only the unreadable-project guard is removed — Recovery\'s damaged project is written into again', 13,
   'the damaged project directory changed',
   { from: GATE, to: '  if (!inspected.ok && inspected.status !== 422) throw mediaOwnerError("NO_ACTIVE_PROJECT");\n' });
 
-serverControl('NC11 the no-project refusal names the placeholder directory it refused to write into', 8,
+serverControl('NC11 the no-project refusal names the placeholder directory it refused to write into', 9,
   'a no-project refusal must leak nothing',
   { from: '    : "No project is open, so there is no project to store this in. Open or create a project first.";\n',
     to: '    : "No project is open, so there is no project to store this in. Open or create a project first. (" + PROJECT_DIR() + ")";\n' });
 
-serverControl('NC21 the unreadable-project refusal names the damaged folder it refused to write into', 13,
+serverControl('NC21 the unreadable-project refusal names the damaged folder it refused to write into', 14,
   'an unreadable-project refusal must leak no path',
   { from: '"This project\'s file cannot be read, so nothing was stored in it. CineBraid does not write into a project it cannot open — recover it or open another project first."',
     to: '"This project\'s file cannot be read, so nothing was stored in it. CineBraid does not write into a project it cannot open — recover it or open another project first. (" + PROJECT_DIR() + ")"' });
 
-serverControl('NC12 the no-project refusal loses its status and answers a generic 400', 7,
+serverControl('NC12 the no-project refusal loses its status and answers a generic 400', 8,
   'must refuse with its own status 404',
   { from: '  if (error?.code === "NO_ACTIVE_PROJECT") return 404;\n', to: '' });
 

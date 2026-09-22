@@ -32,6 +32,8 @@ assertion. Nothing is written to disk.
   N7  the project binding: "a record is installed" passes for "the form's own project"
   N8  the running open: the creators are not told a project is opening
   N9  the redraw: a "still opening" chooser is never corrected once the open settles
+  N10 the form's initial focus: a deferred first-field focus lands after focus has moved on, and
+      the typing meant for the next field is carried into Code / id
 
 NOTHING IS CONFIGURED, PAID FOR, OR SENT ANYWHERE. Config and projects live in a temporary
 directory reached through CINEBRAID_CONFIG_PATH and CINEBRAID_PROJECTS_ROOT; every paid route
@@ -347,6 +349,52 @@ def open_modal_by_keyboard(page):
     page.wait_for_function("() => document.getElementById('modal').contains(document.activeElement)", timeout=5000)
 
 
+# A NEW FORM IS READY FOR TYPING ONCE ITS OWN INITIAL FOCUS HAS LANDED. openModal() moves focus
+# onto the form's first field on a later turn, and Playwright's fill() focuses a field and inserts
+# its text in two separate steps — so typing that starts before that move has run can have its
+# text carried into the first field. This resolves on the focusin that puts the first .form-field
+# control in document.activeElement, or at once if it is already there. The deadline only turns a
+# form that never takes focus into a named failure; nothing here waits on elapsed time.
+FORM_FOCUS = """
+(deadlineMs) => new Promise((resolve, reject) => {
+  const modal = document.getElementById('modal');
+  const first = () => modal.querySelector('.form-field input, .form-field textarea, .form-field select');
+  const owned = () => { const field = first(); return !!field && document.activeElement === field; };
+  if (owned()) return resolve(first().id);
+  let deadline = 0;
+  const landed = () => {
+    if (!owned()) return;
+    modal.removeEventListener('focusin', landed);
+    clearTimeout(deadline);
+    resolve(first().id);
+  };
+  modal.addEventListener('focusin', landed);
+  deadline = setTimeout(() => {
+    modal.removeEventListener('focusin', landed);
+    const field = first(), active = document.activeElement;
+    reject(new Error(`the form's first field ${field ? '#' + field.id : '(none)'} never took focus; focus is on `
+      + (active ? (active.id ? '#' + active.id : active.tagName) : 'nothing')));
+  }, deadlineMs);
+})
+"""
+
+
+def wait_for_form_focus(page):
+    return page.evaluate(FORM_FOCUS, 10000)
+
+
+def assert_typed_where_intended(page, intended):
+    """Every value typed is in the field it was typed into — and #ff-id, which nothing typed into,
+    is still empty, so typing carried into it by a focus move is named for what it is."""
+    held = page.evaluate("(ids) => Object.fromEntries(ids.map((id) => { const f = document.querySelector('#modal #' + id); "
+                         "return [id, f ? f.value : null]; }))", ["ff-id", *intended])
+    assert held["ff-id"] == "", (
+        f"typing was diverted into #ff-id (Code / id), a field nothing typed into: it holds {held['ff-id']!r}, "
+        f"and the fields it was meant for hold {({k: held[k] for k in intended})!r}")
+    misplaced = {k: held[k] for k, v in intended.items() if held[k] != v}
+    assert not misplaced, f"typed values are not in the fields they were typed into: {misplaced!r}, expected {intended!r}"
+
+
 # The seven records, and every way the shipped code can be asked to create one. Read by the
 # contracts and by the negative controls alike.
 LABELS = {"shot": "Shot", "scene": "Scene", "character": "Character", "location": "Location",
@@ -472,6 +520,7 @@ def contract_new_project_escape(page, where, screen, title):
     assert page.evaluate(STATE)["heading"] == "New CineBraid project", "it must be the shipped New CineBraid project dialog"
     assert_readable(page, "#modal #ff-title", f"{where}: the New project dialog's title field")
     shoot(page, f"{where.replace(' ', '-')}-new-project-{page.viewport_size['width']}")
+    wait_for_form_focus(page)
     page.fill("#modal #ff-title", title)
     page.select_option("#modal #ff-startMode", "scratch")
     page.click("#modal .lock-btn")
@@ -566,8 +615,10 @@ def contract_save_time_refusal(page):
     page.click("#global-add")
     page.click(".global-add-grid button:has(b:text-is('Character'))")
     page.wait_for_selector("#modal #ff-name", timeout=10000)
+    wait_for_form_focus(page)
     page.fill("#modal #ff-name", SENTINEL)
     page.fill("#modal #ff-description", "Grey wool coat, one silver button missing.")
+    assert_typed_where_intended(page, {"ff-name": SENTINEL, "ff-description": "Grey wool coat, one silver button missing."})
     idle = page.evaluate(STATE)
     assert idle["refusal"] and idle["refusal"]["hidden"], "with a record open the refusal slot must be empty and hidden"
     page.evaluate("() => showFirstRunWorkspace()")
@@ -623,8 +674,10 @@ def contract_wrong_project(page):
     page.click("#global-add")
     page.click(".global-add-grid button:has(b:text-is('Character'))")
     page.wait_for_selector("#modal #ff-name", timeout=10000)
+    wait_for_form_focus(page)
     page.fill("#modal #ff-name", SENTINEL)
     page.fill("#modal #ff-description", "Drawn for Project A.")
+    assert_typed_where_intended(page, {"ff-name": SENTINEL, "ff-description": "Drawn for Project A."})
     # B REPLACES A WHILE THE FORM IS OPEN, through the server's own switch and the window's own
     # replacement lifecycle — the path a switch takes, without the switcher closing the dialog.
     page.evaluate("""async (slug) => {
@@ -687,6 +740,7 @@ def contract_open_project_creators(page):
         form = page.evaluate(STATE)
         assert form["refusal"] and form["refusal"]["hidden"], f"{label}: the refusal slot must be hidden with a project open"
         name = f"{SENTINEL} {label}"
+        wait_for_form_focus(page)
         page.fill(f"#modal #{field}", name)
         page.click("#modal .lock-btn")
         # THE REQUESTED THING: the product's own answer that its save has settled, with the
@@ -921,8 +975,30 @@ try:
                 "**/app.js*": lambda: mutate("public/app.js",
                     "    if (!PROJECT_OPENS_IN_FLIGHT) try { refreshEntityCreationRefusal(); } catch (_) {}\n", "", "N9"),
             }, {"hold": True}),
+            # The form queues its own first-field focus again, and it lands at the worst moment: after
+            # something has been typed and focus has moved on to the next field — released by those two
+            # events, in the microtask after the move, never by elapsed time. That is the ordering that
+            # carried a description into Code / id on a hosted runner.
+            ("N10 the form's initial focus: a deferred first-field focus lands after focus has moved within the form", "open",
+             contract_save_time_refusal, {
+                "**/app.js*": lambda: mutate("public/app.js",
+                    '      <button class="lock-btn" onclick="_formSubmit()">SAVE</button></div>`);\n}\n',
+                    '      <button class="lock-btn" onclick="_formSubmit()">SAVE</button></div>`);\n'
+                    '  const late = $("#ff-" + fields[0].k), box = $("#modal");\n'
+                    '  let typed = false;\n'
+                    '  const typing = () => { typed = true; };\n'
+                    '  const release = (event) => {\n'
+                    '    if (!typed || event.target === late || !box.contains(event.target)) return;\n'
+                    '    box.removeEventListener("focusin", release);\n'
+                    '    box.removeEventListener("input", typing);\n'
+                    '    queueMicrotask(() => late.focus());\n'
+                    '  };\n'
+                    '  box.addEventListener("input", typing);\n'
+                    '  box.addEventListener("focusin", release);\n'
+                    '}\n', "N10"),
+            }, {}, "typing was diverted into #ff-id"),
         ]
-        for label, server, contract, patches, options in CONTROLS:
+        for label, server, contract, patches, options, *must_say in CONTROLS:
             routes = {glob: build() for glob, build in patches.items()}
             broken, caught = None, None
             try:
@@ -936,6 +1012,8 @@ try:
             finally:
                 if broken: broken.close()
             assert caught, f"{label}: the contract PASSED against the reconstructed defect, so it proves nothing"
+            assert not must_say or caught.startswith(must_say[0]), \
+                f"{label}: the contract failed, but not at the assertion that owns this defect — expected {must_say[0]!r}, got {caught!r}"
             findings.append(f"NC. {label}\n        caught by: {caught}")
 
         for relative in ("public/app.js", "public/shared-shell-availability.js"):

@@ -5138,7 +5138,10 @@ function formModalOption(option, selected) {
    ORPHAN_ENTITY_CREATION_REFUSAL_V1: this dialog closed first and ran its callback
    second, so a callback that could not write threw after the typing was already gone;
    and a callback that COULD write wrote into whichever project was open by then.
-   A caller that passes nothing gets exactly the dialog it always had. */
+   A caller that passes nothing gets exactly the dialog it always had.
+   INITIAL FOCUS IS openModal()'s ALONE. This used to queue a second focus of the first
+   field 30 ms later — the field openModal() had already focused — and that late move
+   could land after focus had gone to another field, sending the typing into the first. */
 function formModal(title, fields, onSubmit, options = {}) {
   const refuse = typeof options.refuse === "function" ? options.refuse : null;
   const openedFor = refuse ? projectOpenIdentity() : null;
@@ -5169,7 +5172,6 @@ function formModal(title, fields, onSubmit, options = {}) {
       .join("")}${refuse ? `<p id="form-modal-refusal" class="form-refusal" role="alert" hidden></p>` : ""}
     <div class="modal-actions"><button class="cancel" onclick="closeModal()">Cancel</button>
       <button class="lock-btn" onclick="_formSubmit()">SAVE</button></div>`);
-  setTimeout(() => $("#ff-" + fields[0].k)?.focus(), 30);
 }
 
 /* ---------- routing ---------- */
