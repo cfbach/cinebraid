@@ -26,3 +26,7 @@
 /.claude                                    export-ignore
 /CINEBRAID_v6.6.4.2_AUDIT_RESULTS.json      export-ignore
 /CineBraid_v6.6.4.2_New_Chat_Handoff.md     export-ignore
+
+# The pre-push hook is run by sh on every platform, and a CRLF line ending
+# breaks it on the machines that most need it.
+/.githooks/** text eol=lf

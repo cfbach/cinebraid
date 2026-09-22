@@ -1,7 +1,7 @@
 /* Public source exposure: what a public checkout of CineBraid says about itself.
 
-   CineBraid is developed in a private origin and published, one reviewed branch
-   at a time, to a separate public repository. Everything this suite pins is
+   CineBraid is developed in one public repository, where every push publishes
+   history (docs/PUBLICATION.md). Everything this suite pins is
    something that was wrong at least once, and each one is only visible from the
    outside:
 
@@ -436,7 +436,7 @@ function testHistoryRangeScan() {
 function testNoStrayNulBytes() {
   for (const rel of [
     "scripts/scan-secrets.js",
-    "scripts/publication-preflight.js",
+    "scripts/push-gate.js",
     "tests/public-exposure.js",
     "tests/public-exposure-negative-controls.js",
   ]) {
@@ -447,137 +447,132 @@ function testNoStrayNulBytes() {
   }
 }
 
-/* ---- 7c. the publication preflight, and the baselines it freezes --------- */
+/* ---- 7c. the pre-push gate and the server-side publication scan ----------- */
 
-function testPublicationPreflight() {
-  assert(pkg.scripts["publication:preflight"], "package.json must expose the publication preflight");
+/* Every push to the public repository publishes history, so the gate that matters
+   runs before git sends anything. Its behaviour - refusals, bindings and the
+   history it reads - is proved against throwaway repositories in
+   tests/public-exposure-negative-controls.js. This asserts the wiring: that the
+   gate exists, cannot push, is what the tracked hook runs, is what the contract
+   documents, and that the server-side scan guards every pull request. */
+function testPushGateWiring() {
+  assert(!exists("scripts/publication-preflight.js"),
+    "the two-repository publication preflight is retired; its only job was a direct push to main, which the contract now forbids");
+  assert(!pkg.scripts["publication:preflight"], "package.json still exposes the retired publication preflight");
 
-  const source = read("scripts/publication-preflight.js");
+  assert.strictEqual(pkg.scripts["hooks:install"], "git config core.hooksPath .githooks",
+    "hooks:install must point this clone's hooks at the tracked .githooks directory, and do nothing else");
 
-  /* It prints the push command; it must not be able to run it. A script that
-     could push is a script that can push by accident. */
-  assert(!/execFileSync\(\s*["']git["']\s*,\s*\[\s*["']push["']/.test(source),
-    "the preflight must not be able to push");
-  assert(!/["']--mirror["']|["']--all["']|spawnSync\(\s*["']git["']\s*,\s*\[\s*["']push["']/.test(source),
-    "the preflight must not carry a bulk push form");
-  for (const forbidden of ["require(\"https\")", "require(\"http\")", "fetch("]) {
-    assert(!source.includes(forbidden), `the preflight must make no network call: ${forbidden}`);
+  const hook = read(".githooks/pre-push");
+  assert(/^#!\/bin\/sh\n/.test(hook), ".githooks/pre-push must be a POSIX shell hook");
+  assert(/exec node "\$\(git rev-parse --show-toplevel\)\/scripts\/push-gate\.js" "\$@"/.test(hook),
+    ".githooks/pre-push must exec scripts/push-gate.js with git's arguments, so stdin reaches the gate");
+  /* Executable in the index, or every non-Windows clone silently skips it. */
+  const mode = git(["ls-files", "-s", "--", ".githooks/pre-push"]).split(/\s+/)[0];
+  if (mode) assert.strictEqual(mode, "100755", ".githooks/pre-push must be committed executable");
+
+  const source = read("scripts/push-gate.js");
+  assert(!/\[\s*["']push["']/.test(source), "the push gate must not be able to push");
+  for (const forbidden of ['require("https")', 'require("http")', "fetch("]) {
+    assert(!source.includes(forbidden), `the push gate must make no network call of its own: ${forbidden}`);
   }
+  /* Anchored on the sha git says it will send, never on HEAD. */
+  assert(/historyRangeEntries\(base, u\.localSha, repo\)/.test(source), "the gate must scan the range ending at the pushed sha");
+  assert(/publicationTreeEntries\(u\.localSha, repo\)/.test(source), "the gate must scan the tree of the pushed sha");
+  assert(!/historyRangeEntries\([^)]*"HEAD"/.test(source), "the gate must never scan HEAD in place of the pushed sha");
 
-  /* Both baseline rules are frozen here and in the document, and they must agree. */
-  const { AUDITED_BASELINE, PUBLIC_REPOSITORY } = require(path.join(ROOT, "scripts", "publication-preflight"));
-  assert.strictEqual(AUDITED_BASELINE.sha, FOUNDATION, "the first-publication baseline is not the audited foundation");
-  assert(AUDITED_BASELINE.why && AUDITED_BASELINE.why.length > 40, "the audited baseline carries no stated evidence");
-  assert(PUBLIC_REPOSITORY.includes("cfbach/cinebraid.git"), "the preflight names the wrong public repository");
+  const { CANONICAL, RELEASE_TAG_ENV } = require(path.join(ROOT, "scripts", "push-gate"));
+  for (const url of ["https://github.com/cfbach/cinebraid.git", "https://github.com/cfbach/cinebraid", "git@github.com:cfbach/cinebraid.git"]) {
+    assert(CANONICAL.test(url), `the gate does not recognise the canonical repository at ${url}`);
+  }
+  for (const url of ["https://github.com/cfbach/cinebraid-app.git", "https://github.com/someone/cinebraid.git"]) {
+    assert(!CANONICAL.test(url), `the gate mistakes ${url} for the canonical repository`);
+  }
+  assert.strictEqual(RELEASE_TAG_ENV, "CINEBRAID_RELEASE_TAG", "the release-tag variable is part of the documented contract");
 
   const doc = read("docs/PUBLICATION.md");
-  assert(doc.includes(FOUNDATION), "PUBLICATION.md must name the audited first-publication baseline");
-  assert(/--public-sha/.test(doc), "PUBLICATION.md must say what the baseline is after the first publication");
-  assert(/history/i.test(doc) && /--history-range/.test(doc), "PUBLICATION.md must document the history-range gate");
-  /* The ordered steps, so the document cannot drift from what the script does. */
-  for (const step of ["ancestor", "non-empty", "publication tree", "newly readable"]) {
-    assert(new RegExp(step, "i").test(doc), `PUBLICATION.md must document the "${step}" step`);
+  for (const needle of ["npm run hooks:install", ".githooks/", "scripts/push-gate.js", "CINEBRAID_RELEASE_TAG", "Publication scan", "--history-range", "--no-verify"]) {
+    assert(doc.includes(needle), `PUBLICATION.md must document ${needle}`);
+  }
+  assert(/every push publishes/i.test(doc), "PUBLICATION.md must state that every push publishes");
+  assert(doc.includes(FOUNDATION), "PUBLICATION.md must name the audited foundation the history scan starts from");
+  /* The ordered steps, so the document cannot drift from what the gate does. */
+  for (const step of ["exact commit", "ls-remote", "direct push to `main`", "baseline", "publication tree", "newly readable"]) {
+    assert(doc.toLowerCase().includes(step.toLowerCase()), `PUBLICATION.md must document the "${step}" step`);
   }
 
-  /* And the preflight refuses the things it says it refuses. Run here against
-     this repository, which is not at `main`, so it must refuse rather than clear. */
-  /* Refusals asserted on conditions that hold in ANY checkout. An earlier version
-     of this ran the preflight with no --candidate and expected a refusal because
-     the default is `main` and this worktree sits on a feature branch - which is
-     true here and false in a fresh clone of the published repository, where HEAD
-     IS main and the preflight correctly clears. The suite has to describe the
-     software, not the branch it happens to be read from. */
-  const script = path.join(ROOT, "scripts", "publication-preflight.js");
-  const runPreflight = (args) => {
-    const r = spawnSync(process.execPath, [script, ...args], { cwd: ROOT, encoding: "utf8", timeout: 300000 });
-    return { status: r.status, output: `${r.stdout || ""}${r.stderr || ""}` };
-  };
-
-  const noBaseline = runPreflight([]);
-  assert.strictEqual(noBaseline.status, 2, `the preflight must refuse without a baseline, got ${noBaseline.status}`);
-  assert(/name the baseline/.test(noBaseline.output), "the refusal must say what is missing");
-
-  /* HEAD~1 exists in any clone with history and is never HEAD, so a refusal is
-     reachable everywhere - but which one depends on the checkout. The binding
-     compares against local main, and a pull-request checkout (actions/checkout on
-     refs/pull/N/merge) is detached with remote-tracking refs only, so there the
-     preflight refuses first, on the local main it cannot resolve. The reason this
-     checkout earns is asserted exactly; the negative suite's throwaway
-     repositories prove both shapes in every checkout. */
-  const localMain = spawnSync("git", ["rev-parse", "--verify", "-q", "refs/heads/main"], { cwd: ROOT, encoding: "utf8" }).status === 0;
-  const mismatched = runPreflight(["--first-publication", "--candidate", "HEAD~1"]);
-  assert.strictEqual(mismatched.status, 2, `publishing a commit that is not the checkout and not main must be refused, got ${mismatched.status}`);
-  assert(/REFUSED/.test(mismatched.output) && (localMain ? /must be the same commit/ : /local refs\/heads\/main/).test(mismatched.output),
-    `the refusal must name its reason: ${mismatched.output.split("\n").slice(-2).join(" ")}`);
-  assert(!/git push/.test(mismatched.output), "a refused preflight must not print the push command");
-
-  /* The binding itself: the push is `main:refs/heads/main`, so the commit that
-     travels is whatever local main points at. Scanning the candidate and printing
-     that command regardless is how a reviewed commit clears while an unreviewed
-     main is what actually ships — measured in this repository before it was
-     fixed. All three refs are resolved and compared before anything clears.
-
-     Asserted on the source and on behaviour, because the behavioural half is
-     environment-dependent: in this worktree main is behind HEAD and the preflight
-     refuses, while in a clone of published main all three already agree. The
-     throwaway-repository controls in the negative suite cover both shapes. */
-  assert(/revParse\(\s*["']refs\/heads\/main["']/.test(source),
-    "the preflight must resolve local refs/heads/main, which is the commit a push actually publishes");
-  assert(/mismatches\.length/.test(source), "the preflight must refuse on a candidate/HEAD/main mismatch");
-  const bindAt = source.indexOf("mismatches.length");
-  const scanAt = source.indexOf("scanner.workingTreeEntries");
-  const printAt = source.indexOf("CLEARED");
-  assert(bindAt > 0 && bindAt < scanAt && bindAt < printAt,
-    "the binding must be checked before anything is scanned or printed");
-
-  /* CI scans the range a pull request adds, which is the cheapest moment to
-     notice - and it needs full history to have a range at all. It is an early
-     warning, not the gate: a CI job can be cancelled, superseded, or never run on
-     the commit that actually gets published, which is why the authoritative scan
-     happens at publication time. Both halves are asserted so neither can drift
-     into claiming to be the other. */
+  /* The server side: a job of its own, on every pull request, over the range the
+     event names and the head's archive, with the history it needs. */
   const workflow = read(".github/workflows/windows-ci.yml");
-  assert(/--history-range/.test(workflow), "CI must scan the history a pull request would add");
-  assert(/fetch-depth: 0/.test(workflow), "a range scan needs full history; a shallow checkout has no range to read");
-  assert(/pull_request\.base\.sha/.test(workflow) && /pull_request\.head\.sha/.test(workflow),
+  const job = (workflow.split(/\n  publication-scan:\n/)[1] || "").split(/\n  [a-z][a-z-]*:\n/)[0];
+  assert(job, "the workflow must carry a publication-scan job");
+  assert(/name: Publication scan/.test(job), "the publication-scan job must report as 'Publication scan'");
+  assert(/fetch-depth: 0/.test(job), "a range scan needs full history; a shallow checkout has no range to read");
+  assert(/--history-range \$\{\{ github\.event\.pull_request\.base\.sha \}\}\.\.\$\{\{ github\.event\.pull_request\.head\.sha \}\}/.test(job),
     "the CI range must come from the pull_request event rather than being inferred");
-  assert(/NOT what makes publication safe|not the gate/i.test(workflow),
-    "the CI step must say it is not the authoritative gate");
-  assert(/publication.time|publication-preflight/i.test(doc),
-    "PUBLICATION.md must locate the authoritative scan at publication time");
+  assert(/--publication-tree \$\{\{ github\.event\.pull_request\.head\.sha \}\}/.test(job),
+    "the publication scan must read the head's archive as well as its history");
+  assert(!/\$\{\{[^}]*\bsecrets\./.test(job) && !/npm ci/.test(job), "the publication scan needs no secrets and no dependencies");
 }
 
-/* ---- 8. only main travels, and main carries no research material --------- */
+/* A public repository takes pull requests from forks, so every job must be one
+   that untrusted code can run safely: GitHub-hosted, read-only, secret-free, and
+   with no token left behind in the checkout. */
+function testWorkflowIsForkSafe() {
+  const workflow = read(".github/workflows/windows-ci.yml");
+  const live = workflow.split("\n").filter((line) => !/^\s*#/.test(line)).join("\n");
+  assert(!/pull_request_target|workflow_run|repository_dispatch/.test(live),
+    "a trigger that runs with the base repository's privileges must never be added");
+  assert(/^permissions:\n  contents: read\n/m.test(live), "the workflow token must be read-only");
+  assert(!/^ +permissions:/m.test(live), "no job may widen the workflow's permissions");
+  assert(!/\$\{\{[^}]*\bsecrets\./.test(live), "the workflow must read no secret");
+  const runners = [...live.matchAll(/runs-on:\s*(.+)/g)].map((m) => m[1].trim());
+  assert(runners.length >= 3, `expected every job to name its runner, found ${runners.length}`);
+  for (const runner of runners) {
+    assert(/^(windows|ubuntu|macos)-latest$/.test(runner), `a job runs on ${runner}; public jobs use standard GitHub-hosted runners only`);
+  }
+  const checkouts = live.split(/\n\s+- (?:name: [^\n]*\n\s+)?uses: /).filter((b) => b.startsWith("actions/checkout@"));
+  assert(checkouts.length >= 3, `expected a checkout in every job, found ${checkouts.length}`);
+  for (const block of checkouts) {
+    assert(/persist-credentials: false/.test(block.split(/\n\s+- /)[0]), "every checkout must set persist-credentials: false");
+  }
+}
+
+/* ---- 8. one repository, named branches only, and no research material ----- */
 
 function testPublicationContract() {
   const doc = read("docs/PUBLICATION.md");
   assert(doc.includes("cfbach/cinebraid"), "PUBLICATION.md must name the public repository");
-  assert(/only\s+`?main`?/i.test(doc), "PUBLICATION.md must state that only main is published");
+  assert(/cfbach\/cinebraid-app`?[^\n]*archived/.test(doc), "PUBLICATION.md must record that the former private origin is archived");
+  assert(doc.includes("e31d9b370f348764cbf6c2183095a30099672a0b"), "PUBLICATION.md must record the cutover SHA both repositories carry");
+  assert(/only through a reviewed pull request/i.test(doc), "PUBLICATION.md must state that main changes only through a reviewed pull request");
   for (const forbidden of ["--mirror", "--all", "wildcard", "force push"]) {
-    assert(new RegExp(`no\\s+\`?${forbidden.replace(/[-]/g, "\\-")}`, "i").test(doc) || new RegExp(`No ${forbidden}`, "i").test(doc),
+    assert(new RegExp(`no\\s+\`?${forbidden.replace(/[-]/g, "\\-")}`, "i").test(doc),
       `PUBLICATION.md must rule out ${forbidden}`);
   }
 
   /* Prose can say anything; the commands are what someone will paste. Every push
-     in this document must name one branch on both sides. */
+     in this document must name one ref on both sides, and none may target main. */
   const blocks = [...doc.matchAll(/```[a-z]*\r?\n([\s\S]*?)```/g)].map((m) => m[1]);
   assert(blocks.length > 0, "PUBLICATION.md has no commands");
-  const pushes = blocks.join("\n").split(/\r?\n/).filter((line) => line.trim().startsWith("git push"));
-  assert(pushes.length > 0, "PUBLICATION.md must show the publication command");
+  const pushes = blocks.join("\n").split(/\r?\n/).filter((line) => /\bgit push\b/.test(line));
+  assert(pushes.length > 0, "PUBLICATION.md must show how to push a branch");
   for (const line of pushes) {
+    const command = line.trim().replace(/^[A-Z_]+=\S+ /, "");
     assert(
-      /^git push (--dry-run )?\S+ main:refs\/heads\/main$/.test(line.trim()),
-      `PUBLICATION.md contains a push that is not one explicit branch: ${line.trim()}`,
+      /^git push (--dry-run )?\S+ (\S+:refs\/heads\/\S+|refs\/tags\/(\S+):refs\/tags\/\3)$/.test(command),
+      `PUBLICATION.md contains a push that does not name one ref on both sides: ${line.trim()}`,
     );
+    assert(!/:refs\/heads\/main$/.test(command), `PUBLICATION.md must not show a direct push to main: ${line.trim()}`);
   }
   for (const line of blocks.join("\n").split(/\r?\n/)) {
-    assert(!/git push[^\n]*(--mirror|--all|--force|-f\b|--follow-tags|--tags|refs\/\*|\*:)/.test(line),
+    assert(!/git push[^\n]*(--mirror|--all|--force|-f\b|--follow-tags|--tags|--no-verify|refs\/\*|\*:)/.test(line),
       `PUBLICATION.md contains an unsafe push form: ${line.trim()}`);
   }
 
-  /* The private research corpus is on unmerged branches, so publishing only main
-     cannot carry it. Proved from the history that would actually travel, not
-     from a .gitignore rule for paths that are not here. */
+  /* The private research corpus was never merged, so it is not in main's history.
+     Proved from the history that is actually public, not from a .gitignore rule
+     for paths that are not here. */
   const paths = new Set(git(["log", "--pretty=format:", "--name-only", "HEAD"]).split("\n").map((s) => s.trim()).filter(Boolean));
   assert(paths.size > 100, `the history walk found only ${paths.size} paths; it is not reading what it thinks`);
   const research = [...paths].filter((p) => p.startsWith("braidy/") || p.startsWith("research/"));
@@ -593,7 +588,8 @@ testReadmeTruth();
 testSecretScanContract();
 testHistoryRangeScan();
 testNoStrayNulBytes();
-testPublicationPreflight();
+testPushGateWiring();
+testWorkflowIsForkSafe();
 testPublicationContract();
 
 console.log(
@@ -601,6 +597,6 @@ console.log(
   "coordinated disclosure, trademark carve-out for both brand assets, no NOTICE obligation, " +
   "no remote font or CDN in any shell page including pre-auth login, non-private release identity, " +
   "README runtime truth, the credential scan wired to the working tree and the publication tree, " +
-  "only main reachable with no research material, the history a push would newly expose scanned " +
-  "from the audited baseline, and a publication preflight that refuses rather than guesses.",
+  "no research material reachable, the history since the audited foundation scanned, a pre-push " +
+  "gate wired to the tracked hook, a fork-safe workflow, and a server-side publication scan on every pull request.",
 );

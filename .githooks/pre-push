@@ -1,0 +1,7 @@
+#!/bin/sh
+# CineBraid pre-push gate. Install once per clone with: npm run hooks:install
+#
+# Every push to the public repository publishes history, so this scans what the
+# push makes newly readable and refuses a direct push to main. See
+# docs/PUBLICATION.md. git hands the gate its remote, URL and ref updates.
+exec node "$(git rev-parse --show-toplevel)/scripts/push-gate.js" "$@"

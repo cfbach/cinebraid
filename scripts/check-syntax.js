@@ -203,7 +203,7 @@ const SOURCES = [
   "tests/generation-surface-polish.js",
   "tests/public-exposure.js",
   "tests/public-exposure-negative-controls.js",
-  "scripts/publication-preflight.js",
+  "scripts/push-gate.js",
   "scripts/verify-migration.js",
   "tests/workspace-migration-nested-documents.js",
   "tests/workspace-migration-nested-documents-negative-controls.js",
