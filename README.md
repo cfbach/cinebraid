@@ -16,7 +16,7 @@ Keep your Project Bible, references, shots, and approvals together.</p>
   <a href="SECURITY.md">Security</a>
 </p>
 
-**Public Alpha released · Source-only · [v6.7.0-alpha.1](https://github.com/cfbach/cinebraid/releases/tag/v6.7.0-alpha.1) · [Apache License 2.0](LICENSE)**
+**Public Alpha · Source-only · Latest release [v6.8.0-alpha.1](https://github.com/cfbach/cinebraid/releases/tag/v6.8.0-alpha.1) · [Apache License 2.0](LICENSE)**
 
 The production layer that keeps AI cinema tied together. **Your production, your control.**
 
@@ -25,10 +25,11 @@ CineBraid keeps the work and its production context in one place. Import media
 made anywhere, organize the references that must stay consistent, and decide what
 to keep. AI assistance and provider-backed generation are optional.
 
-The Public Alpha is **source-only**: there is no binary or native installer.
+Releases are **source-only**: there is no binary or native installer. The latest
+release tag is frozen. `main` is **development code** — currently 6.9.0-alpha.1,
+which has not been released — and can change or break between releases.
 The product remains **in development**, with rough edges and no production-readiness
-or support commitment. The release tag is frozen; ongoing development happens on
-`main`.
+or support commitment.
 
 **Models should be replaceable. The production should not be.**
 
@@ -63,13 +64,13 @@ Requires **Node.js 18 or newer**; Node.js 24 is the version used by Windows CI.
 Check your installation with `node --version`. You also need Git to clone the source.
 
 ```bash
-git clone --branch v6.7.0-alpha.1 --depth 1 https://github.com/cfbach/cinebraid.git
+git clone --branch v6.8.0-alpha.1 --depth 1 https://github.com/cfbach/cinebraid.git
 cd cinebraid
 npm ci
 npm start
 ```
 
-This installs the frozen Alpha source in a detached checkout. For post-release
+This installs the latest release in a detached checkout. For post-release
 development, clone without `--branch` and `--depth` to follow `main`.
 
 Open the URL printed in the terminal — by default [http://127.0.0.1:4477](http://127.0.0.1:4477).
@@ -177,7 +178,7 @@ history, and clearly separated historical engineering provenance.
 | Finish a first shot | [Getting started](docs/GETTING_STARTED.md) |
 | Install, configure providers, or upgrade | [Setup](SETUP.md) |
 | Turn my existing planning material into a project | [Project Builder prompt kit](resources/project-builder/README.md) |
-| Understand this Alpha and its limitations | [Published release](https://github.com/cfbach/cinebraid/releases/tag/v6.7.0-alpha.1) · [Alpha release notes](docs/releases/v6.7.0-alpha.1/CINEBRAID_v6.7.0-alpha.1_RELEASE_NOTES.md) |
+| Understand the latest release and its limitations | [Latest release](https://github.com/cfbach/cinebraid/releases/tag/v6.8.0-alpha.1) · [Release notes](docs/releases/v6.8.0-alpha.1/CINEBRAID_v6.8.0-alpha.1_RELEASE_NOTES.md) |
 | See what changed | [Changelog](CHANGELOG.md) |
 | Work on model integrations | [Generation model packs](docs/architecture/GENERATION_MODEL_PACKS.md) |
 | Run browser tests | [Browser test guide](docs/qa/BROWSER_TESTS.md) |
@@ -190,6 +191,10 @@ Bug reports and focused pull requests are welcome. Open an
 Commits require a DCO `Signed-off-by` line; there is no CLA and you retain your
 copyright. See [Contributing](CONTRIBUTING.md) for the process.
 
+Every branch pushed here is public the moment it lands. Run `npm run hooks:install`
+once per clone: the pre-push gate then scans what each push would publish, and
+refuses a direct push to `main`. See [Publication](docs/PUBLICATION.md).
+
 The verification suites need no API key and make no live provider calls:
 
 ```bash
@@ -199,7 +204,9 @@ npm run check        # Full verification, including browser and release suites
 ```
 
 **Windows validation is the required public status check. Browser validation is
-advisory pending `BROWSER_GATE_RUNNER_STABILITY_V1`.** This policy does not change
+advisory pending `BROWSER_GATE_RUNNER_STABILITY_V1`.** Every pull request also runs
+**Publication scan**, which reads the history the pull request would add to `main`
+for credentials and personal paths. This policy does not change
 the commands: `check:browser-gate` fails if its runtime is missing, while some
 individually run suites can skip. Follow the
 [browser test guide](docs/qa/BROWSER_TESTS.md) for runtime setup and command behavior.

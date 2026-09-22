@@ -8,7 +8,7 @@ provenance; they do not override current setup, release status, or product behav
 
 | I want to... | Read |
 |---|---|
-| Install the source-only Public Alpha | [Setup](../SETUP.md) or the [frozen Alpha installation guide](releases/v6.7.0-alpha.1/CINEBRAID_v6.7.0-alpha.1_PATCH_INSTALL.md) |
+| Install the latest source-only release | [Setup](../SETUP.md), or the [6.8 source update guide](releases/v6.8.0-alpha.1/CINEBRAID_v6.8.0-alpha.1_PATCH_INSTALL.md) for an existing 6.7 installation |
 | Finish a first shot without provider keys | [Getting started](GETTING_STARTED.md) |
 | Configure optional services or LAN access | [Setup and network posture](../SETUP.md#network-posture) |
 | Run on DGX Spark | [Spark setup](../SPARK_SETUP.md) |
@@ -23,8 +23,8 @@ provenance; they do not override current setup, release status, or product behav
   pending `BROWSER_GATE_RUNNER_STABILITY_V1`.**
 - [Isolated Spark QA setup](SPARK_QA_SETUP.md): separate configuration and projects
   for a test installation.
-- [Publication contract](PUBLICATION.md): maintainer procedure and the scans required
-  before accepted work is published. It is not an installation guide.
+- [Publication contract](PUBLICATION.md): one public repository, the pre-push gate
+  every clone should install, and the scans that guard every push and pull request.
 - [Security](../SECURITY.md): private vulnerability reporting.
 - [Brand terms](../TRADEMARKS.md): rights for the name, ribbon logo, and Braidy artwork.
 
@@ -46,13 +46,13 @@ and runtime-data boundaries.
 
 ## Releases
 
-[`v6.7.0-alpha.1`](https://github.com/cfbach/cinebraid/releases/tag/v6.7.0-alpha.1)
-is a released, source-only Public Alpha. It has no binary/native installer or
-uploaded packaged application. GitHub's generated source downloads are source
-archives, not installers. Ongoing work on main is separate from the frozen tag.
+[`v6.8.0-alpha.1`](https://github.com/cfbach/cinebraid/releases/tag/v6.8.0-alpha.1) is the latest release: a source-only Public Alpha.
+Releases have no binary/native installer or uploaded packaged application. GitHub's
+generated source downloads are source archives, not installers. `main` is
+unreleased development code, separate from the frozen tags.
 
-- [Alpha release notes](releases/v6.7.0-alpha.1/CINEBRAID_v6.7.0-alpha.1_RELEASE_NOTES.md)
-- [Alpha installation](releases/v6.7.0-alpha.1/CINEBRAID_v6.7.0-alpha.1_PATCH_INSTALL.md)
+- [6.8 release notes](releases/v6.8.0-alpha.1/CINEBRAID_v6.8.0-alpha.1_RELEASE_NOTES.md) and [6.8 source update guide](releases/v6.8.0-alpha.1/CINEBRAID_v6.8.0-alpha.1_PATCH_INSTALL.md)
+- [6.7 Public Alpha release notes](releases/v6.7.0-alpha.1/CINEBRAID_v6.7.0-alpha.1_RELEASE_NOTES.md) and [6.7 installation](releases/v6.7.0-alpha.1/CINEBRAID_v6.7.0-alpha.1_PATCH_INSTALL.md) ([release](https://github.com/cfbach/cinebraid/releases/tag/v6.7.0-alpha.1))
 - [Changelog](../CHANGELOG.md)
 - [Earlier release documents](releases/): historical instructions and limitations
   apply to their named versions.

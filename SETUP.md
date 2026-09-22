@@ -12,20 +12,22 @@ node --version
 
 ## Install and start
 
-**Public Alpha [v6.7.0-alpha.1](https://github.com/cfbach/cinebraid/releases/tag/v6.7.0-alpha.1) is released as source only.**
+**The latest release, Public Alpha [v6.8.0-alpha.1](https://github.com/cfbach/cinebraid/releases/tag/v6.8.0-alpha.1), is source only.**
 No binary/native installer or packaged application has been uploaded. GitHub offers
 generated source ZIP/tar downloads; these are source archives, not installers.
-Install the frozen source tag **on the machine CineBraid will run on**:
+Install the frozen release tag **on the machine CineBraid will run on**:
 
 ```bash
-git clone --branch v6.7.0-alpha.1 --depth 1 https://github.com/cfbach/cinebraid.git
+git clone --branch v6.8.0-alpha.1 --depth 1 https://github.com/cfbach/cinebraid.git
 cd cinebraid
 npm ci
 npm start
 ```
 
-This selects the frozen Alpha in a detached checkout. Contributors can clone
-without `--branch` and `--depth` to work on post-release main.
+This selects the latest release in a detached checkout. `main` is unreleased
+development code; contributors can clone without `--branch` and `--depth` to work
+on it. To update an existing 6.7 installation, follow the
+[6.8 source update guide](docs/releases/v6.8.0-alpha.1/CINEBRAID_v6.8.0-alpha.1_PATCH_INSTALL.md).
 
 Then open `http://127.0.0.1:4477`.
 
