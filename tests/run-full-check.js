@@ -174,6 +174,10 @@ const nodeSuites = [
   /* C3: the server refuses a no-project search instead of exiting on it. */
   "check:no-project-search",
   "check:no-project-search-negative",
+  /* FIRST_RUN_SETTINGS_SERVER_SURVIVAL_V1: a first-run Settings save and the status
+     refresh after it leave the server running; an async route failure is a 500. */
+  "check:first-run-survival",
+  "check:first-run-survival-negative",
   /* ORPHAN_ENTITY_CREATION_REFUSAL_V1: no record is created without a project record to
      hold it, and no media route writes into a placeholder project. */
   "check:orphan-entity-creation",

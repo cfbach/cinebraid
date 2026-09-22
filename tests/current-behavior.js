@@ -459,6 +459,8 @@ async function main() {
     "ev2-7-shot-leading-action.js",
     "external-test-readiness.js",
     "fal-generation.js",
+    "first-run-settings-server-survival-negative-controls.js",
+    "first-run-settings-server-survival.js",
     "fixtures",
     "focused-workspaces-real-browser.py",
     "focused-workspaces.js",

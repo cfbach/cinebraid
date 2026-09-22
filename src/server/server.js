@@ -78,8 +78,9 @@ const MediaAssetService = require("../media/media-asset-service");
    module's header for why there is deliberately no path-taking endpoint. */
 const LocalFileAffordance = require("../media/local-file-affordance");
 const { isLoopbackRequest } = require("./loopback-request");
+const { installAsyncRouteBoundary } = require("./async-route-boundary");
 
-const app = express();
+const app = installAsyncRouteBoundary(express());
 const PORT = process.env.PORT || 4477;
 const LAN_OPT_IN = process.argv.includes("--lan") || /^(1|true|yes)$/i.test(String(process.env.CINEBRAID_LAN || ""));
 const HOST = String(process.env.CINEBRAID_HOST || (LAN_OPT_IN ? "0.0.0.0" : "127.0.0.1")).trim() || "127.0.0.1";
@@ -9671,7 +9672,11 @@ async function maybeAutoIndex() {
 }
 app.get("/api/agents/status", async (req, res) => {
   const cfg = readConfig();
-  const P = readProject();
+  /* Assistant readiness is per-user and answerable before any project exists — it is
+     what Settings refreshes after a save on first run. Only the index and the run
+     history belong to a project, and with none open they are simply empty. */
+  const slug = activeSlug();
+  const P = slug ? readProject(slug) : null;
   const inventories = await providerInventories(cfg);
   const readiness = Object.fromEntries(
     await Promise.all(
@@ -9694,7 +9699,7 @@ app.get("/api/agents/status", async (req, res) => {
       queued: AGENT_RUNTIME.queue.map((x) => ({ id: x.id, type: x.type, ...(x.workload || {}) })),
       policy: (cfg.agents?.maxConcurrent || 1) === 1 ? "one-heavy-task" : "bounded-concurrency",
     },
-    index: agentIndexMeta(P),
+    index: P ? agentIndexMeta(P) : { ready: false, stale: true },
     localModels: {
       ok: inventories.ollama.ok,
       error: inventories.ollama.error,
@@ -9712,7 +9717,7 @@ app.get("/api/agents/status", async (req, res) => {
       enabled: agentEnabled(id, cfg),
       readiness: readiness[id],
     })),
-    runs: [...agentRuns(P)].reverse().slice(0, 40),
+    runs: P ? [...agentRuns(P)].reverse().slice(0, 40) : [],
   });
 });
 app.post("/api/agents/reconcile", (req, res) => {

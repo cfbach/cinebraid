@@ -115,8 +115,12 @@ const C3_REGION = (() => {
   const start = source.indexOf(GUARD), end = source.indexOf(UNREADABLE_GUARD);
   return start >= 0 && end > start ? source.slice(start, end + UNREADABLE_GUARD.length) : '\u0000missing C3 region\u0000';
 })();
+/* NC2 and NC5 once ended the process. Since FIRST_RUN_SETTINGS_SERVER_SURVIVAL_V1 the
+   async route boundary (src/server/async-route-boundary.js) answers an unguarded read
+   with a generic 500 and the server survives, so what still catches them is the refusal
+   contract itself: a 500 is not the 404 or 422 this route owes. */
 control('NC2 the pristine handler is restored — no guard at all, the read unprotected', 1,
-  'the server process EXITED on a no-project search',
+  'the refusal uses the repository\'s no-project status (GET /api/project answers 404), got 500',
   { from: C3_REGION,
     to: '  const q = String(req.body.q || "").trim();\n  if (!q) return res.json({ mode: "none", results: [] });\n' + PRISTINE_READ });
 
@@ -130,8 +134,8 @@ control('NC4 the file-not-found detail and local path leak into the refusal', 2,
     to: '      error: "No project is open, so there is nothing to search. Create a project or open an existing one first."'
       + ' + (() => { try { readJsonSync(DATA()); return ""; } catch (e) { return " (" + e.message + ")"; } })(),\n' });
 
-control('NC5 an open project that cannot be read crashes the server again', 5,
-  'the server process EXITED on a search of an unreadable project',
+control('NC5 an open project that cannot be read is no longer refused as unreadable', 5,
+  'an unreadable open project must be refused with 422, got 500',
   { from: UNREADABLE_GUARD, to: PRISTINE_READ });
 
 /* The controls patched memory, never the file. Proven, not asserted in prose. */
