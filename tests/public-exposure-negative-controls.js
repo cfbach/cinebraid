@@ -19,15 +19,16 @@
      5. the publication-tree target really reads `git archive` output, not the
         working tree;
      6. a credential committed and then DELETED before the tip is still published
-        by a `main` push, and the history range is what sees it;
-     7. removing that history scan makes the publication guard clear an unsafe
-        candidate;
+        by a push, and the history range is what sees it;
+     7. removing that history scan makes the pre-push gate clear an unsafe push;
      8. path identity survives history enumeration, so one blob at two paths is
         forgiven at the allowlisted one and reported at the other;
      9. every exit code is asserted exactly - 0 clean, 1 findings, 2 could not
         scan - because the defect being fixed was three operational failures
         arriving dressed as findings, which "assert non-zero" cannot see;
-    10. an inability is never rewritten into a clean answer.
+    10. an inability is never rewritten into a clean answer;
+    11. what the gate scans is exactly what git will send - the pushed sha, not
+        HEAD - and a real `git push` through the hook is stopped by a finding.
 
    No mutation is written into this repository. Source mutations are compiled in
    memory under the real filename, and the two git-backed targets are proved
@@ -55,10 +56,13 @@ const SCANNER_BYTES = fs.readFileSync(SCANNER_FILE, "utf8");
 const SCANNER_SOURCE = SCANNER_BYTES.replace(/\r\n/g, "\n");
 const scanner = require(SCANNER_FILE);
 
-const PREFLIGHT_FILE = path.join(ROOT, "scripts", "publication-preflight.js");
-const PREFLIGHT_BYTES = fs.readFileSync(PREFLIGHT_FILE, "utf8");
-const PREFLIGHT_SOURCE = PREFLIGHT_BYTES.replace(/\r\n/g, "\n");
-const { preflight } = require(PREFLIGHT_FILE);
+const GATE_FILE = path.join(ROOT, "scripts", "push-gate.js");
+const GATE_BYTES = fs.readFileSync(GATE_FILE, "utf8");
+const GATE_SOURCE = GATE_BYTES.replace(/\r\n/g, "\n");
+const { gate, parseUpdates } = require(GATE_FILE);
+
+const ZERO = "0".repeat(40);
+const CANONICAL_URL = "https://github.com/cfbach/cinebraid.git";
 
 const notes = [];
 
@@ -88,12 +92,31 @@ function compile(source) {
   return compiled.exports;
 }
 
-function compilePreflight(source) {
-  const compiled = new Module(PREFLIGHT_FILE, null);
-  compiled.filename = PREFLIGHT_FILE;
-  compiled.paths = Module._nodeModulePaths(path.dirname(PREFLIGHT_FILE));
-  compiled._compile(source, PREFLIGHT_FILE);
+function compileGate(source) {
+  const compiled = new Module(GATE_FILE, null);
+  compiled.filename = GATE_FILE;
+  compiled.paths = Module._nodeModulePaths(path.dirname(GATE_FILE));
+  compiled._compile(source, GATE_FILE);
   return compiled.exports;
+}
+
+/* A bare repository standing in for the remote, holding `main` at the given commit
+   of the given scratch repository. It lives in the OS temp area like every other
+   scratch repository here. */
+function makeRemote(repo, mainSha) {
+  const bare = fs.mkdtempSync(path.join(os.tmpdir(), "cinebraid-remote-"));
+  execFileSync("git", ["init", "-q", "--bare", bare]);
+  if (mainSha) execFileSync("git", ["push", "-q", "--no-verify", bare, `${mainSha}:refs/heads/main`], { cwd: repo.dir });
+  return bare;
+}
+
+/* One pre-push update, the way git describes it on the hook's stdin. */
+const update = (remoteRef, localSha, remoteSha = ZERO, localRef = remoteRef) => ({ localRef, localSha, remoteRef, remoteSha });
+
+function runGate(options) {
+  const lines = [];
+  const code = gate({ log: (l) => lines.push(l), env: {}, ...options });
+  return { code, printed: lines.join("\n") };
 }
 
 function report(label, because, failure) {
@@ -381,15 +404,18 @@ function testDeletedSecretIsStillPublished() {
       fs.rmSync(bare, { recursive: true, force: true });
     }
 
-    /* And the preflight refuses C, which is the seam that matters. */
-    const lines = [];
-    const code = preflight(["--repo", repo.dir, "--candidate", "HEAD", "--public-sha", repo.A], (line) => lines.push(line));
-    assert.strictEqual(code, 1, `the publication preflight cleared an unsafe candidate (exit ${code})`);
-    const printed = lines.join("\n");
-    assert(/REFUSED/.test(printed), "the preflight refusal must say so");
-    assert(printed.includes("leaked.env"), "the preflight must name the file it refused for");
-    assert(!/git push https/.test(printed), "a refused preflight must not print the push command");
-    notes.push("A→B→C: the publication preflight exits 1 on C, names leaked.env, and prints no push command");
+    /* And the pre-push gate refuses to send C, which is the seam that matters. */
+    const remote = makeRemote(repo, repo.A);
+    try {
+      const { code, printed } = runGate({ repo: repo.dir, remote, url: CANONICAL_URL, updates: [update("refs/heads/feature", repo.C)] });
+      assert.strictEqual(code, 1, `the pre-push gate cleared an unsafe push (exit ${code})`);
+      assert(/REFUSED/.test(printed), "the gate's refusal must say so");
+      assert(printed.includes("leaked.env") && printed.includes(repo.B.slice(0, 8)),
+        "the gate must name the file it refused for and the commit that carries it");
+      notes.push("A→B→C: the pre-push gate exits 1 on a new branch at C, naming leaked.env in commit B");
+    } finally {
+      fs.rmSync(remote, { recursive: true, force: true });
+    }
   } finally {
     fs.rmSync(repo.dir, { recursive: true, force: true });
   }
@@ -399,28 +425,26 @@ function testDeletedSecretIsStillPublished() {
 
 function testRemovingTheHistoryGateIsObservable() {
   const repo = buildABC();
+  const remote = makeRemote(repo, repo.A);
   try {
+    const options = { repo: repo.dir, remote, url: CANONICAL_URL, updates: [update("refs/heads/feature", repo.C)] };
+
     /* Bypass the history scan the way a well-meaning refactor would: keep every
        other step, drop the one that reads history. */
-    const bypassed = compilePreflight(mutate(
-      PREFLIGHT_SOURCE,
-      "  const history = scanner.scanEntries(range.entries);",
-      "  const history = { findings: [], suppressed: [], files: 0 };",
+    const bypassed = compileGate(mutate(
+      GATE_SOURCE,
+      "    const history = scanner.scanEntries(range.entries);",
+      "    const history = { findings: [], suppressed: [], files: 0 };",
       "history gate bypass",
     ));
     const cleared = [];
-    const code = bypassed.preflight(["--repo", repo.dir, "--candidate", "HEAD", "--public-sha", repo.A], (l) => cleared.push(l));
+    const code = bypassed.gate({ ...options, env: {}, log: (l) => cleared.push(l) });
     assert.strictEqual(code, 0, "the bypass mutation did not change behaviour, so it is not proving anything");
-    assert(/CLEARED/.test(cleared.join("\n")), "the bypassed preflight should have cleared the unsafe candidate");
+    assert(/CLEARED/.test(cleared.join("\n")), "the bypassed gate should have cleared the unsafe push");
 
     /* The shipped one does not. */
-    const shipped = [];
-    assert.strictEqual(
-      preflight(["--repo", repo.dir, "--candidate", "HEAD", "--public-sha", repo.A], (l) => shipped.push(l)),
-      1,
-      "the shipped preflight must refuse C",
-    );
-    notes.push("removing the history scan clears an unsafe candidate; the shipped preflight refuses it");
+    assert.strictEqual(runGate(options).code, 1, "the shipped gate must refuse C");
+    notes.push("removing the history scan clears an unsafe push; the shipped gate refuses it");
 
     /* And the same for the enumeration itself: a range that only looks at the tip
        tree - the mistake the first version of this work shipped - sees nothing. */
@@ -431,6 +455,7 @@ function testRemovingTheHistoryGateIsObservable() {
     notes.push("tip tree: 0 findings; newly exposed history: 1 — the two boundaries are not interchangeable");
   } finally {
     fs.rmSync(repo.dir, { recursive: true, force: true });
+    fs.rmSync(remote, { recursive: true, force: true });
   }
 }
 
@@ -538,45 +563,65 @@ function testExactExitCodes() {
     }
     notes.push(`exact exit codes: ${cases.length} invocations, each asserted against one code — 0 clean, 1 findings, 2 could not scan`);
 
-    /* The preflight speaks the same three codes. */
-    const quiet = () => {};
-    assert.strictEqual(
-      caught(() => preflight(["--repo", repo.dir, "--candidate", "HEAD", "--public-sha", repo.C], quiet)) ? 2 : 0,
-      2, "an empty publication range must be a refusal",
-    );
-    /* Each refusal is asserted on its OWN reason. Accepting "any refusal" is how a
-       control passes without ever reaching the check it exists to prove: the
-       first draft of the ancestry case below refused on the checkout mismatch
-       and never evaluated ancestry at all. */
-    const mismatch = caught(() => preflight(["--repo", repo.dir, "--candidate", repo.A, "--public-sha", repo.B], quiet));
-    assert(mismatch && /checkout is at/.test(mismatch.message),
-      `publishing a commit the checkout is not on must be refused, got: ${mismatch && mismatch.message}`);
-
-    /* Bind A as candidate, HEAD and main together, so the binding check passes
-       and the ANCESTRY check is the thing that gets to speak. C is not an
-       ancestor of A. Without binding main the refusal below would be the binding
-       one, and this control would pass while never evaluating ancestry - which is
-       exactly the way it was wrong once already. */
-    repo.git("checkout", "-q", repo.A);
-    repo.git("branch", "-f", "main", repo.A);
+    /* The gate speaks the same three codes: 0 cleared, 1 findings, 2 refused. Each
+       refusal is asserted on its OWN reason. Accepting "any refusal" is how a
+       control passes without ever reaching the check it exists to prove. */
+    const remote = makeRemote(calm, calmA);
+    const public_ = { repo: calm.dir, remote, url: CANONICAL_URL };
     try {
-      const notAncestor = caught(() => preflight(["--repo", repo.dir, "--candidate", repo.A, "--public-sha", repo.C], quiet));
-      assert(notAncestor, "a non-ancestor baseline must be refused");
-      assert(/not an ancestor/.test(notAncestor.message),
-        `the ancestry check must be what refuses, got: ${notAncestor.message}`);
-    } finally {
-      repo.git("branch", "-f", "main", repo.C);
-      repo.git("checkout", "-q", "main");
-    }
+      /* A side branch that did not build on calmB, for the fast-forward check. */
+      calm.git("checkout", "-q", "-b", "side", calmA);
+      calm.write("side.md", "elsewhere\n");
+      const side = calm.commit("side");
+      calm.git("checkout", "-q", "main");
+      calm.git("tag", "-a", "v0.0.1", "-m", "release notes", calmA);
+      calm.git("tag", "-a", "v0.0.2", "-m", "release notes", calmB);
+      const tagA = calm.git("rev-parse", "refs/tags/v0.0.1").trim();
+      const tagB = calm.git("rev-parse", "refs/tags/v0.0.2").trim();
+      calm.git("checkout", "-q", "--orphan", "unrelated");
+      calm.write("alone.md", "no shared history\n");
+      const orphan = calm.commit("unrelated root");
+      calm.git("checkout", "-q", "-f", "main");
 
-    const unknownBase = caught(() => preflight(["--repo", repo.dir, "--candidate", "HEAD", "--public-sha", "0".repeat(40)], quiet));
-    assert(unknownBase && /public baseline/.test(unknownBase.message),
-      `an unresolvable baseline must be refused as such, got: ${unknownBase && unknownBase.message}`);
-    const noBase = caught(() => preflight(["--repo", repo.dir, "--candidate", "HEAD"], quiet));
-    assert(noBase && /name the baseline/.test(noBase.message), "the preflight must refuse without a baseline");
-    const bothBases = caught(() => preflight(["--repo", repo.dir, "--first-publication", "--public-sha", repo.A], quiet));
-    assert(bothBases && /mutually exclusive/.test(bothBases.message), "two baselines at once must be refused");
-    notes.push("preflight refusals, each on its own reason: empty range, checkout mismatch, non-ancestor baseline, unresolvable baseline, absent baseline, two baselines");
+      const refusals = [
+        ["a direct push to main", { updates: [update("refs/heads/main", calmB, calmA)] }, /direct push to main/],
+        ["deleting main", { updates: [update("refs/heads/main", ZERO, calmA)] }, /delete main/],
+        ["a non-fast-forward update", { updates: [update("refs/heads/feature", side, calmB)] }, /not a fast-forward/],
+        ["a remote branch tip this checkout lacks", { updates: [update("refs/heads/feature", calmB, "1".repeat(40))] }, /does not have/],
+        ["a remote main this checkout lacks", { remoteMain: "2".repeat(40), updates: [update("refs/heads/feature", calmB)] }, /Fetch it first/],
+        ["a new branch sharing no history with main", { updates: [update("refs/heads/unrelated", orphan)] }, /shares no history/],
+        ["a tag nobody approved", { updates: [update("refs/tags/v0.0.1", tagA)] }, /release decision/],
+        ["an approved tag of a commit not on main", { env: { CINEBRAID_RELEASE_TAG: "v0.0.2" }, updates: [update("refs/tags/v0.0.2", tagB)] }, /already on the remote's main/],
+        ["two tags in one push", { env: { CINEBRAID_RELEASE_TAG: "v0.0.1" }, updates: [update("refs/tags/v0.0.1", tagA), update("refs/tags/v0.0.2", tagB)] }, /one tag/],
+        ["a ref that is not a branch or a tag", { updates: [update("refs/notes/commits", calmB)] }, /only branches/],
+        ["no remote at all", { remote: "", updates: [update("refs/heads/feature", calmB)] }, /no remote was named/],
+      ];
+      for (const [label, extra, reason] of refusals) {
+        const failure = caught(() => runGate({ ...public_, ...extra }));
+        assert(failure, `${label} must be refused`);
+        assert(failure instanceof scanner.ScanError, `${label} raised ${failure.name}, not a ScanError, so the CLI would not exit 2`);
+        assert(reason.test(failure.message), `${label} must be refused for its own reason, got: ${failure.message}`);
+      }
+      const garbled = caught(() => parseUpdates("refs/heads/x not-a-sha refs/heads/x also-not"));
+      assert(garbled && /unreadable pre-push line/.test(garbled.message), "an unreadable pre-push line must be refused, not skipped");
+
+      /* And what is allowed, is. */
+      const clears = [
+        ["a clean new branch", { updates: [update("refs/heads/feature", calmB)] }, /1 commit\(s\)/],
+        ["a new branch at a commit the remote already serves", { updates: [update("refs/heads/copy", calmA)] }, /nothing newly readable/],
+        ["deleting a branch", { updates: [update("refs/heads/old", ZERO, calmA)] }, /deleted/],
+        ["the one approved tag of a commit on main", { env: { CINEBRAID_RELEASE_TAG: "v0.0.1" }, updates: [update("refs/tags/v0.0.1", tagA)] }, /annotation 0 finding/],
+        ["a direct push to main of a remote that is not the public repository", { url: remote, updates: [update("refs/heads/main", calmB, calmA)] }, /1 commit\(s\)/],
+      ];
+      for (const [label, extra, receipt] of clears) {
+        const { code, printed } = runGate({ ...public_, ...extra });
+        assert.strictEqual(code, 0, `${label} must clear, got ${code}:\n${printed}`);
+        assert(receipt.test(printed), `${label} cleared without saying what it checked:\n${printed}`);
+      }
+    } finally {
+      fs.rmSync(remote, { recursive: true, force: true });
+    }
+    notes.push("gate refusals, each on its own reason: direct push to main, deleting main, non-fast-forward, unknown remote tip, unknown remote main, unrelated history, unapproved tag, tag off main, two tags, non-branch ref, no remote, unreadable input; and five allowed shapes clear");
   } finally {
     fs.rmSync(dir, { recursive: true, force: true });
     fs.rmSync(repo.dir, { recursive: true, force: true });
@@ -611,152 +656,90 @@ function testInabilityIsNeverClean() {
   }
 }
 
-/* ---- 11. what is scanned must be what is published ---------------------- */
+/* ---- 11. what is scanned must be what is pushed ------------------------- */
 
-/* The push is `main:refs/heads/main`, so the commit that travels is whatever
-   local main points at. An earlier build of the preflight scanned the CANDIDATE,
-   cleared it, and printed that command anyway - so a reviewed clean commit could
-   clear while an unrelated, unscanned main was what actually shipped. Measured in
-   this repository at the time: it cleared HEAD and printed a command that would
-   have published a main seven commits behind it.
+/* The pre-push protocol tells the gate exactly which commit each update sends.
+   The failure this section exists for is the one the retired preflight shipped
+   once: scan one commit, clear it, and let a different one travel. Here that
+   would be scanning HEAD - the clean branch someone is looking at - while git
+   pushes another ref entirely. */
 
-   Every case below is about that one binding. */
-
-/* A baseline A, a clean reviewed candidate C on its own branch, and a main that
-   moved somewhere else and carries a synthetic key nobody scanned. */
+/* A baseline A, a clean branch C that is checked out, and a commit M elsewhere
+   carrying a synthetic key nobody is looking at. */
 function buildBindingRepo() {
   const repo = makeRepo("binding");
   repo.write("a.md", "baseline\n");
   const A = repo.commit("A: baseline");
   repo.git("checkout", "-q", "-b", "reviewed");
   repo.write("clean.md", "nothing to see\n");
-  const C = repo.commit("C: the reviewed candidate");
+  const C = repo.commit("C: the branch on screen");
   repo.git("checkout", "-q", "main");
   repo.write("secrets.env", `OPENAI_API_KEY=${FAKE_KEY}\n`);
-  const M = repo.commit("M: an unreviewed main");
+  const M = repo.commit("M: a commit pushed from elsewhere");
+  repo.git("checkout", "-q", "reviewed");
   return { ...repo, A, C, M };
 }
 
-function testScannedCommitIsThePublishedCommit() {
+function testScannedCommitIsThePushedCommit() {
   const repo = buildBindingRepo();
-  const say = () => { const lines = []; const log = (l) => lines.push(l); log.lines = lines; return log; };
+  const remote = makeRemote(repo, repo.A);
   try {
-    /* The exact reported case: clean candidate checked out, main elsewhere. */
-    repo.git("checkout", "-q", repo.C);
-    const codex = say();
-    const refusal = caught(() => preflight(["--repo", repo.dir, "--candidate", repo.C, "--public-sha", repo.A], codex));
-    assert(refusal, "a candidate that is not local main must be refused");
-    assert(/must be the same commit/.test(refusal.message),
-      `the refusal must name the binding, got: ${refusal.message}`);
-    assert(refusal.message.includes(`local main is at ${repo.M}`),
-      `the refusal must name the commit main would actually publish, got: ${refusal.message}`);
-    assert(!codex.lines.join("\n").includes("git push"), "a refused preflight must print no push command");
-    notes.push("binding: a clean candidate with main elsewhere is refused, naming the commit main would have published");
+    assert.strictEqual(repo.git("rev-parse", "HEAD").trim(), repo.C, "HEAD must be the clean branch for this control to mean anything");
+    const options = { repo: repo.dir, remote, url: CANONICAL_URL, updates: [update("refs/heads/feature", repo.M, ZERO, "refs/heads/main")] };
 
-    /* main == candidate, but the checkout is somewhere else. */
-    repo.git("checkout", "-q", repo.A);
-    repo.git("branch", "-f", "main", repo.C);
-    const detached = say();
-    const wrongHead = caught(() => preflight(["--repo", repo.dir, "--candidate", repo.C, "--public-sha", repo.A], detached));
-    assert(wrongHead && /must be the same commit/.test(wrongHead.message), "a checkout away from the candidate must be refused");
-    assert(wrongHead.message.includes(`the checkout is at ${repo.A}`),
-      `the refusal must name the checkout, got: ${wrongHead.message}`);
-    assert(!detached.lines.join("\n").includes("git push"), "a refused preflight must print no push command");
-    notes.push("binding: main == candidate but the checkout elsewhere is refused, naming the checkout");
+    const { code, printed } = runGate(options);
+    assert.strictEqual(code, 1, `pushing M while C is checked out must be refused, got ${code}:\n${printed}`);
+    assert(printed.includes("secrets.env"), "the refusal must name what the pushed commit carries");
+    notes.push("binding: with a clean branch checked out, pushing a different commit is scanned as that commit and refused");
 
-    /* All three different. */
-    repo.git("branch", "-f", "main", repo.M);
-    repo.git("checkout", "-q", repo.C);
-    const allThree = say();
-    const spread = caught(() => preflight(["--repo", repo.dir, "--candidate", repo.A, "--public-sha", repo.A], allThree));
-    assert(spread && /must be the same commit/.test(spread.message), "three different commits must be refused");
-    assert(spread.message.includes("the checkout is at") && spread.message.includes("local main is at"),
-      `both mismatches must be named, got: ${spread.message}`);
-    assert(!allThree.lines.join("\n").includes("git push"), "a refused preflight must print no push command");
-    notes.push("binding: candidate, HEAD and main all different — both mismatches named, no push command");
-
-    /* No local main at all. */
-    repo.git("checkout", "-q", repo.C);
-    repo.git("branch", "-D", "main");
-    const noMain = say();
-    const missing = caught(() => preflight(["--repo", repo.dir, "--candidate", repo.C, "--public-sha", repo.A], noMain));
-    assert(missing, "a missing local main must be refused");
-    assert(/refs\/heads\/main/.test(missing.message),
-      `an unresolvable main must be named as such, got: ${missing.message}`);
-    assert(!noMain.lines.join("\n").includes("git push"), "a refused preflight must print no push command");
-    notes.push("binding: an unresolvable refs/heads/main is refused rather than treated as absent-and-fine");
-  } finally {
-    fs.rmSync(repo.dir, { recursive: true, force: true });
-  }
-}
-
-/* And the shape that IS allowed to publish: one commit, wearing all three hats. */
-function testBoundPreflightClears() {
-  const repo = makeRepo("bound");
-  try {
-    repo.write("a.md", "baseline\n");
-    const A = repo.commit("A: baseline");
-    repo.write("clean.md", "nothing to see\n");
-    const C = repo.commit("C: accepted, fast-forwarded into main");
-
-    assert.strictEqual(repo.git("rev-parse", "HEAD").trim(), C, "HEAD must be the candidate");
-    assert.strictEqual(repo.git("rev-parse", "refs/heads/main").trim(), C, "main must be the candidate");
-
-    const lines = [];
-    const code = preflight(["--repo", repo.dir, "--candidate", C, "--public-sha", A], (l) => lines.push(l));
-    const printed = lines.join("\n");
-    assert.strictEqual(code, 0, `a properly bound candidate must clear, got ${code}:\n${printed}`);
-    assert(/CLEARED/.test(printed), "a clearance must say so");
-    assert(printed.includes("candidate = HEAD = refs/heads/main"), "the clearance must record what it bound");
-
-    /* Exactly the safe refspec, and nothing that could publish anything else. */
-    const pushes = printed.split("\n").map((l) => l.trim()).filter((l) => l.startsWith("git push"));
-    assert.strictEqual(pushes.length, 2, `expected a dry run and the push, got ${pushes.length}`);
-    for (const line of pushes) {
-      assert(/^git push (--dry-run )?\S+ main:refs\/heads\/main$/.test(line), `unsafe push form printed: ${line}`);
-      assert(!/--mirror|--all|--force|-f\b|--tags|refs\/\*|\*:/.test(line), `bulk push form printed: ${line}`);
-    }
-    notes.push("binding: HEAD == candidate == main clears and prints exactly `main:refs/heads/main`, dry run first");
-  } finally {
-    fs.rmSync(repo.dir, { recursive: true, force: true });
-  }
-}
-
-/* Remove the binding and the reported failure comes straight back. */
-function testRemovingTheBindingIsObservable() {
-  const repo = buildBindingRepo();
-  try {
-    repo.git("checkout", "-q", repo.C);
-
-    const unbound = compilePreflight(mutate(
-      PREFLIGHT_SOURCE,
-      "  if (mismatches.length) {",
-      "  if (false) {",
-      "main-binding bypass",
+    /* Anchor the scan on HEAD instead, and the pushed secret goes out unseen. */
+    const onHead = compileGate(mutate(
+      mutate(GATE_SOURCE, "scanner.historyRangeEntries(base, u.localSha, repo)", 'scanner.historyRangeEntries(base, "HEAD", repo)', "history anchored on HEAD"),
+      "scanner.publicationTreeEntries(u.localSha, repo)", 'scanner.publicationTreeEntries("HEAD", repo)', "tree anchored on HEAD",
     ));
     const cleared = [];
-    const code = unbound.preflight(["--repo", repo.dir, "--candidate", repo.C, "--public-sha", repo.A], (l) => cleared.push(l));
-    const printed = cleared.join("\n");
-    assert.strictEqual(code, 0, "the bypass mutation did not change behaviour, so it is not proving anything");
-    assert(/git push \S+ main:refs\/heads\/main/.test(printed),
-      "the unbound preflight should have printed the push command for a commit it never scanned");
-
-    /* That command publishes M. Nothing in the run looked at M. */
-    const scannedRange = scanner.historyRangeEntries(repo.A, repo.C, repo.dir);
-    const scannedPaths = new Set(scannedRange.entries.map((e) => e.name));
-    assert(!scannedPaths.has("secrets.env"),
-      "the control needs main's secret to be outside what the candidate scan covers");
+    assert.strictEqual(onHead.gate({ ...options, env: {}, log: (l) => cleared.push(l) }), 0,
+      "the HEAD-anchored mutation did not change behaviour, so it is not proving anything");
     const wouldPublish = scanner.scanEntries(scanner.historyRangeEntries(repo.A, repo.M, repo.dir).entries);
-    assert.strictEqual(wouldPublish.findings.length, 1,
-      "main must actually carry something the scan would have caught, or the bypass proves nothing");
-    assert.strictEqual(wouldPublish.findings[0].file, "secrets.env", "the wrong file was found on main");
-
-    /* The shipped one refuses the same configuration. */
-    assert(caught(() => preflight(["--repo", repo.dir, "--candidate", repo.C, "--public-sha", repo.A], () => {})),
-      "the shipped preflight must refuse this configuration");
-    notes.push("binding removed: the preflight clears and prints a push for a commit whose secret it never scanned; the shipped one refuses");
+    assert.strictEqual(wouldPublish.findings.length, 1, "M must actually carry something the scan would have caught");
+    assert.strictEqual(wouldPublish.findings[0].file, "secrets.env", "the wrong file was found on M");
+    notes.push("binding removed: a gate that scans HEAD clears a push whose secret it never read; the shipped one refuses");
   } finally {
     fs.rmSync(repo.dir, { recursive: true, force: true });
+    fs.rmSync(remote, { recursive: true, force: true });
+  }
+}
+
+/* End to end: a real `git push` through a pre-push hook that runs this gate. The
+   remote is a bare repository in the OS temp area; nothing leaves the machine. */
+function testRealPushIsStoppedByTheHook() {
+  const repo = buildABC();
+  const remote = makeRemote(repo, repo.A);
+  const hooks = fs.mkdtempSync(path.join(os.tmpdir(), "cinebraid-hooks-"));
+  try {
+    const node = process.execPath.replace(/\\/g, "/");
+    const gateFile = GATE_FILE.replace(/\\/g, "/");
+    fs.writeFileSync(path.join(hooks, "pre-push"), `#!/bin/sh\nexec "${node}" "${gateFile}" "$@"\n`, { mode: 0o755 });
+    repo.git("config", "core.hooksPath", hooks);
+
+    const push = (refspec) => spawnSync("git", ["push", remote, refspec], { cwd: repo.dir, encoding: "utf8", timeout: 120000 });
+    const refs = () => execFileSync("git", ["for-each-ref", "--format=%(refname)"], { cwd: remote, encoding: "utf8" }).split("\n").filter(Boolean);
+
+    const blocked = push(`${repo.C}:refs/heads/leaky`);
+    assert.notStrictEqual(blocked.status, 0, "git push of a branch carrying a deleted secret must fail through the hook");
+    assert(/REFUSED/.test(`${blocked.stdout}${blocked.stderr}`) && /leaked\.env/.test(`${blocked.stdout}${blocked.stderr}`),
+      "the hook's refusal must reach the person pushing, naming the file");
+    assert(!refs().includes("refs/heads/leaky"), "the refused branch reached the remote anyway");
+    notes.push("end to end: a real git push of A→B→C is stopped by the hook, and the remote never receives the branch");
+
+    const cleanPush = push(`${repo.A}:refs/heads/fine`);
+    assert.strictEqual(cleanPush.status, 0, `a push the remote already serves must go through: ${cleanPush.stderr}`);
+    assert(refs().includes("refs/heads/fine"), "the allowed branch did not arrive");
+    notes.push("end to end: an allowed push goes through the same hook");
+  } finally {
+    fs.rmSync(repo.dir, { recursive: true, force: true });
+    fs.rmSync(remote, { recursive: true, force: true });
+    fs.rmSync(hooks, { recursive: true, force: true });
   }
 }
 
@@ -781,9 +764,9 @@ function testNothingWasWritten() {
     "the scanner on disk was modified; every mutation in this suite must be compiled in memory",
   );
   assert.strictEqual(
-    fs.readFileSync(PREFLIGHT_FILE, "utf8"),
-    PREFLIGHT_BYTES,
-    "the preflight on disk was modified; every mutation in this suite must be compiled in memory",
+    fs.readFileSync(GATE_FILE, "utf8"),
+    GATE_BYTES,
+    "the push gate on disk was modified; every mutation in this suite must be compiled in memory",
   );
   assert.deepStrictEqual(
     sourceStatus(),
@@ -803,9 +786,8 @@ testRemovingTheHistoryGateIsObservable();
 testPathIdentityInHistory();
 testExactExitCodes();
 testInabilityIsNeverClean();
-testScannedCommitIsThePublishedCommit();
-testBoundPreflightClears();
-testRemovingTheBindingIsObservable();
+testScannedCommitIsThePushedCommit();
+testRealPushIsStoppedByTheHook();
 testNothingWasWritten();
 
 console.log(`Public exposure negative controls passed (${notes.length} receipts):`);

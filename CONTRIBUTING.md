@@ -10,6 +10,21 @@ a focused PR with a clear description of what changed and why is enough. For a
 large or architectural change, open an issue first so the direction can be agreed
 before you spend the effort.
 
+## Every push is public
+
+CineBraid is developed in one public repository, so a branch you push here is
+readable by anyone as soon as it lands — even if you delete it later, and even if
+no pull request is ever opened. Install the pre-push gate once per clone:
+
+```bash
+npm run hooks:install
+```
+
+It scans every commit a push would publish, including files added and removed
+again before the tip, and refuses the push if it finds a credential or a personal
+filesystem path. It also refuses a direct push to `main`: changes reach `main`
+only through a reviewed pull request. See [docs/PUBLICATION.md](docs/PUBLICATION.md).
+
 ## Sign your commits (DCO, not a CLA)
 
 CineBraid does **not** use a Contributor Licence Agreement, and it does not ask

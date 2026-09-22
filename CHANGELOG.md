@@ -2,7 +2,11 @@
 
 - Identifies the accepted EV2-1–6 integration for final manual review, with Results, integrated Screening, explicit durable approval and separate finishing/delivery.
 - Qualified integration parent: `b519b8aa613f39425f5b9c0d1f8ace0cd261c6b2`. Its local complete CI, 285-suite full runner, 46/46 required browser suites and separate authority gate passed. The version child receives focused mechanical checks only; see the [verification basis](docs/releases/v6.9.0-alpha.1/CINEBRAID_v6.9.0-alpha.1_VERIFICATION_REPORT.md).
-- Final human dogfood acceptance and publication remain pending. No new tag, release or published main update is claimed. The published v6.8.0-alpha.1 remains unchanged.
+- Final human dogfood acceptance remains pending. Public `main` has carried this identity since the single-repository cutover at `e31d9b3`; no tag or release is claimed, and the published v6.8.0-alpha.1 remains unchanged.
+- **Development moved to one public repository.** `cfbach/cinebraid` is now where development, review, CI and releases happen; the former private origin is archived. `docs/PUBLICATION.md` is rewritten for a repository where every push publishes: `main` changes only through a reviewed pull request, history is append-only, and a tag is one explicit release decision.
+- A pre-push gate, `scripts/push-gate.js`, installed per clone with `npm run hooks:install`, scans the exact commits each push would make readable and refuses direct pushes to `main`, force pushes and unapproved tags. It replaces the two-repository publication preflight, whose only job was a direct push to `main`.
+- CI: a separate **Publication scan** job reads the history and tree every pull request would add to `main`, and every checkout sets `persist-credentials: false`. No suite, product behaviour, schema or provider path changed.
+- README, `SETUP.md` and the docs index name v6.8.0-alpha.1 as the latest release and `main` as unreleased development code.
 - Application identity and required packaging documents only; no behavior, schema, storage, credential or provider change. The oversized Approved treatment and mobile toast overlap remain non-blocking polish.
 - [Candidate notes](docs/releases/v6.9.0-alpha.1/CINEBRAID_v6.9.0-alpha.1_RELEASE_NOTES.md) and [manual review guide](docs/releases/v6.9.0-alpha.1/CINEBRAID_v6.9.0-alpha.1_PATCH_INSTALL.md).
 
