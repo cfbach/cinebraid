@@ -409,35 +409,28 @@ function snapshotDiff(before, after) {
    inside that rename holds the temporary file and not the ledger — which is how a hosted
    runner reported the pass's own write as an extra one. No route reports the pass idle, so
    for a project opened WITHOUT a ledger, as check 12's is, the pass has finished its write
-   once media-assets.json exists and no temporary sibling of it remains. Observed with
-   fs.watch on the project directory and re-checked on every event; the deadline only names
-   a pass that never settles, and nothing here waits on elapsed time. */
+   once media-assets.json exists and no temporary sibling of it remains.
+   POLLED, NOT WATCHED. fs.watch on this directory aborted the whole suite process inside
+   libuv (src\win\fs-event.c) on the hosted Windows runner, whose temporary directory is an
+   8.3 short-name path. So the condition is checked at once and again after each short yield:
+   the cadence only schedules the next look, what ends the wait is the condition itself, and
+   the deadline only names a pass that never settles. */
 const LEDGER_SETTLE_MS = 20000;
+const LEDGER_POLL_MS = 5;
 async function ledgerSettled(project) {
   const ledger = path.join(project, 'media-assets.json');
   const pending = () => fs.readdirSync(project).filter((name) => /^media-assets\.json\..+\.tmp$/.test(name));
   const settled = () => fs.existsSync(ledger) && pending().length === 0;
-  if (settled()) return;
-  await new Promise((resolve, reject) => {
-    let done = false;
-    const finish = (error) => {
-      if (done) return;
-      done = true;
-      clearTimeout(deadline);
-      watcher.close();
-      if (error) reject(error); else resolve();
-    };
-    const watcher = fs.watch(project, () => { if (settled()) finish(); });
-    watcher.on('error', finish);
-    const deadline = setTimeout(() => {
+  const deadline = Date.now() + LEDGER_SETTLE_MS;
+  while (!settled()) {
+    if (Date.now() > deadline) {
       const left = pending();
-      finish(new Error(`the switch's MediaAsset indexing pass did not settle within ${LEDGER_SETTLE_MS} ms: `
+      throw new Error(`the switch's MediaAsset indexing pass did not settle within ${LEDGER_SETTLE_MS} ms: `
         + `${fs.existsSync(ledger) ? 'media-assets.json exists' : 'media-assets.json was never written'}`
-        + `${left.length ? `, and ${left.join(', ')} is still beside it` : ''}`));
-    }, LEDGER_SETTLE_MS);
-    /* The pass may have settled between the first look and the watch starting. */
-    if (settled()) finish();
-  });
+        + `${left.length ? `, and ${left.join(', ')} is still beside it` : ''}`);
+    }
+    await sleep(LEDGER_POLL_MS);
+  }
 }
 
 /* A refusal is a sentence. Nothing a filesystem, a parser or a runtime said on the way. A
