@@ -58,7 +58,10 @@ Run it while you work.
 npm run check:ci
 ```
 
-The portable suites run by Windows CI for pull requests. **Windows validation is
+The portable suites run by Windows CI for pull requests. CI runs this same list
+through `npm run check:ci-census`, which keeps going past a red suite and ends
+with a census of every failure; `check:ci` itself stops at the first one.
+**Windows validation is
 the required public status check. Browser validation is advisory pending
 `BROWSER_GATE_RUNNER_STABILITY_V1`.** A local result does not replace the reported
 Windows status for the candidate under review.

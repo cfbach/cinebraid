@@ -34,6 +34,7 @@ jobs:
       # fetch-depth: 0 because the secret scan below reads the commit RANGE this
       # pull request adds, and a shallow clone has no range to read.
       - name: Check out the branch under test
+        id: checkout
         uses: actions/checkout@v7
         with:
           fetch-depth: 0
@@ -58,8 +59,13 @@ jobs:
 
       # Every suite below is local-only and deterministic: no provider APIs, no
       # repository secrets, no real browser, and no writes to projects/ or data/.
-      - name: Run the CI-safe validation suite
-        run: npm run check:ci
+      #
+      # The census runs the exact check:ci chain from package.json, step by step in
+      # the same order, but does not stop at the first red step: every step runs, a
+      # census listing every failure prints at the end, and the step fails if any
+      # suite failed. It stops early only when a suite cannot be launched at all.
+      - name: Run every CI-safe validation suite and report each failure
+        run: npm run check:ci-census
 
       # An EARLY WARNING, not the gate.
       #
@@ -75,9 +81,12 @@ jobs:
       # base.sha and head.sha come from the pull_request event, so nothing is
       # inferred. Exit 2 means the scan could not run and fails the job, exactly as
       # exit 1 does: an unanswered question is not a clean answer.
+      #
+      # It runs even when the census above is red, so a red suite never hides the
+      # scan's answer; the job still fails on either. It needs only the checkout.
       - name: Scan the history this pull request would add
         run: node scripts/scan-secrets.js --history-range ${{ github.event.pull_request.base.sha }}..${{ github.event.pull_request.head.sha }}
-        if: github.event_name == 'pull_request'
+        if: ${{ !cancelled() && steps.checkout.outcome == 'success' && github.event_name == 'pull_request' }}
 
   # Browser validation runs separately from the required Windows validation job.
   # It is advisory pending BROWSER_GATE_RUNNER_STABILITY_V1. Keep its status name

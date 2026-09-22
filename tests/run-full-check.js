@@ -317,6 +317,10 @@ const nodeSuites = [
   "check:secrets",
   "check:public-exposure",
   "check:public-exposure-negative",
+  /* The runner Windows CI uses for check:ci, proven against a throwaway package. The
+     census itself is not listed: it would run the whole check:ci chain a second time. */
+  "check:ci-census-contracts",
+  "check:ci-census-negative",
 ];
 
 /* Suites that assert something about the whole machine and therefore cannot share it.
