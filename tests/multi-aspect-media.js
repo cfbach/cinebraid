@@ -82,9 +82,23 @@ function note(line) { results.push(line); }
 
 /* The app's module-scope state is lexical inside the sandbox, so it is read by evaluating
  * in that context rather than off the context object. SAVE_REVISION is the honest signal
- * that something called dirty(): it increments before the debounced write is even queued. */
-function saveRevision(context) { return vm.runInContext('SAVE_REVISION', context); }
+ * that something called dirty(): it increments before the debounced write is even queued.
+ *
+ * A write the open has already QUEUED counts too. PENDING_SAVE_TRIGGERS holds the app's
+ * one autonomous save trigger — the schema write-back load() arms 50 ms after an older
+ * record opens — and counting it decides "nothing was written" at the moment of the read,
+ * rather than by whether that timer happens to have fired yet. */
+function saveRevision(context) { return vm.runInContext('SAVE_REVISION + PENDING_SAVE_TRIGGERS.size', context); }
 function sandboxProject(context) { return vm.runInContext('P', context); }
+
+/* The schema markers an open treats as current, read from the page itself so the fixture
+ * below can never fall behind them unnoticed. */
+const APP_SOURCE = fs.readFileSync(path.join(ROOT, 'public', 'app.js'), 'utf8');
+function appConstant(name) {
+  const match = APP_SOURCE.match(new RegExp(`const ${name} = "([^"]+)";`));
+  assert(match, `public/app.js must still declare ${name}`);
+  return match[1];
+}
 
 /* The six formats this product has to support as primary workflows, plus the arbitrary
  * one. Every table below is driven from this list so none of them can drift apart. */
@@ -465,8 +479,19 @@ for (const format of FORMATS) {
 /* ================================================================================
    5. The format actually reaches the screen
    ================================================================================ */
-function projectAt(label, { shotOverride } = {}) {
+/* A record already at the schema this build opens as current. buildFixture() is a v5.5
+ * record, and opening an older record legitimately queues that write-back — so with it,
+ * "opening does not mark the project dirty" held only for its first 50 ms, and whether a
+ * read landed inside them depended on how this suite's successive renders ordered their
+ * timers on a busy runner. Nothing else about the record changes. */
+function currentFixture() {
   const project = buildFixture();
+  project.meta.hubVersion = appConstant('HUB_SCHEMA_VERSION');
+  project.meta.schemaVersion = appConstant('PROJECT_SCHEMA_BASELINE_VERSION');
+  return project;
+}
+function projectAt(label, { shotOverride } = {}) {
+  const project = currentFixture();
   project.meta.aspectRatio = label;
   if (shotOverride !== undefined) {
     project.shots[0].creationBrief = { composition: { aspectRatio: shotOverride } };
@@ -481,6 +506,15 @@ function pendingAt(label, options) {
 }
 
 async function main() {
+  /* The control for every dirty check below. The unstamped v5.5 fixture owes its
+   * write-back from the moment it opens, so the probe must read exactly one owed write
+   * whether or not the timer has fired — otherwise a 0 below would prove nothing. */
+  {
+    const legacy = await render('#/shots', buildFixture());
+    assert.strictEqual(saveRevision(legacy.context), 1, 'an older record must read as one owed write-back the moment it opens, fired or not');
+    note('dirty probe: an older record reads as one owed write-back at once, fired or not; every fixture below is current, so it owes none');
+  }
+
   for (const format of FORMATS) {
     const board = await render('#/shots', projectAt(format.label));
     const expected = Aspect.overviewAspectCss(Aspect.resolveAspect(format.label));
@@ -543,7 +577,7 @@ async function main() {
   /* A project with no format, and one with unusable format data, both render on the
    * stylesheet's own 16/9 fallback rather than being corrected on disk. */
   for (const [description, value] of [['no ratio metadata', ''], ['malformed ratio data', 'widescreen'], ['an out-of-range ratio', '50:1']]) {
-    const project = buildFixture();
+    const project = currentFixture();
     project.meta.aspectRatio = value;
     project.meta.format = 'Short film';
     const board = await render('#/shots', project);
@@ -715,7 +749,7 @@ async function main() {
       };
     }
 
-    const app = await render('#/library', buildFixture());
+    const app = await render('#/library', currentFixture());
     const bind = app.context.bindIntrinsicAspect;
 
     /* 1. cached — already complete, so no load event will ever fire */
