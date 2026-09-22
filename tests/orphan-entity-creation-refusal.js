@@ -402,6 +402,44 @@ function snapshotDiff(before, after) {
   return changed;
 }
 
+/* THE SWITCH'S OWN INDEXING PASS, SETTLED BEFORE ANYTHING IS MEASURED.
+   POST /api/projects/switch answers before the MediaAsset pass it starts has written the
+   project's ledger, and that write goes through a temporary sibling renamed onto
+   media-assets.json (src/media/media-asset-store.js writeLedgerSync). A snapshot taken
+   inside that rename holds the temporary file and not the ledger — which is how a hosted
+   runner reported the pass's own write as an extra one. No route reports the pass idle, so
+   for a project opened WITHOUT a ledger, as check 12's is, the pass has finished its write
+   once media-assets.json exists and no temporary sibling of it remains. Observed with
+   fs.watch on the project directory and re-checked on every event; the deadline only names
+   a pass that never settles, and nothing here waits on elapsed time. */
+const LEDGER_SETTLE_MS = 20000;
+async function ledgerSettled(project) {
+  const ledger = path.join(project, 'media-assets.json');
+  const pending = () => fs.readdirSync(project).filter((name) => /^media-assets\.json\..+\.tmp$/.test(name));
+  const settled = () => fs.existsSync(ledger) && pending().length === 0;
+  if (settled()) return;
+  await new Promise((resolve, reject) => {
+    let done = false;
+    const finish = (error) => {
+      if (done) return;
+      done = true;
+      clearTimeout(deadline);
+      watcher.close();
+      if (error) reject(error); else resolve();
+    };
+    const watcher = fs.watch(project, () => { if (settled()) finish(); });
+    watcher.on('error', finish);
+    const deadline = setTimeout(() => {
+      const left = pending();
+      finish(new Error(`the switch's MediaAsset indexing pass did not settle within ${LEDGER_SETTLE_MS} ms: `
+        + `${fs.existsSync(ledger) ? 'media-assets.json exists' : 'media-assets.json was never written'}`
+        + `${left.length ? `, and ${left.join(', ')} is still beside it` : ''}`));
+    }, LEDGER_SETTLE_MS);
+    /* The pass may have settled between the first look and the watch starting. */
+    if (settled()) finish();
+  });
+}
+
 /* A refusal is a sentence. Nothing a filesystem, a parser or a runtime said on the way. A
    placeholder name counts as a leak unless the caller named it in the request itself. */
 function leaks(text, server, route) {
@@ -537,6 +575,9 @@ check('12. with a project open, the same routes still write into THAT project, a
   });
   assert.ok(switched.ok, `opening the sample must succeed, got ${switched.status}`);
   const project = path.join(server.workspace.projectsRoot, 'cinebraid-sample');
+  /* Measured from a settled project: the switch's own ledger write is not one of the writes
+     these three requests make. */
+  await ledgerSettled(project);
   const before = snapshot([server.workspace.projectsRoot]);
   const unnamed = await call(server, { method: 'POST', url: '/api/media/upload?type=anchors&name=open-project-anchor.png', bytes: PNG });
   const named = await call(server, { method: 'POST', url: '/api/media/upload?type=audio&name=open-project-audio.png&slug=cinebraid-sample', bytes: PNG });

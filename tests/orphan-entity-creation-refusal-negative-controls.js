@@ -11,8 +11,10 @@
  *
  * NOTHING IS WRITTEN INTO THE REPOSITORY. A client control patches a COPY of public/ in a
  * temporary directory; a server control applies its edit IN MEMORY, to the server child
- * only, as node loads src/server/server.js. Every shipped file the controls read is hashed
- * before the first control and after the last, and must be byte-identical.
+ * only, as node loads src/server/server.js or src/media/media-asset-store.js; a control whose
+ * defect is in the measurement itself runs a patched COPY of the suite. Every shipped file the
+ * controls read, the suite included, is hashed before the first control and after the last,
+ * and must be byte-identical.
  */
 'use strict';
 const assert = require('assert');
@@ -25,12 +27,13 @@ const { spawnSync } = require('child_process');
 const ROOT = path.join(__dirname, '..');
 const SUITE = path.join(__dirname, 'orphan-entity-creation-refusal.js');
 const SERVER = path.join(ROOT, 'src', 'server', 'server.js');
+const LEDGER_STORE = path.join(ROOT, 'src', 'media', 'media-asset-store.js');
 
 const notes = [];
 let failures = 0;
 
 /* Every shipped file a control reads, by content, so "restored byte-identically" is measured. */
-const WATCHED = [SERVER, ...fs.readdirSync(path.join(ROOT, 'public')).filter((n) => /\.(js|html|css)$/.test(n)).map((n) => path.join(ROOT, 'public', n))];
+const WATCHED = [SERVER, LEDGER_STORE, SUITE, ...fs.readdirSync(path.join(ROOT, 'public')).filter((n) => /\.(js|html|css)$/.test(n)).map((n) => path.join(ROOT, 'public', n))];
 const digests = () => Object.fromEntries(WATCHED.map((file) => [file, crypto.createHash('sha256').update(fs.readFileSync(file)).digest('hex')]));
 const BEFORE = digests();
 
@@ -50,8 +53,8 @@ function patch(dir, file, from, to, label) {
   fs.writeFileSync(at, normalised.replace(from, to));
 }
 
-function run(env) {
-  const result = spawnSync(process.execPath, [SUITE], { env: { ...process.env, ...env }, encoding: 'utf8', timeout: 300000 });
+function run(env, suite = SUITE) {
+  const result = spawnSync(process.execPath, [suite], { env: { ...process.env, ...env }, encoding: 'utf8', timeout: 300000 });
   const output = String(result.stdout || '') + String(result.stderr || '');
   const failed = {};
   for (const m of output.matchAll(/^ {2}FAIL (\d+)\.[^\n]*\n\s+([^\n]*)/gm)) failed[Number(m[1])] = m[2];
@@ -65,8 +68,8 @@ function judge(label, expectedCheck, expectedWords, outcome) {
   assert.notStrictEqual(code, 0, `${label}: the suite accepted the broken build.\n${output.slice(-900)}`);
   assert.ok(Object.prototype.hasOwnProperty.call(failed, expectedCheck),
     `${label}: expected check ${expectedCheck} to fail; the suite failed ${JSON.stringify(Object.keys(failed))} instead.\n${output.slice(-900)}`);
-  assert.ok(failed[expectedCheck].includes(expectedWords),
-    `${label}: check ${expectedCheck} failed, but not at the assertion that owns this contract. Expected "${expectedWords}", got: ${failed[expectedCheck].slice(0, 300)}`);
+  assert.ok(expectedWords instanceof RegExp ? expectedWords.test(failed[expectedCheck]) : failed[expectedCheck].includes(expectedWords),
+    `${label}: check ${expectedCheck} failed, but not at the assertion that owns this contract. Expected ${expectedWords instanceof RegExp ? expectedWords : `"${expectedWords}"`}, got: ${failed[expectedCheck].slice(0, 300)}`);
   notes.push(`  ${label}\n      check ${expectedCheck}: ${failed[expectedCheck].slice(0, 170)}`);
 }
 
@@ -84,12 +87,25 @@ function clientControl(label, expectedCheck, expectedWords, apply) {
   }
 }
 
-function serverControl(label, expectedCheck, expectedWords, mutation) {
+/* `mutation.file` defaults to src/server/server.js. `suitePatches`, when given, are anchored
+   edits to a COPY of the suite in the control's own temporary directory — for a control whose
+   defect is in the measurement itself — run against this tree's public/ and server. */
+function serverControl(label, expectedCheck, expectedWords, mutation, { suitePatches = [], env = {} } = {}) {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'cinebraid-orphan-entity-nc-server-'));
   try {
     const spec = path.join(dir, 'mutation.json');
     fs.writeFileSync(spec, JSON.stringify({ file: SERVER, ...mutation }));
-    judge(label, expectedCheck, expectedWords, run({ ORPHAN_ENTITY_SERVER_MUTATION: spec, ORPHAN_ENTITY_PART: 'server' }));
+    let suite = SUITE;
+    if (suitePatches.length) {
+      suite = path.join(dir, 'orphan-entity-creation-refusal.js');
+      fs.writeFileSync(suite, fs.readFileSync(SUITE, 'utf8').replace(/\r\n/g, '\n')
+        .replace("require('./helpers/disposable-root')", `require(${JSON.stringify(path.join(__dirname, 'helpers', 'disposable-root'))})`));
+      for (const [from, to] of suitePatches) patch(dir, path.basename(suite), from, to, label);
+    }
+    judge(label, expectedCheck, expectedWords, run({
+      ORPHAN_ENTITY_SERVER_MUTATION: spec, ORPHAN_ENTITY_PART: 'server',
+      ORPHAN_ENTITY_SOURCE_ROOT: ROOT, ORPHAN_ENTITY_SERVER_ROOT: ROOT, ...env,
+    }, suite));
     console.log(`  ok  ${label}`);
   } catch (error) {
     failures += 1;
@@ -250,12 +266,55 @@ serverControl('NC12 the no-project refusal loses its status and answers a generi
   'must refuse with its own status 404',
   { from: '  if (error?.code === "NO_ACTIVE_PROJECT") return 404;\n', to: '' });
 
+/* ------------------------------------------------------------- the measurement boundary */
+
+/* The ledger's real atomic write, with its rename HELD: the temporary sibling is written and
+   synced, and the rename waits for the measurement to say it has taken its first snapshot.
+   Decided by the product's own rename call and the suite's own snapshot, never by time. */
+const LEDGER_RENAME = '    fs.renameSync(temp, target);\n';
+const HELD_RENAME = '    if (process.env.ORPHAN_ENTITY_HOLD_DIR && !writeLedgerSync.held) {\n'
+  + '      writeLedgerSync.held = true;\n'
+  + '      fs.writeFileSync(path.join(process.env.ORPHAN_ENTITY_HOLD_DIR, "held"), temp);\n'
+  + '      const until = Date.now() + 30000;\n'
+  + '      while (!fs.existsSync(path.join(process.env.ORPHAN_ENTITY_HOLD_DIR, "release")) && Date.now() < until) { /* held */ }\n'
+  + '    }\n'
+  + LEDGER_RENAME;
+{
+  const hold = fs.mkdtempSync(path.join(os.tmpdir(), 'cinebraid-orphan-entity-nc-hold-'));
+  try {
+    serverControl('NC23 check 12 measures without waiting for the switch\'s indexing pass, while the ledger\'s real rename is held across its first snapshot', 12,
+      /^nothing else may be written, and nothing outside the open project; all writes: .*created [^|]*[\\/]cinebraid-sample[\\/]media-assets\.json \| .*\| removed [^|]*[\\/]cinebraid-sample[\\/]media-assets\.json\.\d+\.\d+\.[a-z0-9]+\.tmp$/,
+      { file: LEDGER_STORE, from: LEDGER_RENAME, to: HELD_RENAME },
+      {
+        env: { ORPHAN_ENTITY_HOLD_DIR: hold },
+        suitePatches: [
+          ['  await ledgerSettled(project);\n',
+            '  for (const until = Date.now() + 20000; !fs.existsSync(path.join(process.env.ORPHAN_ENTITY_HOLD_DIR, "held"));) {\n'
+            + '    if (Date.now() > until) throw new Error("NC23 setup: the server never held its ledger rename");\n'
+            + '    await new Promise((resolve) => setImmediate(resolve));\n'
+            + '  }\n'],
+          ['  const before = snapshot([server.workspace.projectsRoot]);\n',
+            '  const before = snapshot([server.workspace.projectsRoot]);\n'
+            + '  fs.writeFileSync(path.join(process.env.ORPHAN_ENTITY_HOLD_DIR, "release"), "");\n'],
+        ],
+      });
+  } finally {
+    fs.rmSync(hold, { recursive: true, force: true });
+  }
+}
+
+/* The ledger's temporary sibling is copied onto the ledger instead of renamed, so it is left
+   behind beside media-assets.json. The boundary must name that, not settle past it. */
+serverControl('NC24 the ledger leaves its temporary file behind, and the measurement boundary never settles', 12,
+  /^the switch's MediaAsset indexing pass did not settle within \d+ ms: media-assets\.json exists, and media-assets\.json\.\d+\.\d+\.[a-z0-9]+\.tmp is still beside it$/,
+  { file: LEDGER_STORE, from: LEDGER_RENAME, to: '    fs.copyFileSync(temp, target);\n' });
+
 /* The controls patched copies and memory, never the tree. Proven, not asserted in prose. */
 try {
   const after = digests();
   const changed = WATCHED.filter((file) => after[file] !== BEFORE[file]).map((file) => path.relative(ROOT, file));
   assert.deepStrictEqual(changed, [], 'shipped files changed on disk during the controls — they must patch copies or memory only');
-  notes.push(`  ${WATCHED.length} shipped files (src/server/server.js and every public/ source) byte-identical before and after every control`);
+  notes.push(`  ${WATCHED.length} files (src/server/server.js, src/media/media-asset-store.js, this suite and every public/ source) byte-identical before and after every control`);
 } catch (error) { failures += 1; console.error(`  FAIL ${error.message}`); }
 
 console.log(notes.join('\n'));
