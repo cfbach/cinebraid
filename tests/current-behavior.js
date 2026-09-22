@@ -543,6 +543,8 @@ async function main() {
     "model-intelligence.js",
     "motion-prompt-editing-real-browser.py",
     "multi-aspect-media.js",
+    "no-project-route-error-privacy-negative-controls.js",
+    "no-project-route-error-privacy.js",
     "no-project-search-refusal-negative-controls.js",
     "no-project-search-refusal.js",
     "no-project-shell-truth-negative-controls.js",

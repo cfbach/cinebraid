@@ -15,9 +15,9 @@
  * handler registered afterwards — server.js's own and those the generation, automation
  * and account modules register on the same app. It is NOT an exception filter:
  *
- *   - Only a REJECTED PROMISE returned by a handler is caught. Synchronous throws keep
- *     Express's own handling, and a handler that answers its own failures (almost all
- *     of them) never reaches this code.
+ *   - Only a REJECTED PROMISE returned by a handler is caught. Synchronous throws are
+ *     caught by Express's router and handed to routeErrorHandler below, and a handler
+ *     that answers its own failures (almost all of them) never reaches this code.
  *   - The failure is not hidden. It is logged here in full and answered as a 500; the
  *     request fails exactly as it should, and only the process survives it.
  *   - The client is told that the request failed and nothing else. An error's message
@@ -67,4 +67,28 @@ function installAsyncRouteBoundary(app) {
   return app;
 }
 
-module.exports = { installAsyncRouteBoundary, ROUTE_FAILURE };
+/* NO_PROJECT_ROUTE_ERROR_PRIVACY_V1 — THE SYNCHRONOUS HALF, AS THE LAST MIDDLEWARE.
+ *
+ * Express catches a synchronous throw itself and passes it down the stack. With nothing
+ * below to take it, its default handler answered: an HTML page whose body is the error's
+ * stack — the absolute path an ENOENT names, the install folder in every frame — which
+ * is how GET /api/scan with no project open showed a filmmaker a stack trace.
+ *
+ * Mounted once, after every route, it answers what the async boundary answers: logged
+ * here, a sentence and a code to the client, and never a second answer to a request
+ * that has one. A request the client got wrong — a body that is not JSON, one over the
+ * size limit, a file that went away while it was being sent — keeps the 4xx status
+ * Express gave it; only the body changes. Every refusal a route writes itself
+ * (CONFIG_UNREADABLE, NO_ACTIVE_PROJECT, PROJECT_UNREADABLE) is an answer, not an
+ * error, and never reaches this. Four parameters, because that is how Express knows it
+ * is an error handler. */
+function routeErrorHandler(error, req, res, next) {
+  const status = Number(error?.status || error?.statusCode);
+  if (status >= 400 && status < 500 && !res.headersSent) {
+    console.error(`API_REQUEST_REFUSED ${status} ${req.method} ${req.path}: ${error?.message || error}`);
+    return res.status(status).json(ROUTE_FAILURE);
+  }
+  answerRouteFailure(req, res, error);
+}
+
+module.exports = { installAsyncRouteBoundary, routeErrorHandler, ROUTE_FAILURE };

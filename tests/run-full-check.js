@@ -178,6 +178,10 @@ const nodeSuites = [
      refresh after it leave the server running; an async route failure is a 500. */
   "check:first-run-survival",
   "check:first-run-survival-negative",
+  /* NO_PROJECT_ROUTE_ERROR_PRIVACY_V1: feedback and scan refuse a missing or unreadable
+     project in JSON; a synchronous route failure is generic JSON, not an error page. */
+  "check:no-project-route-privacy",
+  "check:no-project-route-privacy-negative",
   /* ORPHAN_ENTITY_CREATION_REFUSAL_V1: no record is created without a project record to
      hold it, and no media route writes into a placeholder project. */
   "check:orphan-entity-creation",

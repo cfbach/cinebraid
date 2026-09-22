@@ -287,7 +287,11 @@ async function main() {
   fs.writeFileSync(path.join(guarded, "project.json"), JSON.stringify({
     meta: { title: "Zero PUT", format: "Test", version: "v1", hubVersion: "v6.0.0", schemaVersion: "6.6", aiPolicy: "project-default" },
     qcChecklist: [], characters: [], locations: [], props: [], vehicles: [], audio: [], mediaAssets: [],
-    scenes: [], shots: [{ id: "S-01", scene: "", title: "S", desc: "d", keyframes: [], clips: [], candidateFiles: [] }],
+    /* A project the server OPENS: every shot names a scene the project has. Written with
+       `scene: ""` it failed save validation, GET /api/project refused it into Recovery,
+       and only an unguarded /api/scan still indexed it. */
+    scenes: [{ id: "SC-01", title: "Scene" }],
+    shots: [{ id: "S-01", scene: "SC-01", title: "S", desc: "d", keyframes: [], clips: [], candidateFiles: [] }],
     agentRuns: [], decisions: [], sessions: [], finishJobs: [],
   }, null, 2));
   fs.mkdirSync(path.join(guarded, "docs"), { recursive: true });
@@ -316,8 +320,12 @@ async function main() {
        this process — CineBraid has one local server, so two processes writing one
        ledger is not a shape it has in production, and on Windows the loser of that
        race gets EPERM on the rename. */
-    await (await fetch(`http://127.0.0.1:${port}/api/project`)).json();
-    await (await fetch(`http://127.0.0.1:${port}/api/scan`)).json();
+    const opened = await fetch(`http://127.0.0.1:${port}/api/project`);
+    assert.strictEqual(opened.status, 200, "the fixture must be a project the server opens, not one it sends to Recovery");
+    await opened.json();
+    const scanned = await fetch(`http://127.0.0.1:${port}/api/scan`);
+    assert.strictEqual(scanned.status, 200, "and one it scans");
+    await scanned.json();
     const indexDeadline = Date.now() + 10000;
     for (;;) {
       try { if (S.readLedger(guarded).ledger.assets.length === 2) break; } catch {}

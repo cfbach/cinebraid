@@ -78,9 +78,12 @@ const MediaAssetService = require("../media/media-asset-service");
    module's header for why there is deliberately no path-taking endpoint. */
 const LocalFileAffordance = require("../media/local-file-affordance");
 const { isLoopbackRequest } = require("./loopback-request");
-const { installAsyncRouteBoundary } = require("./async-route-boundary");
+const { installAsyncRouteBoundary, routeErrorHandler } = require("./async-route-boundary");
 
 const app = installAsyncRouteBoundary(express());
+/* Express names itself in an X-Powered-By header on every response. What serves
+   CineBraid is not something a response needs to say. */
+app.disable("x-powered-by");
 const PORT = process.env.PORT || 4477;
 const LAN_OPT_IN = process.argv.includes("--lan") || /^(1|true|yes)$/i.test(String(process.env.CINEBRAID_LAN || ""));
 const HOST = String(process.env.CINEBRAID_HOST || (LAN_OPT_IN ? "0.0.0.0" : "127.0.0.1")).trim() || "127.0.0.1";
@@ -1736,6 +1739,25 @@ function mediaOwnerRefusal(res, error, fallback = "The media request could not b
   if (error?.code === "NO_ACTIVE_PROJECT" || error?.code === "PROJECT_UNREADABLE") body.code = error.code;
   return res.status(mediaOwnerStatus(error)).json(body);
 }
+/* NO_PROJECT_ROUTE_ERROR_PRIVACY_V1 — THE SAME VERDICT, FOR A ROUTE THAT ANSWERS IT ITSELF.
+   With no project, PROJECT_DIR() is `<projects root>/_none`: a folder that does not exist,
+   holding a project.json that does not exist, and every project-owned route that went
+   ahead read or wrote there. The open gate's own answer, asked first and unnarrowed —
+   nothing active or no project file is NO_ACTIVE_PROJECT (404); a file that cannot be
+   read, is not JSON, is not a project or fails save validation is PROJECT_UNREADABLE
+   (422), exactly the documents GET /api/project sends to Recovery — and the route words
+   its own sentence, as search and the media routes do. No path, no parser message.
+
+   Both routes that use it can WRITE into the project folder: a scan syncs an incoming
+   media root in and schedules the media ledger, a feedback save writes its note file.
+   A project Recovery promises to leave untouched is not written into by either. */
+function projectOwnerVerdict(slug = activeSlug() || "") {
+  const inspected = inspectProjectFile(slug);
+  if (inspected.ok) return { ok: true, slug: inspected.slug };
+  return inspected.status === 422
+    ? { ok: false, status: 422, code: "PROJECT_UNREADABLE" }
+    : { ok: false, status: 404, code: "NO_ACTIVE_PROJECT" };
+}
 function projectAIPolicy() {
   try {
     return (
@@ -2805,6 +2827,16 @@ app.get("/api/scan", (req, res) => {
     if (!scope || !fs.existsSync(path.join(projectsRoot(), scope, "project.json")))
       return res.status(404).json({ error: "No such project to scan.", code: "PROJECT_NOT_FOUND" });
   }
+  /* NO_PROJECT_ROUTE_ERROR_PRIVACY_V1 — asked before scanProject(), which syncs a
+     configured media root INTO the project folder and then reads project.json. With no
+     project that read threw ENOENT naming `_none/project.json`, and Express answered it
+     with an HTML stack trace; an unreadable project threw the parser's error the same
+     way, after the sync had already copied into its folder. */
+  const owner = projectOwnerVerdict(scope || activeSlug() || "");
+  if (!owner.ok)
+    return res.status(owner.status).json(owner.code === "PROJECT_UNREADABLE"
+      ? { error: "This project's file cannot be read, so its media folders were not scanned. Nothing was changed.", code: owner.code }
+      : { error: "No project is open, so there are no media folders to scan. Open or create a project first.", code: owner.code });
   const scan = scanProject(scope);
   /* After the sync copy, so media just brought in from a configured mediaRoot is
      visible to the pass. Scheduled, never awaited — the scan answers now. */
@@ -5772,6 +5804,7 @@ const AutomationRuns = registerAutomationRuns(app, {
   activeSlug,
   projectReadinessIssues,
   projectDirForSlug,
+  projectOwnerVerdict,
 });
 /* ---- the server-side ingest reaper -----------------------------------------
  *
@@ -10502,6 +10535,10 @@ app.post("/api/projects/new", (req, res) => {
 /* ---- test isolation ----
  * The test-mode refusals run at startup, before the settings file is read: see
  * refuseTestConfigOutsideDisposableEnvironment() above the configuration reconcile. */
+
+/* The terminal error handler. After every route, so it sees what any of them throws
+   synchronously; see src/server/async-route-boundary.js. */
+app.use(routeErrorHandler);
 
 const httpServer = app.listen(PORT, HOST, () => {
   /* Runtime queues are process-local. Reconcile every durable project once at

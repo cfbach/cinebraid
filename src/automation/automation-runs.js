@@ -96,7 +96,7 @@ function sanitizeLeaseDiagnostics(value, base = {}) {
 }
 
 function registerAutomationRuns(app, deps) {
-  const { projectDir, readProject, activeSlug, projectReadinessIssues, projectDirForSlug } = deps;
+  const { projectDir, readProject, activeSlug, projectReadinessIssues, projectDirForSlug, projectOwnerVerdict } = deps;
   let lastReadWarning = "";
   /* `dir` is given only by a route a runner addressed to its own project (see
      namedRunsScope); every other caller reads and writes the active project's ledger. */
@@ -866,13 +866,33 @@ function registerAutomationRuns(app, deps) {
     res.setHeader("Content-Disposition", `attachment; filename="CineBraid-production-summary-${date}.md"`);
     res.send(productionSummaryMarkdown(payload));
   });
+  /* NO_PROJECT_ROUTE_ERROR_PRIVACY_V1 — FEEDBACK IS KEPT IN A PROJECT, SO IT NEEDS ONE.
+     "Leave feedback" is offered with no project open. The note file is
+     projectDir()/test-feedback.json, which with no project is `_none/test-feedback.json`,
+     and saving read `_none/project.json` first: the ENOENT that came back carried the
+     absolute path, and the route answered it as the error the filmmaker read in the
+     toast. Reading notes is refused only when there is no project; saving is also
+     refused into a project this server would not open, which it could not summarise
+     and must not write into. Asked before any project-owned path is resolved. */
+  function feedbackOwnerRefusal(res, { forWrite }) {
+    const owner = typeof projectOwnerVerdict === "function" ? projectOwnerVerdict() : { ok: true };
+    if (owner.ok || (!forWrite && owner.code !== "NO_ACTIVE_PROJECT")) return false;
+    res.status(owner.status).json(owner.code === "PROJECT_UNREADABLE"
+      ? { error: "This project's file cannot be read, so your feedback was not saved. CineBraid does not write into a project it cannot open — recover it or open another project first.", code: owner.code }
+      : forWrite
+        ? { error: "No project is open, so there is no project to save this feedback in. Open or create a project first.", code: owner.code }
+        : { error: "No project is open, so there is no saved feedback to show. Open or create a project first.", code: owner.code });
+    return true;
+  }
   app.get("/api/test-feedback", (req, res) => {
+    if (feedbackOwnerRefusal(res, { forWrite: false })) return;
     res.json({ notes: readTestFeedback() });
   });
-  app.post("/api/test-feedback", (req, res) => {
+  app.post("/api/test-feedback", (req, res, next) => {
     try {
       const note = cleanText(req.body?.note, 4000).trim();
       if (!note) return res.status(400).json({ error: "A test note is required." });
+      if (feedbackOwnerRefusal(res, { forWrite: true })) return;
       const project = typeof readProject === "function" ? readProject() : {};
       const record = redactDiagnostic({
         id: `test-note-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`,
@@ -889,10 +909,13 @@ function registerAutomationRuns(app, deps) {
       writeTestFeedback(notes);
       res.status(201).json({ record, markdown: testFeedbackMarkdown(record) });
     } catch (error) {
-      res.status(500).json({ error: error.message || "Could not save test note." });
+      /* Whatever is left is unexpected, and its message can name a path. The terminal
+         error handler logs it and answers without it. */
+      next(error);
     }
   });
   app.get("/api/test-feedback/:id/export", (req, res) => {
+    if (feedbackOwnerRefusal(res, { forWrite: false })) return;
     const record = readTestFeedback().find((item) => item.id === req.params.id);
     if (!record) return res.status(404).json({ error: "test note not found" });
     const format = String(req.query?.format || "markdown").toLowerCase();
