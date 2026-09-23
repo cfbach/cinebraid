@@ -958,7 +958,9 @@ async function ux1_10_returnedResultRouting() {
     });
   `);
   equal(aSeen.returned, 1, "A: one returned candidate is awaiting review");
-  equal(aSeen.decisions, 0, "A: and no filmmaker decision is outstanding — the two scopes stay separate");
+  /* UX1-12 reversed this line. It used to assert 0, and Production rendered exactly that:
+     "0 decisions need you" directly beneath REVIEW SHOT IMAGE for this candidate. */
+  equal(aSeen.decisions, 1, "A: and reviewing it is the one filmmaker decision outstanding");
   equal(aSeen.shotStatus, "READY", "A: precondition — the shot could also be told to produce another frame");
   equal(aSeen.next.kind, "returned-result", "A: the primary action reviews the returned result instead");
   equal(aSeen.next.actionLabel, "REVIEW SHOT IMAGE", "A: and says so");
@@ -1071,7 +1073,7 @@ async function ux1_10_returnedResultRouting() {
   ok(["shot", "blocker"].includes(fSeen.next.kind),
     "F: and the existing ready/blocker branches decide, exactly as before: " + fSeen.next.kind);
 
-  note("UX1-10 returned media is reviewed before more is generated, the two counts stay separate, and the integrity blocker still outranks both");
+  note("UX1-10 returned media is reviewed before more is generated, and the integrity blocker still outranks it");
 }
 
 /* ===========================================================================
@@ -1121,6 +1123,111 @@ async function ux1_11_deliveredTaxonomy() {
   note("UX1-11 Delivered / Not delivered survives as the board taxonomy; Mark shot final stays the name of the action");
 }
 
+/* ===========================================================================
+   UX1-12 — A RETURNED CANDIDATE WAITING FOR REVIEW IS A FILMMAKER DECISION.
+
+   Found on the public sample's README state: SAMPLE-03 had one returned Frame A
+   candidate nobody had reviewed, readiness truthfully said READY (another frame could
+   be produced), and Production read "0 decisions need you" directly beneath its own
+   REVIEW SHOT IMAGE action for that candidate, while the shot's board card said the
+   result was "waiting for your decision". Approve, keep as an alternate or reject is a
+   choice only the filmmaker can make.
+
+   The count is SHOTS, like every other decision row: one shot with a waiting candidate
+   is one decision however many candidates came back, and the inbox keeps counting
+   candidates in its own words. A shot that already needs a decision is not counted
+   twice. The project repair still counts once and outranks the review.
+   =========================================================================== */
+
+async function ux1_12_returnedReviewIsADecision() {
+  const surfaces = `
+    const feed = projectShotReadiness();
+    const decisions = projectFilmmakerDecisions(feed);
+    const home = await productionHomeView();
+    const filters = shotBoardActionFilters(feed);
+    const scenes = (home.split('<section class="production-scenes"')[1] || "").split("</section>")[0];
+    const tile = ((home.split('<article class="review"')[1] || home.split('<article class=""')[1] || "").split("</article>")[0]);
+    return {
+      status: Object.fromEntries(feed.shots.map((row) => [row.shotId, row.status])),
+      count: decisions.count,
+      shots: decisions.shots.map((row) => ({ shotId: row.shotId, code: row.code })),
+      project: decisions.project,
+      numbers: decisionNumbersIn(home),
+      tileNumber: Number((tile.split("<b>")[1] || "").split("</b>")[0]),
+      pill: Number((home.match(/data-filmmaker-decisions="(\\d+)"/) || [])[1]),
+      scenes: [...scenes.matchAll(/data-scene-decisions="(\\d+)"/g)].reduce((sum, m) => sum + Number(m[1]), 0),
+      board: Object.fromEntries([...filters.matchAll(/data-board-filter="([^"]+)" data-count="(\\d+)"/g)].map((m) => [m[1], Number(m[2])])),
+      category: Object.fromEntries(P.shots.map((shot) => [shot.id, shotBoardActionCategory(shot, shotReadinessFor(shot, feed))])),
+      returned: returnedResultCount(returnedResultsAwaitingReview()),
+      inbox: (productionResultInbox().split("<h2>")[1] || "").split("</h2>")[0],
+      next: projectNextProductionAction(feed).kind,
+    };
+  `;
+  /* decisionNumbersIn() is this file's; the page is asked through the realm, so it is
+     handed in rather than restated. */
+  const withReader = (page) => vm.runInContext(`var decisionNumbersIn = ${decisionNumbersIn.toString()};`, page.context);
+
+  /* A — THE SAMPLE-03 SHAPE. Every cast reference is approved, both shots are READY,
+     and only L1-01 has a returned candidate. Two candidates, so shots are counted. */
+  const a = projectOf([{ id: "L1-01" }, { id: "L1-02" }]);
+  const aPage = await render("#/production", a, { scan: scanWith(a, { "L1-01": ["FRAME_A.png", "FRAME_B.png"], "L1-02": [] }) });
+  withReader(aPage);
+  const aSeen = await evaluateAsync(aPage.context, surfaces);
+  deepEqual(aSeen.status, { "L1-01": "READY", "L1-02": "READY" }, "A: precondition — readiness says both shots can produce, and that is not changed");
+  equal(aSeen.returned, 2, "A: precondition — two returned candidates are waiting, both on L1-01");
+  equal(aSeen.next, "returned-result", "A: precondition — Production's next action is to review them");
+  equal(aSeen.count, 1, "A: one shot is waiting on the filmmaker, so one decision");
+  deepEqual(aSeen.shots, [{ shotId: "L1-01", code: "review-returned-result" }], "A: named for the shot and by what it waits on");
+  equal(aSeen.tileNumber, 1, "A: the Production tile no longer says 0 decisions need you");
+  deepEqual([...new Set(aSeen.numbers)], [1], `A: every decision number on the Production page is 1, found ${JSON.stringify(aSeen.numbers)}`);
+  equal(aSeen.pill, 1, "A: the readiness pill reads the same projection");
+  equal(aSeen.scenes, 1, "A: and so do the scene cards");
+  equal(aSeen.board.review, 1, "A: the board's Needs a decision filter counts the same shot");
+  equal(aSeen.category["L1-01"], "review", "A: and files L1-01 there");
+  equal(aSeen.category["L1-02"], "ready", "A: while the shot with nothing to review stays Ready");
+  ok(/2 returned results waiting for review/.test(aSeen.inbox), "A: the inbox still counts candidates, in its own words: " + aSeen.inbox);
+
+  /* B — NOT COUNTED TWICE. L1-01 also carries a real readiness decision (PR-TOOL is
+     unconfirmed), so it is one decision and it keeps readiness's own code. */
+  const b = projectOf([{ id: "L1-01" }]);
+  b.productionAuthority.receipts = b.productionAuthority.receipts
+    .filter((row) => row.targetKey !== "entity-state:props:PR-TOOL#state-default");
+  const bPage = await render("#/production", b, { scan: scanWith(b, { "L1-01": ["FRAME_A.png"] }) });
+  withReader(bPage);
+  const bSeen = await evaluateAsync(bPage.context, surfaces);
+  equal(bSeen.status["L1-01"], "NEEDS_DECISION", "B: precondition — readiness already asks for a decision");
+  equal(bSeen.returned, 1, "B: precondition — and a candidate is waiting too");
+  equal(bSeen.count, 1, "B: the shot is still one decision");
+  ok(bSeen.shots[0].code && bSeen.shots[0].code !== "review-returned-result", "B: reported by readiness's own action: " + bSeen.shots[0].code);
+  equal(bSeen.board.review, 1, "B: and the board agrees");
+
+  /* C — REVIEWING IT MOVES THE DECISION ON, THROUGH THE SHIPPED CONTROL. The candidate
+     is approved, the queue empties, and what is left is the delivery decision. */
+  const c = projectOf([{ id: "L1-01" }]);
+  const cPage = await render("#/shot/L1-01", c, { scan: scanWith(c, { "L1-01": ["FRAME_A.png"] }) });
+  withReader(cPage);
+  const cBefore = await evaluateAsync(cPage.context, surfaces);
+  deepEqual(cBefore.shots, [{ shotId: "L1-01", code: "review-returned-result" }], "C: precondition — the review is the decision");
+  cPage.context.approveGuidedFrame("L1-01", "frame-a", "FRAME_A.png");
+  cPage.context.document.getElementById("approve-name").value = "FRAME_A.png";
+  await cPage.gesture.act(() => cPage.context.confirmApproveTake());
+  const cAfter = await evaluateAsync(cPage.context, surfaces);
+  equal(cAfter.returned, 0, "C: approving the candidate empties the queue");
+  deepEqual(cAfter.shots, [{ shotId: "L1-01", code: "mark-shot-final" }], "C: and the one decision is now marking the shot final");
+
+  /* D — AN UNREADABLE LEDGER IS STILL ONE REPAIR. The waiting candidate adds nothing. */
+  const d = projectOf([{ id: "L1-01" }, { id: "L1-02" }]);
+  d.productionAuthority.receipts[0].command = "not-a-command";
+  const dPage = await render("#/production", d, { scan: scanWith(d, { "L1-01": ["FRAME_A.png"], "L1-02": ["FRAME_A.png"] }) });
+  withReader(dPage);
+  const dSeen = await evaluateAsync(dPage.context, surfaces);
+  equal(dSeen.returned, 2, "D: precondition — candidates are waiting");
+  equal(dSeen.count, 1, "D: the project repair is still the one decision");
+  ok(dSeen.project && dSeen.shots.length === 0, "D: counted as the project's, not per shot");
+
+  note("UX1-12 a returned candidate waiting for review is one filmmaker decision per shot, on the tile, the pill, the scene cards and the board, and is never counted twice");
+}
+
 /* ========================================================================== */
 
 async function main() {
@@ -1135,6 +1242,7 @@ async function main() {
   await ux1_9_oneDeliveryAuthority();
   await ux1_10_returnedResultRouting();
   await ux1_11_deliveredTaxonomy();
+  await ux1_12_returnedReviewIsADecision();
   await noParallelProjection();
 }
 

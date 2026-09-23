@@ -12,7 +12,8 @@
  *   (c) unavailable media displaces only a move-on action, on both;
  *   (d) a stale route claim is the Desk's alone — a Board card is never stale;
  *   (e) painting either surface writes no stage selection, no storage and no project edit;
- *   (f) the board filters still count readiness alone;
+ *   (f) the board filters count readiness, and a shot led by a returned review as a
+ *       decision — the Production tile's number, never a second one;
  *   (g) a supplied projection is the default projection, and is actually used;
  *   (h) the Results handoff names the exact key and never writes selectedCandidate.
  * Three in-memory negative controls prove the suite goes red when those guarantees break.
@@ -265,9 +266,15 @@ async function caseF() {
   const b = await render("#/shots/board", without, { scan: scanWith(without, {}), storage: { "cinebraid-shot-action-filter": "all" } });
   equal(a.cards["L1-01"].source, "returned-review", "(f) precondition: a card leads with a returned review");
   const seenA = evaluate(a.board.context, COUNT), seenB = evaluate(b.context, COUNT);
-  deepEqual(seenA.counts, seenB.counts, "(f) returned media changes no board filter count");
-  equal(seenA.markup, seenB.markup, "(f) and no filter control");
-  equal(seenA.counts.review, 0, "(f) 'Needs a decision' still counts readiness decisions, not returned results");
+  /* UX1-12: the shot waiting on a review moves from Ready to Needs a decision, which is
+     exactly the Production tile's count. Nothing else moves. */
+  equal(seenB.counts.review, 0, "(f) precondition: without the candidate nothing needs a decision");
+  equal(seenA.counts.review, 1, "(f) 'Needs a decision' counts the shot whose returned result is waiting");
+  equal(seenA.counts.ready, seenB.counts.ready - 1, "(f) and takes it out of Ready, so the shot is counted once");
+  for (const id of ["unfinished", "missing-inputs", "complete", "all"])
+    equal(seenA.counts[id], seenB.counts[id], `(f) and changes no other filter: ${id}`);
+  const tile = evaluate(a.board.context, "return projectFilmmakerDecisions().count;");
+  equal(seenA.counts.review, tile, "(f) the board and the Production tile report one number");
 }
 
 /* ---------------------------------------------------------------- (g) */
