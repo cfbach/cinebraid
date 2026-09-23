@@ -17,7 +17,8 @@
      7. an interruption ends the running step's whole process tree, starts nothing
         further and exits 128+signal;
      8. the real `check:ci` chain is the census plan, step for step, and the Windows
-        workflow runs the census and still runs the history-range scan when it is red.
+        workflow runs the census while the history-range scan runs in a job of its
+        own that a red census cannot skip.
 
    Nothing is written inside this repository. */
 
@@ -265,18 +266,28 @@ function contractRealCensusIntact({
     "check:ci-census must run the census over the default check:ci chain, with no second list");
 
   const workflow = workflowText.replace(/\r\n/g, "\n");
-  const job = workflow.slice(workflow.indexOf("windows-validation:"), workflow.indexOf("browser-validation:"));
-  const censusAt = job.indexOf("run: npm run check:ci-census");
-  const scanAt = job.indexOf("--history-range");
-  assert(censusAt > 0, "Windows validation must run the census");
+  const jobOf = (key) => {
+    const start = workflow.indexOf(`\n  ${key}:\n`);
+    if (start < 0) return "";
+    const next = workflow.slice(start + 1).search(/\n  [a-z][a-z-]*:\n/);
+    return next < 0 ? workflow.slice(start) : workflow.slice(start, start + 1 + next);
+  };
+  const job = jobOf("windows-validation");
+  assert(job.indexOf("run: npm run check:ci-census") > 0, "Windows validation must run the census");
   assert(!/run: npm run check:ci\s*$/m.test(job), "Windows validation must not also run the fail-fast chain");
   assert(!/continue-on-error/.test(job), "no Windows validation step may swallow its own failure");
-  assert(scanAt > censusAt, "the history-range scan must follow the census");
-  const scanIf = /\n\s+if: (.+)\n/.exec(job.slice(job.lastIndexOf("- name:", scanAt)))?.[1] || "";
-  assert(/!cancelled\(\)/.test(scanIf), `the history-range scan must still run when the census is red: if: ${scanIf}`);
-  assert(/steps\.checkout\.outcome == 'success'/.test(scanIf), `the scan must still require a checkout it can read: if: ${scanIf}`);
+
+  /* The history-range scan lives in a job of its own, so a red census can never hide
+     its answer: jobs run independently unless one needs another. */
+  const scan = jobOf("publication-scan");
+  assert(/--history-range/.test(scan), "the history-range scan must run in the publication-scan job");
+  assert(!/--history-range/.test(job), "the history-range scan must not be a step that a red census can skip");
+  assert(!/^\s+needs:/m.test(scan), "the publication scan must not wait on Windows validation; a red census would skip it");
+  assert(!/continue-on-error/.test(scan), "the publication scan may not swallow its own failure");
+  const scanIf = /\n {4}if: (.+)\n/.exec(scan)?.[1] || "";
   assert(/github\.event_name == 'pull_request'/.test(scanIf), `the scan must still be scoped to pull requests: if: ${scanIf}`);
-  assert(/id: checkout/.test(job), "the checkout step must carry the id the scan's condition reads");
+  assert(!/success\(\)|needs\.|result/.test(scanIf), `the scan's condition must not depend on another job: if: ${scanIf}`);
+  assert(/fetch-depth: 0/.test(scan), "the publication scan needs the full history it reads");
 }
 
 async function main() {

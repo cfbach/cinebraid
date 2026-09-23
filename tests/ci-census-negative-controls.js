@@ -107,10 +107,17 @@ const RUNNER_CONTROLS = [
 
 const WORKFLOW_CONTROLS = [
   {
-    label: "the history-range scan skipped whenever the census is red",
+    label: "the publication scan made to wait on a green census",
     edits: [[
-      `        if: \${{ !cancelled() && steps.checkout.outcome == 'success' && github.event_name == 'pull_request' }}\n`,
-      `        if: github.event_name == 'pull_request'\n`,
+      `    name: Publication scan\n`,
+      `    name: Publication scan\n    needs: windows-validation\n`,
+    ]],
+  },
+  {
+    label: "the history-range scan moved back behind the census, skipped whenever it is red",
+    edits: [[
+      `      - name: Run every CI-safe validation suite and report each failure\n        run: npm run check:ci-census\n`,
+      `      - name: Run every CI-safe validation suite and report each failure\n        run: npm run check:ci-census\n\n      - name: Scan\n        run: node scripts/scan-secrets.js --history-range a..b\n`,
     ]],
   },
   {
