@@ -1,6 +1,6 @@
 # CineBraid 6.8.0-alpha.1 — EV2 milestone
 
-Status: active product version; qualification and main publication pending. No v6.8.0-alpha.1 tag or GitHub release is created by this version advancement.
+Status: published on 2026-09-15 as the source-only GitHub pre-release [v6.8.0-alpha.1](https://github.com/cfbach/cinebraid/releases/tag/v6.8.0-alpha.1), tagged at `d5342b9`. It is the latest release; `main` has since moved on to 6.9.0-alpha.1 development code. No release archive or native installer exists.
 
 The combined Experience V2 milestone includes the accepted A+ Shot Desk representative workflow and References with explicit enrollment of existing production media through durable asset identities. Enrollment remains separate from approval. Approval remains a deliberate user action through the existing authority writer.
 

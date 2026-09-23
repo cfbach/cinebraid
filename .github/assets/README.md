@@ -2,82 +2,83 @@
 
 This directory holds durable guidance for public repository presentation. Runtime
 artwork stays in `public/`. Three product screenshots are approved for README publication as recorded below.
-Project Bible is held. The social preview below is active in the repository settings.
+Project Bible is held. The V2 captures and social preview below were approved by the
+product owner on 2026-09-23 and replace the V1 set. GitHub keeps serving the V1
+social preview until the owner uploads V2 in the repository settings.
 
-## GitHub Social Preview V1 — approved
+## GitHub Social Preview V2 — approved
 
-`social-preview.png` is product-owner approved as-is for repository publication. The owner activated it in the repository settings; on 2026-09-22 the image GitHub served was byte-identical to this file (SHA-256 below). Prepared from post-Alpha main `5e8d998f9ebf94f73bba5e59472306eda87b9e54`. Project Bible remains held.
+`social-preview.png` is product-owner approved (2026-09-23). It is rebuilt from the V2
+production capture below, on the recorded V1 layout. Prepared from public main `bddf73834e8ed1df83493db380a5f6eafe6e3860` (6.9.0-alpha.1). GitHub setting
+activation is a manual upload by the owner after approval; V1 (SHA-256
+`8153421e1df485fe8bd553de6b2ffcfab2414188cad10fc93c2404b315861af5`, from
+`5e8d998f9ebf94f73bba5e59472306eda87b9e54`) stays active until then.
 
-- Dimensions: **1280 × 640** RGB PNG, sRGB rendering intent declared. Descriptive metadata stripped; the sRGB colour declaration is the only ancillary metadata. Lossless PNG optimization; 112,657 bytes.
-- Final SHA-256: `8153421e1df485fe8bd553de6b2ffcfab2414188cad10fc93c2404b315861af5`.
-- Native ribbon source: `public/cinebraid-logo-xs.png`, SHA-256 `f29dd3d8ad3dbf8c2b4ff38e612d5e832e90fc8713a1c1c85687246c19afe8dc`, displayed at exactly **80 × 103**. No enlargement, recolouring, tracing or substitution.
-- Screenshot source: `.github/assets/screenshots/production-overview.png`, SHA-256 `4d3c7e1eb77d82cb691945975c3a064211308fb798addc3ab5de3e09be54f14c`. Approved source capture from application SHA `022fe324c725a40b8cd89a6e0283cfd99527e7f6`, disposable `cinebraid-sample-public-media-v1` / The Blue Parcel, route `/#/production`; its state and rights record appears below.
-- Screenshot treatment: the entire 1600 × 1000 capture displayed proportionally at **864 × 540**. No crop, UI retouching, compositing of UI states, or added browser chrome. One genuine screenshot only.
-- Layout: restrained navy `#09121b`, cyan `#28d1df`, light text. Minimum 48 px outer safe margin; screenshot at (368, 50), ribbon at (48, 50). All content remains inside safe margins.
-- Text: **CineBraid** / **Local-first production software for filmmaking.** / **Public Alpha · Source-only**.
-- Visual review: inspected at 1280 × 640 and 640 × 320. Name and positioning remain readable; the production heading, image and next-action card establish real application context. Fine UI text is not expected to be readable at half size.
-- Public safety and rights: uses only the two approved assets with verified hashes. No private production, credentials, personal paths, QA overlays, generated art or outside imagery introduced. Native branding remains covered by Frombach Studios brand terms; public-sample provenance and Apache-2.0 asset terms are recorded below.
-- Lossless composition original and HTML layout remain outside Git in the isolated review-artifact directory. No GitHub settings changed. Human visual approval is complete; no GitHub setting activation is performed by this publication.
-- Repository-only asset: `.github/` remains export-ignored. The exact `.github/assets/social-preview.png` path is recognized only by the repository-presentation allowance, never by runtime SHIPPED_MEDIA. No product/runtime code changes.
+- Dimensions: **1280 × 640** RGB PNG, sRGB rendering intent declared. Descriptive metadata stripped; the sRGB colour declaration is the only ancillary chunk. Lossless PNG encoding; 101,923 bytes.
+- Final SHA-256: `bc6bee9338cef0d93c0bea43dd25849af2a91910a27fc542c2f066cfbf20f734`.
+- Native ribbon source: `public/cinebraid-logo-xs.png`, SHA-256 `f29dd3d8ad3dbf8c2b4ff38e612d5e832e90fc8713a1c1c85687246c19afe8dc`, displayed at exactly **80 × 103** at (48, 50). No enlargement, recolouring, tracing or substitution.
+- Screenshot source: `.github/assets/screenshots/production-overview.png` (V2), SHA-256 `cfcb4e1dcd3150852227fff484b3e3aa874439128306d17032971e7351b3c85f`, the entire 1600 × 1000 capture displayed proportionally at **864 × 540** at (368, 50). No crop, UI retouching, compositing of UI states, or added browser chrome.
+- Layout: navy `#09121b`, cyan `#28d1df`, light text, 48 px outer safe margin. Text: **CineBraid** / **Local-first production software for filmmaking.** / **Public Alpha · Source-only**.
+- Rendered by headless Chromium from an HTML layout at 1280 × 640, device scale 1; the layout and unencoded render remain outside Git.
 
-## Accepted README captures — Public Media Capture V1
+## Accepted README captures — Public Media Capture V2
 
-Product-owner visual review approved the following three genuine captures for README publication. Originals remain outside Git, on the maintainer's machine. Source application SHA for every image: `022fe324c725a40b8cd89a6e0283cfd99527e7f6`. Disposable public demo: `cinebraid-sample-public-media-v1`, displayed as **CineBraid Sample — The Blue Parcel**, derived only from tracked `projects/cinebraid-sample`.
+Product-owner visual review (2026-09-23) approved these three genuine captures of the
+running 6.9.0-alpha.1 build at public main `bddf73834e8ed1df83493db380a5f6eafe6e3860`, all
+in **one project state**. Disposable public demo `cinebraid-sample-public-media-v1`,
+displayed as **CineBraid Sample — The Blue Parcel**, copied from the tracked
+`projects/cinebraid-sample` into an isolated projects root with isolated settings,
+loopback only, no provider credentials, and a fresh browser profile. The tracked
+sample remained byte-identical.
 
-All captures are 1600 × 1000 CSS/pixel viewports, DPR 1, zoom 100%, dark theme. No crop, scaling, retouching, compositing or UI-state alteration. Repository PNGs preserve decoded RGB pixels exactly; lossless PNG optimization strips descriptive metadata and retains only an sRGB rendering-intent declaration. All are below 1 MB.
+The state: four real reference approvals, each made through the application's own
+approval dialog once it reported the image ready, and each waited on until saved —
+The courier · Travel coat, Rain platform · Rainy afternoon, Blue parcel · Closed and
+Blue parcel · Opened. After that, navigation only: no shot approval, route choice,
+delivery, generation, import or image edit. The three views were captured in
+sequence after the application's own approval notification had dismissed itself.
 
-Public-safety review: no private productions, credentials, local filesystem paths, browser chrome, QA/debug overlays or private media appear. Capture used isolated projects/configuration/ComfyUI registry roots and fresh browser profiles. All nine sample artwork files remained byte-identical. Runtime normalization and approvals affected only the disposable project; tracked public sample was unchanged.
+All captures are 1600 × 1000 CSS pixels, device scale 1, zoom 100%, dark theme, with
+no crop, scaling, retouching, compositing or UI-state alteration. Published PNGs
+decode to exactly the captured pixels; only an sRGB rendering-intent chunk is added
+and no descriptive metadata is kept. Originals remain outside Git, on the
+maintainer's machine.
 
-Rights/provenance: media came solely from the public sample at the source SHA above; `TRADEMARKS.md` places non-brand tracked assets under the repository Apache-2.0 licence. CineBraid branding remains subject to its separate Frombach Studios terms. These are owner-approved depictions of the genuine application, not generated substitutes.
+Public-safety review: no private production, credential, filesystem path, browser
+chrome, QA/debug overlay or private media. Rights/provenance: sample media only;
+`TRADEMARKS.md` places non-brand tracked assets under the repository Apache-2.0
+licence, and CineBraid branding stays under its separate Frombach Studios terms.
 
 ### `production-overview.png`
 
-- Published path: `screenshots/production-overview.png`.
-- Route: `/#/production`.
-- Source SHA-256: `cd323ed57dc29add9816c60b0fde4c853c45e433c938dd9b6aae9a2d4e3b4acf`.
-- Optimization: 142,861 → 146,750 bytes; pixel-identical.
-- Final SHA-256: `4d3c7e1eb77d82cb691945975c3a064211308fb798addc3ab5de3e09be54f14c`.
-- Selected entity/shot: SAMPLE-03 — Parcel opened; overview also lists SAMPLE-01 and SAMPLE-02.
-- UI state: One returned frame awaits review; 2/3 shots retain inherited signed-off workflow labels; 0/3 delivered. All four reference states have been confirmed.
-- Disposable changes: Navigation plus four real reference approvals; no shot approval, delivery, generation or image edits. App performed its normal schema/authority normalization on the disposable copy.
-- Captured: 2026-09-10T06:37:46.017642+00:00.
+- Route: `/#/production`. Captured: 2026-09-23T03:01:23.198Z.
+- Capture SHA-256: `f0513a38246f274880de8eae1cb5bb7330387e90f439f1b45dbfa91dad9d2ae5`; final 115,045 bytes, SHA-256 `cfcb4e1dcd3150852227fff484b3e3aa874439128306d17032971e7351b3c85f`.
+- UI state: next action SAMPLE-03 · Parcel opened, one frame candidate to review; one returned result waiting for review; 0/3 shots delivered, 2/3 signed off, 0 decisions need you, 0:12 planned; all three shots READY to produce Frame A.
 - Caption: See the production and the next shot that needs your attention.
 - Alt text: CineBraid production overview showing the Blue Parcel demo's three shots and the next pending shot decision.
-- Visual acceptance caveat: Visible UI says one result awaits review but zero decisions need you. Preserve this discrepancy; do not caption the first two shots as newly approved or delivered.
+- Visual acceptance caveat: the view says a returned result awaits review while "0 decisions need you". This is the application's real state, carried over from V1; do not caption the first two shots as newly approved or delivered.
 
 ### `shot-workspace.png`
 
-- Published path: `screenshots/shot-workspace.png`.
-- Route: `/#/shot/SAMPLE-03`.
-- Source SHA-256: `dbcd86123b9935f3922d97a8b005267968d1c95e5fa3f6558d13b79caf15dec3`.
-- Optimization: 193,725 → 193,537 bytes; pixel-identical.
-- Final SHA-256: `2b2eb8db8923d81e2fa7c1a3f2b73a477156baf2d0e458da16fe0aaf6ba1e732`.
-- Selected entity/shot: SAMPLE-03 — Parcel opened; Frame A, SAMPLE-03-OPEN.png.
-- UI state: Five linked references, zero of one frame approved, returned candidate and real review/use/revise/keep-looking controls. Production note describes the open parcel; production route remains undecided.
-- Disposable changes: Same four reference approvals; opening the shot also triggered the app’s normal shot-folder request. No candidate approved, route selected, media generated or imported.
-- Captured: 2026-09-10T06:37:57.483009+00:00.
+- Route: `/#/shot/SAMPLE-03`. Captured: 2026-09-23T03:01:23.527Z.
+- Capture SHA-256: `3f611e00a75759579b704786b465a074a2bf5ce067d2122bd192c5b98c758721`; final 113,913 bytes, SHA-256 `7f895b3f798ca469f20454e5f76a65e9e775e73b36991bfb6910387007e69e8a`.
+- UI state: Parcel opened, SAMPLE-03, 4 seconds, In progress; stages Inputs complete, Frames needs review (0 of 1 approved), Motion & sound and Deliver blocked; generation mode Reference-led; shot intent not declared and production route not decided; returned Frame A result SAMPLE-03-OPEN.png awaiting review; Frame A has one new candidate and no approved image.
 - Caption: Keep each shot connected to its references and chosen frames.
-- Alt text: Parcel opened in CineBraid's Frames workspace, with a selected Frame A candidate awaiting human approval.
-- Visual acceptance caveat: Production route genuinely remains undecided. Lower frame controls extend below the viewport. Do not imply this screenshot proves generation, delivery or completed approval.
+- Alt text: The Parcel opened shot in CineBraid, with its returned Frame A result waiting for a human decision and no image approved yet.
+- Visual acceptance caveat: nothing on this shot is approved; the production route is genuinely undecided. Lower sections extend below the viewport.
 
 ### `reference-review.png`
 
-- Published path: `screenshots/reference-review.png`.
-- Route: `/#/character/CHAR-COURIER`.
-- Source SHA-256: `b5705e66973f4dbd3593e4deb10f83f9852ad714525d217fcd104e2bebf916e0`.
-- Optimization: 153,494 → 147,075 bytes; pixel-identical.
-- Final SHA-256: `2d6514bace4ec114e52abd4770da8c24d9877de1b8f7fbe7376e3eda1ca21dca`.
-- Selected entity/shot: CHAR-COURIER — The courier; CHAR-COURIER-FRONT.png; Travel coat.
-- UI state: Approval dialog open before confirmation; selected candidate and primary project-wide state visible, with Approve, Cancel and Request changes controls.
-- Disposable changes: Captured before the first confirmation. Navigation opened the real approval dialog; the four approvals occurred afterward.
-- Captured: 2026-09-10T06:31:52.755780+00:00.
-- Caption: Review a candidate before making an explicit approval.
-- Alt text: CineBraid reference approval view for the courier, showing the selected reference target and explicit human approval controls.
-- Visual acceptance caveat: Earlier point in the same demo timeline than the other three images. Background dimming/blur is the native modal, not retouching. Do not describe this frame as already approved.
+- Route: `/#/character/CHAR-COURIER`. Captured: 2026-09-23T03:01:23.807Z.
+- Capture SHA-256: `4cfe7b212d978cb5f2a269698f55494c7dc56a7011e341ce5563b18188fd529d`; final 79,001 bytes, SHA-256 `31f4abbdbaef4f6327495d12784bdf18dd41ca035e6748df1df79e21ed562db0`.
+- UI state: The courier, continuity state Travel coat, **Approved** · Travel coat; needed now: none; coverage 1 of 2 planned views filled (Front filled, Three-quarter front missing); Approved reference panel.
+- Caption: Keep an explicitly approved reference for each continuity state, and see what coverage remains.
+- Alt text: CineBraid reference page for the courier, showing the explicitly approved Travel coat image and the planned views it still needs.
+- Visual acceptance caveat: unlike V1, which showed the approval dialog before confirmation, V2 shows the reference after the approval, so all three images share one state. Do not describe it as awaiting approval.
 
 ### Held and deferred
 
-`project-bible.png` is **held / not published** by product-owner decision: truthful but visually sparse. No fourth gallery image is included. GitHub Social Preview activation (`CINEBRAID_GITHUB_SOCIAL_PREVIEW_V1`) is complete: the served image matches `social-preview.png` byte for byte. Native 80 × 103 ribbon treatment is unchanged; higher-resolution master provenance remains separate.
+`project-bible.png` is **held / not published** by product-owner decision: truthful but visually sparse. No fourth gallery image is included. Native 80 × 103 ribbon treatment is unchanged; higher-resolution master provenance remains separate. A later capture set from a real production is planned separately.
 
 ## Existing authoritative assets
 

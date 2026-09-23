@@ -1,10 +1,10 @@
 # CineBraid 6.8.0-alpha.1 — source update guide
 
-This guide updates an existing 6.7 Alpha source installation. Use it after the
-6.8 milestone has been qualified and published to main, checking the exact commit
-against its publication record. The frozen v6.7.0-alpha.1 tag still identifies
-6.7; this guide does not imply that a v6.8 tag, release archive or native installer
-exists. Requires Node.js 18 or newer; the required Windows CI uses Node 24.
+This guide updates an existing 6.7 Alpha source installation to the published
+[v6.8.0-alpha.1](https://github.com/cfbach/cinebraid/releases/tag/v6.8.0-alpha.1) source pre-release, whose tag names
+`d5342b98c3d9f7a824c74ca48a483a1702f183c8`. The frozen v6.7.0-alpha.1 tag still
+identifies 6.7. There is no v6.8 release archive or native installer. Requires
+Node.js 18 or newer; the required Windows CI uses Node 24.
 
 ## 1. Stop and preserve your production
 
