@@ -50,13 +50,13 @@ does not block the manual workflow.
 
 ## See the workflow
 
-![Parcel opened in CineBraid's Frames workspace, with a selected Frame A candidate awaiting human approval.](.github/assets/screenshots/shot-workspace.png)
+![The Parcel opened shot in CineBraid, with its returned Frame A result waiting for a human decision and no image approved yet.](.github/assets/screenshots/shot-workspace.png)
 
 Keep each shot connected to its references and chosen frames.
 
-![CineBraid reference approval view for the courier, showing the selected reference target and explicit human approval controls.](.github/assets/screenshots/reference-review.png)
+![CineBraid reference page for the courier, showing the explicitly approved Travel coat image and the planned views it still needs.](.github/assets/screenshots/reference-review.png)
 
-Review a candidate before making an explicit approval.
+Keep an explicitly approved reference for each continuity state, and see what coverage remains.
 
 ## Start
 

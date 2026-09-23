@@ -5,8 +5,10 @@ References milestone. These notes describe the changes since the immutable
 [v6.7.0-alpha.1 release](https://github.com/cfbach/cinebraid/releases/tag/v6.7.0-alpha.1),
 including storage improvements published on main after that release.
 
-This candidate's version is not a claim that a 6.8 tag, GitHub release or installer
-has been published. Publication and final qualification are recorded separately.
+Published on 2026-09-15 as the source-only GitHub pre-release
+[v6.8.0-alpha.1](https://github.com/cfbach/cinebraid/releases/tag/v6.8.0-alpha.1); the tag names `d5342b98c3d9f7a824c74ca48a483a1702f183c8`.
+No release archive was uploaded and there is no native installer: GitHub's generated
+source downloads are source archives, not installers.
 See the [verification basis](CINEBRAID_v6.8.0-alpha.1_VERIFICATION_REPORT.md) and
 [source update guide](CINEBRAID_v6.8.0-alpha.1_PATCH_INSTALL.md).
 
