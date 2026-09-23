@@ -31,7 +31,11 @@
         HEAD - and a real `git push` through the hook is stopped by a finding;
     12. an allowed tag is scanned like a branch: a tag-only push of a new commit
         whose history holds a secret is refused on every remote, with or without
-        the canonical on-main rule, and a real tag-only `git push` is stopped.
+        the canonical on-main rule, and a real tag-only `git push` is stopped;
+    13. the baseline is read from the push destination, not the remote's fetch
+        URL: with origin fetching from a repository whose main is ahead of its
+        push URL, a real push of a branch or a tag carrying a deleted key is
+        refused and the destination receives nothing.
 
    No mutation is written into this repository. Source mutations are compiled in
    memory under the real filename, and the two git-backed targets are proved
@@ -115,6 +119,29 @@ function makeRemote(repo, mainSha) {
 
 /* One pre-push update, the way git describes it on the hook's stdin. */
 const update = (remoteRef, localSha, remoteSha = ZERO, localRef = remoteRef) => ({ localRef, localSha, remoteRef, remoteSha });
+
+/* The canonical URL is github.com, which no control may contact. A control that
+   names it gets this stand-in for the gate's ls-remote: it answers the canonical
+   URL from the given local repository, answers any real path with a real
+   ls-remote, and refuses anything else - which is what a remote NAME would be.
+   Controls pass remote: "origin", so a gate that read main through the remote's
+   name, instead of the URL git is pushing to, fails here rather than passing. */
+function lsRemoteMain(target) {
+  const line = execFileSync("git", ["ls-remote", target, "refs/heads/main"], { encoding: "utf8" }).trim();
+  return line ? line.split(/\s+/)[0] : null;
+}
+function canonicalAt(bare, asked = []) {
+  return {
+    remote: "origin",
+    url: CANONICAL_URL,
+    readRemoteMain: (target) => {
+      asked.push(target);
+      if (target === CANONICAL_URL) return lsRemoteMain(bare);
+      if (fs.existsSync(target)) return lsRemoteMain(target);
+      throw new Error(`the gate read main from ${target}, which is not the push destination`);
+    },
+  };
+}
 
 function runGate(options) {
   const lines = [];
@@ -410,7 +437,7 @@ function testDeletedSecretIsStillPublished() {
     /* And the pre-push gate refuses to send C, which is the seam that matters. */
     const remote = makeRemote(repo, repo.A);
     try {
-      const { code, printed } = runGate({ repo: repo.dir, remote, url: CANONICAL_URL, updates: [update("refs/heads/feature", repo.C)] });
+      const { code, printed } = runGate({ repo: repo.dir, ...canonicalAt(remote), updates: [update("refs/heads/feature", repo.C)] });
       assert.strictEqual(code, 1, `the pre-push gate cleared an unsafe push (exit ${code})`);
       assert(/REFUSED/.test(printed), "the gate's refusal must say so");
       assert(printed.includes("leaked.env") && printed.includes(repo.B.slice(0, 8)),
@@ -430,7 +457,7 @@ function testRemovingTheHistoryGateIsObservable() {
   const repo = buildABC();
   const remote = makeRemote(repo, repo.A);
   try {
-    const options = { repo: repo.dir, remote, url: CANONICAL_URL, updates: [update("refs/heads/feature", repo.C)] };
+    const options = { repo: repo.dir, ...canonicalAt(remote), updates: [update("refs/heads/feature", repo.C)] };
 
     /* Bypass the history scan the way a well-meaning refactor would: keep every
        other step, drop the one that reads history. */
@@ -570,7 +597,7 @@ function testExactExitCodes() {
        refusal is asserted on its OWN reason. Accepting "any refusal" is how a
        control passes without ever reaching the check it exists to prove. */
     const remote = makeRemote(calm, calmA);
-    const public_ = { repo: calm.dir, remote, url: CANONICAL_URL };
+    const public_ = { repo: calm.dir, ...canonicalAt(remote) };
     try {
       /* A side branch that did not build on calmB, for the fast-forward check. */
       calm.git("checkout", "-q", "-b", "side", calmA);
@@ -688,7 +715,7 @@ function testScannedCommitIsThePushedCommit() {
   const remote = makeRemote(repo, repo.A);
   try {
     assert.strictEqual(repo.git("rev-parse", "HEAD").trim(), repo.C, "HEAD must be the clean branch for this control to mean anything");
-    const options = { repo: repo.dir, remote, url: CANONICAL_URL, updates: [update("refs/heads/feature", repo.M, ZERO, "refs/heads/main")] };
+    const options = { repo: repo.dir, ...canonicalAt(remote), updates: [update("refs/heads/feature", repo.M, ZERO, "refs/heads/main")] };
 
     const { code, printed } = runGate(options);
     assert.strictEqual(code, 1, `pushing M while C is checked out must be refused, got ${code}:\n${printed}`);
@@ -767,7 +794,7 @@ function testAllowedTagIsScanned() {
     const tagPush = (sha, name = "v9.9.9") => [update(`refs/tags/${name}`, sha)];
 
     /* Canonical, authorized: refused by policy, before and regardless of the scan. */
-    const policy = caught(() => runGate({ repo: repo.dir, remote, url: CANONICAL_URL, env: authorized, updates: tagPush(annotated) }));
+    const policy = caught(() => runGate({ repo: repo.dir, ...canonicalAt(remote), env: authorized, updates: tagPush(annotated) }));
     assert(policy && /already on the remote's main/.test(policy.message), `an authorized tag of a new commit must be refused by policy, got: ${policy && policy.message}`);
 
     /* Canonical, authorized, with the on-main rule removed: the scan alone refuses. */
@@ -776,7 +803,7 @@ function testAllowedTagIsScanned() {
       "      if (false) {",
       "on-main rule removal"));
     const lines = [];
-    const code = noPolicy.gate({ repo: repo.dir, remote, url: CANONICAL_URL, env: authorized, updates: tagPush(annotated), log: (l) => lines.push(l) });
+    const code = noPolicy.gate({ repo: repo.dir, ...canonicalAt(remote), env: authorized, updates: tagPush(annotated), log: (l) => lines.push(l) });
     assert.strictEqual(code, 1, `without the on-main rule, the authorized tag must still be refused by the scan, got ${code}:\n${lines.join("\n")}`);
     assert(lines.join("\n").includes("leaked.env") && lines.join("\n").includes(repo.B.slice(0, 8)), "the refusal must name leaked.env in commit B");
     notes.push("canonical: an authorized tag of a new commit is refused by the on-main rule, and with that rule removed the scan refuses it, naming leaked.env in B");
@@ -801,7 +828,7 @@ function testAllowedTagIsScanned() {
 
     /* An annotation is scanned too: a clean commit already on main, a key in the message. */
     repo.git("tag", "-a", "v9.9.8", "-m", `notes ${FAKE_KEY}`, repo.A);
-    const leakyNote = runGate({ repo: repo.dir, remote, url: CANONICAL_URL, env: { CINEBRAID_RELEASE_TAG: "v9.9.8" }, updates: tagPush(repo.git("rev-parse", "refs/tags/v9.9.8").trim(), "v9.9.8") });
+    const leakyNote = runGate({ repo: repo.dir, ...canonicalAt(remote), env: { CINEBRAID_RELEASE_TAG: "v9.9.8" }, updates: tagPush(repo.git("rev-parse", "refs/tags/v9.9.8").trim(), "v9.9.8") });
     assert.strictEqual(leakyNote.code, 1, `a key in an approved tag's annotation must be refused, got ${leakyNote.code}`);
     assert(/annotation/.test(leakyNote.printed), "the refusal must say the finding is in the annotation");
     notes.push("an approved tag of a commit already on main is still refused when its annotation carries a key");
@@ -821,6 +848,106 @@ function testAllowedTagIsScanned() {
   } finally {
     fs.rmSync(repo.dir, { recursive: true, force: true });
     fs.rmSync(remote, { recursive: true, force: true });
+    fs.rmSync(hooks, { recursive: true, force: true });
+  }
+}
+
+/* ---- 13. the baseline is read from the push destination ---------------- */
+
+/* git hands a pre-push hook the remote's name AND the URL it is pushing to. With
+   remote.<name>.pushurl set they are different repositories, and
+   `git ls-remote <name>` reads the FETCH one. Measured on the previous version of
+   the gate: origin fetched from F, whose main was A→B→C (B adds a key, C deletes
+   it); origin pushed to D, whose main was A. The gate took F's main, C, as its
+   baseline, saw one clean commit, cleared - and D received B. */
+function buildForkedDestination(label) {
+  const upstream = buildABC();
+  const fetchFrom = makeRemote(upstream, upstream.C); // main ahead
+  const pushTo = makeRemote(upstream, upstream.A); // main behind
+  const work = makeRepo(label);
+  work.git("remote", "add", "origin", fetchFrom);
+  work.git("config", "remote.origin.pushurl", pushTo);
+  work.git("config", "tag.gpgsign", "false");
+  work.git("fetch", "-q", "origin");
+  work.git("checkout", "-q", "-b", "feature", "origin/main");
+  work.write("clean.md", "an ordinary change\n");
+  const E = work.commit("E: an ordinary change on top of the fetched main");
+  work.git("tag", "-a", "v9.9.9", "-m", "release notes, nothing sensitive", upstream.C);
+  const cleanup = () => { for (const d of [upstream.dir, fetchFrom, pushTo, work.dir]) fs.rmSync(d, { recursive: true, force: true }); };
+  return { upstream, fetchFrom, pushTo, work, E, cleanup };
+}
+
+function destinationState(bare, shas) {
+  const refs = execFileSync("git", ["for-each-ref", "--format=%(refname)"], { cwd: bare, encoding: "utf8" }).split("\n").filter(Boolean);
+  const held = shas.filter((sha) => spawnSync("git", ["cat-file", "-e", `${sha}^{commit}`], { cwd: bare }).status === 0);
+  return { refs, held };
+}
+
+function testBaselineIsThePushDestination() {
+  const hooks = fs.mkdtempSync(path.join(os.tmpdir(), "cinebraid-hooks-"));
+  const node = process.execPath.replace(/\\/g, "/");
+  fs.writeFileSync(path.join(hooks, "pre-push"), `#!/bin/sh\nexec "${node}" "${GATE_FILE.replace(/\\/g, "/")}" "$@"\n`, { mode: 0o755 });
+
+  for (const [label, refspec, env] of [
+    ["a new branch", "feature:refs/heads/feature", {}],
+    ["a tag alone", "refs/tags/v9.9.9:refs/tags/v9.9.9", { CINEBRAID_RELEASE_TAG: "v9.9.9" }],
+  ]) {
+    const f = buildForkedDestination("pushurl");
+    try {
+      const { A, B, C } = f.upstream;
+      assert.strictEqual(f.work.git("ls-remote", "origin", "refs/heads/main").split(/\s+/)[0], C, "the remote's name must resolve to the fetch side, whose main is ahead");
+      assert.strictEqual(lsRemoteMain(f.pushTo), A, "the push destination's main must be behind");
+
+      f.work.git("config", "core.hooksPath", hooks);
+      const pushed = spawnSync("git", ["push", "origin", refspec], { cwd: f.work.dir, encoding: "utf8", timeout: 120000, env: { ...process.env, ...env } });
+      const said = `${pushed.stdout}${pushed.stderr}`;
+      assert.notStrictEqual(pushed.status, 0, `a real push of ${label} carrying B's deleted key must fail through the hook:\n${said}`);
+      assert(/leaked\.env/.test(said) && said.includes(B.slice(0, 8)), `the refusal of ${label} must name leaked.env in commit B:\n${said}`);
+      assert(said.includes(f.pushTo), `the gate must report the push destination it read, not the fetch URL:\n${said}`);
+      const after = destinationState(f.pushTo, [B, C, f.E]);
+      assert.deepStrictEqual(after.refs, ["refs/heads/main"], `the destination received a ref from a refused push of ${label}: ${after.refs.join(", ")}`);
+      assert.deepStrictEqual(after.held, [], `the destination received commits from a refused push of ${label}`);
+      assert.strictEqual(lsRemoteMain(f.pushTo), A, "the destination's main moved");
+
+      /* Non-vacuity: read main through the remote's name, and the same push clears. */
+      const byName = compileGate(mutate(GATE_SOURCE, "readMain(destination)", "readMain(remote)", "baseline read through the remote's name"));
+      const localSha = f.work.git("rev-parse", refspec.split(":")[0]).trim();
+      const cleared = byName.gate({ repo: f.work.dir, remote: "origin", url: f.pushTo, env, log: () => {},
+        updates: [update(refspec.split(":")[1], localSha)] });
+      assert.strictEqual(cleared, 0, `reading main through the remote's name should clear ${label}, or this control proves nothing`);
+      notes.push(`push destination: a real \`git push origin\` of ${label} with pushurl ≠ url is refused for leaked.env in B, and the destination receives no ref and no commit; reading main by remote name clears it`);
+    } finally {
+      f.cleanup();
+    }
+  }
+
+  /* The authorized-tag decision on the canonical repository, with the two sides
+     different: the fetch side's main already has C, the push destination's does not. */
+  const f = buildForkedDestination("pushurl-canonical");
+  try {
+    const { A, C } = f.upstream;
+    const asked = [];
+    const readRemoteMain = (target) => {
+      asked.push(target);
+      if (target === CANONICAL_URL) return A; // the push destination: main behind
+      if (target === "origin") return C; // what the name resolves to: the fetch side, ahead
+      throw new Error(`unexpected ls-remote target ${target}`);
+    };
+    const tagObject = f.work.git("rev-parse", "refs/tags/v9.9.9").trim();
+    const options = { repo: f.work.dir, remote: "origin", url: CANONICAL_URL, readRemoteMain, env: { CINEBRAID_RELEASE_TAG: "v9.9.9" },
+      updates: [update("refs/tags/v9.9.9", tagObject)] };
+
+    const refusal = caught(() => runGate(options));
+    assert(refusal && /already on the remote's main/.test(refusal.message),
+      `an authorized tag of a commit only the fetch side has must be refused, got: ${refusal && refusal.message}`);
+    assert.deepStrictEqual(asked, [CANONICAL_URL], `the gate must ask the push destination and nothing else, asked: ${asked.join(", ")}`);
+
+    const byName = compileGate(mutate(GATE_SOURCE, "readMain(destination)", "readMain(remote)", "baseline read through the remote's name"));
+    assert.strictEqual(byName.gate({ ...options, log: () => {} }), 0,
+      "reading main through the remote's name should approve this tag, or this control proves nothing");
+    notes.push("push destination: an authorized canonical tag of C is refused because the destination's main is A, although the fetch side's main is C; reading by remote name approves it");
+  } finally {
+    f.cleanup();
     fs.rmSync(hooks, { recursive: true, force: true });
   }
 }
@@ -871,6 +998,7 @@ testInabilityIsNeverClean();
 testScannedCommitIsThePushedCommit();
 testRealPushIsStoppedByTheHook();
 testAllowedTagIsScanned();
+testBaselineIsThePushDestination();
 testNothingWasWritten();
 
 console.log(`Public exposure negative controls passed (${notes.length} receipts):`);

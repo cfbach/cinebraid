@@ -482,6 +482,11 @@ function testPushGateWiring() {
   assert(/publicationTreeEntries\(head, repo\)/.test(source), "the gate must scan the tree of the pushed commit");
   assert(/newlyReadable\(\{ name, head: u\.localSha, base,/.test(source), "a branch must be scanned at the sha git will send");
   assert(/newlyReadable\(\{ name, head: target, base,/.test(source), "a tag must be scanned at the commit it names, not only its annotation");
+  /* The baseline comes from the URL git is pushing to, never from the remote's name,
+     which resolves to its fetch URL. */
+  assert(/const destination = url \|\| remote;/.test(source), "the gate must take the push destination from git's URL argument");
+  assert(/readMain\(destination\)/.test(source), "the gate must read main from the push destination");
+  assert(!/remoteMainOf\(remote\b|readMain\(remote\)/.test(source), "the gate must never read main through the remote's name");
   assert(!/historyRangeEntries\([^)]*"HEAD"/.test(source), "the gate must never scan HEAD in place of the pushed sha");
 
   const { CANONICAL, RELEASE_TAG_ENV } = require(path.join(ROOT, "scripts", "push-gate"));

@@ -42,8 +42,14 @@
      1  a scan completed and found something disallowed - do not push
      2  refused by policy, or the gate could not decide - do not push
 
-   THIS SCRIPT CANNOT PUSH. It reads the repository and asks the remote which
-   commit its `main` is at (`git ls-remote`), and that is all it does. */
+   The baseline is read from the PUSH DESTINATION: the URL git hands the hook as
+   its second argument. That is not always where the remote fetches from - with
+   `remote.<name>.pushurl` set, `git ls-remote <name>` reads the fetch URL, whose
+   main can already hold commits the destination has never seen. A baseline read
+   that way excludes exactly the history the push is about to publish.
+
+   THIS SCRIPT CANNOT PUSH. It reads the repository and asks the push destination
+   which commit its `main` is at (`git ls-remote <url>`), and that is all it does. */
 
 const fs = require("fs");
 const path = require("path");
@@ -113,10 +119,11 @@ function parseUpdates(text) {
   });
 }
 
-/* Which commit the remote's main is at, asked of the remote rather than read from
-   a remote-tracking ref that may be days stale. null when the remote has no main. */
-function remoteMainOf(remote, repo) {
-  const line = git(["ls-remote", remote, "refs/heads/main"], repo, `reading main from ${remote}`);
+/* Which commit main is at on the push destination, asked of that URL rather than
+   read from a remote-tracking ref that may be days stale, or from the remote's
+   name, which resolves to its fetch URL. null when the destination has no main. */
+function remoteMainOf(destination, repo) {
+  const line = git(["ls-remote", destination, "refs/heads/main"], repo, `reading main from ${destination}`);
   const sha = line.split(/\s+/)[0];
   return /^[0-9a-f]{40}$/.test(sha || "") ? sha : null;
 }
@@ -142,19 +149,24 @@ function newlyReadable({ name, head, base, repo, log, note = "" }) {
   return [...archive.findings, ...history.findings];
 }
 
-function gate({ repo = ROOT, remote, url, updates, remoteMain, env = process.env, log = console.log }) {
+function gate({ repo = ROOT, remote, url, updates, remoteMain, readRemoteMain, env = process.env, log = console.log }) {
   if (!remote) fail("no remote was named; the gate cannot tell what the remote already holds");
-  const canonical = CANONICAL.test(String(url || remote));
-  log(`CineBraid push gate — ${canonical ? "canonical public repository" : "remote"} ${url || remote}`);
+  /* git passes both the remote's name and the URL it is pushing to. Everything the
+     gate decides - which repository this is, and what it already serves - is
+     about the URL. The name is only a label. */
+  const destination = url || remote;
+  const canonical = CANONICAL.test(String(destination));
+  log(`CineBraid push gate — ${canonical ? "canonical public repository" : "remote"} ${destination}`);
 
   if (!updates.length) {
     log("  nothing to push");
     return 0;
   }
 
-  const main = remoteMain === undefined ? remoteMainOf(remote, repo) : remoteMain;
+  const readMain = readRemoteMain || ((target) => remoteMainOf(target, repo));
+  const main = remoteMain === undefined ? readMain(destination) : remoteMain;
   if (main && !hasCommit(main, repo)) {
-    fail(`the remote's main is at ${main.slice(0, 12)}, which this checkout does not have. Fetch it first: git fetch ${remote} main`);
+    fail(`main on the push destination is at ${main.slice(0, 12)}, which this checkout does not have. Fetch it first: git fetch ${destination} main`);
   }
 
   const tags = updates.filter((u) => u.remoteRef.startsWith("refs/tags/"));
