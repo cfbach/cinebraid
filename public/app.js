@@ -6383,9 +6383,10 @@ function projectNextProductionAction(feed = projectShotReadiness()) {
    * still consulted on exactly the condition it always was: no ready work.
    *
    * THE COUNTS ARE NOT MERGED. This reads returnedResultsAwaitingReview(), whose
-   * scope is candidates awaiting review, and changes no filmmaker-decision count.
-   * A project can truthfully show 0 decisions and still be told to review a
-   * returned result, because those are two different questions. */
+   * scope is candidates awaiting review. The filmmaker-decision count counts the
+   * shots those candidates belong to (projectFilmmakerDecisions()), so whenever this
+   * tier fires for a shot, that count includes it: Production can no longer say
+   * 0 decisions beside an action to review a returned result. */
   /* One derivation, read twice: the review queue and the integrity blockers are two
      answers from the same projection, and asking for it twice would be two answers. */
   const returnedReview = returnedReviewProjectionForBrowser();
@@ -7139,8 +7140,9 @@ function describeReturnedCorrectionIntent(buildId) {
  * The scope this answers is narrow and worth answering: WHICH RETURNED CANDIDATES
  * ARE SITTING UNREVIEWED. It is a workflow queue over media that came back, it
  * makes no claim about authority, and it is not the filmmaker-decision count —
- * that is projectFilmmakerDecisions(), derived from readiness and from nothing
- * else. The word "decision" does not appear in what this renders.
+ * that is projectFilmmakerDecisions(), which counts SHOTS: a shot waiting on one of
+ * these candidates is one decision there, however many candidates came back here.
+ * The word "decision" does not appear in what this renders.
  *
  * SLICE 3 CHANGED WHERE THE SHOT ROWS COME FROM AND NOTHING ELSE ABOUT THEM.
  *
@@ -7264,9 +7266,21 @@ function projectShotReadiness() {
    pill, the scene cards and the shot board filters.
 
    IT DERIVES NOTHING. Every row is a shot readiness row the shared module already
-   produced, filtered by the status that module already assigned. There is no
+   produced, filtered by the status that module already assigned — or a shot whose
+   leading action is a returned result waiting for review, as shotLeadingAction()
+   already answers it for the shot board card and the Shot Desk. There is no
    threshold here, no ranking, no priority number and no second predicate — if this
    file ever decides on its own that something is a decision, the defect is back.
+
+   A RETURNED CANDIDATE WAITING FOR REVIEW IS A DECISION. Readiness answers "can this
+   be produced now", and it truthfully says READY for a frame whose first candidate
+   nobody has looked at, because nothing stops a second one being made. But approve,
+   keep as an alternate or reject is a choice only the filmmaker can make, the shot
+   card already says "waiting for your decision", and the project's next action
+   already routes to it ahead of any production. Counting it nowhere left Production
+   reading "0 decisions need you" directly beneath REVIEW SHOT IMAGE for that very
+   candidate. It counts once per shot, like every other row here, and a shot that
+   already NEEDS_DECISION keeps its readiness row instead of being counted twice.
 
    ONE CORRUPT LEDGER IS ONE DECISION, not one per shot. When the project carries a
    truth problem every shot reports NEEDS_DECISION with `awaiting-project-repair`,
@@ -7276,7 +7290,9 @@ function projectShotReadiness() {
    single action is what is counted, and the shots are reported as unanswerable.
 
    WHAT IS DELIBERATELY NOT COUNTED HERE, each because it has its own named scope:
-     returned candidates awaiting review   returnedResultsAwaitingReview()
+     returned results, by candidate        returnedResultsAwaitingReview() — the
+                                           inbox counts candidates and entity
+                                           reference rows; this counts shots
      existing selections to confirm        feed.historic — grouped by authority
                                            target, so N shots sharing one reference
                                            are one confirmation, not N
@@ -7285,7 +7301,20 @@ function projectShotReadiness() {
    Each is a real, useful count. None of them is "decisions", and none of them may
    be rendered with that word. */
 const FILMMAKER_DECISION_LABEL = "decision";
-function projectFilmmakerDecisions(feed = projectShotReadiness()) {
+/* THE SHOT'S OWN ANSWER, NOT A THIRD ONE. shotLeadingAction() is what the board card
+   and the Shot Desk lead with, including the rules this must not restate: an
+   unreadable ledger outranks a review, and an approved file that has gone missing is
+   repaired before anything new is judged. `returnedReview` is the projection a caller
+   already derived for the page; it is uncached, so a caller rendering several shots
+   passes it rather than asking once per shot. The claim is "" because a count is not a
+   route: no URL decides which candidate a shot is waiting on. */
+function shotAwaitsReturnedReview(readiness, returnedReview = null) {
+  const shot = readiness && typeof shotById === "function" ? shotById(readiness.shotId) : null;
+  if (!shot || readiness.status === "COMPLETE" || typeof shotLeadingAction !== "function") return null;
+  const leading = shotLeadingAction(shot, readiness, { claim: "", projection: returnedReview });
+  return leading.source === "returned-review" ? shotLeadingActionWords(leading) : null;
+}
+function projectFilmmakerDecisions(feed = projectShotReadiness(), returnedReview = null) {
   const rows = feed && !feed.error ? (feed.shots || []) : [];
   /* `delivered`, not `final`: the board, the tiles and the scene cards have always
      called this state Delivered, and the readiness rollup's COMPLETE is the same
@@ -7304,9 +7333,16 @@ function projectFilmmakerDecisions(feed = projectShotReadiness()) {
       project: { code: feed.nextAction?.code || "repair-authority-ledger", message: feed.truthProblem.message },
     };
   }
-  const shots = rows
-    .filter((row) => row.status === "NEEDS_DECISION")
-    .map((row) => ({ shotId: row.shotId, code: row.nextAction?.code || "", message: row.nextAction?.message || "" }));
+  const projection = returnedReview || (typeof returnedReviewProjectionForBrowser === "function" ? returnedReviewProjectionForBrowser() : null);
+  const shots = [];
+  for (const row of rows) {
+    if (row.status === "NEEDS_DECISION") {
+      shots.push({ shotId: row.shotId, code: row.nextAction?.code || "", message: row.nextAction?.message || "" });
+      continue;
+    }
+    const review = shotAwaitsReturnedReview(row, projection);
+    if (review) shots.push({ shotId: row.shotId, code: "review-returned-result", message: review.detail });
+  }
   return { available: true, count: shots.length, shots, blocked, delivered, unanswerable: [], project: null };
 }
 /* The same projection, narrowed to one scene's shots. Scene cards summarise by
@@ -7651,7 +7687,7 @@ async function productionHomeView() {
        inbox still counts only what returnedResultsAwaitingReview() returns and
        the card still states only what projectPrimaryProductionAction() won. -->
   <section class="production-work">${nextCard}${productionResultInbox()}</section>
-  <div class="production-summary"><article title="A shot is delivered once you have marked it final in Finish &amp; Delivery. That decision is recorded as a production approval you can withdraw later, and a leftover file pointer with no approval behind it does not count."><b>${deliveredCount}/${P.shots.length}</b><span>${pluralWord(P.shots.length, "shot")} delivered</span></article><article title="A shot is signed off once its workflow status reaches Signed off. Signing a shot off is not the same as delivering it, and neither one approves an image."><b>${approvedCount}/${P.shots.length}</b><span>${pluralWord(P.shots.length, "shot")} signed off</span></article><article class="${decisions.available && decisions.count ? "review" : ""}" title="Shots that cannot move without a decision only you can make. This is the one decision count in CineBraid: the readiness list, the scene cards and the shot filters all report this same number.">${decisions.available ? `<b>${decisions.count}</b><span>${pluralWord(decisions.count, FILMMAKER_DECISION_LABEL)} ${decisions.count === 1 ? "needs" : "need"} you</span>` : `<b>—</b><span>decisions unavailable</span>`}</article><article><b>${mmss(plannedRuntimeOf(P.shots).seconds)}</b><span>planned runtime across ${plural(P.scenes.length, "scene")}${esc(unplannedRuntimeNote(plannedRuntimeOf(P.shots)))}</span></article></div>
+  <div class="production-summary"><article title="A shot is delivered once you have marked it final in Finish &amp; Delivery. That decision is recorded as a production approval you can withdraw later, and a leftover file pointer with no approval behind it does not count."><b>${deliveredCount}/${P.shots.length}</b><span>${pluralWord(P.shots.length, "shot")} delivered</span></article><article title="A shot is signed off once its workflow status reaches Signed off. Signing a shot off is not the same as delivering it, and neither one approves an image."><b>${approvedCount}/${P.shots.length}</b><span>${pluralWord(P.shots.length, "shot")} signed off</span></article><article class="${decisions.available && decisions.count ? "review" : ""}" title="Shots waiting on a decision only you can make, including a returned result to review. This is the one decision count in CineBraid: the readiness list, the scene cards and the shot filters all report this same number.">${decisions.available ? `<b>${decisions.count}</b><span>${pluralWord(decisions.count, FILMMAKER_DECISION_LABEL)} ${decisions.count === 1 ? "needs" : "need"} you</span>` : `<b>—</b><span>decisions unavailable</span>`}</article><article><b>${mmss(plannedRuntimeOf(P.shots).seconds)}</b><span>planned runtime across ${plural(P.scenes.length, "scene")}${esc(unplannedRuntimeNote(plannedRuntimeOf(P.shots)))}</span></article></div>
   <!-- THE ORDER OF THIS PAGE IS THE POINT.
        What to do now, then the outstanding decisions behind it, then the detail.
        The next action used to render THIRD, below a four-row confirmation backlog
@@ -7859,11 +7895,16 @@ window.runGlobalAdd = (key) => {
  * receipt filed under Delivered while the readiness list beside it still named a
  * decision. Canonical readiness answers both halves now: COMPLETE means marked
  * final, NEEDS_DECISION means one decision is outstanding, and the pointer is only
- * consulted when readiness could not be derived at all. */
-function shotBoardActionCategory(shot, readiness = shotReadinessFor(shot)) {
+ * consulted when readiness could not be derived at all.
+ *
+ * `review` is projectFilmmakerDecisions()'s membership test, so a shot whose returned
+ * result is waiting for review files under Needs a decision exactly as the Production
+ * tile counts it. A decision outranks a missing input, as it does in readiness. */
+function shotBoardActionCategory(shot, readiness = shotReadinessFor(shot), returnedReview = null) {
   if (!readiness) return shotIsDelivered(shot) ? "complete" : "unfinished";
   if (readiness.status === "COMPLETE") return "complete";
   if (readiness.status === "NEEDS_DECISION") return "review";
+  if (shotAwaitsReturnedReview(readiness, returnedReview)) return "review";
   if (readiness.status === "BLOCKED") return "missing-inputs";
   if (readiness.status === "READY") return "ready";
   return "unfinished";
@@ -7877,7 +7918,9 @@ function shotBoardActionCategory(shot, readiness = shotReadinessFor(shot)) {
    taxonomy — which is to say a comment would be holding a product contract up, and the
    rename it guards against would stop being caught. */
 function shotBoardNotDelivered(shot, readiness = shotReadinessFor(shot)) {
-  return shotBoardActionCategory(shot, readiness) !== "complete";
+  /* The complete test alone: which undelivered category a shot files under is not this
+     question, and asking it would derive the returned-review projection per shot. */
+  return readiness ? readiness.status !== "COMPLETE" : !shotIsDelivered(shot);
 }
 window.setShotActionFilter = (value) => {
   FILTER.action = value || "unfinished";
@@ -7885,11 +7928,10 @@ window.setShotActionFilter = (value) => {
   if (typeof boundedWriteState === "function") boundedWriteState("page:shots", shotBoardPageKey(), 0);
   route();
 };
-function shotBoardActionMatches(shot, feed = projectShotReadiness()) {
-  const category = shotBoardActionCategory(shot, shotReadinessFor(shot, feed));
+function shotBoardActionMatches(shot, feed = projectShotReadiness(), returnedReview = null) {
   if (!FILTER.action || FILTER.action === "all") return true;
   if (FILTER.action === "unfinished") return shotBoardNotDelivered(shot, shotReadinessFor(shot, feed));
-  return category === FILTER.action;
+  return shotBoardActionCategory(shot, shotReadinessFor(shot, feed), returnedReview) === FILTER.action;
 }
 function shotBoardActionDefs() {
   /* Only ONE label changed here. "Needs a decision" is the same word the Production
@@ -7907,9 +7949,11 @@ function shotBoardActionDefs() {
    canonical counts now sit in one labelled select, and the board prints the matching count
    and page range beside it. The predicates and the counts are unchanged, and each option
    carries its filter id and count as data so a reader never parses the words. */
-function shotBoardActionFilters(feed = projectShotReadiness()) {
+function shotBoardActionFilters(feed = projectShotReadiness(), returnedReview = null) {
   const defs = shotBoardActionDefs();
-  const counts = Object.fromEntries(defs.map(([id]) => [id, P.shots.filter((shot) => id === "all" ? true : id === "unfinished" ? shotBoardNotDelivered(shot, shotReadinessFor(shot, feed)) : shotBoardActionCategory(shot, shotReadinessFor(shot, feed)) === id).length]));
+  const projection = returnedReview || (typeof returnedReviewProjectionForBrowser === "function" ? returnedReviewProjectionForBrowser() : null);
+  const category = new Map(P.shots.map((shot) => [shot.id, shotBoardActionCategory(shot, shotReadinessFor(shot, feed), projection)]));
+  const counts = Object.fromEntries(defs.map(([id]) => [id, P.shots.filter((shot) => id === "all" ? true : id === "unfinished" ? shotBoardNotDelivered(shot, shotReadinessFor(shot, feed)) : category.get(shot.id) === id).length]));
   return `<label class="board-show" for="shot-board-show"><span>Show</span><select id="shot-board-show" aria-describedby="shot-board-range" onchange="setShotActionFilter(this.value)">${defs.map(([id,label]) => `<option value="${id}" data-board-filter="${id}" data-count="${counts[id]}"${FILTER.action===id?" selected":""}>${esc(label)} · ${counts[id]}</option>`).join("")}</select></label>`;
 }
 function shotBoardPageKey() {
@@ -8026,27 +8070,28 @@ function productionView(tab = "board") {
     ...new Set(P.shots.map((s) => outputPlanLabel(s)).filter(Boolean)),
   ];
   const filterBody = `<div class="toolbar board-filter-fields"><label><span>Workflow status</span><select onchange="FILTER.status=this.value;route()"><option value="">Any workflow status</option>${WORKFLOW_STATES.map((x) => `<option value="${x}" ${FILTER.status === x ? "selected" : ""}>${workflowStatusLabel(x)}</option>`).join("")}</select></label><label><span>Output</span><select onchange="FILTER.route=this.value;route()"><option value="">Any output</option>${routes.map((r) => `<option value="${attr(r.toUpperCase())}" ${FILTER.route === r.toUpperCase() ? "selected" : ""}>${esc(r)}</option>`).join("")}</select></label><label><span>Character</span><select onchange="FILTER.char=this.value;route()"><option value="">Any character</option>${P.characters.map((c) => `<option value="${c.id}" ${FILTER.char === c.id ? "selected" : ""}>${esc(c.name)}</option>`).join("")}</select></label></div>`;
+  /* Derived ONCE for the page and handed to the filters and every card:
+     returnedReviewProjectionForBrowser() is uncached, and each shot or slate asking for it
+     would re-derive the whole project. */
+  const returnedProjection = typeof returnedReviewProjectionForBrowser === "function" ? returnedReviewProjectionForBrowser() : null;
   const filteredPairs = [];
   P.scenes.forEach((sc) => {
     P.shots.filter((shot) => shot.scene === sc.id).filter((shot) =>
       (!FILTER.status || workflowState(shot).key === FILTER.status) &&
       (!FILTER.route || outputPlanLabel(shot).toUpperCase() === FILTER.route) &&
       (!FILTER.char || (shot.characters || []).includes(FILTER.char)) &&
-      shotBoardActionMatches(shot, shotReadiness)
+      shotBoardActionMatches(shot, shotReadiness, returnedProjection)
     ).forEach((shot) => filteredPairs.push({ sc, shot }));
   });
   const boardPageKey = shotBoardPageKey();
   const shotPage = boundedPage(filteredPairs, "shots", boardPageKey, 5);
-  /* Derived ONCE for the page and handed to every card: returnedReviewProjectionForBrowser()
-     is uncached, and each slate asking for it would re-derive the whole project. */
-  const returnedProjection = typeof returnedReviewProjectionForBrowser === "function" ? returnedReviewProjectionForBrowser() : null;
   /* EV2-7 B2.2/B2.4 — Show, the visible matching count and range, then More filters as the
      one secondary fold. Its active count and Clear filters stay outside the fold, so a
      filter hidden in a closed disclosure never narrows the board unannounced. The fold
-     states which dimension Show filters, and that a returned result does not change it. */
+     states which dimension Show filters, and where a shot waiting on a returned result files. */
   const moreActive = [FILTER.status, FILTER.route, FILTER.char].filter(Boolean).length;
   const range = `${filteredPairs.length} of ${plural(P.shots.length, "shot")}${shotPage.total ? ` · ${shotPage.start + 1}–${shotPage.end} shown` : ""}`;
-  const controls = P.shots.length ? `<div class="board-scope">${shotBoardActionFilters(shotReadiness)}<span class="board-range" id="shot-board-range">${esc(range)}</span><details class="board-filter-fold" data-ui-state-key="shot-board-more-filters"><summary>More filters${moreActive ? ` <span class="board-filter-count">${moreActive} active</span>` : ""}</summary><div class="board-filter-body"><p class="board-filter-note"><b>Production state</b> is what Show filters by: each shot’s readiness. A returned result waiting for your review does not change a shot’s production state. These filters narrow the board further.</p>${filterBody}</div></details>${moreActive ? '<button type="button" class="board-clear-filters" onclick="clearShotBoardFilters()">Clear filters</button>' : ""}</div>` : "";
+  const controls = P.shots.length ? `<div class="board-scope">${shotBoardActionFilters(shotReadiness, returnedProjection)}<span class="board-range" id="shot-board-range">${esc(range)}</span><details class="board-filter-fold" data-ui-state-key="shot-board-more-filters"><summary>More filters${moreActive ? ` <span class="board-filter-count">${moreActive} active</span>` : ""}</summary><div class="board-filter-body"><p class="board-filter-note"><b>Production state</b> is what Show filters by: each shot’s readiness, except that a shot whose returned result is waiting for your review is listed under Needs a ${FILMMAKER_DECISION_LABEL}. These filters narrow the board further.</p>${filterBody}</div></details>${moreActive ? '<button type="button" class="board-clear-filters" onclick="clearShotBoardFilters()">Clear filters</button>' : ""}</div>` : "";
   const grouped = new Map();
   shotPage.rows.forEach(({ sc, shot }) => { if (!grouped.has(sc.id)) grouped.set(sc.id, { sc, shots: [] }); grouped.get(sc.id).shots.push(shot); });
   /* Each page's scenes are plain headings over their cards. The heading takes focus when a

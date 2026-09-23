@@ -341,8 +341,8 @@ async function nc3() {
    genuinely outstanding.
    =========================================================================== */
 
-const NC4_ANCHOR = "  const shots = rows\n    .filter((row) => row.status === \"NEEDS_DECISION\")";
-const NC4_BREAK = "  const shots = (returnedResultsAwaitingReview().length ? rows : [])\n    .filter((row) => row.status === \"NEEDS_DECISION\")";
+const NC4_ANCHOR = "  for (const row of rows) {\n    if (row.status === \"NEEDS_DECISION\") {";
+const NC4_BREAK = "  for (const row of (returnedResultsAwaitingReview().length ? rows : [])) {\n    if (row.status === \"NEEDS_DECISION\") {";
 
 async function nc4() {
   anchorIn("public/app.js", NC4_ANCHOR, "NC-UX1-4");
@@ -389,6 +389,62 @@ async function nc4() {
   });
 
   note("NC-UX1-4 an empty Returned Results queue cleared the global count: \"" + seen.tile + "\" with mark-shot-final genuinely outstanding");
+}
+
+/* ===========================================================================
+   NC-UX1-8 — A RETURNED CANDIDATE WAITING FOR REVIEW IS COUNTED AS NO DECISION.
+
+   The public sample's README state: every reference approved, SAMPLE-03 READY with one
+   returned Frame A candidate nobody has reviewed, and Production reading "0 decisions
+   need you" beneath its own REVIEW SHOT IMAGE action. The projection goes back to
+   counting readiness rows alone.
+   =========================================================================== */
+
+const NC8_ANCHOR = "    const review = shotAwaitsReturnedReview(row, projection);\n    if (review) shots.push(";
+const NC8_BREAK = "    const review = null;\n    if (review) shots.push(";
+
+async function nc8() {
+  anchorIn("public/app.js", NC8_ANCHOR, "NC-UX1-8");
+
+  const project = rawFixture();
+  project.shots = [stillShot(project.shots[0], "L1-01", "SC-01", ""), stillShot(project.shots[0], "L1-02", "SC-01", "")];
+  withCanon(project, CAST_CANON);
+  const page = await render("#/production", project, {
+    scan: scanWith(project, { "L1-01": ["FRAME_A.png"], "L1-02": [] }),
+    mutateSource: replacing("app.js", NC8_ANCHOR, NC8_BREAK),
+  });
+
+  const seen = await evaluateAsync(page.context, `
+    const feed = projectShotReadiness();
+    const home = await productionHomeView();
+    const tile = ((home.split('<article class="review"')[1] || home.split('<article class=""')[1] || "").split("</article>")[0]).split(">").slice(1).join(">");
+    const filters = shotBoardActionFilters(feed);
+    return {
+      status: feed.shots.map((row) => row.status),
+      next: projectNextProductionAction(feed),
+      reported: projectFilmmakerDecisions(feed).count,
+      board: Number((filters.match(/data-board-filter="review" data-count="(\\d+)"/) || [])[1]),
+      tile: tile.replace(/<[^>]*>/g, " ").replace(/\\s+/g, " ").trim(),
+    };
+  `);
+
+  /* 1. THE DEFECT, IN THE WORDS PRODUCTION SHOWED. */
+  equal(seen.status.join(","), "READY,READY", "NC-UX1-8 precondition: readiness truthfully says both shots can produce");
+  equal(seen.next.kind, "returned-result", "NC-UX1-8 precondition: Production's next action is to review L1-01's candidate");
+  equal(seen.next.actionLabel, "REVIEW SHOT IMAGE", "and says so");
+  equal(seen.reported, 0, "NC-UX1-8 reproduces the defect — no decision is counted");
+  ok(/^0 decisions need you$/.test(seen.tile), "and the tile reads it: " + seen.tile);
+  equal(seen.board, 1, "while the board, which asks the shot itself, still files it under Needs a decision — two numbers under one word");
+
+  /* 2. AND THE GUARANTEE GOES RED. */
+  await mustFail("NC-UX1-8", "a returned candidate waiting for review is a decision", () => {
+    assert.strictEqual(seen.reported, 1, "a returned candidate waiting for review is a decision");
+  });
+  await mustFail("NC-UX1-8 board", "the board and the tile report one number", () => {
+    assert.strictEqual(seen.reported, seen.board, "the board and the tile report one number");
+  });
+
+  note("NC-UX1-8 counting readiness rows alone restored \"" + seen.tile + "\" beneath REVIEW SHOT IMAGE");
 }
 
 /* ===========================================================================
@@ -563,7 +619,7 @@ async function nc6() {
   `);
 
   equal(seen.returned, 1, "NC-UX1-6 precondition: one returned candidate is awaiting review");
-  equal(seen.decisions, 0, "NC-UX1-6 precondition: and no filmmaker decision is outstanding");
+  equal(seen.decisions, 1, "NC-UX1-6 precondition: and reviewing it is the one filmmaker decision (UX1-12)");
   equal(seen.inboxHeadline, "1 returned result waiting for review",
     "Returned Results correctly says a result is waiting");
   equal(seen.next.kind, "shot", "NC-UX1-6 reproduces the routing defect");
@@ -682,7 +738,7 @@ async function shippedBuildIsGreen() {
   assert.deepStrictEqual([...new Set(seen.numbers)], [1],
     "and renders that one number wherever the page says decision: " + JSON.stringify(seen.numbers));
   checks += 1;
-  note("the shipped build is green on every claim the seven controls broke");
+  note("the shipped build is green on every claim the eight controls broke");
 }
 
 /* ========================================================================== */
@@ -695,6 +751,7 @@ async function main() {
   await nc5();
   await nc6();
   await nc7();
+  await nc8();
   await shippedBuildIsGreen();
 }
 

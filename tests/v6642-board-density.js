@@ -205,7 +205,7 @@ async function caseD() {
   equal(rangeOf(html), '3 of 3 shots · 1–3 shown', '(d) and the range follows it');
   const fold = foldOf(html);
   ok(/<summary>More filters<\/summary>/.test(fold), '(d) More filters is one closed secondary fold with nothing active');
-  ok(/<b>Production state<\/b> is what Show filters by/.test(fold) && /returned result waiting for your review does not change/.test(fold), '(d) and it names the Show dimension Production state, unchanged by returned results');
+  ok(/<b>Production state<\/b> is what Show filters by/.test(fold) && /returned result is waiting for your review is listed under Needs a decision/.test(fold), '(d) and it names the Show dimension Production state, and where a waiting returned result files');
   ok(!html.includes('Clear filters'), '(d) with no filter applied there is nothing to clear');
 
   vm.runInContext('FILTER.status = "IN PROGRESS";', page.context);
@@ -232,7 +232,7 @@ async function caseE() {
     equal((card.next.attrs.match(/\bdata-leading-key="([^"]*)"/) || [])[1], 'path:shots/L1-01/takes/FRAME_A.png', `(e) under ${filter}: carrying the exact key of the result it means`);
     equal(card.reason.text, 'A returned Frame A result is waiting for your decision.', `(e) under ${filter}: with one plain reason and no filename wall`);
     deepEqual(optionsOf(html).filter((row) => row.selected).map((row) => row.id), [filter], `(e) under ${filter}: which is the state Show says`);
-    equal(optionsOf(html).find((row) => row.id === 'review').count, 0, `(e) under ${filter}: "Needs a decision" still counts readiness decisions, not returned results`);
+    equal(optionsOf(html).find((row) => row.id === 'review').count, 1, `(e) under ${filter}: "Needs a decision" counts the shot waiting on its returned result, as the Production tile does`);
   }
 }
 

@@ -1080,9 +1080,11 @@ async function agreement_oneQueueEverywhere() {
     "AGREEMENT: each grouped row names the first candidate of its own group, in queue order");
   equal(seen.next.reviewKey, seen.queueKeys[0], "AGREEMENT: and Production's action names the head of the queue");
 
-  /* THE TWO SCOPES STAY SEPARATE, which is Slice 1 and must not be merged by this
-     slice's arithmetic. */
-  equal(seen.decisions, 0, "AGREEMENT: four returned results are still zero filmmaker decisions");
+  /* THE TWO SCOPES STAY SEPARATE IN THEIR UNITS. The inbox counts candidates; the
+     filmmaker-decision count counts shots, and each shot waiting on a review is one
+     decision (tests/readiness-action-projection.js UX1-12). Four candidates on two
+     shots are two decisions, never four. */
+  equal(seen.decisions, 2, "AGREEMENT: four returned results on two shots are two filmmaker decisions");
   ok(!/decision/i.test(seen.headline), "AGREEMENT: and the returned queue never borrows the word");
 
   /* THE SHOT WORKSPACE READS THE SAME ARRAY. */
