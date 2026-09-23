@@ -476,9 +476,12 @@ function testPushGateWiring() {
   for (const forbidden of ['require("https")', 'require("http")', "fetch("]) {
     assert(!source.includes(forbidden), `the push gate must make no network call of its own: ${forbidden}`);
   }
-  /* Anchored on the sha git says it will send, never on HEAD. */
-  assert(/historyRangeEntries\(base, u\.localSha, repo\)/.test(source), "the gate must scan the range ending at the pushed sha");
-  assert(/publicationTreeEntries\(u\.localSha, repo\)/.test(source), "the gate must scan the tree of the pushed sha");
+  /* Anchored on the sha git says it will send, never on HEAD - and one scan for
+     branches and tags alike, so an allowed tag cannot publish history unread. */
+  assert(/historyRangeEntries\(base, head, repo\)/.test(source), "the gate must scan the range ending at the pushed commit");
+  assert(/publicationTreeEntries\(head, repo\)/.test(source), "the gate must scan the tree of the pushed commit");
+  assert(/newlyReadable\(\{ name, head: u\.localSha, base,/.test(source), "a branch must be scanned at the sha git will send");
+  assert(/newlyReadable\(\{ name, head: target, base,/.test(source), "a tag must be scanned at the commit it names, not only its annotation");
   assert(!/historyRangeEntries\([^)]*"HEAD"/.test(source), "the gate must never scan HEAD in place of the pushed sha");
 
   const { CANONICAL, RELEASE_TAG_ENV } = require(path.join(ROOT, "scripts", "push-gate"));

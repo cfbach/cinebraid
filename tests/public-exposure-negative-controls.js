@@ -28,7 +28,10 @@
         arriving dressed as findings, which "assert non-zero" cannot see;
     10. an inability is never rewritten into a clean answer;
     11. what the gate scans is exactly what git will send - the pushed sha, not
-        HEAD - and a real `git push` through the hook is stopped by a finding.
+        HEAD - and a real `git push` through the hook is stopped by a finding;
+    12. an allowed tag is scanned like a branch: a tag-only push of a new commit
+        whose history holds a secret is refused on every remote, with or without
+        the canonical on-main rule, and a real tag-only `git push` is stopped.
 
    No mutation is written into this repository. Source mutations are compiled in
    memory under the real filename, and the two git-backed targets are proved
@@ -433,8 +436,8 @@ function testRemovingTheHistoryGateIsObservable() {
        other step, drop the one that reads history. */
     const bypassed = compileGate(mutate(
       GATE_SOURCE,
-      "    const history = scanner.scanEntries(range.entries);",
-      "    const history = { findings: [], suppressed: [], files: 0 };",
+      "  const history = scanner.scanEntries(range.entries);",
+      "  const history = { findings: [], suppressed: [], files: 0 };",
       "history gate bypass",
     ));
     const cleared = [];
@@ -694,8 +697,8 @@ function testScannedCommitIsThePushedCommit() {
 
     /* Anchor the scan on HEAD instead, and the pushed secret goes out unseen. */
     const onHead = compileGate(mutate(
-      mutate(GATE_SOURCE, "scanner.historyRangeEntries(base, u.localSha, repo)", 'scanner.historyRangeEntries(base, "HEAD", repo)', "history anchored on HEAD"),
-      "scanner.publicationTreeEntries(u.localSha, repo)", 'scanner.publicationTreeEntries("HEAD", repo)', "tree anchored on HEAD",
+      mutate(GATE_SOURCE, "scanner.historyRangeEntries(base, head, repo)", 'scanner.historyRangeEntries(base, "HEAD", repo)', "history anchored on HEAD"),
+      "scanner.publicationTreeEntries(head, repo)", 'scanner.publicationTreeEntries("HEAD", repo)', "tree anchored on HEAD",
     ));
     const cleared = [];
     assert.strictEqual(onHead.gate({ ...options, env: {}, log: (l) => cleared.push(l) }), 0,
@@ -736,6 +739,85 @@ function testRealPushIsStoppedByTheHook() {
     assert.strictEqual(cleanPush.status, 0, `a push the remote already serves must go through: ${cleanPush.stderr}`);
     assert(refs().includes("refs/heads/fine"), "the allowed branch did not arrive");
     notes.push("end to end: an allowed push goes through the same hook");
+  } finally {
+    fs.rmSync(repo.dir, { recursive: true, force: true });
+    fs.rmSync(remote, { recursive: true, force: true });
+    fs.rmSync(hooks, { recursive: true, force: true });
+  }
+}
+
+/* ---- 12. an allowed tag is scanned like a branch ------------------------- */
+
+/* A tag publishes the commit it names and that commit's whole history. The gap
+   this section exists for, measured on the first version of the gate: it read an
+   allowed tag's annotation and nothing else, so on a fork (where the canonical
+   on-main rule does not apply) a real tag-only push of A→B→C went through and the
+   remote could serve B's deleted credential. On the canonical repository only the
+   on-main rule stood in the way; removed, the same tag cleared. */
+function testAllowedTagIsScanned() {
+  const repo = buildABC();
+  const remote = makeRemote(repo, repo.A);
+  const hooks = fs.mkdtempSync(path.join(os.tmpdir(), "cinebraid-hooks-"));
+  try {
+    repo.git("config", "tag.gpgsign", "false");
+    repo.git("tag", "-a", "v9.9.9", "-m", "release notes, nothing sensitive", repo.C);
+    repo.git("tag", "light", repo.C);
+    const annotated = repo.git("rev-parse", "refs/tags/v9.9.9").trim();
+    const authorized = { CINEBRAID_RELEASE_TAG: "v9.9.9" };
+    const tagPush = (sha, name = "v9.9.9") => [update(`refs/tags/${name}`, sha)];
+
+    /* Canonical, authorized: refused by policy, before and regardless of the scan. */
+    const policy = caught(() => runGate({ repo: repo.dir, remote, url: CANONICAL_URL, env: authorized, updates: tagPush(annotated) }));
+    assert(policy && /already on the remote's main/.test(policy.message), `an authorized tag of a new commit must be refused by policy, got: ${policy && policy.message}`);
+
+    /* Canonical, authorized, with the on-main rule removed: the scan alone refuses. */
+    const noPolicy = compileGate(mutate(GATE_SOURCE,
+      "      if (canonical && (!main || !isAncestor(target, main, repo))) {",
+      "      if (false) {",
+      "on-main rule removal"));
+    const lines = [];
+    const code = noPolicy.gate({ repo: repo.dir, remote, url: CANONICAL_URL, env: authorized, updates: tagPush(annotated), log: (l) => lines.push(l) });
+    assert.strictEqual(code, 1, `without the on-main rule, the authorized tag must still be refused by the scan, got ${code}:\n${lines.join("\n")}`);
+    assert(lines.join("\n").includes("leaked.env") && lines.join("\n").includes(repo.B.slice(0, 8)), "the refusal must name leaked.env in commit B");
+    notes.push("canonical: an authorized tag of a new commit is refused by the on-main rule, and with that rule removed the scan refuses it, naming leaked.env in B");
+
+    /* Any other remote: annotated and lightweight tags are both scanned. */
+    for (const [label, sha, name] of [["annotated", annotated, "v9.9.9"], ["lightweight", repo.C, "light"]]) {
+      const { code: forkCode, printed } = runGate({ repo: repo.dir, remote, url: remote, updates: tagPush(sha, name) });
+      assert.strictEqual(forkCode, 1, `a ${label} tag of A→B→C on a non-canonical remote must be refused, got ${forkCode}:\n${printed}`);
+      assert(printed.includes("leaked.env"), `the ${label} tag refusal must name leaked.env`);
+    }
+    notes.push("non-canonical remote: annotated and lightweight tags of A→B→C are each refused for leaked.env");
+
+    /* Non-vacuity for tags specifically: stop scanning the tag's history and the
+       tag clears again - the first version's behaviour. */
+    const annotationOnly = compileGate(mutate(GATE_SOURCE,
+      "      findings.push(...newlyReadable({ name, head: target, base, repo, log, note: `annotation ${notes.findings.length} finding(s); ` }));",
+      "      log(`  ${name}  annotation ${notes.findings.length} finding(s)`);",
+      "tag history scan removal"));
+    assert.strictEqual(annotationOnly.gate({ repo: repo.dir, remote, url: remote, env: {}, updates: tagPush(annotated), log: () => {} }), 0,
+      "reading only the annotation should clear this tag, or the control proves nothing");
+    notes.push("scanning only a tag's annotation clears A→B→C again; the shipped gate refuses it");
+
+    /* An annotation is scanned too: a clean commit already on main, a key in the message. */
+    repo.git("tag", "-a", "v9.9.8", "-m", `notes ${FAKE_KEY}`, repo.A);
+    const leakyNote = runGate({ repo: repo.dir, remote, url: CANONICAL_URL, env: { CINEBRAID_RELEASE_TAG: "v9.9.8" }, updates: tagPush(repo.git("rev-parse", "refs/tags/v9.9.8").trim(), "v9.9.8") });
+    assert.strictEqual(leakyNote.code, 1, `a key in an approved tag's annotation must be refused, got ${leakyNote.code}`);
+    assert(/annotation/.test(leakyNote.printed), "the refusal must say the finding is in the annotation");
+    notes.push("an approved tag of a commit already on main is still refused when its annotation carries a key");
+
+    /* End to end: a real tag-only git push through a hook running this gate. */
+    const node = process.execPath.replace(/\\/g, "/");
+    fs.writeFileSync(path.join(hooks, "pre-push"), `#!/bin/sh\nexec "${node}" "${GATE_FILE.replace(/\\/g, "/")}" "$@"\n`, { mode: 0o755 });
+    repo.git("config", "core.hooksPath", hooks);
+    const pushed = spawnSync("git", ["push", remote, "refs/tags/v9.9.9:refs/tags/v9.9.9"], { cwd: repo.dir, encoding: "utf8", timeout: 120000 });
+    assert.notStrictEqual(pushed.status, 0, "a real tag-only push of A→B→C must fail through the hook");
+    assert(/leaked\.env/.test(`${pushed.stdout}${pushed.stderr}`), "the hook's refusal must name leaked.env");
+    const refs = execFileSync("git", ["for-each-ref", "--format=%(refname)"], { cwd: remote, encoding: "utf8" });
+    assert(!refs.includes("refs/tags/v9.9.9"), "the refused tag reached the remote anyway");
+    const served = spawnSync("git", ["cat-file", "-e", `${repo.B}:leaked.env`], { cwd: remote });
+    assert.notStrictEqual(served.status, 0, "the remote can serve the deleted credential after a refused push");
+    notes.push("end to end: a real tag-only git push of A→B→C is stopped by the hook; the remote has neither the tag nor the credential");
   } finally {
     fs.rmSync(repo.dir, { recursive: true, force: true });
     fs.rmSync(remote, { recursive: true, force: true });
@@ -788,6 +870,7 @@ testExactExitCodes();
 testInabilityIsNeverClean();
 testScannedCommitIsThePushedCommit();
 testRealPushIsStoppedByTheHook();
+testAllowedTagIsScanned();
 testNothingWasWritten();
 
 console.log(`Public exposure negative controls passed (${notes.length} receipts):`);

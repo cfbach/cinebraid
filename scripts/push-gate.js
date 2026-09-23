@@ -28,6 +28,11 @@
      - A tag is published only by an explicit release decision: the push must
        carry exactly one tag, CINEBRAID_RELEASE_TAG must name it, and it must point
        at a commit already on the remote's `main`.
+
+   On every remote, a tag is scanned like a branch: its annotation, the tree of
+   the commit it names, and every file version that commit's history makes newly
+   readable. The canonical on-main rule is policy on top of that scan, never a
+   substitute for it.
      - Only branches and that one tag. Notes, pull refs and anything else are
        refused, which also makes a stray `--mirror` fail loudly.
 
@@ -116,6 +121,27 @@ function remoteMainOf(remote, repo) {
   return /^[0-9a-f]{40}$/.test(sha || "") ? sha : null;
 }
 
+/* Everything pushing `head` makes readable when the remote already serves `base`
+   (null: nothing): the bytes of the commit itself, and every file version in the
+   range - including ones deleted again before `head`. One implementation for
+   branches and tags, so neither can drift into scanning less than the other. */
+function newlyReadable({ name, head, base, repo, log, note = "" }) {
+  const commits = Number(git(["rev-list", "--count", base ? `${base}..${head}` : head], repo, `range of ${name}`));
+  if (!commits) {
+    log(`  ${name}  ${head.slice(0, 12)}  ${note}nothing newly readable (the remote already serves every commit)`);
+    return [];
+  }
+  const archive = scanner.scanEntries(scanner.publicationTreeEntries(head, repo));
+  if (!archive.files) fail(`the publication tree of ${name} read no files`);
+  const range = scanner.historyRangeEntries(base, head, repo);
+  if (!range.commits.length) fail(`the history range of ${name} enumerated no commits`);
+  if (!range.treeRows) fail(`the history range of ${name} enumerated no tree content`);
+  const history = scanner.scanEntries(range.entries);
+  log(`  ${name}  ${head.slice(0, 12)}  ${note}${range.commits.length} commit(s), ${history.files} file versions newly readable, `
+    + `${archive.files} files at the tip, ${archive.findings.length + history.findings.length} finding(s)`);
+  return [...archive.findings, ...history.findings];
+}
+
 function gate({ repo = ROOT, remote, url, updates, remoteMain, env = process.env, log = console.log }) {
   if (!remote) fail("no remote was named; the gate cannot tell what the remote already holds");
   const canonical = CANONICAL.test(String(url || remote));
@@ -156,20 +182,29 @@ function gate({ repo = ROOT, remote, url, updates, remoteMain, env = process.env
         if (env[RELEASE_TAG_ENV] !== tag) {
           fail(`refusing to publish tag ${tag}: a tag is a release decision. Set ${RELEASE_TAG_ENV}=${tag} to publish exactly this one`);
         }
-        if (!ZERO.test(u.remoteSha)) fail(`refusing to move the published tag ${tag}`);
-        const target = scanner.revParse(u.localSha, repo, `tag ${tag}`);
-        if (!main || !isAncestor(target, main, repo)) {
-          fail(`refusing to publish tag ${tag}: it must name a commit already on the remote's main`);
-        }
       }
       if (deleting) { log(`  ${name}  deleted`); continue; }
-      /* The commit is already public on main; what the tag itself adds is its
-         annotation, so that is what gets read. */
+      if (!ZERO.test(u.remoteSha)) fail(`refusing to move the published tag ${tag}`);
+
+      /* A tag publishes the commit it names and all of that commit's history, not
+         just its own annotation. Policy on the canonical repository keeps release
+         tags on commits main already serves, but the scan does not rely on that:
+         the history is read exactly as a branch's would be, on every remote. */
+      const target = scanner.revParse(u.localSha, repo, `tag ${tag}`);
+      if (canonical && (!main || !isAncestor(target, main, repo))) {
+        fail(`refusing to publish tag ${tag}: it must name a commit already on the remote's main`);
+      }
       const type = git(["cat-file", "-t", u.localSha], repo, `tag ${tag}`);
       const annotation = type === "tag" ? git(["cat-file", "tag", u.localSha], repo, `tag ${tag}`) : "";
-      const scanned = scanner.scanEntries(annotation ? [{ name: `${name} (annotation)`, text: annotation }] : []);
-      findings.push(...scanned.findings);
-      log(`  ${name}  tag of a commit already on main, annotation ${scanned.findings.length} finding(s)`);
+      const notes = scanner.scanEntries(annotation ? [{ name: `${name} (annotation)`, text: annotation }] : []);
+      findings.push(...notes.findings);
+
+      let base = null;
+      if (main) {
+        base = mergeBase(target, main, repo);
+        if (!base) fail(`refusing ${name}: it shares no history with the remote's main`);
+      }
+      findings.push(...newlyReadable({ name, head: target, base, repo, log, note: `annotation ${notes.findings.length} finding(s); ` }));
       continue;
     }
 
@@ -198,23 +233,7 @@ function gate({ repo = ROOT, remote, url, updates, remoteMain, env = process.env
       base = null;
     }
 
-    const commits = Number(git(["rev-list", "--count", base ? `${base}..${u.localSha}` : u.localSha], repo, `range of ${name}`));
-    if (!commits) {
-      log(`  ${name}  ${u.localSha.slice(0, 12)}  nothing newly readable (the remote already serves every commit)`);
-      continue;
-    }
-
-    /* The bytes this commit ships, and the history it makes readable. */
-    const archive = scanner.scanEntries(scanner.publicationTreeEntries(u.localSha, repo));
-    if (!archive.files) fail(`the publication tree of ${name} read no files`);
-    const range = scanner.historyRangeEntries(base, u.localSha, repo);
-    if (!range.commits.length) fail(`the history range of ${name} enumerated no commits`);
-    if (!range.treeRows) fail(`the history range of ${name} enumerated no tree content`);
-    const history = scanner.scanEntries(range.entries);
-
-    findings.push(...archive.findings, ...history.findings);
-    log(`  ${name}  ${u.localSha.slice(0, 12)}  ${range.commits.length} commit(s), ${history.files} file versions newly readable, `
-      + `${archive.files} files at the tip, ${archive.findings.length + history.findings.length} finding(s)`);
+    findings.push(...newlyReadable({ name, head: u.localSha, base, repo, log }));
   }
 
   if (findings.length) {
