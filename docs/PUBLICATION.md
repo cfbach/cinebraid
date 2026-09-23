@@ -34,8 +34,9 @@ the archived private repository, not to pull requests here.
 ## How changes reach `main`
 
 - **`main` changes only through a reviewed pull request merged on GitHub.** No one
-  pushes to `main` directly — including an account that branch protection would
-  let through. The pre-push gate below refuses it.
+  pushes to `main` directly. Branch protection on `main` does not allow bypassing,
+  and the pre-push gate below refuses a direct push before anything leaves the
+  machine.
 - **Published history is append-only.** No force push. Branch updates are
   fast-forwards; to change something already pushed, push a new commit.
 - **Only named branches travel.** No `--mirror`, no `--all`, no wildcard refspec
@@ -89,12 +90,15 @@ ref the push would update, the gate:
 
 1. takes the exact commit git says it will send — never `HEAD`, never a branch
    name that may have moved;
-2. asks the remote which commit its `main` is at (`git ls-remote`), and refuses if
-   this checkout does not have it;
+2. asks the push destination which commit its `main` is at (`git ls-remote <url>`),
+   and refuses if this checkout does not have it. The destination is the URL git is
+   actually pushing to, which differs from where the remote fetches whenever
+   `remote.<name>.pushurl` is set; a baseline read from the fetch side would skip
+   exactly the history the push is about to publish;
 3. refuses a direct push to `main`, a non-fast-forward update, anything that is not
    a branch, and a tag the release environment does not name;
-4. takes as its baseline what the remote provably already serves — the branch's
-   current remote tip, or where a new branch leaves `main`;
+4. takes as its baseline what the push destination provably already serves — the
+   branch's current tip there, or where a new branch or a tag leaves that `main`;
 5. scans the publication tree of the pushed commit;
 6. scans every file version newly readable across the range, including ones
    deleted before the tip.
@@ -154,7 +158,7 @@ The whole of public `main` has been read.
   public repository then held. The last one, `d5342b98..e31d9b37` (74 commits,
   632 file versions), reported nothing.
 
-From here on the baseline is never remembered: it is whatever the remote serves at
+From here on the baseline is never remembered: it is whatever the push destination serves at
 the moment of the push, or the pull request's base.
 
 ## Checks you can run by hand
