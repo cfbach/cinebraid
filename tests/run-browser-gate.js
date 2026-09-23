@@ -42,6 +42,7 @@ const SUITES = [
   "check:refresh-race-browser",
   "check:run-binding-browser",
   "check:h3-browser",
+  "check:h3-motion-handoff",
   "check:preview-layout",
   "check:ui-state",
   "check:board-density-browser",
@@ -145,19 +146,6 @@ const QUARANTINED = [
       "`calls` returns empty. A separate AI-review contract from the keyed-identity invariant " +
       "check:state-honesty-browser proves, and unreachable behind C2 until that was fixed. Post-Alpha " +
       "test debt; no AI-review product behaviour was changed for it.",
-  },
-  {
-    suite: "check:h3-motion-handoff",
-    expect: 'resolved to hidden <section class="frames-to-motion-cta state-pass">',
-    why: "UNPROVEN: that the Frames workspace hands off into Motion & sound once the required frames are " +
-      "approved. FIRST FAILURE, re-read for PR #74: the hand-off is no longer held shut - with the required " +
-      "frames approved the section now renders state-pass, its button enabled - but it sits inside the " +
-      "Frames workflow disclosure, which folds once the frames step is complete (the accepted EV2-7 Shot " +
-      "Desk ruling, f8bbde2), so the suite's wait for a VISIBLE .frames-to-motion-cta times out. The " +
-      "hand-off itself stays reachable as the visible \"Continue to Motion & sound\". The claim stays " +
-      "unproven until the suite opens the completed section the way a filmmaker would and presses the " +
-      "hand-off it now finds enabled; that rewrite, and promotion out of quarantine, are follow-up F2. " +
-      "check:h3-browser still proves the keyframe panel itself against the same real fixture.",
   },
 ];
 

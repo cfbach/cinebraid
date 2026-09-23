@@ -340,14 +340,37 @@ try:
             seconds and can replace a node between resolving it and pressing it. Never
             dispatched, because the product refuses a Canon command raised from page script
             and this suite depends on that refusal holding."""
+            errors = []
             for _ in range(6):
                 try:
                     locator.first.scroll_into_view_if_needed(timeout=5000)
                     locator.first.click(timeout=5000)
                     return
-                except Exception:  # noqa: BLE001 - a repaint stole the node; press again
+                except Exception as error:  # noqa: BLE001 - a repaint stole the node; press again
+                    # The first line only says "Timeout 5000ms exceeded."; WHY is in the call
+                    # log below it -- not enabled, not stable, another element intercepting.
+                    lines = [line.strip() for line in str(error).splitlines() if line.strip()]
+                    why = list(dict.fromkeys(line for line in lines[1:] if re.search(
+                        r'intercepts pointer events|not enabled|not visible|not stable|detached|disabled', line)))
+                    errors.append(' | '.join(([lines[0]] if lines else []) + (why[-3:] or lines[-2:]))[:600])
                     page.wait_for_timeout(250)
-            raise AssertionError(f"{what} never stayed put long enough to press")
+            # A GIVE-UP MUST SAY WHY. PR #4's Browser validation stopped here on Frame A's
+            # #rx-confirm with nothing but this sentence, and the cause could not be read
+            # back: disabled again, covered, or replaced. Each attempt's stated reason and
+            # what the control looks like now are the evidence; the verdict is unchanged.
+            # Checked by forcing it: a button held disabled reports "element is not
+            # enabled" and disabled: True; a covered one names the element that
+            # "intercepts pointer events" as what is underneath.
+            try:
+                now = locator.first.evaluate("""(e) => { const r = e.getBoundingClientRect();
+                  const top = document.elementFromPoint(r.x + r.width / 2, r.y + r.height / 2);
+                  return { connected: e.isConnected, disabled: !!e.disabled, visible: e.checkVisibility(), rect: [r.x, r.y, r.width, r.height].map(Math.round),
+                    underneath: top === e || e.contains(top) ? 'itself' : (top ? (top.id || top.className || top.tagName) : null),
+                    status: (document.getElementById('rx-confirm-status') || {}).textContent || '',
+                    pending: typeof approvalSubmissionPending === 'function' ? approvalSubmissionPending() : null }; }""", timeout=5000)
+            except Exception as error:  # noqa: BLE001 - reporting only
+                now = f'unreadable: {str(error).splitlines()[0][:200]}'
+            raise AssertionError(f"{what} never stayed put long enough to press. Attempts: {errors}. Now: {now}")
         for frame in FRAME_LABELS:
             frame_id = 'frame-' + frame.lower()
             rail = page.locator('#main [data-shot-results-rail]')
@@ -597,26 +620,32 @@ try:
         press(page.locator('.motion-workflow-map button').nth(2), 'the Create motion nav button'); page.wait_for_timeout(250)
         assert page.evaluate('location.hash')==original_hash, 'Create motion navigation must not replace the SPA route hash'
         assert page.locator('.motion-assisted-tools').evaluate('e=>e.open') is True, 'Create motion must open assisted motion tools'
-        # ---- THE FRAMES -> MOTION HAND-OFF, SPLIT OUT AND QUARANTINED --------------
+        # ---- THE FRAMES -> MOTION HAND-OFF -----------------------------------------
         #
-        # WHAT IS UNPROVEN: that the Frames workspace offers a working hand-off into
-        # Motion & sound once the required frames are approved -- the CTA reachable,
-        # enabled, and landing on the motion task without leaving the shot.
+        # THE CLAIM: once the required frames are approved, the Frames workspace offers a
+        # working hand-off into Motion & sound -- reachable, enabled, and landing on the
+        # motion task without leaving the shot. It runs only under
+        # CINEBRAID_H3_CONTRACT=motion-handoff (check:h3-motion-handoff).
         #
-        # WHY IT CANNOT RUN HERE YET: the CTA renders DISABLED until a passing
-        # frameSequenceReview exists whose file list matches the approved anchors
-        # exactly and in order, and approving a frame RENAMES its file to production
-        # naming (FRAME_B.png -> H3-AUDIT_H3-01_FRAME_B_V002.png). A review recorded
-        # before the approvals can never match, and one written afterwards from the
-        # real names does not survive to the Frames render. Manufacturing that state
-        # by hand would mean stamping a review the product never produced, which is
-        # the practice this suite exists to have stopped.
-        #
-        # Everything above this line is the H3 keyframe panel proof and it passes. This
-        # contract runs only under CINEBRAID_H3_CONTRACT=motion-handoff, where the gate
-        # records it as quarantined and requires it to keep failing for THIS reason.
+        # It was quarantined as F2 because the suite waited for a VISIBLE
+        # .frames-to-motion-cta, and the hand-off lives inside the Frames workflow
+        # disclosure, which folds once the frames step is complete (the accepted EV2-7
+        # Shot Desk ruling, f8bbde2). The product was right and the wait was wrong: a
+        # filmmaker who wants the hand-off opens the completed section. So the suite does
+        # exactly that -- a real click on the section's own summary, never d.open = true --
+        # and then presses the hand-off it finds enabled.
         if HANDOFF_CONTRACT:
             page.evaluate("selectBoundedTask('shot-task','H3-01','frames')"); page.wait_for_timeout(350)
+            page.wait_for_selector('.frames-to-motion-cta', state='attached', timeout=20000)
+            completed = page.locator('#main details.guided-frame-workflow.is-complete')
+            assert completed.count() == 1, 'the approved frames fold into one completed Frames section'
+            assert completed.evaluate('d => d.contains(document.querySelector(".frames-to-motion-cta"))'), \
+                'the hand-off lives inside the completed Frames section'
+            if not completed.evaluate('d => d.open'):
+                summary = completed.locator(':scope > summary')
+                summary.scroll_into_view_if_needed(timeout=5000)
+                summary.click(timeout=5000)
+                page.wait_for_function("() => document.querySelector('#main details.guided-frame-workflow').open", timeout=10000)
             page.wait_for_selector('.frames-to-motion-cta')
             preview=page.locator('.guided-frame-approved-preview').first.bounding_box()
             assert preview and preview['width']<=302 and preview['height']<=225, preview
