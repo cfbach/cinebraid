@@ -218,6 +218,42 @@ def stored_candidates(subject):
     return [row['stored'] for row in entity.get('candidateFiles', [])]
 
 
+STATUS_READY = {"standing": "ready", "ready": True, "label": "ready", "provider": "stub", "model": "browser-qa",
+                "message": "Configured.", "action": ""}
+last_status, fixture_failures = [], []
+
+
+def patched_status(route):
+    """The stubbed /api/agents/status answer: the real payload with every Braidy capability ready.
+
+    Reading the real payload through the interception can be reset by the local server
+    after thousands of short-lived connections in one session. That is this fixture's
+    plumbing, and it must never change what the page is told. The first version let the
+    real, UNPATCHED answer through on a reset, which told the page Braidy was not ready:
+    measured by forcing the reset, an early read timed out the Start Braidy run click, a
+    mid-session read lost an AI review, and a late read let every run pass and then
+    crashed printing its own note on a cp1252 console. So a reset is retried, and if the
+    retries fail too, the last answer this fixture read is patched again. Only a session
+    that never read the status at all has nothing honest to answer with."""
+    url = route.request.url
+    for attempt in range(1, 4):
+        try:
+            payload = route.fetch().json()
+            last_status[:] = [payload]
+            break
+        except Exception as error:  # noqa: BLE001
+            upstream_resets.append(f"{url} attempt {attempt}: {error}")
+    else:
+        if not last_status:
+            fixture_failures.append(f"{url}: no status answer could be read through the interception")
+            return None
+        payload = json.loads(json.dumps(last_status[0]))
+    payload["enabled"] = True
+    payload["capabilities"] = {**payload.get("capabilities", {}), "text": STATUS_READY, "vision": STATUS_READY,
+                               "verifier": STATUS_READY, "continuity": STATUS_READY}
+    return payload
+
+
 def note_response(response):
     """The server's own order of revisions, and every conflict it answered."""
     path = response.url.split('://', 1)[-1].partition('/')[2]
@@ -285,20 +321,9 @@ try:
                 return route.fulfill(status=503, content_type="application/json",
                                      body=json.dumps({"error": "local prompt advisor unavailable"}))
             if "/api/agents/status" in url:
-                try:
-                    payload = route.fetch().json()
-                except Exception as error:  # noqa: BLE001
-                    # Reading upstream through the interception can be reset by the local
-                    # server after thousands of short-lived connections in one session.
-                    # That is this fixture's plumbing, not the page: let the real answer
-                    # through unpatched and count it, rather than failing a run for it.
-                    upstream_resets.append(f"{url}: {error}")
-                    return route.continue_()
-                ready = {"standing": "ready", "ready": True, "label": "ready", "provider": "stub", "model": "browser-qa",
-                         "message": "Configured.", "action": ""}
-                payload["enabled"] = True
-                payload["capabilities"] = {**payload.get("capabilities", {}), "text": ready, "vision": ready,
-                                           "verifier": ready, "continuity": ready}
+                payload = patched_status(route)
+                if payload is None:
+                    return route.abort("failed")
                 return route.fulfill(status=200, content_type="application/json", body=json.dumps(payload))
             if url.startswith(base) or url.startswith("data:") or url.startswith("blob:"):
                 return route.continue_()
@@ -329,6 +354,7 @@ try:
                                  " `${step.key}:${step.status}${step.error ? ' ' + step.error : ''}`)}))", subject)
 
         def start_and_reach_gate(subject, label):
+            assert not fixture_failures, f"{label}: the fixture could not stub Braidy's status: {fixture_failures}"
             page.get_by_role("button", name="Start Braidy run", exact=True).first.click()
             page.wait_for_selector(".automation-plan-modal", timeout=15000)
             start = page.get_by_role("button", name="START", exact=True).first
@@ -408,9 +434,13 @@ try:
         'canonical ingestion must download every returned image exactly once'
     assert len(submissions) == len(PLAN), f"{len(submissions)} submissions for {len(PLAN)} runs"
     assert len(review_calls) == 3 * len(PLAN), f"{len(review_calls)} reviews for {len(PLAN)} runs"
+    assert not fixture_failures, f"the fixture could not stub Braidy's status: {fixture_failures}"
     if upstream_resets:
-        print(f"Fixture note: {len(upstream_resets)} interception read(s) to the local server were reset and passed "
-              f"through unpatched: {upstream_resets[:2]}", flush=True)
+        # ascii(): the recorded Playwright errors carry non-ASCII call-log arrows, and a
+        # note must never be what fails a run on a console that cannot print them.
+        print(f"Fixture note: {len(upstream_resets)} upstream read(s) of /api/agents/status were reset through "
+              f"the interception; each was retried or answered from the last patched status, never passed "
+              f"through unpatched: {ascii(upstream_resets[:2])}", flush=True)
     print(f"Project refresh race real-browser proof passed: {len(PLAN)} Braidy runs with the result refresh and the "
           f"revision watch forced to collide ({', '.join(MODES)}; project-read delays {DELAYS} ms) each reached "
           f"its human gate with all three candidates in the open project, imported once, no 409 and no backward "

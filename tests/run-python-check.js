@@ -67,7 +67,12 @@ for (const [command, prefix] of interpreters()) {
   if (probe.error || probe.status !== 0) continue;
   const run = spawnSync(command, [...prefix, path.resolve(script)], {
     cwd: ROOT,
-    env: { ...process.env, PYTHONDONTWRITEBYTECODE: "1", ...extraEnv },
+    /* UTF-8 output, whatever the machine's code page. With stdout on a pipe - CI, the
+       browser gate, npm - Windows Python writes in the ANSI code page, cp1252 on the
+       hosted runner, and a suite that prints any character outside it dies with a
+       UnicodeEncodeError after its assertions have passed. check:refresh-race-browser did
+       exactly that on PR #2, printing a Playwright error's call-log arrow. */
+    env: { ...process.env, PYTHONDONTWRITEBYTECODE: "1", PYTHONIOENCODING: "utf-8", ...extraEnv },
     encoding: "utf8",
     stdio: "inherit",
   });
