@@ -1,49 +1,16 @@
 /* Shot Desk: returned-shot-image review. Every override is local to this view. */
 body.shot-desk-active {
-  --sd-bg: #111315;
-  --sd-panel: #181a1c;
-  --sd-well: #090a0b;
-  --sd-ink: #edeef0;
-  --sd-muted: #a4a9af;
-  --sd-quiet: #858c94;
-  --sd-line: #2b2e32;
-  --sd-line-strong: #454b52;
-  --sd-cyan: #7dcad3;
-  --sd-cyan-wash: rgba(125, 202, 211, .09);
-  --sd-warm: #ddb68b;
-  --sd-warm-hover: #e9c8a4;
   margin: 0;
   height: 100vh;
   height: 100dvh;
   overflow: hidden;
-  background: var(--sd-bg);
-  color: var(--sd-ink);
+  background: var(--cb-shell-bg);
 }
 body.shot-desk-active::before { display: none; }
 /* EV2-7: the rail, the header and their geometry (--cb-nav-width, --cb-topbar-height) are the one shared
-   shell in experience-coherence.css. The desk keeps its own palette for its content and its own scroll
+   shell in experience-coherence.css. The desk inherits the app palette and keeps its own scroll
    model: a viewport-tall #app whose #main holds the review, with the header and rail fixed around it. */
 body.shot-desk-active #app {
-  --acc: var(--sd-cyan);
-  --accent: var(--sd-cyan);
-  --acc-ink: var(--sd-cyan);
-  --acc-soft: var(--sd-cyan-wash);
-  --accent-wash: var(--sd-cyan-wash);
-  --bg: var(--sd-bg);
-  --bg-2: var(--sd-bg);
-  --canvas: var(--sd-bg);
-  --workspace: var(--sd-bg);
-  --panel: var(--sd-panel);
-  --panel-2: #1d2023;
-  --surface: var(--sd-panel);
-  --surface-1: var(--sd-panel);
-  --surface-2: #1d2023;
-  --ink: var(--sd-ink);
-  --text: var(--sd-ink);
-  --muted: var(--sd-muted);
-  --faint: var(--sd-quiet);
-  --line: var(--sd-line);
-  --line-2: var(--sd-line-strong);
   width: 100%;
   max-width: 100%;
   height: 100vh;

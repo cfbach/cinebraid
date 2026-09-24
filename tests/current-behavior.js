@@ -693,6 +693,7 @@ async function main() {
     "v6642-board-density-real-browser.py",
     "v6642-board-density.js",
     "version-consistency.js",
+    "visual-shell-coherence-browser.js",
     "voice-runtime-ownership-negative-controls.js",
     "voice-runtime-ownership.js",
     "windows-shutdown.js",

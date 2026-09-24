@@ -372,6 +372,7 @@
     "check:ev2-7-bible-export": "node tests/ev2-7-bible-working-draft.js",
     "check:ev2-7-shell-utilities": "node tests/ev2-7-shell-utilities.js",
     "check:ev2-7-shell-utilities-negative": "node tests/ev2-7-shell-utilities-negative-controls.js",
+    "check:visual-shell-browser": "node tests/visual-shell-coherence-browser.js",
     "check:ev2-7-shell-utilities-browser": "node tests/ev2-7-shell-utilities-browser.js",
     "check:ev2-7-coverage-browser": "node tests/run-python-check.js tests/ev2-7-reference-coverage-real-browser.py",
     "check:ev2-6": "node tests/ev2-6-results.js",
