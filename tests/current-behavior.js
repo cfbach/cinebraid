@@ -458,6 +458,7 @@ async function main() {
     "ev2-7-shell-utilities.js",
     "ev2-7-shot-leading-action.js",
     "external-test-readiness.js",
+    "f1-import-identity-real-browser.js",
     "fal-generation.js",
     "first-run-settings-server-survival-negative-controls.js",
     "first-run-settings-server-survival.js",
