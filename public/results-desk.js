@@ -7,7 +7,7 @@ let active=null,nextFocus='',nextScroll=null;
 const val=x=>x?.state==='known'?x.value:'';
 const btn=(id,text,extra='')=>`<button type="button" data-rx="${id}" id="rx-${id}" ${extra}>${text}</button>`;
 const routeFor=(list,id)=>'#/'+ENTITY_ROUTE[list]+'/'+enc(id);
-function state(scope){const key=ACTIVE_PROJECT_SLUG+':'+PROJECT_OPEN_EPOCH+':'+JSON.stringify(scope);if(!sessions.has(key))sessions.set(key,{selected:'',compare:'',screen:false,page:0,filter:'all',scroll:0});return sessions.get(key);}
+function state(scope){const key=ACTIVE_PROJECT_SLUG+':'+PROJECT_OPEN_EPOCH+':'+JSON.stringify(scope);if(!sessions.has(key))sessions.set(key,{selected:'',exact:null,compare:'',screen:false,page:0,filter:'all',scroll:0});return sessions.get(key);}
 function href(scope,key=''){return scope.shotId?'#/shot/'+enc(scope.shotId)+'/results/'+scope.kind+'/'+enc(scope.frameId||'-')+'/'+enc(key||'-'):routeFor(scope.list,scope.id)+'/results/'+enc(scope.stateId)+'/'+enc(scope.slotId||'-')+'/'+enc(key||'-');}
 function parse(){const p=location.hash.split('/').map(x=>{try{return decodeURIComponent(x);}catch{return x;}});if(p[1]==='shot'){
  if(p[3]==='review'){const key=routeReviewClaim(),item=returnedReviewProjectionForBrowser()?.items?.find(r=>r.key===key&&r.shotId===p[2]);return {scope:{shotId:p[2],kind:item?.owner.kind==='shot-motion'?'motion':'frame',frameId:item?.owner.frameId||''},key,invalid:!item};}
@@ -43,7 +43,7 @@ function repair(r){const src=r?.source,parent=src?.repairOf;if(!parent)return ''
 function authority(r,id){const src=r?.source;return !src?'':(src.actions||[]).includes(id)?'decision':(src.workflows||[]).includes(id)?'workflow':'';}
 function view(parsed=parse()){
  if(!parsed)return null;const {scope,key,invalid}=parsed,m=model(scope),s=state(scope);active={scope,key};document.body.classList.add('results-desk-active');
- if(key)s.selected=key;let selected=m.rows.find(r=>r.key===s.selected);if(!s.selected&&m.rows.length){s.selected=m.rows[0].key;selected=m.rows[0];}
+ if(key){if(s.selected!==key&&s.exact?.key!==key)s.exact=null;s.selected=key;}let selected=m.rows.find(r=>r.key===s.selected);if(!s.selected&&m.rows.length){s.selected=m.rows[0].key;selected=m.rows[0];}if(selected)s.exact={key:selected.key,name:selected.name,url:selected.url,type:selected.type,assetId:selected.assetId||''};
  const stale=invalid||!m.valid||s.selected&&!selected;const visible=m.rows.filter(r=>s.filter==='all'||s.filter==='approved'?s.filter==='all'||r.approved:s.filter==='unresolved'?!r.approved&&!r.rejected:r.rejected);const pages=Math.max(1,Math.ceil(visible.length/24));s.page=Math.min(s.page,pages-1);const page=visible.slice(s.page*24,s.page*24+24),comparison=m.rows.find(r=>r.key===s.compare&&r.key!==selected?.key),screen=s.screen&&!stale;
  const label=r=>'Result '+(m.rows.indexOf(r)+1);
  /* EV2-7: the contextual return is the first thing in the header area, above the eyebrow and the heading,
@@ -58,12 +58,33 @@ function choose(key,focus=true){const c=current();if(!c?.m.rows.some(r=>r.key===
    focus stays on the card); pressing the result that is ALREADY selected — pointer, Enter or Space, the
    button's own keys — opens Screening for exactly that key. Neither press writes or decides anything. */
 function press(key){const c=current();return c&&!c.s.screen&&c.s.selected===key&&c.m.rows.some(r=>r.key===key)?action('screen-large'):choose(key);}
+/* Refreshing an identity may legitimately change only its route key: a just-imported
+   file first appears as path:shots/... and becomes asset:asset-... after indexing. Keep
+   the last resolved file facts beside the old key, prepare that one contained take, and
+   accept the new key only when the refreshed row reports the SAME name, URL, media type
+   and authoritative assetId. A foreign key, a missing file, or a mismatched identity
+   therefore stays unresolved instead of selecting another result. */
+async function refreshExact(c){
+ const remembered=c.r?{key:c.r.key,name:c.r.name,url:c.r.url,type:c.r.type,assetId:c.r.assetId||''}:(c.s.exact?.key===c.s.selected?c.s.exact:null);
+ let prepared=null;
+ if(remembered&&c.scope.shotId){
+  try{const response=await fetch('/api/media/prepare-identity',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({projectSlug:ACTIVE_PROJECT_SLUG,dir:'shots/'+c.scope.shotId+'/takes',name:remembered.name})});prepared=await response.json().catch(()=>null);if(!response.ok)prepared=null;}catch{prepared=null;}
+ }
+ await load({intent:'refresh'});
+ const expectedAssetId=remembered?.assetId||prepared?.assetId||'';
+ const sameIdentity=!remembered?.assetId||prepared?.assetId===remembered.assetId;
+ if(remembered&&c.scope.shotId&&prepared?.status==='ready'&&expectedAssetId&&sameIdentity){
+  const rows=model(c.scope).rows.filter(row=>row.name===remembered.name&&row.url===remembered.url&&row.type===remembered.type&&row.assetId===expectedAssetId);
+  if(rows.length===1){const row=rows[0];c.s.selected=row.key;c.s.exact={key:row.key,name:row.name,url:row.url,type:row.type,assetId:row.assetId};history.replaceState(history.state,'',href(c.scope,row.key));return repaint('card:'+row.key);}
+ }
+ repaint();
+}
 function origin(action){const c=current();if(!c)return;if(action==='origin'&&CineBraidMediaReturn.matches(c.m.origin))return CineBraidMediaReturn.back();const saved=CineBraidMediaReturn.capture({label:'Return to Results',resume:()=>{closeModal({restoreFocus:false});document.getElementById('rx-'+action)?.focus({preventScroll:true});}});if(!c.scope.shotId){CineBraidReferenceDesk.selectForResults(c.scope,c.r);if(action==='revise'){selectEntityResultTask(c.scope.list,c.scope.id,'coverage',c.scope.slotId?'coverage':'states',c.scope.stateId);if(c.scope.slotId)boundedWriteState('selected:coverage-slot',c.scope.list+':'+c.scope.id,c.scope.slotId);}}const origin=c.m.origin||(c.scope.shotId?'#/shot/'+enc(c.scope.shotId):routeFor(c.scope.list,c.scope.id));CineBraidMediaReturn.go(origin+(!c.scope.shotId&&action==='revise'?'/tools':''),saved);if(c.scope.shotId)setTimeout(()=>{if(action==='import'){if(c.scope.kind==='frame'){openGuidedPanel(c.scope.shotId,'frames');setTimeout(()=>document.getElementById('frame-file-'+c.scope.frameId)?.click(),100);}else clickGuidedUpload(c.scope.shotId,'video');}else if(action==='revise')openGuidedPanel(c.scope.shotId,c.scope.kind==='motion'?'motion':'frames',c.scope.kind==='frame'?'[data-frame-id="'+c.scope.frameId+'"]':'');},100);else {CineBraidReferenceDesk.selectContext({list:c.scope.list,id:c.scope.id,stateId:c.scope.stateId,candidateName:c.r?.name||'',assetId:c.r?.assetId||''});if(action==='import')setTimeout(()=>CineBraidReferenceDesk.importForResults(c.scope),100);}}
 async function action(id){const c=current();if(!c)return;const {m,s,r,scope}=c;
  if(id==='revise'&&r?.available&&scope.shotId&&authority(r,'revise')==='workflow')return reviseReturnedResult(scope.shotId,r.key);
  if(['origin','import','revise'].includes(id))return origin(id);
  if(id==='activity')return window.CineBraidCreatorSurfaces?.expandTerminal();
- if(id==='refresh'){await load({intent:'refresh'});return repaint();}
+ if(id==='refresh')return refreshExact(c);
  /* Screening is entered and left in one place, so leaving it always returns to the same card with the
     contact sheet where it was: the sheet's scroll is remembered on the way in and put back on the way out. */
  if(id==='screen'||id==='screen-large'){const open=id==='screen-large'||!s.screen;if(open&&!s.screen)s.scroll=document.getElementById('main')?.scrollTop||0;s.screen=open;return repaint(open?'rx-screen':'card:'+s.selected,open?null:s.scroll);}

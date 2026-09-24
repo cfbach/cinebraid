@@ -177,8 +177,8 @@ assert.strictEqual((serverNoComments.match(/MediaAssetService\.anchorBeforeRenam
    the pass it may schedule is the ordinary indexing pass with verification off.
    It writes nothing to project.json, moves no file, and grants no authority — the
    kernel still decides what may be approved and still refuses independently. */
-assert.strictEqual((serverNoComments.match(/MediaAssetService.prepareAssetIdentity\(/g) || []).length, 1,
-  "and approval preparation is called from exactly one place — the media prepare-identity route");
+assert.strictEqual((serverNoComments.match(/MediaAssetService.prepareAssetIdentity\(/g) || []).length, 2,
+  "and exact-file identity preparation is called only by the media prepare-identity route and the deliberate shot-take import boundary");
 
 /* ---- 2. the schema and store layers stay free of discovery and hashing ---- */
 const foundationSource = ["media-assets", "media-asset-store"]

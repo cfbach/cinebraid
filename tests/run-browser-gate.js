@@ -92,6 +92,7 @@ const SUITES = [
   "check:bible-canon-browser",
   "check:returned-review-browser",
   "check:ev2-6-browser",
+  "check:f1-import-identity-browser",
   "check:launch-language-browser",
   "check:reference-demand-browser",
   "check:references-alpha-browser",
