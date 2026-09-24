@@ -376,6 +376,7 @@
     "check:ev2-7-coverage-browser": "node tests/run-python-check.js tests/ev2-7-reference-coverage-real-browser.py",
     "check:ev2-6": "node tests/ev2-6-results.js",
     "check:ev2-6-browser": "node tests/ev2-6-review-real-browser.js",
+    "check:f1-import-identity-browser": "node tests/f1-import-identity-real-browser.js",
     "check:reference-enrollment": "node tests/reference-enrollment.js",
     "check:media-discovery": "node tests/media-discovery.js",
     "check:ev2-5-writers": "node tests/ev2-5-settings-writers.js",

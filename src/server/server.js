@@ -2947,7 +2947,7 @@ app.post("/api/local-file/project-folder", async (req, res) => {
 app.post(
   "/api/shots/:id/take",
   express.raw({ type: "*/*", limit: "400mb" }),
-  (req, res) => {
+  async (req, res) => {
     try {
       const id = path.basename(req.params.id);
       const name = path
@@ -2962,7 +2962,46 @@ app.post(
         final = name.slice(0, dot) + "_" + ++n + name.slice(dot);
       }
       fs.writeFileSync(path.join(dir, final), req.body);
-      res.json({ ok: true, name: final });
+      /* A manual import is one deliberate file write, so settle the durable identity
+         for that exact file before telling the browser the import is complete. The
+         guided import handlers scan immediately after this response; without this
+         boundary that scan can only see a path key, while the background pass later
+         replaces it with an asset key underneath the open Results route.
+
+         Preparation grants no authority and reads no media bytes. If the ledger cannot
+         settle, the import still succeeds and the typed verdict travels back; Results'
+         existing assetId guard continues to refuse approval. */
+      const slug = path.basename(ownedProjectDir(req));
+      const storagePath = `shots/${id}/takes/${final}`;
+      let identity;
+      try {
+        identity = await MediaAssetService.prepareAssetIdentity({
+          projectsRoot: projectsRoot(),
+          slug,
+          path: storagePath,
+          activeSlug,
+        });
+      } catch {
+        /* The file write already completed. An unexpected ledger failure cannot
+           turn that successful import into an error response which tells the UI
+           to discard the saved candidate. Report the file and the unavailable
+           identity together; Results still refuses it until a later preparation
+           proves an assetId. */
+        identity = {
+          status: "unavailable",
+          reason: "identity-preparation-failed",
+          assetId: "",
+        };
+      }
+      res.json({
+        ok: true,
+        name: final,
+        storagePath,
+        url: `/assets/${storagePath.split("/").map(encodeURIComponent).join("/")}`,
+        identityStatus: identity.status,
+        identityReason: identity.reason,
+        ...(identity.status === "ready" && identity.assetId ? { assetId: identity.assetId } : {}),
+      });
     } catch (error) {
       mediaOwnerRefusal(res, error);
     }
