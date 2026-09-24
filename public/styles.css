@@ -7731,8 +7731,8 @@ body[data-focused-route="library"]:has(.library-grid .library-card) #app[data-su
 .broll-controls{display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:10px 16px}
 .broll-output{display:flex;align-items:center;gap:10px;min-width:0;margin:0;padding:0;border:0}
 .broll-output>legend{float:left;padding:0;margin:0;font:700 8px var(--mono);letter-spacing:.08em;text-transform:uppercase;color:var(--muted)}
-#main .broll-panel .broll-generate{min-height:44px;padding:0 20px;border:1px solid var(--cb-action-warm);border-radius:8px;background:var(--cb-action-warm);color:var(--bg);font:650 15px/1.2 var(--body);letter-spacing:normal;text-transform:none;cursor:pointer}
-#main .broll-panel .broll-generate:hover:not(:disabled){background:color-mix(in srgb,var(--cb-action-warm) 84%,var(--ink));border-color:color-mix(in srgb,var(--cb-action-warm) 84%,var(--ink))}
+#main .broll-panel .broll-generate{min-height:44px;padding:0 20px;border:1px solid var(--cb-action-primary);border-radius:8px;background:var(--cb-action-primary);color:var(--bg);font:650 15px/1.2 var(--body);letter-spacing:normal;text-transform:none;cursor:pointer}
+#main .broll-panel .broll-generate:hover:not(:disabled){background:color-mix(in srgb,var(--cb-action-primary) 84%,var(--ink));border-color:color-mix(in srgb,var(--cb-action-primary) 84%,var(--ink))}
 #main .broll-panel .broll-generate:focus-visible{outline:2px solid var(--cb-focus);outline-offset:2px}
 #main .broll-panel .broll-generate:disabled{background:transparent;border-color:var(--line-2);color:var(--muted);cursor:not-allowed}
 .broll-target{margin:-4px 0 0;font:11px var(--mono);color:var(--faint)}

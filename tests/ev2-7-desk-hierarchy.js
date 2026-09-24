@@ -12,7 +12,7 @@
  *      a bordered card nested inside it; at most three, then how many more; visible rather
  *      than folded away; the canonical label, the canonical reason and one quiet text link.
  *
- *   C  ONE WARM ACTION. var(--cb-action-warm) belongs to the hero's one control and to
+ *   C  ONE PRIMARY ACTION. var(--cb-action-primary) belongs to the hero's one control and to
  *      nothing else on this page.
  *
  *   D  MISSING APPROVED BYTES, TOLD HONESTLY AND WITHOUT DOWNGRADING THE RECEIPT. The stage
@@ -249,14 +249,14 @@ async function compactOutstandingList(options = {}) {
 }
 
 /* ===========================================================================
-   C — ONE WARM ACTION ON THE DESK.
+   C — ONE PRIMARY ACTION ON THE DESK.
    =========================================================================== */
 async function oneWarmAction() {
   const project = projectOf([{ id: "L1-01", frames: [{ id: "frame-a", label: "A" }], clips: [MOTION_CLIP], candidates: [candidate("FRAME_A.png")] }]);
   const page = await render("#/shot/L1-01", project, { scan: scanWith(project, { "L1-01": ["FRAME_A.png"] }) });
   equal((mainOf(page).match(/shot-primary-action/g) || []).length, 1, "C: one control on the Desk is the current action");
 
-  /* The stylesheet says the same thing: inside the Desk's own sections, the warm accent is
+  /* The stylesheet says the same thing: inside the Desk's own sections, the primary accent is
      declared for the hero's primary and for nothing else. The section boundaries are the
      file's own comment banners, so this reads what the Desk owns rather than the whole app. */
   const css = readLF("public/experience-coherence.css");
@@ -267,11 +267,11 @@ async function oneWarmAction() {
     return css.slice(start, next < 0 ? css.length : next);
   };
   const desk = ["Stage bar & Shot layout", "Shot Desk", "Shot Desk stage-body type & target floor"].map(section).join("\n");
-  /* Comments are stripped before this reads the rules: the notes explaining the one-warm-action
+  /* Comments are stripped before this reads the rules: the notes explaining the one-primary-action
      rule necessarily NAME the token, which is exactly what a presence check must not trip over. */
   const rules = desk.replace(/\/\*[\s\S]*?\*\//g, "");
-  const warmRules = rules.split("\n").filter((line) => line.includes("--cb-action-warm"));
-  ok(warmRules.length > 0, "C: the hero's action is warm");
+  const warmRules = rules.split("\n").filter((line) => line.includes("--cb-action-primary"));
+  ok(warmRules.length > 0, "C: the hero's action uses the primary accent");
   /* Everything these sections scope to the Desk itself. The repair context Results carries is
      declared here too and is deliberately not on this page, so it is named rather than ignored:
      a new leak onto the Desk cannot hide behind the same exemption. */
@@ -279,10 +279,10 @@ async function oneWarmAction() {
   const elsewhere = warmRules.filter((line) => !deskScoped.includes(line));
   for (const rule of deskScoped)
     ok(/\.guided-next-action .shot-primary-action/.test(rule),
-      "C: the warm accent is declared for the hero's one action and nothing else: " + rule);
+      "C: the primary accent is declared for the hero's one action and nothing else: " + rule);
   for (const rule of elsewhere)
     ok(/^\.results-desk .rx-repair,\.rx-request .rx-repair/.test(rule.trim()),
-      "C: the only warm rule these sections declare off the Desk is the repair context Results carries: " + rule);
+      "C: the only primary rule these sections declare off the Desk is the repair context Results carries: " + rule);
   ok(!/border-left:3px solid var\(--acc\)/.test(rules), "C: and no coloured left stripe survives on the Desk's cards");
 }
 

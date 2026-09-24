@@ -4,26 +4,24 @@
    decision footer, the request record and the empty states are the same card: var(--panel), 1px
    var(--line), radius 10px, no coloured stripe and no gradient, and no card inside another card.
    Labels are sentence-case body text rather than uppercase kickers; status is the WORD, with at most
-   one small dot beside it (green approved, amber needs attention, red failure); the warm accent
+   one small dot beside it (green approved, amber needs attention, red failure); the primary accent
    carries exactly one control on the surface (Approve result…), and teal is only a focus ring.
 
    THE CONTEXTUAL RETURN IS NOT STYLED HERE. .cb-return is the one control public/media-return.js
    paints into [data-return-slot], and it must read the same on every page — so every generic control
    rule below excludes it rather than dressing it as a Results button. */
 
-/* The desk's palette, declared the way the other desks declare theirs: inside Results, --panel,
-   --line and --ink ARE the shell's graphite, whatever surface theme the app is wearing. */
-body.results-desk-active #app{--bg:#111315;--bg-2:#111315;--canvas:#111315;--workspace:#111315;--panel:#181a1c;--panel-2:#1d2023;--surface:#181a1c;--surface-1:#181a1c;--surface-2:#1d2023;--ink:#edeef0;--text:#edeef0;--muted:#a4a9af;--faint:#858c94;--line:#2b2e32;--line-soft:#2b2e32;--line-2:#454b52;--acc:#7dcad3;--accent:#7dcad3;--acc-ink:#7dcad3;--acc-soft:rgba(125,202,211,.09);--accent-wash:rgba(125,202,211,.09)}
-.results-desk{--rx-bg:#111315;--rx-panel:#181a1c;--rx-well:#090b0c;--rx-ink:#edeef0;--rx-muted:#a4a9af;--rx-line:#2b2e32;--rx-accent:#86dfdc;color:var(--rx-ink);background:var(--rx-bg);max-width:1720px;margin:0 auto;padding:22px 22px 16px;min-width:0;box-sizing:border-box;font:400 14px/1.5 var(--body)}
+/* Results uses the same application palette as Production. */
+.results-desk{--rx-bg:var(--bg-2);--rx-panel:var(--panel);--rx-well:#090b0c;--rx-ink:var(--ink);--rx-muted:var(--muted);--rx-line:var(--line);--rx-accent:var(--acc);color:var(--rx-ink);background:var(--rx-bg);max-width:1720px;margin:0 auto;padding:22px 22px 16px;min-width:0;box-sizing:border-box;font:400 14px/1.5 var(--body)}
 .results-desk *{box-sizing:border-box;min-width:0}
 .results-desk button:not(:where(.cb-return)),.results-desk select,.rx-entry button{min-height:44px;border:1px solid var(--line-2);border-radius:8px;background:transparent;color:var(--ink);padding:10px 14px;font:500 14px/1.25 var(--body);letter-spacing:normal;text-transform:none;white-space:normal;cursor:pointer}
 .results-desk select{background-color:var(--panel-2)}
 .results-desk button:not(:where(.cb-return)):hover{border-color:#8a9299}
 .results-desk button:disabled{opacity:.46;cursor:not-allowed}
 .results-desk :focus-visible,.rx-entry :focus-visible{outline:3px solid var(--cb-focus,#86dfdc);outline-offset:3px}
-/* The one current primary action on this surface, and the only warm thing on it. */
-.results-desk .rx-primary{background:var(--cb-action-warm,#e5bd8e);border-color:var(--cb-action-warm,#e5bd8e);color:#241e17;font-weight:600}
-.results-desk .rx-primary:hover{background:#eccfa8;border-color:#eccfa8}
+/* The one current primary action on this surface, with the shared mint accent. */
+.results-desk .rx-primary{background:var(--cb-action-primary,#72d99b);border-color:var(--cb-action-primary,#72d99b);color:var(--cb-action-ink);font-weight:600}
+.results-desk .rx-primary:hover{background:var(--cb-action-hover);border-color:var(--cb-action-hover)}
 .results-desk .rx-primary:disabled{opacity:.42}
 /* THE ONE CARD. */
 .results-desk .rx-card,.rx-selected,.results-desk .rx-decision,.rx-requests,.rx-job-note,.rx-unavailable{background:var(--panel);border:1px solid var(--line);border-radius:10px}
@@ -103,7 +101,7 @@ body.results-desk-active #app{--bg:#111315;--bg-2:#111315;--canvas:#111315;--wor
 /* The decision this surface asks for wears the surface's own primary: warm, sentence-case, 44px — not the
    old 9px monospace pill. Nothing about the confirmation, its save fence or its writer changes. */
 /* styles.css fills every .approve-btn with the accent under !important, so the one narrow override is too. */
-#modal .rx-confirm .approve-btn{min-height:44px;padding:10px 16px;border:1px solid var(--cb-action-warm,#e5bd8e)!important;border-radius:8px;background:var(--cb-action-warm,#e5bd8e)!important;color:#241e17!important;font:600 14px/1.2 var(--body);letter-spacing:normal;text-transform:none}
+#modal .rx-confirm .approve-btn{min-height:44px;padding:10px 16px;border:1px solid var(--cb-action-primary,#72d99b)!important;border-radius:8px;background:var(--cb-action-primary,#72d99b)!important;color:var(--cb-action-ink)!important;font:600 14px/1.2 var(--body);letter-spacing:normal;text-transform:none}
 #modal .rx-confirm .approve-btn:disabled{opacity:.42}
 #modal .rx-confirm+.modal-actions .cancel,#modal .rx-confirm .modal-actions .cancel{min-height:44px;padding:10px 14px;font:500 14px/1.2 var(--body);color:var(--muted)}
 .rx-request pre{white-space:pre-wrap;overflow-wrap:anywhere;max-height:45vh;overflow:auto;background:#101315;border-radius:8px;padding:18px}
