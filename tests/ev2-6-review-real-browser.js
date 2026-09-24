@@ -21,7 +21,15 @@ fs.writeFileSync(path.join(dir,'generation-jobs.json'),JSON.stringify(jobs));
 fs.writeFileSync(path.join(dir,'project.json'),JSON.stringify(p,null,2));
 /* Media latency for the whole file, so a slow runner can be modelled on demand; 0 by default. */
 const BASE_SLOW_MEDIA_MS=Number(process.env.EV2_SLOW_MEDIA_MS||0)||0;
-let server,browser,page,base,saveMode='',heldSave=null,saveBodies=[],readFails=false,failedMedia='',slowMediaMs=BASE_SLOW_MEDIA_MS;const checks=[],errors=[],blocked=[];const check=(name,ok)=>{checks.push({name,passed:!!ok});assert(ok,name);};
+let server,browser,page,base,saveMode='',heldSave=null,saveBodies=[],readFails=false,failedMedia='',slowMediaMs=BASE_SLOW_MEDIA_MS,mediaLatch=null;const checks=[],errors=[],blocked=[];const check=(name,ok)=>{checks.push({name,passed:!!ok});assert(ok,name);};
+function holdExactMedia(pathname){
+ let announce,release;
+ const latch={pathname,seen:0,released:false,seenPromise:new Promise(resolve=>{announce=resolve;}),releasePromise:new Promise(resolve=>{release=resolve;})};
+ latch.markSeen=()=>{latch.seen+=1;announce();};
+ latch.release=()=>{if(latch.released)return;latch.released=true;release();};
+ mediaLatch=latch;
+ return latch;
+}
 /* WHY THE MEDIA-RECOVERY STEP STOPPED WAITING ON naturalWidth ALONE.
 
    The assertion after the retry is a conjunction of five facts: the bytes decoded, the
@@ -86,6 +94,12 @@ if(['POST','PUT'].includes(r.request().method())&&/\/api\/projects\/returned-pro
 }
 if(readFails&&r.request().method()==='GET'&&u.pathname==='/api/projects/returned-project/project')return r.abort('failed');
 if(failedMedia&&decodeURIComponent(u.pathname).endsWith(failedMedia))return r.fulfill({status:404,body:'Synthetic media unavailable'});
+if(mediaLatch&&!mediaLatch.released&&decodeURIComponent(u.pathname)===mediaLatch.pathname){
+ const latch=mediaLatch,answer=await r.fetch();
+ latch.markSeen();
+ await latch.releasePromise;
+ return r.fulfill({response:answer,headers:{...answer.headers(),'cache-control':'no-store, no-cache, must-revalidate'}});
+}
 /* FORCED TIMING, ON PURPOSE, AND A COLD CACHE WITH IT. Media bytes are held so a repaint
    can be put exactly where a slow runner put it. 0 by default: nothing is slowed unless a
    step asks.
@@ -104,7 +118,7 @@ if(slowMediaMs>0&&/\.(png|jpe?g|webp|gif|mp4|webm)$/i.test(u.pathname)){
  return r.fulfill({response:answer,headers:{...answer.headers(),'cache-control':'no-store, no-cache, must-revalidate'}});
 }
 if(/\/api\/(generation|accounts|assistant\/test)/.test(u.pathname)&&r.request().method()!=='GET'){blocked.push(u.pathname);return r.fulfill({status:503,json:{error:'Provider traffic disabled in synthetic acceptance'}});}return r.continue();});
-page=await context.newPage();page.on('pageerror',e=>errors.push(e.message));await page.goto(base);await page.waitForFunction(()=>typeof P!=='undefined'&&P?.shots?.length);await page.waitForTimeout(1200);
+page=await context.newPage();const cdp=await context.newCDPSession(page);page.on('pageerror',e=>errors.push(e.message));await page.goto(base);await page.waitForFunction(()=>typeof P!=='undefined'&&P?.shots?.length);await page.waitForTimeout(1200);
 for(const [width,height]of [[390,844],[1280,720],[1440,900],[1920,1080]]){await page.setViewportSize({width,height});await shot('SH-A');await capture('after-shot-'+width);
 /* EV2-7 dogfood correction: this shot's hero leads with the returned Frame A result, so Frame A's ONE action is the
    hero's exact-key review and the rail no longer repeats it as "Frame A Results". The opener is that one real action;
@@ -176,37 +190,45 @@ const failedCard=page.locator('[data-rx-key][aria-pressed=true]'),cardLabel=awai
 check('Unloadable card shows a neutral placeholder with its exact identity, decision and selection',await failedCard.getAttribute('data-rx-key')===parentKey&&await failedCard.getAttribute('aria-label')===cardLabel&&await failedCard.locator('.rx-status').innerText()===cardDecision&&await page.locator('[data-rx-key][aria-pressed=true]').count()===1&&await failedCard.locator('.rx-thumb img').evaluate(img=>getComputedStyle(img).visibility==='hidden'));
 check('Unloadable selected result shows no media or alt text and cannot approve',await page.locator('#rx-primary').evaluate(img=>getComputedStyle(img).visibility==='hidden')&&await page.locator('#rx-approve').isDisabled());await capture('results-card-load-failure');
 /* THE REPLACED MECHANISM, MEASURED. The retry is made with media held back, the old
-   naturalWidth wait is run to completion, and then the async repaint a slow runner landed
-   mid-assertion is landed here on purpose. What the old reads would have found is
-   recorded: a card that is not marked failed, whose error note is hidden, and whose
-   #rx-approve is disabled by a freshly mounted <img> that has not decoded. */
+   naturalWidth wait is run to completion, and then the exact replacement response is
+   fetched but latched before Chromium receives it. What the old reads would have found is
+   recorded while that latch is still closed: a card that is not marked failed, whose
+   error note is hidden, and whose #rx-approve is disabled by a freshly mounted <img> that
+   cannot have decoded. A fixed delay and no-store did not reliably produce this
+   intermediate state on CI; the old log did not identify which condition differed. */
 failedMedia='';slowMediaMs=800;await page.locator('.rx-selected [data-rx=reload-media]').click();
 await page.waitForFunction(()=>document.getElementById('rx-primary')?.naturalWidth>0);
-/* READ IN ONE TASK, so the reproduction is deterministic rather than merely likely.
-   Everything after `await route()` is read inside the SAME evaluate, in the same task the
-   repaint finished in. A freshly mounted <img> cannot have decoded by then -- an image
-   load always needs at least one more task, cached or not -- so mount()'s sync() has
-   deterministically seen neither `good` nor `failed` and has disabled #rx-approve. Read
-   across separate round trips instead (as this control first did, and as the assertion
-   it is about still does) the answer depends on whether the decode beat the next round
-   trip, which is the very thing being corrected: measured over 30 runs it did not, twice. */
-const raced=await page.evaluate(async()=>{
- const decodedBefore=!!document.getElementById('rx-primary')?.naturalWidth;
- await route();
- const root=document.querySelector('[data-results-desk]');
- const img=root&&root.querySelector('#rx-primary');
- const fig=img&&img.closest('.rx-media');
- const note=fig&&fig.querySelector('.rx-load-error');
- const approve=root&&root.querySelector('#rx-approve');
- return {decodedBefore,mounted:!!fig,
-         failed:!!(fig&&fig.classList.contains('rx-failed')),
-         noteHidden:!!(note&&note.hidden),
-         approveDisabled:!!(approve&&approve.disabled)};
-});
-check('Forced latency: the replaced naturalWidth wait admits a partially repainted card',raced.decodedBefore&&raced.mounted&&!raced.failed&&raced.noteHidden&&raced.approveDisabled);
-/* AND THE CORRECTION UNDER THE SAME LATENCY: one evaluation, five facts, true together. */
-await selectedMediaSettled(BROWSER_FIXTURE.parentB,parentKey);slowMediaMs=BASE_SLOW_MEDIA_MS;
-check('Retry restores the same selected media',await page.locator('.rx-selected .rx-media').evaluate(f=>!f.classList.contains('rx-failed')&&f.querySelector('.rx-load-error').hidden)&&await page.locator('#rx-approve').isEnabled()&&await failedCard.getAttribute('data-rx-key')===parentKey);
+slowMediaMs=BASE_SLOW_MEDIA_MS;
+await cdp.send('Network.clearBrowserCache');
+const replacementPath=await page.evaluate(()=>decodeURIComponent(new URL(document.getElementById("rx-primary").src).pathname));
+const latch=holdExactMedia(replacementPath);
+const releaseExactMedia=()=>{latch.release();if(mediaLatch===latch)mediaLatch=null;};
+try{
+ const decodedBefore=await page.evaluate(()=>!!document.getElementById('rx-primary')?.naturalWidth);
+ await page.evaluate(()=>route());
+ const latchSeen=await Promise.race([latch.seenPromise.then(()=>true),page.waitForTimeout(5000).then(()=>false)]);
+ const raced=await page.evaluate(decoded=>{
+  const root=document.querySelector('[data-results-desk]');
+  const img=root&&root.querySelector('#rx-primary');
+  const fig=img&&img.closest('.rx-media');
+  const note=fig&&fig.querySelector('.rx-load-error');
+  const approve=root&&root.querySelector('#rx-approve');
+  return {decodedBefore:decoded,mounted:!!fig,
+          failed:!!(fig&&fig.classList.contains('rx-failed')),
+          noteHidden:!!(note&&note.hidden),
+          approveDisabled:!!(approve&&approve.disabled)};
+ },decodedBefore);
+ const latchState={pathname:latch.pathname,seen:latch.seen,released:latch.released,seenInTime:latchSeen};
+ const forcedRace=raced.decodedBefore&&raced.mounted&&!raced.failed&&raced.noteHidden&&raced.approveDisabled&&latchState.seen>0&&!latchState.released&&latchState.seenInTime;
+ if(!forcedRace)console.error('Forced-latency state '+JSON.stringify({raced,latch:latchState}));
+ check('Forced latency: the replaced naturalWidth wait admits a partially repainted card',forcedRace);
+ releaseExactMedia();
+ /* AND THE CORRECTION UNDER THE SAME LATENCY: one evaluation, five facts, true together. */
+ await selectedMediaSettled(BROWSER_FIXTURE.parentB,parentKey);
+ check('Retry restores the same selected media',await page.locator('.rx-selected .rx-media').evaluate(f=>!f.classList.contains('rx-failed')&&f.querySelector('.rx-load-error').hidden)&&await page.locator('#rx-approve').isEnabled()&&await failedCard.getAttribute('data-rx-key')===parentKey);
+}finally{
+ releaseExactMedia();
+}
 await page.locator('#rx-screen').click();await page.locator('#rx-compare').selectOption({index:1});failedMedia=BROWSER_FIXTURE.repairB;await page.locator('.rx-stage img').nth(1).evaluate(img=>{const src=img.src;img.src=src+(src.includes('?')?'&':'?')+'syntheticFailure=1';});await page.locator('.rx-stage .rx-load-error:not([hidden])').waitFor();check('Comparison failure leaves healthy selected approval enabled',await page.locator('#rx-approve').isEnabled());failedMedia='';await page.locator('.rx-stage .rx-load-error:not([hidden]) [data-rx=reload-media]').click();await page.waitForFunction(()=>[...document.querySelectorAll('.rx-stage img')].every(img=>img.complete&&img.naturalWidth>0));
 failedMedia=BROWSER_FIXTURE.parentB;await page.locator('#rx-primary').evaluate(img=>{img.src+='?syntheticFailure=1';});await page.locator('.rx-stage .rx-load-error:not([hidden])').waitFor();check('Selected load failure prevents approval',await page.locator('#rx-approve').isDisabled());await capture('media-load-failure');failedMedia='';await page.locator('.rx-stage .rx-load-error:not([hidden]) [data-rx=reload-media]').click();await selectedMediaSettled(BROWSER_FIXTURE.parentB);check('Loading retry preserves exact target',await page.locator('#rx-primary').getAttribute('src').then(src=>src.includes(BROWSER_FIXTURE.parentB)));
 await page.locator('#rx-reject').click();await page.waitForFunction(()=>!approvalSubmissionPending());check('Rejection saved and retained',disk().shots.find(s=>s.id==='SH-B').candidateFiles.find(r=>r.stored===BROWSER_FIXTURE.parentB).decision==='rejected');await capture('rejected-result');await page.locator('#rx-restore').click();await page.waitForFunction(()=>!approvalSubmissionPending());check('Restore is not approval',!disk().productionAuthority.receipts.some(r=>r.kind==='shot-frame'&&r.shotId==='SH-B'&&r.status==='current'));
