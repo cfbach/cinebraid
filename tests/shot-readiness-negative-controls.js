@@ -535,6 +535,42 @@ const C19 = () => mustFailAsync("C19 legacy projection renders a rival READY ver
     "an empty setup list must not claim the project is ready for production");
 });
 
+/* ---------------------------------------------------------------------------
+   C20 / C21 — THE PRODUCE SENTENCE GOES BACK TO CONTRACT NAMES.
+
+   "Produce Motion a using i2v." was two defects in one sentence: the resolver's mode
+   token where the filmmaker's words belong (C20), and the clip's lower-case storage
+   suffix where its display label belongs (C21). Each is put back on its own. */
+{
+  const still = baseProject();
+  approve(still);
+  mustFail("C20 the produce sentence names the resolver token", "names the method in the filmmaker's words", () => {
+    const model = compile(mutate(
+      'const method = methods.admissible ? ` · ${modeLanguageOwner(methods.admissible)}` : "";',
+      'const method = methods.admissible ? ` using ${methods.admissible}` : "";',
+      "C20"));
+    assert.strictEqual(evaluate(model, still).nextAction.message, "Produce Frame A · Create from approved references.",
+      "the produce sentence names the method in the filmmaker's words");
+  });
+  const motion = baseProject();
+  motion.shots[0].deliveryRoute = "t2v";
+  motion.shots[0].clips = [{ id: "seg-1", suffix: "a", label: "A", dur: 4, kind: "t2v", fromFrame: "", toFrame: "", generationPackages: [] }];
+  approve(motion);
+  mustFail("C21 a stored unit is named by its storage suffix", "a stored unit is named by its display label", () => {
+    const model = compile(mutate(
+      "label: `Motion ${text(clip.label) || text(clip.suffix).toUpperCase() || text(clip.id)}`,",
+      "label: `Motion ${text(clip.suffix) || text(clip.id)}`,",
+      "C21"));
+    assert.strictEqual(evaluate(model, motion).nextAction.message, "Produce Motion A · Create from scratch.",
+      "a stored unit is named by its display label");
+  });
+  /* And both assertions hold under the real module, so the controls above are catching
+     the mutation rather than a fixture that never produced these sentences. */
+  const real = require(READINESS_FILE);
+  assert.strictEqual(evaluate(real, still).nextAction.message, "Produce Frame A · Create from approved references.");
+  assert.strictEqual(evaluate(real, motion).nextAction.message, "Produce Motion A · Create from scratch.");
+}
+
 C19().then(
   () => {
     console.log(notes.join("\n"));

@@ -662,7 +662,9 @@
     if (unit) c.activeMotionUnitId = unit.id;
     return unit;
   }
-  function effectiveMotionPlan(s, unit = activeMotionUnit(s)) { return unit?.motionPlan ? normalizeMotionPlan607(unit.motionPlan) : ensureShotCreation(s).motionPlan; }
+  /* Reading a plan never creates a unit: a new unit has no plan of its own, so the answer
+     without one is the same shot plan. The Direct motion controls read this on render. */
+  function effectiveMotionPlan(s, unit = activeMotionUnit(s, false)) { return unit?.motionPlan ? normalizeMotionPlan607(unit.motionPlan) : ensureShotCreation(s).motionPlan; }
   function ensureUnitMotionPlan(s, unit = activeMotionUnit(s)) { if (!unit) return ensureShotCreation(s).motionPlan; if (!unit.motionPlan) unit.motionPlan = clone(ensureShotCreation(s).motionPlan); return normalizeMotionPlan607(unit.motionPlan); }
   function targetOptions(s, currentId = "") {
     const rows = [];
@@ -697,8 +699,12 @@
        composers cannot answer this differently. */
     const kind = profile?.mode ? (profile.mode === "audio-video" ? "r2v" : profile.mode) : String(unit?.kind || "i2v");
     const needsStartFrame = guidedVideoModeNeedsApprovedStill(kind);
+    /* A new primary unit keeps the shot's planned duration. A shot is as long as its
+       units once it has any, so a hard-coded 5 here turned a 4-second shot into a
+       5-second one by the act of creating its unit. 5 remains only where nothing was
+       planned. */
     if (!unit) {
-      unit = { id: `seg-guided-${Date.now().toString(36)}`, suffix: "a", label: "A", title: "Primary motion", dur: 5, kind, note: "", motionPrompt: "", fromFrame: needsStartFrame ? (frames[0]?.id || "") : "", toFrame: "", generationPackages: [], motionPlan: null };
+      unit = { id: `seg-guided-${Date.now().toString(36)}`, suffix: "a", label: "A", title: "Primary motion", dur: (typeof shotDurationSeconds === "function" ? shotDurationSeconds(s) : 0) || 5, kind, note: "", motionPrompt: "", fromFrame: needsStartFrame ? (frames[0]?.id || "") : "", toFrame: "", generationPackages: [], motionPlan: null };
       s.clips = [unit];
     }
     c.activeMotionUnitId = unit.id;
@@ -850,8 +856,20 @@
   };
 
   function motionUnitTabs(s) {
-    const c = ensureShotCreation(s), unit = activeMotionUnit(s);
-    return `<details class="motion-unit-tabs"><summary><div><b>Motion unit ${esc(unit?.label || "A")}</b><small>${esc(unit?.title || "Primary motion")} · ${esc(shotDurationWords(unit, "no duration set"))} · ${unit?.motionPlan ? "custom overrides" : "inherits shot defaults"}</small></div><span>${(s.clips || []).length} UNIT${(s.clips || []).length === 1 ? "" : "S"}</span></summary><div class="motion-unit-tab-body"><div>${(s.clips || []).map((item) => `<button class="${item.id === unit?.id ? "active" : ""}" onclick="selectMotionUnit('${s.id}','${item.id}')"><b>${esc(item.label || item.suffix || "Unit")}</b><span>${esc(item.title || "Motion")} · ${esc(shotDurationWords(item, "no duration set"))}</span></button>`).join("")}<button onclick="addGuidedMotionUnit('${s.id}')">＋ Add unit</button></div>${unit ? `<footer><span>${unit.motionPlan ? "CUSTOM OVERRIDES" : "INHERITING SHOT DEFAULTS"}</span><button onclick="resetMotionUnitPlan('${s.id}','${unit.id}')">Reset to defaults</button><button onclick="setMotionUnitAsDefaults('${s.id}','${unit.id}')">Use as shot defaults</button></footer>` : ""}</div></details>`;
+    /* A SHOT WITH NO STORED UNIT SAYS SO. Drawing Motion stores nothing (see
+       guidedMotionPanel607), so a shot that has never needed a unit has none: the tabs
+       name the primary unit it will get, at the shot's own planned duration, as not
+       created yet, and count no unit. Add unit on such a shot creates that unit A
+       first and then B, so the button names B and the note says what creates A. */
+    const c = ensureShotCreation(s), unit = activeMotionUnit(s, false), stored = (s.clips || []).length > 0;
+    const planned = typeof shotDurationSeconds === "function" ? shotDurationSeconds(s) : 0;
+    const shown = unit || { id: "", label: "A", title: "Primary motion", dur: planned };
+    const seconds = shotDurationWords(shown, "no duration set");
+    const detail = stored ? (shown.motionPlan ? "custom overrides" : "inherits shot defaults") : "";
+    const count = stored ? `${s.clips.length} UNIT${s.clips.length === 1 ? "" : "S"}` : "NOT CREATED YET";
+    const units = stored ? s.clips.map((item) => `<button class="${item === shown ? "active" : ""}" onclick="selectMotionUnit('${s.id}','${item.id}')"><b>${esc(item.label || item.suffix || "Unit")}</b><span>${esc(item.title || "Motion")} · ${esc(shotDurationWords(item, "no duration set"))}</span></button>`).join("") : "";
+    const note = stored ? "" : `<p class="hint motion-unit-unsaved">Unit A is created, at ${esc(planned ? `this shot's ${seconds}` : "5s")}, the first time you edit this shot's motion, build a prompt, open the Motion &amp; Sound Composer or approve a video. Add unit B creates unit A first.</p>`;
+    return `<details class="motion-unit-tabs"><summary><div><b>Motion unit ${esc(shown.label || "A")}</b><small>${esc(shown.title || "Primary motion")} · ${esc(seconds)}${detail ? ` · ${detail}` : ""}</small></div><span>${count}</span></summary><div class="motion-unit-tab-body">${note}<div>${units}<button onclick="addGuidedMotionUnit('${s.id}')">＋ Add unit${stored ? "" : " B"}</button></div>${unit ? `<footer><span>${unit.motionPlan ? "CUSTOM OVERRIDES" : "INHERITING SHOT DEFAULTS"}</span><button onclick="resetMotionUnitPlan('${s.id}','${unit.id}')">Reset to defaults</button><button onclick="setMotionUnitAsDefaults('${s.id}','${unit.id}')">Use as shot defaults</button></footer>` : ""}</div></details>`;
   }
   const guidedMotionReferencesRaw607 = guidedMotionReferences;
   function gatherMotionReferences607(s, current, profile) {
@@ -881,7 +899,9 @@
        only be dropped later — and a package preview listing references the request
        cannot hold is the same lie as a model picker offering a model that cannot run. */
     if (profile?.mode === "t2v") return [];
-    const unit = activeMotionUnit(s), frames = guidedFrames(s), refs = [];
+    /* Read-only: the package preview is drawn on every Motion render, and a build has
+       already created its unit before it gathers references. */
+    const unit = activeMotionUnit(s, false), frames = guidedFrames(s), refs = [];
     const startFrame = frames.find((frame) => frame.id === unit?.fromFrame) || frames[0], startIndex = frames.indexOf(startFrame), startTake = startFrame ? guidedFrameApproved(s, startFrame, takesFor(s.id), startIndex) : current;
     if (startTake) refs.push({ key: `shot-start:${startFrame?.id || s.id}:${startTake.name}`, label: `Approved Frame ${startFrame?.label || "A"}`, url: startTake.url, role: "first-frame", mediaType: "image", priority: "primary", approved: true, instruction: "Use as the approved opening composition. Preserve geometry, identity, lighting, and continuity unless motion direction explicitly changes them." });
     if (unit?.toFrame && ["flf","r2v","audio-video"].includes(profile?.mode)) { const frame = frames.find((item) => item.id === unit.toFrame), index = frames.indexOf(frame), take = frame ? guidedFrameApproved(s, frame, takesFor(s.id), index) : null; if (take) refs.push({ key: `shot-last:${frame.id}:${take.name}`, label: `Approved Frame ${frame.label}`, url: take.url, role: "last-frame", mediaType: "image", priority: "primary", approved: true, instruction: "Use as the approved endpoint composition." }); }
@@ -901,7 +921,12 @@
 
   const guidedMotionPanel606 = guidedMotionPanel;
   guidedMotionPanel = window.guidedMotionPanel = function guidedMotionPanel607(s, current, takes, open = false) {
-    const c = ensureShotCreation(s), unit = activeMotionUnit(s), defaultPlan = c.motionPlan, effective = effectiveMotionPlan(s, unit), savedDirection = c.motionDirection, savedDuration = c.motionDuration, savedProfile = c.motionProfileId, savedIntensity = c.motionIntensity, savedPreserve = c.preserveComposition, savedBuilds = c.motionPromptBuilds;
+    /* DRAWING THE MOTION STAGE CREATES NOTHING. This asked for the active unit with
+       `create` on, so merely opening Motion wrote a default 5-second unit into
+       s.clips: the shot's planned duration went from its own value to 5 and the next
+       unrelated save persisted it. A unit is created by an act that needs one: a
+       duration or direction edit, a build, the composer, Add unit. */
+    const c = ensureShotCreation(s), unit = activeMotionUnit(s, false), defaultPlan = c.motionPlan, effective = effectiveMotionPlan(s, unit), savedDirection = c.motionDirection, savedDuration = c.motionDuration, savedProfile = c.motionProfileId, savedIntensity = c.motionIntensity, savedPreserve = c.preserveComposition, savedBuilds = c.motionPromptBuilds;
     c.motionPlan = effective;
     c.motionDirection = unit?.motionPrompt || unit?.note || savedDirection || "";
     c.motionDuration = unit?.dur || savedDuration;
@@ -916,7 +941,9 @@
     return html;
   };
   window.selectMotionUnit = (id, unitId) => { const s = shotById(id), c = ensureShotCreation(s); c.activeMotionUnitId = unitId; c.openPanels.motion = true; dirty(); route(); };
-  window.addGuidedMotionUnit = (id) => { const s = shotById(id), c = ensureShotCreation(s), frames = guidedFrames(s), index = (s.clips || []).length, unit = { id: `seg-guided-${Date.now().toString(36)}-${index}`, suffix: alphaLabel(index).toLowerCase(), label: alphaLabel(index), title: `Motion unit ${alphaLabel(index)}`, dur: 5, kind: "i2v", note: "", motionPrompt: "", fromFrame: frames[Math.min(index, frames.length - 1)]?.id || frames[0]?.id || "", toFrame: "", generationPackages: [], motionPlan: null }; s.clips.push(unit); c.activeMotionUnitId = unit.id; c.deliveryIntent = "motion"; dirty(); route(); };
+  /* The primary unit a shot is shown with before any is stored becomes real first, at
+     the shot's own duration, so Add unit adds the SECOND unit the tabs were offering. */
+  window.addGuidedMotionUnit = (id) => { const s = shotById(id); if (s && !(s.clips || []).length) ensureGuidedMotionUnit(s, guidedCurrentShotStill(s)?.name || "", null); const c = ensureShotCreation(s), frames = guidedFrames(s), index = (s.clips || []).length, unit = { id: `seg-guided-${Date.now().toString(36)}-${index}`, suffix: alphaLabel(index).toLowerCase(), label: alphaLabel(index), title: `Motion unit ${alphaLabel(index)}`, dur: 5, kind: "i2v", note: "", motionPrompt: "", fromFrame: frames[Math.min(index, frames.length - 1)]?.id || frames[0]?.id || "", toFrame: "", generationPackages: [], motionPlan: null }; s.clips.push(unit); c.activeMotionUnitId = unit.id; c.deliveryIntent = "motion"; dirty(); route(); };
   window.resetMotionUnitPlan = (id, unitId) => { const s = shotById(id), unit = (s.clips || []).find((item) => item.id === unitId); if (!unit) return; unit.motionPlan = null; unit.motionProfileId = ""; unit.motionIntensity = ""; unit.preserveComposition = null; dirty(); route(); toast("Motion unit reset to shot defaults"); };
   window.setMotionUnitAsDefaults = (id, unitId) => { const s = shotById(id), c = ensureShotCreation(s), unit = (s.clips || []).find((item) => item.id === unitId); if (!unit) return; c.motionPlan = clone(effectiveMotionPlan(s, unit)); dirty(); route(); toast("This unit is now the shot motion default"); };
   function activeUnitPlanForEdit(s) { const unit = activeMotionUnit(s); return ensureUnitMotionPlan(s, unit); }

@@ -197,9 +197,15 @@ async function main() {
      mutation is the classic falsy-zero bug — `+limit || rows.length` reads a real
      limit of 0 as "no limit stated" — which is exactly how a declared ceiling of none
      turns into a ceiling of everything. */
+  /* The unit is read without creating one (drawing Motion stores nothing), so the
+     anchor carries the read-only lookup and the note above it. The defect is the same:
+     the t2v guard is gone. */
+  const E_UNIT = `    /* Read-only: the package preview is drawn on every Motion render, and a build has
+       already created its unit before it gathers references. */
+    const unit = activeMotionUnit(s, false), frames = guidedFrames(s), refs = [];`;
   const E_ANCHOR = `    if (profile?.mode === "t2v") return [];
-    const unit = activeMotionUnit(s), frames = guidedFrames(s), refs = [];`;
-  const E_BROKEN = `    const unit = activeMotionUnit(s), frames = guidedFrames(s), refs = [];`;
+${E_UNIT}`;
+  const E_BROKEN = E_UNIT;
   const E_ANCHOR2 = `    const totalLimit = Number.isFinite(+profile?.limits?.maxReferences) ? +profile.limits.maxReferences : rows.length;`;
   const E_BROKEN2 = `    const totalLimit = +profile?.limits?.maxReferences || rows.length;`;
   const brokenT2vRefs = () => (file, source) => {

@@ -6141,6 +6141,27 @@ function shotProductionNextAction(s, readiness = shotReadinessFor(s)) {
     nextUnitId: readiness.nextUnitId || "",
   };
 }
+/* WHAT A LIST OF SHOTS SAYS ABOUT ONE SHOT: the action leading it, and readiness beside it.
+ *
+ * Two answers, kept apart on purpose:
+ *   lead   what this shot is waiting on now. It is shotLeadingAction() in the words
+ *          shotLeadingActionWords() gives it, which are the Shot Board card's and the Shot
+ *          Desk hero's words, so every list that names a shot's next action names the same
+ *          one (a returned result waiting for review leads over "Produce the frame").
+ *   also   canonical readiness, whenever something else leads. It is not dropped: the
+ *          frame can still be produced and another candidate can still be made, and a
+ *          surface that reports readiness keeps saying so. It is null when readiness leads.
+ * `production` is always the canonical readiness words. claim "" because a list row is
+ * ordinary navigation, never a route claim. A caller painting several shots passes the
+ * returned-review projection it derived once. */
+function shotNextActionListing(s, readiness = shotReadinessFor(s), projection = null) {
+  const production = shotProductionNextAction(s, readiness);
+  if (typeof shotLeadingAction !== "function" || typeof shotLeadingActionWords !== "function")
+    return { source: readiness ? "readiness" : "unavailable", key: "", lead: production, production, also: null };
+  const leading = shotLeadingAction(s, readiness, { claim: "", projection });
+  const led = leading.source !== "readiness" && leading.source !== "unavailable";
+  return { source: leading.source, key: leading.key || "", lead: shotLeadingActionWords(leading), production: leading.production, also: led ? leading.production : null };
+}
 function shotReadinessTargetDestination(readiness) {
   const action = readiness?.nextAction?.code || "";
   return typeof shotReadinessDestinationForAction === "function"
@@ -6422,7 +6443,10 @@ function projectNextProductionAction(feed = projectShotReadiness()) {
       message: `${first.label}. ${total > 1
         ? `${plural(total, "returned result")} are waiting for review across this project.`
         : "It is waiting for your review — approve it, keep it as an alternate, or reject it."}`,
-      actionLabel: "REVIEW SHOT IMAGE",
+      /* The noun is the returned result's own. A returned video read REVIEW SHOT IMAGE
+         here while its Board card and Desk hero said "Review motion result", and an
+         entity reference row, which opens the reference, said the same. */
+      actionLabel: first.type === "video" ? "REVIEW SHOT VIDEO" : first.type === "reference" ? "REVIEW REFERENCE" : "REVIEW SHOT IMAGE",
     };
   }
   /* RETURNED MEDIA THE PROJECT STILL OWES A DECISION ON AND CANNOT FIND.
@@ -6536,14 +6560,13 @@ function slate(s, sceneId, readiness = null, returnedProjection = null) {
   const context = shotCardContext(referenceRecordsForShot(s));
   /* EV2-7: the card names the SAME leading action the shot's own hero leads with — a
      returned result waiting for a decision outranks non-integrity readiness — through the
-     one shared read-only precedence. claim "" because a board card is ordinary
+     one shared read-only precedence, asked through shotNextActionListing() exactly as
+     Production's two shot lists ask it. claim "" because a board card is ordinary
      navigation, never a route claim. The canonical readiness code stays on the next-action
-     line as data-readiness-code, and the board filters below still count readiness alone. */
+     line as data-readiness-code. */
   const cardReadiness = readiness || shotReadinessFor(s);
-  const leading = typeof shotLeadingAction === "function"
-    ? shotLeadingAction(s, cardReadiness, { claim: "", projection: returnedProjection })
-    : { source: cardReadiness ? "readiness" : "unavailable", production: shotProductionNextAction(s, cardReadiness), review: null, key: "" };
-  const next = typeof shotLeadingActionWords === "function" ? shotLeadingActionWords(leading) : leading.production;
+  const leading = shotNextActionListing(s, cardReadiness, returnedProjection);
+  const next = leading.lead;
   /* O5: INSPECT, NOT MERELY ENLARGE. The board's thumbnail is the shot's approved
      pick or its newest take — production media with a disposition, an authority and a
      provenance — so the control that was "make it bigger" now opens the Inspector,
@@ -7491,7 +7514,7 @@ function historicConfirmationMarkup(feed) {
      of a film's production page. One click is the whole list back. */
   return `<details class="production-readiness historic-confirm" data-readiness-action-surface="production-historic-confirmation"><summary><div><span>Existing selections</span><b>${plural(queue.uniqueTargets, "existing selection")} need${queue.uniqueTargets === 1 ? "s" : ""} your confirmation</b></div><span>${plural(queue.occurrences, "requirement")}</span></summary><div class="historic-confirm-body"><p>These references are already in the project and nobody has approved them. Confirming one approves it everywhere it is used.</p><ul class="historic-confirm-list">${rows}</ul>${bulk}</div></details>`;
 }
-function shotReadinessFeedMarkup(feed, decisions = null) {
+function shotReadinessFeedMarkup(feed, decisions = null, returnedProjection = null) {
   if (!feed) return "";
   if (feed.error) return `<details class="production-readiness"><summary><div><span>Production readiness</span><b>Readiness could not be derived</b></div><span>Unavailable</span></summary><div class="production-readiness-list"><p>${esc(feed.error)}</p></div></details>`;
   const counts = feed.counts || { ready: 0, blocked: 0, needsDecision: 0, complete: 0 };
@@ -7506,7 +7529,30 @@ function shotReadinessFeedMarkup(feed, decisions = null) {
   const problem = feed.truthProblem
     ? `<div class="readiness-truth-problem" data-readiness-action-surface="production-project-repair" data-readiness-truth-problem="${attr(feed.truthProblem.reason)}"><b>${esc(readinessActionWords(feed.nextAction))}</b><span>${esc(feed.truthProblem.message)}</span>${feed.truthProblem.diagnostics?.length ? `<small>${esc(feed.truthProblem.diagnostics.map((row) => row.code).filter(Boolean).join(", "))}</small>` : ""}</div>`
     : "";
+  /* THE PILL READS THE ONE DECISION PROJECTION, NOT `counts.needsDecision`.
+     They agree on an ordinary project and deliberately do not agree on a broken
+     one: when the ledger cannot be read, every shot reports NEEDS_DECISION about
+     the SAME single repair, and a pill saying "12 DECISIONS" there would send a
+     filmmaker looking for twelve things to decide. */
+  const projection = feed.truthProblem ? null
+    : returnedProjection || (typeof returnedReviewProjectionForBrowser === "function" ? returnedReviewProjectionForBrowser() : null);
+  const decided = decisions || projectFilmmakerDecisions(feed, projection);
+  const deciding = new Set((decided.shots || []).map((row) => row.shotId));
   const rows = (feed.shots || []).map((shot) => {
+    /* A ROW WHOSE SHOT IS LED BY SOMETHING ELSE SAYS SO FIRST, AND KEEPS ITS READINESS.
+       A returned Frame A waiting for review used to read "READY · Produce the frame" here,
+       beside a pill counting it as the decision. The row now leads with the action the
+       Board card and the Desk lead with, and the status word is the decision projection's
+       (the pill's) where it counts this shot. The canonical verdict is not removed: it is
+       the row's second line, word for word, because the frame can still be produced. A
+       delivered shot and an unreadable ledger keep the canonical row unchanged. */
+    const record = projection && shot.status !== "COMPLETE" && typeof shotById === "function" ? shotById(shot.shotId) : null;
+    const listing = record ? shotNextActionListing(record, shot, projection) : null;
+    if (listing && listing.also) {
+      const shown = deciding.has(shot.shotId) ? "NEEDS_DECISION" : shot.status;
+      const also = `${shot.status === "READY" ? "Also ready" : "Also needed"} · ${listing.also.label} — ${listing.also.detail}`;
+      return `<a href="#/shot/${attr(shot.shotId)}" data-leading-source="${attr(listing.source)}" data-leading-key="${attr(listing.key)}" data-readiness-status="${attr(shot.status)}" data-readiness-code="${attr(shot.nextAction?.code || "")}"><b>${esc(shot.shotId)}</b><span class="readiness-status readiness-${attr(String(shown).toLowerCase())}">${esc(READINESS_STATUS_WORDS[shown] || shown)} · ${esc(listing.lead.label)}</span><small>${esc(listing.lead.detail)} <span class="readiness-also">${esc(also)}</span></small><i>Open →</i></a>`;
+    }
     const status = READINESS_STATUS_WORDS[shot.status] || shot.status;
     return `<a href="#/shot/${attr(shot.shotId)}"><b>${esc(shot.shotId)}</b><span class="readiness-status readiness-${attr(String(shot.status).toLowerCase())}">${esc(status)} · ${esc(readinessActionWords(shot.nextAction))}</span><small>${esc(shot.nextAction?.message || "")}</small><i>Open →</i></a>`;
   }).join("");
@@ -7515,12 +7561,6 @@ function shotReadinessFeedMarkup(feed, decisions = null) {
   const headline = feed.truthProblem
     ? "Readiness cannot be answered yet"
     : `${plural(counts.ready, "shot")} ${counts.ready === 1 ? "has" : "have"} work that can start now`;
-  /* THE PILL READS THE ONE DECISION PROJECTION, NOT `counts.needsDecision`.
-     They agree on an ordinary project and deliberately do not agree on a broken
-     one: when the ledger cannot be read, every shot reports NEEDS_DECISION about
-     the SAME single repair, and a pill saying "12 DECISIONS" there would send a
-     filmmaker looking for twelve things to decide. */
-  const decided = decisions || projectFilmmakerDecisions(feed);
   const pill = decided.available
     ? `${plural(decided.count, FILMMAKER_DECISION_LABEL)} · ${counts.blocked} blocked`
     : "Unavailable";
@@ -7645,7 +7685,10 @@ async function productionHomeView() {
   /* ONE COUNT, ONE MEANING, AND THE SAME OBJECT EVERY SUMMARY ON THIS PAGE READS.
      Derived once from the readiness answer already in hand, and handed down to the
      summary tile, the readiness pill and every scene card below. */
-  const decisions = projectFilmmakerDecisions(shotReadiness);
+  /* The returned-review projection is uncached, so it is derived once here and handed to
+     every per-shot reader below: the decision count and both shot lists. */
+  const returnedProjection = typeof returnedReviewProjectionForBrowser === "function" ? returnedReviewProjectionForBrowser() : null;
+  const decisions = projectFilmmakerDecisions(shotReadiness, returnedProjection);
   const hasShots = P.shots.length > 0;
   /* Three different states of a shot, counted three different ways, so each tile is
      labelled with the one it actually reports:
@@ -7661,8 +7704,12 @@ async function productionHomeView() {
   const readinessByShot = new Map((shotReadiness?.shots || []).map((row) => [row.shotId, row]));
   const deliveredIds = new Set(decisions.delivered || []);
   const isDelivered = (shot) => (decisions.available ? deliveredIds.has(shot.id) : shotIsDelivered(shot));
-  const activeRows = P.shots.map((shot) => ({ shot, next: shotProductionNextAction(shot, readinessByShot.get(shot.id)) }))
-    .filter((row) => !isDelivered(row.shot)).slice(0, 8);
+  /* SHOTS AND THEIR NEXT ACTION name the leading action, in the Shot Board card's words.
+     This list printed canonical readiness alone, so a shot whose returned Frame A was
+     waiting read "Produce the frame" here while the hero above, the tile and the board
+     all said review. Readiness is still reported, in Production readiness above. */
+  const activeRows = P.shots.filter((shot) => !isDelivered(shot)).slice(0, 8)
+    .map((shot) => ({ shot, listing: shotNextActionListing(shot, readinessByShot.get(shot.id), returnedProjection) }));
   /* THE SURFACE NAMES ITSELF, AND SAYS THE PROJECT ONCE — WHICH IS NOT HERE.
      The 42px headline was the project title. Checkpoint A demoted it to a
      context line above `Production`; the review found that a third printing of
@@ -7702,11 +7749,11 @@ async function productionHomeView() {
        queue and the setup list still ship closed, and none of them is filtered.
        They moved; they did not change what they claim. -->
   <div class="production-context">
-  ${shotReadinessFeedMarkup(shotReadiness, decisions)}
+  ${shotReadinessFeedMarkup(shotReadiness, decisions, returnedProjection)}
   ${historicConfirmationMarkup(shotReadiness)}
   ${projectSetupIssuesMarkup(setup)}
   </div>
-  <section class="production-active"><header><div><span>Not yet delivered</span><h2>Shots and their next action</h2></div><a href="#/shots/board">View all shots →</a></header>${activeRows.length ? `<div class="production-active-list">${activeRows.map(({shot,next}) => `<a href="#/shot/${shot.id}"><span class="next-${next.key}" title="Next action for this shot">${esc(next.label)}</span><div><b>${esc(shot.id)} · ${esc(shot.title)}</b><small>${esc(sceneById(shot.scene)?.title || shot.scene)} · ${esc(next.detail)}</small></div><i>→</i></a>`).join("")}</div>` : `<div class="production-inbox-empty">${hasShots ? "Every shot has been delivered." : "No shots have been added yet."}</div>`}</section>
+  <section class="production-active"><header><div><span>Not yet delivered</span><h2>Shots and their next action</h2></div><a href="#/shots/board">View all shots →</a></header>${activeRows.length ? `<div class="production-active-list">${activeRows.map(({shot,listing:{lead:next,source,key,production}}) => `<a href="#/shot/${shot.id}" data-leading-source="${attr(source)}" data-leading-key="${attr(key)}" data-readiness-code="${attr(production.action?.code || "")}"><span class="next-${next.key}" title="Next action for this shot">${esc(next.label)}</span><div><b>${esc(shot.id)} · ${esc(shot.title)}</b><small>${esc(sceneById(shot.scene)?.title || shot.scene)} · ${esc(next.detail)}</small></div><i>→</i></a>`).join("")}</div>` : `<div class="production-inbox-empty">${hasShots ? "Every shot has been delivered." : "No shots have been added yet."}</div>`}</section>
   <section class="production-scenes"><header><div><span>Scenes</span><h2>Production progress</h2></div><a href="#/shots/scenes">Manage scenes →</a></header>${P.scenes.length ? `<div class="scene-progress-grid">${P.scenes.map((scene) => {
     /* THE SCENE CARD SUMMARISES THE SAME PROJECTION THE TILE ABOVE IT COUNTS.
        It used to say "N shots waiting for review" from its own scene-local read of

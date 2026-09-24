@@ -799,7 +799,19 @@ try:
                         "and section 9's assertion catches it")
 
         # ---- a route that DOES owe a frame gets its handoff back --------------------
+        # With no stage chosen, the shot opens where its next action is done: declaring
+        # i2v makes readiness say "Produce the frame", so the strip moves to Frames instead
+        # of staying on whichever stage it had defaulted to (the 6.9 audit's Look &
+        # blocking beside "Produce the motion"). The Inputs -> Frames handoff is still the
+        # model's answer, and a filmmaker standing on Inputs is offered it.
         declare("i2v")
+        page.wait_for_selector('.cb-stage-bar[data-current-stage="frames"]', timeout=10000)
+        landed = page.evaluate(SHELL_STATE, undecided_id)
+        assert "inputs->frames" in landed["recommendations"], \
+            f"9. a declared route that owes an opening frame must recommend Frames, got {landed['recommendations']}"
+        assert "Look & blocking" not in " ".join(landed["barLabels"]), \
+            f"9. and the shot, with no stage chosen, must not open on the optional stage, got {landed['barLabels']}"
+        page.locator('.cb-stage-bar [data-stage-id="inputs"]').first.click()
         page.wait_for_selector('.cb-stage-action[data-advances="1"]', timeout=10000)
         owed = page.evaluate(SHELL_STATE, undecided_id)
         assert "inputs->frames" in owed["recommendations"], \
@@ -818,9 +830,9 @@ try:
             f"9. withdrawing the route must withdraw the handoff with it, got {withdrawn['recommendations']}"
         assert page.evaluate(FRAME_STATE, undecided_id)["allFrames"] == frames_at_start, \
             "9. and none of that moved the shot's own frame records"
-        findings.append("9. declaring i2v on the same shot brought back exactly one handoff -- 'Continue to Frames' "
-                        "on the bar and Frames in the rail -- and withdrawing the route withdrew it again, with the "
-                        "frame record untouched throughout")
+        findings.append("9. declaring i2v on the same shot opened it on Frames, where Produce the frame is done, and "
+                        "brought back exactly one handoff -- 'Continue to Frames' on the Inputs bar and Frames in the "
+                        "rail -- and withdrawing the route withdrew it again, with the frame record untouched throughout")
 
 
         # ================================== 10 · AUTOMATION OWES WHAT THE ROUTE OWES

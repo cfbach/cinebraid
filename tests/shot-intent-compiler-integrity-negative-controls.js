@@ -411,14 +411,16 @@ async function nc10() {
     defect: "composer state stops being shot-scoped, so shot B shows shot A's authored brief",
     files: {
       "public/motion-sound-composer.js": [[
-        `  function activeUnit(s) {
+        `  function activeUnit(s, create = true) {
     const c = ensureShotCreation(s);
-    return (s.clips || []).find((item) => item.id === c.activeMotionUnitId) || (s.clips || [])[0] || ensureGuidedMotionUnit(s, guidedCurrentShotStill(s)?.name || "", null);
+    return (s.clips || []).find((item) => item.id === c.activeMotionUnitId) || (s.clips || [])[0]
+      || (create ? ensureGuidedMotionUnit(s, guidedCurrentShotStill(s)?.name || "", null) : null);
   }`,
-        `  function activeUnit(s) {
+        `  function activeUnit(s, create = true) {
     const c = ensureShotCreation(s);
     const anywhere = (P.shots || []).flatMap((shot) => shot.clips || []).find((item) => item.motionBrief && String(item.motionBrief.performance?.action || ""));
-    return anywhere || (s.clips || []).find((item) => item.id === c.activeMotionUnitId) || (s.clips || [])[0] || ensureGuidedMotionUnit(s, guidedCurrentShotStill(s)?.name || "", null);
+    return anywhere || (s.clips || []).find((item) => item.id === c.activeMotionUnitId) || (s.clips || [])[0]
+      || (create ? ensureGuidedMotionUnit(s, guidedCurrentShotStill(s)?.name || "", null) : null);
   }`,
       ]],
     },

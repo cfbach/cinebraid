@@ -452,6 +452,11 @@
     "routeRequirementsKnown",
     "requiredFrameCount",
     "hasMotionUnit",
+    /* IS MOTION OWED, as canonical readiness answers it: a REQUIRED motion unit exists
+       because the shot's declared route or delivery includes motion. Distinct from
+       `hasMotionUnit`, which also counts a unit the shot merely carries so that its
+       workspace stays reachable. Only the Motion stage's `optional` reads it. */
+    "motionRequired",
     "motionReadinessStatus",
     "motionReadinessReason",
     "motionCandidateCount",
@@ -483,6 +488,11 @@
        stage derivations consume those facts rather than parsing route vocabulary or
        inferring intent from frame counts. */
     "deliveryRoute",
+    /* THE CODE OF THE SHOT'S NEXT READINESS ACTION, exactly as canonical readiness
+       returned it. The declaration above already says which stage completes each code;
+       this fact lets the recommendation below ask it, so a shot with no stored stage
+       opens where its next action is done rather than on the first stage not started. */
+    "readinessActionCode",
   ]);
 
   function stageCount(value) {
@@ -508,6 +518,7 @@
       routeRequirementsKnown: !!raw.routeRequirementsKnown,
       requiredFrameCount: stageCount(raw.requiredFrameCount),
       hasMotionUnit: !!raw.hasMotionUnit,
+      motionRequired: !!raw.motionRequired,
       motionReadinessStatus: stageText(raw.motionReadinessStatus),
       motionReadinessReason: stageText(raw.motionReadinessReason),
       motionCandidateCount: stageCount(raw.motionCandidateCount),
@@ -518,6 +529,7 @@
       lifecycleKey: stageText(raw.lifecycleKey),
       deliveryIntent: stageText(raw.deliveryIntent),
       deliveryRoute: stageText(raw.deliveryRoute),
+      readinessActionCode: stageText(raw.readinessActionCode),
     };
   }
 
@@ -880,6 +892,12 @@
        intent work exists to remove. Where readiness cannot answer at all the count
        falls back to the stored flag and this stays false, exactly as before. */
     if (stage.id === "frames") state.optional = resolved.requiredFrameCount === 0;
+    /* THE SAME RULE FOR MOTION, asked of the same owner. Motion is declared optional
+       because a still shot may skip it; a shot whose declared route or delivery owes
+       motion may not, and labelling that stage optional beside "Produce the motion"
+       was two answers to one question. Where readiness cannot answer, the fact is
+       false and the declared default stands. */
+    if (stage.id === "motion") state.optional = !resolved.motionRequired;
     const recommended = state.recommendedNext || recommendedNextFor(stage.id, resolved);
     /* A recommendation that is not a declared successor is a bug, not a shortcut. */
     return { ...state, recommendedNext: stage.next.includes(recommended) ? recommended : "" };
@@ -891,12 +909,17 @@
   }
 
   /* Which stage navigation should select when the filmmaker has expressed no
-     preference: the first one a machine is working on, then the first needing
-     attention, then the first not yet done, and finally the last declared stage.
+     preference: the first one a machine is working on, then the stage holding a
+     returned result that waits for a decision, then the stage that completes the shot's
+     next readiness action, then the first needing attention, then the first not yet
+     done, and finally the last declared stage. This is the Shot Desk's own precedence
+     (shotLeadingAction in public/creation-studio.js), so the strip opens on the stage
+     whose work the Desk is leading with.
      The final fallback is read off the declaration rather than written as "deliver",
      so adding a sixth stage cannot leave this pointing at the fifth. */
   function recommendedShotStageId(facts) {
-    const states = shotStageProgress(facts);
+    const resolved = normaliseShotStageFacts(facts);
+    const states = shotStageProgress(resolved);
     /* "THE FIRST ONE A MACHINE IS WORKING ON" IS ASKED OF `activity`, NOT OF THE
        COLOUR. The two used to coincide because the activity branch always painted
        `active`; now that approved work outranks a run for the STATUS WORD (see
@@ -906,7 +929,26 @@
        not. */
     const working = states.find((state) => state.activity);
     if (working) return working.id;
-    for (const tone of ["active", "attention", "pending"]) {
+    const active = states.find((state) => state.tone === "active");
+    if (active) return active.id;
+    /* A RETURNED RESULT WAITING FOR A DECISION LEADS, as it leads the Desk. These are the
+       two facts that put Frames and Motion into review; Look & blocking's review is of
+       planning attempts, which are not production results, so it no longer opens ahead
+       of a returned Frame A that the Desk is asking the filmmaker to review. */
+    const returned = states.find((state) => state.tone === "attention"
+      && ((state.id === "frames" && resolved.frameNeedsReview)
+        || (state.id === "motion" && resolved.lifecycleKey === "review-motion")));
+    if (returned) return returned.id;
+    /* WHERE THE NEXT ACTION IS DONE, BEFORE WHATEVER IS MERELY NOT STARTED.
+       "The first stage not yet done" is Look & blocking on almost every shot, because
+       that stage is declared optional and is usually skipped. So a shot whose Desk said
+       "Produce the motion" opened on Look & blocking with "Open Look & blocking" in the
+       bar. The stage that owns the readiness action is the declaration's own answer
+       (shotStageForReadinessAction); a code that belongs to a route such as Production,
+       or no code at all, falls through to the scans below exactly as before. */
+    const owner = shotStageForReadinessAction(resolved.readinessActionCode);
+    if (owner && SHOT_STAGE_IDS.includes(owner.id)) return owner.id;
+    for (const tone of ["attention", "pending"]) {
       const match = states.find((state) => state.tone === tone);
       if (match) return match.id;
     }
