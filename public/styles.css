@@ -2624,6 +2624,8 @@ body[data-focused-workspace="1"] .coverage-slot-card.focused-slot-selected .cove
 .shot-readiness-list>a{grid-template-columns:minmax(90px,.2fr) minmax(0,auto) minmax(0,1fr) auto}
 .shot-readiness-list>a b{color:var(--text);text-transform:none}
 .shot-readiness-list>a small{font-size:11px;color:var(--muted);min-width:0}
+/* A row led by something other than readiness keeps its readiness on a line of its own. */
+.shot-readiness-list .readiness-also{display:block;margin-top:2px}
 .readiness-status{font:700 10px var(--mono);letter-spacing:.06em;white-space:nowrap}
 .readiness-status.readiness-ready{color:var(--ok,var(--acc))}
 .readiness-status.readiness-blocked{color:var(--amber)}

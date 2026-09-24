@@ -794,6 +794,10 @@ async function checkNoVisibleChange(baseline) {
       "requiredFramesApproved",
       "motionReadinessStatus",
       "motionReadinessReason",
+      /* Both are readiness projections too: whether a required motion unit exists, and
+         the code of readiness's next action. The declared route is what changes them. */
+      "motionRequired",
+      "readinessActionCode",
     ]) delete copy[key];
     return JSON.stringify(copy);
   };
@@ -816,6 +820,8 @@ async function checkNoVisibleChange(baseline) {
       route + ": a declared Shot Intent must produce known route requirements");
     assert.strictEqual(routed.facts.requiredFrameCount, requiredFramesByRoute[route],
       route + ": the stage fact must carry the intended frame requirement");
+    assert.strictEqual(routed.facts.motionRequired, true,
+      route + ": every declared route owes motion, so the stage fact must say so");
     assert.strictEqual(withoutRouteProjection(routed.facts), withoutRouteProjection(baseline.facts),
       route + ": declaring Shot Intent disturbed facts outside the readiness projection");
 

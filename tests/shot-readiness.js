@@ -1299,6 +1299,73 @@ async function renderedSurfaceSection() {
   })).status, "COMPLETE", "and marking it final completes the shot");
 }
 
+/* ===========================================================================
+   THE PRODUCE SENTENCE NAMES THE METHOD IN THE FILMMAKER'S WORDS.
+
+   It read "Produce Motion a using i2v." on the Shot Desk, the Shot Board and
+   Production: the clip's lower-case storage suffix and the resolver's contract token.
+   The method is now named by modeLanguage() — the words the Shot intent control uses
+   for the same choice — and a stored unit by its display label, the way a frame is
+   "Frame A". Asked of every declared route, of a frame with and without references,
+   and of a unit stored with a label and with only a suffix.
+   =========================================================================== */
+{
+  const { modeLanguage, CINEBRAID_MODE_LANGUAGE } = require(path.join(PUBLIC, "shared-generation-options.js"));
+  const TOKEN = new RegExp(`(^|[^A-Za-z-])(${Object.keys(CINEBRAID_MODE_LANGUAGE).map((mode) => mode.replace(/-/g, "\\-")).join("|")})([^A-Za-z-]|$)`);
+  const sentences = [];
+  const said = (row, unitId, expected, message) => {
+    const unit = unitOf(row, unitId);
+    equal(unit.nextAction.message, expected, message);
+    equal(unit.nextAction.message, `Produce ${unit.label} · ${modeLanguage(unit.admissible)}.`,
+      `${message}: the method is the unit's own admissible method, in modeLanguage()'s words`);
+    sentences.push(unit.nextAction.message, row.nextAction.message);
+  };
+
+  /* A frame made from approved references, and one made from a description alone. */
+  const referenced = castProject({ shots: [castShot("SH-WORDS-FRAME")] });
+  approveWholeCast(referenced);
+  const frameRow = shotOf(referenced, "SH-WORDS-FRAME", oracleFor());
+  equal(frameRow.nextAction.code, "produce-frame", "precondition: the frame is the next work");
+  said(frameRow, "frame:frame-a", "Produce Frame A · Create from approved references.", "a frame made from approved references");
+  const described = project({ shots: [shot("SH-WORDS-T2I")] });
+  said(shotOf(described, "SH-WORDS-T2I", oracleFor([])), "frame:frame-a", "Produce Frame A · Create from a written description.",
+    "a frame with no reference to work from");
+
+  /* Every declared route, once its route inputs are approved. */
+  const ROUTE_WORDS = {
+    t2v: ["", "Create from scratch"],
+    i2v: ["A", "Animate from first frame"],
+    flf: ["AB", "Animate between frames"],
+    r2v: ["", "Animate using references"],
+    hybrid: ["AB", "Animate between frames"],
+  };
+  const TAKES = { A: { name: "A.png", url: "/shots/A.png" }, B: { name: "B.png", url: "/shots/B.png" } };
+  for (const [route, [approved, words]] of Object.entries(ROUTE_WORDS)) {
+    for (const [variant, clips, label] of [
+      ["no stored unit", [], "Motion"],
+      ["a unit stored with its label", [{ id: "seg-1", suffix: "a", label: "A", title: "Primary motion", dur: 4, kind: route, fromFrame: "frame-a", toFrame: "", generationPackages: [] }], "Motion A"],
+      ["a unit stored with only its suffix", [{ id: "seg-2", suffix: "b", dur: 4, kind: route, fromFrame: "frame-a", toFrame: "", generationPackages: [] }], "Motion B"],
+    ]) {
+      const id = `SH-WORDS-${route.toUpperCase()}-${clips.length ? clips[0].id.toUpperCase() : "SHOT"}`;
+      const P = castProject({ shots: [castShot(id, {
+        deliveryRoute: route,
+        keyframes: [{ id: "frame-a", label: "A", required: true }, { id: "frame-b", label: "B", required: true }],
+        clips,
+      })] });
+      approveWholeCast(P);
+      for (const letter of approved) approveFrame(P, id, `frame-${letter.toLowerCase()}`, TAKES[letter].name);
+      const row = shotOf(P, id, oracleFor(undefined, { [id]: [...approved].map((letter) => TAKES[letter]) }));
+      const unitId = clips.length ? `motion:${clips[0].id}` : "motion:shot";
+      equal(row.nextAction.code, "produce-motion", `precondition: ${route} with ${variant} is ready to produce its motion`);
+      said(row, unitId, `Produce ${label} · ${words}.`, `${route}, ${variant}`);
+    }
+  }
+  for (const text of sentences) {
+    ok(!TOKEN.test(text), `no produce sentence carries a method token: ${text}`);
+    ok(!/\bMotion [a-z]\b/.test(text), `no produce sentence carries a lower-case unit suffix: ${text}`);
+  }
+}
+
 renderedSurfaceSection().then(
   () => console.log(`shot-readiness: ${checks} assertions passed`),
   (error) => { console.error(error.stack || error.message || error); process.exit(1); },

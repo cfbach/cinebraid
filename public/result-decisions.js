@@ -26,6 +26,11 @@
     // selecting the first clip when the shot contains several possible targets.
     if(kind==='motion') {
       const clips=shot.clips || [];
+      // A shot with no motion unit has one possible target, its primary unit. Opening the
+      // Motion stage no longer creates it, so it is created here, inside the approval the
+      // filmmaker asked for; open() then waits for the save before the confirmation can be
+      // pressed. prepareMotion() is the shipped setup for exactly this.
+      if(!motionUnit&&!clips.length){prepared={id,name,kind,frameId,slug,epoch};return prepareMotion();}
       if(!motionUnit&&clips.length!==1) {
         prepared={id,name,kind,frameId,slug,epoch};
         openModal('<h3>Choose the motion approval target</h3><p>Approval applies to one declared motion unit. It does not approve its input frames or delivery.</p>'+(clips.length?'<label>Motion unit<select id="rx-motion-target">'+clips.map(u=>'<option value="'+attr(u.id||unitKey(u))+'">'+esc(u.title||u.label||u.id||unitKey(u))+'</option>').join('')+'</select></label>':'<p>This shot has no motion unit yet. Set up the existing primary motion target before reviewing approval.</p>')+'<div class="modal-actions"><button class="cancel" onclick="closeModal()">Cancel</button><button onclick="CineBraidResultDecisions.prepareMotion()">'+(clips.length?'Continue to review':'Set up primary motion target')+'</button></div>');

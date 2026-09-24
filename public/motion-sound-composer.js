@@ -13,9 +13,11 @@
   function clone(value) {
     return JSON.parse(JSON.stringify(value == null ? null : value));
   }
-  function activeUnit(s) {
+  /* `create` is for an act that needs a unit; a render passes false and reads. */
+  function activeUnit(s, create = true) {
     const c = ensureShotCreation(s);
-    return (s.clips || []).find((item) => item.id === c.activeMotionUnitId) || (s.clips || [])[0] || ensureGuidedMotionUnit(s, guidedCurrentShotStill(s)?.name || "", null);
+    return (s.clips || []).find((item) => item.id === c.activeMotionUnitId) || (s.clips || [])[0]
+      || (create ? ensureGuidedMotionUnit(s, guidedCurrentShotStill(s)?.name || "", null) : null);
   }
   function blankSfx() {
     return { timing: "", event: "", source: "", intensity: "restrained", distance: "near", diegetic: true };
@@ -267,14 +269,17 @@
   }
 
   function motionSoundEditor(s) {
-    const unit = activeUnit(s), brief = ensureMotionSoundBrief(s, unit), c = ensureShotCreation(s);
-    if (!unit || !brief) return "";
-    const profileId = unit.motionProfileId || c.motionProfileId || preferredGuidedVideoProfile("");
+    /* Drawn on every Motion render, so it reads and never creates. A shot with no stored
+       unit gets the same launcher with nothing in the brief yet; opening the composer is
+       the act that creates the unit (openMotionSoundComposer). */
+    const unit = activeUnit(s, false), brief = unit ? ensureMotionSoundBrief(s, unit) : null, c = ensureShotCreation(s);
+    if (unit && !brief) return "";
+    const profileId = unit?.motionProfileId || c.motionProfileId || preferredGuidedVideoProfile("");
     const profile = guidedVideoProfiles().find((item) => item.id === profileId);
-    const warnings = motionSoundWarnings(s, unit, profile);
-    const line = String(brief.dialogue?.line || "").trim();
-    const sfxCount = (brief.sound?.sfxEvents || []).filter((item) => String(item.event || "").trim()).length;
-    return `<details class="motion-sound-launcher"><summary><div><span>MOTION & SOUND BRIEF · UNIT ${esc(unit.label || "A")}</span><b>${line ? `${esc(brief.dialogue.speakerName || brief.dialogue.speakerId || "Dialogue")} · locked dialogue` : "Performance, camera, dialogue, and sound"}</b><small>${esc(profile?.name || profileId)} · ${sfxCount} timed SFX event${sfxCount === 1 ? "" : "s"}${warnings.length ? ` · ${warnings.length} warning${warnings.length === 1 ? "" : "s"}` : " · preflight ready"}</small></div><i>Edit brief</i></summary><div class="motion-sound-launcher-body"><p>Edit performance, camera, dialogue, <b>Persistent voice authority</b>, and <b>SFX, ambience & music</b> in a dedicated workspace, then build or AI-improve the model-specific prompt below.</p><button class="ghost-btn" onclick="openMotionSoundComposer('${s.id}','${unit.id}')">Open Motion & Sound Composer</button></div></details>`;
+    const warnings = unit ? motionSoundWarnings(s, unit, profile) : [];
+    const line = String(brief?.dialogue?.line || "").trim();
+    const sfxCount = (brief?.sound?.sfxEvents || []).filter((item) => String(item.event || "").trim()).length;
+    return `<details class="motion-sound-launcher"><summary><div><span>MOTION & SOUND BRIEF · UNIT ${esc(unit?.label || "A")}</span><b>${line ? `${esc(brief.dialogue.speakerName || brief.dialogue.speakerId || "Dialogue")} · locked dialogue` : "Performance, camera, dialogue, and sound"}</b><small>${esc(profile?.name || profileId)} · ${sfxCount} timed SFX event${sfxCount === 1 ? "" : "s"}${warnings.length ? ` · ${warnings.length} warning${warnings.length === 1 ? "" : "s"}` : " · preflight ready"}</small></div><i>Edit brief</i></summary><div class="motion-sound-launcher-body"><p>Edit performance, camera, dialogue, <b>Persistent voice authority</b>, and <b>SFX, ambience & music</b> in a dedicated workspace, then build or AI-improve the model-specific prompt below.</p><button class="ghost-btn" onclick="openMotionSoundComposer('${s.id}','${unit ? unit.id : ""}')">Open Motion & Sound Composer</button></div></details>`;
   }
   window.openMotionSoundComposer = (shotId, unitId = "") => {
     const s = shotById(shotId);

@@ -443,6 +443,9 @@
   const buildEntityOwnerIndexOwner = requireOwner(OWNERSHIP && OWNERSHIP.buildEntityOwnerIndex, "buildEntityOwnerIndex", "shared-entity-ownership.js");
   const resolveMediaOwnershipOwner = requireOwner(OWNERSHIP && OWNERSHIP.resolveMediaOwnership, "resolveMediaOwnership", "shared-entity-ownership.js");
   const resolveTaskModesOwner = requireOwner(OPTIONS && OPTIONS.resolveTaskModes, "resolveTaskModes", "shared-generation-options.js");
+  /* The filmmaker's name for a method. A resolver token (`i2v`, `multi-reference`) is a
+     contract name and never reaches a sentence this module writes. */
+  const modeLanguageOwner = requireOwner(OPTIONS && OPTIONS.modeLanguage, "modeLanguage", "shared-generation-options.js");
   const deriveLipSyncOwner = requireOwner(LIP_SYNC && LIP_SYNC.deriveLipSync, "deriveLipSync", "shared-lip-sync.js");
   const canonicalShotRouteOwner = requireOwner(ROUTE && ROUTE.canonicalShotRoute, "canonicalShotRoute", "shared-shot-route.js");
   const shotRouteGenerationModeOwner = requireOwner(ROUTE && ROUTE.shotRouteGenerationMode, "shotRouteGenerationMode", "shared-shot-route.js");
@@ -1052,7 +1055,9 @@
       units.push({
         id: `motion:${text(clip.id)}`,
         kind: "motion",
-        label: `Motion ${text(clip.suffix) || text(clip.id)}`,
+        /* The unit's display label, as frames use theirs ("Frame A"). `suffix` is the
+           lower-case storage key, which is how "Motion a" reached the screen. */
+        label: `Motion ${text(clip.label) || text(clip.suffix).toUpperCase() || text(clip.id)}`,
         clip,
         /* A STORED CLIP IS NOT A DECLARATION. This was unconditionally `true`, and it
            is the defect the Codex review demonstrated: a legacy `post` clip — a
@@ -1361,9 +1366,12 @@
     if (status !== "READY") {
       return action("nothing-outstanding", "No execution method is admissible for this unit.", 0);
     }
+    /* The method in the words the Shot intent control uses for it: "Produce Motion A ·
+       Animate from first frame.", never "Produce Motion a using i2v.". */
+    const method = methods.admissible ? ` · ${modeLanguageOwner(methods.admissible)}` : "";
     return unit.kind === "motion"
-      ? action("produce-motion", `Produce ${unit.label}${methods.admissible ? ` using ${methods.admissible}` : ""}.`, 1)
-      : action("produce-frame", `Produce ${unit.label}${methods.admissible ? ` using ${methods.admissible}` : ""}.`, 1);
+      ? action("produce-motion", `Produce ${unit.label}${method}.`, 1)
+      : action("produce-frame", `Produce ${unit.label}${method}.`, 1);
   }
 
   function decisionMessage(row, count) {

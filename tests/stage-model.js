@@ -380,12 +380,24 @@ async function checkRepresentativeStates() {
 
   /* Optionality is DECLARED, and is a different question from completion. */
   assert.strictEqual(S1.byId.look.optional, true, "planning may be skipped where appropriate");
-  assert.strictEqual(S1.byId.motion.optional, true, "a still shot never needs motion");
+  /* S1 declares Animate from first frame, so it OWES motion. This line used to assert
+     `true` under the message "a still shot never needs motion" — on a shot that is not a
+     still shot — which is the contradiction the 6.9 newcomer audit found on screen:
+     "Motion · optional" beside "Produce the motion". Motion is optional exactly where
+     canonical readiness owes no motion unit, which the still shot below demonstrates. */
+  assert.strictEqual(S1.byId.motion.optional, false, "a shot whose declared route animates its first frame owes motion");
   assert.strictEqual(S1.byId.frames.optional, false);
+  const stillShot = authoritativeFixture("");
+  stillShot.shots[0].clips = [];
+  stillShot.shots[0].creationBrief = { ...(stillShot.shots[0].creationBrief || {}), deliveryIntent: "still" };
+  const STILL = await stagesFor(stillShot, ["FRAME_A.png"]);
+  assert.strictEqual(STILL.facts.motionRequired, false, "precondition: readiness owes a still shot no motion unit");
+  assert.strictEqual(STILL.byId.motion.optional, true, "a still shot never needs motion");
   const description = authoritativeFixture("t2v");
   description.shots[0].clips = [];
   const T2V = await stagesFor(description, ["FRAME_A.png", "FRAME_B.png"]);
   assert.strictEqual(T2V.byId.frames.optional, true, "description-only makes retained Frames optional");
+  assert.strictEqual(T2V.byId.motion.optional, false, "description-only delivery is motion, so Motion is owed");
   assert.strictEqual(T2V.byId.motion.availability, "available", "description-only Motion requires no frame input");
 }
 
