@@ -526,6 +526,32 @@ VISUAL_AUDIT = """
 """
 
 
+# Approval panels use a translucent color-mix over a fixed dark Inspector.
+# Composite the actual CSS colors (including color(srgb ...)), rather than
+# treating the tint as opaque or skipping it in the ancestor background walk.
+APPROVAL_CONTRAST = """selector => {
+  const ctx = document.createElement('canvas').getContext('2d', {willReadFrequently:true});
+  ctx.canvas.width = ctx.canvas.height = 1;
+  const rgba = color => {
+    ctx.clearRect(0,0,1,1); ctx.fillStyle=color; ctx.fillRect(0,0,1,1);
+    const p=[...ctx.getImageData(0,0,1,1).data]; return [...p.slice(0,3),p[3]/255];
+  };
+  const luminance = c => c.map(x=>x/255).map(x=>x<=.04045?x/12.92:((x+.055)/1.055)**2.4)
+    .reduce((sum,x,i)=>sum+x*[.2126,.7152,.0722][i],0);
+  return [...document.querySelectorAll(selector || '.md-inspector .mi-decision.tone-approved b, .md-inspector .mi-disposition.tone-approved b')].map(el=>{
+    const layers=[];
+    for(let node=el;node;node=node.parentElement){
+      const c=rgba(getComputedStyle(node).backgroundColor); layers.push(c); if(c[3]===1)break;
+    }
+    let bg=[255,255,255];
+    for(const c of layers.reverse())bg=c.slice(0,3).map((v,i)=>v*c[3]+bg[i]*(1-c[3]));
+    const color=getComputedStyle(el).color, fg=rgba(color).slice(0,3);
+    return {text:el.textContent.trim(),color,background:getComputedStyle(el.parentElement).backgroundColor,
+      compositedBackground:bg,ratio:(Math.max(luminance(fg),luminance(bg))+.05)/(Math.min(luminance(fg),luminance(bg))+.05)};
+  });
+}"""
+
+
 def assert_unknown_cost(text):
     assert not re.search(r"(?:USD\s*|\$)0\.00\b",text), "An unknown cost must not be rendered as zero"
 
@@ -806,6 +832,7 @@ try:
                 for row in built["rows"][:5]:
                     page.evaluate("(k) => window.inspectMedia(k)", row["key"])
                     page.wait_for_selector("[data-media-inspector]", timeout=15000)
+                    expand_inspector()
                     surfaces += 1
                     page.mouse.move(0,0)
                     hits = page.evaluate(VISUAL_AUDIT)
@@ -818,6 +845,56 @@ try:
                              + json.dumps(defects, indent=2)[:2200])
         findings.append(f"visual audit: {surfaces} surfaces (4 widths x 2 themes x routes and inspected records) "
                         "with no clipped, vertically cut, invisible, sub-AA, zero-size or broken content")
+
+        # Approval ink must remain legible on the Inspector's fixed dark surface
+        # for every selectable accent, including when the surrounding shell is light.
+        original_appearance = page.evaluate("() => [app.dataset.surf, app.dataset.acc]")
+        approved_rows = [next(r for r in built['rows'] if r['role']=='approved' and r['kind']==kind)
+                         for kind in ('entity-reference','shot-still')]
+        assert {r['kind'] for r in approved_rows} == {'entity-reference','shot-still'}
+        approval_checks = []
+        for width in (1440, 390):
+            page.set_viewport_size({'width':width,'height':950})
+            for theme in ('night','graphite','cool','light'):
+                for accent in ('blue','green','amber','rust'):
+                    page.evaluate("([t,a])=>{app.dataset.surf=t;app.dataset.acc=a}", [theme,accent])
+                    page.wait_for_function("([t,a])=>app.dataset.surf===t && app.dataset.acc===a",arg=[theme,accent])
+                    for row in approved_rows:
+                        page.evaluate('(k)=>inspectMedia(k)',row['key'])
+                        page.wait_for_function("k=>document.querySelector('[data-media-inspector]')?.dataset.miKey===k",arg=row['key'])
+                        expand_inspector()
+                        colors=page.evaluate(APPROVAL_CONTRAST)
+                        assert len(colors)==2, f'approval fixture must render both labels: {colors}'
+                        assert all(c['ratio']>=4.5 for c in colors), f'{width}/{theme}/{accent}: {colors}'
+                        approval_checks.append({'width':width,'theme':theme,'accent':accent,'kind':row['kind'],'colors':colors})
+                        page.evaluate('()=>closeModal()')
+        # Restore the original failing foreground in the browser. The same reader
+        # must detect both low-contrast labels, then pass after removing the mutation.
+        page.evaluate("()=>{app.dataset.surf='light';app.dataset.acc='blue'}")
+        page.evaluate('(k)=>inspectMedia(k)',approved_rows[0]['key'])
+        page.wait_for_selector('[data-media-inspector]')
+        expand_inspector()
+        selector='.md-inspector .mi-decision.tone-approved b, .md-inspector .mi-disposition.tone-approved b'
+        page.locator(selector).evaluate_all("els=>els.forEach(el=>el.style.color='var(--acc)')")
+        broken=page.evaluate(APPROVAL_CONTRAST)
+        assert len(broken)==2 and all(c['ratio']<4.5 for c in broken), f'negative control did not reproduce unreadable approval ink: {broken}'
+        page.locator(selector).evaluate_all("els=>els.forEach(el=>el.style.removeProperty('color'))")
+        assert all(c['ratio']>=4.5 for c in page.evaluate(APPROVAL_CONTRAST))
+        prompt_selector='.md-inspector .mi-prompt pre'
+        prompt=page.evaluate(APPROVAL_CONTRAST,prompt_selector)
+        assert prompt and all(c['ratio']>=4.5 for c in prompt), prompt
+        page.locator(prompt_selector).evaluate_all("els=>els.forEach(el=>el.style.background='var(--bg)')")
+        broken_prompt=page.evaluate(APPROVAL_CONTRAST,prompt_selector)
+        assert broken_prompt and all(c['ratio']<4.5 for c in broken_prompt), broken_prompt
+        page.locator(prompt_selector).evaluate_all("els=>els.forEach(el=>el.style.removeProperty('background'))")
+        assert all(c['ratio']>=4.5 for c in page.evaluate(APPROVAL_CONTRAST,prompt_selector))
+        print('prompt contrast positive / negative control: '+json.dumps({'positive':prompt,'negative':broken_prompt}),flush=True)
+        print('approval contrast evidence: '+json.dumps(approval_checks),flush=True)
+        print('approval contrast negative control: '+json.dumps(broken),flush=True)
+        page.evaluate('()=>closeModal()')
+        page.evaluate("([t,a])=>{app.dataset.surf=t;app.dataset.acc=a}",original_appearance)
+        page.set_viewport_size({'width':1440,'height':950})
+        findings.append(f'approval contrast: {len(approval_checks)} theme/accent/viewport/record cases clear 4.5:1; original dark-ink mutation detected')
 
         # ---- 13. accepted review surface remains neutral under either shell theme.
         page.evaluate("(k)=>inspectMedia(k)",target_key)
