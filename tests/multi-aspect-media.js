@@ -498,10 +498,16 @@ function projectAt(label, { shotOverride } = {}) {
   }
   return project;
 }
-/* Approvals cleared so RETURNED RESULTS has a decision to show. */
+/* These format checks judge reviewable results. Declare each candidate's target
+ * from the fixture's stored frame before clearing its winner; filenames alone
+ * cannot assign the two scan images to either frame. */
 function pendingAt(label, options) {
   const project = projectAt(label, options);
-  for (const shot of project.shots) for (const frame of shot.keyframes || []) frame.winner = '';
+  for (const shot of project.shots) {
+    shot.candidateFiles = (shot.keyframes || []).map(frame =>
+      ({stored:frame.winner,frameId:frame.id,decision:'unreviewed'}));
+    for (const frame of shot.keyframes || []) frame.winner = '';
+  }
   return project;
 }
 
@@ -515,6 +521,25 @@ async function main() {
     note('dirty probe: an older record reads as one owed write-back at once, fired or not; every fixture below is current, so it owes none');
   }
 
+  /* Preserve the original failing fixture as a negative target control. Its two
+   * identity-less receipts no longer have live winners, and neither scan image
+   * has a frameId. A production aspect ratio supplies no missing provenance. */
+  {
+    const unbound = projectAt('16:9');
+    for (const shot of unbound.shots) for (const frame of shot.keyframes || []) frame.winner = '';
+    const page = await render('#/production', unbound);
+    const rows = JSON.parse(vm.runInContext(`JSON.stringify(returnedReviewProjectionForBrowser().items
+      .filter(row => row.shotId === "L1-01")
+      .map(row => ({name:row.candidate.name,frameId:row.owner.frameId,reason:row.unreviewable,actions:row.actions})))`, page.context));
+    assert.deepStrictEqual(rows, ['FRAME_A.png', 'FRAME_B.png'].map(name =>
+      ({name,frameId:'',reason:'frame-target-unresolved',actions:[]})),
+      'format metadata cannot assign an unstamped multi-frame result');
+    assert(!page.html.includes('production-inbox-shell'),
+      'unresolved targets do not render as returned review rows with production wells');
+    assert.strictEqual(saveRevision(page.context), 0, 'reading unresolved targets must not dirty the project');
+    note('unbound multi-frame images stay unresolved; format metadata neither assigns nor rewrites them');
+  }
+
   for (const format of FORMATS) {
     const board = await render('#/shots', projectAt(format.label));
     const expected = Aspect.overviewAspectCss(Aspect.resolveAspect(format.label));
@@ -525,6 +550,10 @@ async function main() {
     assert.strictEqual(saveRevision(board.context), 0, `${format.label}: rendering the board must not mark the project dirty`);
 
     const production = await render('#/production', pendingAt(format.label));
+    assert.deepStrictEqual(JSON.parse(vm.runInContext(`JSON.stringify(returnedReviewProjectionForBrowser().queue
+      .filter(row => row.shotId === "L1-01").map(row => row.owner.frameId + ":" + row.candidate.name))`, production.context)),
+      ['frame-a:FRAME_A.png', 'frame-b:FRAME_B.png'],
+      `${format.label}: both explicitly bound frame results remain reviewable`);
     assert(
       production.html.includes(`--cb-well-aspect:${expected}`),
       `${format.label}: the returned-results row must carry the production format too, not only the board`,

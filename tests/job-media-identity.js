@@ -33,7 +33,7 @@ const vm = require("vm");
 const { spawn } = require("child_process");
 
 const D = require("../public/shared-media-disposition");
-const { render, buildFixture } = require("./render-harness");
+const { render, buildFixture, withCanon } = require("./render-harness");
 
 const ROOT = path.resolve(__dirname, "..");
 const ID_A = "asset-" + "a".repeat(32);
@@ -228,10 +228,25 @@ function repairSection() {
    helper they call, because the point of C4's reader half is that the LIVE
    surface resolves identity-first — a suite that only exercised
    jobOutputMatcher() would pass with the readers still matching strings. */
-async function readerSection(options = {}) {
+async function readerCase(binding, options = {}) {
   const project = buildFixture();
   const shot = project.shots.find((row) => row.id === "L1-01") || project.shots[0];
-  const frame = (shot.keyframes || [])[0];
+  let frame = (shot.keyframes || [])[0];
+  if (binding === "explicit-a" || binding === "explicit-b") {
+    frame = shot.keyframes[binding === "explicit-b" ? 1 : 0];
+    shot.candidateFiles = ["RENAMED_A.png", "TAKE_2.png"].map(stored =>
+      ({stored,frameId:frame.id,decision:"unreviewed"}));
+  } else if (binding === "single") {
+    shot.keyframes = [frame];
+    frame.winner = "";
+    project.productionAuthority.receipts = [];
+  } else if (binding === "receipt-b") {
+    frame = shot.keyframes[1];
+    frame.winner = "RENAMED_A.png";
+    frame.winnerAssetId = ID_A;
+    project.productionAuthority.receipts = [];
+    withCanon(project, [{kind:"shot-frame",shotId:shot.id,frameId:frame.id,value:frame.winner,assetId:ID_A}]);
+  }
   const scan = {
     anchors: [], plates: [], props: [], vehicles: [], audio: [], media: [],
     shots: { [shot.id]: {
@@ -264,20 +279,59 @@ async function readerSection(options = {}) {
       filenameOnly: v626FrameRowsFromJob(s.id, frameId, filenameOnly).map((row) => row.name),
       stale: v626FrameRowsFromJob(s.id, frameId, stale).map((row) => row.name),
       matcherIsShared: typeof jobOutputMatcher === "function",
+      identifiedBytes: takesFor(s.id).filter(jobOutputMatcher(identified)).map(row => row.name),
+      frameRows: s.keyframes.map((f,i) => ({frameId:f.id,names:guidedFrameCandidateRows(s,f,takesFor(s.id),i).map(row => row.name)})),
+      unresolved: returnedReviewProjectionForBrowser().items.filter(row => row.shotId === s.id && row.unreviewable === "frame-target-unresolved")
+        .map(row => ({name:row.candidate.name,frameId:row.owner.frameId,actions:row.actions})),
       readerSource: String(v626FrameRowsFromJob),
     };
   })())`, rendered.context));
 
   assert.strictEqual(seen.matcherIsShared, true,
     "the shared job-output resolver is loaded in the browser scope before automation.js uses it");
-  assert.deepStrictEqual(seen.identified, ["RENAMED_A.png"],
-    "the live frame reader resolves a job's delivery through identity after the approval rename moved it");
-  assert.deepStrictEqual(seen.filenameOnly, ["TAKE_2.png"],
-    "and a pre-C4 job with no identity still resolves by filename exactly as before");
-  assert.deepStrictEqual(seen.stale, [],
-    "while an output naming nothing resolves to nothing rather than to a neighbour");
   assert(/jobOutputMatcher/.test(seen.readerSource),
     "the live reader routes through the one resolver rather than re-deriving a filename Set");
+  return seen;
+}
+
+async function readerSection(options = {}) {
+  let seen;
+  for (const binding of ["explicit-a", "explicit-b", "single"]) {
+    seen = await readerCase(binding, options);
+    assert.deepStrictEqual(seen.identified, ["RENAMED_A.png"],
+      `${binding}: the live frame reader resolves a job's delivery through identity after the approval rename moved it`);
+    assert.deepStrictEqual(seen.filenameOnly, ["TAKE_2.png"],
+      `${binding}: a pre-C4 job still matches by filename once frame ownership is established`);
+    assert.deepStrictEqual(seen.stale, [],
+      `${binding}: an output naming nothing resolves to nothing rather than to a neighbour`);
+    assert.deepStrictEqual(seen.unresolved, [], `${binding}: both candidates have a provable target`);
+    assert.deepStrictEqual(seen.frameRows.filter(row => row.names.length), [{
+      frameId: binding === "explicit-b" ? "frame-b" : "frame-a",
+      names: ["RENAMED_A.png", "TAKE_2.png"],
+    }], `${binding}: the candidates appear only under their intended frame`);
+  }
+
+  /* The original two-frame fixture supplied byte identity but no frame binding.
+   * A reader's frameId argument and a job's output name cannot supply provenance. */
+  const unbound = await readerCase("unbound", options);
+  assert.deepStrictEqual(unbound.identifiedBytes, ["RENAMED_A.png"],
+    "the job still identifies the renamed bytes independently of frame ownership");
+  assert.deepStrictEqual(unbound.identified, [], "an asset match alone cannot bind a multi-frame result");
+  assert.deepStrictEqual(unbound.filenameOnly, [], "a filename match alone cannot bind a multi-frame result");
+  assert.deepStrictEqual(unbound.stale, [], "a stale output still resolves to nothing");
+  assert.deepStrictEqual(unbound.unresolved, ["RENAMED_A.png", "TAKE_2.png"].map(name =>
+    ({name,frameId:"",actions:[]})), "the original unbound results remain unresolved and unactionable");
+
+  const receipt = await readerCase("receipt-b", options);
+  assert.deepStrictEqual(receipt.identified, ["RENAMED_A.png"],
+    "an exact asset-matched Frame B receipt preserves the renamed job result");
+  assert.deepStrictEqual(receipt.filenameOnly, [], "the neighbouring unbound take does not inherit the receipt");
+  assert.deepStrictEqual(receipt.stale, [], "the receipt does not revive a stale filename-only output");
+  assert.deepStrictEqual(receipt.frameRows, [
+    {frameId:"frame-a",names:[]}, {frameId:"frame-b",names:["RENAMED_A.png"]},
+  ], "the receipt establishes Frame B, not the first frame");
+  assert.deepStrictEqual(receipt.unresolved, [{name:"TAKE_2.png",frameId:"",actions:[]}],
+    "only the result without the receipt remains unresolved");
 
   /* The second live reader, asserted at source because it runs only inside an
      entity automation turn. Wiring rather than behaviour, and named as such. */
@@ -286,7 +340,7 @@ async function readerSection(options = {}) {
   assert.strictEqual(entityReader.length, 1, "there is exactly one entity-state job reader to keep honest");
   assert(/jobOutputMatcher/.test(entityReader[0]),
     "and it resolves through the shared matcher rather than a filename list");
-  console.log("  readers · the live frame reader resolves identity-first, a pre-C4 job still resolves by filename, and both job readers route through the one resolver");
+  console.log("  readers · explicit A/B, single-frame legacy and exact Frame B receipts preserve job identity; unbound multi-frame results stay unresolved");
   return seen;
 }
 
