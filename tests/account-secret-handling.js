@@ -250,11 +250,16 @@ async function main() {
   assert.strictEqual(after.openaiKey, OPENAI_KEY);
 
   /* ---- B4. the preflight's G1 gap: a NEW account with a placeholder is refused ---- */
+  const accountsBeforeInvented = onDisk().accounts;
+  // A real random ID may start with conn-ff. Choose an absent full identity:
+  // with two stored connections, at least one of these three IDs is available.
+  const inventedId = ["f", "e", "d"].map((hex) => "conn-" + hex.repeat(32))
+    .find((id) => !accountsBeforeInvented.some((row) => row.connectionId === id));
   const invented = await server.request("/api/config", {
     method: "PUT", headers: { "content-type": "application/json" },
     body: JSON.stringify({
       accounts: [{
-        connectionId: "conn-" + "f".repeat(32), providerId: "civitai", status: "connected",
+        connectionId: inventedId, providerId: "civitai", status: "connected",
         credential: { tokenSource: "api_key", apiKey: `${MASK_PREFIX}9999` },
       }],
     }),
@@ -263,7 +268,10 @@ async function main() {
   assert.strictEqual(invented.body.code, "ACCOUNT_ENDPOINT_REQUIRED");
   after = onDisk();
   assert.strictEqual(after.accounts.length, 2, "a config PUT must not be able to invent a connection");
-  assert(!after.accounts.some((row) => row.connectionId.startsWith("conn-ff")));
+  assert(!after.accounts.some((row) => row.connectionId === inventedId),
+    "the exact invented connection must not be stored");
+  assert.deepStrictEqual(after.accounts, accountsBeforeInvented,
+    "refusing an invented connection must leave every stored account unchanged");
 
   /* ---- B5. nor may a config PUT delete, blank or overwrite a credential ---- */
   for (const attempt of [
