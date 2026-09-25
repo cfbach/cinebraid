@@ -227,11 +227,18 @@ async function main() {
       const { render, buildFixture } = require("./render-harness");
       const project = buildFixture();
       const shot = project.shots.find((row) => row.id === "L1-01") || project.shots[0];
+      shot.candidateFiles = [{stored:"RENAMED_A.png",frameId:shot.keyframes[0].id,decision:"unreviewed"}];
       const scan = {
         anchors: [], plates: [], props: [], vehicles: [], audio: [], media: [],
         shots: { [shot.id]: { takes: [{ name: "RENAMED_A.png", url: "/assets/x/RENAMED_A.png", assetId: suite.ID_A }], locked: [], blocking: [] } },
       };
       const rendered = await render(`#/shot/${shot.id}`, project, { mutateSource: mutate, scan });
+      const eligible = JSON.parse(vm.runInContext(`JSON.stringify((() => {
+        const s = P.shots.find(row => row.id === ${JSON.stringify(shot.id)});
+        return guidedFrameCandidateRows(s,s.keyframes[0],takesFor(s.id),0).map(row => row.name);
+      })())`, rendered.context));
+      assert.deepStrictEqual(eligible, ["RENAMED_A.png"],
+        "NC-D precondition: the explicitly bound take is eligible before the sabotaged job matcher runs");
       const rows = JSON.parse(vm.runInContext(`JSON.stringify((() => {
         const s = P.shots.find((row) => row.id === ${JSON.stringify(shot.id)});
         const job = { id: "j1", outputs: [{ type: "candidate", name: "PRE_RENAME_A.png", url: "/assets/shots/" + s.id + "/takes/PRE_RENAME_A.png", mediaAssetId: ${JSON.stringify(suite.ID_A)} }] };

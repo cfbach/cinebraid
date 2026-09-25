@@ -326,11 +326,43 @@ async function main() {
   const board = await render('#/shots', buildFixture());
   const library = await render('#/library', buildFixture());
 
-  /* RETURNED RESULTS only lists frames with candidates and no approval yet, so the
-   * production fixture has its approvals cleared to put a decision in the inbox. */
+  /* The old fixture cleared both winners but gave neither scanned image a frame
+   * binding. Retain that exact case: it is unresolved, not an image to review. */
+  const unbound = buildFixture();
+  for (const shot of unbound.shots) for (const frame of shot.keyframes || []) frame.winner = '';
+  const unresolved = await render('#/production', unbound);
+  const unresolvedRows = JSON.parse(vm.runInContext(`JSON.stringify(returnedReviewProjectionForBrowser().items
+    .filter(row => row.shotId === "L1-01")
+    .map(row => ({name:row.candidate.name,frameId:row.owner.frameId,reason:row.unreviewable,actions:row.actions})))`, unresolved.context));
+  assert.deepStrictEqual(unresolvedRows, ['FRAME_A.png', 'FRAME_B.png'].map(name =>
+    ({name,frameId:'',reason:'frame-target-unresolved',actions:[]})),
+    'unstamped two-frame images remain visible as unresolved records with no decision actions');
+  assert(!unresolved.html.includes('production-enlarge'),
+    'an unresolved target must not acquire a review-row enlargement control');
+
+  /* Keep the original enlargement contract on results with declared provenance.
+   * Capture the fixture's stored target before clearing its approval pointer. */
   const pending = buildFixture();
-  for (const shot of pending.shots) for (const frame of shot.keyframes || []) frame.winner = '';
+  for (const shot of pending.shots) {
+    shot.candidateFiles = (shot.keyframes || []).map(frame =>
+      ({stored:frame.winner,frameId:frame.id,decision:'unreviewed'}));
+    for (const frame of shot.keyframes || []) frame.winner = '';
+  }
   const production = await render('#/production', pending);
+  assert.deepStrictEqual(JSON.parse(vm.runInContext(`JSON.stringify(returnedReviewProjectionForBrowser().queue
+    .filter(row => row.shotId === "L1-01").map(row => row.owner.frameId + ":" + row.candidate.name))`, production.context)),
+    ['frame-a:FRAME_A.png', 'frame-b:FRAME_B.png'],
+    'the enlargement fixture reviews the explicitly bound image for each frame');
+
+  const single = JSON.parse(JSON.stringify(unbound));
+  single.shots[0].keyframes = single.shots[0].keyframes.slice(0, 1);
+  const singlePage = await render('#/production', single);
+  assert.deepStrictEqual(JSON.parse(vm.runInContext(`JSON.stringify(returnedReviewProjectionForBrowser().queue
+    .filter(row => row.shotId === "L1-01").map(row => row.owner.frameId + ":" + row.candidate.name))`, singlePage.context)),
+    ['frame-a:FRAME_A.png', 'frame-a:FRAME_B.png'],
+    'a single-frame legacy fixture remains unambiguous despite suggestive filenames');
+  assert(singlePage.html.includes('production-enlarge'),
+    'single-frame legacy results retain the same enlargement affordance');
 
   const surfaces = [
     ['shot board card', board.html, 'slate-enlarge'],
