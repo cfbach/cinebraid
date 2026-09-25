@@ -5,6 +5,14 @@
   'use strict';
   let prepared = null;
   const exact = (id, name) => takesFor(id).find(x => x.name === name);
+  function recordedFrameTarget(shot, name, frameId, assetId) {
+    const frames = shot.keyframes || [];
+    const row = shotCandidateRowFor(shot, name);
+    if (row?.frameId) return row.frameId === frameId;
+    if (frames.length === 1) return frames[0].id === frameId;
+    const receipt = currentHumanAuthority(P, { kind: 'shot-frame', shotId: shot.id, frameId });
+    return !!assetId && receipt?.value === name && receipt.assetId === assetId;
+  }
   function durableTarget(id, name) {
     if (approvalSubmissionPending() || !projectSaveSettled().settled) return null;
     const media = exact(id, name), stored = durableProjectBaseline();
@@ -40,6 +48,7 @@
     }
     const authorityTarget=target || {kind:'shot-motion',shotId:id,unitKey:motionUnit || shot.clips[0].id || unitKey(shot.clips[0])};
     if(kind==='frame' && !(shot.keyframes||[]).some(f=>f.id===frameId))return toast('This frame no longer exists. Nothing was approved.');
+    if(kind==='frame' && !recordedFrameTarget(shot,name,frameId,media.assetId))return toast('This result has no recorded binding to that frame. Import it to an explicit frame before approval.');
     const savedFinish=finishJobId?durableProjectBaseline()?.finishJobs?.find(j=>j.id===finishJobId):null;
     const sourceFile=savedFinish&&exact(id,savedFinish.sourceFile),sourceReceipt=savedFinish&&currentHumanAuthority(durableProjectBaseline(),authorityTarget);
     const validFinish=savedFinish?.shotId===id&&savedFinish.resultFile===name&&sourceFile?.assetId&&sourceReceipt?.value===savedFinish.sourceFile&&sourceReceipt.assetId===sourceFile.assetId&&projectSaveSettled().settled;
@@ -64,7 +73,9 @@
     const d=prepared,modal=document.querySelector("#modal:not(.hidden) .rx-confirm"),visual=modal?.querySelector("img,video");if(!d?.ready||!visual||visual.getAttribute("src")!==d.url||!(visual.tagName==="VIDEO"?visual.readyState>=1:visual.complete&&visual.naturalWidth>0)||approvalSubmissionPending())return;
     const file=exact(d.id,d.name);
     if(d.slug!==ACTIVE_PROJECT_SLUG||d.epoch!==PROJECT_OPEN_EPOCH||d.revision!==PROJECT_REVISION||file?.assetId!==d.assetId||!projectSaveSettled().settled)return toast('The result or project changed. Cancel and review this exact result again.');
-    const s=shotById(d.id),previous=d.kind==='frame'?s.keyframes.find(f=>f.id===d.authorityTarget.frameId)?.winner:'',at=new Date().toISOString(),args={...d.authorityTarget,value:d.name,assetId:d.assetId,at,via:'results-human-confirmation'};
+    const s=shotById(d.id);
+    if(d.kind==='frame' && !recordedFrameTarget(s,d.name,d.authorityTarget.frameId,d.assetId))return toast('The frame binding changed. Cancel and review this exact result again.');
+    const previous=d.kind==='frame'?s.keyframes.find(f=>f.id===d.authorityTarget.frameId)?.winner:'',at=new Date().toISOString(),args={...d.authorityTarget,value:d.name,assetId:d.assetId,at,via:'results-human-confirmation'};
     const finishing=d.finishJobId?finishJobById(d.finishJobId):null;
     if(d.finishJobId&&(!finishing||finishing.resultFile!==d.name||finishing.shotId!==d.id))return toast("This finishing result changed. Review it again.");
     try {

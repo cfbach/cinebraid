@@ -1127,6 +1127,19 @@
      * file is being used as; what changes is that CineBraid stops saying they
      * chose it. */
     const backedTargets = receiptBackedEdges(input.project, claimed.targets, input.authorityContext);
+    /* A legacy receipt without assetId can keep an existing edge authoritative,
+       but it cannot identify which scan asset an unstamped frame result belongs to.
+       Keep that stronger evidence separate from the ordinary receipt-backed word. */
+    const identityBackedTargets = backedTargets.filter((edge) => {
+      const target = edgeAuthorityTarget(edge, input.authorityContext);
+      let receipt = null;
+      try {
+        receipt = target && AUTHORITY && typeof AUTHORITY.currentHumanAuthority === "function"
+          ? AUTHORITY.currentHumanAuthority(input.project, target) : null;
+      } catch { return false; }
+      return identity.ledger.state === "known" && receipt && text(receipt.assetId) === identity.ledger.value
+        && text(receipt.value) === name;
+    });
     const claimedApproved = text(claimed.role) === "approved";
     const receiptBacked = claimedApproved && backedTargets.length > 0;
     const disposition = claimedApproved && !receiptBacked
@@ -1173,6 +1186,7 @@
           claimed: claimedApproved,
           receiptBacked,
           backedTargets: deepFreeze(backedTargets.map((edge) => text(edge.kind) + ":" + text(edge.id))),
+          identityBackedTargets: deepFreeze(identityBackedTargets.map((edge) => text(edge.kind) + ":" + text(edge.id))),
         }),
       }),
       availability: deepFreeze({ state: item.available === false ? (/missing|not-found|absent/.test(text(item.reason)) ? "missing" : "unavailable") : item.url ? "available" : "unknown", reason: text(item.reason) }),

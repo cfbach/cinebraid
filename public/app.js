@@ -6465,14 +6465,17 @@ function projectNextProductionAction(feed = projectShotReadiness()) {
   if (unavailable.length) {
     const first = unavailable[0];
     const shot = shotById(first.shotId);
+    const unresolved = first.unreviewable === "frame-target-unresolved";
     return {
       kind: "returned-media-unavailable",
       shotId: first.shotId,
-      reviewKey: first.key || "",
+      reviewKey: unresolved ? "" : first.key || "",
       unavailable: unavailable.length,
-      href: shotReviewHref(first.shotId, first.key),
+      href: unresolved ? `#/shot/${encodeURIComponent(first.shotId)}` : shotReviewHref(first.shotId, first.key),
       title: `${first.shotId}${shot?.title ? ` · ${shot.title}` : ""}`,
-      message: `${first.candidate.name} is recorded as a returned result nobody has decided about, and the file is no longer in this project. ${unavailable.length > 1 ? `${plural(unavailable.length, "returned result")} are in this state.` : "Restore the file or dispose of the record before generating more."}`,
+      message: unresolved
+        ? `${first.candidate.name} has no recorded frame target. Open the shot to inspect this result before approving or generating more.${unavailable.length > 1 ? ` ${plural(unavailable.length - 1, "other result")} also need attention.` : ""}`
+        : `${first.candidate.name} is recorded as a returned result nobody has decided about, and the file is no longer in this project. ${unavailable.length > 1 ? `${plural(unavailable.length, "returned result")} need attention.` : "Restore the file or dispose of the record before generating more."}`,
       actionLabel: "OPEN THE SHOT",
     };
   }

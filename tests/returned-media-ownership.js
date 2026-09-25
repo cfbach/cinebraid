@@ -2473,6 +2473,164 @@ async function rc_removedFrameIsNotMissingMedia() {
   note("RC the stale card speaks one clause per declared reason: a removed frame says the frame is gone and never that the media is, missing media keeps its own sentence, and both removal controls reach the same state and the same words");
 }
 
+/* ===========================================================================
+   FT — AN UNSTAMPED STILL IN A MULTI-FRAME SHOT HAS NO ASSUMED FRAME.
+
+   This is a public synthetic analogue of the Pandemonium handoff: a file with a
+   suggestive name and even a Frame A working selection, but no durable frameId.
+   The test judges the projection, both UI surfaces and the approval preflight.
+   =========================================================================== */
+
+async function ft_unboundFrameTarget() {
+  const unbound = candidate("LEGACY_FRAME_C.png", { frameId: null });
+  delete unbound.frameId;
+  const project = projectOf([{
+    id: "L1-01",
+    frames: [{ id: "frame-a", label: "A" }, { id: "frame-b", label: "B" }],
+    candidates: [unbound, candidate("MISSING_B.png", { frameId: "frame-b" })],
+    creationBrief: { frameWorkflows: { "frame-a": { selectedCandidate: "LEGACY_FRAME_C.png" } } },
+  }]);
+  const scan = scanWith(project, { "L1-01": ["LEGACY_FRAME_C.png"] });
+  scan.shots["L1-01"].takes[0].assetId = harnessAssetId("shots/L1-01/takes/LEGACY_FRAME_C.png");
+  const page = await render("#/shot/L1-01", project, { scan });
+  const seen = evaluate(page.context, `
+    const p = returnedReviewProjectionForBrowser();
+    return {
+      queue: p.queue.map(r => r.candidate.name),
+      items: p.items.map(r => ({ name:r.candidate.name, frame:r.owner.frameId, reason:r.unreviewable, blocking:r.blocking, media:r.mediaAvailable, actions:r.actions.length })),
+      frameA: guidedFrameCandidateRows(P.shots[0], P.shots[0].keyframes[0], takesFor("L1-01"), 0).map(r => r.name),
+      frameB: guidedFrameCandidateRows(P.shots[0], P.shots[0].keyframes[1], takesFor("L1-01"), 1).map(r => r.name),
+      next: projectNextProductionAction(),
+    };
+  `);
+  deepEqual(seen.queue, [], "FT1: an unstamped multi-frame result cannot enter any frame review queue");
+  const unknown = seen.items.find(r => r.name === "LEGACY_FRAME_C.png");
+  deepEqual(unknown, { name:"LEGACY_FRAME_C.png", frame:"", reason:"frame-target-unresolved", blocking:true, media:true, actions:0 },
+    "FT1: the present file remains named as an unresolved target with no decision actions");
+  const missing = seen.items.find(r => r.name === "MISSING_B.png");
+  equal(missing.reason, "media-not-available", "FT2: the separately bound missing file keeps its own media-gap reason");
+  deepEqual(seen.frameA, [], "FT3: a Frame A working selection does not silently bind the result");
+  deepEqual(seen.frameB, [], "FT3: a suggestive filename does not bind it to Frame B either");
+  equal(seen.next.kind, "returned-media-unavailable", "FT4: Production leads with the unresolved target instead of generation");
+  ok(/no recorded frame target/.test(seen.next.message), "FT4: Production names the actual integrity condition");
+  equal(seen.next.href, "#/shot/L1-01", "FT4: the action opens the shot rather than a guessed frame review");
+  const card = cardOf(page.context.document.getElementById("main").innerHTML);
+  equal(card.headline, "Frame target needs confirmation", "FT5: the shot card does not say the present file is missing");
+  ok(/MISSING_B\.png/.test(card.markup) && /cannot be loaded/.test(card.markup),
+    "FT5: the separate Frame B media gap remains visible beside the unresolved target");
+  ok(!/Approve result/.test(card.markup), "FT5: there is no approval control for the unbound result");
+  const before = evaluate(page.context, `return JSON.stringify({rows:P.shots[0].candidateFiles,receipts:P.productionAuthority?.receipts});`);
+  let refusal = "";
+  page.context.toast = (message) => { refusal = message; };
+  await page.context.CineBraidResultDecisions.open("L1-01", "LEGACY_FRAME_C.png", "frame", "frame-a");
+  ok(/no recorded binding/.test(refusal), "FT6: a direct approval call also refuses the guessed target: " + refusal);
+  equal(evaluate(page.context, `return JSON.stringify({rows:P.shots[0].candidateFiles,receipts:P.productionAuthority?.receipts});`), before,
+    "FT6: refusal writes no candidate row or authority receipt");
+
+  const legacy = candidate("OLD.png", { frameId: null }); delete legacy.frameId;
+  const one = projectOf([{ id:"L1-01", frames:[{id:"frame-a",label:"A"}], candidates:[legacy] }]);
+  const onePage = await render("#/shot/L1-01", one, { scan: scanWith(one, {"L1-01":["OLD.png"]}) });
+  deepEqual(evaluate(onePage.context, `return returnedReviewProjectionForBrowser().queue.map(r => r.owner.frameId+":"+r.candidate.name);`),
+    ["frame-a:OLD.png"], "FT7: a one-frame legacy project remains unambiguous and reviewable");
+
+  const explicit = projectOf([{ id:"L1-01", frames:[{id:"frame-a",label:"A"},{id:"frame-b",label:"B"}],
+    candidates:[candidate("B.png",{frameId:"frame-b"})] }]);
+  const explicitPage = await render("#/shot/L1-01", explicit, { scan: scanWith(explicit, {"L1-01":["B.png"]}) });
+  deepEqual(evaluate(explicitPage.context, `return returnedReviewProjectionForBrowser().queue.map(r => r.owner.frameId+":"+r.candidate.name);`),
+    ["frame-b:B.png"], "FT8: an explicit frame stamp still binds the correct frame");
+
+  const approved = candidate("RECEIPT.png", { frameId: null }); delete approved.frameId;
+  const receiptAsset = harnessAssetId("shots/L1-01/takes/RECEIPT.png");
+  const withReceipt = projectOf([{ id:"L1-01", frames:[{id:"frame-a",label:"A"},{id:"frame-b",label:"B",winner:"RECEIPT.png",canon:false}],
+    candidates:[approved] }], { extraCanon:[{kind:"shot-frame",shotId:"L1-01",frameId:"frame-b",value:"RECEIPT.png",assetId:receiptAsset}] });
+  withReceipt.shots[0].keyframes[1].winnerAssetId = receiptAsset;
+  const approvedScan = scanWith(withReceipt, {"L1-01":["RECEIPT.png"]});
+  approvedScan.shots["L1-01"].takes[0].assetId = receiptAsset;
+  const approvedPage = await render("#/shot/L1-01", withReceipt, { scan: approvedScan });
+  const approvedSeen = evaluate(approvedPage.context, `
+    const p=returnedReviewProjectionForBrowser(); const r=p.items.find(x=>x.candidate.name==="RECEIPT.png");
+    return {frame:r.owner.frameId,settled:r.settled,blocking:r.blocking,receipt:r.candidate.receiptBacked,
+      frameA:guidedFrameCandidateRows(P.shots[0],P.shots[0].keyframes[0],takesFor("L1-01"),0).map(x=>x.name),
+      frameB:guidedFrameCandidateRows(P.shots[0],P.shots[0].keyframes[1],takesFor("L1-01"),1).map(x=>x.name)};
+  `);
+  equal(approvedSeen.frame, "frame-b", "FT9: a current receipt-backed edge preserves an existing multi-frame approval target");
+  equal(approvedSeen.receipt, true, "FT9: the edge is actual human authority, not a working pointer");
+  equal(approvedSeen.blocking, false, "FT9: an existing approval is never rewritten into a new blocker");
+  deepEqual(approvedSeen.frameA, [], "FT9: approved legacy media is not copied onto Frame A");
+  deepEqual(approvedSeen.frameB, ["RECEIPT.png"], "FT9: the approved frame still displays its exact image");
+  note("FT unbound multi-frame stills stay visible as unresolved without approval; missing bytes retain a separate reason; singleton, stamped and receipt-backed bindings continue to work");
+}
+
+/* The stored shot winner is the opening-frame fallback, but its filename is not
+   evidence that the currently scanned file is the same asset as the receipt. */
+async function ft_receiptIdentityControls() {
+  const name = "SAME_NAME.png";
+  const oldAsset = harnessAssetId("old/import/SAME_NAME.png");
+  const replacementAsset = harnessAssetId("replacement/import/SAME_NAME.png");
+  const unstamped = () => { const row = candidate(name, { frameId:null }); delete row.frameId; return row; };
+  const makeShotEdge = (receiptAssetId) => {
+    const project = projectOf([{id:"L1-01",frames:[{id:"frame-a",label:"A"},{id:"frame-b",label:"B"}],
+      candidates:[unstamped()] }], {extraCanon:[{kind:"shot-frame",shotId:"L1-01",frameId:"frame-a",value:name,assetId:receiptAssetId}]});
+    project.shots[0].winner = name; // no frame.winner: readAuthorityEdge uses shot-opening-frame
+    if (receiptAssetId) project.shots[0].winnerAssetId = receiptAssetId;
+    const scan = scanWith(project, {"L1-01":[name]});
+    scan.shots["L1-01"].takes[0].assetId = replacementAsset;
+    return {project,scan};
+  };
+  const checkUnresolved = async (label, fixture, expectedRail) => {
+    const page = await render("#/shot/L1-01",fixture.project,{scan:fixture.scan});
+    const found = evaluate(page.context,`
+      const row=returnedReviewProjectionForBrowser().items.find(r=>r.candidate.name==="SAME_NAME.png");
+      const frame=P.shots[0].keyframes[0];
+      const railFacts=shotResultsTargetFacts(P.shots[0],takesFor("L1-01"),returnedReviewProjectionForBrowser(),"frame",frame);
+      const rail=shotResultsTargetMarkup(P.shots[0],railFacts,"frame",frame);
+      return {owner:row.owner.frameId,reason:row.unreviewable,blocking:row.blocking,settled:row.settled,
+        receiptBacked:row.candidate.receiptBacked,actions:row.actions,
+        frameA:guidedFrameCandidateRows(P.shots[0],P.shots[0].keyframes[0],takesFor("L1-01"),0).map(x=>x.name),
+        frameB:guidedFrameCandidateRows(P.shots[0],P.shots[0].keyframes[1],takesFor("L1-01"),1).map(x=>x.name),
+        railApproved:railFacts.approved,railUrl:railFacts.approvedUrl,railWords:rail};
+    `);
+    equal(found.owner,"",label+": no frame is inferred");
+    equal(found.reason,"frame-target-unresolved",label+": the candidate remains unresolved");
+    equal(found.blocking,true,label+": the unresolved record remains visible as a blocker");
+    equal(found.settled,"",label+": an old filename receipt cannot settle the replacement");
+    equal(found.receiptBacked,false,label+": the candidate is not presented as approved");
+    deepEqual(found.actions,[],label+": no frame decision actions");
+    deepEqual(found.frameA,[],label+": absent from Frame A");
+    deepEqual(found.frameB,[],label+": absent from Frame B");
+    equal(found.railApproved,expectedRail,label+": Results rail does not preview the replacement as approved");
+    equal(found.railUrl,"",label+": no approved preview URL points at replacement bytes");
+    if (expectedRail === "unverified") ok(/exact asset unverified/.test(found.railWords),label+": Results names the identity gap");
+    const before=evaluate(page.context,`return JSON.stringify({rows:P.shots[0].candidateFiles,receipts:P.productionAuthority.receipts});`);
+    let refusal="";
+    page.context.toast=(message)=>{refusal=message;};
+    await page.context.CineBraidResultDecisions.open("L1-01",name,"frame","frame-a");
+    ok(/no recorded binding/.test(refusal),label+": decision writer refuses the name-only claim");
+    equal(evaluate(page.context,`return JSON.stringify({rows:P.shots[0].candidateFiles,receipts:P.productionAuthority.receipts});`),before,
+      label+": refusal writes no approval or receipt");
+  };
+  await checkUnresolved("FT10/shot edge with identity-less receipt",makeShotEdge(""),"unverified");
+  await checkUnresolved("FT11/replacement asset with old exact receipt",makeShotEdge(oldAsset),"none");
+
+  const exact = makeShotEdge(replacementAsset);
+  equal(require("../public/shared-authority-kernel").currentHumanAuthority(
+    exact.project,{kind:"shot-frame",shotId:"L1-01",frameId:"frame-a"})?.assetId,
+    replacementAsset,"FT12: a shot-only edge is the opening-frame authority target in stored data");
+  /* The browser's legacy hydration mirrors shot.winner to frame[0].winner. Carry
+     the same identity on that mirror so the current receipt remains exact. */
+  exact.project.shots[0].keyframes[0].winnerAssetId = replacementAsset;
+  const exactPage = await render("#/shot/L1-01",exact.project,{scan:exact.scan});
+  const exactSeen=evaluate(exactPage.context,`
+    const row=returnedReviewProjectionForBrowser().items.find(r=>r.candidate.name==="SAME_NAME.png");
+    return {owner:row.owner.frameId,receiptBacked:row.candidate.receiptBacked,
+      frameA:guidedFrameCandidateRows(P.shots[0],P.shots[0].keyframes[0],takesFor("L1-01"),0).map(x=>x.name),
+      frameB:guidedFrameCandidateRows(P.shots[0],P.shots[0].keyframes[1],takesFor("L1-01"),1).map(x=>x.name)};
+  `);
+  deepEqual(exactSeen,{owner:"frame-a",receiptBacked:true,frameA:[name],frameB:[]},
+    "FT12: a shot edge with the exact asset receipt identifies the opening frame");
+  note("FT identity controls reject identity-less and old-asset receipts on replacement media while an exact shot-edge receipt identifies Frame A");
+}
+
 /* =========================================================================== */
 
 async function main() {
@@ -2489,6 +2647,8 @@ async function main() {
   await actions_declaredNotSynthesised();
   await label_machineSelectedIsNotHumanApproved();
   await rm8_failsClosed();
+  await ft_unboundFrameTarget();
+  await ft_receiptIdentityControls();
   await rm9_repairLineage();
   await rm10_historyIsDurable();
   await rm11_approvingTheRepair();
