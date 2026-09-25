@@ -38,6 +38,7 @@ from browser_runtime import require_browser, launch_chromium
 
 LABEL = "Declared stage model real-browser audit"
 sync_playwright = require_browser(LABEL)
+from playwright.sync_api import TimeoutError as PlaywrightTimeoutError
 
 SHOT = "SAMPLE-01"
 SLUG = "dogfood-sample"
@@ -45,6 +46,15 @@ PAID_ROUTE = "/api/generation/fal/jobs"
 
 page_errors, offsite, paid_calls = [], [], []
 findings = []
+
+
+def wait_for_stage(page, stage_id, timeout=15000):
+    # selectBoundedTask writes storage immediately but does not return route()'s
+    # promise. The shot view awaits /folder before replacing the old stage DOM.
+    page.wait_for_function("""stage =>
+        document.body.dataset.renderReady === '1' &&
+        document.querySelector('[data-selected-task]')?.dataset.selectedTask === stage
+    """, arg=stage_id, timeout=timeout)
 
 
 def free_port():
@@ -97,7 +107,7 @@ try:
             "try { localStorage.setItem('cinebraid-focused:%s:shot-task:%s', 'frames'); } catch (e) {}" % (SLUG, SHOT))
         page.goto(f"{base}/#/shot/{SHOT}", wait_until="domcontentloaded")
         page.wait_for_selector(".bounded-shot-taskbar", timeout=20000)
-        page.wait_for_timeout(400)
+        wait_for_stage(page, "frames")
         assert not page_errors, f"the shot workspace raised uncaught errors: {page_errors}"
 
         # ---- 1. the declaration is loaded, and it is the same object the app reads ----
@@ -148,8 +158,8 @@ try:
 
         # ---- 4. selecting a stage still works, for every declared stage ---------------
         for stage_id, label in zip(declared["ids"], declared["labels"]):
-            page.evaluate("id => selectBoundedTask('shot-task', %s, id)" % json.dumps(SHOT), stage_id)
-            page.wait_for_timeout(250)
+            page.locator(".bounded-shot-taskbar").get_by_text(label, exact=True).click()
+            wait_for_stage(page, stage_id)
             state = page.evaluate("""() => ({
                 selected: document.querySelector('[data-selected-task]')?.dataset.selectedTask || '',
                 body: document.querySelector('.guided-work-stack')?.dataset.boundedTask || '',
@@ -162,9 +172,9 @@ try:
 
         # ---- 5. stage semantics survive a normal re-render ----------------------------
         page.evaluate("() => selectBoundedTask('shot-task', %s, 'motion')" % json.dumps(SHOT))
-        page.wait_for_timeout(250)
+        wait_for_stage(page, "motion")
         page.evaluate("() => route()")
-        page.wait_for_timeout(400)
+        wait_for_stage(page, "motion")
         after = page.evaluate("""() => {
             const nav = document.querySelector('.bounded-shot-taskbar');
             return {
@@ -177,6 +187,60 @@ try:
         assert after["selected"] == "motion", f"5. a re-render lost the selection, got {after['selected']}"
         assert after["bars"] == 1, f"5. a re-render produced {after['bars']} taskbars"
         findings.append("5. stage list and selection survive a normal re-render, with one taskbar")
+
+        # A held real folder response reproduces the stale Frames DOM seen in CI.
+        # Selection must settle after release, not after an arbitrary elapsed time.
+        page.evaluate("() => selectBoundedTask('shot-task', %s, 'frames')" % json.dumps(SHOT))
+        wait_for_stage(page, "frames")
+        page.evaluate("""() => {
+            window.__stageRealFetch = window.fetch;
+            window.fetch = async (...args) => {
+                const response = await window.__stageRealFetch(...args);
+                if (String(args[0]).includes('/api/shots/' + %s + '/folder'))
+                    await new Promise(resolve => { window.__stageRelease = resolve; });
+                return response;
+            };
+        }""" % json.dumps(SHOT))
+        motion_label = declared["labels"][declared["ids"].index("motion")]
+        try:
+            page.locator(".bounded-shot-taskbar").get_by_text(motion_label, exact=True).click()
+            page.wait_for_function("typeof window.__stageRelease === 'function'")
+            pending = page.evaluate("""() => ({
+                selected: document.querySelector('[data-selected-task]')?.dataset.selectedTask,
+                stored: localStorage.getItem('cinebraid-focused:%s:shot-task:%s'),
+            })""" % (SLUG, SHOT))
+            assert pending == {"selected": "frames", "stored": "motion"}, pending
+            page.evaluate("() => window.__stageRelease()")
+            wait_for_stage(page, "motion")
+            assert page.locator('.guided-work-stack').get_attribute('data-bounded-task') == 'motion'
+            assert page.locator('.bounded-shot-taskbar button.selected b').inner_text() == motion_label
+        finally:
+            page.evaluate("() => { window.fetch = window.__stageRealFetch; delete window.__stageRelease; delete window.__stageRealFetch; }")
+        findings.append("latency control: a real Motion click leaves Frames visible while /folder is held, then selects and renders Motion after release")
+
+        # A lost selection must still fail the new wait; it cannot pass on old DOM.
+        page.evaluate("() => selectBoundedTask('shot-task', %s, 'frames')" % json.dumps(SHOT))
+        wait_for_stage(page, "frames")
+        page.evaluate("""() => {
+            window.__stageRealSelect = window.selectBoundedTask;
+            window.__stageDropped = 0;
+            window.selectBoundedTask = () => { window.__stageDropped++; };
+        }""")
+        try:
+            page.locator(".bounded-shot-taskbar").get_by_text(motion_label, exact=True).click()
+            assert page.evaluate("window.__stageDropped") == 1, 'negative control did not intercept the click'
+            try:
+                wait_for_stage(page, "motion", timeout=300)
+            except PlaywrightTimeoutError:
+                pass
+            else:
+                raise AssertionError('negative control: a lost Motion selection passed the stage wait')
+            assert page.locator('[data-selected-task]').get_attribute('data-selected-task') == 'frames'
+        finally:
+            page.evaluate("() => { window.selectBoundedTask = window.__stageRealSelect; delete window.__stageRealSelect; delete window.__stageDropped; }")
+        page.evaluate("() => selectBoundedTask('shot-task', %s, 'motion')" % json.dumps(SHOT))
+        wait_for_stage(page, "motion")
+        findings.append("negative control: dropping the Motion click is detected by the selected-stage wait")
 
         # ---- 6. inserting and reordering nodes changes nothing semantic ---------------
         # A presentational node is inserted into the work stack and the taskbar's buttons
@@ -192,7 +256,6 @@ try:
             [...nav.children].reverse().forEach(node => nav.appendChild(node));
             window.enhanceFocusedWorkspace?.();
         }""")
-        page.wait_for_timeout(300)
         disturbed = page.evaluate("""() => ({
             bars: document.querySelectorAll('.focused-taskbar').length,
             selected: document.querySelector('[data-selected-task]')?.dataset.selectedTask || '',
@@ -206,7 +269,7 @@ try:
         # And the declaration is the authority on the way back: one re-render restores the
         # order the DOM was just holding backwards.
         page.evaluate("() => route()")
-        page.wait_for_timeout(400)
+        wait_for_stage(page, "motion")
         restored = page.evaluate("""() => [...document.querySelectorAll('.bounded-shot-taskbar button[onclick]')]
             .map(b => (b.getAttribute('onclick').match(/'([a-z-]+)'\\)$/) || [])[1] || '')""")
         assert restored == declared["ids"], f"6. the declared order was not restored, got {restored}"
@@ -219,13 +282,13 @@ try:
         # is contacted. What it proves is that a panel key names a stage the live
         # workspace actually moves to, which is the property callers depend on.
         page.evaluate("() => selectBoundedTask('shot-task', %s, 'deliver')" % json.dumps(SHOT))
-        page.wait_for_timeout(250)
+        wait_for_stage(page, "deliver")
         page.evaluate("""() => {
             const shot = shotById(%s);
             selectGuidedPanelTask(shot, 'blocking');
             route();
         }""" % json.dumps(SHOT))
-        page.wait_for_timeout(400)
+        wait_for_stage(page, "look")
         handoff = page.evaluate("""() => ({
             selected: document.querySelector('[data-selected-task]')?.dataset.selectedTask || '',
             stored: localStorage.getItem('cinebraid-focused:%s:shot-task:%s') || '',
