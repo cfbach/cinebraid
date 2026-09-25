@@ -16,6 +16,7 @@ const BASELINE = process.env.CINEBRAID_VISUAL_BASELINE === '1';
 const BASE_CSS = process.env.CINEBRAID_VISUAL_BASE_CSS === '1';
 const sleep = ms => new Promise(r => setTimeout(r, ms));
 const checks = [], errors = [], readings = [];
+const surfaces = {};
 function check(name, ok, detail) { checks.push({name, ok:!!ok, detail}); console.log(`${ok?'PASS':'FAIL'} ${name}`); }
 
 // Active navigation changes before async route content arrives. Require the matching
@@ -126,7 +127,18 @@ async function waitForTheme(page, theme) {
     // Preferences are browser-local test inputs. A route must not replace the chosen surface.
     if (!BASELINE) {
       await page.setViewportSize({width:1440,height:1000});
-      for (const theme of ['night','cool','warm','light']) {
+      const graphiteSaved = await page.evaluate(async()=>{
+        const response=await fetch('/api/config',{method:'PUT',headers:{'Content-Type':'application/json'},body:JSON.stringify({appearance:{surface:'graphite'}})});
+        const config=await fetch('/api/config').then(r=>r.json());
+        return response.ok && config.appearance.surface==='graphite';
+      });
+      check('Graphite studio survives server save/read',graphiteSaved);
+      await page.evaluate(()=>localStorage.removeItem('ahub-surf'));
+      await page.reload();
+      await waitForRouteContent(page,'production');
+      await waitForTheme(page,'graphite');
+      check('Graphite studio loads from saved settings',await page.locator('#app').getAttribute('data-surf')==='graphite');
+      for (const theme of ['night','graphite','cool','warm','light']) {
         await page.evaluate(t => {localStorage.setItem('ahub-surf',t); applyTheme();}, theme);
         await waitForTheme(page, theme);
         let expected;
@@ -147,11 +159,16 @@ async function waitForTheme(page, theme) {
               const card = document.querySelector('.rd-library-card');
               const text = getComputedStyle(card.querySelector('p')).color;
               const background = getComputedStyle(card).backgroundColor;
-              return {text, background};
+              const css = selector => getComputedStyle(document.querySelector(selector));
+              return {text, background, rail:css('#rail').backgroundColor,
+                header:css('#topbar').backgroundColor, page:css('#main').backgroundColor,
+                dock:css('#cb-shell-dock').backgroundColor,
+                primary:css('#global-add').backgroundColor, primaryInk:css('#global-add').color};
             });
             const luminance = c => c.match(/[\d.]+/g).slice(0,3).map(n => {
               const v=Number(n)/255; return v<=0.04045?v/12.92:((v+0.055)/1.055)**2.4;
             }).reduce((sum,v,i)=>sum+v*[0.2126,0.7152,0.0722][i],0);
+            surfaces[theme] = colors;
             const a=luminance(colors.text), b=luminance(colors.background);
             const contrast=(Math.max(a,b)+0.05)/(Math.min(a,b)+0.05);
             check(`${theme}: reference status contrast >=4.5:1`,contrast>=4.5,{...colors,contrast});
@@ -159,6 +176,51 @@ async function waitForTheme(page, theme) {
           if(theme==='light' && ['production','library'].includes(route)) await page.screenshot({path:path.join(OUT,`light-${route}.png`)});
         }
       }
+      // Surface names are a visual contract, not just a saved data attribute.
+      const rgb = color => color.match(/[\d.]+/g).slice(0,3).map(Number);
+      const luminance = color => rgb(color).map(n => {
+        const v=n/255; return v<=0.04045?v/12.92:((v+0.055)/1.055)**2.4;
+      }).reduce((sum,v,i)=>sum+v*[0.2126,0.7152,0.0722][i],0);
+      for (const region of ['rail','header','page','background','dock']) {
+        const dark=rgb(surfaces.night[region]), navy=rgb(surfaces.cool[region]);
+        check(`Dark studio ${region}: neutral near-black`,Math.max(...dark)-Math.min(...dark)<=6 && luminance(surfaces.night[region])<0.014,dark);
+        const graphite=rgb(surfaces.graphite[region]);
+        check(`Graphite studio ${region}: neutral and lighter than Dark studio`,
+          Math.max(...graphite)-Math.min(...graphite)<=6 && luminance(surfaces.graphite[region])>luminance(surfaces.night[region]),graphite);
+        check(`Website navy ${region}: blue and no darker than Dark studio`,
+          navy[2]>navy[0]+10 && luminance(surfaces.cool[region])>=luminance(surfaces.night[region]),{dark,navy});
+      }
+      const warm=rgb(surfaces.night.primary);
+      check('Dark studio primary is warm',warm[0]>warm[1] && warm[1]>warm[2],warm);
+      for (const theme of ['night','graphite','cool','light']) {
+        const ink=luminance(surfaces[theme].primaryInk), fill=luminance(surfaces[theme].primary);
+        check(`${theme}: primary label contrast >=4.5:1`,(Math.max(ink,fill)+0.05)/(Math.min(ink,fill)+0.05)>=4.5);
+      }
+      for (const theme of ['night','graphite','cool']) {
+        let primary, statuses;
+        const accentColors = new Set();
+        for (const accent of ['blue','green','amber','rust']) {
+          await page.evaluate(({theme,accent})=>{
+            localStorage.setItem('ahub-surf',theme);localStorage.setItem('ahub-acc',accent);applyTheme();
+          },{theme,accent});
+          await waitForTheme(page,theme);
+          await page.locator('#topbar .topbar-search input').focus();
+          const seen=await page.evaluate(()=>{
+            const c=getComputedStyle(document.querySelector('#app'));
+            const probe=document.createElement('a');probe.href='#';document.querySelector('#app').append(probe);
+            const link=getComputedStyle(probe).color;probe.remove();
+            return {link,focus:getComputedStyle(document.querySelector('#topbar .topbar-search')).outlineColor,
+              primary:getComputedStyle(document.querySelector('#global-add')).backgroundColor,
+              statuses:['--green','--blue','--amber','--red'].map(t=>c.getPropertyValue(t).trim())};
+          });
+          primary ||= seen.primary; statuses ||= seen.statuses; accentColors.add(seen.link);
+          check(`${theme}/${accent}: links and shell focus share selected accent`,seen.link===seen.focus,seen);
+          check(`${theme}/${accent}: accent does not recolor primary or status`,seen.primary===primary&&JSON.stringify(seen.statuses)===JSON.stringify(statuses));
+        }
+        check(`${theme}: all four selected accents remain distinct`,accentColors.size===4);
+      }
+      await page.evaluate(()=>{document.activeElement?.blur();localStorage.setItem('ahub-surf','light');applyTheme();});
+      await waitForTheme(page,'light');
       await page.goBack();
       await waitForRouteContent(page, 'reports');
       await waitForTheme(page, 'light');
