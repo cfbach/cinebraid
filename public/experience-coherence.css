@@ -1,17 +1,17 @@
-/* EV2-7 shared shell. ONE blue-slate frame on every route (Production, the Shot board and workspace,
+/* EV2-7 shared shell. ONE themed frame on every route (Production, the Shot board and workspace,
    Results, References, Production Media, the Working Bible, Settings), so nothing in the frame moves
    when the page changes: one rail (220px; 208px below 1360; a 240px drawer behind ☰ at 900 and below),
    one brand and project block, one navigation treatment, one quiet rail foot, one 80px header (64px on mobile).
-   The frame carries its own palette on #rail and #topbar, so a desk's #app tokens, the surface theme
-   and the accent never change how the chrome reads. reference-desk.css and shot-desk.css keep only
+   The frame inherits the central #app surface and accent tokens, so navigation never
+   replaces the saved appearance. reference-desk.css and shot-desk.css keep only
    their own scroll model and content. Page headings and gutters are shared at the end of this file.
    In the header: ONE row of 48px controls with one radius, at every width and on every desk.
-   Add is the mint primary action; Activity and Braidy are bordered actions; Saved is a quiet status
+   Add uses the theme’s primary action; Activity and Braidy are bordered actions; Saved is a quiet status
    (no border, no hover, never focusable: it is a div); Search flexes, then folds to a 48×48 control
    that expands on focus. The header never wraps, so --cb-topbar-height stays the real header height
    and every surface pinned at --cb-topbar-stop sits beneath it. #creator-rail-toggle display stays
    owned by styles.css (creator shell gate and the measured 720px phone floor). */
-:root { --cb-control-height:48px; --cb-control-radius:8px; --cb-action-primary:#72d99b; --cb-action-hover:#92e5b3; --cb-action-ink:#10231b; --cb-focus:#86dfdc; --cb-shell-bg:#202832; --cb-shell-hover:#2a3542; --cb-page-gutter:24px;
+:root { --cb-control-height:48px; --cb-control-radius:8px; --cb-action-primary:#72d99b; --cb-action-hover:#92e5b3; --cb-action-ink:#10231b; --cb-focus:#86dfdc; --cb-shell-bg:#252729; --cb-shell-hover:#303236; --cb-page-gutter:24px;
   --cb-search-mark:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='2.2' stroke-linecap='round'%3E%3Ccircle cx='10.5' cy='10.5' r='6.5'/%3E%3Cpath d='M15.5 15.5 21 21'/%3E%3C/svg%3E"); }
 :root {
   --sd-bg:#1b222a; --sd-panel:#222d39; --sd-well:#090a0b; --sd-ink:#edf4fa;
@@ -19,20 +19,12 @@
   --sd-cyan:#72d99b; --sd-cyan-wash:rgba(114,217,155,.14);
   --sd-warm:var(--cb-action-primary); --sd-warm-hover:var(--cb-action-hover);
 }
-/* The frame owns its palette once, including Activity and Braidy. Route classes never
-   replace these tokens. Status colors retain their operational meaning. */
-#rail,#topbar,#cb-shell-dock,#cb-shell-rail,#modal .modal-box:has(.md-inspector) { color-scheme:dark;
-  --bg:#1b222a; --bg-2:#1b222a; --canvas:#1b222a; --workspace:#1b222a;
-  --panel:#202832; --panel-2:#273341; --surface:#202832; --surface-1:#202832; --surface-2:#273341;
-  --ink:#edf4fa; --text:#edf4fa; --muted:#adbed0; --faint:#95a6b8;
-  --line:#354250; --line-soft:#2c3743; --line-2:#526478;
-  --acc:#72d99b; --accent:#72d99b; --acc-ink:#72d99b; --acc-soft:rgba(114,217,155,.14); --accent-wash:rgba(114,217,155,.14);
-  --green:#7fd7b3; --blue:#72b8f2; --amber:#f3b761; --red:#e8846f; }
-/* Production's blue-slate surface is the default. Other appearance choices remain
-   owned by styles.css; all desks consume those same app tokens instead of replacing them. */
-#app[data-surf="night"] { --bg:#171e26; --bg-2:#1b222a; --panel:#222d39; --panel-2:#293746;
-  --ink:#edf4fa; --muted:#adbed0; --faint:#95a6b8; --line:#354250; --line-soft:#2c3743; --line-2:#526478; }
+/* Resolve aliases at the app, where the chosen surface and accent are applied.
+   The rail, header, utilities and desks inherit them; none owns a second palette.
+   Media preview wells remain neutral so the surrounding theme cannot tint images. */
 #app {
+  color-scheme:dark;
+  --cb-shell-bg:var(--panel); --cb-shell-hover:var(--panel-2); --cb-focus:var(--acc);
   --text:var(--ink); --canvas:var(--bg); --workspace:var(--bg-2);
   --surface:var(--panel); --surface-1:var(--panel); --surface-2:var(--panel-2); --panel-strong:var(--panel);
   --accent:var(--acc); --accent-wash:var(--acc-soft);
@@ -43,6 +35,7 @@
   --sd-warm:var(--cb-action-primary); --sd-warm-hover:var(--cb-action-hover);
   --bg-panel:var(--panel); --border:var(--line); --text-muted:var(--muted);
 }
+#app[data-surf="light"] { color-scheme:light; --cb-action-primary:var(--acc); --cb-action-hover:var(--acc); --cb-action-ink:#fff; }
 /* The frame's geometry: one rail width per band, one header height. --cb-nav-width still feeds the #app grid
    and the dock's left edge (styles.css), so the dock ends where this rail ends. */
 #app { --cb-nav-width:220px; --cb-topbar-height:80px; grid-template-columns:var(--cb-nav-width) minmax(0,1fr); }
@@ -758,7 +751,7 @@
 /* EV2-7 Dogfood — Shell utilities & contextual return */
 /* Two utilities hang off the shared shell: Activity along the bottom (#cb-shell-dock) and Braidy down
    the side (#cb-shell-rail). They are the shell's own furniture rather than two more products, so they
-   are drawn with the shell's tokens — the header's blue-slate ground, one line colour, one ink, 44/48px
+   are drawn with the shell's tokens — the header's themed ground, one line colour, one ink, 44/48px
    controls at one radius, one focus ring — and their frames carry no second palette and no uppercase
    monospace kicker. Only the FRAMES are touched: the Activity rows keep their dense operational
    register (status, provider, cost) and Braidy keeps its thread, because those are page content.
