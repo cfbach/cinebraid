@@ -229,16 +229,16 @@
   /* Why a returned candidate cannot be reviewed even though a row exists for it.
      These FAIL CLOSED — the candidate is excluded from the queue and named here.
 
-     `media-not-available` is a BLOCKER and the other two are not. A project that still
-     says a result is undecided while its bytes have gone is in an integrity state; a
-     candidate whose frame was deleted, or whose kind takes no decision, is simply not a
-     review anybody owes. */
+     Missing bytes and an unresolved frame target are BLOCKERS: neither permits a
+     decision or another generation. A stamped frame that was removed, or a kind with
+     no decision, is reported without claiming that a review is owed. */
   const RETURNED_REVIEW_UNREVIEWABLE_REASONS = deepFreeze([
     "media-not-available",
+    "frame-target-unresolved",
     "frame-no-longer-declared",
     "decision-not-supported",
   ]);
-  const RETURNED_REVIEW_BLOCKING_REASONS = deepFreeze(["media-not-available"]);
+  const RETURNED_REVIEW_BLOCKING_REASONS = deepFreeze(["media-not-available", "frame-target-unresolved"]);
 
   /* ==========================================================================
      THE INPUT.
@@ -375,20 +375,29 @@
 
   /* WHICH FRAME A RETURNED STILL BELONGS TO.
 
-     The stamped `frameId` when there is one; the FIRST declared frame when there is
-     not, because a candidate that predates per-frame stamping belongs to the frame the
-     shot opened with. This is public/creation-studio.js guidedFrameCandidateRows()'s
-     display rule, and tests/returned-media-ownership.js requires the two to agree on
-     the same shot rather than trusting that they do.
-
-     A stamped id naming a frame this shot no longer declares belongs to NO frame. It is
-     reported as unreviewable rather than re-homed onto frame one: re-homing would put a
-     candidate generated for a deleted composition in front of a filmmaker as though it
-     had been made for the one that is left. */
+     A stored frameId is the normal binding. A current receipt whose assetId matches
+     this exact ledger asset can also establish a legacy still's target without changing
+     its row. In the authority contract a shot edge means the opening frame. With one
+     declared frame, the old unstamped format is unambiguous. With several and no such
+     evidence, a working selection or a filename cannot assign a review target. */
   function frameOwnerFor(row, frames) {
     const stamped = valueOf(record(row.context).frameId);
-    if (!stamped) return frames[0] || null;
-    return frames.find((frame) => text(record(frame).id) === stamped) || null;
+    if (stamped) return frames.find((frame) => text(record(frame).id) === stamped) || null;
+    if (frames.length === 1) return frames[0];
+    const disposition = record(row.disposition);
+    const backed = list(record(disposition.authority).identityBackedTargets);
+    const ids = new Set();
+    for (const edge of list(disposition.targets)) {
+      const kind = text(record(edge).kind), id = text(record(edge).id);
+      if (!backed.includes(`${kind}:${id}`)) continue;
+      if (kind === "frame") ids.add(id);
+      else if (kind === "shot" && frames[0]) ids.add(text(record(frames[0]).id));
+    }
+    return ids.size === 1 ? frames.find((frame) => ids.has(text(record(frame).id))) || null : null;
+  }
+  function unownedFrameReason(row, frames) {
+    return !valueOf(record(row.context).frameId) && frames.length > 1
+      ? "frame-target-unresolved" : "frame-no-longer-declared";
   }
 
   /* THE UNIT'S PICK, in Slice 1's words: has this frame already been picked. An
@@ -746,6 +755,11 @@
          projection exists to prevent — and they never claim a review. */
       for (const row of stills) {
         if (frameOwnerFor(row, frames)) continue;
+        const reason = unownedFrameReason(row, frames);
+        /* A filename-only receipt may still make the P4 edge look approved. It does
+           not settle an unstamped multi-frame candidate or supply its owner. */
+        const settled = reason === "frame-target-unresolved" && text(record(row.humanDecision).state) === "approved"
+          ? "" : decidedReason(row);
         items.push(deepFreeze({
           contract: RETURNED_REVIEW_CONTRACT,
           key: text(row.key),
@@ -759,13 +773,15 @@
             frameLabel: "",
             picked: "",
           }),
-          candidate: mediaRef(row),
+          candidate: reason === "frame-target-unresolved"
+            ? deepFreeze({ ...mediaRef(row), receiptBacked: false }) : mediaRef(row),
           awaitingReview: false,
-          settled: "",
-          unreviewable: "frame-no-longer-declared",
+          settled: settled || "",
+          unreviewable: settled ? "" : reason,
           mediaAvailable: !!text(record(row.file).url),
-          blocking: false,
-          humanDecision: text(record(row.humanDecision).state) || "undecided",
+          blocking: !settled && RETURNED_REVIEW_BLOCKING_REASONS.includes(reason),
+          humanDecision: reason === "frame-target-unresolved" && !settled
+            ? "undecided" : text(record(row.humanDecision).state) || "undecided",
           repairOf: null,
           repairedInto: deepFreeze([]),
           correction: deepFreeze({ state: "not-a-repair", buildId: "", intent: "" }),
@@ -827,10 +843,14 @@
         const name = text(row.stored) || text(row.name);
         if (!name || present.has(name)) continue;
         const stamped = text(row.frameId);
-        const frame = stamped ? frames.find((item) => text(record(item).id) === stamped) || null : frames[0] || null;
+        const frame = stamped ? frames.find((item) => text(record(item).id) === stamped) || null
+          : frames.length === 1 ? frames[0] : null;
         const kind = MEDIA.productionMediaTypeOf ? MEDIA.productionMediaTypeOf(name) : "image";
         const motion = kind === "video";
-        const undeclared = !motion && !frame;
+        const targetUnresolved = !motion && !stamped && frames.length > 1;
+        const undeclared = !motion && !frame && !targetUnresolved;
+        const reason = targetUnresolved ? "frame-target-unresolved"
+          : undeclared ? "frame-no-longer-declared" : "media-not-available";
         /* THE SAME SETTLEMENT DECISION THE MEDIA-PRESENT PATH MAKES, with the same
            inputs: this row's unit, the pick that unit settled with, and that unit's
            lineage lookup — plus this row itself, so a repair whose own bytes are gone can
@@ -867,9 +887,9 @@
           }),
           awaitingReview: false,
           settled: "",
-          unreviewable: undeclared ? "frame-no-longer-declared" : "media-not-available",
+          unreviewable: reason,
           mediaAvailable: false,
-          blocking: !undeclared,
+          blocking: RETURNED_REVIEW_BLOCKING_REASONS.includes(reason),
           humanDecision: "undecided",
           repairOf: text(row.correctionOf)
             ? deepFreeze({ state: present.has(text(row.correctionOf)) ? "available" : "recorded-not-available", name: text(row.correctionOf), candidate: null })

@@ -1393,7 +1393,10 @@ function guidedFrameCandidateRows(s, frame, takes = takesFor(s.id), index = 0) {
     if (isVideo(take.name) || isAudio(take.name)) return false;
     const row = candidateRecord(s, take.name);
     if (row.frameId) return row.frameId === frame.id;
-    return index === 0;
+    if ((s.keyframes || []).length === 1) return index === 0;
+    const receipt = typeof currentHumanAuthority === "function"
+      ? currentHumanAuthority(P, { kind: "shot-frame", shotId: s.id, frameId: frame.id }) : null;
+    return !!take.assetId && receipt?.value === take.name && receipt.assetId === take.assetId;
   });
 }
 function guidedPreviousFrame(s, index) {
@@ -2894,7 +2897,9 @@ function shotLeadingActionWords(leading) {
     return { key: "returned-review", label: `Review ${unit} result`, detail };
   }
   if (leading?.source === "returned-unavailable" && item)
-    return { key: "returned-unavailable", label: "Returned result missing", detail: "The recorded result cannot be loaded. Inspect its record before another request." };
+    return item.unreviewable === "frame-target-unresolved"
+      ? { key: "returned-unavailable", label: "Frame target needs confirmation", detail: "This result has no recorded frame target. Inspect its media record before another request." }
+      : { key: "returned-unavailable", label: "Returned result missing", detail: "The recorded result cannot be loaded. Inspect its record before another request." };
   /* THE APPROVAL IS NEVER DOWNGRADED IN WORDS. The receipt is recorded; the file is not
      here. A list surface says both, and names no filename — the Desk names the file. */
   if (leading?.source === "approved-media-unavailable" && leading.gap)
@@ -3025,14 +3030,21 @@ function returnedOutstandingRows(s, review, exceptKey = "") {
         ? `${first.candidate.name} came back, with ${plural(others.length - 1, "other")} in this shot. ${where}`
         : `${first.candidate.name} came back. ${where}` });
   }
-  const blocked = (review.projection.blockers || []).filter((row) => row.shotId === s.id);
-  if (blocked.length) rows.push(returnedBlockedOutstandingRow(blocked));
+  const blocked = (review.projection.blockers || []).filter((row) => row.shotId === s.id && row.key !== exceptKey);
+  rows.push(...returnedBlockedOutstandingRows(blocked));
   return rows;
 }
-function returnedBlockedOutstandingRow(blocked) {
-  return { kind: "missing", lead: "Also missing", blocked: blocked.length,
-    label: `${plural(blocked.length, "returned result")} in this shot cannot be shown`,
-    detail: `${blocked[0].candidate.name} is recorded as returned and its file cannot be loaded from this project.` };
+function returnedBlockedOutstandingRows(blocked) {
+  const rows = [];
+  const unbound = blocked.filter((row) => row.unreviewable === "frame-target-unresolved");
+  const missing = blocked.filter((row) => row.unreviewable === "media-not-available");
+  if (unbound.length) rows.push({ kind: "unresolved-target", lead: "Also unresolved", blocked: unbound.length,
+    label: `${plural(unbound.length, "returned image")} without a frame target`,
+    detail: `${unbound[0].candidate.name} is recorded without a frame binding. No frame decision is available.` });
+  if (missing.length) rows.push({ kind: "missing", lead: "Also missing", blocked: missing.length,
+    label: `${plural(missing.length, "returned result")} in this shot cannot be shown`,
+    detail: `${missing[0].candidate.name} is recorded as returned and its file cannot be loaded from this project.` });
+  return rows;
 }
 function shotOutstandingListMarkup(rows, readinessCode = "") {
   if (!rows.length) return "";
@@ -3145,18 +3157,17 @@ function returnedReviewStaleCardMarkup(s, neighbors, review, readiness, next) {
  * keeps "Produce the frame" from taking the first line of the card. */
 function returnedMediaUnavailableCardMarkup(s, neighbors, review, readiness, next) {
   const item = review.item;
+  const unresolved = item.unreviewable === "frame-target-unresolved";
   const others = review.blockers.length - 1;
-  const unit = item.owner.kind === "shot-motion" ? "Motion" : `Frame ${item.owner.frameLabel || item.owner.frameId || "A"}`;
-  /* "Returned result missing" is what the Shot Board prints for this same answer
-     (shotLeadingActionWords), so the card a filmmaker opens says what the card they
-     pressed said. The one action opens THIS result's own record in Results, where its
-     identity and receipt are retained and nothing is approvable — never a generation and
-     never a different result. A record with no resolvable key keeps the shipped
-     destination rather than guessing one. */
-  const action = item.key
-    ? `<button class="assemble-btn shot-primary-action" onclick="openShotResultRecord('${attr(s.id)}','${attr(item.key)}')">Inspect missing result</button>`
-    : `<button class="assemble-btn shot-primary-action" onclick="location.hash='#/results'">Open Production media</button>`;
-  return `<section class="guided-next-action returned-review-card returned-review-unavailable state-readiness-${attr(String(readiness?.status || "unavailable").toLowerCase())}" data-shot-readiness="${attr(readiness?.status || "UNAVAILABLE")}" data-returned-review="0" data-returned-review-unavailable="1" data-returned-review-file="${attr(item.candidate.name)}" data-returned-review-owner="${attr(item.owner.kind)}" data-returned-review-blocked="${attr(String(review.blockers.length))}" style="${attr(shotCanvasStyle(s))}"><div class="guided-lifecycle-preview"><div class="guided-lifecycle-empty"><span>File not found</span></div></div><div><span>Returned result · ${esc(unit)} · file not found</span><h2>Returned result missing</h2><p>${esc(item.candidate.name)} is recorded as a returned result nobody has decided about, and its file can no longer be loaded from this project. Inspect its record before another request.${others > 0 ? ` ${plural(others, "other returned result")} in this shot ${others === 1 ? "is" : "are"} in the same state.` : ""}</p><div class="guided-next-actions">${action}</div>${returnedReviewSecondaryMarkup(s, readiness, next)}</div></section>`;
+  const unit = unresolved ? "Unassigned frame" : item.owner.kind === "shot-motion" ? "Motion" : `Frame ${item.owner.frameLabel || item.owner.frameId || "A"}`;
+  const action = unresolved || !item.key
+    ? `<button class="assemble-btn shot-primary-action" onclick="location.hash='#/results'">Open Production media</button>`
+    : `<button class="assemble-btn shot-primary-action" onclick="openShotResultRecord('${attr(s.id)}','${attr(item.key)}')">Inspect missing result</button>`;
+  const headline = unresolved ? "Frame target needs confirmation" : "Returned result missing";
+  const detail = unresolved
+    ? `${item.candidate.name} is recorded without a frame binding. ${item.mediaAvailable ? "The file is present, but" : "The file also cannot be loaded, and"} CineBraid cannot establish which frame owns the result. Inspect its media record; import a new copy to an explicit frame before approving it. No existing decision or approval has been changed.`
+    : `${item.candidate.name} is recorded as a returned result nobody has decided about, and its file can no longer be loaded from this project. Inspect its record before another request.`;
+  return `<section class="guided-next-action returned-review-card returned-review-unavailable state-readiness-${attr(String(readiness?.status || "unavailable").toLowerCase())}" data-shot-readiness="${attr(readiness?.status || "UNAVAILABLE")}" data-returned-review="0" data-returned-review-unavailable="1" data-returned-review-file="${attr(item.candidate.name)}" data-returned-review-owner="${attr(item.owner.kind)}" data-returned-review-blocked="${attr(String(review.blockers.length))}" style="${attr(shotCanvasStyle(s))}"><div class="guided-lifecycle-preview"><div class="guided-lifecycle-empty"><span>${unresolved ? "Target unknown" : "File not found"}</span></div></div><div><span>Returned result · ${esc(unit)} · ${unresolved ? "target unknown" : "file not found"}</span><h2>${headline}</h2><p>${esc(detail)}${others > 0 ? ` ${plural(others, "other returned result")} in this shot also need attention.` : ""}</p><div class="guided-next-actions">${action}</div>${returnedReviewSecondaryMarkup(s, readiness, next, review, item.key)}</div></section>`;
 }
 function returnedReviewCardMarkup(s, neighbors, review, readiness, next) {
   const item = review.item;
@@ -3387,7 +3398,7 @@ function guidedShotStatusCard(s, takes, neighbors, supplied = null) {
   if (leading.source === "returned-review") return returnedReviewCardMarkup(s, neighbors, returnedReview, readiness, leading.production);
   /* The row the readiness card carries when it keeps the card over a blocker. */
   const unavailableNote = returnedReview && returnedReview.kind === "unavailable"
-    ? shotOutstandingListMarkup([returnedBlockedOutstandingRow(returnedReview.blockers)], "")
+    ? shotOutstandingListMarkup(returnedBlockedOutstandingRows(returnedReview.blockers), "")
     : "";
   /* Non-final cards never fall back to media-derived lifecycle progression. When
      readiness is unavailable, saying so is safer than inventing Add motion/Create. */
@@ -5982,13 +5993,16 @@ function shotResultsTargetFacts(s, takes, projection, kind, frame = null) {
   const take = name
     ? takes.find((row) => row.name === name && (kind === "motion" ? isVideo(row.name) : !isVideo(row.name) && !isAudio(row.name))) || null
     : null;
-  const sameBytes = !!(take && take.url) && !(receipt.assetId && take.assetId && String(receipt.assetId) !== String(take.assetId));
+  const sameBytes = !!(take && take.url) && (kind === "motion"
+    ? !(receipt.assetId && take.assetId && String(receipt.assetId) !== String(take.assetId))
+    : !!receipt.assetId && !!take.assetId && String(receipt.assetId) === String(take.assetId));
+  const identityUnverified = kind === "frame" && !!receipt && !!(take && take.url) && !sameBytes;
   return {
     readable,
     count: items.length,
     waiting: items.filter((row) => row.awaitingReview).length,
     missing: items.filter((row) => row.blocking).length,
-    approved: !receipt ? "none" : sameBytes ? "retained" : "unavailable",
+    approved: !receipt ? "none" : sameBytes ? "retained" : identityUnverified ? "unverified" : "unavailable",
     approvedName: name,
     approvedUrl: sameBytes ? take.url : "",
     approvedKey: sameBytes ? (items.find((row) => row.candidate?.name === name)?.key || "") : "",
@@ -6013,7 +6027,8 @@ function shotResultsTargetMarkup(s, facts, kind, frame = null, picker = "", lead
     : facts.count ? `${label} · ${plural(facts.count, "result")}` : `${label} · no results yet`;
   const approvedWords = facts.approved === "retained"
     ? (facts.waiting ? `Approved ${noun} retained` : `Approved ${noun}`)
-    : facts.approved === "unavailable" ? `Approved ${noun} unavailable` : `No Approved ${noun}`;
+    : facts.approved === "unavailable" ? `Approved ${noun} unavailable`
+    : facts.approved === "unverified" ? `Approved ${noun} identity unverified` : `No Approved ${noun}`;
   const status = [
     approvedWords,
     facts.waiting ? plural(facts.waiting, "new candidate") : "",
@@ -6033,7 +6048,7 @@ function shotResultsTargetMarkup(s, facts, kind, frame = null, picker = "", lead
       : `<span class="shot-results-approved">${preview}</span>`
     : `<span class="shot-results-approved is-empty${facts.approved === "unavailable" ? " is-unavailable" : ""}" aria-hidden="true"></span>`;
   const name = facts.approvedName
-    ? `<small class="shot-results-name">${esc(facts.approvedName)}${facts.approved === "unavailable" ? " · receipt kept, file not found" : ""}</small>`
+    ? `<small class="shot-results-name">${esc(facts.approvedName)}${facts.approved === "unavailable" ? " · receipt kept, file not found" : facts.approved === "unverified" ? " · receipt kept, exact asset unverified" : ""}</small>`
     : "";
   const call = kind === "motion"
     ? `openShotResults('${attr(s.id)}','motion','')`
