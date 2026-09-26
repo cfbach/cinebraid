@@ -118,7 +118,7 @@ async function stopServer() {
   for (const server of servers) server.close();
 }
 
-function writeProject(aiPolicy) {
+function writeProject(aiPolicy, { readyForAssistant = false } = {}) {
   fs.writeFileSync(path.join(PROJECT_DIR, "project.json"), JSON.stringify({
     meta: { title: SENTINEL, format: "Test", version: "v1", hubVersion: "v5.5.0", aiPolicy },
     qcChecklist: [],
@@ -137,9 +137,10 @@ function writeProject(aiPolicy) {
       positioning: "Locked hull-camera composition.",
       dur: 10,
       workflowStatus: "DRAFT",
+      ...(readyForAssistant ? { deliveryRoute: "t2i", creationBrief: { deliveryIntent: "still" } } : {}),
       characters: [],
       codes: [],
-      keyframes: [],
+      keyframes: readyForAssistant ? [{ id: "S-01-A", label: "A", title: "Opening frame", description: "Ship exterior.", required: true }] : [],
       clips: [],
     }],
     jobs: [],
@@ -395,14 +396,31 @@ async function main() {
       "the compiled prompt must say why the assistant was not used",
     );
 
+    /* A blocked shot is answered from server readiness, with no model request. The
+       provider-routing checks below then use a shot with a producible Frame A so
+       they still prove which actual local endpoint receives an eligible question. */
+    reset();
+    writeProject("local-only");
+    writeConfigFile({ customBaseUrl: localBase, ollamaUrl });
+    const blockedQuestion = await ask(port);
+    assert.strictEqual(blockedQuestion.status, 200);
+    assert.strictEqual(blockedQuestion.data.source, "production-readiness");
+    assert.strictEqual(blockedQuestion.data.modelInvoked, false);
+    assert.strictEqual(blockedQuestion.data.readiness[0].nextAction.code, "declare-producible-unit");
+    assert.strictEqual(customChat.length + ollamaChat.length, 0,
+      "blocked-shot guidance must not call a model, local or remote");
+
     /* THE SAME THREE ANSWERS FOR A PROJECT QUESTION.
 
        Asserted against the mocks rather than against the response, because what is
        being pinned is which host the material reached — a 200 that quietly went to a
        remote API is the failure, not a shape. */
     reset();
-    writeProject("local-only");
+    writeProject("local-only", { readyForAssistant: true });
     writeConfigFile({ customBaseUrl: localBase, ollamaUrl });
+    const readyQuestion = await request(port, "/api/project/readiness");
+    assert.strictEqual(readyQuestion.data.readiness.shots[0].status, "READY",
+      "the provider-routing control must use a genuinely ready shot");
     response = await ask(port);
     assert.strictEqual(response.status, 200, "a loopback custom endpoint must be allowed to answer a local-only project's question");
     assert(customChat.length > 0, "the loopback custom endpoint must be the one that answered");
@@ -428,7 +446,7 @@ async function main() {
 
     /* a project without the policy keeps its configured routing */
     reset();
-    writeProject("project-default");
+    writeProject("project-default", { readyForAssistant: true });
     writeConfigFile({ customBaseUrl: localBase, ollamaUrl });
     response = await compile(port, true);
     assert.strictEqual(response.status, 200);
@@ -445,7 +463,7 @@ async function main() {
        make every assertion after it vacuous: an unrestricted project routes to it and
        the record arrives, sentinel and all. */
     reset();
-    writeProject("project-default");
+    writeProject("project-default", { readyForAssistant: true });
     writeConfigFile({ customBaseUrl: spy.base, ollamaUrl });
     response = await ask(port);
     assert.strictEqual(response.status, 200, "an unrestricted project must still reach its configured provider");
@@ -455,7 +473,7 @@ async function main() {
     /* LOCAL-ONLY, POINTED STRAIGHT AT IT. The record is re-pointed at the local Ollama
        endpoint and the remote-designated provider is never contacted. */
     reset();
-    writeProject("local-only");
+    writeProject("local-only", { readyForAssistant: true });
     writeConfigFile({ customBaseUrl: spy.base, ollamaUrl });
     response = await ask(port);
     assertNoDisclosure("local-only with the assistant pointed at a remote-designated provider");
@@ -496,7 +514,7 @@ async function main() {
        remote-designated spy receives the request, the sentinel is in the body, and
        assertNoDisclosure fails naming that. */
     reset();
-    writeProject("local-only");
+    writeProject("local-only", { readyForAssistant: true });
     writeConfigFile({ customBaseUrl: spy.base, ollamaUrl });
     const bypassPort = await freePort();
     const preload = writePreload(TEMP,
@@ -572,7 +590,7 @@ async function main() {
 
     /* ---- 5. deterministic compilation stays deterministic ---- */
     reset();
-    writeProject("local-only");
+    writeProject("local-only", { readyForAssistant: true });
     const first = await compile(port, false);
     const second = await compile(port, false);
     assert.strictEqual(first.status, 200);

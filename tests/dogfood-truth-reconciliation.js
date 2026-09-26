@@ -795,7 +795,9 @@ function checkMotionReviewSaysWhatIsTrue() {
   assert.strictEqual(review.statusKey, "needsReview");
   assert.strictEqual(review.availability, "available", "a returned candidate makes the review workspace reachable");
 
-  const approved = Stage.shotStageState("motion", { ...base, lifecycleKey: "motion-approved" });
+  const unvouched = Stage.shotStageState("motion", { ...base, lifecycleKey: "motion-approved" });
+  assert.notStrictEqual(unvouched.statusKey, "approved", "a lifecycle label cannot vouch for a motion take");
+  const approved = Stage.shotStageState("motion", { ...base, lifecycleKey: "motion-approved", approvedMotionAvailable: true });
   assert.strictEqual(approved.completion, "complete", "an approved take is complete");
   assert.strictEqual(approved.statusKey, "approved");
 

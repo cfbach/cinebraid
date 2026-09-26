@@ -289,8 +289,35 @@ async function checkRepresentativeStates() {
   assert.strictEqual(S6.facts.lifecycleKey, "final", "the fixture must actually reach the delivered lifecycle");
   assert.strictEqual(S6.byId.deliver.completion, "complete");
   assert.strictEqual(S6.byId.deliver.availability, "available");
-  assert.strictEqual(S6.byId.motion.completion, "complete");
+  assert.strictEqual(S6.byId.motion.completion, "not-started", "delivering a still does not approve motion");
+  assert.strictEqual(S6.facts.approvedMotionAvailable, false);
   record("S6 delivered: deliver complete", S6.byId);
+
+  const motionApproved = authoritativeFixture("i2v");
+  motionApproved.shots[0].clips = [motionApproved.shots[0].clips[0]];
+  motionApproved.shots[0].clips[0].videoWinner = "MOTION.mp4";
+  withCanon(motionApproved, [{ kind: "shot-motion", shotId: "L1-01", unitKey: "motion-a", value: "MOTION.mp4" }]);
+  const S6b = await stagesFor(motionApproved, ["FRAME_A.png", "FRAME_B.png", "MOTION.mp4"]);
+  assert.strictEqual(S6b.facts.approvedMotionAvailable, true);
+  assert.strictEqual(S6b.byId.motion.statusKey, "approved");
+  record("S6b approved motion: current motion receipt and physical take", S6b.byId);
+  motionApproved.productionAuthority.receipts.pop();
+  const S6c = await stagesFor(motionApproved, ["FRAME_A.png", "FRAME_B.png", "MOTION.mp4"]);
+  assert.strictEqual(S6c.facts.approvedMotionAvailable, false, "a video winner without authority is not approved motion");
+  assert.notStrictEqual(S6c.byId.motion.statusKey, "approved");
+  withCanon(motionApproved, [{ kind: "shot-motion", shotId: "L1-01", unitKey: "motion-a", value: "MOTION.mp4" }]);
+  const S6d = await stagesFor(motionApproved, ["FRAME_A.png", "FRAME_B.png"]);
+  assert.strictEqual(S6d.facts.approvedMotionAvailable, false, "an unavailable approved video cannot be shown as usable motion");
+  const finalVideo = authoritativeFixture("i2v");
+  finalVideo.shots[0].clips = [];
+  finalVideo.shots[0].creationBrief = { deliveryIntent: "video", approvedMotionFile: "FINAL.mp4" };
+  withCanon(finalVideo, [{ kind: "shot-delivery", shotId: "L1-01", value: "FINAL.mp4" }]);
+  const S6e = await stagesFor(finalVideo, ["FRAME_A.png", "FRAME_B.png", "FINAL.mp4"]);
+  assert.strictEqual(S6e.facts.lifecycleKey, "final");
+  assert.strictEqual(S6e.byId.motion.statusKey, "approved", "a receipt-backed delivered video remains approved motion");
+  finalVideo.productionAuthority.receipts.pop();
+  const S6f = await stagesFor(finalVideo, ["FRAME_A.png", "FRAME_B.png", "FINAL.mp4"]);
+  assert.strictEqual(S6f.facts.approvedMotionAvailable, false, "a legacy final-video pointer alone is not motion authority");
 
   /* S7 — a machine is running on the shot. Completion and activity are separate
      answers: an automation run in flight does not make unapproved frames complete.

@@ -11,6 +11,7 @@ const fs = require("fs");
 const path = require("path");
 const crypto = require("crypto");
 const { spawnSync } = require("child_process");
+const { braidyReadinessContext } = require("../assistant/braidy-readiness");
 const { llm, embed, vision, isLocalProviderEndpoint, resolveVisionTarget, providerForTask } = require("../assistant/llm");
 const {
   CONFIG_LOCATION,
@@ -3580,10 +3581,13 @@ app.post("/api/project/ask", async (req, res) => {
      * null is the normal answer and means "resolve the task the way llm() always
      * does". Under local-only it resolves to a local provider or throws, which is a
      * refusal rather than a send. */
-    const provider = aiProviderOverride();
     const P = readProject();
+    const guidance = braidyReadinessContext(P, shotReadinessProjection(P), { question, shotId: req.body?.shotId });
+    if (guidance.response) return res.json(guidance.response);
+    const provider = aiProviderOverride();
     const mediaScan = scanProject();
     const compact = {
+      productionReadiness: guidance.readiness,
       project: {
         title: P.meta?.title || "",
         format: P.meta?.format || "",
@@ -3657,7 +3661,7 @@ app.post("/api/project/ask", async (req, res) => {
         })),
       },
     };
-    const system = `You are the CineBraid project planning assistant. Answer only from the supplied project record. Be concise and operational. Cite shot IDs and scene IDs whenever possible. Distinguish facts from suggestions. Never claim to have changed the project. If information is missing, say so.`;
+    const system = `You are the CineBraid project planning assistant. Answer only from the supplied project record. Production readiness is authoritative: never advance beyond its next action or omit an unresolved required reference. Imported reference media is not approved shot output. Be concise and operational. Cite shot IDs and scene IDs whenever possible. Distinguish facts from suggestions. Never claim to have changed the project. If information is missing, say so.`;
     const answer = await llm(
       "prompt",
       system,
