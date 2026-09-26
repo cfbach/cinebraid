@@ -569,6 +569,7 @@ async function main() {
     "orphan-entity-creation-refusal.js",
     "paid-request-truth-negative-controls.js",
     "paid-request-truth.js",
+    "parked-gate-reconciliation.js",
     "post-authority-save-truth-real-browser.py",
     "post-authority-save-truth.js",
     "private-preview-layout-real-browser.py",

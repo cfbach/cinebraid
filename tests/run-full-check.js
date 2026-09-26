@@ -33,6 +33,7 @@ const nodeSuites = [
   "check:authority-write-seam",
   "check:authority-server",
   "check:diagnostics",
+  "check:parked-gates",
   "check:activity",
   "check:coverage",
   "check:coverage-requirement",
