@@ -34,6 +34,7 @@ const nodeSuites = [
   "check:authority-server",
   "check:diagnostics",
   "check:parked-gates",
+  "check:shot-entry-save-safety",
   "check:activity",
   "check:coverage",
   "check:coverage-requirement",
