@@ -468,6 +468,8 @@ async function main() {
     "fixtures",
     "focused-workspaces-real-browser.py",
     "focused-workspaces.js",
+    "founder-braidy-readiness.js",
+    "founder-delivery-reporting.js",
     "founder-smoke-overlay-real-browser.py",
     "founder-smoke-p0-trust-negative-controls.js",
     "founder-smoke-p0-trust.js",
