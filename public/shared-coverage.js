@@ -271,6 +271,7 @@
 
   function referenceArtifactStructure(row) {
     if (!row || typeof row !== "object" || Array.isArray(row)) return "undeclared";
+    if (row.mediaKind === "audio") return "undeclared";
     const jobType = coverageText(row.coverageJobType);
     if (jobType === "sheet") return "sheet";
     if (SINGLE_VIEW_JOB_TYPES.includes(jobType)) return "single";
@@ -322,6 +323,15 @@
      dimension or an aspect ratio. */
   function artifactMayHoldPrimaryAuthority(structure) {
     return coverageText(structure) === "single";
+  }
+
+  // The stored row records an explicit audio intake. Filename checks format only;
+  // ownership still comes from the exact candidate row and the authority boundary.
+  function audioArtifactMayHoldPrimaryAuthority(entity, fileName) {
+    const row = referenceArtifactRow(entity, fileName);
+    return !!row && row.mediaKind === "audio"
+      && /\.(wav|mp3|m4a|flac|ogg)$/i.test(String(fileName))
+      && !row.coverageJobType && !row.coverageCrop && !row.coverageSheetType;
   }
 
   function activeCoverageSlots(slots) {
@@ -709,6 +719,7 @@
     referenceArtifactStructureOf,
     isCoverageSheetArtifact,
     artifactMayHoldPrimaryAuthority,
+    audioArtifactMayHoldPrimaryAuthority,
     activeCoverageSlots,
     coverageSlotFile,
     summariseCoverage,

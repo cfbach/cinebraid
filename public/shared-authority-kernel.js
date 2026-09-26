@@ -809,7 +809,7 @@ function coverageStructureModule() {
     try { return require("./shared-coverage.js"); } catch { return null; }
   }
   if (typeof referenceArtifactStructureOf === "function" && typeof artifactMayHoldPrimaryAuthority === "function") {
-    return { referenceArtifactStructureOf, artifactMayHoldPrimaryAuthority };
+    return { referenceArtifactStructureOf, artifactMayHoldPrimaryAuthority, audioArtifactMayHoldPrimaryAuthority: typeof audioArtifactMayHoldPrimaryAuthority === "function" ? audioArtifactMayHoldPrimaryAuthority : null };
   }
   if (typeof globalThis !== "undefined"
     && typeof globalThis.referenceArtifactStructureOf === "function"
@@ -817,6 +817,7 @@ function coverageStructureModule() {
     return {
       referenceArtifactStructureOf: globalThis.referenceArtifactStructureOf,
       artifactMayHoldPrimaryAuthority: globalThis.artifactMayHoldPrimaryAuthority,
+      audioArtifactMayHoldPrimaryAuthority: globalThis.audioArtifactMayHoldPrimaryAuthority,
     };
   }
   return null;
@@ -839,6 +840,12 @@ function entityArtifactVerdict(project, target, fileName) {
   const entity = kernelList(kernelObject(project)[kernelText(need.list)])
     .map(kernelObject)
     .find((row) => kernelText(row.id) === kernelText(need.entityId)) || null;
+  if (kernelText(need.list) === "audio") {
+    return typeof structures.audioArtifactMayHoldPrimaryAuthority === "function"
+      && structures.audioArtifactMayHoldPrimaryAuthority(entity, name)
+      ? { ok: true }
+      : { ok: false, code: "AUTHORITY_AUDIO_UNDECLARED", message: "This candidate is not recorded as an audio recording. Import it through this audio item's upload before approving it. No authority was written." };
+  }
   const structure = kernelText(structures.referenceArtifactStructureOf(entity, name));
   if (structures.artifactMayHoldPrimaryAuthority(structure) === true) return { ok: true };
   /* TWO REFUSALS, AND THEY ARE NOT THE SAME SENTENCE. A declared sheet is a

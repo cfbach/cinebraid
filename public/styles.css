@@ -7784,3 +7784,11 @@ body[data-focused-route="library"]:has(.library-grid .library-card) #app[data-su
 /* A phone hides the paid dialogs' lead sentence to save height. The B-roll one is the
    no-reference explanation, one short line, so it stays. */
 .h3-generation-modal.broll-confirmation .h3-generation-head p{display:block}
+
+/* Manual audio review shares the authority dialog without an image-sized well. */
+.audio-candidate{display:flex;flex-direction:column;gap:10px;min-width:0;padding:16px;border:1px solid var(--line);border-radius:9px;background:var(--surface-2)}
+.audio-candidate b,.audio-candidate p{overflow-wrap:anywhere;margin:0}
+.audio-candidate audio,.entity-approval-modal audio{width:100%;min-width:0;max-width:100%}
+.audio-candidate[data-audio-standing="approved"]{border-color:var(--green)}
+.entity-approval-modal figure:has(audio){align-self:start}
+.entity-approval-modal figure:has(audio)>div{height:auto;min-height:90px;padding:16px}
