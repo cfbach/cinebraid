@@ -347,6 +347,7 @@ const serialSuites = ["check:windows-shutdown"];
    that refuses to accept a skip is `npm run check:browser-gate`, which every one of
    these also belongs to. See docs/qa/BROWSER_TESTS.md. */
 const browserSuites = [
+  "check:broll-deliver-browser",
   "check:audio-recording-browser",
   "check:ev2-3-browser",
   "check:ev2-3-selector-browser",

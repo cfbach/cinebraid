@@ -76,6 +76,7 @@
     "check:founder-p0-negative": "node tests/founder-smoke-p0-trust-negative-controls.js",
     "check:founder-p0-browser": "node tests/run-python-check.js tests/founder-smoke-overlay-real-browser.py",
     "check:package": "node tests/release-package-smoke.js",
+    "check:broll-deliver-browser": "node tests/broll-deliver-real-browser.js",
     "check:audio-recording": "node tests/audio-recording.js",
     "check:audio-recording-browser": "node tests/run-python-check.js tests/audio-recording-real-browser.py",
     "check:alpha-reference-approval": "node tests/alpha-imported-reference-approval.js",

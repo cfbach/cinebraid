@@ -379,6 +379,7 @@ async function main() {
     "braidy-rail.js",
     "brand-logo-asset.js",
     "brand-logo-real-browser.py",
+    "broll-deliver-real-browser.js",
     "broll-generation-real-browser.py",
     "broll-generation.js",
     "browser-requirements.txt",
