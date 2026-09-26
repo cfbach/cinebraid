@@ -1,0 +1,135 @@
+"use strict";
+// Real import, playback, approval, separate delivery and export on disposable data.
+const assert = require("assert");
+const fs = require("fs");
+const path = require("path");
+const os = require("os");
+const net = require("net");
+const crypto = require("crypto");
+const {spawn} = require("child_process");
+const {disposableRoot} = require("./helpers/disposable-root");
+const {writeBrowserFixture} = require("./returned-media-ownership");
+const ROOT = path.resolve(__dirname, "..");
+const OUT = process.env.CINEBRAID_BROLL_EVIDENCE || fs.mkdtempSync(path.join(os.tmpdir(), "cinebraid-broll-deliver-"));
+fs.mkdirSync(OUT, {recursive:true});
+const checks = [], errors = [], blocked = [];
+const check = (name, value) => { checks.push({name, passed:!!value}); assert(value, name); };
+const freePort = () => new Promise(resolve => { const s=net.createServer(); s.listen(0,"127.0.0.1",()=>{const p=s.address().port;s.close(()=>resolve(p));}); });
+async function walk(browser, width) {
+  const slug = "broll-deliver-"+width, id = "BR-"+width;
+  const w = disposableRoot(slug,{config:{activeProject:slug}});
+  const dir = path.join(w.projectsRoot,slug);
+  const project = writeBrowserFixture(dir);
+  const shot = structuredClone(project.shots.find(s=>s.id==="SH-A"));
+  Object.assign(shot,{id,title:"Rain on the platform",referenceMode:"style-only",characters:[],codes:[],candidateFiles:[],finalVideoFile:"",workflowStatus:"IN PROGRESS",status:"BUILT"});
+  shot.keyframes=[{...shot.keyframes[0],winner:""}];
+  shot.clips=[{id:"motion-a",suffix:"A",title:"B-roll motion",fromFrame:"",toFrame:"",kind:"interpolate",dur:4,winner:"",winnerEnd:"",videoWinner:"",generationPackages:[]}];
+  shot.creationBrief={deliveryIntent:"motion",approvedMotionFile:"",finalVideoFile:"",brollPrompt:"Rain crosses an empty platform.",brollOutput:"video"};
+  project.shots=[shot]; project.meta.title="B-roll delivery rehearsal"; project.productionAuthority.receipts=[];
+  fs.mkdirSync(path.join(dir,"shots",id,"takes"),{recursive:true});
+  const file=path.join(dir,"project.json");fs.writeFileSync(file,JSON.stringify(project,null,2));
+  const disk=()=>JSON.parse(fs.readFileSync(file,"utf8"));
+  const receipts=()=>disk().productionAuthority?.receipts||[];
+  const delivery=()=>receipts().filter(r=>r.kind==="shot-delivery" && r.status==="current");
+  const port=await freePort(), base="http://127.0.0.1:"+port;
+  const log=fs.openSync(path.join(OUT,width+"-server.log"),"w");
+  const server=spawn(process.execPath,["-r","./tests/helpers/ev2-6-no-network.js","server.js"],{cwd:ROOT,env:w.serverEnv(port),stdio:["ignore",log,log],windowsHide:true});
+  let context, page;
+  const capture=async name=>{
+    await page.waitForFunction(()=>document.getElementById("toast")?.classList.contains("hidden"));
+    await page.locator('#save-state[data-state="saved"]').waitFor();
+    await page.waitForFunction(()=>[...document.querySelectorAll(".broll-delivery video")].every(e=>e.readyState>=2&&!e.seeking));
+    await page.screenshot({path:path.join(OUT,name+"-"+width+".png"),fullPage:true});
+    check(width+" "+name+" has no horizontal overflow",await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth));
+  };
+  const settled=async()=>page.waitForFunction(()=>projectSaveSettled().settled&&!approvalSubmissionPending());
+  const open=async()=>{await page.goto(base+"/#/shot/"+id);await page.locator("[data-broll-panel]").waitFor();await settled();};
+  const finish=async()=>{const p=page.locator(".broll-delivery .guided-finish-card");await p.waitFor();if(!await p.getAttribute("open")) {if(!await p.evaluate(e=>e.open))await p.locator("summary").click();}};
+  try {
+    for(let i=0;i<150;i++){try{if((await fetch(base+"/api/project")).ok)break;}catch{}await new Promise(r=>setTimeout(r,100));}
+    context=await browser.newContext({viewport:{width,height:width===390?844:1000},reducedMotion:"reduce",serviceWorkers:"block"});
+    await context.route("**/*",route=>{
+      const req=route.request(),url=req.url();
+      if(!url.startsWith(base+"/") || (req.method()!=="GET" && /\/api\/(generation|agents|automation|accounts)\//.test(new URL(url).pathname))){blocked.push(url.split("?")[0]);return route.abort();}
+      return route.continue();
+    });
+    page=await context.newPage();page.setDefaultTimeout(12000);page.on("pageerror",e=>errors.push(e.message));
+    await open();
+    check(width+" B-roll exposes Deliver before any result",await page.getByRole("heading",{name:"Deliver",exact:true}).count()===1);
+    check(width+" empty B-roll cannot finalize",await page.getByRole("button",{name:"Mark shot final",exact:true}).count()===0);
+    await capture("01-empty-deliver");
+    const beforeToggle=fs.readFileSync(file,"utf8"), disclosure=page.locator(".broll-delivery .guided-finish-card");
+    await disclosure.locator("summary").click();await disclosure.locator("summary").click();
+    await page.evaluate(()=>new Promise(resolve=>requestAnimationFrame(()=>requestAnimationFrame(resolve))));
+    check(width+" opening Deliver does not dirty the project",await page.evaluate(()=>projectSaveSettled().settled) && fs.readFileSync(file,"utf8")===beforeToggle);
+    await page.getByRole("button",{name:"Import existing…",exact:true}).click();
+    const chooser=page.waitForEvent("filechooser");await page.getByRole("button",{name:"Motion video",exact:true}).click();
+    await (await chooser).setFiles(path.join(ROOT,"tests/fixtures/ev2-6/motion-0.mp4"));
+    await page.waitForFunction(id=>takesFor(id).some(t=>t.name==="motion-0.mp4"&&t.assetId),id);
+    await settled();
+    // Existing import feedback can retain its modal after the successful durable save.
+    if(await page.locator(".shot-import-chooser").isVisible())await page.locator(".shot-import-chooser .cancel").click();
+    check(width+" import creates no authority",receipts().length===0);
+    check(width+" candidate cannot finalize",await page.getByRole("button",{name:"Mark shot final",exact:true}).count()===0);
+    await page.getByRole("button",{name:"Motion Results",exact:true}).click();
+    await page.locator("#rx-primary").waitFor();
+    await page.locator("#rx-primary").evaluate(async e=>{await e.play();});
+    await page.waitForFunction(()=>document.querySelector("#rx-primary")?.currentTime>0.1);
+    check(width+" candidate video really plays",await page.locator("#rx-primary").evaluate(e=>e.readyState>=2&&e.duration>0));
+    await page.locator("#rx-primary").evaluate(e=>e.pause());
+    await page.locator("#rx-approve").click();
+    await page.locator("#rx-confirm").click();await settled();
+    check(width+" motion approval remains separate from delivery",receipts().some(r=>r.kind==="shot-motion")&&delivery().length===0);
+    await page.locator("button[data-media-return]").click();
+    await page.locator("[data-broll-panel]").waitFor();await finish();
+    await capture("02-approved-ready");
+    await page.getByRole("button",{name:"Mark shot final",exact:true}).click();
+    await page.locator("#rx-confirm").waitFor();
+    await page.locator("#modal").getByRole("button",{name:"Cancel",exact:true}).click();
+    check(width+" cancelling delivery adds no receipt",delivery().length===0);
+    await page.getByRole("button",{name:"Mark shot final",exact:true}).click();
+    await page.locator("#rx-confirm").click();await settled();
+    const final=delivery()[0],motion=receipts().find(r=>r.kind==="shot-motion"&&r.status==="current");
+    check(width+" explicit delivery records exact approved asset",delivery().length===1&&final.assetId===motion.assetId&&final.value==="motion-0.mp4");
+    check(width+" workflow intent remains B-roll",disk().shots[0].referenceMode==="style-only");
+    const beforeReload=JSON.stringify(receipts());await page.reload();await page.locator("[data-broll-panel]").waitFor();await finish();
+    check(width+" reload preserves B-roll and delivery receipts",disk().shots[0].referenceMode==="style-only"&&JSON.stringify(receipts())===beforeReload);
+    check(width+" final state is visible",await page.locator(".broll-delivery").getByText("Marked final",{exact:true}).isVisible());
+    await page.locator(".broll-delivery video").evaluate(async e=>{await e.play();});
+    await page.waitForFunction(()=>document.querySelector(".broll-delivery video")?.currentTime>0.5);
+    check(width+" delivered preview plays after reload",await page.locator(".broll-delivery video").evaluate(e=>e.readyState>=2));
+    await page.locator(".broll-delivery video").evaluate(e=>e.pause());
+    await capture("03-delivered-reloaded");
+    await page.locator(".broll-delivery").scrollIntoViewIfNeeded();
+    await page.screenshot({path:path.join(OUT,"04-delivery-controls-"+width+".png")});
+    const download=page.waitForEvent("download");await page.getByRole("link",{name:"Download Approved record",exact:true}).click();
+    const saved=path.join(OUT,"approved-record-"+width+".md");await (await download).saveAs(saved);
+    const record=fs.readFileSync(saved,"utf8");
+    check(width+" exported record carries shot, delivery and exact receipt",record.includes(id)&&record.includes("Deliverable")&&record.includes(final.id)&&record.includes(final.value));
+    const ledger=JSON.parse(fs.readFileSync(path.join(dir,"media-assets.json"),"utf8"));
+    const asset=ledger.assets.find(a=>a.assetId===final.assetId);
+    check(width+" delivered asset points at the imported physical file",asset.storage.path==="shots/"+id+"/takes/motion-0.mp4");
+    const physical=path.join(dir,asset.storage.path), bytes=fs.readFileSync(physical);
+    check(width+" imported bytes match the original fixture",bytes.equals(fs.readFileSync(path.join(ROOT,"tests/fixtures/ev2-6/motion-0.mp4"))));
+    fs.writeFileSync(path.join(OUT,"delivery-evidence-"+width+".json"),JSON.stringify({shot:disk().shots[0],receipts:receipts(),asset,sha256:crypto.createHash("sha256").update(bytes).digest("hex")},null,2));
+    // Missing bytes are not a new decision and cannot offer a new finalization.
+    fs.renameSync(physical,physical+".missing-control");
+    if(width===390)await page.locator("#mobile-nav").click();
+    await page.locator("#rescan").click();await page.getByText("Local folders synced",{exact:true}).waitFor();await page.reload();await page.locator("[data-broll-panel]").waitFor();await finish();
+    check(width+" missing original cannot offer finalization",await page.getByRole("button",{name:"Mark shot final",exact:true}).count()===0);
+    check(width+" missing original preserves approval history",JSON.stringify(receipts())===beforeReload);
+    const missing=await context.request.get(base+"/api/bible/export?preset=approved");
+    const missingText=await missing.text();fs.writeFileSync(path.join(OUT,"missing-original-record-"+width+".md"),missingText);
+    check(width+" record reports missing original",missingText.includes(final.id)&&missingText.includes("Unavailable"));
+    await capture("05-missing-original");
+  } catch(error) {if(page){await page.screenshot({path:path.join(OUT,"failure-"+width+".png"),fullPage:true}).catch(()=>{});fs.writeFileSync(path.join(OUT,"failure-"+width+".txt"),await page.locator("body").innerText().catch(()=>""));}throw error;
+  } finally {if(context)await context.close();server.kill();await new Promise(r=>server.exitCode!==null?r():server.once("exit",r));fs.closeSync(log);w.cleanup();}
+}
+(async()=>{let browser;try{
+  const pw=require("./helpers/playwright-module").requirePlaywright("B-roll Deliver");
+  browser=await pw.chromium.launch({headless:true,...(process.env.CINEBRAID_BROWSER_EXECUTABLE?{executablePath:process.env.CINEBRAID_BROWSER_EXECUTABLE}:{})});
+  console.log("[browser-runtime] B-roll Deliver: launched Chromium "+browser.version()+" (Node Playwright)");
+  for(const width of [1440,390])await walk(browser,width);
+  check("No browser errors",errors.length===0);check("No provider or off-origin requests",blocked.length===0);
+  console.log(`B-roll Deliver: ${checks.length} checks passed. Evidence: ${OUT}`);
+}catch(e){console.error(e);process.exitCode=1;}finally{if(browser)await browser.close();fs.writeFileSync(path.join(OUT,"results.json"),JSON.stringify({checks,errors,blocked},null,2));}})();
