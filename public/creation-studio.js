@@ -2567,7 +2567,13 @@ function guidedApprovedMotion(s, takes = takesFor(s.id)) {
   const names = [c.approvedMotionFile, ...(s.clips || []).map((clip) => clip.videoWinner)].filter(Boolean);
   for (const name of [...new Set(names)]) {
     const take = takes.find((item) => item.name === name && isVideo(item.name));
-    if (take) return { ...take, final: delivery.final && delivery.value === name };
+    const final = delivery.final && delivery.value === name && delivery.form === "video";
+    const approved = final || (s.clips || []).some((clip) => {
+      const receipt = typeof currentHumanAuthority === "function"
+        ? currentHumanAuthority(P, { kind: "shot-motion", shotId: s.id, unitKey: clip.id || clip.suffix || "" }) : null;
+      return receipt && receipt.value === name;
+    });
+    if (take && approved) return { ...take, final };
   }
   return null;
 }
@@ -5751,6 +5757,7 @@ function shotStageModelFacts(s, takes) {
        directly so Deliver can ask whether a result exists rather than infer it from
        which label the lifecycle happened to reach. */
     approvedResultAvailable: !!life.current || !!life.motion,
+    approvedMotionAvailable: !!life.motion,
     lifecycleKey: life.key,
     deliveryIntent: life.intent,
     /* Slice 5a. Read straight off the shot record through the one vocabulary owner, and

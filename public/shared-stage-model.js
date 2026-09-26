@@ -481,6 +481,7 @@
        a video first" and that is a question about RESULTS, not about which lifecycle
        label the shot happens to be wearing. See deliverState. */
     "approvedResultAvailable",
+    "approvedMotionAvailable",
     "lifecycleKey",
     "deliveryIntent",
     /* The canonical route token remains in the fact record for truthful storage
@@ -526,6 +527,7 @@
       activityHealth: ACTIVITY_HEALTH.includes(health) ? health : "",
       downstreamAuthorityApproved: !!raw.downstreamAuthorityApproved,
       approvedResultAvailable: !!raw.approvedResultAvailable,
+      approvedMotionAvailable: !!raw.approvedMotionAvailable,
       lifecycleKey: stageText(raw.lifecycleKey),
       deliveryIntent: stageText(raw.deliveryIntent),
       deliveryRoute: stageText(raw.deliveryRoute),
@@ -765,7 +767,7 @@
     const open = generationOpen || returnedWork;
     const availability = open ? "available" : "blocked";
     const blockedReason = open ? "" : facts.motionReadinessReason || "Production readiness is unavailable for Motion";
-    if (facts.lifecycleKey === "final" || facts.lifecycleKey === "motion-approved")
+    if (facts.approvedMotionAvailable)
       return stageResult(stage, { availability, blockedReason, completion: "complete", statusKey: "approved", tone: "complete", recommendedNext: "deliver" });
     if (facts.lifecycleKey === "review-motion")
       return stageResult(stage, { availability, blockedReason, completion: "needs-review", statusKey: "needsReview", tone: "attention" });
