@@ -7342,10 +7342,9 @@ function shotAwaitsReturnedReview(readiness, returnedReview = null) {
 }
 function projectFilmmakerDecisions(feed = projectShotReadiness(), returnedReview = null) {
   const rows = feed && !feed.error ? (feed.shots || []) : [];
-  /* `delivered`, not `final`: the board, the tiles and the scene cards have always
-     called this state Delivered, and the readiness rollup's COMPLETE is the same
-     state. "Mark shot final" names the ACTION that reaches it. */
-  const delivered = rows.filter((row) => row.status === "COMPLETE").map((row) => row.shotId);
+  // A current delivery receipt records the filmmaker's final decision. Readiness
+  // independently reports unresolved inputs, including on already delivered shots.
+  const delivered = P.shots.filter(shotIsDelivered).map((shot) => shot.id);
   const blocked = rows.filter((row) => row.status === "BLOCKED").map((row) => row.shotId);
   if (!feed || feed.error) return { available: false, count: 0, shots: [], blocked, delivered, unanswerable: [], project: null };
   if (feed.truthProblem) {
@@ -7769,13 +7768,13 @@ async function productionHomeView() {
     const shots = P.shots.filter((shot) => shot.scene === scene.id);
     const scene_ = sceneFilmmakerDecisions(scene.id, decisions);
     const pct = shots.length ? Math.round(scene_.delivered / shots.length * 100) : 0;
-    const complete = shots.length > 0 && scene_.delivered === shots.length;
+    const complete = shots.length > 0 && scene_.delivered === shots.length && !scene_.blocked && !scene_.count && !scene_.unanswerable;
     const parts = [];
     if (scene_.count) parts.push(`${plural(scene_.count, "shot")} ${scene_.count === 1 ? "needs" : "need"} a ${FILMMAKER_DECISION_LABEL}`);
     if (scene_.blocked) parts.push(`${plural(scene_.blocked, "shot")} blocked`);
     if (scene_.unanswerable) parts.push(`${plural(scene_.unanswerable, "shot")} unanswerable until the project is repaired`);
     const remaining = shots.length - scene_.delivered;
-    return `<a href="#/scene/${scene.id}" class="scene-progress-card${complete ? " is-complete" : ""}" data-scene-decisions="${attr(String(scene_.count))}"><header><b>${esc(scene.title)}</b><span title="A shot is delivered once you have marked it final.">${scene_.delivered}/${shots.length} delivered</span></header><div class="progress-line"><i style="width:${pct}%"></i></div><footer>${complete ? `<span>Scene complete</span><span>Nothing outstanding</span>` : `<span>${esc(parts[0] || (decisions.available ? "No decision waiting" : "Decisions unavailable"))}</span><span>${esc(parts[1] || `${plural(remaining, "shot")} not delivered`)}</span>`}</footer></a>`;
+    return `<a href="#/scene/${scene.id}" class="scene-progress-card${complete ? " is-complete" : ""}" data-scene-decisions="${attr(String(scene_.count))}"><header><b>${esc(scene.title)}</b><span title="A shot is delivered once you have marked it final.">${scene_.delivered}/${shots.length} delivered</span></header><div class="progress-line"><i style="width:${pct}%"></i></div><footer>${complete ? `<span>Scene complete</span><span>Nothing outstanding</span>` : `<span>${esc(parts[0] || (decisions.available ? "No decision waiting" : "Decisions unavailable"))}</span><span>${esc(parts[1] || (remaining ? `${plural(remaining, "shot")} not delivered` : "All shots delivered"))}</span>`}</footer></a>`;
   }).join("")}</div>` : `<div class="production-inbox-empty">No scenes have been added yet.</div>`}</section>`;
 }
 /* The records the add control can create, declared once so the chooser and the
@@ -7952,7 +7951,7 @@ window.runGlobalAdd = (key) => {
  * tile counts it. A decision outranks a missing input, as it does in readiness. */
 function shotBoardActionCategory(shot, readiness = shotReadinessFor(shot), returnedReview = null) {
   if (!readiness) return shotIsDelivered(shot) ? "complete" : "unfinished";
-  if (readiness.status === "COMPLETE") return "complete";
+  if (readiness.status === "COMPLETE") return shotIsDelivered(shot) ? "complete" : "unfinished";
   if (readiness.status === "NEEDS_DECISION") return "review";
   if (shotAwaitsReturnedReview(readiness, returnedReview)) return "review";
   if (readiness.status === "BLOCKED") return "missing-inputs";
@@ -7970,7 +7969,7 @@ function shotBoardActionCategory(shot, readiness = shotReadinessFor(shot), retur
 function shotBoardNotDelivered(shot, readiness = shotReadinessFor(shot)) {
   /* The complete test alone: which undelivered category a shot files under is not this
      question, and asking it would derive the returned-review projection per shot. */
-  return readiness ? readiness.status !== "COMPLETE" : !shotIsDelivered(shot);
+  return !shotIsDelivered(shot);
 }
 window.setShotActionFilter = (value) => {
   FILTER.action = value || "unfinished";
@@ -7980,6 +7979,7 @@ window.setShotActionFilter = (value) => {
 };
 function shotBoardActionMatches(shot, feed = projectShotReadiness(), returnedReview = null) {
   if (!FILTER.action || FILTER.action === "all") return true;
+  if (FILTER.action === "complete") return shotIsDelivered(shot);
   if (FILTER.action === "unfinished") return shotBoardNotDelivered(shot, shotReadinessFor(shot, feed));
   return shotBoardActionCategory(shot, shotReadinessFor(shot, feed), returnedReview) === FILTER.action;
 }
@@ -8003,7 +8003,7 @@ function shotBoardActionFilters(feed = projectShotReadiness(), returnedReview = 
   const defs = shotBoardActionDefs();
   const projection = returnedReview || (typeof returnedReviewProjectionForBrowser === "function" ? returnedReviewProjectionForBrowser() : null);
   const category = new Map(P.shots.map((shot) => [shot.id, shotBoardActionCategory(shot, shotReadinessFor(shot, feed), projection)]));
-  const counts = Object.fromEntries(defs.map(([id]) => [id, P.shots.filter((shot) => id === "all" ? true : id === "unfinished" ? shotBoardNotDelivered(shot, shotReadinessFor(shot, feed)) : category.get(shot.id) === id).length]));
+  const counts = Object.fromEntries(defs.map(([id]) => [id, P.shots.filter((shot) => id === "all" ? true : id === "complete" ? shotIsDelivered(shot) : id === "unfinished" ? shotBoardNotDelivered(shot, shotReadinessFor(shot, feed)) : category.get(shot.id) === id).length]));
   return `<label class="board-show" for="shot-board-show"><span>Show</span><select id="shot-board-show" aria-describedby="shot-board-range" onchange="setShotActionFilter(this.value)">${defs.map(([id,label]) => `<option value="${id}" data-board-filter="${id}" data-count="${counts[id]}"${FILTER.action===id?" selected":""}>${esc(label)} · ${counts[id]}</option>`).join("")}</select></label>`;
 }
 function shotBoardPageKey() {
