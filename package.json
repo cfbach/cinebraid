@@ -25,7 +25,7 @@
     "check:ev2-4-audience": "node tests/ev2-4-bible-audience.js",
     "check:ev2-4-browser": "node tests/run-python-check.js tests/ev2-4-bible-real-browser.py",
     "check:syntax": "node scripts/check-syntax.js",
-    "check:render": "node tests/render-harness.js",
+    "check:render": "node tests/sound-placement-clicks.js && node tests/render-harness.js",
     "check:behavior": "node tests/current-behavior.js",
     "check:api": "node tests/api-smoke.js",
     "check": "node tests/run-full-check.js",
