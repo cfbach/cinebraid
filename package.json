@@ -79,6 +79,7 @@
     "check:broll-deliver-browser": "node tests/broll-deliver-real-browser.js",
     "check:audio-recording": "node tests/audio-recording.js",
     "check:audio-recording-browser": "node tests/run-python-check.js tests/audio-recording-real-browser.py",
+    "check:sound-placement-browser": "node tests/run-python-check.js tests/sound-placement-real-browser.py",
     "check:alpha-reference-approval": "node tests/alpha-imported-reference-approval.js",
     "check:alpha-reference-approval-negative": "node tests/alpha-imported-reference-approval-negative-controls.js",
     "check:reference-authority": "node tests/reference-authority-deep-dive.js",

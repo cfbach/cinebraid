@@ -1,0 +1,26 @@
+.sound-placement{margin:18px 0;padding:18px;border:1px solid var(--line);border-radius:12px;background:var(--surface-1)}
+.sound-placement>summary{cursor:pointer;font-size:17px;font-weight:650;list-style:none;display:flex;justify-content:space-between;gap:12px;align-items:center}
+.sound-placement>summary::-webkit-details-marker{display:none}
+.sound-placement>summary::before{content:"▸";margin-right:6px}
+.sound-placement[open]>summary::before{content:"▾"}
+.sound-placement>summary span{margin-left:auto;font-size:12px;color:var(--muted);font-weight:400}
+.sound-placement-content{padding-top:14px}
+.sound-placement h2{margin:0 0 5px;font-size:18px}
+.sound-placement header p,.sound-placement-empty{margin:0 0 14px;color:var(--muted);line-height:1.5}
+.sound-placement-list{display:grid;gap:10px;margin:14px 0}
+.sound-placement-list article{min-width:0;padding:14px;border:1px solid var(--line);border-radius:9px;background:var(--surface)}
+.sound-placement-list article.unavailable{border-color:#a76a50}
+.sound-placement-row,.sound-placement-actions{display:flex;justify-content:space-between;gap:12px;align-items:start;flex-wrap:wrap}
+.sound-placement-row p{margin:3px 0;overflow-wrap:anywhere}
+.sound-placement-row span{font-size:12px;color:var(--muted)}
+.sound-placement dl{display:flex;gap:14px;flex-wrap:wrap;margin:10px 0}
+.sound-placement dt{font-size:11px;color:var(--muted)}
+.sound-placement dd{margin:3px 0 0}
+.sound-placement audio{display:block;width:100%;max-width:440px;margin:12px 0}
+.sound-placement-actions small{overflow-wrap:anywhere}
+.sound-placement-form{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:10px;margin-top:14px}
+.sound-placement-form label{display:grid;gap:5px;min-width:0}
+.sound-placement-form select,.sound-placement-form input{width:100%;min-width:0}
+.sound-placement-form button{justify-self:start}
+.sound-placement-message{align-self:center;margin:0}
+@media(max-width:600px){.sound-placement{padding:13px}.sound-placement-form{grid-template-columns:minmax(0,1fr)}}

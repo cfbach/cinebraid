@@ -84,6 +84,7 @@ const SCRIPT_ORDER = [
   "library-tools.js",
   "review.js",
   "scene-review.js",
+  "sound-placement.js",
   "creation-studio.js",
   "continuity-workspace.js",
   "fal-generation.js",

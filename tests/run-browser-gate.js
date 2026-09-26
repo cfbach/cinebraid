@@ -32,6 +32,7 @@ const RECEIPT = /^\[browser-runtime\] (.+): launched Chromium (\S+) \((.+)\)$/;
 const SUITES = [
   "check:broll-deliver-browser",
   "check:audio-recording-browser",
+  "check:sound-placement-browser",
   "check:ev2-3-browser",
   "check:ev2-3-selector-browser",
   "check:ev2-4-visual-browser",
