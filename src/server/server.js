@@ -10247,6 +10247,7 @@ function approvedRecordProjection(project) {
         url:found.available ? "/assets/"+found.storagePath.split("/").map(encodeURIComponent).join("/") : ""};
     },
     shotMedia: (shot,receipt) => observed(receipt,["shots/"+shot.id+"/takes/"+receipt.value,"shots/"+shot.id+"/locked/"+receipt.value]),
+    placedAudio: (entity,receipt) => audio.resolve({...receipt,entityId:entity.id}),
   });
 }
 app.get("/api/bible", (req, res) => {
