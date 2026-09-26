@@ -2606,9 +2606,13 @@ function guidedShotLifecycle(s, takes = takesFor(s.id)) {
   if (images.length) return { key: "review-still", label: "Image returned", title: "Review the returned still", note: "Choose the image that should become the approved shot still.", panel: "review", current, motion, intent, images, videos };
   return { key: "needs-image", label: "Needs image", title: "Add or create the shot image", note: "Upload a still made elsewhere, use an approved plate, or open the image builder.", panel: "still", current, motion, intent, images, videos };
 }
+function guidedPanelPreferenceKey(id, key) {
+  return `guided-panel:${JSON.stringify([id, key])}`;
+}
 function guidedPanelOpen(s, key, fallback = false) {
-  const c = ensureShotCreation(s);
-  return Object.prototype.hasOwnProperty.call(c.openPanels, key) ? !!c.openPanels[key] : fallback;
+  const stored = s.creationBrief?.openPanels || {};
+  const legacy = Object.prototype.hasOwnProperty.call(stored, key) ? !!stored[key] : fallback;
+  return workspaceSectionOpen(guidedPanelPreferenceKey(s.id, key), legacy);
 }
 function keepGuidedPanelOpen(s, panel, subpanel = "") {
   const c = ensureShotCreation(s);
@@ -2618,9 +2622,10 @@ function keepGuidedPanelOpen(s, panel, subpanel = "") {
 }
 window.rememberGuidedPanel = (id, key, open) => {
   if (typeof ROUTE_RENDER_IN_PROGRESS !== "undefined" && ROUTE_RENDER_IN_PROGRESS) return;
-  const s = shotById(id), c = ensureShotCreation(s);
-  c.openPanels[key] = !!open;
-  dirty();
+  // Native toggle events may arrive after the render guard clears. Remember
+  // disclosure state in the existing project-scoped browser store, never by
+  // saving the project (and its in-memory display normalizations).
+  rememberWorkspaceSection(guidedPanelPreferenceKey(id, key), !!open);
 };
 async function focusGuidedWorkspaceTarget(selector, attempts = 12) {
   for (let attempt = 0; attempt < attempts; attempt += 1) {
