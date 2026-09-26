@@ -72,6 +72,7 @@ const { createRequestBoundary, createRequestPosture } = require("./request-origi
    module and never to media-assets/-store/-indexer/-verify directly, so there is
    one answer to when the identity ledger changes and who changed it. */
 const MediaAssetService = require("../media/media-asset-service");
+const AudioApproval = require("../media/audio-approval");
 /* Local File Affordances V1. Resolves a durable media identity to an authoritative
    path inside the project it belongs to, and opens Explorer on it. server.js hands
    it an identity and a contained slug and never a filesystem path — see that
@@ -1607,6 +1608,7 @@ const AuthorityWriteBoundary = createAuthorityWriteSeam({
     }
     if ([WRITE_CLASSES.NORMAL_SAVE, WRITE_CLASSES.CANON_TRANSITION].includes(context.writeClass)) {
       ReferenceMedia.validateSuccessor({current,successor:prepared,projectsRoot:projectsRoot(),slug:context.slug,canon:context.writeClass === WRITE_CLASSES.CANON_TRANSITION});
+      if (context.writeClass === WRITE_CLASSES.CANON_TRANSITION) AudioApproval.validateSuccessor({current,successor:prepared,projectsRoot:projectsRoot(),slug:context.slug});
     }
     normalizePromptBuildHistory(prepared, { applyRetention: false });
     return prepared;
@@ -2150,7 +2152,7 @@ app.get("/assets/*", (req, res) => {
     try {
       const doc=approvedRecordProjection(readJsonSync(DATA()));
       permitted=[...doc.entities,...doc.shots].some(row=>row.targets.some(t=>{
-        try{return t.media.available && decodeURIComponent(t.media.url.slice("/assets/".length))===rel;}catch{return false;}
+        try{return t.media.available && decodeURIComponent(new URL(t.media.url,"http://local").pathname.slice("/assets/".length))===rel;}catch{return false;}
       }));
     } catch { permitted=false; }
     return permitted;
@@ -2160,6 +2162,32 @@ app.get("/assets/*", (req, res) => {
   if (!allowedRoot || (!MEDIA_EXT.has(ext) && !([".avif",".bmp"].includes(ext) && approvedPath())))
     return res.status(404).send("Not found");
   if(req.role!=="editor" && !approvedPath())return res.status(404).send("Not found");
+  if (rel.startsWith("audio/")) {
+    const slug = activeSlug();
+    if (req.query.project && req.query.project !== slug) return res.status(404).send("Recording project unavailable");
+    const audio = AudioApproval.resolver({projectsRoot:projectsRoot(),slug,project:readProject(slug)});
+    const recorded = audio.receipts.filter(r => "audio/"+r.value === rel);
+    const requested = String(req.query.audioAsset || "");
+    // Also guard an old filename-only player left open before approval.
+    if (requested || recorded.length) {
+      const receipt = recorded.find(r => !requested || r.assetId === requested);
+      const exact = receipt && recorded.every(r => r.assetId === receipt.assetId) ? audio.resolve(receipt,true) : null;
+      res.setHeader("Cache-Control","private, no-store");
+      if (!exact?.available) return res.status(404).send("Original approved recording unavailable; approval history is preserved.");
+      const bytes = exact.bytes;
+      res.type(ext); res.setHeader("Accept-Ranges","bytes");
+      if (req.headers.range) {
+        const ranges = req.range(bytes.length);
+        if (!Array.isArray(ranges) || ranges.type !== "bytes" || ranges.length !== 1) {
+          res.setHeader("Content-Range","bytes */"+bytes.length);return res.status(416).end();
+        }
+        const {start,end} = ranges[0];
+        res.setHeader("Content-Range",`bytes ${start}-${end}/${bytes.length}`);
+        return res.status(206).send(bytes.subarray(start,end+1));
+      }
+      return res.send(bytes);
+    }
+  }
   const located=LocalFileAffordance.localFileAffordance({projectsRoot:projectsRoot(),slug:activeSlug(),key:"path:"+rel});
   if(located.state!=="available")return res.status(404).send("Not found");
   const file=located.path;
@@ -2773,7 +2801,7 @@ function scanProject(slug = "") {
     plates: enrich(listMedia("plates", identity, base)),
     props: enrich(listMedia("props", identity, base)),
     vehicles: enrich(listMedia("vehicles", identity, base)),
-    audio: enrich(listMedia("audio", identity, base)),
+    audio: AudioApproval.resolver({projectsRoot:projectsRoot(),slug:slug || activeSlug(),project:mediaProject}).decorate(enrich(listMedia("audio", identity, base))),
     media: enrich(listMedia("media", identity, base)),
     shots,
     workspaceSync: sync,
@@ -3103,12 +3131,15 @@ app.post("/api/media/prepare-identity", async (req, res) => {
     return mediaOwnerRefusal(res, error);
   }
   const slug = path.basename(owned);
-  const prepared = await MediaAssetService.prepareAssetIdentity({
+  let prepared = await MediaAssetService.prepareAssetIdentity({
     projectsRoot: projectsRoot(),
     slug,
     path: `${safeDir}/${name}`,
     activeSlug,
   });
+  if (safeDir === "audio" && prepared.status === "ready") {
+    prepared = await AudioApproval.prepare({projectsRoot:projectsRoot(),slug,name});
+  }
   /* Every typed verdict is a 200. "Not ready yet" is an answer this route was
      asked for, not a failure of the request, and a surface that has to render the
      reason cannot do it from an HTTP status. */
@@ -10181,6 +10212,7 @@ app.post("/api/search", async (req, res) => {
 /* Audience correction: all record reads are strict even for an editor. Query
    flags cannot broaden them. The only supporting export is server-role gated. */
 function approvedRecordProjection(project) {
+  const audio = AudioApproval.resolver({projectsRoot:projectsRoot(),slug:activeSlug(),project});
   const resolver = ReferenceMedia.resolver({projectsRoot:projectsRoot(),slug:activeSlug(),project});
   let assets=[];
   try { const ledger=MediaAssetService.readAssets(projectsRoot(),activeSlug()); if(!ledger.readOnly)assets=ledger.assets||[]; } catch { /* Availability stays unknown; no registry repair on read. */ }
@@ -10208,7 +10240,7 @@ function approvedRecordProjection(project) {
     entityMedia: (list,entity,receipt) => {
       if(list==="audio") {
         if(!EntityOwnership.entityOwnsMedia(EntityOwnership.buildEntityOwnerIndex(project,list),entity.id,receipt.value))return null;
-        return observed(receipt,["audio/"+receipt.value]);
+        return audio.resolve({...receipt,entityId:entity.id});
       }
       const found=resolver.resolve(list,entity,receipt.value,receipt.assetId);
       return {available:found.available,sourceName:found.sourceName,

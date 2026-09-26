@@ -22,6 +22,12 @@ async function run(){
  const ledgerRows=[];
  const asset=(rel,type='image')=>{fs.mkdirSync(path.dirname(path.join(dir,rel)),{recursive:true});fs.writeFileSync(path.join(dir,rel),'synthetic-approved-original');const st=fs.statSync(path.join(dir,rel));const row={assetId:Assets.mintAssetId(),contentHash:null,hashState:'unhashed',scope:{},mediaType:type,role:'import',source:'imported',lifecycle:'candidate',storage:{path:rel,bytes:st.size,mtimeMs:st.mtimeMs},legacy:{},indexedAt:'2026-09-15T00:00:00Z'};ledgerRows.push(row);return row;};
  const enrolled=asset('media/approved.bmp'),locked=asset('shots/S-01/locked/LOCK.png');
+ const audioReceipt=P.productionAuthority.receipts.find(r=>r.list==='audio'&&r.status==='current');
+ const recording=asset('audio/'+audioReceipt.value,'audio');
+ recording.contentHash='sha256:'+require('crypto').createHash('sha256').update(fs.readFileSync(path.join(dir,recording.storage.path))).digest('hex');recording.hashState='hashed';
+ audioReceipt.assetId=recording.assetId;
+ const audioEntity=P.audio.find(e=>e.id===audioReceipt.entityId);audioEntity.approvedAssetId=recording.assetId;audioEntity.continuityStates.find(s=>s.id===audioReceipt.stateId).approvedAssetId=recording.assetId;
+
  Store.writeLedgerSync(dir,{schemaVersion:Assets.MEDIA_ASSETS_SCHEMA_VERSION,assets:ledgerRows});
  P.props=[{id:'TOOL',name:'Approved tool',notes:secret,coverageSlots:[{id:'front',label:'Front',requirement:'required'}],continuityStates:[{id:'state-default',name:'Default',isDefault:true}],candidateFiles:[]}];
  const ref=Reference.resolver({projectsRoot:w.projectsRoot,slug:'record-test',project:P});
@@ -86,6 +92,13 @@ async function run(){
   check(fs.readFileSync(dataFile,'utf8')===before,'all reads leave project bytes unchanged');
   fs.writeFileSync(path.join(dir,'shots/S-01/locked/LOCK.png'),'replacement with different physical observation');
   const stale=await (await get('/api/bible')).json();check(stale.shots[0].targets.some(t=>t.value==='LOCK.png'&&!t.media.available),'same-name replacement cannot stand in for receipt identity');check((await get('/assets/shots/S-01/locked/LOCK.png')).status===404,'viewer cannot retrieve stale identity bytes');
+  const recordingPath=path.join(dir,recording.storage.path),recordingStat=fs.statSync(recordingPath),replacement=Buffer.from(fs.readFileSync(recordingPath));replacement[0]^=1;
+  fs.writeFileSync(recordingPath,replacement);fs.utimesSync(recordingPath,recordingStat.atime,recordingStat.mtime);
+  const changedAudio=await (await get('/api/bible')).json();
+  check(changedAudio.entities.find(x=>x.list==='audio').targets.every(t=>!t.media.available),'viewer retains audio receipt but withholds same-stat replacement');
+  const oldAudioUrl=doc.entities.find(x=>x.list==='audio').targets[0].media.url;
+  for(const options of [{},{method:'HEAD'},{headers:{range:'bytes=0-1'}}])check((await get(oldAudioUrl,viewer,options)).status===404,'viewer audio replacement denied for GET, HEAD and Range');
+  check((await get(oldAudioUrl,editor)).status===404,'editor approved audio URL also refuses replacement');
   fs.unlinkSync(path.join(dir,'shots/S-01/takes/R1.png'));const missing=await (await get('/api/bible')).json();check(missing.shots[0].targets.some(t=>t.value==='R1.png'&&!t.media.available),'missing approved media retains receipt with unavailable status');
   const revoked=structuredClone(P);revoked.shots[0].keyframes.find(f=>f.id==='encoded').winner='';fs.writeFileSync(dataFile,JSON.stringify(revoked));check((await get(percent.media.url)).status===404,'revoked current target immediately loses viewer access');
   // Open viewer mode still cannot select supporting export.

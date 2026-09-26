@@ -141,9 +141,10 @@ function intakeModal(list, id, files) {
    * already reads the element with `?.value || ""`, so the absent field is the
    * same "not recorded" answer the single option was standing for. */
   const provenanceModels = P.meta.models || [];
+  const audio = list === "audio";
   openModal(`<h3>Upload candidates — ${files.length} file(s)</h3><div class="modal-sub">${targetState ? `TARGET · ${esc(targetState.name || "CONTINUITY STATE")} · ` : ""}ORIGINAL FILENAMES ARE RETAINED IN METADATA · FILES KEEP THE NAME THEY ARE IMPORTED UNDER</div>
     <div class="approval-preview"><b>${esc(it.name || it.id)}</b><span>${esc(files.map((f) => f.name).join(", ")).slice(0, 180)}</span></div>
-    <div class="form-field"><label>What are these files?</label><select id="in-structure" class="status-select" onchange="syncIntakeStructure()"><option value="">— choose —</option><option value="single-reference">Single reference image</option><option value="sheet">Coverage / multi-view sheet</option></select><small class="hint" id="in-structure-note">CineBraid cannot tell one reference from a multi-view sheet by looking at the file, and it will not guess. Only a single reference can become this asset&rsquo;s identity; a sheet is a source you extract views from.</small></div>
+    ${audio ? `<p class="hint" data-audio-intake>These recordings will be added to this audio item as candidates. Listen and approve separately; uploading does not approve or attach them to a shot.</p>` : `<div class="form-field"><label>What are these files?</label><select id="in-structure" class="status-select" onchange="syncIntakeStructure()"><option value="">— choose —</option><option value="single-reference">Single reference image</option><option value="sheet">Coverage / multi-view sheet</option></select><small class="hint" id="in-structure-note">CineBraid cannot tell one reference from a multi-view sheet by looking at the file, and it will not guess. Only a single reference can become this asset&rsquo;s identity; a sheet is a source you extract views from.</small></div>`}
     ${provenanceModels.length ? `<div class="form-field"><label>Made with (optional provenance)</label><select id="in-model" class="status-select"><option value="">— not recorded —</option>${provenanceModels.map((m) => `<option value="${m.id}">${esc(m.name)}</option>`).join("")}</select></div>` : ""}
     <div class="modal-actions"><button class="cancel" onclick="closeModal()">Cancel</button><button class="submit-btn" id="in-submit" disabled onclick="doIntake()">UPLOAD CANDIDATES</button></div>`);
   syncIntakeStructure();
@@ -176,7 +177,7 @@ const INTAKE_STRUCTURES = ["single-reference", "sheet"];
 window.syncIntakeStructure = () => {
   const chosen = document.getElementById("in-structure")?.value || "";
   const submit = document.getElementById("in-submit");
-  if (submit) submit.disabled = !chosen;
+  if (submit) submit.disabled = window._intake?.list === "audio" ? false : !chosen;
   const note = document.getElementById("in-structure-note");
   if (note && chosen) {
     note.textContent = chosen === "sheet"
@@ -190,10 +191,11 @@ window.doIntake = async () => {
     /* Re-read at the writer, not carried from the click, and refused rather than
        defaulted: a silent default would be the guess this whole seam exists to
        avoid. */
-    structure = document.getElementById("in-structure")?.value || "";
+    structure = list === "audio" ? "audio-recording" : document.getElementById("in-structure")?.value || "";
   /* The button is disabled without a choice; this is the writer saying the same
      thing, so a replayed or scripted call cannot land undeclared rows either. */
-  if (!INTAKE_STRUCTURES.includes(structure)) return toast("Say whether these files are a single reference or a coverage sheet");
+  const refusal = intakeFilesRefusal(list, files, structure);
+  if (refusal) return toast(refusal);
   closeModal();
   const { saved, settled } = await intakeEntityFiles({ list, id, files, structure, targetStateId, targetStateName, model });
   window._pendingEntityStateUpload = null;
@@ -210,10 +212,18 @@ window.doIntake = async () => {
 /* EV2-7 — THE INTAKE WRITER, AWAITABLE. doIntake() reads the DOM and delegates here;
    Build coverage calls it with `structure: "sheet"` and continues only when the save
    settled. Same upload, same declared structure, same row, same settled-save rule. */
+function intakeFilesRefusal(list, files, structure) {
+  if (list === "audio") {
+    if (structure !== "audio-recording" || !files.length || files.some(f => !isAudio(f.name)))
+      return "Choose audio recordings (WAV, MP3, M4A, FLAC or OGG) for this audio item. Nothing was uploaded.";
+  } else if (!INTAKE_STRUCTURES.includes(structure)) return "Say whether these files are a single reference or a coverage sheet";
+  return "";
+}
 async function intakeEntityFiles({ list, id, files, structure, targetStateId = "", targetStateName = "", model = "" }) {
   const it = P[list]?.find((x) => x.id === id),
     type = ENTITY_MEDIA[list];
-  if (!INTAKE_STRUCTURES.includes(structure)) throw new Error("Say whether these files are a single reference or a coverage sheet");
+  const refusal = intakeFilesRefusal(list, files, structure);
+  if (refusal) throw new Error(refusal);
   if (!it) throw new Error("This reference no longer exists.");
   const saved = [],
     original = [];
@@ -236,7 +246,7 @@ async function intakeEntityFiles({ list, id, files, structure, targetStateId = "
     const d = await r.json();
     if (r.ok) {
       saved.push(d.name);
-      original.push({ stored: d.name, original: f.name, coverageJobType: structure, ...(targetStateId ? { targetStateId, targetStateName } : {}) });
+      original.push({ stored: d.name, original: f.name, ...(list === "audio" ? { mediaKind: "audio" } : { coverageJobType: structure }), ...(targetStateId ? { targetStateId, targetStateName } : {}) });
     }
   }
   it.candidateFiles = [...(it.candidateFiles || []), ...original];
@@ -804,7 +814,9 @@ function durableApprovalContext(want) {
   }
   const structure = typeof referenceArtifactStructureOf === "function"
     ? String(referenceArtifactStructureOf(entity, want.name) || "") : "";
-  const mayHold = typeof artifactMayHoldPrimaryAuthority === "function" && artifactMayHoldPrimaryAuthority(structure) === true;
+  const mayHold = want.list === "audio"
+    ? typeof audioArtifactMayHoldPrimaryAuthority === "function" && audioArtifactMayHoldPrimaryAuthority(entity, want.name) === true
+    : typeof artifactMayHoldPrimaryAuthority === "function" && artifactMayHoldPrimaryAuthority(structure) === true;
   if (!mayHold) {
     return {
       ok: false,
@@ -847,6 +859,9 @@ function entityApprovalReadinessRefusal(readiness, want) {
   }
   if (readiness.saveGeneration !== PROJECT_SAVE_GENERATION) {
     return { code: "project-advanced", message: "This project was saved again, so this image has to be prepared again." };
+  }
+  if (want.list === "audio" && !/^sha256:[a-f0-9]{64}$/.test(readiness.contentHash || "")) {
+    return { code: "audio-not-verified", message: "CineBraid has not verified this recording's bytes. Try preparing it again." };
   }
   const settled = typeof projectSaveSettled === "function" ? projectSaveSettled() : { settled: true };
   if (!settled.settled) {
@@ -909,7 +924,7 @@ function renderEntityApprovalReadiness() {
     line.dataset.state = ready ? "ready" : preparing ? "preparing" : "unavailable";
     const sentence = ready
       ? (entityCandidateRow(P[want.list]?.find(e=>e.id===want.id),want.name,false)?.referenceBinding ? "Ready for your approval" : `Ready to approve · ${want.name}`)
-      : preparing ? "Preparing this image for approval…" : refusal.message;
+      : preparing ? (want.list === "audio" ? "Preparing this recording for approval…" : "Preparing this image for approval…") : refusal.message;
     /* A settled "not ready" is re-asked only when the filmmaker asks, so the way
        to ask is on screen beside the reason rather than hidden in a reload. */
     line.innerHTML = esc(sentence) + (ready || preparing
@@ -1001,6 +1016,7 @@ window.prepareEntityApprovalIdentity = async () => {
 function entityApprovalPreparationMessage(prepared) {
   const reason = String(prepared?.reason || "");
   if (prepared?.status === "ready") return "";
+  if (reason === "audio-verification-unavailable") return "CineBraid could not verify this recording. Make sure it is available locally and within the 400 MB upload limit, then try again.";
   if (reason === "file-missing") return "CineBraid cannot find this file where it was imported, so it cannot be approved.";
   if (reason === "not-indexable") return "CineBraid cannot record a durable identity for this file, so it cannot be approved.";
   if (reason === "ledger-unreadable" || reason === "ledger-newer-than-build") {
@@ -1030,7 +1046,7 @@ window.showPendingApprovalSurface = () => {
   const meta = record.meta || {};
   const outcome = record.outcome || "saving";
   const preview = meta.url
-    ? `<figure><div id="entity-approval-preview">${isVideo(meta.fileName)?`<video controls preload="metadata" src="${attr(meta.url)}"></video>`:`<img src="${attr(meta.url)}" alt="The exact result this approval was taken on">`}</div><figcaption>${esc(meta.fileName || "")}</figcaption></figure>`
+    ? `<figure><div id="entity-approval-preview">${entityApprovalPreview(meta.fileName, meta.url)}</div><figcaption>${esc(meta.fileName || "")}</figcaption></figure>`
     : "";
   const ordinary = !!(meta.finishJob || meta.finishDelete || meta.candidateDecision || meta.entityDecision);
   const target = `<div class="entity-approval-target-summary"><span>${ordinary?"DECISION TARGET":"APPROVAL TARGET"}</span><b>${esc(meta.entityName || meta.entityId || "")} · ${esc(meta.stateName || "Default")}</b><small>${esc(meta.fileName || "")}</small></div>`;
@@ -1144,6 +1160,11 @@ window.leavePendingApprovalUnapproved = () => abandonPendingApproval("Left unapp
 window.reviewCurrentApprovalState = () => abandonPendingApproval("Reopening this project so you can review its current state");
 
 const ENTITY_APPROVAL_MODES = ["primary-authority", "sheet-source"];
+function entityApprovalPreview(fileName, url) {
+  if (isAudio(fileName)) return `<audio controls preload="metadata" src="${attr(url)}" aria-label="Recording to approve"></audio>`;
+  if (isVideo(fileName)) return `<video controls preload="metadata" src="${attr(url)}"></video>`;
+  return `<img src="${attr(url)}" alt="Candidate to approve">`;
+}
 window.approveEntityFile = (list, id, name, stateId = "", mode = "primary-authority") => {
   const x = P[list].find((e) => e.id === id),
     states = entityStateListRead(x, true),
@@ -1172,6 +1193,8 @@ window.approveEntityFile = (list, id, name, stateId = "", mode = "primary-author
        answer is "cannot confirm", and cannot-confirm is not eligibility — the
        same discipline shared-authority-kernel.js applies when its resolver is
        missing. Re-deriving the rule here is how the two copies drifted before. */
+    if (list === "audio") return typeof audioArtifactMayHoldPrimaryAuthority === "function"
+      && audioArtifactMayHoldPrimaryAuthority(x, fileName) === true;
     if (typeof referenceArtifactStructureOf !== "function") return false;
     if (typeof artifactMayHoldPrimaryAuthority !== "function") return false;
     return artifactMayHoldPrimaryAuthority(referenceArtifactStructureOf(x, fileName)) === true;
@@ -1191,8 +1214,10 @@ window.approveEntityFile = (list, id, name, stateId = "", mode = "primary-author
       return toast(`${namedMedia.name} is not recorded as a coverage sheet, so it cannot be used as one. Say which it is when you import it.`);
     }
   } else if (!eligiblePool.length) {
-    return toast("None of these files is recorded as a single reference image, so none can become this reference's identity. Say which one is a single reference when you import it, or map it to a state or view first.");
+    return toast(list === "audio" ? "No audio recording is ready to approve. Import a recording into this audio item first." : "None of these files is recorded as a single reference image, so none can become this reference's identity. Say which one is a single reference when you import it, or map it to a state or view first.");
   }
+  if (list === "audio" && name && !eligiblePool.some(item => item.name === name))
+    return toast("This exact recording is not eligible. No other recording was selected.");
   const selected = sheetSource
     ? namedMedia
     : eligiblePool.find((item) => item.name === name)
@@ -1284,7 +1309,7 @@ window.approveEntityFile = (list, id, name, stateId = "", mode = "primary-author
      file on the reference, so switching it re-opened the exact hole the entry
      check had just closed: an undeclared row presented as approvable, refused a
      click later by the kernel. One list, one predicate, both ends. */
-  const primaryMarkup = `<div class="entity-approval-modal" data-approval-mode="primary-authority"><h3>Approve reference — ${esc(x.name || id)}</h3><div class="modal-sub">ASSIGN ONE CANDIDATE TO ONE CONTINUITY STATE</div><div class="entity-approval-modal-layout"><figure><div id="entity-approval-preview">${isVideo(selected.name) ? `<video muted controls src="${attr(selected.url)}"></video>` : `<img src="${attr(selected.url)}" alt="Candidate to approve">`}</div><figcaption id="entity-approval-file-caption">${esc(selected.name)}</figcaption></figure><div class="entity-approval-fields"><div class="form-field"><label>Candidate file</label><select id="entity-approve-file" onchange="syncEntityApprovalModal()">${eligiblePool.map((item) => `<option value="${attr(item.name)}" ${item.name === selected.name ? "selected" : ""}>${esc(item.name)}</option>`).join("")}</select></div>${stateField}<div class="entity-approval-target-summary" id="entity-approval-target-summary"></div><div class="entity-approval-readiness" id="entity-approval-readiness" data-state="preparing" role="status" aria-live="polite">Preparing this image for approval&hellip;</div><p class="hint">The selected state will show this image in the live Project Bible. This image keeps the filename it was imported under, and other states and candidates are unchanged.</p>${continuationField}</div></div><div class="modal-actions entity-approval-actions"><button class="changes-btn" onclick="closeModal();requestEntityChanges('${list}','${id}')">Request changes</button><div>${approvalActions}</div></div></div>`;
+  const primaryMarkup = `<div class="entity-approval-modal" data-approval-mode="primary-authority"><h3>Approve ${list === "audio" ? "recording" : "reference"} — ${esc(x.name || id)}</h3><div class="modal-sub">ASSIGN ONE CANDIDATE TO ONE CONTINUITY STATE</div><div class="entity-approval-modal-layout"><figure><div id="entity-approval-preview">${entityApprovalPreview(selected.name, selected.url)}</div><figcaption id="entity-approval-file-caption">${esc(selected.name)}</figcaption></figure><div class="entity-approval-fields"><div class="form-field"><label>Candidate file</label><select id="entity-approve-file" onchange="syncEntityApprovalModal()">${eligiblePool.map((item) => `<option value="${attr(item.name)}" ${item.name === selected.name ? "selected" : ""}>${esc(item.name)}</option>`).join("")}</select></div>${stateField}<div class="entity-approval-target-summary" id="entity-approval-target-summary"></div><div class="entity-approval-readiness" id="entity-approval-readiness" data-state="preparing" role="status" aria-live="polite">Preparing this ${list === "audio" ? "recording" : "image"} for approval&hellip;</div><p class="hint">${list === "audio" ? "Review reads this recording to verify its bytes (up to 400 MB). This recording becomes the approved audio for this item. It does not approve a shot, mix sound into a video, or mark a delivery final." : "The selected state will show this image in the live Project Bible. This image keeps the filename it was imported under, and other states and candidates are unchanged."}</p>${continuationField}</div></div><div class="modal-actions entity-approval-actions"><button class="changes-btn" onclick="closeModal();requestEntityChanges('${list}','${id}')">Request changes</button><div>${approvalActions}</div></div></div>`;
 
   openModal(sheetSource ? sheetSourceMarkup : primaryMarkup);
   /* A modal that has just opened holds no prepared identity, whatever the last
@@ -1314,10 +1339,12 @@ window.syncEntityApprovalModal = () => {
      written. */
   const primaryIntent = current.mode !== "sheet-source";
   const eligibleNow = (candidate) => (
-    typeof referenceArtifactStructureOf === "function"
-    && typeof artifactMayHoldPrimaryAuthority === "function"
-    && Boolean(candidate)
-    && artifactMayHoldPrimaryAuthority(referenceArtifactStructureOf(x, candidate)) === true
+    current.list === "audio"
+      ? typeof audioArtifactMayHoldPrimaryAuthority === "function" && audioArtifactMayHoldPrimaryAuthority(x, candidate) === true
+      : typeof referenceArtifactStructureOf === "function"
+        && typeof artifactMayHoldPrimaryAuthority === "function"
+        && Boolean(candidate)
+        && artifactMayHoldPrimaryAuthority(referenceArtifactStructureOf(x, candidate)) === true
   );
   let fileName = requestedFile;
   let lostSelection = false;
@@ -1355,7 +1382,7 @@ window.syncEntityApprovalModal = () => {
   current.name = fileName;
   current.stateId = stateId;
   const preview = document.getElementById("entity-approval-preview");
-  if (preview && media) preview.innerHTML = isVideo(media.name) ? `<video muted controls src="${attr(media.url)}"></video>` : `<img src="${attr(media.url)}" alt="Candidate to approve">`;
+  if (preview && media) preview.innerHTML = entityApprovalPreview(media.name, media.url);
   const caption = document.getElementById("entity-approval-file-caption");
   if (caption) caption.textContent = fileName;
   const summary = document.getElementById("entity-approval-target-summary");
@@ -1473,6 +1500,16 @@ window.syncEntityApprovalContinuation = () => {
    reaches it directly, because it writes no Canon and its ordinary save is
    unchanged by this slice. */
 async function finishEntityApprovalCeremony(meta) {
+  if (meta.list === "audio") {
+    const slug = ACTIVE_PROJECT_SLUG, epoch = PROJECT_OPEN_EPOCH;
+    try {
+      const response = await fetch(`/api/scan?project=${encodeURIComponent(slug)}`,{cache:"no-store"});
+      const scan = response.ok ? await response.json() : null;
+      if (slug !== ACTIVE_PROJECT_SLUG || epoch !== PROJECT_OPEN_EPOCH) return;
+      if (scan) SCAN = scan;
+    } catch { /* The receipt is saved; availability remains unverified until reload. */ }
+    if (slug !== ACTIVE_PROJECT_SLUG || epoch !== PROJECT_OPEN_EPOCH) return;
+  }
   closeModal();
   await route();
   /* This approval may be exactly what an automation run is parked on. See
@@ -1564,10 +1601,11 @@ window.confirmEntityApproval = async (continueToNext = false) => {
       return toast(`${name || "That file"} is no longer recorded as a coverage sheet, so it cannot be used as one. Nothing was changed.`);
     }
   } else {
-    const mayHoldPrimary = typeof artifactMayHoldPrimaryAuthority === "function"
-      && artifactMayHoldPrimaryAuthority(structureNow) === true;
+    const mayHoldPrimary = list === "audio"
+      ? typeof audioArtifactMayHoldPrimaryAuthority === "function" && audioArtifactMayHoldPrimaryAuthority(x, name) === true
+      : typeof artifactMayHoldPrimaryAuthority === "function" && artifactMayHoldPrimaryAuthority(structureNow) === true;
     if (!mayHoldPrimary) {
-      return toast(structureNow === "sheet"
+      return toast(list === "audio" ? "This exact candidate is not recorded as an audio recording. Nothing was changed." : structureNow === "sheet"
         ? `${name || "That file"} is a coverage sheet — several views in one image — so it cannot be this reference's identity. Use it as a sheet source instead. Nothing was changed.`
         : `${name || "That file"} is not recorded as a single reference image, so it cannot become this reference's identity. Nothing was changed.`);
     }

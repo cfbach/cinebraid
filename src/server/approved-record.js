@@ -41,7 +41,7 @@ function markdown(doc) {
   const lines=['# '+text(doc.title || 'Untitled project'),'','Approved record','', 'Current receipt-backed targets. Labels identify material; they are not approvals of creative prose.',''];
   for(const row of [...doc.entities,...doc.shots]){
     lines.push('## '+text(row.name)+' · '+text(row.id),'');
-    for(const t of row.targets)lines.push('- **Approved** · '+text(t.label)+' · '+text(t.value), '  Receipt: '+text(t.receiptId)+' · '+text(t.at),'  Media: '+(t.media.available?'Available locally':'Unavailable — approval remains recorded'),'');
+    for(const t of row.targets)lines.push('- **'+(t.media.type==='audio'&&!t.media.available?'Approval history — original recording unavailable':'Approved')+'** · '+text(t.label)+' · '+text(t.value), '  Receipt: '+text(t.receiptId)+' · '+text(t.at),'  Media: '+(t.media.available?'Available locally':'Unavailable — approval remains recorded'),'');
   }
   if(!doc.entities.length&&!doc.shots.length)lines.push('No current approved material.');
   return lines.join('\n')+'\n';
