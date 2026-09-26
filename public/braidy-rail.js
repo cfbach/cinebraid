@@ -254,17 +254,21 @@
     repaint();
 
     let outcome = null;
+    let deterministic = false;
     let failure = "";
     try {
       const response = await fetch("/api/project/ask", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ question: shared.braidyQuestion(handoff, asked) }),
+        body: JSON.stringify({ question: shared.braidyQuestion(handoff, asked), shotId: handoff.target?.kind === "shot" ? handoff.target.id : undefined }),
         signal: controller.signal,
       });
       const data = await response.json().catch(() => ({}));
       if (!response.ok) failure = String(data.error || `The assistant request failed (${response.status}).`);
-      else outcome = String(data.answer || "").trim();
+      else {
+        outcome = String(data.answer || "").trim();
+        deterministic = data.source === "production-readiness" && data.modelInvoked === false;
+      }
       if (!failure && !outcome) failure = "The assistant returned nothing to show.";
     } catch (error) {
       failure = error?.name === "AbortError"
@@ -289,6 +293,7 @@
     remember({
       role: "braidy",
       advisory,
+      deterministic,
       /* Built from the HANDOFF. The answer is not consulted, which is why an answer
          cannot produce a control. */
       actions: shared.braidyOfferedActions(handoff),
@@ -354,16 +359,19 @@
 
   function answerMarkup(entry) {
     const advisory = entry.advisory;
-    const lead = advisory.lead.map((paragraph) => `<p>${esc_(paragraph)}</p>`).join("");
+    // Required references must all remain visible without expanding model prose.
+    const paragraphs = entry.deterministic ? [...advisory.lead, ...advisory.rest] : advisory.lead;
+    const lead = paragraphs.map((paragraph) => `<p>${esc_(paragraph)}</p>`).join("");
     /* NOTHING IS DISCARDED. The compact register is a decision about what is shown
        first; the remainder is behind one control, verbatim. */
-    const more = advisory.rest.length
+    const more = !entry.deterministic && advisory.rest.length
       ? (SHOW_REST
         ? `<div class="cb-braidy-more">${advisory.rest.map((paragraph) => `<p>${esc_(paragraph)}</p>`).join("")}</div>`
           + `<button type="button" class="cb-braidy-action" onclick="window.CineBraidBraidy.showLess()">Show less</button>`
         : `<button type="button" class="cb-braidy-action" onclick="window.CineBraidBraidy.explainMore()">Explain more</button>`)
       : "";
     return `<article class="cb-braidy-turn" data-braidy-role="braidy" data-braidy-authority="${attr_(advisory.authority)}">`
+      + (entry.deterministic ? `<strong>Production record · model task unqualified</strong>` : "")
       + `${lead}${more}`
       + `<div class="cb-braidy-turn-foot">`
       + `<button type="button" class="cb-braidy-action" onclick="window.copyText(window.CineBraidBraidy.lastAnswer())">Copy</button>`
