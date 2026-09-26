@@ -56,6 +56,7 @@
     if (host && !host.firstElementChild) host.innerHTML = form(panel.dataset.soundShotId, available());
   }, true);
   document.addEventListener("click", event => {
+    if (typeof event.target?.closest !== "function") return;
     const add = event.target.closest("[data-sound-add]");
     if (add) {
       const shot = shotById(add.dataset.soundAdd), box = add.closest("[data-sound-form]");
