@@ -500,16 +500,20 @@ function applyGateReconciliation(run, plan, options = {}) {
    * is the safe direction and must never depend on having the project. */
   const project = authorityObject(options).project;
   const steps = authorityObject(r.steps);
+  let closed = 0, reopened = 0;
   for (const requirement of authorityList(p.satisfied)) {
     const step = authorityObject(steps[requirement.stepKey]);
     if (!step || step.status !== "needs-review") continue;
     if (!project) continue;
-    const verified = currentHumanAuthority(project, gateAuthorityTarget(requirement));
+    const actual = gateRequirement(r, { ...step, key: requirement.stepKey });
+    if (!actual || JSON.stringify(gateAuthorityTarget(actual)) !== JSON.stringify(gateAuthorityTarget(requirement))) continue;
+    const verified = currentHumanAuthority(project, gateAuthorityTarget(actual));
     /* The receipt must exist NOW, and be the one the plan cited. A stale plan
        whose receipt was superseded or revoked between planning and applying
        closes nothing. */
     if (!verified) continue;
-    if (authorityText(requirement.receiptId) && authorityText(requirement.receiptId) !== authorityText(verified.id)) continue;
+    if (authorityText(requirement.receiptId) !== authorityText(verified.id)) continue;
+    closed++;
     step.status = "completed";
     step.pass = true;
     step.completedAt = step.completedAt || at;
@@ -528,7 +532,10 @@ function applyGateReconciliation(run, plan, options = {}) {
   }
   for (const requirement of authorityList(p.invalidated)) {
     const step = authorityObject(steps[requirement.stepKey]);
-    if (!step) continue;
+    if (!stepClaimsHumanApproval(step)) continue;
+    const actual = gateRequirementForAnyStatus(r, { ...step, key: requirement.stepKey });
+    if (!actual || (project && gateSatisfied(actual, project))) continue;
+    reopened++;
     step.status = "needs-review";
     step.pass = false;
     step.updatedAt = at;
@@ -545,9 +552,16 @@ function applyGateReconciliation(run, plan, options = {}) {
       authorityInvalidatedReason: "The human approval this step recorded is no longer in force. Approve again to continue.",
     };
   }
-  if (p.nextStatus && p.nextStatus !== r.status) {
-    r.status = p.nextStatus;
-    r.summary = authorityList(p.invalidated).length
+  // Only applied transitions may change resumability. A rejected or partial
+  // plan must not advertise that an outstanding gate has been satisfied.
+  if (!closed && !reopened) return r;
+  const waiting = Object.values(steps).some((step) => authorityObject(step).status === "needs-review");
+  const nextStatus = waiting
+    ? (["awaiting-review", "running"].includes(r.status) ? r.status : "awaiting-review")
+    : (r.status === "awaiting-review" ? "interrupted" : r.status);
+  if (nextStatus !== r.status) {
+    r.status = nextStatus;
+    r.summary = reopened
       ? "An approval this run relied on is no longer in force. The gate is open again and needs a decision before the run can continue."
       : "The approval this run was waiting for was made elsewhere in CineBraid. The gate is satisfied; resume the run to continue.";
   }
@@ -569,13 +583,18 @@ function runHasActionableGate(run, project) {
      the run has re-parked yet. Asking both directions here is what makes a
      render, a poll and a resume agree before the ledger has been rewritten. */
   const steps = authorityObject(authorityObject(run).steps);
+  let currentCompletedGate = false;
   for (const key of Object.keys(steps)) {
     const step = authorityObject(steps[key]);
+    if (step.status === "needs-review" && !gateRequirement(run, { ...step, key })) return true;
     if (!stepClaimsHumanApproval(step)) continue;
     const requirement = gateRequirementForAnyStatus(run, { ...step, key: authorityText(step.key) || key });
-    if (requirement && !gateSatisfied(requirement, project)) return true;
+    if (!requirement) return true;
+    if (!gateSatisfied(requirement, project)) return true;
+    currentCompletedGate = true;
   }
-  return !requirements.length;
+  // A verified completed gate is known history, not an unidentified open gate.
+  return !requirements.length && !currentCompletedGate;
 }
 
 /* HAS AN APPROVAL THIS RUN ALREADY RELIED ON BEEN WITHDRAWN.

@@ -435,9 +435,14 @@ function registerAutomationRuns(app, deps) {
       const plan = ProductionAuthority.reconcileRunGates(run, project, { at });
       if (!plan.changed) continue;
       const next = clone(run);
-      ProductionAuthority.applyGateReconciliation(next, plan, { at });
-      const satisfiedCount = (plan.satisfied || []).length;
-      const invalidatedCount = (plan.invalidated || []).length;
+      ProductionAuthority.applyGateReconciliation(next, plan, { at, project });
+      // A plan is a request, not proof that the applier accepted a transition.
+      const transitions = Object.entries(next.steps || {}).map(([key, step]) => ({ before: run.steps?.[key], after: step }));
+      const satisfiedCount = transitions.filter(({ before, after }) => before?.status === "needs-review"
+        && after.status === "completed" && after.result?.humanApproved === true && after.result?.authorityReceiptId).length;
+      const invalidatedCount = transitions.filter(({ before, after }) => before?.status === "completed"
+        && after.status === "needs-review" && after.result?.authorityInvalidated === true).length;
+      if (!satisfiedCount && !invalidatedCount) continue;
       const notes = [];
       if (satisfiedCount) notes.push(`${satisfiedCount} approval gate${satisfiedCount === 1 ? "" : "s"} ${satisfiedCount === 1 ? "was" : "were"} satisfied elsewhere in CineBraid and ${satisfiedCount === 1 ? "is" : "are"} no longer waiting for you.`);
       if (invalidatedCount) notes.push(`${invalidatedCount} approval${invalidatedCount === 1 ? "" : "s"} this run relied on ${invalidatedCount === 1 ? "is" : "are"} no longer in force. The gate${invalidatedCount === 1 ? " is" : "s are"} open again.`);
