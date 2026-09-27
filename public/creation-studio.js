@@ -1247,20 +1247,20 @@ function ensureShotCreation(s) {
   c.composition.camera.crop = c.composition.camera.crop || "full-scene";
   c.composition.camera.reframe = c.composition.camera.reframe || "preserve-loosely";
   c.composition.elements = Array.isArray(c.composition.elements) ? c.composition.elements : [];
-  const boundedCompositionNumber = (value, fallback, min, max) => {
-    const number = Number(value);
-    return Number.isFinite(number) ? Math.max(min, Math.min(max, number)) : fallback;
-  };
+  // This is also a read path over the live project that dirty() later saves.
+  // Stored composition is authored data, including accepted off-canvas values.
+  // Supply missing defaults without coercing or bounding existing values; display
+  // bounds belong to the preview and validation belongs to explicit edit handlers.
   c.composition.elements = c.composition.elements
     .filter((element) => element && typeof element === "object")
     .map((element, index) => ({
       ...element,
       id: element.id || `${s.id}-composition-${index + 1}`,
       referenceKey: String(element.referenceKey || ""),
-      x: boundedCompositionNumber(element.x, 0.5, 0, 1),
-      y: boundedCompositionNumber(element.y, 0.5, 0, 1),
-      w: boundedCompositionNumber(element.w, 0.25, 0.08, 1),
-      h: boundedCompositionNumber(element.h, 0.25, 0.08, 1),
+      x: element.x ?? 0.5,
+      y: element.y ?? 0.5,
+      w: element.w ?? 0.25,
+      h: element.h ?? 0.25,
       depth: element.depth || "midground",
       facing: element.facing || "camera",
       view: element.view || "reference-view",

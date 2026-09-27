@@ -653,6 +653,7 @@ async function main() {
     "shot-canon-removal-drift-negative-controls.js",
     "shot-canon-removal-drift-real-browser.py",
     "shot-canon-removal-drift.js",
+    "shot-composition-preservation.js",
     "shot-desk-presentation.js",
     "shot-entry-save-safety.js",
     "shot-execution-tier0-negative-controls.js",

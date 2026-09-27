@@ -164,10 +164,12 @@
     const comp = c.composition;
     comp.baseFrame = comp.baseFrame && typeof comp.baseFrame === "object" ? comp.baseFrame : {};
     comp.baseFrame.source = comp.baseFrame.source || "auto";
-    comp.baseFrame.zoom = finite(comp.baseFrame.zoom, 1, 0.5, 2.5);
-    comp.baseFrame.panX = finite(comp.baseFrame.panX, 0, -50, 50);
-    comp.baseFrame.panY = finite(comp.baseFrame.panY, 0, -50, 50);
-    comp.baseFrame.rotation = finite(comp.baseFrame.rotation, 0, -15, 15);
+    // Read-time defaults must not clamp authored transforms into the UI range.
+    // finite() remains available for bounded, non-mutating preview geometry.
+    comp.baseFrame.zoom = comp.baseFrame.zoom ?? 1;
+    comp.baseFrame.panX = comp.baseFrame.panX ?? 0;
+    comp.baseFrame.panY = comp.baseFrame.panY ?? 0;
+    comp.baseFrame.rotation = comp.baseFrame.rotation ?? 0;
     comp.baseFrame.fit = comp.baseFrame.fit || "cover";
     comp.guides = comp.guides && typeof comp.guides === "object" ? comp.guides : {};
     comp.guides.grid = comp.guides.grid !== false;
