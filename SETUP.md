@@ -46,6 +46,13 @@ Those archives do **not** include `node_modules`. Dependencies are installed on 
 destination machine, which is what lets one runtime tarball serve x64 and arm64
 alike — including the DGX Spark.
 
+On Windows, after extracting the ZIP, run `npm ci` and then `start.bat` in the
+extracted application folder. Node.js and npm must be on PATH; Git is not required
+for an archive install. The launcher also runs `npm ci` if `node_modules` is absent,
+and stops if that installation fails. Open the local URL printed by the server;
+the launcher does not open a browser automatically. Keep the terminal open while
+using CineBraid and press Ctrl+C to stop it.
+
 ## Running a second CineBraid on the same machine
 
 Give it its own port, projects root and config path, or it will share them:

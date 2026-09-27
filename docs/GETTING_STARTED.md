@@ -10,23 +10,21 @@ Run:
 npm start
 ```
 
-Open `http://127.0.0.1:4477`, then choose **CineBraid Sample — The Blue Parcel**.
+Open the local URL printed by the server (normally `http://127.0.0.1:4477`), then choose **Add the CineBraid sample** on the welcome screen. This creates an editable **CineBraid Sample — The Blue Parcel** copy in your projects folder.
 
 The sample contains no real production material and needs no provider.
 
-The sample is intentionally **instructive rather than pristine**. Production readiness begins with two deliberate items: the Blue parcel needs a canon description, and the third shot needs an explicit duration. These are teaching prompts, not missing package files.
+The sample includes existing media selections that still need explicit human approval.
+Readiness prompts identify those decisions; they do not mean files are missing.
 
-## 2. Inspect approved references
+## 2. Inspect references
 
-Open **References → Approved**.
+Open **References**. You will see the courier, rain platform and blue parcel, with
+candidate images and planned views/states. The **Approved** tab shows only images
+with an explicit approval; the shipped sample's existing selections are not approvals.
 
-You will see:
-
-- the courier’s primary and Profile authorities;
-- the rain platform and its matching reverse view;
-- the blue parcel in Closed and Opened states.
-
-Open an item to see how views and states can be marked **Required**, **Planned**, or **Not required**.
+Open an item to inspect its candidates and decide which reference to approve.
+Views and states can be marked **Required**, **Planned**, or **Not required**.
 
 ## 3. Practice importing an authority
 
@@ -43,22 +41,18 @@ Human approval is sufficient. An optional AI check can be run separately when co
 
 Open **Production**, then **Parcel opened**.
 
-1. In **Frames**, choose the existing `SAMPLE-03-OPEN.png` image and approve it as Frame A.
-2. In **Deliver**, finalize the approved still.
-3. Return to Production and confirm the shot is complete.
+1. Choose **Review Frame A result** to open Results for `SAMPLE-03-OPEN.png`. Choose **Approve result…**, then confirm the approval. Frames prepares/imports images; Results records the decision.
+2. Open **Deliver**, choose **Mark shot final**, then **Confirm final delivery**.
+3. Return to Production and confirm that one shot is delivered.
 
 This proves the core workflow without prompts, generation, or automation.
 
-## 5. Clear a readiness item
+## 5. Review the remaining decisions
 
-Open **Production → Production readiness**, then open **Blue parcel has no canon text**.
-
-1. Choose **Details & history → Details**.
-2. In **Canon description**, write a short locked description of the parcel: its blue box, pale straps, proportions, and which details must remain the same when it opens.
-3. Return to Production and open Production readiness again.
-4. Confirm the shared entity warning has cleared for every shot at once.
-
-The remaining sample item points to **Parcel opened**. Add an explicit duration in the shot workspace when you want to practice clearing the second item.
+Production may still ask you to confirm the sample's existing reference selections.
+Open **Production readiness** or a **Confirm existing reference** action, inspect the
+candidate, and approve it only if it is the reference you want the production to use.
+Completing the third shot does not approve references or the other shots for you.
 
 ## 6. Create your own project
 
