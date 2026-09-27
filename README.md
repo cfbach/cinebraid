@@ -94,9 +94,10 @@ running a second isolated installation. For DGX Spark, see [Spark setup](SPARK_S
 `npm ci` in that folder before using `start.bat` on Windows, `start.command` on
 macOS, or `./start.sh` on Linux / DGX Spark.
 
-The launchers install with `npm install --silent` only when `node_modules` is
-absent. They do not perform the same locked install as `npm ci`; running `npm ci`
-first keeps the documented setup reproducible.
+The Windows launcher runs `npm ci` when `node_modules` is absent and stops if
+installation fails. Open the local URL printed by the server in your browser.
+The macOS/Linux launchers use `npm install --silent` when `node_modules` is absent;
+running `npm ci` first keeps setup reproducible on every platform.
 
 </details>
 
@@ -106,9 +107,9 @@ The included **CineBraid Sample — The Blue Parcel** is a three-shot project wi
 simple storyboard media, a courier, a railway platform, and a parcel. It needs no
 assistant or generation provider.
 
-1. Open the sample and inspect **References → Approved**.
-2. Open **Production → Parcel opened**. In **Frames**, approve the existing `SAMPLE-03-OPEN.png` as Frame A.
-3. In **Deliver**, finalize the approved still, then return to Production to see the completed shot.
+1. Add the sample from the welcome screen and inspect **References**. Its existing selections still need explicit approval.
+2. Open **Production → Parcel opened → Review Frame A result**. In Results, approve `SAMPLE-03-OPEN.png` as Frame A and confirm the decision.
+3. In **Deliver**, choose **Mark shot final**, then **Confirm final delivery**. Return to Production to see the delivered shot.
 
 Follow the [first-shot guide](docs/GETTING_STARTED.md) to practice importing
 references, clear the sample's deliberate readiness prompts, and create your own

@@ -9,10 +9,8 @@ const SOURCE_FAMILY = {
   CINEBRAID_LEGACY: "cinebraid-legacy",
   /* Already an Open Film Project document. Not a migration source. */
   OPEN_FILM_PROJECT: "open-film-project",
-  /* Measured in the archive: `D:\Projects\Spy NF` is a 3D scene editor whose
-     files are also called project.json. The audit says plainly: do not migrate
-     it. Recognising it by name is what keeps a wrong answer from being a quiet
-     one. */
+  /* Foreign scene editors may also name their files project.json. Detect the
+     document family before migration so an unrelated project is not rewritten. */
   FOREIGN_APPLICATION: "foreign-application",
   UNKNOWN: "unknown",
 };
