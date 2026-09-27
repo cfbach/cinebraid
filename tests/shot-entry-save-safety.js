@@ -55,6 +55,7 @@ async function probe(mutateSource) {
   assert.strictEqual(result.editedTitle, "A deliberate owner edit");
 }
 async function main() {
+  await require("./shot-composition-preservation").main();
   await probe();
   const controls = [
     { name: "dirty trigger", file: "creation-studio.js", from: "rememberWorkspaceSection(guidedPanelPreferenceKey(id, key), !!open);", to: "rememberWorkspaceSection(guidedPanelPreferenceKey(id, key), !!open); dirty();", error: "a disclosure must not schedule" },
