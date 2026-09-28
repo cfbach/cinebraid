@@ -178,7 +178,7 @@ async function caseD() {
   const project = projectOf([{ id: 'L1-01' }, { id: 'L1-02' }, { id: 'L1-03', scene: 'SC-02' }]);
   const page = await board(project, { storage: { 'cinebraid-shot-action-filter': 'missing-inputs' } });
   let html = mainHtml(page);
-  equal((html.match(/<select\b/g) || []).length - (foldOf(html).match(/<select\b/g) || []).length, 1, '(d) one Show selector outside More filters');
+  equal((html.match(/<select\b/g) || []).length - (foldOf(html).match(/<select\b/g) || []).length, 2, '(d) Show and Shots per page selectors outside More filters');
   ok(/<label class="board-show" for="shot-board-show"><span>Show<\/span><select id="shot-board-show" aria-describedby="shot-board-range" onchange="setShotActionFilter\(this\.value\)">/.test(html), '(d) labelled Show, described by the matching count, and filtering through the canonical owner');
   const options = optionsOf(html);
   deepEqual(options.map((row) => row.id), ['unfinished', 'review', 'missing-inputs', 'ready', 'complete', 'all'], '(d) the six canonical production states, in order');
@@ -263,9 +263,9 @@ async function caseF() {
 /* ---------------------------------------------------------------- (g) */
 async function caseG() {
   const shots = Array.from({ length: 7 }, (_, index) => ({ id: `L1-0${index + 1}`, scene: index < 4 ? 'SC-01' : 'SC-02' }));
-  const page = await board(projectOf(shots), { storage: { 'cinebraid-shot-action-filter': 'all' } });
+  const page = await board(projectOf(shots), { storage: { 'cinebraid-shot-action-filter': 'all', 'cinebraid-bounded:fixture:page-size:shots': '5' } });
   let html = mainHtml(page);
-  equal(cardsOf(html).length, 5, '(g) five cards a page');
+  equal(cardsOf(html).length, 5, '(g) five cards when the reader selects five');
   equal((html.match(/<nav class="bounded-pager board-pager"/g) || []).length, 1, '(g) one pager');
   ok(html.indexOf('board-pager') > html.lastIndexOf('</article>'), '(g) after the cards, not above them');
   ok(html.includes('<span>1–5 of 7</span>') && html.includes('onclick="setShotBoardPage(1)">Next</button>'), '(g) naming the range and turning through the board owner');
@@ -276,7 +276,7 @@ async function caseG() {
   html = mainHtml(page);
   equal(cardsOf(html).length, 2, '(g) the next page holds the rest');
   ok(html.includes('<span>6–7 of 7</span>'), '(g) and says so');
-  equal(page.context.localStorage.getItem('cinebraid-bounded:fixture:page:shots:board::::all'), '1', '(g) the page is the bounded page state, so returning to the board keeps it');
+  equal(page.context.localStorage.getItem('cinebraid-bounded:fixture:page:shots:board::::all:5'), '1', '(g) the page is the bounded page state, so returning to the board keeps it');
   const few = mainHtml(await board(projectOf(shots.slice(0, 3)), { storage: { 'cinebraid-shot-action-filter': 'all' } }));
   ok(!few.includes('board-pager'), '(g) a single page has no pager');
 }
