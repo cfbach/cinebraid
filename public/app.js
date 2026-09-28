@@ -8006,8 +8006,26 @@ function shotBoardActionFilters(feed = projectShotReadiness(), returnedReview = 
   const counts = Object.fromEntries(defs.map(([id]) => [id, P.shots.filter((shot) => id === "all" ? true : id === "complete" ? shotIsDelivered(shot) : id === "unfinished" ? shotBoardNotDelivered(shot, shotReadinessFor(shot, feed)) : category.get(shot.id) === id).length]));
   return `<label class="board-show" for="shot-board-show"><span>Show</span><select id="shot-board-show" aria-describedby="shot-board-range" onchange="setShotActionFilter(this.value)">${defs.map(([id,label]) => `<option value="${id}" data-board-filter="${id}" data-count="${counts[id]}"${FILTER.action===id?" selected":""}>${esc(label)} · ${counts[id]}</option>`).join("")}</select></label>`;
 }
+const SHOT_BOARD_PAGE_SIZES = Object.freeze([5, 10, 15, 20, 25]);
+function shotBoardPageSize() {
+  const size = Number(boundedReadState("page-size", "shots", 20));
+  return SHOT_BOARD_PAGE_SIZES.includes(size) ? size : 20;
+}
+function shotBoardPageSizeControl() {
+  const size = shotBoardPageSize();
+  return `<label class="board-page-size" for="shot-board-page-size"><span>Shots per page</span><select id="shot-board-page-size" aria-describedby="shot-board-range" onchange="setShotBoardPageSize(this.value)">${SHOT_BOARD_PAGE_SIZES.map((value) => `<option value="${value}"${value === size ? " selected" : ""}>${value}</option>`).join("")}</select></label>`;
+}
+window.setShotBoardPageSize = async (value) => {
+  const size = Number(value);
+  if (!SHOT_BOARD_PAGE_SIZES.includes(size)) return;
+  boundedWriteState("page-size", "shots", size);
+  boundedWriteState("page:shots", shotBoardPageKey(), 0);
+  await route();
+  document.getElementById("shot-board-page-size")?.focus({ preventScroll: true });
+};
 function shotBoardPageKey() {
-  return `board:${FILTER.status}:${FILTER.route}:${FILTER.char}:${FILTER.action}`;
+  // A page number belongs to both its filters and size; other views keep their own limits.
+  return `board:${FILTER.status}:${FILTER.route}:${FILTER.char}:${FILTER.action}:${shotBoardPageSize()}`;
 }
 window.clearShotBoardFilters = () => {
   FILTER.status = "";
@@ -8026,8 +8044,8 @@ function shotBoardNoMatch(moreActive) {
   const how = [showing ? "show all shots" : "", moreActive ? "clear filters" : ""].filter(Boolean).join(" or ");
   return `<div class="empty-state board-no-match"><h2>${esc(showing ? `No shots match “${showing}”` : "No shots match these filters")}</h2><p>${esc(`${why} To see ${one ? "it" : "them"}, ${how}.`)}</p>${showing ? '<button type="button" onclick="setShotActionFilter(\'all\')">Show all shots</button>' : ""}</div>`;
 }
-/* EV2-7 B2.5 — ONE PAGER, AFTER THE SHOTS, AND ONLY WHEN THERE IS A SECOND PAGE. Five
-   shots a page, as before. Turning a page takes the reader with it: focus moves to the new
+/* EV2-7 B2.5 — ONE PAGER, AFTER THE SHOTS, AND ONLY WHEN THERE IS A SECOND PAGE.
+   Turning a page takes the reader with it: focus moves to the new
    page's first scene heading and that heading scrolls under the header, instead of leaving
    the reader at the foot of a page that has just been replaced. */
 function shotBoardPager(info) {
@@ -8134,14 +8152,14 @@ function productionView(tab = "board") {
     ).forEach((shot) => filteredPairs.push({ sc, shot }));
   });
   const boardPageKey = shotBoardPageKey();
-  const shotPage = boundedPage(filteredPairs, "shots", boardPageKey, 5);
+  const shotPage = boundedPage(filteredPairs, "shots", boardPageKey, shotBoardPageSize());
   /* EV2-7 B2.2/B2.4 — Show, the visible matching count and range, then More filters as the
      one secondary fold. Its active count and Clear filters stay outside the fold, so a
      filter hidden in a closed disclosure never narrows the board unannounced. The fold
      states which dimension Show filters, and where a shot waiting on a returned result files. */
   const moreActive = [FILTER.status, FILTER.route, FILTER.char].filter(Boolean).length;
   const range = `${filteredPairs.length} of ${plural(P.shots.length, "shot")}${shotPage.total ? ` · ${shotPage.start + 1}–${shotPage.end} shown` : ""}`;
-  const controls = P.shots.length ? `<div class="board-scope">${shotBoardActionFilters(shotReadiness, returnedProjection)}<span class="board-range" id="shot-board-range">${esc(range)}</span><details class="board-filter-fold" data-ui-state-key="shot-board-more-filters"><summary>More filters${moreActive ? ` <span class="board-filter-count">${moreActive} active</span>` : ""}</summary><div class="board-filter-body"><p class="board-filter-note"><b>Production state</b> is what Show filters by: each shot’s readiness, except that a shot whose returned result is waiting for your review is listed under Needs a ${FILMMAKER_DECISION_LABEL}. These filters narrow the board further.</p>${filterBody}</div></details>${moreActive ? '<button type="button" class="board-clear-filters" onclick="clearShotBoardFilters()">Clear filters</button>' : ""}</div>` : "";
+  const controls = P.shots.length ? `<div class="board-scope">${shotBoardActionFilters(shotReadiness, returnedProjection)}${shotBoardPageSizeControl()}<span class="board-range" id="shot-board-range">${esc(range)}</span><details class="board-filter-fold" data-ui-state-key="shot-board-more-filters"><summary>More filters${moreActive ? ` <span class="board-filter-count">${moreActive} active</span>` : ""}</summary><div class="board-filter-body"><p class="board-filter-note"><b>Production state</b> is what Show filters by: each shot’s readiness, except that a shot whose returned result is waiting for your review is listed under Needs a ${FILMMAKER_DECISION_LABEL}. These filters narrow the board further.</p>${filterBody}</div></details>${moreActive ? '<button type="button" class="board-clear-filters" onclick="clearShotBoardFilters()">Clear filters</button>' : ""}</div>` : "";
   const grouped = new Map();
   shotPage.rows.forEach(({ sc, shot }) => { if (!grouped.has(sc.id)) grouped.set(sc.id, { sc, shots: [] }); grouped.get(sc.id).shots.push(shot); });
   /* Each page's scenes are plain headings over their cards. The heading takes focus when a

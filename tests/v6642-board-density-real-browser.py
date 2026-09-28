@@ -119,6 +119,7 @@ try:
           clone('BOARD-04', longTitle, arrival[0]);
           FILTER.action = 'all'; FILTER.status = ''; FILTER.route = ''; FILTER.char = '';
           location.hash = '#/shots/board'; await route();
+          await setShotBoardPageSize('5'); // Exercise paging explicitly; the default is 20.
         }""", {"longTitle": LONG_TITLE, "vertical": VERTICAL})
         page.wait_for_selector("#main .shot-board .slate")
 
