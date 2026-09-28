@@ -676,6 +676,7 @@ async function main() {
     "shot-state-declaration-actionability.js",
     "shot-truth-cohesion.js",
     "shot-workspace-responsive-layout.js",
+    "shots-pagination.js",
     "sound-placement-clicks.js",
     "sound-placement-real-browser.py",
     "stage-model-negative-controls.js",
