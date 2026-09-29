@@ -529,7 +529,7 @@ async function caseJ(options = {}) {
 
 /* ---------------------------------------------------------------- (k)
    THE APPROVAL TRANSITION on an Animate-from-first-frame shot, and the Frames -> Motion
-   case from the audit: the Desk said "Produce the motion" while the strip opened on Look
+   case from the audit: the Desk said "Create the shot video" while the strip opened on Look
    & blocking. The two states are the returned Frame A waiting, and the same Frame A
    holding its approval receipt. */
 async function caseK(options = {}) {
@@ -566,17 +566,17 @@ async function caseK(options = {}) {
   const canonical = readinessIn(after.page, "L1-01");
   equal(canonical.code, "produce-motion", "(k) precondition: after approval readiness owes the motion");
   ok(!after.hero.review, "(k) after approval the Desk no longer leads with a review");
-  equal(after.hero.headline, "Produce the motion", "(k) it leads with Produce the motion");
-  equal(after.seen.active["L1-01"].label, "Produce the motion", "(k) and so does Shots and their next action");
+  equal(after.hero.headline, "Create the shot video", "(k) it leads with Create the shot video");
+  equal(after.seen.active["L1-01"].label, "Create the shot video", "(k) and so does Shots and their next action");
   equal(after.seen.active["L1-01"].source, "readiness", "(k) because readiness leads again");
-  equal(after.seen.readiness["L1-01"].status, "READY · Produce the motion", "(k) the readiness row is canonical again");
+  equal(after.seen.readiness["L1-01"].status, "READY · Create the shot video", "(k) the readiness row is canonical again");
   equal(after.seen.readiness["L1-01"].also, "", "(k) with no second line");
   equal(after.seen.pill, 0, "(k) no decision is outstanding");
   equal(after.seen.tile, 0, "(k) on the tile either");
   equal(after.filters.review, 0, "(k) the Board's Needs a decision empties");
   equal(after.filters.ready, before.filters.ready + 1, "(k) and the shot returns to Ready");
   equal(after.seen.hero.kind, "shot", "(k) the project hero stops pointing at a review");
-  equal(after.strip.selected, "motion", "(k) after approval the shot opens on the stage that owns Produce the motion");
+  equal(after.strip.selected, "motion", "(k) after approval the shot opens on the stage that owns Create the shot video");
   ok(!/Look/.test(after.strip.actions.join(" ")), "(k) and the bar no longer offers Look & blocking: " + after.strip.actions.join(" | "));
   deepEqual(after.strip.actions, ["Open Motion & sound"], "(k) it offers Motion & sound");
   ok(mainHtml(after.desk).includes('data-selected-task="motion"'), "(k) and the Desk workspace below is Motion");
@@ -795,7 +795,7 @@ async function negativeControls() {
       ``) }));
   /* NC-L7 — the stage recommendation forgets where the readiness action is done, and an
      approved Frame A on an Animate-from-first-frame shot opens on Look & blocking again. */
-  await mustFail("NC-L7 landing ignores the readiness action", "(k) after approval the shot opens on the stage that owns Produce the motion",
+  await mustFail("NC-L7 landing ignores the readiness action", "(k) after approval the shot opens on the stage that owns Create the shot video",
     () => caseK({ mutate: replacing("shared-stage-model.js",
       `    if (owner && SHOT_STAGE_IDS.includes(owner.id)) return owner.id;`,
       ``) }));
@@ -804,7 +804,7 @@ async function negativeControls() {
     () => caseK({ mutate: replacing("shared-stage-model.js",
       `    if (returned) return returned.id;`,
       ``) }));
-  /* NC-L9 — Motion goes back to its declared default: optional beside Produce the motion. */
+  /* NC-L9 — Motion goes back to its declared default: optional beside Create the shot video. */
   await mustFail("NC-L9 motion requirement ignored", "(l) Motion is required for an Animate-from-first-frame shot",
     () => caseL({ mutate: replacing("shared-stage-model.js",
       `    if (stage.id === "motion") state.optional = !resolved.motionRequired;`,

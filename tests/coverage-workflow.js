@@ -289,7 +289,7 @@ async function testLegacySilentThreeQuarterMigrationAndStateVariantFlow() {
 
   const html = rendered.context.document.getElementById("main").innerHTML;
   /* CONTINUITY_CREATION_TOOLS_CLARITY_V1 — the chosen state's own prompt controls are the
-     workspace now, not a head button that opened them; upload lives with its candidates. */
+     workspace now, not a head button that opened them; upload names its state in the header. */
   assert(html.includes('data-entity-state-generation="state-night"') && html.includes(">Build state prompt<"), "empty alternate-state cards must put the state's own generation path on screen");
   assert(html.includes("openStateReferenceUpload('characters','CHAR-IREN','state-night')\">Upload image<"), "empty alternate-state cards must provide a targeted upload path");
   assert.strictEqual(typeof rendered.context.openContinuityStateVariantHub, "function", "the Reference workspace must retain the state-variant chooser");

@@ -7792,3 +7792,32 @@ body[data-focused-route="library"]:has(.library-grid .library-card) #app[data-su
 .audio-candidate[data-audio-standing="approved"]{border-color:var(--green)}
 .entity-approval-modal figure:has(audio){align-self:start}
 .entity-approval-modal figure:has(audio)>div{height:auto;min-height:90px;padding:16px}
+
+/* First frame / motion handoff and the saved Input exclusions. */
+.shot-generation-next { margin: 12px 0 20px; padding: 18px; border: 1px solid var(--line); border-radius: 12px; background: var(--panel-2); min-width: 0; }
+.shot-generation-next-label { color: var(--acc); font-size: 11px; font-weight: 700; }
+.shot-generation-next h3 { margin: 8px 0; }
+.shot-generation-next p, .shot-generation-frame-guide, .shot-input-exclusions p { line-height: 1.6; overflow-wrap: anywhere; }
+.shot-generation-next small { display: block; margin-top: 12px; line-height: 1.6; }
+.shot-generation-next details { margin-top: 14px; }
+.shot-generation-next-actions { display: flex; gap: 10px; flex-wrap: wrap; }
+.shot-input-exclusions { margin: 12px 0; padding: 12px; border-left: 3px solid var(--warn, #e7b65d); background: var(--panel-2); }
+.guided-input-tray > article.disabled-input { opacity: 1; border-style: dashed; }
+.guided-input-tray .input-inclusion-state { font-weight: 700; font-size: 11px; }
+@media (max-width: 600px) { .shot-generation-next { padding: 14px; } .shot-generation-next-actions button { width: 100%; min-height: 44px; white-space: normal; } }
+
+.shot-generation-frame-entry { margin-bottom: 16px; padding: 14px; border: 1px solid var(--line); border-radius: 10px; }
+.shot-generation-frame-entry p, .shot-generation-frame-entry small { line-height: 1.6; }
+.shot-generation-frame-entry small { display: block; margin-top: 12px; }
+
+/* Compact production summary; the persistent stage bar remains the navigator. */
+.shot-journey{border:1px solid var(--border);border-radius:12px;padding:14px;margin:12px 0;background:var(--panel-2)}
+.shot-journey header{display:flex;justify-content:space-between;gap:12px;align-items:baseline;font-size:13px}.shot-journey header span{color:var(--muted);font-size:12px}
+.shot-journey ol{list-style:none;display:grid;grid-template-columns:repeat(5,minmax(0,1fr));padding:0;margin:12px 0;gap:8px}
+.shot-journey li{position:relative;display:flex;flex-direction:column;align-items:center;gap:4px;text-align:center;border:1px solid var(--border);border-radius:8px;padding:8px 3px;min-width:0;font-size:12px}
+.shot-journey li.is-current{border-color:var(--acc);background:color-mix(in srgb,var(--acc) 8%,transparent)}.shot-journey li.warn strong{color:var(--warn,#e6bf70)}
+.shot-journey li strong{font-size:11px;font-weight:500}.shot-journey li small{color:var(--muted);font-size:10px}.shot-journey li em{font-style:normal;color:var(--acc);font-size:10px}
+.shot-journey-preview{height:36px;display:flex;align-items:center;justify-content:center;font-size:26px;color:var(--acc);gap:2px}.shot-journey-preview img{width:48px;height:36px;object-fit:cover;border-radius:4px}
+.shot-journey-reference{position:relative;display:inline-flex}.shot-journey-reference img{width:24px;height:32px}.shot-journey-reference.is-excluded{border:1px dashed var(--muted);border-radius:4px}.shot-journey-reference i{position:absolute;right:0;bottom:0;line-height:12px;background:var(--panel);font-size:15px;font-style:normal}
+.shot-journey footer{display:flex;justify-content:space-between;align-items:center;gap:16px}.shot-journey footer>small{color:var(--muted);font-size:11px;max-width:55%;line-height:1.5}.shot-journey-alternative{display:flex;flex-direction:column;align-items:flex-end;gap:5px;font-size:12px}.shot-journey-alternative button{min-height:44px}
+@media(max-width:600px){.shot-journey{padding:10px}.shot-journey header{align-items:flex-start;flex-direction:column;gap:4px}.shot-journey ol{gap:4px}.shot-journey li{font-size:11px;padding:7px 1px}.shot-journey li small{font-size:9px}.shot-journey-reference img{width:16px;height:28px}.shot-journey footer{flex-direction:column;align-items:stretch;gap:10px}.shot-journey footer>small{max-width:none}.shot-journey-alternative{align-items:stretch}.shot-journey-alternative button{width:100%}}

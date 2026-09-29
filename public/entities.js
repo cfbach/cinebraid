@@ -621,8 +621,7 @@ function continuityStateCandidateRows(entity, state, media) {
 function continuityStateCandidateTray(list, entity, state, media, rows = continuityStateCandidateRows(entity, state, media)) {
   if (!state) return "";
   const mediaJson = encodeURIComponent(JSON.stringify(rows));
-  const upload = `<button type="button" class="ghost-btn" onclick="openStateReferenceUpload('${attr(list)}','${attr(entity.id)}','${attr(state.id)}')">Upload image</button>`;
-  return `<section class="continuity-candidate-tray"><header><h4>Candidates <span>${rows.length}</span></h4>${upload}</header>${rows.length ? `<div class="entity-media entity-candidate-grid continuity-candidate-grid">${rows.map((item,index)=>entityCandidateCard(list,entity,item,index,mediaJson,false)).join("")}</div>` : `<p class="continuity-candidate-empty">Images generated or uploaded for this state land here.</p>`}</section>`;
+  return `<section class="continuity-candidate-tray"><header><h4>Candidates <span>${rows.length}</span></h4></header>${rows.length ? `<div class="entity-media entity-candidate-grid continuity-candidate-grid">${rows.map((item,index)=>entityCandidateCard(list,entity,item,index,mediaJson,false)).join("")}</div>` : `<p class="continuity-candidate-empty">Images generated or uploaded for this state land here.</p>`}</section>`;
 }
 
 
@@ -695,9 +694,9 @@ function continuityStateDerivationMarkup(list, entity, state) {
   if (approvedSources.length === 1) {
     const only = byId.get(approvedSources[0]);
     const name = only?.name || approvedSources[0];
-    return `<section class="state-derivation-missing is-single-source" data-derivation-unrecorded="${attr(state.id)}" data-derivation-suggestion="${attr(approvedSources[0])}"><header><div><span>SOURCE STATE NOT RECORDED</span><b>${esc(state.name || "This state")} changes from: ${esc(name)}</b><small>${esc(name)} is the only approved state this one could come from. CineBraid will not record it for you — confirm it and generation can use the approved ${esc(name)} image as the starting point. Confirming approves nothing.</small></div></header><div class="state-derivation-confirm"><button class="add-btn" onclick="recordContinuityStateDerivation('${attr(list)}','${attr(entity.id)}','${attr(state.id)}','${attr(approvedSources[0])}')">Use ${esc(name)} as source</button><details class="state-derivation-change"><summary>Change source</summary><div>${selector}</div></details></div></section>`;
+    return `<section class="state-derivation-missing is-single-source" data-derivation-unrecorded="${attr(state.id)}" data-derivation-suggestion="${attr(approvedSources[0])}"><header><div><p><span>SOURCE STATE NOT RECORDED</span></p><p><b>${esc(state.name || "This state")} changes from: ${esc(name)}</b></p><p><small>${esc(name)} is the only approved state this one could come from.<br>CineBraid will not record it for you — confirm it and generation can use the approved ${esc(name)} image as the starting point.<br>Confirming approves nothing.</small></p></div></header><div class="state-derivation-confirm"><button class="add-btn" onclick="recordContinuityStateDerivation('${attr(list)}','${attr(entity.id)}','${attr(state.id)}','${attr(approvedSources[0])}')">Use ${esc(name)} as source</button><details class="state-derivation-change"><summary>Change source</summary><div>${selector}</div></details></div></section>`;
   }
-  return `<section class="state-derivation-missing" data-derivation-unrecorded="${attr(state.id)}"><header><div><span>SOURCE STATE NOT RECORDED</span><b>${esc(state.name || "This state")} does not record what it derives from</b><small>CineBraid will not guess. Generation and parent-to-state validation stay blocked until you say which approved state this one comes from. Recording it approves nothing.</small></div></header>${selector}</section>`;
+  return `<section class="state-derivation-missing" data-derivation-unrecorded="${attr(state.id)}"><header><div><p><span>SOURCE STATE NOT RECORDED</span></p><p><b>${esc(state.name || "This state")} does not record what it derives from</b></p><p><small>CineBraid will not guess. Generation and parent-to-state validation stay blocked until you say which approved state this one comes from.<br>Recording it approves nothing.</small></p></div></header>${selector}</section>`;
 }
 window.recordContinuityStateDerivation = (list, entityId, stateId, sourceStateId) => {
   const entity = P[list]?.find((item) => item.id === entityId);
@@ -946,8 +945,8 @@ function continuityStateNextMarkup(list, entity, state, facts) {
     text = "Approve the image already chosen for this state, or build a prompt for a new one.";
     action = `<button type="button" class="ghost-btn" onclick="approveEntityFile('${attr(list)}','${attr(entity.id)}','${attr(facts.file)}','${attr(state.id)}')">Approve existing image…</button>`;
   } else if (!state.isDefault && !String(state.notes || "").trim()) text = "Describe what changes, then build the prompt.";
-  else if (!facts.latest) text = "Build the prompt, then generate or upload the image.";
-  else text = "Generate or upload an image from this prompt. It will appear under Candidates.";
+  else if (!facts.latest) text = "Upload an image, or build a prompt to generate one.";
+  else text = "Upload an image, or generate one from this prompt. It will appear under Candidates.";
   return `<div class="cs-next" data-state-next="${attr(state.id)}"><p><b>Next</b> ${esc(text)}</p>${action}</div>`;
 }
 /* ONE STATE, ONE WORKSPACE.
@@ -971,7 +970,9 @@ function continuityStateWorkspaceMarkup(list, it, st, index, media, stateTruth, 
   const thumb = fileMedia
     ? `<button type="button" class="cs-thumb" onclick="openMediaTheatre('${attr(encodeURIComponent(fileMedia.url))}','${attr(encodeURIComponent(`${st.name || "State"} ${isCanon ? "canon" : "historic"} image · ${file}`))}','${isVideo(fileMedia.name) ? "video" : "image"}')" aria-label="View the ${isCanon ? "canon" : "historic, not approved"} image larger">${isVideo(fileMedia.name) ? `<video muted src="${attr(fileMedia.url)}"></video>` : `<img src="${attr(fileMedia.url)}" alt="">`}</button>`
     : "";
-  const head = `<header class="cs-head">${thumb}<div><input class="cs-name" aria-label="State name" value="${attr(st.name || "")}" placeholder="Clean suit / Damaged sleeve / Night lighting" onchange="setContinuityState('${list}','${it.id}',${index},'name',this.value)" ${st.isDefault ? 'data-default="1"' : ""}><p class="cs-status tone-${tone}">${esc(continuityStateStatusWord(st, standing.standing, demand))}</p></div></header>`;
+  const uploadHintId = `state-upload-hint-${list}-${it.id}-${st.id}`;
+  const upload = `<aside class="cs-upload"><button type="button" class="add-btn" aria-describedby="${attr(uploadHintId)}" onclick="openStateReferenceUpload('${attr(list)}','${attr(it.id)}','${attr(st.id)}')">Upload image</button><small id="${attr(uploadHintId)}">For ${esc(st.name || "this state")} · candidate, not approved</small></aside>`;
+  const head = `<header class="cs-head">${thumb}<div><input class="cs-name" aria-label="State name" value="${attr(st.name || "")}" placeholder="Clean suit / Damaged sleeve / Night lighting" onchange="setContinuityState('${list}','${it.id}',${index},'name',this.value)" ${st.isDefault ? 'data-default="1"' : ""}><p class="cs-status tone-${tone}">${esc(continuityStateStatusWord(st, standing.standing, demand))}</p></div>${upload}</header>`;
   const relation = !st.isDefault && typeof assetStateDerivationSentence === "function" ? assetStateDerivationSentence(list, it, st) : "";
   /* An unrecorded source is the one case where the lineage question IS the next
      task — CineBraid will not guess it — so its chooser stays at full rank. */
@@ -1048,8 +1049,8 @@ function continuityStatesPanel(list, it, media = [], demand = null) {
     return `<button type="button" class="tone-${tone} ${state.id===selectedId?"selected":""}" aria-pressed="${state.id===selectedId?"true":"false"}" onclick="selectBoundedItem('continuity-state','${attr(context)}','${attr(state.id)}')"><i></i><span><b>${esc(state.name || `State ${index+1}`)}</b><small>${esc(continuityStateStatusWord(state, standing, demand))}</small></span></button>`;
   }).join("")}</nav>`;
   /* R21 — the section's own verb sits beside its heading. Once states exist it is a
-     quiet control, so the selected state's Build state prompt is the one primary
-     action on screen. */
+     quiet control; image upload and prompt building live in the selected state's
+     workspace. */
   const lead = `<header class="continuity-states-lead"><h3>Continuity states</h3><button class="${variants.length ? "ghost-btn" : "add-btn"}" onclick="addContinuityState('${list}','${it.id}')">+ Add continuity state</button></header>`;
   const intro = variants.length ? rail : `<p class="continuity-states-empty">A persistent story variant — glasses on, wet, damaged, older. Add one only when the story needs it.</p>`;
   const workspace = st ? continuityStateWorkspaceMarkup(list, it, st, selectedIndex, media, stateTruth, demand) : "";

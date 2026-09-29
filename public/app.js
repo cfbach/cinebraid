@@ -7418,7 +7418,7 @@ const READINESS_ACTION_WORDS = {
   "approve-parent-frame": "Approve the previous frame",
   "approve-required-frames": "Approve required frames",
   "produce-frame": "Produce the frame",
-  "produce-motion": "Produce the motion",
+  "produce-motion": "Create the shot video",
   /* The durable decision, in the filmmaker's words rather than the ledger's. It is
      deliberately not "Approve" — this project already uses that word for accepting
      bytes, and the whole point of this action is that it is the OTHER decision. */
@@ -7476,7 +7476,7 @@ const READINESS_NAVIGATION_WORDS = {
   "approve-parent-frame": "Review the previous frame",
   "approve-required-frames": "Review required frames",
   "produce-frame": "Open the frame workspace",
-  "produce-motion": "Open the motion workspace",
+  "produce-motion": "Prepare video request",
   "mark-shot-final": "Open the finish decision",
   "nothing-outstanding": "Open the shot",
 };
