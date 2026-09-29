@@ -78,6 +78,10 @@ async function visiblePreview(name){
   check(width+' Results cards carry Front and Profile identities',await page.locator('.rx-card-info b').allTextContents().then(labels=>labels.includes('Front \u00b7 Result 1')&&labels.includes('Profile \u00b7 Result 2')));
   const resultCards=page.locator('[data-rx-key]');if(await resultCards.count()>1&&await resultCards.nth(1).getAttribute('aria-pressed')!=='true')await resultCards.nth(1).click();
   const exactResult=new URL(page.url()).hash;
+  if(width===1440){
+   const spacing=await page.evaluate(()=>{const cards=[...document.querySelectorAll('.rx-card')],preview=document.querySelector('.rx-selected').getBoundingClientRect(),last=cards.at(-1).getBoundingClientRect();return preview.left-last.right;});
+   check('1440 two candidates do not leave an empty grid column before the preview',spacing>=0&&spacing<=16);
+  }
   await capture(width+'-results-current-intention');
   await inspectCurrentContext(width+' Results',description,width+'-results-intention-expanded');
   const selectedLabel=await page.locator('.rx-selected h2').textContent();
@@ -98,6 +102,19 @@ async function visiblePreview(name){
   check(width+' Compare choice names the recorded Front view',await page.locator('#rx-compare option').nth(1).textContent().then(t=>t.startsWith('Front \u00b7 Result 1')));
   await page.locator('#rx-compare').selectOption(comparison);await settled();
   check(width+' comparison captions distinguish selected Profile from Front',await page.locator('.rx-stage figcaption').allTextContents().then(labels=>labels[0].includes('Profile \u00b7 Result 2')&&labels[0].includes('Selected result')&&labels[1].includes('Front \u00b7 Result 1')&&labels[1].includes('Comparison only')));
+  // Judge the contained artwork, not the image element's letterboxed rectangle.
+  const artwork=await page.locator('.rx-stage img').evaluateAll(images=>images.map(img=>{const box=img.getBoundingClientRect(),scale=Math.min(box.width/img.naturalWidth,box.height/img.naturalHeight);return {width:img.naturalWidth*scale,height:img.naturalHeight*scale};}));
+  check(width+' comparison preserves two independently inspectable artworks',artwork.length===2&&artwork.every(r=>r.width>=330&&r.height>=180));
+  check(width+' sticky approval names the selected result, never the comparison',await page.locator('.rx-decision-selection').innerText(),'Selected: '+selectedLabel);
+  if(width===390){
+   const figures=page.locator('.rx-stage figure');
+   for(let index=0;index<2;index++){
+    await figures.nth(index).evaluate(el=>el.scrollIntoView({block:'start'}));await settled();
+    const visible=await figures.nth(index).evaluate(el=>{const img=el.querySelector('img').getBoundingClientRect(),main=document.querySelector('#main').getBoundingClientRect(),footer=document.querySelector('.rx-decision').getBoundingClientRect();return img.top>=main.top&&img.bottom<=footer.top;});
+    check('390 artwork '+index+' can be inspected completely above approval and Activity',visible);
+   }
+   await page.locator('#main').evaluate(el=>el.scrollTop=0);
+  }
   await capture(width+'-reference-screening-comparison');
   await inspectCurrentContext(width+' Screening',description,width+'-screening-intention-expanded');
   check(width+' closing intention remains in Screening',await page.locator('.rx-screening').count(),1);
@@ -105,6 +122,8 @@ async function visiblePreview(name){
   check(width+' Screening returns to the exact selected key',new URL(page.url()).hash,exactResult);
   await page.locator('#rx-revise').click();await page.locator('[data-create-target="characters:CHAR-COURIER"] .creation-description').waitFor({state:'visible'});await settled();
   await page.waitForFunction(()=>{const el=document.querySelector('[data-create-target="characters:CHAR-COURIER"] .creation-description'),r=el?.getBoundingClientRect();return r&&r.top>=64&&r.bottom<=innerHeight-54&&document.activeElement===el;});
+  const editorWidth=await page.locator('.creation-description').evaluate(el=>el.getBoundingClientRect().width);
+  check(width+' reference editor uses the available field width',editorWidth>=(width===390?350:500));
   check(width+' primary revise lands on the visible editor',await page.locator('[data-create-target="characters:CHAR-COURIER"] .creation-description').evaluate(el=>document.activeElement===el));
   check(width+' primary revise opens the manual prompt description',await page.locator('[data-create-target="characters:CHAR-COURIER"] .creation-description').inputValue(),description);
   check(width+' primary revise selects Primary reference',await page.locator('.bounded-entity-taskbar .selected b').textContent(),'Primary reference');

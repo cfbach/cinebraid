@@ -53,12 +53,12 @@
 /* A selected result says so and says what pressing it again does — in the word, in the hint and in the cursor. */
 .results-desk .rx-card[aria-pressed=true]{border-color:#8a9299;background:var(--panel-2);box-shadow:inset 0 0 0 2px #8a9299;cursor:zoom-in}
 .results-desk .rx-card[aria-pressed=true] .rx-card-open{color:var(--ink)}
-/* The contact sheet keeps room under its last row for the decision footer that floats over it. */
-.rx-work{padding-bottom:96px}
+/* The footer has its own flow space; a modest gutter keeps the final row clear at scroll end. */
+.rx-work{padding-bottom:20px}
 .rx-screening .rx-work{padding-bottom:0}
 .rx-card-open{display:flex;align-items:center;gap:6px;padding:0 12px 11px;font:500 12px/1.3 var(--body);color:var(--muted)}
 .rx-thumb{aspect-ratio:16/10;background:var(--rx-well);display:grid;place-items:center;position:relative;overflow:hidden}
-.rx-thumb img,.rx-thumb video{width:100%;height:100%;object-fit:contain}
+.rx-thumb img,.rx-thumb video{position:absolute;inset:0;width:100%;height:100%;object-fit:contain;min-height:0}
 .rx-thumb>span{font-size:12px;color:var(--muted);padding:8px}
 .rx-thumb .rx-video-badge{position:absolute;bottom:8px;left:8px;background:rgba(17,19,21,.82);border-radius:5px;padding:4px 8px}
 .rx-card-info{display:grid;grid-template-columns:1fr auto;gap:6px;padding:12px}
@@ -126,7 +126,7 @@
 @media(min-width:1700px){.rx-grid{grid-template-columns:repeat(5,minmax(0,1fr))}.rx-contact{display:grid;grid-template-columns:minmax(0,1fr) 370px;gap:20px}.rx-selected{margin:0;display:block;align-self:start}.rx-selected-media{height:260px}.rx-pages{grid-column:1}.rx-contact .rx-selected{grid-column:2;grid-row:1/3}}
 @media(max-width:1100px){.rx-grid{grid-template-columns:repeat(3,minmax(0,1fr))}.rx-heading-row{align-items:flex-start}.rx-head-actions{justify-content:flex-end}.rx-heading h1{font-size:28px}}
 @media(max-width:650px){.results-desk{padding:14px 10px 16px}.rx-heading{padding-bottom:12px;gap:10px}.rx-heading-row{display:block}.rx-heading h1{font-size:26px}.rx-head-actions{justify-content:flex-start;margin-top:12px}.rx-context{margin:8px 0}.rx-grid{grid-template-columns:repeat(2,minmax(0,1fr));gap:10px}.rx-card-info{padding:10px 9px;gap:5px;display:flex;flex-wrap:wrap;justify-content:space-between;align-items:baseline}.rx-card-info small{width:100%}.rx-card-open{padding:0 9px 10px}.rx-toolbar{display:block}.rx-toolbar>div{margin-top:10px;display:grid;grid-template-columns:repeat(3,1fr);gap:6px}.rx-toolbar>div button{padding:8px 6px;font-size:13px}.rx-selected{display:block;padding:12px;margin-top:14px}.rx-selected-media{height:210px}.rx-selected h2{margin:10px 0}.results-desk .rx-decision{align-items:center;flex-wrap:wrap;gap:10px}.results-desk .rx-decision>div:last-child{flex:1 1 100%}.results-desk .rx-decision button{flex:1 1 auto}.rx-stage{height:52vh}.rx-stage.rx-ab{height:70vh;grid-template-columns:1fr;grid-template-rows:1fr 1fr}.rx-screen-controls{gap:8px}.rx-screen-controls select{max-width:230px}.rx-confirm figure{height:190px}.rx-heading p{overflow-wrap:anywhere}}
-@media(min-width:1101px){.rx-contact{display:grid;grid-template-columns:minmax(0,1fr) 340px;gap:18px}.rx-contact .rx-grid{grid-template-columns:repeat(3,minmax(0,1fr))}.rx-contact .rx-selected{margin:0;display:block;align-self:start;grid-column:2;grid-row:1/3;position:sticky;top:12px}.rx-selected-media{height:245px}.rx-contact .rx-pages{grid-column:1}.rx-card-info{padding:10px 9px}}
+@media(min-width:1000px){.rx-contact{display:grid;grid-template-columns:minmax(0,1fr) minmax(280px,29%);gap:12px;align-items:start}.rx-contact .rx-grid{grid-template-columns:repeat(auto-fit,minmax(min(190px,100%),1fr))}.rx-contact .rx-selected{margin:0;display:block;align-self:start;grid-column:2;grid-row:1/3;position:sticky;top:12px;padding:12px}.rx-selected-media{height:245px}.rx-contact .rx-pages{grid-column:1}.rx-card-info{padding:10px 9px}}
 .rx-screening{height:calc(100dvh - 210px);min-height:440px;display:flex;flex-direction:column}.rx-screening .rx-heading{padding-bottom:10px;gap:8px}.rx-screening .rx-heading h1{font-size:26px;margin:2px 0}.rx-screening .rx-toolbar{margin:10px 0}.rx-screening .rx-work{flex:1;min-height:120px;display:flex;flex-direction:column}.rx-screening .rx-stage{height:auto;flex:1;min-height:100px}.rx-screening .rx-screen-controls{margin:8px 0}.rx-screening .rx-decision{margin-top:4px}.rx-screening .rx-requests{display:none}.rx-screening .rx-heading #rx-import,.rx-screening .rx-heading #rx-revise{display:none}
 @media(max-width:650px){.rx-screening{height:calc(100dvh - 225px);min-height:555px}.rx-screening .rx-heading-row{display:flex;gap:8px;align-items:center}.rx-screening .rx-heading h1{font-size:24px}.rx-screening .rx-heading p:not(.rx-eyebrow){display:none}.rx-screening .rx-head-actions{margin:0}.rx-screening .rx-toolbar{display:flex;gap:8px;align-items:flex-start}.rx-screening .rx-toolbar>label{display:none}.rx-screening .rx-toolbar>div{display:flex;margin:0}.results-desk.rx-screening .rx-decision{gap:8px;padding:10px 12px}.rx-screening .rx-decision small{font-size:12px}.rx-screening .rx-stage.rx-ab{grid-template-columns:1fr;grid-template-rows:repeat(2,minmax(0,1fr))}.rx-screen-controls>span:last-child{font-size:12px}}
 .rd-slot-pair{min-width:0;display:flex;flex-direction:column;gap:6px}.rd-slot-pair .rd-slot{width:100%;flex:1}.rd-slot-pair>.rd-button{font-size:12px;min-height:44px;white-space:normal}
@@ -154,10 +154,40 @@ body.results-desk-active #app #main{display:block;min-height:0;min-width:0;width
  .results-desk.rx-screening{min-height:560px}
 }
 
-/* Reading the full brief may scroll the narrow Screening page, but must never
-   squeeze the selected or comparison image into a strip beneath its caption. */
+/* Narrow Screening is an inspection page, not two images squeezed into the remaining
+   viewport. Each complete image owns its aspect ratio; the page scrolls past the
+   separate decision footer, whose text always names the selected approval target. */
+.rx-decision-selection{display:block;font-weight:600;color:var(--ink);overflow-wrap:anywhere}
+.rx-screening .rx-media figcaption{color:#b6bdc5}
 @media(max-width:650px){
- .rx-screening .rx-context[open]~.rx-work{flex:0 0 auto}
- .rx-screening .rx-context[open]~.rx-work .rx-stage{height:260px;flex:none}
- .rx-screening .rx-context[open]~.rx-work .rx-stage.rx-ab{height:360px}
+ .results-desk{padding:12px 10px 12px}
+ .rx-heading{gap:6px;padding-bottom:8px}
+ .rx-heading h1{font-size:24px;margin:2px 0}
+ .rx-heading p{margin:2px 0;font-size:12px}
+ .rx-heading-row>div:first-child{display:grid;grid-template-columns:auto minmax(0,1fr);column-gap:10px;align-items:baseline}
+ .rx-heading-row .rx-eyebrow{grid-column:1/-1}
+ .rx-heading-row>div:first-child>p:last-child{text-align:right}
+ body.results-desk-active #app #main{scroll-padding:12px 0 160px}
+ .rx-head-actions{margin-top:6px;gap:6px}
+ .rx-head-actions button{flex:1;padding:8px;font-size:13px}
+ .rx-context summary{min-height:44px;padding:4px 0}
+ .rx-job-note{border:0;border-radius:0;background:none;padding:0;margin-bottom:8px;font-size:12px}
+ .rx-toolbar{margin-bottom:10px}
+ .rx-toolbar>div{margin-top:6px}
+ .rx-selected{margin-top:12px}
+ .results-desk.rx-screening{height:auto;min-height:100%}
+ .rx-screening .rx-work,.rx-screening .rx-context[open]~.rx-work{display:block;flex:none;min-height:0}
+ .rx-screening .rx-stage,.rx-screening .rx-stage.rx-ab{height:auto;min-height:0;flex:none;grid-template-columns:minmax(0,1fr);grid-template-rows:auto;gap:16px}
+ .rx-screening .rx-media{height:auto}
+ .rx-screening .rx-media img,.rx-screening .rx-media video{display:block;flex:none;width:100%;height:auto;max-height:70dvh;object-fit:contain}
+ .rx-screening .rx-media figcaption{padding:8px 10px;line-height:1.4}
+ .rx-screen-controls{gap:8px;margin:12px 0}
+ .rx-screen-controls>span:first-child{flex-basis:100%}
+ .rx-screen-controls label{flex:1 1 100%;min-width:0}
+ .rx-screen-controls select{flex:1;min-width:0;max-width:100%}
+ .results-desk .rx-decision{gap:6px;padding:8px 10px;margin-top:8px}
+ .results-desk .rx-decision>div:first-child{gap:3px;flex:1 1 0}
+ .results-desk .rx-decision>div:last-child{flex:0 1 auto}
+ .results-desk .rx-decision>div:first-child small{overflow-wrap:anywhere}
+ .results-desk .rx-decision button{padding:10px;font-size:13px}
 }
