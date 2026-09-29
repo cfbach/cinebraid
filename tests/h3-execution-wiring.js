@@ -1046,6 +1046,35 @@ async function main() {
         "the listed order must be the plan's, not the package's array order");
       note("ui: the dialog compiles through the server, shows the compiled prompt, the effective 7,000 ceiling and the real provider bindings");
 
+      /* Resolve the real helper's local plan response only after the user moves on.
+         No clock delay: these are controlled async interleavings, plus a positive control. */
+      const editor = view.context.document.getElementById("fal-h3-prompt-editor");
+      const coverage = view.context.document.getElementById("fal-h3-edit-coverage");
+      const originalRequest = view.context._falH3MotionRequest;
+      for (const change of ["unchanged", "reset", "other-edit", "other-request", "refreshed-plan"]) {
+        view.context._falH3MotionRequest = { ...originalRequest };
+        editor.value = "Saved manual wording";
+        coverage.hidden = true;
+        coverage.innerHTML = "";
+        let release;
+        view.context.fetch = () => new Promise((resolve) => { release = resolve; });
+        const pending = view.context.reviewFalH3PromptEdit();
+        assert(release, "the actual helper must request its coverage plan before the user action");
+        if (change === "reset") view.context.resetFalH3PromptEditor();
+        if (change === "other-edit") editor.value = "Newer wording";
+        if (change === "other-request") view.context._falH3MotionRequest = { ...originalRequest };
+        if (change === "refreshed-plan") view.context._falH3MotionRequest.compiledPrompt = "Recompiled for different settings";
+        release({ ok: true, json: async () => ({ ...previewPayload,
+          editedCoverage: { lost: [{ label: "old direction" }], checked: [{ label: "old direction" }] },
+        }) });
+        await pending;
+        assert.strictEqual(coverage.hidden, change !== "unchanged", `${change}: coverage must describe only the current editor and plan`);
+        if (change === "unchanged") assert(coverage.innerHTML.includes("old direction"), "the positive control must actually render the response");
+        else assert.strictEqual(coverage.innerHTML, "", "a superseded response cannot publish stale findings");
+        if (change === "reset") assert.strictEqual(editor.value, originalRequest.compiledPrompt);
+      }
+      note("ui: deferred edited-coverage responses cannot undo Reset or describe a different edit, request or refreshed plan");
+
       /* A 4-second shot: the dialog must OPEN — refusing here would be a dead end,
          since the dialog is the only place the filmmaker can choose a valid length —
          and it must say plainly that the length will not be changed for them. */

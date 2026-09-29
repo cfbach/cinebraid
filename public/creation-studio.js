@@ -2506,8 +2506,17 @@ function shotStateEntityRoute(list, entityId) {
   return route ? `#/${route}/${encodeURIComponent(entityId)}` : "#/library";
 }
 window.openShotStateAuthoring = (shotId, list, entityId) => {
-  if (typeof selectEntityResultTask === "function") selectEntityResultTask(list, entityId, "coverage", "states");
-  location.hash = shotStateEntityRoute(list, entityId);
+  const shot = shotById(shotId);
+  const row = shot && guidedShotStateEntityRows(shot).find((item) => item.list === list && item.entity.id === entityId);
+  if (!row) return toast("This reference is no longer attached to the shot");
+  const states = entityStateListRead(row.entity, true);
+  const declaredId = String(shot.continuityStateSelections?.[entityId] || "");
+  const state = declaredId ? states.find((item) => item.id === declaredId) : states.find((item) => item.isDefault) || states[0];
+  if (typeof selectEntityResultTask === "function") selectEntityResultTask(list, entityId, "coverage", "states", state?.id || "");
+  /* An invalid declaration opens the owned state list, never a remembered state from
+     another visit. Navigation selects a workspace; it does not repair the shot binding. */
+  if (!state && typeof boundedWriteState === "function") boundedWriteState("selected:continuity-state", `${list}:${entityId}`, "");
+  location.hash = `${shotStateEntityRoute(list, entityId)}/tools`;
 };
 function guidedShotStateDeclarations(s) {
   const rows = guidedShotStateEntityRows(s);

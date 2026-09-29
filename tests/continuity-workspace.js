@@ -193,6 +193,32 @@ function workspaceFixture() {
   return project;
 }
 
+/* State-authoring handoffs are navigation, never authority or binding repair. */
+for (const [list, id, route] of [["characters", "KAI", "character"], ["locations", "LOC-HULL", "location"], ["props", "PR-TOOL", "prop"], ["vehicles", "VEH-CART", "vehicle"]]) {
+  for (const [declared, expected] of [["state-alt", "state-alt"], ["", "state-default"], ["foreign-state", ""]]) {
+    const project = workspaceFixture();
+    project.shots[0].continuityStateSelections = declared ? { [id]: declared } : {};
+    const rendered = await render("#/shot/L1-01", project, { storage: FRAMES_STORAGE });
+    const before = evaluate(rendered, "JSON.stringify(P)");
+    evaluate(rendered, `boundedWriteState("selected:continuity-state", "${list}:${id}", "state-alt")`);
+    evaluate(rendered, `openShotStateAuthoring("L1-01", "${list}", "${id}")`);
+    assert.strictEqual(evaluate(rendered, "location.hash"), `#/${route}/${id}/tools`);
+    assert.strictEqual(evaluate(rendered, `boundedReadState("selected:continuity-state", "${list}:${id}", "")`), expected);
+    assert.strictEqual(evaluate(rendered, "JSON.stringify(P)"), before, "opening state authoring must not repair bindings or alter approvals");
+  }
+}
+{
+  const rendered = await render("#/shot/L1-01", workspaceFixture(), { storage: FRAMES_STORAGE });
+  for (const args of [['missing-shot', 'characters', 'KAI'], ['L1-01', 'props', 'KAI'], ['L1-01', 'characters', 'missing-entity']]) {
+    const before = evaluate(rendered, "JSON.stringify(P)");
+    const route = evaluate(rendered, "location.hash");
+    evaluate(rendered, `openShotStateAuthoring(...${JSON.stringify(args)})`);
+    assert.strictEqual(evaluate(rendered, "location.hash"), route, "an unattached or missing target cannot navigate to an unrelated reference");
+    assert.strictEqual(evaluate(rendered, "JSON.stringify(P)"), before);
+  }
+}
+pass("state authoring targets the exact owned state/default across all four reference kinds, clears stale UI selection for invalid declarations, and refuses missing/unattached targets without writes");
+
 /* One stub comparison carrying every outcome, shaped exactly as the compare
    route answers. The UI is a renderer, so the fixture is the contract. */
 function comparePayload(patch = {}) {
