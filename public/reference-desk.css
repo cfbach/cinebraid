@@ -243,6 +243,9 @@ body:is(.reference-desk-active,.production-media-active) #modal .rd-confirm-box{
 .rd-existing-tools .cs-workspace { display:grid; gap:14px; padding:18px; border:1px solid var(--line); border-radius:12px; background:var(--surface-2,var(--panel)); scroll-margin-top:100px; }
 .rd-existing-tools .cs-head { display:flex; gap:14px; align-items:center; min-width:0; }
 .rd-existing-tools .cs-head>div { display:grid; gap:2px; flex:1; min-width:0; }
+.rd-existing-tools .cs-upload { display:grid; gap:5px; flex:0 1 300px; min-width:0; justify-items:end; }
+.rd-existing-tools .cs-upload .add-btn { margin:0; min-height:44px; padding:10px 16px; font:600 14px/1.3 var(--body); letter-spacing:0; text-transform:none; }
+.rd-existing-tools .cs-upload small { color:var(--muted); font:12px/1.4 var(--body); text-align:right; overflow-wrap:anywhere; }
 .rd-existing-tools .cs-thumb { flex:0 0 auto; width:96px; height:72px; padding:0; border:1px solid var(--line); border-radius:8px; overflow:hidden; background:#08090a; cursor:zoom-in; }
 .rd-existing-tools .cs-thumb img,.rd-existing-tools .cs-thumb video { display:block; width:100%; height:100%; object-fit:contain; }
 .rd-existing-tools .cs-name { width:100%; min-width:0; margin:0 0 0 -7px; padding:2px 6px; border:1px solid transparent; border-radius:6px; background:transparent; color:var(--ink); font:600 20px/1.3 var(--body); letter-spacing:-.01em; }
@@ -254,6 +257,14 @@ body:is(.reference-desk-active,.production-media-active) #modal .rd-confirm-box{
 .rd-existing-tools .cs-status.tone-pending::before { background:var(--blue); }
 .rd-existing-tools .cs-status.tone-attention::before { background:var(--amber); }
 .rd-existing-tools .cs-parent { margin:0; font-size:13px; line-height:1.55; color:var(--text); }
+/* Keep the unrecorded-source status, relationship and explanation distinct. */
+.cs-workspace .state-derivation-missing { display:grid; gap:12px; }
+.cs-workspace .state-derivation-missing>header>div { display:grid; gap:8px; min-width:0; }
+.cs-workspace .state-derivation-missing>header p { margin:0; }
+.cs-workspace .state-derivation-missing>header span { font:600 11px/1.4 var(--body); letter-spacing:.06em; }
+.cs-workspace .state-derivation-missing>header b { color:var(--ink); font:600 15px/1.4 var(--body); }
+.cs-workspace .state-derivation-missing>header small { display:block; max-width:78ch; color:var(--muted); font:13px/1.55 var(--body); }
+.cs-workspace .state-derivation-confirm .add-btn { margin:0; }
 .rd-existing-tools .cs-workspace .continuity-state-delta { display:grid; gap:6px; }
 .rd-existing-tools .cs-workspace .continuity-state-delta>span { font:500 13px/1.4 var(--body); letter-spacing:0; text-transform:none; color:var(--text); }
 .rd-existing-tools .cs-next { display:flex; flex-wrap:wrap; align-items:center; justify-content:space-between; gap:10px 16px; padding:10px 12px; border-left:3px solid var(--amber); border-radius:0 8px 8px 0; background:color-mix(in srgb,var(--amber) 7%,transparent); }
@@ -284,6 +295,9 @@ body:is(.reference-desk-active,.production-media-active) #modal .rd-confirm-box{
 .rd-existing-tools .state-prompt-options>.field>label,.rd-existing-tools .continuity-advanced .continuity-state-scope>label { font:500 13px/1.4 var(--body); letter-spacing:0; text-transform:none; color:var(--text); margin:0; }
 @media (max-width:720px) {
   .rd-existing-tools .cs-workspace { padding:14px; }
+  .rd-existing-tools .cs-head { flex-wrap:wrap; }
+  .rd-existing-tools .cs-upload { flex-basis:100%; justify-items:start; }
+  .rd-existing-tools .cs-upload small { text-align:left; }
   .rd-existing-tools .cs-thumb { width:72px; height:54px; }
   .rd-existing-tools .cs-name { font-size:18px; }
   .rd-existing-tools .continuity-state-rail { grid-template-columns:1fr 1fr; }

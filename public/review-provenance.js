@@ -253,16 +253,29 @@ function currentDirectionForPackage(s, pack) {
  * promptReferenceOptions() requires before it offers one; a take's file is gone.
  * Each of those changes what a rebuild would compile, so each must stale the
  * package that consumed it. */
+/* H3 reference-video builds use state/coverage/keyframe IDs from the guided
+   packager, rather than the older planning picker's entity/take IDs. Resolve
+   their current inputs through that same packager: an explicit exclusion,
+   removed entity, or lost approved frame must still make its saved build stale. */
+function currentPackageReferenceOptions(s, pack) {
+  if (pack?.mode === "r2v" && typeof guidedMotionReferences === "function"
+      && typeof guidedVideoProfiles === "function") {
+    const profileId = currentMotionInputs(s, pack)?.profileId || pack.profileId;
+    const profile = guidedVideoProfiles().find((row) => row.id === profileId);
+    if (profile?.family === "minimax-h3")
+      return guidedMotionReferences(s, guidedCurrentShotStill(s), profile);
+  }
+  return typeof promptReferenceOptions === "function" ? promptReferenceOptions(s) : [];
+}
 function missingConsumedReferences(s, pack) {
-  if (typeof promptReferenceOptions !== "function") return [];
-  const available = new Set(promptReferenceOptions(s).map((row) => row.key));
+  const available = new Set(currentPackageReferenceOptions(s, pack).map((row) => row.key));
   return (pack.references || [])
     .filter((saved) => saved && saved.key && !available.has(saved.key))
     .map((saved) => saved.label || saved.key);
 }
 function currentSnapshotForPackage(s, pack) {
   const available =
-      typeof promptReferenceOptions === "function" ? promptReferenceOptions(s) : [],
+      currentPackageReferenceOptions(s, pack),
     /* Dropped, not substituted — see missingConsumedReferences above. A reference
        the production can no longer provide is absent from what it would compile
        now, so the reference arrays differ and the named reason below says which. */

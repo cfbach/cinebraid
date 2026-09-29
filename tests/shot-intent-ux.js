@@ -943,11 +943,11 @@ async function checkExecutionGate() {
     "and must create no compiled package for a paid action to be drawn from");
 
   /* 4 — NO PAID ACTION IS PRODUCED, from a stale build or otherwise. */
-  assert(!reproduction.paidAction.includes("GENERATE H3 VIDEO"),
+  assert(!reproduction.paidAction.includes("Review video request"),
     "a stale package compiled before the intent changed must not draw the paid button");
   assert(reproduction.paidAction.includes("data-h3-intent-blocked"),
     "it must state the reason where the button was, rather than leaving a gap");
-  assert(!reproduction.panel.includes("GENERATE H3 VIDEO"),
+  assert(!reproduction.panel.includes("Review video request"),
     "and the rendered motion workspace must not carry the paid button either");
 
   /* 5 — THE BUILD CONTROLS ARE DISABLED AND SAY WHY. Belt; the gate above is the braces. */
