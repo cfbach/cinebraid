@@ -282,13 +282,17 @@ async function ll3_requiredMotionSurvives() {
   equal(seen.readinessCode, "produce-motion", "LL3 C: readiness names produce-motion as the shot's next action");
   ok(/frames-to-motion-cta/.test(seen.frames), "LL3 C: so the handoff is still promoted");
 
-  /* ONE ACTION, ONE NAME. The button borrows Slice 1's own word rather than coining a
-     second one, so the shot card and this CTA cannot drift apart. */
-  const word = evaluate(page.context, `
-    const readiness = shotReadinessFor(P.shots[0]);
-    return ({ slice1: readinessActionWords(readiness.nextAction) });
-  `).slice1;
-  equal(seen.handoff, word, "LL3 C: the handoff is named by Slice 1's action words, not by a second vocabulary");
+  /* The heading names the goal; the button names its navigation, not dispatch. */
+  const words = evaluate(page.context, `
+    const action = shotReadinessFor(P.shots[0]).nextAction;
+    return ({ heading: readinessActionWords(action), navigation: readinessNavigationWords(action) });
+  `);
+  equal(words.heading, "Create the shot video", "LL3 C: the heading names the video goal");
+  equal(words.navigation, "Prepare video request", "LL3 C: preparation opens Motion");
+  const word = words.navigation;
+  equal(seen.handoff, word, "LL3 C: the handoff uses the shared navigation vocabulary");
+  ok(controls(seen.frames).some((row) => row.label === word.toUpperCase() + " →"
+    && row.call === "openGuidedMotionFromFrames('L1-01','create')"), "LL3 C: preparation is wired to Motion, not dispatch");
   ok(seen.frames.includes(word.toUpperCase()), `LL3 C: and the rendered button says "${word.toUpperCase()}"`);
   ok(!seen.frames.includes("CREATE MOTION"), "LL3 C: the third spelling of that action is gone");
 
@@ -307,7 +311,7 @@ async function ll3_requiredMotionSurvives() {
   equal(blockedSeen.readinessCode, "approve-required-frames", "LL3: precondition — an flf shot still wants its closing frame");
   equal(blockedSeen.handoff, "Open Motion", "LL3: so the handoff is navigation, not a produce-motion claim");
 
-  note("LL3 required motion keeps its promotion and Slice 1's exact word; a blocked shot is not told to produce motion");
+  note("LL3 required motion keeps its goal and preparation handoff; a blocked shot is not told to produce motion");
 }
 
 /* ===========================================================================
