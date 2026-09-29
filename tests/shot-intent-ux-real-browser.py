@@ -295,8 +295,13 @@ try:
             page.wait_for_selector(".shot-intent-control", timeout=20000)
 
         def select_stage(label):
-            page.locator(".cb-stage-strip .focused-task-button", has_text=label).first.click()
-            page.wait_for_timeout(400)
+            button = page.locator(".cb-stage-strip .focused-task-button", has_text=label).first
+            stage_id = button.get_attribute("data-stage-id")
+            button.click()
+            # The shot renderer awaits /folder; elapsed time does not identify its DOM.
+            page.wait_for_function("""stageId => document.body.dataset.renderReady === '1'
+                && document.querySelector('#main [data-selected-task]')?.dataset.selectedTask === stageId""",
+                arg=stage_id)
 
         def expand_all():
             """The video-target picker lives three disclosures deep inside the Motion
