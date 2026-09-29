@@ -118,7 +118,75 @@ function projectFixture() {
   };
 }
 
+/* A restart needs a new process, not another adapter registration. The shared
+   job-operation chain is intentionally module-scoped: registering again in this
+   process would queue behind the deliberately interrupted collection.
+   Each recovery call runs against the same disposable files in a fresh process. */
+function collectAfterRestart(owner, jobId, options, config, children) {
+  return new Promise((resolve, reject) => {
+    const child = spawn(process.execPath, [__filename, "--restart-collection"], {
+      cwd: ROOT, env: process.env, stdio: ["pipe", "pipe", "pipe"],
+    });
+    children.add(child);
+    let output = "", stderr = "", settled = false;
+    const finish = (error, result) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      if (error) reject(error); else resolve(result);
+    };
+    const timer = setTimeout(() => {
+      child.kill();
+      finish(new Error("Restarted recovery worker timed out after 15 seconds."));
+    }, 15_000);
+    child.stdout.on("data", (chunk) => { output += chunk; });
+    child.stderr.on("data", (chunk) => { stderr = (stderr + chunk).slice(-4000); });
+    child.once("error", (error) => { children.delete(child); finish(error); });
+    child.once("close", (code, signal) => {
+      children.delete(child);
+      let reply;
+      try { reply = JSON.parse(output); } catch {}
+      if (code !== 0 || !reply?.ok || reply.pid === process.pid) {
+        finish(new Error(`Restarted recovery worker failed (${signal || code}): ${reply?.error || stderr || "no isolated result received"}`));
+      } else finish(null, reply.result);
+    });
+    child.stdin.once("error", (error) => { child.kill(); finish(error); });
+    child.stdin.end(JSON.stringify({ dir: owner.dir, slug: owner.slug, jobId, options, config }));
+  });
+}
+
+function runRestartCollectionWorker() {
+  let input = "";
+  process.stdin.setEncoding("utf8");
+  process.stdin.on("data", (chunk) => { input += chunk; });
+  process.stdin.once("end", async () => {
+    // Natural exit lets Windows close the child's pipes before process teardown.
+    const reply = (message, code) => {
+      process.stdout.write(JSON.stringify({ ...message, pid: process.pid }));
+      process.exitCode = code;
+    };
+    try {
+      const { dir, slug, jobId, options, config } = JSON.parse(input);
+      const file = path.join(dir, "project.json");
+      const context = {
+        readConfig: () => config,
+        readProject: () => JSON.parse(fs.readFileSync(file, "utf8")),
+        writeProject: (project) => fs.writeFileSync(file, JSON.stringify(project, null, 2)),
+        activeSlug: () => slug,
+        projectDirForSlug: (requested) => {
+          if (requested !== slug) throw new Error(`No such disposable project: ${requested}`);
+          return { slug, dir, file };
+        },
+      };
+      const generation = registerFalGeneration(express(), context);
+      const result = await generation.recovery.collect(generation.recovery.ownerFor(slug), jobId, options);
+      reply({ ok: true, result }, 0);
+    } catch (error) { reply({ ok: false, error: error.stack || String(error) }, 1); }
+  });
+}
+
 async function harness({ enabled = true, apiKey = "fal-test-key" } = {}) {
+  const restartedChildren = new Set();
   const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "cinebraid-reaper-"));
   const projects = path.join(tmp, "projects");
   const dir = path.join(projects, "reaper-project");
@@ -244,8 +312,11 @@ async function harness({ enabled = true, apiKey = "fal-test-key" } = {}) {
     tmp, dir, origin, calls, statusFor, behaviour, config, poller, ledgerFile, writeLedger, readLedger, runsFile, hold,
     recovery: FalGeneration.recovery,
     reconcileStaleRuns: AutomationRuns.reconcileStaleRuns,
-    /* A second registration against the same directories: what the NEXT process sees. */
-    restart: () => registerFalGeneration(express(), context),
+    /* The next process reads the same files with fresh in-memory lock ownership. */
+    restart: () => ({ recovery: {
+      ownerFor: (slug) => FalGeneration.recovery.ownerFor(slug),
+      collect: (owner, jobId, options) => collectAfterRestart(owner, jobId, options, config, restartedChildren),
+    } }),
     base: originOf(cinebraid),
     project: () => JSON.parse(fs.readFileSync(path.join(dir, "project.json"), "utf8")),
     takes: () => (fs.existsSync(path.join(dir, "shots", "SH-1", "takes")) ? fs.readdirSync(path.join(dir, "shots", "SH-1", "takes")).sort() : []),
@@ -255,6 +326,7 @@ async function harness({ enabled = true, apiKey = "fal-test-key" } = {}) {
        the collection that was fetching it is gone, which is exactly what the shutdown
        case is describing. */
     close: () => {
+      for (const child of restartedChildren) child.kill();
       poller.stop();
       provider.closeAllConnections?.();
       cinebraid.closeAllConnections?.();
@@ -1284,7 +1356,8 @@ async function main() {
   console.log("Generation ingest reaper suite passed:\n" + notes.map((line) => `  - ${line}`).join("\n"));
 }
 
-main().catch((error) => {
+if (process.argv[2] === "--restart-collection") runRestartCollectionWorker();
+else main().catch((error) => {
   console.error(error);
   process.exit(1);
 });
