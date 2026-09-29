@@ -27,6 +27,48 @@ const sourceBefore=fs.readFileSync(path.join(dir,"media/source.png")),pathsBefor
 check("a Media Library link alone does not enroll or fill coverage",()=>{assert.equal(resolve().listing("props",project.props[0]).length,0);assert.equal(Shared.coverage(project.props[0],[],"state-default").filled,0);});
 const baseline=JSON.stringify(project),fixed="ref-11111111-1111-4111-8111-111111111111",at="2026-09-14T01:00:00Z";
 const request={...opts(),list:"props",entityId:"tool",stateId:"state-default",slotId:"front",assetId:image.assetId,expectedIdentity:resolve().asset(image.assetId).identity,bindingId:fixed,at};
+check("browser normalization and new entities use the enrollment writer's canonical view template",()=>{
+  const Coverage=require("../public/shared-coverage"),vm=require("vm");
+  const fn=(file,name,next)=>{const source=fs.readFileSync(path.join(__dirname,"../public",file),"utf8");return vm.runInNewContext("("+source.slice(source.indexOf("function "+name+"("),source.indexOf("\nfunction "+next+"(")).trim()+")",{coverageTemplateSlots:Coverage.coverageTemplateSlots});};
+  const display=fn("app.js","projectCoverageTemplate","projectExpressionTemplate"),create=fn("entities.js","coverageTemplateForList","ensureCoverageSlots");
+  for(const list of ["characters","props","vehicles","locations"]){
+    const slots=Coverage.coverageTemplateSlots(list),normalized=display(list).map(({approvedFile,replacementHistory,...slot})=>({...slot,selectedFile:approvedFile}));
+    assert.deepEqual(JSON.parse(JSON.stringify(normalized)),slots);assert.deepEqual(create(list),slots);
+    slots[0].label="changed in one caller";assert.notEqual(Coverage.coverageTemplateSlots(list)[0].label,slots[0].label);
+  }
+  assert.deepEqual(Coverage.coverageTemplateSlots("unknown"),[]);
+});
+/* Fresh/imported entities can have no stored plan: opening supplies display defaults,
+   but only the explicit assignment may persist those defaults. */
+check("an explicit enrollment materializes an empty plan without changing its input or approving",()=>{
+  for(const missing of [false,true])for(const stateId of ["state-default","weathered"]){
+    const p=structuredClone(project),e=p.props[0];e.coverageSlots=[];if(missing)delete e.coverageSlots;
+    const before=JSON.stringify(p),diskBefore=fs.readFileSync(path.join(dir,"project.json"));
+    Reference.resolver({...opts(),project:p}).projection();assert.equal(JSON.stringify(p),before);
+    const out=Reference.enroll({...request,project:p,stateId,slotId:"hero"}),next=out.project.props[0];
+    assert.equal(JSON.stringify(p),before);assert.deepEqual(fs.readFileSync(path.join(dir,"project.json")),diskBefore);
+    const hero=next.coverageSlots.find(s=>s.id==="hero");
+    assert.deepEqual(hero.referenceBindings,{[stateId]:fixed});
+    if(stateId==="weathered")assert(next.coverageSlots.every(s=>!s.selectedFile),"nondefault enrollment leaves global selections empty");
+    else assert.equal(hero.selectedFile,fixed,"Default retains its compatible selected-file projection");
+    assert.deepEqual(next.continuityStates,e.continuityStates);assert.equal(out.project.productionAuthority,undefined);
+    assert.equal(Reference.resolver({...opts(),project:out.project}).resolve("props",next,fixed).assetId,image.assetId);
+    Reference.validateSuccessor({current:p,successor:out.project,projectsRoot:w.projectsRoot,slug,canon:false});
+  }
+});
+check("empty-plan enrollment still refuses unknown views, states and identities without a mutation",()=>{
+  const p=structuredClone(project);p.props[0].coverageSlots=[];const before=JSON.stringify(p);
+  for(const over of [{slotId:"invented-view"},{slotId:"hero",stateId:"invented-state"},{slotId:"hero",assetId:"asset-"+"f".repeat(32)},{slotId:"hero",expectedIdentity:{...request.expectedIdentity,bytes:-1}}]){
+    assert.throws(()=>Reference.enroll({...request,project:p,...over}));assert.equal(JSON.stringify(p),before);
+  }
+});
+check("a stored authored plan cannot acquire an unrecorded template view through enrollment",()=>{
+  assert.throws(()=>Reference.enroll({...request,slotId:"hero"}),/existing required view/);
+  assert.equal(JSON.stringify(project),baseline);
+  const malformed=structuredClone(project);malformed.props[0].coverageSlots=false;
+  assert.throws(()=>Reference.enroll({...request,project:malformed,slotId:"hero"}));
+  assert.equal(malformed.props[0].coverageSlots,false);
+});
 const first=Reference.enroll(request);
 check("planning enrollment leaves its input unchanged",()=>assert.equal(JSON.stringify(project),baseline));
 check("same deterministic inputs produce identical successor",()=>assert.deepEqual(Reference.enroll(request),first));

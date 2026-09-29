@@ -1123,7 +1123,10 @@ async function ev27Click(rendered, dataset) {
    =========================================================================== */
 controlAsync({
   label: "N19 a nondefault enrollment keeps the default state's legacy selection",
-  mutateSource: (file, text) => (file !== "reference-media.js" ? text : mutate(text, "stateScoped: stateId !== defaultId", "stateScoped: false", "N19")),
+  /* Earlier enrollment checks now also exercise nondefault empty plans. Confine the
+     defect to this control's legacy-selected entity so those checks still run and the
+     probe reaches the exact default-selection overwrite it names. */
+  mutateSource: (file, text) => (file !== "reference-media.js" ? text : mutate(text, "stateScoped: stateId !== defaultId", 'stateScoped: entityId === "legacy-tool" ? false : stateId !== defaultId', "N19")),
   probe: async (mutateSource) => {
     const target = path.join(ROOT, "src/media/reference-media.js");
     const replacement = mutateSource ? mutateSource("reference-media.js", fs.readFileSync(target, "utf8")) : "";
@@ -1407,6 +1410,32 @@ controlAsync({
  * The positive claim this control guarded is unchanged and still proven from the enrolment
  * flow: testTheRevisionWatchKnowsThisWindowsOwnEnrollment() in tests/reference-ux-convergence.js
  * (EV2-7 C10). */
+
+/* The canonical template moved to shared-coverage so explicit enrollment and the
+   browser cannot invent different default targets. Presentation still may not soften
+   its structural seed: a dormant reference can display Planned while these views remain
+   required in the plan. Mutate the live shared owner, not the retired browser table. */
+controlAsync({
+  label: "N30 the shared character template retains its required views",
+  mutateSource: only("shared-coverage.js", (text) => mutate(
+    text,
+    'characters: [["front","Front",true]',
+    'characters: [["front","Front",false]',
+    "N30")),
+  probe: async (mutateSource) => {
+    const rendered = await draw(uxFixture(), COVERAGE_STORAGE, mutateSource);
+    const rows = JSON.parse(vm.runInContext('JSON.stringify(coverageTemplateForList("characters"))', rendered.context));
+    const required = rows.filter((slot) => slot.requirement === "required").map((slot) => slot.id).join(",");
+    const held = required === "front,front-three-quarter,profile,rear";
+    return {
+      reached: rows.some((slot) => slot.id === "front") && rows.some((slot) => slot.id === "rear"),
+      held,
+      reason: held ? "structural-character-plan-preserved" : "character-template-lost-required-view",
+    };
+  },
+  reason: "character-template-lost-required-view",
+  explain: "Moving the seed to the shared owner must not change the work coverage automation plans.",
+});
 
 /* ---------------------------------------------------------------------------
    NO CATCH-AS-SUCCESS. Enforced, not promised. */

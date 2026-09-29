@@ -5,6 +5,7 @@ const {localFileAffordance} = require("./local-file-affordance");
 const Shared = require("../../public/shared-reference-media");
 const Owners = require("../../public/shared-entity-ownership");
 const Slots = require("../../public/shared-entity-slots");
+const {coverageTemplateSlots} = require("../../public/shared-coverage");
 const Authority = require("../../public/shared-authority-kernel");
 const IMAGE = /\.(png|jpe?g|webp|gif|avif|bmp)$/i;
 const unavailable = (key, assetId, reason) => ({name:key, assetId:assetId || "", available:false, reason, url:""});
@@ -96,6 +97,9 @@ function resolver({projectsRoot, slug, project}) {
 function enroll({project,list,entityId,stateId,slotId,assetId,expectedIdentity,projectsRoot,slug,bindingId,at}) {
   const next = structuredClone(project), entity = (next[list] || []).find(e => e.id === entityId);
   if (!Shared.dirs[list] || !entity) throw Error("This reference is unavailable.");
+  // Opening only displays defaults. The explicit assignment can materialize an empty
+  // plan from that same template; an authored plan and unknown views are never repaired here.
+  if (entity.coverageSlots == null || (Array.isArray(entity.coverageSlots) && !entity.coverageSlots.length)) entity.coverageSlots = coverageTemplateSlots(list);
   const slot = (entity.coverageSlots || []).find(s => s.id === slotId);
   if (!slot) throw Error("Choose an existing required view.");
   const r = resolver({project:next,projectsRoot,slug}).asset(assetId,expectedIdentity);

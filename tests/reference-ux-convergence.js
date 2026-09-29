@@ -1456,12 +1456,21 @@ async function testStructuralSeedAndAutomationAreUntouched() {
   ok(/entityDemandContext\(list, entity\)/.test(summary) && /effectiveReferenceRequirement\(slot, demand\)/.test(summary),
     "its copy consumes the shipped context and the shipped join, and nothing else");
 
-  /* THE SEED ITSELF, unchanged. */
+  /* THE SEED ITSELF, unchanged in meaning. The enrollment writer and browser now
+     share one canonical template; its location and whitespace are not the contract. */
   const entities = read("public/entities.js");
-  ok(/\["front", "Front", true\][\s\S]{0,200}\["rear", "Rear", true\]/.test(entities),
-    "coverageTemplateForList() still seeds the character views as required");
-  ok(entities.includes("requirement: templateRequirement(required)"),
-    "through the same writer it always used");
+  ok(/function coverageTemplateForList\(list\)\s*\{\s*return coverageTemplateSlots\(list\);\s*\}/.test(entities),
+    "the browser delegates to the shared canonical coverage template");
+  const canonical = require("../public/shared-coverage").coverageTemplateSlots("characters");
+  const browser = JSON.parse(vm.runInContext('JSON.stringify(coverageTemplateForList("characters"))', rendered.context));
+  eq(JSON.stringify(browser), JSON.stringify(canonical),
+    "the browser and enrollment-side shared template expose the same default rows");
+  eq(canonical.filter((slot) => slot.requirement === "required").map((slot) => slot.id).join(","),
+    "front,front-three-quarter,profile,rear",
+    "all four character views retain their structural required status");
+  eq(canonical.filter((slot) => slot.requirement === "planned").map((slot) => slot.id).join(","),
+    "detail-face,expression",
+    "the optional character views stay planned rather than required");
 }
 
 /* CONTROL B — UNKNOWN DEMAND IS NOT SOFTENED.
