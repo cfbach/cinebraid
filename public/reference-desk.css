@@ -350,3 +350,8 @@ body:is(.reference-desk-active,.production-media-active) #modal .rd-confirm-box{
   /* The paid confirmation's two controls are touch targets at phone width. */
   .fal-entity-actions button{min-height:44px}
 }
+
+/* Recorded roles remain readable when several views share one image. */
+.rd-candidates button { width:124px; }
+.rd-candidates .rd-candidate-role { overflow-wrap:anywhere; line-height:1.3; font-size:12px; }
+.rd-candidates .rd-candidate-detail { color:var(--muted); font-size:11px; padding-top:0; }

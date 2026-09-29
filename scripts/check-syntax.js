@@ -3,6 +3,12 @@ const { spawnSync } = require("child_process");
 const path = require("path");
 const ROOT = path.resolve(__dirname, "..");
 const SOURCES = [
+  "tests/product-system-workflow-browser.js",
+  "tests/reference-candidate-roles.js",
+  "tests/production-search-corpus.js",
+  "tests/assistant-capability-presentation.js",
+  "tests/workflow-context-handoffs.js",
+  "tests/global-search-behavior.js",
   "tests/media-discovery.js",
   "tests/ev2-5-settings-writers.js",
   "tests/ev2-5-check-targets.js",

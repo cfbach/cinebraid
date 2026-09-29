@@ -724,49 +724,63 @@ async function testBrowserReadsTheServerStanding(scenarios) {
     "C2 browser: a record carrying no standing is treated as unanswered, never as Off");
 }
 
-/* ---- C2 — the assistant settings ask where it runs before which protocol ---- */
+/* ---- C2 — assistant settings ask how it connects before which protocol ---- */
 function testAssistantSettingsAreTaskFirst() {
   const views = code(source("views.js"));
   ok(/const ASSISTANT_TIERS = \[/.test(views)
-    && /\["local", "Local \/ self-hosted"/.test(views) && /\["cloud", "Cloud"/.test(views),
-    "C2 settings: the runtimes are grouped by whose hardware answers");
-  /* The tier is named for who controls the machine, not for whether anything
-     travels. The real production setup — CineBraid on Windows, self-hosted Qwen on
-     a DGX Spark — sends every request over the network and is still this tier, so
-     a claim that nothing is sent would be false on the very setup it describes. */
-  ok(/Runs on hardware you control — this computer, your LAN, or a private remote machine\./.test(views),
-    "C2 settings: and self-hosted is described truthfully, including LAN and private remote machines");
-  ok(!/Nothing is sent anywhere/.test(views),
-    "C2 settings: with no claim that a self-hosted runtime sends nothing");
-  ok(/Where Braidy runs/.test(views),
-    "C2 settings: and the first question asked is where, not which protocol");
+    && /\["local", "Local \/ custom endpoint", [^\n]*\["ollama", "custom"\]\]/.test(views)
+    && /\["cloud", "Hosted API", [^\n]*\["openai", "anthropic"\]\]/.test(views),
+    "C2 settings: connection groups retain the existing provider ids and distinguish custom endpoints from hosted APIs");
+  /* An adapter id identifies a protocol, not who owns the endpoint. Both Ollama
+     and compatible URLs may address this computer, the network, or a remote service. */
+  ok(/The saved address can be on this computer, your network, or a remote service\./.test(views),
+    "C2 settings: the custom-endpoint group explicitly permits all three endpoint locations");
+  const connectionCopyStart = views.indexOf("const ASSISTANT_PROVIDERS");
+  const connectionCopyEnd = views.indexOf("const VISION_RUNTIME_LABELS");
+  ok(connectionCopyStart > 0 && connectionCopyEnd > connectionCopyStart,
+    "C2 settings: the provider and connection-group descriptions are present");
+  const connectionCopy = views.slice(connectionCopyStart, connectionCopyEnd);
+  ok(!/hardware you (?:own|control)|private remote machine/i.test(connectionCopy),
+    "C2 settings: choosing an adapter makes no unsupported hardware-ownership claim");
+  ok(/Ollama's own API at the saved endpoint/.test(connectionCopy)
+    && !/own API on this machine|runs (?:only )?locally|stays (?:entirely )?local/i.test(connectionCopy),
+    "C2 settings: Ollama names its saved endpoint without claiming it must be local");
+  ok(!/nothing is sent anywhere|(?:data|requests?|prompts?|images?) (?:never leave|stay(?:s)? (?:on|within))|privacy[- ]safe|completely private/i.test(connectionCopy),
+    "C2 settings: choosing an adapter makes no unsupported data-residency or privacy promise");
+  ok(/How Braidy connects/.test(views),
+    "C2 settings: the first question describes a connection choice, not assumed hosting");
   ok(/const braidyRuntimeChoice = braidyTier === "off" \|\| !braidyTier \? "" :/.test(views),
     "C2 settings: the runtime step appears only once a tier is chosen");
   ok(/<optgroup label="\$\{attr\(tierLabel\)\}">/.test(views),
     "C2 settings: visual review offers its runtimes under the same groups");
-  ok(/<optgroup label="Local \/ self-hosted">/.test(views) && /<optgroup label="Cloud">/.test(views),
+  ok(/<optgroup label="Local \/ custom endpoint">/.test(views) && /<optgroup label="Hosted API">/.test(views),
     "C2 settings: and so does continuity analysis");
-  /* THE CONFUSION THIS REMOVES: OpenAI and OpenAI-compatible are no longer peers in
-     one flat list — they sit in different groups, which is what they actually are. */
+  /* OpenAI and OpenAI-compatible remain distinct connection choices, rather than
+     looking like two names for one service in a flat list. */
   ok(/ollama: "Ollama"/.test(views) && /custom: "OpenAI-compatible server"/.test(views)
     && /openai: "OpenAI"/.test(views) && /anthropic: "Claude"/.test(views),
     "C2 settings: each runtime is named for what it is, inside its own tier");
-
   /* NOTHING ABOUT STORAGE CHANGED, which is what keeps this a presentation
      simplification rather than a schema migration. The same five ids are written by
      the same single writer, and the tiers only group them. */
   const settings = code(source("settings.js"));
   ok(/body: JSON\.stringify\(\{ assistant: \{ provider: v \} \}\)/.test(settings),
     "C2 settings: the provider is still stored exactly as it was");
-  ok(/patch\.assistant = \{ provider: CONFIG\.assistant\?\.provider \|\| "ollama", visionProvider: v\("#assistant-vision-provider", "same"\) \}/.test(settings),
-    "C2 settings: and the vision selection still saves through its own untouched path");
+  ok(/const assistant = settingsPresentFields\(\[\["visionProvider", "#assistant-vision-provider"\]\]\);/.test(settings)
+    && /if \(Object\.keys\(assistant\)\.length\) patch\.assistant = assistant;/.test(settings),
+    "C2 settings: the rendered vision selection saves through its own field without replacing the text provider");
   ok(/const tierEntryProvider = \(tier, current\) => \(tierRuntimes\(tier\)\.includes\(current\) \? current : tierRuntimes\(tier\)\[0\]\);/.test(views),
     "C2 settings: choosing a tier lands on a runtime that belongs to it");
   /* The card reads the authoritative standing, so a provider change must refresh it
      or the card would show the previous provider's verdict under the new one. */
-  ok(/if \(typeof refreshAgentStatus === "function"\) await refreshAgentStatus\(false\);/.test(settings),
+  const writerStart = settings.indexOf("window.setAssistantProvider =");
+  const writerEnd = settings.indexOf("function assistantTestEndpoint", writerStart);
+  ok(writerStart > 0 && writerEnd > writerStart,
+    "C2 settings: the provider-change writer is present");
+  const providerWriter = settings.slice(writerStart, writerEnd);
+  ok(/if \(typeof refreshAgentStatus === "function"\) \{\s*try \{ await refreshAgentStatus\(false\);/.test(providerWriter),
     "C2 settings: a provider change refreshes the capability record the card reads");
-  /* ONE ACT, ONE CONTROL. Off is a tile in the where-it-runs choice now, so the
+  /* ONE ACT, ONE CONTROL. Off is a tile in the connection choice now, so the
      separate off button and the hint restating the same state are gone. */
   ok(!/capability-off-switch/.test(views) && !/Braidy is off\. Choose a provider to turn it on\./.test(views),
     "C2 settings: turning Braidy off is one control, not three");
@@ -781,17 +795,31 @@ function testSettingsDoesNotDeriveVisionStanding() {
      configuration failure with a complaint about a model OpenAI does not require. */
   ok(!/!visionModel \? "incomplete"/.test(views),
     "C2 settings: a blank model no longer overrides the authoritative diagnosis");
-  /* Scoped to the VISION card. Braidy's own text card still has an `incomplete`
-     state of its own, and this correction is Vision-only — reaching into the text
-     card would be exactly the broader redesign this pass is not. */
+  /* Text now reports its own authoritative standing too. A chosen provider,
+     saved model, or legacy ready flag must not substitute another verdict. */
+  const textStart = views.indexOf("const textCapability = typeof capabilityState");
+  const textEnd = views.indexOf("const textModelIdentity", textStart);
+  ok(textStart > 0 && textEnd > textStart,
+    "C2 settings: the text standing derivation is present");
+  const textDerivation = views.slice(textStart, textEnd);
+  ok(/capabilityState\("text"\)/.test(textDerivation)
+    && /capabilityStanding\(textCapability\)/.test(textDerivation),
+    "C2 settings: the text card reads its own authoritative capability standing");
+  ok(/const braidyState = \{ off: "off", checking: "checking", ready: "on", "configured-unavailable": "unreachable" \}\[textStanding\];/.test(textDerivation),
+    "C2 settings: every text state is a function of its standing alone");
+  ok(/const braidyStatus = \{ off: "Off", checking: "Status unknown", on: "Configured", unreachable: "Needs attention" \}\[braidyState\];/.test(textDerivation),
+    "C2 settings: text status labels distinguish configuration, unknown status, and unavailability");
+  ok(!/providerTextModel|textReady|\.ready|provider ===|incomplete|Needs a model/.test(textDerivation),
+    "C2 settings: text standing is not overridden by configuration or a legacy readiness flag");
+  ok(/const textDiagnostic = \[textCapability\?\.message, textCapability\?\.action\]/.test(views)
+    && /braidyState === "unreachable"\s*\? textDiagnostic/.test(views),
+    "C2 settings: an unavailable text capability preserves its diagnostic and recovery action");
   const visionCardSlice = views.slice(views.indexOf("const visionCapability = typeof capabilityState"), views.indexOf("const continuityConfig"));
   ok(!/Needs a model/.test(visionCardSlice),
     "C2 settings: and 'Needs a model' is not a standing the vision card can invent");
-  ok(/incomplete: "Needs a model"/.test(views) && /const braidyState = provider === "none" \? "off"/.test(views),
-    "C2 settings: Braidy's own text card is left exactly as it was");
   ok(/const visionState = \{ off: "off", checking: "checking", ready: "ready", "configured-unavailable": "unavailable" \}\[visionStanding\];/.test(views),
     "C2 settings: the state is a total function of the standing, with no other input");
-  ok(/const visionStatus = \{ off: "Off", checking: "Checking…", ready: "Ready", unavailable: "Unavailable" \}\[visionState\];/.test(views),
+  ok(/const visionStatus = \{ off: "Off", checking: "Status unknown", ready: "Configured", unavailable: "Unavailable" \}\[visionState\];/.test(views),
     "C2 settings: and the word shown is a lookup on that state");
   ok(/const visionDiagnostic = \[visionCapability\?\.message, visionCapability\?\.action\]/.test(views),
     "C2 settings: an unavailable capability shows the record's own diagnostic and action");
@@ -811,17 +839,34 @@ function testSettingsDoesNotDeriveVisionStanding() {
   }
   /* And the form still shows and saves those fields, which is the half that must
      NOT change: this correction removes an authority, not a control. */
-  ok(/const visionModelField = provider === "ollama"/.test(views)
-    && /id="cfg-openai-vision"/.test(views) && /id="cfg-custom-vision"/.test(views) && /id="cfg-vmodel"/.test(views),
-    "C2 settings: the model fields are still rendered and still editable");
+  const connections = code(source("settings-studio.js"));
+  const settings = code(source("settings.js"));
+  for (const [id, key] of [
+    ["cfg-openai-vision", "openaiVisionModel"],
+    ["cfg-custom-vision", "customVisionModel"],
+    ["cfg-vmodel", "ollamaVisionModel"],
+  ]) {
+    ok(connections.includes('input("Vision model", "' + id + '", c.' + key + ')')
+      && settings.includes('["' + key + '", "#' + id + '"]'),
+      "C2 settings: " + key + " remains editable in its connection and saves through its existing field");
+  }
 }
 
 /* The card, rendered for each authoritative record, asserted against that record. */
 async function testSettingsCardMatchesTheServerStanding(scenarios) {
-  const rendered = await render("#/production", buildFixture());
-  const read = async (record, assistant) => vm.runInContext(`(async () => {
+  /* Settings reads /api/config again when rendered. Serve each scenario there;
+     assigning CONFIG alone is immediately replaced by the harness's defaults. */
+  let settingsConfig = {};
+  const rendered = await render("#/production", buildFixture(), {
+    fetch(url, _options, response) {
+      if (url === "/api/config") return response(settingsConfig);
+      return null;
+    },
+  });
+  const read = async (record, assistant) => {
+    settingsConfig = { assistant };
+    return vm.runInContext(`(async () => {
     AGENT_STATUS = { capabilities: { vision: ${record === null ? "undefined" : JSON.stringify(record)} } };
-    CONFIG = { ...(typeof CONFIG === "object" && CONFIG ? CONFIG : {}), assistant: ${JSON.stringify(assistant)} };
     boundedWriteFocusedTask?.("settings-task", "settings", "assistant");
     location.hash = "#/settings";
     const html = await ROUTES.settings();
@@ -833,8 +878,9 @@ async function testSettingsCardMatchesTheServerStanding(scenarios) {
       detail: (card.match(/capability-detail">([^<]*)</) || [])[1],
     };
   })()`, rendered.context);
+  };
 
-  const WORD = { off: ["off", "Off"], ready: ["ready", "Ready"], "configured-unavailable": ["unavailable", "Unavailable"] };
+  const WORD = { off: ["off", "Off"], ready: ["ready", "Configured"], "configured-unavailable": ["unavailable", "Unavailable"] };
   for (const { label, record, expected } of scenarios) {
     const seen = await read(record, { provider: record.provider || "openai", visionProvider: record.provider || "openai" });
     ok(seen.state === WORD[expected][0] && seen.status === WORD[expected][1],
@@ -871,13 +917,13 @@ async function testSettingsCardMatchesTheServerStanding(scenarios) {
     ready: true, standing: "ready", provider: "openai", model: "",
     message: "Vision assistance is configured through openai.", action: "",
   }, { provider: "openai", visionProvider: "openai" });
-  ok(providerDefault.status === "Ready" && /provider default/i.test(providerDefault.detail),
+  ok(providerDefault.status === "Configured" && /OpenAI API · provider default/i.test(providerDefault.detail),
     "C2 settings: a ready provider serving its own default says so, rather than reporting a missing model");
 
   /* And the loading boundary reaches this card too. */
   const checking = await read(null, { provider: "openai", visionProvider: "openai" });
-  ok(checking.state === "checking" && checking.status === "Checking…",
-    "C2 settings: a capability record that has not arrived reads Checking, not Off and not Needs a model");
+  ok(checking.state === "checking" && checking.status === "Status unknown",
+    "C2 settings: a capability record that has not arrived reads Status unknown, not Off and not Needs a model");
 }
 
 /* ---- C2 — standing dominates the legacy readiness flag, everywhere --------- */

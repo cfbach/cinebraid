@@ -1,0 +1,12 @@
+'use strict';
+const assert=require('assert/strict'),fs=require('fs'),vm=require('vm');
+const {entityVisualDescription}=require('../public/shared-entities');
+const src=fs.readFileSync(require.resolve('../src/server/server'),'utf8');
+const context={entityVisualDescription,resolvePromptBuildList:(_p,list)=>list};vm.createContext(context);
+vm.runInContext(src.slice(src.indexOf('function searchCorpus(P) {'),src.indexOf('\nfunction hashStr(')),context);
+const project={meta:{title:'Night Crossing',world:{setting:'A flooded coastal village',include:'Salt stains',reject:'Neon'},globalStylePrompt:'Silver gelatin'},shots:[{id:'SH-01',title:'The departure',creationBrief:{frameWorkflows:{a:{action:'The brass compass slips from her hand'}}}}],characters:[{id:'CHAR-1',name:'Mara',creationDescription:'Weather-beaten mariner',block:'Former pilot',continuityStates:[{id:'wet',name:'Storm-soaked',notes:'Coat darkens in rain'}]}],vehicles:[{id:'VEH-1',name:'Tender',creationDescription:'Clinker-built launch'}],audio:[{id:'AUD-1',name:'Bell',description:'Distant ship bell'}],scenes:[{id:'SC-1',title:'Jetty',notes:'Before dawn'}]};
+const original=JSON.stringify(project),docs=context.searchCorpus(project),get=t=>docs.find(d=>d.type===t);
+assert.match(get('bible').text,/flooded coastal village/);assert.match(get('bible').text,/Silver gelatin/);assert.match(get('bible').text,/Neon/);assert(!get('bible').text.includes('[object Object]'));
+assert.match(get('shot').text,/brass compass/);assert.match(get('character').text,/Weather-beaten mariner/);assert.match(get('character').text,/Storm-soaked/);assert.match(get('vehicle').text,/Clinker-built/);assert.match(get('audio').text,/Distant ship bell/);assert.match(get('scene').text,/Before dawn/);
+assert.equal(JSON.stringify(project),original);assert.equal(context.searchCorpus({}).length,1);
+console.log('Production search corpus: 12 checks passed');

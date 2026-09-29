@@ -15,7 +15,7 @@
  *   3  the same process then answers its status, Settings and project-list routes
  *   4  repeated refusals, sequential and concurrent, write nothing anywhere
  *   5  a project that is open but cannot be read is refused too (422 PROJECT_UNREADABLE)
- *   6  once a project is open, ordinary search returns the four "parcel" results
+ *   6  once a project is open, ordinary search includes the Bible and binds the open production
  *   7  the server made no connection to anything but this machine
  *
  * TWO KNOBS, for the companion negative controls and for the pristine reproduction:
@@ -308,7 +308,7 @@ check('5. a project that is open but cannot be read is refused too — 422 PROJE
   }
 });
 
-check('6. once a project is open, ordinary search returns the four "parcel" results', async () => {
+check('6. once a project is open, ordinary search includes the Bible and binds the open production', async () => {
   const server = state.first;
   assertAlive(server, 'before a project was opened');
   server.workspace.installSample('cinebraid-sample');
@@ -316,12 +316,16 @@ check('6. once a project is open, ordinary search returns the four "parcel" resu
     method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ slug: 'cinebraid-sample' }),
   });
   assert.ok(switched.ok, `opening the sample must succeed, got ${switched.status}`);
-  const answer = await search(server, { q: 'parcel' });
+  const stale = await search(server, { q: 'parcel', project: 'previous-production' });
+  assert.strictEqual(stale.status, 409, 'a stale window must not search another production');
+  assert.strictEqual(stale.json.code, 'PROJECT_CHANGED');
+  const answer = await search(server, { q: 'parcel', project: 'cinebraid-sample' });
   assertAlive(server, 'on an ordinary search');
   assert.strictEqual(answer.status, 200, `ordinary search must answer 200, got ${answer.status} ${answer.text.slice(0, 160)}`);
   assert.ok(answer.json && Array.isArray(answer.json.results), 'with a result list');
-  assert.strictEqual(answer.json.results.length, 4,
-    `"parcel" must return the sample's four results, got ${answer.json.results.length}: ${answer.json.results.map((r) => r.id).join(', ')}`);
+  assert.strictEqual(answer.json.results.length, 5,
+    `"parcel" must return the sample's four existing results plus its Bible, got ${answer.json.results.length}: ${answer.json.results.map((r) => r.id).join(', ')}`);
+  assert.deepStrictEqual(answer.json.results.map(row => row.id).sort(), ['PROP-PARCEL','SAMPLE-01','SAMPLE-02','SAMPLE-03','project'], 'search preserves the existing records and adds the project foundation');
   for (const row of answer.json.results)
     assert.ok(row.type && row.id && row.title, `every result names a record, got ${JSON.stringify(row).slice(0, 120)}`);
   const empty = await search(server, { q: '' });

@@ -83,6 +83,16 @@
     const word = value?.word === "planned" ? "planned" : "required";
     return (value?.filled || 0) + " of " + (value?.required || 0) + " " + word + " views filled" + notes.join("");
   }
+  /* Display roles from the same exact selections as the coverage rows. A filename,
+     shared asset identity, or a selection on another state never establishes a view. */
+  function candidateRoles(entity, item, stateId, media) {
+    if (!item || item.structure === "sheet") return [];
+    return rows(entity?.coverageSlots).flatMap(slot => {
+      const status = viewStatus(entity, slot, stateId, media);
+      return status.filled && status.key === item.name
+        ? [{ id: slot.id, label: String(slot.label || slot.id) }] : [];
+    });
+  }
   // The retry idempotency check: this exact asset already bound to this exact state and view.
   function findExactBinding(entity, {assetId, stateId, slotId} = {}) {
     const slot = rows(entity?.coverageSlots).find(s => s.id === slotId);
@@ -90,7 +100,7 @@
     const bound = slot.referenceBindings && Object.hasOwn(slot.referenceBindings, stateId) ? String(slot.referenceBindings[stateId] || "") : "";
     return rows(entity?.candidateFiles).find(r => r?.referenceBinding && r.referenceBinding.assetId === assetId && r.referenceBinding.stateId === stateId && r.referenceBinding.slotId === slotId && keyOf(r) === bound) || null;
   }
-  const api = {dirs, keyOf, bindingIssue, listing, selectedKey, requiredSlots, coverage, coverageSummary, viewStatus, defaultStateId, selectedAssignment, findExactBinding};
+  const api = {dirs, keyOf, bindingIssue, listing, selectedKey, requiredSlots, coverage, coverageSummary, viewStatus, defaultStateId, selectedAssignment, findExactBinding, candidateRoles};
   if (typeof module !== "undefined" && module.exports) module.exports = api;
   else root.CineBraidReferenceMedia = api;
 })(typeof globalThis !== "undefined" ? globalThis : this);

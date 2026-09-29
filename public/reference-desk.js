@@ -83,7 +83,7 @@
   }
   function inspect(m) {
     const desc=typeof entityVisualDescription==='function'?entityVisualDescription(m.entity,m.list):m.entity.description||m.entity.block||"";
-    return '<h3>Reference intention</h3><p>'+e(desc || 'No reference description recorded.')+'</p><details><summary>Provenance &amp; identity</summary><dl><dt>Reference</dt><dd>'+e(m.id)+'</dd><dt>Asset identity</dt><dd>'+e(m.selected?.assetId||'No asset selected')+'</dd><dt>Candidate binding</dt><dd>'+e(m.row?.referenceBinding?.id||'Existing folder reference')+'</dd><dt>Original file</dt><dd>'+e(m.selected?.sourceName||m.row?.original||'—')+'</dd><dt>Availability</dt><dd>'+e(m.selected?.reason||'Available')+'</dd></dl></details>'+button('details','Notes &amp; history')+'<p><a class="rd-tool-link" href="'+routeFor(m.list,m.id)+'/tools">Continuity &amp; creation tools</a></p>';
+    return '<h3>Reference intention</h3><p>'+e(desc || 'No reference description recorded.')+'</p><p><a id="rd-bible-intention" class="rd-tool-link" data-rd-bible href="#/bible/'+a(m.list)+'/'+a(encodeURIComponent(m.id))+'">Open intention in Working Bible</a></p><details><summary>Provenance &amp; identity</summary><dl><dt>Reference</dt><dd>'+e(m.id)+'</dd><dt>Asset identity</dt><dd>'+e(m.selected?.assetId||'No asset selected')+'</dd><dt>Candidate binding</dt><dd>'+e(m.row?.referenceBinding?.id||'Existing folder reference')+'</dd><dt>Original file</dt><dd>'+e(m.selected?.sourceName||m.row?.original||'—')+'</dd><dt>Availability</dt><dd>'+e(m.selected?.reason||'Available')+'</dd></dl></details>'+button('details','Notes &amp; history')+'<p><a class="rd-tool-link" href="'+routeFor(m.list,m.id)+'/tools">Continuity &amp; creation tools</a></p>';
   }
   function context(m) {
     return '<nav class="rd-crumb" aria-label="Production context"><a href="#/production">Production</a><span>/</span><a href="#/library/'+m.list+'">References</a><span>/ '+e(types[m.list])+'</span></nav><span data-return-slot></span>';
@@ -143,7 +143,12 @@
     const coverageLine=views.length?m.coverage.filled+'/'+views.length+' '+word+' view'+(views.length===1?'':'s'):'No '+word+' views';
     const needsStrip=needWords?'<section class="rd-needs'+(needWords.count?' is-owed':'')+'" data-rd-needs data-rd-needs-now="'+needWords.count+'" data-rd-needs-action="'+a(need.action.kind)+'" data-rd-needs-known="'+(need.known?'readiness':'unknown')+'" aria-label="What this reference needs"><p class="rd-need rd-need-now"><span>Needed now</span><b>'+e(needWords.now)+'</b><small>'+e(needWords.detail)+'</small></p><p class="rd-need rd-need-coverage"><span>Coverage</span><b>'+e(coverageLine)+'</b><small>'+e(word==='required'?'Readiness could not confirm these are optional':'Not needed by the current shots · build any time')+'</small></p>'+(needWords.states?'<p class="rd-need rd-need-states"><span>Continuity states</span><b>'+e(needWords.states)+'</b></p>':'')+stripButton+'</section>':'';
     const approval=approvalStatus(m);
-    const strip=m.strip.map((item,i)=>{const from=item.structure==='sheet'?'':cropSource(m,item);return '<button data-rd-candidate="'+a(item.name)+'" aria-pressed="'+(item.name===m.state.selected)+'" aria-label="Review candidate '+(i+1)+' — '+a(words(m,item)+(from?' · Crop from '+from:''))+'">'+(item.available?'<img src="'+a(item.url)+'" alt="">':'<span>Unavailable</span>')+'<small>Image '+(i+1)+(item.structure==='sheet'?' · <b class="rd-sheet-tag">Sheet</b>':'')+'</small>'+(from?'<small class="rd-crop-from">Crop from '+e(from)+'</small>':'')+'</button>';}).join('');
+    const strip=m.strip.map((item,i)=>{
+      const from=item.structure==='sheet'?'':cropSource(m,item), roles=R.candidateRoles(m.entity,item,m.state.stateId,m.all);
+      const role=roles.map(viewWord).join(' · '), label=item.structure==='sheet'?'Reference sheet':role||'Image '+(i+1);
+      const detail=from?'Crop from '+from:role?'Assigned view'+(roles.length===1?'':'s'):'';
+      return '<button data-rd-candidate="'+a(item.name)+'" aria-pressed="'+(item.name===m.state.selected)+'" aria-label="Review candidate '+(i+1)+' — '+a(label+' · '+words(m,item)+(from?' · Crop from '+from:''))+'" title="'+a(label+' · '+words(m,item)+(from?' · Crop from '+from:''))+'">'+(item.available?'<img src="'+a(item.url)+'" alt="">':'<span>Unavailable</span>')+'<small class="rd-candidate-role">'+e(label)+'</small>'+(detail?'<small class="rd-candidate-detail'+(from?' rd-crop-from':'')+'">'+e(detail)+'</small>':'')+'</button>';
+    }).join('');
     const derivedList=sheet?'<section class="rd-derived" aria-label="Views from this sheet"><h2>Views from this sheet · '+e(m.currentState?.name||'Default')+'</h2>'+(derived.length?'<ul>'+derived.map(d=>'<li><b>'+e(d.label)+'</b><span>'+e(d.assigned?'assigned to '+d.label:'crop saved, not assigned')+'</span></li>').join('')+'</ul>':'<p>No views have been cropped from this sheet for this state yet.</p>')+'</section>':'';
     // Cropping a sheet is one way into Build coverage, not a workflow competing with it.
     const decision=selected?.available && m.row?.decision==='rejected'?button('restore','Restore candidate','rd-primary'):sheet&&selected?.available?button('sheet','Crop views from this sheet'):selected?.available && !(m.truth.standing==='canon'&&m.truth.file===selected.name)?button('approve','Approve reference…','rd-primary'):'';
@@ -464,6 +469,11 @@
     if(link && link.closest('[data-reference-details-dialog], .rd-inspection')) {
       const target=link.getAttribute('href');
       if(target!==location.hash) {
+        if(link.hasAttribute('data-rd-bible')&&active){
+          const source={...active},saved=CineBraidMediaReturn.capture();
+          if(link.closest('[data-reference-details-dialog]'))saved.resume=()=>{if(active?.list===source.list&&active?.id===source.id){local(source.list,source.id).inspect=false;action('inspect');}};
+          CineBraidMediaReturn.prepare(saved);
+        }
         if(link.closest('[data-reference-details-dialog]')) {
           closeModal({restoreFocus:false});
           if(modalOpen()){event.preventDefault();return;}

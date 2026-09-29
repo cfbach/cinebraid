@@ -1044,80 +1044,119 @@ window.closeLB = () => {
    announce the decision, so no oversized overlay covers the work or its actions. */
 function stampCeremony(text) {}
 
-/* ---------- global semantic search ---------- */
-let SEARCH_T = null;
+/* ---------- global production search ---------- */
+let SEARCH_T = null, SEARCH_REQUEST = 0, SEARCH_ABORT = null;
+function cancelPendingSearch() {
+  clearTimeout(SEARCH_T);
+  SEARCH_T = null;
+  SEARCH_REQUEST += 1;
+  SEARCH_ABORT?.abort();
+  SEARCH_ABORT = null;
+}
+function searchContext() {
+  return {
+    slug: typeof ACTIVE_PROJECT_SLUG === "undefined" ? "" : ACTIVE_PROJECT_SLUG,
+    epoch: typeof PROJECT_OPEN_EPOCH === "undefined" ? 0 : PROJECT_OPEN_EPOCH,
+    route: location.hash,
+    input: document.getElementById("global-search")?.value,
+  };
+}
+function searchIsCurrent(request, context) {
+  if (request !== SEARCH_REQUEST || typeof P === "undefined" || !P) return false;
+  const current = searchContext();
+  return current.slug === context.slug && current.epoch === context.epoch
+    && current.route === context.route && current.input === context.input;
+}
 function wireSearch() {
   const el = document.getElementById("global-search");
   if (!el || el._wired) return;
   el._wired = true;
   el.addEventListener("input", () => {
-    clearTimeout(SEARCH_T);
-    SEARCH_T = setTimeout(() => runSearch(el.value), 350);
+    cancelPendingSearch();
+    const request = SEARCH_REQUEST, context = searchContext(), query = el.value;
+    SEARCH_T = setTimeout(() => {
+      SEARCH_T = null;
+      if (searchIsCurrent(request, context)) runSearch(query);
+    }, 350);
   });
   el.addEventListener("keydown", (e) => {
     if (e.key === "Escape") {
+      cancelPendingSearch();
       el.value = "";
       closeModal();
       el.blur();
     }
   });
 }
+window.addEventListener("hashchange", cancelPendingSearch);
+window.addEventListener("cinebraid:modal-opened", cancelPendingSearch);
+document.addEventListener("click", (event) => {
+  if (event.target?.id === "modal" || event.target?.closest?.("#modal .cancel")) cancelPendingSearch();
+}, true);
 async function runSearch(q) {
-  /* NO_PROJECT_SHELL_TRUTH_V1 — NEVER WITHOUT A LOADED PROJECT. POST /api/search reads
-     the active project's file, and with none open the server does not refuse: it throws
-     outside any handler and the whole local server exits. The box is made unavailable
-     in the shell (public/app.js, syncShellAvailability); this is the second, independent
-     layer, at the one place the request is made, so no caller can reach it without a
-     record to search. It says nothing: the control that could reach it already has. */
+  cancelPendingSearch();
+  /* Both the shell and this request boundary require a loaded production. The
+     server independently refuses missing or unreadable project records. */
   if (typeof P === "undefined" || !P) return;
-  if (!q.trim()) {
+  q = String(q || "").trim();
+  if (!q) {
     closeModal();
     return;
   }
-  const r = await fetch("/api/search", {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ q }),
-  });
-  const d = await r.json().catch(() => ({}));
-  /* C3. The server now REFUSES a search it cannot run (no project open, or one it cannot
-     read) instead of dying on it. A window that still believes a project is open — the
-     project removed from another window — says the server's own sentence rather than
-     reading `results` off a refusal. */
+  const request = SEARCH_REQUEST, context = searchContext();
+  const controller = typeof AbortController === "function" ? new AbortController() : null;
+  SEARCH_ABORT = controller;
+  let r, d;
+  try {
+    r = await fetch("/api/search", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ q, ...(context.slug ? { project: context.slug } : {}) }),
+      ...(controller ? { signal: controller.signal } : {}),
+    });
+    d = await r.json().catch(() => ({}));
+    d = d && typeof d === "object" ? d : {};
+  } catch (error) {
+    if (searchIsCurrent(request, context) && error?.name !== "AbortError")
+      toast("Search could not reach CineBraid. Try again.");
+    return;
+  } finally {
+    if (SEARCH_ABORT === controller) SEARCH_ABORT = null;
+  }
+  // A response belongs to the query, project open and route that requested it.
+  // Abort is only an optimization: even a response already in flight must pass.
+  if (!searchIsCurrent(request, context)) return;
   if (!r.ok || !Array.isArray(d.results)) return toast(d.error || "Search is unavailable right now.");
   const go = {
+    bible: "#/bible/",
+    scene: "#/scene/",
     shot: "#/shot/",
     character: "#/character/",
     location: "#/location/",
     prop: "#/prop/",
+    vehicle: "#/vehicle/",
+    audio: "#/sound/",
     style: "#/settings",
-    /* NO_PROJECT_SHELL_TRUTH_V1 — THE SESSION ENTRY IS GONE. It aimed at an activity
-       hash this build has no view for. That used to fall through to Production
-       silently; now that an unknown hash is answered as not found, a link the product
-       generates itself must not be left pointing at one. A session has no workspace to
-       open, so it takes the same inert destination every other unmapped result type
-       already takes below. Giving it a real one is a question about the search surface,
-       not about the shell. */
   };
+  const rows = d.results.filter((row) => row && typeof row === "object").map((x) => {
+    const type = String(x.type || "record"), id = String(x.id ?? "");
+    const route = Object.prototype.hasOwnProperty.call(go, type) ? go[type] : "";
+    const href = route && (type === "style" || id) ? (type === "style" ? route : route + encodeURIComponent(id)) : "";
+    const destination = type === "style" ? "Open in Settings" : href ? "" : "Search excerpt · no separate workspace";
+    const content = `<span class="dur-chip" style="min-width:64px">${esc(type.toUpperCase())}</span>
+      <span><b>${esc(String(x.title || "Untitled record"))}</b><br><span class="hint">${esc(String(x.snippet || ""))}</span>${destination ? `<br><span class="hint">${esc(destination)}</span>` : ""}</span>`;
+    return href
+      ? `<a class="qc-item" style="text-decoration:none" href="${attr(href)}" onclick="cancelPendingSearch();closeModal()">${content}</a>`
+      : `<div class="qc-item">${content}</div>`;
+  });
   /* Search is global navigation: a result link clears any contextual return. */
-  openModal(`<div data-global-navigation><h3>Search</h3><div class="modal-sub">${esc(d.mode || "").toUpperCase()}</div>
-    ${
-      d.results.length
-        ? d.results
-            .map(
-              (
-                x,
-              ) => `<a class="qc-item" style="text-decoration:none" href="${go[x.type] ? (x.type === "style" ? go[x.type] : go[x.type] + x.id) : "#"}" onclick="closeModal()">
-      <span class="dur-chip" style="min-width:64px">${esc(x.type.toUpperCase())}</span>
-      <span><b>${esc(x.title)}</b><br><span class="hint">${esc(x.snippet)}…</span></span></a>`,
-            )
-            .join("")
-        : '<div class="canon-notes">Nothing found.</div>'
-    }
-    <div class="modal-actions"><button class="cancel" onclick="closeModal()">Close</button></div></div>`);
+  openModal(`<div data-global-navigation><h3>Search production</h3><div class="modal-sub">${rows.length} ${rows.length === 1 ? "match" : "matches"} for “${esc(q)}”</div>
+    ${rows.join("") || '<div class="canon-notes">Nothing found.</div>'}
+    <div class="modal-actions"><button class="cancel" onclick="cancelPendingSearch();closeModal()">Close</button></div></div>`);
 }
 
 document.addEventListener("keydown", (e) => {
+  if (e.key === "Escape") cancelPendingSearch();
   if (
     e.key === "/" &&
     !/input|textarea|select/i.test(document.activeElement?.tagName || "")

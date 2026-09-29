@@ -378,7 +378,7 @@
        did nothing at all), and wiring it the way a project window does sends
        POST /api/search to a server with no project file — which takes the whole local
        server down. There is no meaningful search without a project to search. */
-    search: { reason: SHELL_NO_PROJECT_REASONS.search, state: "Open a project to search canon" },
+    search: { reason: SHELL_NO_PROJECT_REASONS.search, state: "Open a project to search this production" },
   });
 
   const SHELL_UTILITY_NAMES = deepFreeze(Object.keys(SHELL_UTILITIES));

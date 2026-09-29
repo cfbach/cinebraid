@@ -3,6 +3,11 @@ const fs = require("fs");
 const path = require("path");
 
 const nodeSuites = [
+  "check:reference-candidate-roles",
+  "check:production-search-corpus",
+  "check:assistant-capability-presentation",
+  "check:workflow-context-handoffs",
+  "check:global-search",
   "check:audio-recording",
   "check:ev2-7-navigation",
   "check:ev2-7-bible-export",
@@ -349,6 +354,7 @@ const serialSuites = ["check:windows-shutdown"];
    that refuses to accept a skip is `npm run check:browser-gate`, which every one of
    these also belongs to. See docs/qa/BROWSER_TESTS.md. */
 const browserSuites = [
+  "check:product-system-browser",
   "check:broll-deliver-browser",
   "check:audio-recording-browser",
   "check:sound-placement-browser",

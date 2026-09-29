@@ -579,7 +579,7 @@ def contract_search(page):
         state = page.evaluate(SHELL)
         assert state["searchUnavailable"], "the topbar search must report itself unavailable with no project open"
         assert state["searchReadOnly"], "an aria-disabled input still accepts keystrokes, so it must also be read-only"
-        assert state["searchPlaceholder"] == "Open a project to search canon", \
+        assert state["searchPlaceholder"] == "Open a project to search this production", \
             f"the box must say why in its own words, it reads {state['searchPlaceholder']!r}"
         assert state["searchReason"].endswith("Create a project or open an existing one first."), \
             f"and its accessible description must carry the full reason, got {state['searchReason']!r}"
@@ -617,7 +617,7 @@ def contract_search(page):
     finally:
         page.unroute("**/api/search")
         page.remove_listener("request", listener)
-    return ("search: aria-disabled, read-only, 'Open a project to search canon', dimmed like the rail; / focuses it, "
+    return ("search: aria-disabled, read-only, 'Open a project to search this production', dimmed like the rail; / focuses it, "
             "typing is refused with the reason, Tab leaves it, and no /api/search request is ever made")
 
 
@@ -754,7 +754,7 @@ def contract_ordinary_window(page):
     state = page.evaluate(SHELL)
     assert not state["searchUnavailable"] and not state["searchReadOnly"], \
         "with a project open the topbar search must be available and editable"
-    assert state["searchPlaceholder"] == "Search canon", f"and read as it shipped, got {state['searchPlaceholder']!r}"
+    assert state["searchPlaceholder"] == "Search production", f"and read as it shipped, got {state['searchPlaceholder']!r}"
     answered = []
     listener = lambda r: answered.append(r.status) if "/api/search" in r.url else None
     page.on("response", listener)
@@ -832,7 +832,7 @@ try:
             wide = page.evaluate(SHELL)
             assert not wide["horizontalOverflow"], f"the welcome shell overflows horizontally at {width}px"
             contract_welcome_mark(page)
-            assert wide["searchUnavailable"] and wide["searchPlaceholder"] == "Open a project to search canon", \
+            assert wide["searchUnavailable"] and wide["searchPlaceholder"] == "Open a project to search this production", \
                 f"the search must stay unavailable, with its reason, at {width}px"
             if width <= 1180:
                 # The narrow header folds the search into an icon with an INVISIBLE input over it.

@@ -29,13 +29,22 @@ boundaries remain at the top level.
 
 - `public/` contains browser code, shared browser/Node contracts, styles and shipped
   assets. The server serves this application-root directory.
-- `projects/` is the default production-storage directory. Only
-  `projects/cinebraid-sample` is tracked; local productions and generated media
-  are not source. Existing workspace and environment overrides still apply.
-- `data/` contains shipped model catalogs alongside ignored local runtime data.
-  `data/config.json` remains the local, untracked configuration file, including
-  credentials. Configuration backups, embeddings and workflow registries remain
-  at their existing application-root locations. Moving source does not move data.
+- `projects/cinebraid-sample` is shipped application content and the only tracked
+  project. User productions default to `%USERPROFILE%\CineBraid Projects` on
+  Windows and `~/CineBraid Projects` elsewhere. A saved `workspace.projectRoot`
+  takes precedence, followed by `CINEBRAID_PROJECTS_ROOT`. An existing installation
+  with productions in its application-root `projects/` keeps using that legacy
+  location until the user chooses another; the bundled sample does not trigger
+  this compatibility behavior. `src/server/server.js` owns this resolution.
+- Private settings, including credentials, live in the per-user location resolved
+  by `src/server/config-location.js`, or the explicit `CINEBRAID_CONFIG_PATH`.
+  Configuration backups and recovery sidecars live beside that settings file.
+  On upgrade, an old `data/config.json` is copied once when no per-user settings
+  file exists; the original is retained and existing settings are never merged.
+- `data/` contains shipped model catalogs alongside ignored local runtime data,
+  including the embeddings cache and workflow registries. Local productions,
+  credentials and generated media are not source. See [Setup](../../SETUP.md) for
+  storage choices and the supported copy-based migration.
 - `package.json`, the lockfile and supplied build identity remain at the
   application root. Source modules resolve that root independently of their
   depth beneath `src/`.

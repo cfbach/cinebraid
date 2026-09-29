@@ -456,12 +456,12 @@ check('16. the topbar search cannot be typed into, and cannot reach the server, 
      two independent layers — the control, and the one place the request is made. */
   const answer = shellUtilityAvailability('search', { hasProject: false });
   assert.strictEqual(answer.available, false, 'search is unavailable with no project');
-  assert.strictEqual(answer.state, 'Open a project to search canon', 'the box says, in its own words, why it cannot search');
+  assert.strictEqual(answer.state, 'Open a project to search this production', 'the box says, in its own words, why it cannot search');
   assert.ok(answer.reason.endsWith(SHELL_NO_PROJECT_REMEDY), 'and its full reason names the way out');
   assert.strictEqual(shellUtilityAvailability('search', { hasProject: true }).available, true, 'search works again with a project');
 
   const html = read('public/index.html');
-  assert.ok(/<input id="global-search" aria-label="Search canon" placeholder="Search canon"><kbd>\/<\/kbd><span id="search-availability-note" class="sr-only"><\/span>/.test(html),
+  assert.ok(/<input id="global-search" aria-label="Search production" placeholder="Search production"><kbd>\/<\/kbd><span id="search-availability-note" class="sr-only"><\/span>/.test(html),
     'the accessible reason has a home beside the box — static markup, like the other notes');
 
   const app = read('public/app.js');
@@ -504,7 +504,7 @@ check('16. the topbar search cannot be typed into, and cannot reach the server, 
     'in the folded narrow header the input stays an invisible overlay until focused, as it shipped');
   assert.ok(/ {2}#topbar \.topbar-search\[data-shell-unavailable="no-project"\]:focus-within \{ opacity:1; \}\n {2}#topbar \.topbar-search\[data-shell-unavailable="no-project"\]:focus-within input\[aria-disabled="true"\] \{ opacity:\.58 !important; \}/.test(css),
     'expanded, the narrow search is an overlay across the header — it stays opaque and the dimming moves to the input');
-  note('16. search: aria-disabled + read-only + "Open a project to search canon", keystrokes refused with the reason, and runSearch() never posts without a project');
+  note('16. search: aria-disabled + read-only + "Open a project to search this production", keystrokes refused with the reason, and runSearch() never posts without a project');
 });
 
 /* =========================================================================== 17 */

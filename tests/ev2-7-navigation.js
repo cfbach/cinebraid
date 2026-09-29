@@ -187,6 +187,7 @@ const SHOT = { id: 'SH010', title: 'The signal', scene: 'SC1', keyframes: [{ id:
 Object.assign(context, {
   ACTIVE_PROJECT_SLUG: 'synthetic-film', PROJECT_OPEN_EPOCH: 1, PROJECT_REVISION: 'r1', CURRENT_RENDER_ROUTE_KEY: '',
   ENTITY_ROUTE: { characters: 'character', locations: 'location', props: 'prop', vehicles: 'vehicle', audio: 'sound' },
+  SCAN: {},
   P: { meta: { title: 'Synthetic film' }, characters: [{ id: 'KAI', name: 'Kai' }, { id: 'MARA', name: 'Mara' }], locations: [], props: [], vehicles: [], audio: [], shots: [SHOT], scenes: [{ id: 'SC1', title: 'Scene One' }] },
   esc: v => String(v ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c])),
   shotById: id => (id === SHOT.id ? SHOT : null), sceneById: id => (id === 'SC1' ? { id: 'SC1', title: 'Scene One' } : null),
@@ -195,7 +196,7 @@ Object.assign(context, {
   entityStateListRead: () => [{ id: 'default', name: 'Default', isDefault: true }], entityCandidateTargetStateId: () => 'default', entityCandidateRow: () => null, currentHumanAuthority: () => null,
   returnedReviewProjectionForBrowser: () => ({ items: [] }), routeReviewClaim: () => '', shotCandidateRowFor: () => null,
   openGuidedPanel() {}, clickGuidedUpload() {}, selectEntityResultTask() {}, boundedWriteState() {}, toast() {},
-  CineBraidReferenceMedia: { listing: () => [], coverage: () => ({ filled: 0, required: 0 }), requiredSlots: () => [] },
+  CineBraidReferenceMedia: { ...require('../public/shared-reference-media'), listing: () => [], coverage: () => ({ filled: 0, required: 0 }), requiredSlots: () => [] },
   CineBraidMediaInspector: { projection: () => ({ records: [], unresolvedReferences: [] }) },
   fetch: async () => ({ ok: true, json: async () => ({ entities: [] }), headers: { get: () => context.ACTIVE_PROJECT_SLUG } }),
 });
@@ -683,7 +684,7 @@ const inspectorOwner = (hash, origin) => api.go(hash, origin || api.capture()); 
     assert.ok(reference.includes("</nav><span data-return-slot></span>'"), 'Reference Desk reserves the slot after its crumb');
     assert.ok(!/\borigin=|\breturning\b|frameLabel/.test(reference), 'Reference Desk no longer captures its own shot origin');
     assert.ok(!/function back\(|action==='back'|\borigin=null/.test(bible), 'Working Bible no longer owns a return');
-    assert.ok(/openModal\(`<div data-global-navigation><h3>Search<\/h3>/.test(review), 'the search modal is marked as global navigation');
+    assert.ok(/openModal\(`<div data-global-navigation><h3>Search production<\/h3>/.test(review), 'the search modal is marked as global navigation');
     assert.ok(/function stampCeremony\(text\) \{\}/.test(review), 'the approval announcement seam paints nothing');
     assert.ok(!shotDesk.includes('>Return to shot<'), 'Shot Desk error state offers a target, not a return');
     assert.ok(!/\.stamp-overlay\{|\.stamp-big\{|--z-stamp:|@keyframes stamp-hit/.test(styles), 'the oversized APPROVED overlay is gone');
