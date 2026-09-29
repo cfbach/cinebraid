@@ -65,6 +65,8 @@ let page;
 let base = "";
 let stripIdentityFor = "";
 let replacementIdentityFor = "";
+let restoreIdentityOnPrepare = "";
+const prepareRequests = [];
 const blocked = [];
 const uploadReplies = [];
 const checks = [];
@@ -245,20 +247,36 @@ async function exerciseRefreshRecovery({ scope, name, assetId, label, slug }) {
           body: JSON.stringify(body),
         });
       }
-      if (replacementIdentityFor && request.method() === "POST" && parsed.pathname === "/api/media/prepare-identity"
-          && String(request.postData() || "").includes(replacementIdentityFor)) {
-        return route.fulfill({
-          status: 200,
-          json: { ok: true, status: "ready", reason: "simulated-replacement", assetId: REPLACEMENT_ASSET_ID },
-        });
+      if (request.method() === "POST" && parsed.pathname === "/api/media/prepare-identity") {
+        const body = request.postDataJSON();
+        prepareRequests.push(body);
+        if (replacementIdentityFor && body.name === replacementIdentityFor) {
+          if (restoreIdentityOnPrepare === body.name) {
+            // Keep every scan unresolved until the real Refresh record interaction
+            // requests this exact identity. A render cannot remove the button first.
+            restoreIdentityOnPrepare = "";
+            replacementIdentityFor = "";
+            return route.continue();
+          }
+          return route.fulfill({
+            status: 200,
+            json: { ok: true, status: "ready", reason: "simulated-replacement", assetId: REPLACEMENT_ASSET_ID },
+          });
+        }
       }
       if ((stripIdentityFor || replacementIdentityFor) && request.method() === "GET" && parsed.pathname === "/api/scan") {
+        // Freeze the mock state at request arrival: releasing a later recovery
+        // must not change an already in-flight replacement scan.
+        const strippedName = stripIdentityFor;
+        const replacementName = replacementIdentityFor;
+        const prepareSequence = prepareRequests.length;
         const response = await route.fetch();
         const body = await response.json();
-        const targetName = stripIdentityFor || replacementIdentityFor;
+        body.__f1PrepareSequence = prepareSequence;
+        const targetName = strippedName || replacementName;
         const row = body.shots?.[SHOT]?.takes?.find((item) => item.name === targetName);
-        if (row && stripIdentityFor) delete row.assetId;
-        if (row && replacementIdentityFor) row.assetId = REPLACEMENT_ASSET_ID;
+        if (row && strippedName) delete row.assetId;
+        if (row && replacementName) row.assetId = REPLACEMENT_ASSET_ID;
         return route.fulfill({
           status: response.status(),
           headers: { ...response.headers(), "content-type": "application/json" },
@@ -409,7 +427,24 @@ async function exerciseRefreshRecovery({ scope, name, assetId, label, slug }) {
     replacementIdentityFor = MOTION;
     await page.evaluate(async () => { await load({ intent: "refresh" }); });
     await page.locator("#rx-refresh").waitFor();
-    await page.locator("#rx-refresh").click();
+    const motionPrepareResponse = (response) => {
+      const request = response.request();
+      return new URL(response.url()).pathname === "/api/media/prepare-identity"
+        && request.method() === "POST" && request.postDataJSON()?.name === MOTION;
+    };
+    const refusalSequence = prepareRequests.length + 1;
+    const [refusedPrepare] = await Promise.all([
+      page.waitForResponse(motionPrepareResponse),
+      page.waitForResponse(async (response) => new URL(response.url()).pathname === "/api/scan"
+        && (await response.json()).__f1PrepareSequence === refusalSequence),
+      page.locator("#rx-refresh").click(),
+    ]);
+    // The old blocked DOM cannot prove this click refused the replacement. First
+    // observe its own post-prepare scan installed by the settled refresh owner.
+    await page.waitForFunction((sequence) => SCAN.__f1PrepareSequence === sequence
+      && !PROJECT_REFRESH_RUN && !PROJECT_REFRESH_FOLLOW_UP, refusalSequence);
+    check("Replacement refusal exercised the real Refresh record request",
+      (await refusedPrepare.json()).assetId === REPLACEMENT_ASSET_ID);
     await page.waitForFunction(({ key, name, replacementAssetId }) => {
       const parsed = CineBraidResults.parse();
       const rows = CineBraidResults.model(parsed.scope).rows;
@@ -427,10 +462,49 @@ async function exerciseRefreshRecovery({ scope, name, assetId, label, slug }) {
         && !document.getElementById("rx-approve");
     }, { key: motionAssetKey, replacementAssetId: REPLACEMENT_ASSET_ID }));
     await capture("replacement-identity-stays-blocked");
-    replacementIdentityFor = "";
-    await page.locator("#rx-refresh").click();
+    // The refusal's blocked DOM predates its request; it is not proof that the
+    // asynchronous refresh has finished. Do not restore the mock before clicking:
+    // an in-flight project refresh can otherwise resolve the result and remove
+    // the very button the next step is trying to press.
+    const receiptsBeforeRecovery = JSON.stringify(disk().productionAuthority.receipts);
+    const preparesBeforeRecovery = prepareRequests.length;
+    restoreIdentityOnPrepare = MOTION;
+    const [restoredPrepare] = await Promise.all([
+      page.waitForResponse(motionPrepareResponse),
+      page.locator("#rx-refresh").click(),
+    ]);
+    const recoveryRequest = restoredPrepare.request().postDataJSON();
+    check("Explicit recovery requests only the same project's exact motion take",
+      recoveryRequest.projectSlug === SLUG && recoveryRequest.dir === "shots/" + SHOT + "/takes"
+      && recoveryRequest.name === MOTION && prepareRequests.length === preparesBeforeRecovery + 1
+      && restoreIdentityOnPrepare === "");
+    check("Explicit Refresh record receives the original authoritative asset identity",
+      (await restoredPrepare.json()).assetId === motionAssetId);
     check("The original motion result recovers only when its exact identity returns",
       await waitForSelectedApproved(MOTION, motionAssetId, motionAssetKey) === motionAssetKey);
+    check("Explicit recovery preserves the existing approval receipts",
+      JSON.stringify(disk().productionAuthority.receipts) === receiptsBeforeRecovery);
+
+    // Separately cover recovery when an ordinary project refresh observes the
+    // original identity again. No Refresh record click or preparation request is
+    // needed to display the already-approved, exact asset; no approval is created.
+    replacementIdentityFor = MOTION;
+    await page.evaluate(async () => { await load({ intent: "refresh" }); });
+    await page.waitForFunction(({ key, replacementAssetId }) => {
+      const parsed = CineBraidResults.parse();
+      const rows = CineBraidResults.model(parsed.scope).rows;
+      return parsed.key === key && !rows.some((row) => row.key === key)
+        && rows.some((row) => row.assetId === replacementAssetId)
+        && !!document.getElementById("rx-refresh") && !document.getElementById("rx-approve");
+    }, { key: motionAssetKey, replacementAssetId: REPLACEMENT_ASSET_ID });
+    const preparesBeforeAutomaticRecovery = prepareRequests.length;
+    replacementIdentityFor = "";
+    await page.evaluate(async () => { await load({ intent: "refresh" }); });
+    check("A project refresh independently recovers only the same approved motion identity",
+      await waitForSelectedApproved(MOTION, motionAssetId, motionAssetKey) === motionAssetKey);
+    check("Automatic display recovery needs no preparation request or approval write",
+      prepareRequests.length === preparesBeforeAutomaticRecovery
+      && JSON.stringify(disk().productionAuthority.receipts) === receiptsBeforeRecovery);
 
     await page.reload();
     await page.waitForFunction((id) => typeof P !== "undefined" && P?.shots?.some((row) => row.id === id), SHOT);
