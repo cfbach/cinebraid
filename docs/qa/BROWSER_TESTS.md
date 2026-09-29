@@ -106,19 +106,51 @@ generation route outright.
 
 ## The quarantine
 
-Three suites launch a browser and are **expected to fail**, pinned to the reason in
-`tests/run-browser-gate.js`:
+Two optional assistance suites still launch a browser and are **expected to fail**,
+pinned to their existing reasons in `tests/run-browser-gate.js`:
 
-| Suite | Why |
+| Suite | Unqualified user workflow |
 |---|---|
-| `check:motion-edit` | Proxies the app through a fabricated origin; the cross-origin guard correctly refuses writes from it. The harness needs to stop faking an origin. |
-| `check:continuity-browser` | Asserts a `FIX CONTINUITY` control the shipped continuity UI no longer labels that way. |
-| `check:continuity-workspace-browser` | Waits for a per-frame state `<select>` that now renders inside a collapsed disclosure. |
+| `check:continuity-browser` | Assisted continuity repair; the old test expects `FIX CONTINUITY`. Manual state editing is separately qualified. |
+| `check:state-honesty-frame-review` | Optional frame AI critique does not issue the expected frame-owned review request. Manual approval is separately qualified. |
 
-None of the three was reachable from `check`, `check:ci` or `check:quick`, so unlike
-the other suites they were never even skipping — they were not wired into anything.
-Running them for the first time showed all three had drifted away from the shipped
-UI.
+### Promoted motion and continuity journeys
+
+`check:motion-edit` and `check:continuity-workspace-browser` are required suites.
+The former now uses a real saved project, a UI-imported and explicitly approved
+Frame A, a declared I2V route and the real compiler. Its old fabricated-origin,
+injected-project fixture stopped before native review with “Select and build a
+MiniMax H3 motion profile first.” Its fixed 2,000-character expectation also
+predated the current effective model/backend limit.
+
+Ordinary UI reproduction exposed a product defect behind that fixture: native
+request review discarded the wording of a saved manual revision. Review now loads
+that wording while keeping the server's compiled plan and approved-frame binding
+separate. Reset restores the compiled text; cancel leaves saved history intact.
+An unchanged manual revision is reused; a further edit creates a linked revision.
+The dispatch source remains the structured package, with authored text recorded
+separately. Tests cover limits, immutable source fields, two intercepted requests,
+exact Frame A identity, save/reopen, duration refresh and desktop/390 px containment. Deferred-response tests also
+prove a late edited-coverage result cannot undo Reset or describe a different
+edit, request or refreshed plan.
+
+The continuity fixture now carries approval receipts for its existing A/B winners,
+opens the shipped disclosures with ordinary clicks, targets the named frame/state
+and waits for actual comparison/config responses. All prior comparison, cache,
+intent, tracking, reload and cross-project assertions remain. It additionally
+follows Inputs → Add or edit states → exact owned state → edit → return/reopen.
+That journey exposed a second product defect: the action opened the reference
+overview on Default. It now opens the state-authoring tools on the shot's explicit
+owned state (or inherited default). Invalid bindings remain invalid and open the
+owned list without a remembered selection; missing/unattached targets are refused.
+Navigation does not approve media or rewrite bindings.
+
+Both suites use disposable workspaces. Motion dispatch is intercepted; continuity
+observations come only from a loopback stub, never an actual AI provider. The
+continuity stub does not qualify AI judgment or assisted repair. Optional raw
+captures can be written outside the repository with `CINEBRAID_JOURNEY_OUT`.
+Historical quarantine failures remain evidence of the older candidate; promotion
+requires these suites to pass, not a relaxed expected-failure match.
 
 The quarantine is pinned in both directions. A quarantined suite must still launch a
 browser, and must still fail for its recorded reason. One that starts passing fails

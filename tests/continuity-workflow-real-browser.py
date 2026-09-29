@@ -15,11 +15,12 @@ CINEBRAID_CONFIG_PATH and CINEBRAID_PROJECTS_ROOT, so data/ and the shipped
 sample are never touched.
 """
 
-import json, os, pathlib, shutil, socket, subprocess, tempfile, threading, time
+import json, os, pathlib, socket, subprocess, threading, time
+from urllib.parse import urlparse
 from http.server import BaseHTTPRequestHandler, HTTPServer
 
 ROOT = pathlib.Path(__file__).resolve().parents[1]
-from browser_runtime import require_browser, launch_chromium
+from browser_runtime import require_browser, launch_chromium, disposable_workspace
 LABEL = 'Continuity workspace real-browser audit'
 sync_playwright = require_browser(LABEL)
 
@@ -113,6 +114,12 @@ def project_json():
         'meta': {'title': 'Continuity workspace audit', 'format': 'Short film', 'version': 'v1',
                  'hubVersion': 'v6.0.0', 'schemaVersion': '6.6', 'aiPolicy': 'project-default',
                  'world': {}, 'styleBlocks': []},
+        'productionAuthority': {'version':1,'receipts':[
+            {'id':f'authority-{i:06}', 'sequence':i, 'actor':'human','act':'explicit-approval',
+             'command':'approve-shot-frame','kind':'shot-frame','targetKey':f'shot-frame:S-01#frame-{tag.lower()}',
+             'shotId':'S-01','frameId':f'frame-{tag.lower()}','value':f'{tag}.png','status':'current',
+             'at':'2026-09-29T00:00:00.000Z','provenance':{'manualAction':f'fixture-{tag}','via':'test-fixture','gesture':'click'}}
+             for i,tag in enumerate(('A','B'),1)]},
         'qcChecklist': [],
         'characters': [{'id': 'CHAR-KAI', 'name': 'Kai', 'block': 'Late-30s, lean.',
                         'approvedFile': '', 'continuityStates': json.loads(json.dumps(STATES))}],
@@ -146,12 +153,15 @@ def project_json():
     }
 
 
-TEMP = pathlib.Path(tempfile.mkdtemp(prefix='cinebraid-continuity-ui-'))
+workspace = disposable_workspace('continuity-workspace', sample=False, active_project='continuity-audit')
+TEMP = workspace.home
+OUT = pathlib.Path(os.environ['CINEBRAID_JOURNEY_OUT']) if os.environ.get('CINEBRAID_JOURNEY_OUT') else None
+if OUT: OUT.mkdir(parents=True, exist_ok=True)
 provider_port = free_port()
 provider = HTTPServer(('127.0.0.1', provider_port), Provider)
 threading.Thread(target=provider.serve_forever, daemon=True).start()
 
-projects_root = TEMP / 'projects'
+projects_root = workspace.projects_root
 project_dir = projects_root / 'continuity-audit'
 takes = project_dir / 'shots' / 'S-01' / 'takes'
 takes.mkdir(parents=True)
@@ -176,8 +186,9 @@ other['meta']['title'] = 'Second project, same shot id'
 for tag in ('A', 'B'):
     (project_b / 'shots' / 'S-01' / 'takes' / f'{tag}.png').write_bytes(base64.b64decode(PNG) + tag.encode())
 
-config_path = TEMP / 'config.json'
+config_path = workspace.config_path
 config_path.write_text(json.dumps({
+    **json.loads(config_path.read_text(encoding='utf-8')),
     'activeProject': 'continuity-audit',
     'assistant': {'provider': 'custom', 'visionProvider': 'ollama'},
     'customBaseUrl': f'http://127.0.0.1:{provider_port}/v1',
@@ -190,15 +201,38 @@ config_path.write_text(json.dumps({
     'agents': {'enabled': True},
 }, indent=2), encoding='utf-8')
 
+# Only the owned local stub may receive server fetches. All other HTTP is denied.
+preload = TEMP / 'stub-only.cjs'
+preload.write_text("const allowed=" + json.dumps(f'http://127.0.0.1:{provider_port}') + ";" + """
+const fetch = global.fetch;
+global.fetch = (input, init) => {
+  if (new URL(typeof input === 'string' || input instanceof URL ? input : input.url).origin !== allowed)
+    throw Error('Continuity fixture forbids non-stub outbound traffic');
+  return fetch(input, init);
+};
+for (const name of ['http','https']) {
+  const client = require(name);
+  client.request = client.get = () => { throw Error('Continuity fixture forbids outbound HTTP clients'); };
+}
+""", encoding='utf-8')
 port = free_port()
-server = subprocess.Popen(
-    ['node', 'server.js'], cwd=ROOT,
-    env={**os.environ, 'PORT': str(port), 'CINEBRAID_CONFIG_PATH': str(config_path),
-         'CINEBRAID_PROJECTS_ROOT': str(projects_root)},
-    stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+server_log = ((OUT or TEMP) / 'server.log').open('w', encoding='utf-8')
+server = subprocess.Popen(['node', '-r', str(preload), 'server.js'], cwd=ROOT,
+                          env=workspace.env(port), stdout=server_log, stderr=server_log)
+
 
 BASE = f'http://127.0.0.1:{port}'
 console_errors = []
+
+
+def capture(page, name):
+    if not OUT: return
+    page.screenshot(path=str(OUT / (name + '.png')))
+    (OUT / (name + '.txt')).write_text(page.locator('body').inner_text(), encoding='utf-8')
+
+
+def saved(page):
+    page.wait_for_function("projectSaveSettled().settled")
 
 
 def stored_project():
@@ -210,11 +244,25 @@ def open_shot(page, marker):
     reload, which would leave the previous project state in memory."""
     page.goto(f'{BASE}/?audit={marker}#/shot/S-01', wait_until='domcontentloaded', timeout=30000)
     page.wait_for_function("document.body.dataset.renderReady === '1'", timeout=30000)
+    page.locator('[data-stage-id="frames"]').click()
+    fold = page.locator('.shot-continuity-fold')
+    if fold.get_attribute('open') is None:
+        fold.locator(':scope > summary').click()
     page.wait_for_selector('.shot-continuity', timeout=15000)
 
 
+def open_inputs(page):
+    page.locator('[data-stage-id="inputs"]').click()
+    panel = page.locator('.guided-inputs-card')
+    if panel.get_attribute('open') is None:
+        panel.locator(':scope > summary').click()
+
+
 def check_continuity(page):
-    page.get_by_role('button', name='CHECK CONTINUITY').or_(page.get_by_role('button', name='CHECK AGAIN')).first.click()
+    with page.expect_response(lambda r: r.url.endswith('/api/continuity/compare') and r.request.method == 'POST') as response:
+        page.get_by_role('button', name='CHECK CONTINUITY').or_(page.get_by_role('button', name='CHECK AGAIN')).first.click()
+    assert response.value.ok
+    page.wait_for_function("continuityRun('S-01')?.status === 'done'")
     page.wait_for_selector('.continuity-outcome-counts, .continuity-analysis-error', timeout=30000)
 
 
@@ -227,11 +275,19 @@ try:
     with sync_playwright() as pw:
         browser = launch_chromium(pw, label=LABEL)
         page = browser.new_page(viewport={'width': 1440, 'height': 1000})
+        forbidden = []
+        def guard(route):
+            url = urlparse(route.request.url)
+            if url.hostname in ('fonts.googleapis.com', 'fonts.gstatic.com'):
+                return route.fulfill(status=200, content_type='text/css', body='')
+            if f'{url.scheme}://{url.netloc}' != BASE or (url.path.startswith(('/api/generation/', '/api/llm/', '/api/ai/')) and route.request.method != 'GET'):
+                forbidden.append(route.request.url)
+                return route.abort()
+            return route.continue_()
+        page.route('**/*', guard)
         page.on('console', lambda m: console_errors.append(m.text) if m.type == 'error' else None)
         page.on('pageerror', lambda e: console_errors.append(str(e)))
-        # The Frames stage is the one under test.
-        page.add_init_script("localStorage.setItem('cinebraid-focused:continuity-audit:shot-task:S-01','frames');"
-                             "localStorage.setItem('cinebraid-workspace-section:continuity-audit:S-01:continuity-frame-states','1');")
+
 
         # 1-5. open the shot, see both frames and the continuity card, run a check
         open_shot(page, 'open')
@@ -239,6 +295,7 @@ try:
         assert page.locator('.guided-frame-rail button', has_text='Frame B').count() == 1
         assert 'Frame A → Frame B' in page.locator('.shot-continuity > header b').inner_text()
         assert page.get_by_role('button', name='CHECK CONTINUITY').is_visible()
+        authority = stored_project()['productionAuthority']
         check_continuity(page)
         assert sorted(observations) == ['A', 'B'], f'expected one observation per frame, got {observations}'
 
@@ -263,11 +320,17 @@ try:
             assert leak not in surface, f'the continuity surface leaked {leak}'
 
         # 11. declare the frame state that makes Kai's change intentional
-        kai_select = page.locator('.continuity-state-row', has_text='Kai').locator('select').nth(1)
+        page.locator('.continuity-frame-states > summary').click()
+        kai_select = page.get_by_label('State for Kai on Frame B', exact=True)
+        assert set(kai_select.locator('option').evaluate_all('(rows)=>rows.map(r=>r.value)')) == {'', 'state-default', 'state-jacket-off'}
         kai_select.select_option(label='Jacket removed')
-        page.wait_for_timeout(1400)
+        saved(page)
         stored = stored_project()
         assert stored['shots'][0]['creationBrief']['frameWorkflows']['frame-b']['characterStateSelections']['CHAR-KAI'] == 'state-jacket-off'
+        assert not stored['shots'][0]['creationBrief']['frameWorkflows'].get('frame-a', {}).get('characterStateSelections')
+        assert stored['productionAuthority'] == authority
+        kai_select.scroll_into_view_if_needed()
+        capture(page, '01-frame-b-state-1440')
         assert stored['meta']['schemaVersion'] == '6.7', 'writing a continuity field must move the project to 6.7'
 
         # 9. recheck — cached observations, and the state change is now expected
@@ -283,7 +346,8 @@ try:
 
         # 8. mark the remaining issue expected
         page.locator('.continuity-entity', has_text='Enamel mug').get_by_role('button', name='MARK EXPECTED').click()
-        page.wait_for_timeout(1500)
+        page.wait_for_function("continuityRun('S-01')?.data?.outcomeCounts?.expected === 2")
+        saved(page)
         assert outcome_count(page, 'expected') == 2
         assert outcome_count(page, 'issue') == 0
         assert page.locator('.continuity-entity', has_text='Enamel mug').count() == 1, 'a declared change stays visible'
@@ -291,9 +355,10 @@ try:
 
         # 12-13. reload — every declaration is still there
         open_shot(page, 'reload')
-        assert page.locator('.continuity-state-row', has_text='Kai').locator('select').nth(1).input_value() == 'state-jacket-off'
-        page.locator('.continuity-intent').first.click()
-        page.wait_for_timeout(150)
+        if page.locator('.continuity-frame-states').get_attribute('open') is None:
+            page.locator('.continuity-frame-states > summary').click()
+        assert page.get_by_label('State for Kai on Frame B', exact=True).input_value() == 'state-jacket-off'
+        page.locator('.continuity-intent > summary').first.click()
         mug_intent = page.locator('.continuity-intent-row', has_text='Enamel mug').locator('select').first
         assert mug_intent.input_value() == 'may-leave'
         check_continuity(page)
@@ -305,16 +370,15 @@ try:
         # needs, inside the continuity section's one Advanced disclosure.
         page.goto(f'{BASE}/?audit=prop#/prop/PROP-WATCH/tools', wait_until='domcontentloaded', timeout=30000)
         page.wait_for_function("document.body.dataset.renderReady === '1'", timeout=30000)
-        page.evaluate("selectBoundedTask('entity-task','props:PROP-WATCH','coverage')")
+        page.locator('.bounded-entity-taskbar button').filter(has_text='Production needs').click()
         page.wait_for_selector('details.continuity-advanced > summary', timeout=10000)
         page.locator('details.continuity-advanced > summary').first.click()
         page.wait_for_selector('.continuity-tracking', timeout=10000)
-        page.locator('.continuity-tracking').first.click()
-        page.wait_for_timeout(120)
+        page.locator('.continuity-tracking > summary').first.click()
         colour = page.locator('.continuity-track-option', has_text='Colour').locator('input')
         assert colour.is_checked(), 'the fixture asked for colour tracking explicitly'
         colour.uncheck()
-        page.wait_for_timeout(1400)
+        saved(page)
         assert stored_project()['props'][1].get('tracking') in (None, {}), 'returning colour to its default must store nothing'
 
         # 15. re-observe discards the stored analysis and asks again
@@ -324,7 +388,10 @@ try:
         page.get_by_role('button', name='RE-OBSERVE', exact=True).click()
         page.wait_for_selector('#modal-confirm-action', timeout=10000)
         assert 'not touched' in page.locator('.modal-confirm-message').inner_text()
-        page.locator('#modal-confirm-action').click()
+        with page.expect_response(lambda r: r.url.endswith('/api/continuity/compare') and r.request.method == 'POST') as response:
+            page.locator('#modal-confirm-action').click()
+        assert response.value.ok
+        page.wait_for_function("continuityRun('S-01')?.status === 'done'")
         page.wait_for_selector('.continuity-outcome-counts', timeout=30000)
         assert sorted(observations) == ['A', 'B'], 'RE-OBSERVE must look at both frames again'
         assert '2 new analyses' in page.locator('.continuity-provenance').inner_text()
@@ -334,9 +401,10 @@ try:
 
         # narrower viewport: the card must stack rather than overflow
         page.set_viewport_size({'width': 390, 'height': 844})
-        page.wait_for_timeout(200)
         overflow = page.evaluate('document.documentElement.scrollWidth - document.documentElement.clientWidth')
         assert overflow <= 2, f'the continuity workspace overflowed by {overflow}px at 390px'
+
+        page.set_viewport_size({'width':1440,'height':1000})
 
         # 17. a verdict belongs to the project that produced it (acceptance D1)
         open_shot(page, 'switch-a')
@@ -347,14 +415,15 @@ try:
         page.wait_for_function("continuityProjectKey() === 'continuity-audit-b'", timeout=20000)
         page.evaluate("localStorage.setItem('cinebraid-focused:continuity-audit-b:shot-task:S-01','frames');"
                       "location.hash = '#/shot/S-01'; route();")
+        if page.locator('.shot-continuity-fold').get_attribute('open') is None:
+            page.locator('.shot-continuity-fold > summary').click()
         page.wait_for_selector('.shot-continuity', timeout=15000)
-        page.wait_for_timeout(200)
         card = page.locator('.shot-continuity').inner_text()
         assert 'STABLE' not in card, 'no stale verdict may survive a project switch'
         assert 'Enamel mug' not in card, 'no stale finding may survive a project switch'
         assert 'CHECK CONTINUITY' in card, 'the second project must start idle'
         page.evaluate("switchProject('continuity-audit')")
-        page.wait_for_function("window.ACTIVE_PROJECT_SLUG === 'continuity-audit'", timeout=20000)
+        page.wait_for_function("continuityProjectKey() === 'continuity-audit'", timeout=20000)
 
         # 18. continuity configures independently of the main assistant (D2)
         page.request.put(f'{BASE}/api/config', data={'assistant': {'provider': 'ollama', 'visionProvider': 'ollama'},
@@ -372,30 +441,85 @@ try:
         page.goto(f'{BASE}/?audit=settings#/settings', wait_until='domcontentloaded', timeout=30000)
         page.wait_for_function("document.body.dataset.renderReady === '1'", timeout=30000)
         page.evaluate("selectBoundedTask('settings-task','settings','assistant')")
+        configure=page.locator('[data-capability="continuity"] details')
+        if configure.get_attribute('open') is None: configure.locator('summary').click()
         page.wait_for_selector('#cfg-continuity-provider', timeout=10000)
         assert page.locator('#cfg-continuity-base').input_value() == f'http://127.0.0.1:{provider_port}/v1'
         page.locator('#cfg-continuity-provider').select_option('')
-        page.get_by_role('button', name='Save assistant settings').click()
-        page.wait_for_timeout(1200)
+        with page.expect_response(lambda r: r.url.endswith('/api/config') and r.request.method == 'PUT') as response:
+            page.get_by_role('button', name='Save assistant settings').click()
+        assert response.value.ok
+        page.wait_for_function("!CONFIG.continuity?.visionProvider && !continuityCapability().ready")
         # Same document — no reload between the save and the workspace.
         page.evaluate("localStorage.setItem('cinebraid-focused:continuity-audit:shot-task:S-01','frames');"
                       "location.hash = '#/shot/S-01'; route();")
+        if page.locator('.shot-continuity-fold').get_attribute('open') is None:
+            page.locator('.shot-continuity-fold > summary').click()
         page.wait_for_selector('.shot-continuity', timeout=15000)
-        page.wait_for_timeout(200)
         assert "isn't configured" in page.locator('.shot-continuity').inner_text(), \
             'removing the continuity provider must be reflected without a page reload'
         page.evaluate("selectBoundedTask('settings-task','settings','assistant'); location.hash = '#/settings'; route();")
+        configure=page.locator('[data-capability="continuity"] details')
+        if configure.get_attribute('open') is None: configure.locator('summary').click()
         page.wait_for_selector('#cfg-continuity-provider', timeout=10000)
         page.locator('#cfg-continuity-provider').select_option('custom')
         page.locator('#cfg-continuity-model').fill('stub-continuity-model')
         page.locator('#cfg-continuity-base').fill(f'http://127.0.0.1:{provider_port}/v1')
-        page.get_by_role('button', name='Save assistant settings').click()
-        page.wait_for_timeout(1200)
+        with page.expect_response(lambda r: r.url.endswith('/api/config') and r.request.method == 'PUT') as response:
+            page.get_by_role('button', name='Save assistant settings').click()
+        assert response.value.ok
+        page.wait_for_function("CONFIG.continuity?.visionProvider === 'custom' && continuityCapability().ready")
         page.evaluate("location.hash = '#/shot/S-01'; route();")
+        if page.locator('.shot-continuity-fold').get_attribute('open') is None:
+            page.locator('.shot-continuity-fold > summary').click()
         page.wait_for_selector('.shot-continuity', timeout=15000)
-        page.wait_for_timeout(200)
         assert "isn't configured" not in page.locator('.shot-continuity').inner_text(), \
             'saving a valid continuity provider must become available without a page reload'
+
+        # Ordinary Inputs -> exact owned reference state -> edit -> return -> reopen.
+        # Manual declarations do not need an assistant or any new approval.
+        page.set_viewport_size({'width':1440,'height':1000})
+        open_inputs(page)
+        selector = page.get_by_label('State for Kai on this shot', exact=True)
+        selector.select_option('state-jacket-off')
+        saved(page)
+        page.locator('[data-shot-state-entity="CHAR-KAI"]').get_by_role('button', name='Add or edit states', exact=True).click()
+        page.wait_for_selector('[data-reference-tools]')
+        assert page.url.endswith('#/character/CHAR-KAI/tools')
+        assert page.locator('.continuity-state-rail button[aria-pressed="true"]').inner_text().startswith('Jacket removed')
+        card = page.locator('[data-continuity-state-id="state-jacket-off"]')
+        notes = card.locator('.state-source-delta')
+        notes.fill('Jacket removed; the shirt and watch remain unchanged.')
+        notes.press('Tab')
+        saved(page)
+        card.scroll_into_view_if_needed(); capture(page, '02-owned-state-edit-1440')
+        state = stored_project()
+        assert state['characters'][0]['continuityStates'][1]['notes'] == 'Jacket removed; the shirt and watch remain unchanged.'
+        assert all(state['characters'][0]['continuityStates'][0].get(k)==v for k,v in STATES[0].items())
+        assert state['shots'][0]['continuityStateSelections']['CHAR-KAI'] == 'state-jacket-off'
+        assert state['productionAuthority'] == authority
+        page.locator('[data-media-return]').click()
+        page.wait_for_url('**#/shot/S-01')
+        open_inputs(page)
+        assert page.get_by_label('State for Kai on this shot', exact=True).input_value() == 'state-jacket-off'
+        page.reload()
+        open_inputs(page)
+        assert page.get_by_label('State for Kai on this shot', exact=True).input_value() == 'state-jacket-off'
+        page.set_viewport_size({'width':390,'height':844})
+        selector = page.get_by_label('State for Kai on this shot', exact=True)
+        # Wait for the real sidebar resize transition, not an arbitrary delay.
+        page.evaluate("() => Promise.all(document.getAnimations().filter(a => a.effect.getComputedTiming().iterations !== Infinity).map(a => a.finished))")
+        selector.scroll_into_view_if_needed()
+        bounds = selector.bounding_box()
+        assert bounds and bounds['x'] >= 0 and bounds['x'] + bounds['width'] <= 390, bounds
+        capture(page, '03-shot-state-390')
+        selector.select_option('')
+        saved(page)
+        assert 'CHAR-KAI' not in stored_project()['shots'][0].get('continuityStateSelections', {})
+        assert stored_project()['shots'][0]['creationBrief']['frameWorkflows']['frame-b']['characterStateSelections']['CHAR-KAI'] == 'state-jacket-off'
+        assert stored_project()['productionAuthority'] == authority
+        assert page.evaluate('document.documentElement.scrollWidth - document.documentElement.clientWidth') <= 2
+        assert not forbidden, forbidden
 
         # 16. nothing broke on the way
         assert not console_errors, f'console errors: {console_errors}'
@@ -414,4 +538,5 @@ finally:
     except subprocess.TimeoutExpired:
         server.kill()
     provider.shutdown()
-    shutil.rmtree(TEMP, ignore_errors=True)
+    server_log.close()
+    workspace.cleanup()

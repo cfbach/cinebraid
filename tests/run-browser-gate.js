@@ -46,6 +46,7 @@ const SUITES = [
   "check:run-binding-browser",
   "check:h3-browser",
   "check:h3-motion-handoff",
+  "check:motion-edit",
   "check:preview-layout",
   "check:ui-state",
   "check:board-density-browser",
@@ -64,6 +65,7 @@ const SUITES = [
   "check:focused-browser",
   "check:entity-truth-browser",
   "check:state-binding-browser",
+  "check:continuity-workspace-browser",
   "check:alpha-loop-browser",
   "check:shot-readiness-browser",
   "check:founder-p0-browser",
@@ -104,12 +106,11 @@ const SUITES = [
 
 /* Suites that launch a browser and are known to fail, pinned to the reason.
 
-   These three were never reachable from `npm run check`, `check:ci` or
-   `check:quick` - unlike the five above they were not merely skipping, they were
-   not wired into anything at all. Running them for the first time showed all
-   three have drifted away from the shipped UI. Repairing them means changing
-   test harnesses rather than product code, which is a different piece of work
-   from making browser QA run, so they are recorded here instead of fixed here.
+   Motion editing and continuity workspace access are now required above. Their
+   repaired fixtures use real saved projects, explicit approved-frame receipts,
+   visible disclosures and settled responses. Current UI reproduction also found
+   and corrected lost saved motion wording and an inexact state-authoring handoff.
+   The optional assisted-repair and frame-AI-review contracts remain separate.
 
    A quarantine that only tolerates failure is how the original skips became
    invisible, so this one is pinned in both directions: the suite must still
@@ -118,25 +119,10 @@ const SUITES = [
    fails the gate too. Neither can pass unnoticed. */
 const QUARANTINED = [
   {
-    suite: "check:motion-edit",
-    expect: "fal-h3-prompt-editor",
-    why: "UNPROVEN: that the H3 motion prompt editor opens and can be edited from the motion workspace. " +
-      "FIRST FAILURE: #fal-h3-prompt-editor never becomes visible. The recorded reason used to be the " +
-      "cross-origin write refusal from its fabricated origin; that is no longer where it stops, so the " +
-      "entry is re-pinned to what it actually fails on now.",
-  },
-  {
     suite: "check:continuity-browser",
     expect: "FIX CONTINUITY",
     why: "UNPROVEN: that the continuity workspace offers a repair control for a drifted state. " +
       "FIRST FAILURE: asserts a 'FIX CONTINUITY' control the shipped continuity UI no longer labels that way.",
-  },
-  {
-    suite: "check:continuity-workspace-browser",
-    expect: 'hidden <section class="shot-continuity"',
-    why: "UNPROVEN: that opening a shot shows its continuity workspace. FIRST FAILURE: .shot-continuity " +
-      "resolves but stays hidden, so the suite never reaches its own assertions. The recorded reason was a " +
-      "per-frame state <select> (continuity-state-row); it now stops one level earlier, on the section itself.",
   },
   /* SPLIT OUT OF A GREEN SUITE, NOT INVENTED HERE. Each of these two ran inside a larger
      suite whose required proof now passes, and each is a later, independent contract that

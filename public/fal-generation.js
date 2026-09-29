@@ -1196,6 +1196,7 @@ window.reviewFalH3PromptEdit = async () => {
     panel.innerHTML = "";
     return;
   }
+  const compiledPrompt = request.compiledPrompt;
   const gate = falH3AspectGate();
   const preview = await fetchFalH3Plan(request.shotId, request.buildId, {
     durationSeconds: Number(document.getElementById("fal-h3-duration")?.value || request.durationSeconds),
@@ -1204,7 +1205,12 @@ window.reviewFalH3PromptEdit = async () => {
     profileMode: request.profileMode,
     prompt,
   });
-  if (!preview) return;
+  /* This response describes the text and plan that requested it. Reset, another edit,
+     a refreshed plan or a different dialog must not inherit its stale explanation. */
+  if (!preview || window._falH3MotionRequest !== request
+    || document.getElementById("fal-h3-edit-coverage") !== panel
+    || document.getElementById("fal-h3-prompt-editor")?.value !== prompt
+    || request.compiledPrompt !== compiledPrompt) return;
   const lost = preview.editedCoverage?.lost || [];
   const checked = preview.editedCoverage?.checked || [];
   panel.hidden = false;
@@ -1437,7 +1443,9 @@ window.openFalH3MotionModal = async (shotId, buildId = "") => {
     profileName: preview.profile?.name || profile.name,
     profileMode: preview.mode || profile.mode,
     packageId: build.packageId || "",
-    prompt: preview.compiledPrompt,
+    /* A saved manual revision supplies only the text. The server's compiled plan
+       still owns references, settings and the Reset target. */
+    prompt: build.manualEdited ? String(build.prompt) : preview.compiledPrompt,
     clientRequestId,
     styleOnly,
   };
@@ -1447,7 +1455,7 @@ window.openFalH3MotionModal = async (shotId, buildId = "") => {
   const videos = (preview.references || []).filter((ref) => ref.mediaType === "video");
   const audio = (preview.references || []).filter((ref) => ref.mediaType === "audio");
   const limit = Number(preview.maxPromptCharacters) || 7000;
-  const promptReady = preview.compiledPrompt.length <= limit;
+  const promptReady = !!request.prompt.trim() && request.prompt.length <= limit;
   const [durationLow, durationHigh] = Array.isArray(preview.durationRange) && preview.durationRange.length === 2
     ? preview.durationRange
     : [5, 15];
@@ -1512,11 +1520,11 @@ window.openFalH3MotionModal = async (shotId, buildId = "") => {
      so they show in both modes. A reference-led package renders exactly as before. */
   const advancedOnly = styleOnly ? ' data-broll-advanced="1"' : "";
   dismissStaleNotice();
-  openModal(`<div class="h3-generation-modal${styleOnly ? " broll-confirmation" : ""}"><header class="h3-generation-head"><div><span>MINIMAX H3 · PAID GENERATION</span>${headline}</div><button class="cancel" onclick="closeModal()">Close</button></header><div class="h3-generation-scroll"><div class="modal-sub"${advancedOnly}>FAL · ${esc(preview.dispatch?.model || "minimax/h3")} · compiled by ${esc(preview.compiler?.packId || "minimax-h3")} ${esc(preview.compiler?.packVersion || "")}</div><div class="candidate-evidence-facts"${advancedOnly}>${inputFacts}<span id="fal-h3-prompt-fact">${preview.compiledPrompt.length.toLocaleString()}/${limit.toLocaleString()} prompt characters</span><span>Native stereo audio</span></div><div id="fal-h3-refusal" class="guided-prompt-error" hidden></div><div id="fal-h3-options"></div><section id="fal-h3-sequence" class="h3-submit-sequence" hidden></section>${freshnessBanner}${durationBanner}<div id="fal-h3-generation-view"></div><div id="fal-h3-aspect-warning" class="guided-prompt-error" ${aspectGate.ok ? "hidden" : ""}>${aspectGate.ok ? "" : `<div><b>MiniMax H3 cannot deliver ${esc(ratio)}</b><small>${esc(aspectGate.message)}</small></div>`}</div><div id="fal-h3-cost-estimate" class="h3-cost-estimate"${advancedOnly}></div><div id="fal-h3-plan-warnings"${advancedOnly}></div><div id="fal-h3-prompt-warning" class="guided-prompt-error" ${promptReady ? "hidden" : ""}><div><b>Prompt is not ready for submission</b><small>${promptReady ? "" : `Shorten this prompt to ${limit.toLocaleString()} characters before a paid submission.`}</small></div></div><section class="h3-prompt-editor"${advancedOnly}><header><div><b>Edit prompt before generation</b><small>This is the prompt CineBraid compiled and the exact text that will be sent. ${esc(limitNote)} The compiled package is preserved; any change is ${styleOnly ? "" : "saved as a linked manual revision and "}recorded beside the compiled original.</small></div><span id="fal-h3-prompt-count">${preview.compiledPrompt.length.toLocaleString()}/${limit.toLocaleString()}</span></header><textarea id="fal-h3-prompt-editor" oninput="updateFalH3PromptEditor()" onchange="reviewFalH3PromptEdit()">${esc(preview.compiledPrompt)}</textarea><div id="fal-h3-edit-coverage" class="h3-edit-coverage" hidden></div><div class="h3-prompt-editor-actions">${styleOnly ? "" : `<label><span>Revision note · optional</span><input id="fal-h3-prompt-edit-reason" placeholder="Clarified timing, removed duplicate action…"></label>`}<button class="ghost-btn" onclick="resetFalH3PromptEditor()">Reset compiled prompt</button></div></section><p class="hint"${advancedOnly}>This submits one paid MiniMax H3 request through FAL. The returned MP4 is saved as an unapproved video candidate in this shot. The request uses an idempotency key to prevent an accidental double submission from this dialog.</p></div><footer class="modal-actions h3-generation-actions"><button class="cancel" onclick="closeModal()">Cancel</button><button id="fal-h3-submit" class="approve-btn large" onclick="startFalH3MotionGeneration()" ${promptReady && aspectGate.ok && !preview.refusal && !packageStale ? "" : "disabled"}>Generate video</button></footer></div>`);
+  openModal(`<div class="h3-generation-modal${styleOnly ? " broll-confirmation" : ""}"><header class="h3-generation-head"><div><span>MINIMAX H3 · PAID GENERATION</span>${headline}</div><button class="cancel" onclick="closeModal()">Close</button></header><div class="h3-generation-scroll"><div class="modal-sub"${advancedOnly}>FAL · ${esc(preview.dispatch?.model || "minimax/h3")} · compiled by ${esc(preview.compiler?.packId || "minimax-h3")} ${esc(preview.compiler?.packVersion || "")}</div><div class="candidate-evidence-facts"${advancedOnly}>${inputFacts}<span id="fal-h3-prompt-fact">${request.prompt.length.toLocaleString()}/${limit.toLocaleString()} prompt characters</span><span>Native stereo audio</span></div><div id="fal-h3-refusal" class="guided-prompt-error" hidden></div><div id="fal-h3-options"></div><section id="fal-h3-sequence" class="h3-submit-sequence" hidden></section>${freshnessBanner}${durationBanner}<div id="fal-h3-generation-view"></div><div id="fal-h3-aspect-warning" class="guided-prompt-error" ${aspectGate.ok ? "hidden" : ""}>${aspectGate.ok ? "" : `<div><b>MiniMax H3 cannot deliver ${esc(ratio)}</b><small>${esc(aspectGate.message)}</small></div>`}</div><div id="fal-h3-cost-estimate" class="h3-cost-estimate"${advancedOnly}></div><div id="fal-h3-plan-warnings"${advancedOnly}></div><div id="fal-h3-prompt-warning" class="guided-prompt-error" ${promptReady ? "hidden" : ""}><div><b>Prompt is not ready for submission</b><small>${promptReady ? "" : `Shorten this prompt to ${limit.toLocaleString()} characters before a paid submission.`}</small></div></div><section class="h3-prompt-editor"${advancedOnly}><header><div><b>Edit prompt before generation</b><small>${build.manualEdited ? "Your saved manual revision is loaded below. Reset restores the compiled prompt." : "This is the prompt CineBraid compiled."} The text below is exactly what will be sent. ${esc(limitNote)} The compiled package is preserved; any change is ${styleOnly ? "" : "saved as a linked manual revision and "}recorded beside the compiled original.</small></div><span id="fal-h3-prompt-count">${request.prompt.length.toLocaleString()}/${limit.toLocaleString()}</span></header><textarea id="fal-h3-prompt-editor" oninput="updateFalH3PromptEditor()" onchange="reviewFalH3PromptEdit()">${esc(request.prompt)}</textarea><div id="fal-h3-edit-coverage" class="h3-edit-coverage" hidden></div><div class="h3-prompt-editor-actions">${styleOnly ? "" : `<label><span>Revision note · optional</span><input id="fal-h3-prompt-edit-reason" placeholder="Clarified timing, removed duplicate action…"></label>`}<button class="ghost-btn" onclick="resetFalH3PromptEditor()">Reset compiled prompt</button></div></section><p class="hint"${advancedOnly}>This submits one paid MiniMax H3 request through FAL. The returned MP4 is saved as an unapproved video candidate in this shot. The request uses an idempotency key to prevent an accidental double submission from this dialog.</p></div><footer class="modal-actions h3-generation-actions"><button class="cancel" onclick="closeModal()">Cancel</button><button id="fal-h3-submit" class="approve-btn large" onclick="startFalH3MotionGeneration()" ${promptReady && aspectGate.ok && !preview.refusal && !packageStale ? "" : "disabled"}>Generate video</button></footer></div>`);
   /* One slot, and this dialog now owns it: switching Simple/Advanced redraws THIS view.
      Registered before the first paint so the very first toggle has somewhere to go. */
   window._generationViewRefresh = () => renderFalH3GenerationView();
-  setTimeout(() => { renderFalH3PlanPanels(); updateFalH3CostEstimate(); updateFalH3PromptEditor(); }, 0);
+  setTimeout(() => { renderFalH3PlanPanels(); updateFalH3CostEstimate(); updateFalH3PromptEditor(); reviewFalH3PromptEdit(); }, 0);
 };
 
 /* The H3 dialog's own controls, drawn from the plan rather than from a fixed grid.
@@ -1693,7 +1701,9 @@ window.startFalH3MotionGeneration = async () => {
   /* A style-only package keeps no separate Motion revision: it is not in the Motion
      workflow's list, and the job records the compiled and the submitted prompt side by
      side whether or not they differ. */
-  if (!request.styleOnly && editedPrompt !== String(request.compiledPrompt || "").trim() && typeof createManualMotionPromptRevision === "function") {
+  if (!request.styleOnly && editedPrompt !== String(request.compiledPrompt || "").trim()
+    && !(gateBuild?.manualEdited && editedPrompt === String(gateBuild.prompt || "").trim())
+    && typeof createManualMotionPromptRevision === "function") {
     try {
       const revised = createManualMotionPromptRevision(request.shotId, request.buildId, editedPrompt, revisionReason);
       if (revised?.id) request.revisionBuildId = revised.id;
