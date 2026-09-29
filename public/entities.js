@@ -2281,7 +2281,8 @@ function referenceWorkspaceMarkup(list, entity, context = {}) {
  * disclosure inside it is opened too, because a filmmaker who pressed Generate has
  * asked for the controls rather than for the summary of them. */
 window.openEntityCreationSection = (list, id) => {
-  window.selectBoundedTask?.("entity-task", `${list}:${id}`, "reference");
+  if (!document.querySelector('.bounded-entity-page[data-selected-task="reference"]'))
+    window.selectBoundedTask?.("entity-task", `${list}:${id}`, "reference");
   const section = document.querySelector(`.reference-create-section`);
   if (!section) return toast("Primary reference builder is unavailable");
   /* The builder's paths now sit in one "More options" disclosure, and the manual panel
@@ -2292,12 +2293,27 @@ window.openEntityCreationSection = (list, id) => {
     more.open = true;
     rememberWorkspaceSection(`asset-prompt:${list}:${id}:more`, true);
   }
+  const replacement = section.querySelector("details.reference-create-replace");
+  if (replacement && !replacement.open) {
+    replacement.open = true;
+    rememberWorkspaceSection(`asset-prompt:${list}:${id}:replace`, true);
+  }
   const manual = section.querySelector(".reference-create-manual");
   if (manual && manual.hasAttribute("hidden")) window.toggleReferenceManualPath?.(list, id);
   section.hidden = false;
   section.scrollIntoView({ behavior: "smooth", block: "start" });
   section.classList.add("focus-flash");
   setTimeout(() => section.classList.remove("focus-flash"), 1200);
+  // The explicit editor handoff follows the route's own scroll restoration.
+  const scope = `${ACTIVE_PROJECT_SLUG}:${PROJECT_OPEN_EPOCH}`, target = location.hash;
+  if (typeof requestAnimationFrame === "function") requestAnimationFrame(() => requestAnimationFrame(() => {
+    if (scope !== `${ACTIVE_PROJECT_SLUG}:${PROJECT_OPEN_EPOCH}` || location.hash !== target) return;
+    const current = [...document.querySelectorAll('section.reference-create-section')].find(node => node.getAttribute('data-create-target') === `${list}:${id}`);
+    const editor = current?.querySelector('.creation-description');
+    if (!editor || !editor.getClientRects().length) return;
+    editor.focus({ preventScroll: true });
+    editor.scrollIntoView({ block: 'center', behavior: 'instant' });
+  }));
 };
 /* R1, THE SURFACE THE FIRST PASS DID NOT REACH.
  *
@@ -2835,6 +2851,7 @@ function afterReferenceToolsRender(list, id, then) {
 window.openPrimaryPromptWorkspace = (list, id) => {
   const key = `asset-prompt:${list}:${id}`;
   rememberWorkspaceSection(`${key}:more`, true);
+  rememberWorkspaceSection(`${key}:replace`, true);
   rememberWorkspaceSection(`${key}:manual`, true);
   const here = [...document.querySelectorAll("section.reference-create-section")].some((node) => node.getAttribute("data-create-target") === `${list}:${id}`);
   if (here) return window.openEntityCreationSection(list, id);

@@ -34,9 +34,16 @@
 .rx-heading .rx-eyebrow{font:400 12px/1.45 var(--body);letter-spacing:normal;color:var(--muted)}
 .rx-head-actions,.rx-toolbar>div,.results-desk .rx-decision>div:last-child,.rx-entry{display:flex;gap:8px;flex-wrap:wrap}
 .rx-head-actions{align-items:center}
-.rx-context{padding:15px 0;display:flex;flex-direction:column;gap:6px}
-.rx-context strong{font:500 14px/1.5 var(--body)}
-.rx-context span,.rx-job-note,.results-desk .rx-decision small{font-size:12px;color:var(--muted)}
+/* One native, keyboard-operable current-context disclosure in both review modes.
+   Opening it only exposes present creative text; Original request remains immutable provenance. */
+.rx-context{margin:10px 0;flex:0 0 auto;border-bottom:1px solid var(--line)}
+.rx-context summary{min-height:52px;padding:6px 0;cursor:pointer;font:500 14px/1.45 var(--body)}
+.rx-context-excerpt{display:block;margin-left:16px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;font:400 12px/1.5 var(--body);color:var(--muted)}
+.rx-context[open] .rx-context-excerpt{display:none}
+.rx-context-body{max-height:30vh;overflow:auto;overscroll-behavior:contain;padding:0 8px 10px 16px;overflow-wrap:anywhere;white-space:pre-wrap}
+.rx-context-body p{margin:0 0 10px;font-size:14px;line-height:1.5}
+.rx-context-body strong{font-weight:600}
+.rx-context-body .rx-context-note,.rx-job-note,.results-desk .rx-decision small{font-size:12px;color:var(--muted)}
 .rx-job-note{margin:0 0 16px;padding:12px 14px;line-height:1.5}
 .rx-toolbar{margin:0 0 18px}
 .rx-toolbar label,.rx-screen-controls label{display:flex;align-items:center;gap:10px;font-size:14px}
@@ -72,7 +79,14 @@
 /* The media well inside the card is a well, not a second card. */
 .rx-media{height:100%;margin:0;position:relative;display:flex;flex-direction:column;background:var(--rx-well);border-radius:8px;overflow:hidden}
 .rx-media img,.rx-media video{width:100%;height:calc(100% - 32px);object-fit:contain;min-height:0;flex:1}
-.rx-media figcaption{height:32px;padding:8px 12px;font-size:12px;color:var(--muted)}
+.rx-media figcaption{min-height:32px;flex:0 0 auto;padding:6px 10px;font-size:12px;line-height:1.5;color:var(--muted);overflow-wrap:anywhere}
+/* The clickable media shares a grid cell with its overlay. A wrapping recorded
+   view caption owns its actual height and is never covered by that control. */
+.rx-media-open{display:grid;grid-template-rows:minmax(0,1fr) auto}
+.rx-media-open img,.rx-media-open video{grid-area:1/1;height:100%}
+.rx-media-open figcaption{grid-area:2/1}
+.results-desk .rx-media-open .rx-open{position:relative;inset:auto;grid-area:1/1}
+
 /* The preview IS the control that opens Screening: the whole media area, with a visible hint. */
 .results-desk .rx-open{position:absolute;inset:0 0 32px;display:flex;align-items:flex-end;justify-content:center;padding:10px;border:0;border-radius:0;background:transparent;cursor:zoom-in}
 .results-desk .rx-open>span{display:inline-flex;align-items:center;gap:6px;padding:7px 11px;border:1px solid var(--line-2);border-radius:999px;background:rgba(17,19,21,.84);font:500 12px/1.2 var(--body);color:var(--ink)}
@@ -108,10 +122,10 @@
 /* This surface's own dialog closes with a control, not a line of text: it sits outside .modal-actions,
    which is the only thing styles.css dresses. Secondary geometry, the same as the desk's. */
 #modal .rx-request>.cancel{display:inline-flex;align-items:center;min-height:44px;margin-top:14px;padding:10px 14px;border:1px solid var(--line-2);border-radius:8px;background:transparent;color:var(--ink);font:500 14px/1.2 var(--body)}
-.rx-screening .rx-context,.rx-screening .rx-job-note{display:none}
+.rx-screening .rx-job-note{display:none}
 @media(min-width:1700px){.rx-grid{grid-template-columns:repeat(5,minmax(0,1fr))}.rx-contact{display:grid;grid-template-columns:minmax(0,1fr) 370px;gap:20px}.rx-selected{margin:0;display:block;align-self:start}.rx-selected-media{height:260px}.rx-pages{grid-column:1}.rx-contact .rx-selected{grid-column:2;grid-row:1/3}}
 @media(max-width:1100px){.rx-grid{grid-template-columns:repeat(3,minmax(0,1fr))}.rx-heading-row{align-items:flex-start}.rx-head-actions{justify-content:flex-end}.rx-heading h1{font-size:28px}}
-@media(max-width:650px){.results-desk{padding:14px 10px 16px}.rx-heading{padding-bottom:12px;gap:10px}.rx-heading-row{display:block}.rx-heading h1{font-size:26px}.rx-head-actions{justify-content:flex-start;margin-top:12px}.rx-context{padding:12px 0}.rx-grid{grid-template-columns:repeat(2,minmax(0,1fr));gap:10px}.rx-card-info{padding:10px 9px;gap:5px;display:flex;flex-wrap:wrap;justify-content:space-between;align-items:baseline}.rx-card-info small{width:100%}.rx-card-open{padding:0 9px 10px}.rx-toolbar{display:block}.rx-toolbar>div{margin-top:10px;display:grid;grid-template-columns:repeat(3,1fr);gap:6px}.rx-toolbar>div button{padding:8px 6px;font-size:13px}.rx-selected{display:block;padding:12px;margin-top:14px}.rx-selected-media{height:210px}.rx-selected h2{margin:10px 0}.results-desk .rx-decision{align-items:center;flex-wrap:wrap;gap:10px}.results-desk .rx-decision>div:last-child{flex:1 1 100%}.results-desk .rx-decision button{flex:1 1 auto}.rx-stage{height:52vh}.rx-stage.rx-ab{height:70vh;grid-template-columns:1fr;grid-template-rows:1fr 1fr}.rx-screen-controls{gap:8px}.rx-screen-controls select{max-width:230px}.rx-confirm figure{height:190px}.rx-heading p{overflow-wrap:anywhere}}
+@media(max-width:650px){.results-desk{padding:14px 10px 16px}.rx-heading{padding-bottom:12px;gap:10px}.rx-heading-row{display:block}.rx-heading h1{font-size:26px}.rx-head-actions{justify-content:flex-start;margin-top:12px}.rx-context{margin:8px 0}.rx-grid{grid-template-columns:repeat(2,minmax(0,1fr));gap:10px}.rx-card-info{padding:10px 9px;gap:5px;display:flex;flex-wrap:wrap;justify-content:space-between;align-items:baseline}.rx-card-info small{width:100%}.rx-card-open{padding:0 9px 10px}.rx-toolbar{display:block}.rx-toolbar>div{margin-top:10px;display:grid;grid-template-columns:repeat(3,1fr);gap:6px}.rx-toolbar>div button{padding:8px 6px;font-size:13px}.rx-selected{display:block;padding:12px;margin-top:14px}.rx-selected-media{height:210px}.rx-selected h2{margin:10px 0}.results-desk .rx-decision{align-items:center;flex-wrap:wrap;gap:10px}.results-desk .rx-decision>div:last-child{flex:1 1 100%}.results-desk .rx-decision button{flex:1 1 auto}.rx-stage{height:52vh}.rx-stage.rx-ab{height:70vh;grid-template-columns:1fr;grid-template-rows:1fr 1fr}.rx-screen-controls{gap:8px}.rx-screen-controls select{max-width:230px}.rx-confirm figure{height:190px}.rx-heading p{overflow-wrap:anywhere}}
 @media(min-width:1101px){.rx-contact{display:grid;grid-template-columns:minmax(0,1fr) 340px;gap:18px}.rx-contact .rx-grid{grid-template-columns:repeat(3,minmax(0,1fr))}.rx-contact .rx-selected{margin:0;display:block;align-self:start;grid-column:2;grid-row:1/3;position:sticky;top:12px}.rx-selected-media{height:245px}.rx-contact .rx-pages{grid-column:1}.rx-card-info{padding:10px 9px}}
 .rx-screening{height:calc(100dvh - 210px);min-height:440px;display:flex;flex-direction:column}.rx-screening .rx-heading{padding-bottom:10px;gap:8px}.rx-screening .rx-heading h1{font-size:26px;margin:2px 0}.rx-screening .rx-toolbar{margin:10px 0}.rx-screening .rx-work{flex:1;min-height:120px;display:flex;flex-direction:column}.rx-screening .rx-stage{height:auto;flex:1;min-height:100px}.rx-screening .rx-screen-controls{margin:8px 0}.rx-screening .rx-decision{margin-top:4px}.rx-screening .rx-requests{display:none}.rx-screening .rx-heading #rx-import,.rx-screening .rx-heading #rx-revise{display:none}
 @media(max-width:650px){.rx-screening{height:calc(100dvh - 225px);min-height:555px}.rx-screening .rx-heading-row{display:flex;gap:8px;align-items:center}.rx-screening .rx-heading h1{font-size:24px}.rx-screening .rx-heading p:not(.rx-eyebrow){display:none}.rx-screening .rx-head-actions{margin:0}.rx-screening .rx-toolbar{display:flex;gap:8px;align-items:flex-start}.rx-screening .rx-toolbar>label{display:none}.rx-screening .rx-toolbar>div{display:flex;margin:0}.results-desk.rx-screening .rx-decision{gap:8px;padding:10px 12px}.rx-screening .rx-decision small{font-size:12px}.rx-screening .rx-stage.rx-ab{grid-template-columns:1fr;grid-template-rows:repeat(2,minmax(0,1fr))}.rx-screen-controls>span:last-child{font-size:12px}}
@@ -133,9 +147,17 @@ body.results-desk-active #app #main{display:block;min-height:0;min-width:0;width
 /* Media that cannot be loaded: a neutral placeholder, never a broken-image icon or leaked alt text. */
 .rx-thumb .rx-thumb-unavailable{position:absolute;inset:0;display:grid;place-items:center;padding:8px;font-size:13px;color:var(--muted);background:var(--rx-well);text-align:center}.rx-thumb .rx-thumb-unavailable[hidden]{display:none}.rx-failed>img,.rx-failed>video{visibility:hidden}
 @media(max-width:650px){
- .rx-heading{padding-bottom:10px}.rx-context{padding:9px 0}.rx-context span{display:none}
+ .rx-heading{padding-bottom:10px}.rx-context{margin:6px 0}
  .rx-job-note{padding:9px 11px;margin-bottom:10px}.rx-toolbar{margin-bottom:12px}
  .results-desk .rx-decision{padding:10px 12px}
  .results-desk .rx-decision>div:first-child{max-width:none}
  .results-desk.rx-screening{min-height:560px}
+}
+
+/* Reading the full brief may scroll the narrow Screening page, but must never
+   squeeze the selected or comparison image into a strip beneath its caption. */
+@media(max-width:650px){
+ .rx-screening .rx-context[open]~.rx-work{flex:0 0 auto}
+ .rx-screening .rx-context[open]~.rx-work .rx-stage{height:260px;flex:none}
+ .rx-screening .rx-context[open]~.rx-work .rx-stage.rx-ab{height:360px}
 }

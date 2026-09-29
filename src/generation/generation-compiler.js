@@ -201,9 +201,9 @@ function inventoryIntent(spec, sanitize) {
    decides how to say it, and only the pack knows whether this model wants
    `<Subject 1>`, `Image 1`, or a named API field.
 
-   MediaAsset stays dormant. The planner reads the reference objects the prompt engine
-   already receives and the entity records already resolved onto the spec; it mints no
-   asset identity and calls nothing in the ledger. */
+   The planner reads the reference objects the prompt engine already receives and
+   the entity records already resolved onto the spec; it mints no asset identity
+   and calls nothing in the ledger. MediaAsset access belongs to media-asset-service. */
 
 /* Order matters to some models and not to others, so the planner produces ONE
    canonical order and records it. Temporal contracts lead, because a first or last
@@ -304,7 +304,7 @@ function planReferences(spec, references, options = {}) {
       const entity = entities.get(entityId) || null;
       /* refId is the reference's own key where it has one, and its ordinal otherwise.
          Deterministic, stable across runs, and never derived from a hash of bytes —
-         that identity belongs to MediaAsset and MediaAsset is dormant. */
+         that identity belongs to MediaAsset, not this reference planner. */
       const refId = text(reference.refId || reference.key) || `ref-${index + 1}`;
       return {
         refId,

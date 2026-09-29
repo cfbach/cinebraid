@@ -90,7 +90,8 @@ Two rules matter more than the rest:
   plan with no bound ending frame.
 
 The planner mints no asset identity and imports nothing from the MediaAsset ledger.
-MediaAsset remains dormant.
+The active ledger is accessed through `src/media/media-asset-service.js`; reference
+planning does not bypass that owner.
 
 ## How intent coverage works
 

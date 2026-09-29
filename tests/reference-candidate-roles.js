@@ -1,0 +1,15 @@
+'use strict';
+const assert = require('assert/strict');
+const R = require('../public/shared-reference-media');
+const entity = {continuityStates:[{id:'dry',isDefault:true},{id:'wet'}],coverageSlots:[{id:'front',label:'Front',selectedFile:'arbitrary.png'},{id:'side',label:'Profile',referenceBindings:{wet:'ref-wet'}}],candidateFiles:[{stored:'ref-wet',targetStateId:'wet',referenceBinding:{stateId:'wet',slotId:'side'}}]};
+const media = [{name:'arbitrary.png',available:true},{name:'ref-wet',available:true,assetId:'shared-asset'},{name:'crop.png',available:true,assetId:'shared-asset'}];
+const before=JSON.stringify(entity);
+assert.deepEqual(R.candidateRoles(entity,media[0],'dry',media),[{id:'front',label:'Front'}]);
+assert.deepEqual(R.candidateRoles(entity,media[0],'wet',media),[],'legacy selection must not imply another state');
+assert.deepEqual(R.candidateRoles(entity,media[1],'wet',media),[{id:'side',label:'Profile'}]);
+assert.deepEqual(R.candidateRoles(entity,media[1],'dry',media),[],'binding must stay state-specific');
+assert.deepEqual(R.candidateRoles(entity,media[2],'wet',media),[],'same asset is not the exact selected relationship');
+assert.deepEqual(R.candidateRoles(entity,{...media[0],structure:'sheet'},'dry',media),[],'sheet cannot claim a single view');
+assert.deepEqual(R.candidateRoles(entity,media[0],'dry',[{...media[0],available:false}]),[],'unavailable selected image is not a filled view');
+assert.equal(JSON.stringify(entity),before,'reading roles never changes project data');
+console.log('Reference candidate roles: 8 checks passed');

@@ -1,20 +1,19 @@
 /* CineBraid MediaAsset ledger — durable persistence.
  *
- * `projects/<slug>/media-assets.json`, written the way automation-runs.js writes:
+ * `<projects root>/<slug>/media-assets.json`, written the way automation-runs.js writes:
  * a schema version on the document, an atomic temp-then-rename, a `.bak` taken
  * before the primary is replaced, and read-side recovery from that backup.
  *
- * It deliberately does NOT write the way fal-generation.js reads. That module's
- * `catch { return []; }` turns an unreadable job file into an empty job list, which
- * silently frees every concurrency slot. The same shape here would mean "this
- * project has no media" — and a later index would then re-mint an assetId for every
- * file, destroying every relationship built on the old ones. So when the primary
- * AND the backup are both unreadable this store REFUSES. Losing a ledger loudly is
+ * An unreadable ledger must not look like an empty one: a later index would
+ * re-mint an assetId for every file, destroying relationships built on the old
+ * identities. When the primary AND the backup are unreadable this store REFUSES,
+ * as generation-job-store.js does for the job ledger. Losing a ledger loudly is
  * recoverable; losing identity silently is not.
  *
- * PHASE 2a: inert. Nothing in the product calls readLedger or writeLedger, and no
- * `media-assets.json` is created by opening a project. A missing sidecar is the
- * normal pre-Phase-2b state and reads as an empty ledger that does not exist yet.
+ * media-asset-service.js is the production access owner. It coordinates indexing
+ * and verification, including stat-only backfill when a project has no ledger.
+ * A missing sidecar reads as an empty ledger that does not exist yet; reading it
+ * alone does not create a file.
  */
 
 const fs = require("fs");

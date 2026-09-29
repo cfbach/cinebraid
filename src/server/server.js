@@ -10034,8 +10034,17 @@ app.post("/api/agents/runs/:id/apply-stage", (req, res) => {
 /* ---- search: semantic via local embeddings, plain-text fallback ---- */
 const EMB_CACHE = path.join(path.resolve(__dirname, "../.."), "data", "embeddings.json");
 function searchCorpus(P) {
-  const docs = [];
-  for (const s of P.shots)
+  const rows = value => Array.isArray(value) ? value : [];
+  const meta = P.meta || {};
+  const docs = [{
+    type: "bible", id: "project", title: "Project Bible — " + (meta.title || "Project foundation"),
+    text: [meta.world?.setting || meta.worldSetting, meta.globalStylePrompt, meta.globalNegativePrompt || meta.world?.reject, meta.world?.include, meta.description].filter(Boolean).join("\n"),
+  }];
+  for (const scene of rows(P.scenes)) docs.push({
+    type: "scene", id: scene.id, title: scene.id + " — " + (scene.title || "Scene"),
+    text: [scene.title, scene.description, scene.desc, scene.notes].filter(Boolean).join("\n"),
+  });
+  for (const s of rows(P.shots))
     docs.push({
       type: "shot",
       id: s.id,
@@ -10043,6 +10052,7 @@ function searchCorpus(P) {
       text: [
         s.title,
         s.desc,
+        ...Object.values(s.creationBrief?.frameWorkflows || {}).map(frame => frame?.action),
         s.positioning,
         s.safe,
         s.notes,
@@ -10067,14 +10077,18 @@ function searchCorpus(P) {
     ["characters", "character"],
     ["locations", "location"],
     ["props", "prop"],
+    ["vehicles", "vehicle"],
+    ["audio", "audio"],
   ])
-    for (const e of P[list])
+    for (const e of rows(P[list]))
       docs.push({
         type,
         id: e.id,
         title: e.id + " — " + e.name,
         text: [
           e.name,
+          entityVisualDescription(e, list),
+          ...rows(e.continuityStates).map(state => [state.name, state.notes].filter(Boolean).join(" ")),
           e.block,
           e.driftNotes,
           e.notes,
@@ -10085,14 +10099,14 @@ function searchCorpus(P) {
           .filter(Boolean)
           .join("\n"),
       });
-  for (const b of P.meta.styleBlocks || [])
+  for (const b of rows(meta.styleBlocks))
     docs.push({
       type: "style",
       id: b.id,
       title: "Style — " + b.name,
       text: b.text,
     });
-  for (const s of P.sessions)
+  for (const s of rows(P.sessions))
     docs.push({
       type: "session",
       id: String(s.n),
@@ -10120,6 +10134,13 @@ const cos = (a, b) => {
   return d / Math.sqrt(na * nb);
 };
 app.post("/api/search", async (req, res) => {
+  // Bind this navigation request to the production the window is actually showing.
+  // Older clients may omit it; a named, stale project must never search the new one.
+  if (req.body.project && String(req.body.project) !== activeSlug())
+    return res.status(409).json({
+      error: "The active project changed. Reopen your production before searching.",
+      code: "PROJECT_CHANGED",
+    });
   /* NO_PROJECT_SHELL_TRUTH_V1 (C3) — SEARCH REFUSES WITHOUT A PROJECT; IT DOES NOT CRASH.
 
      This route read `DATA()` unconditionally. With no active project that is
