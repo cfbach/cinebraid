@@ -782,13 +782,7 @@ function normalizeShotV5(s) {
 const SHOT_NO_PRIMARY_LOCATION_KEY = "noPrimaryLocation";
 
 function projectCoverageTemplate(list) {
-  const templates = {
-    characters: [["front","Front",true],["front-three-quarter","3/4 front",true],["profile","Profile",true],["rear","Rear",true],["detail-face","Face / detail",false],["expression","Expression / optional detail",false]],
-    props: [["hero","Front / hero",true],["three-quarter","3/4 view",true],["side","Side",true],["rear","Rear",false],["top","Top",false],["detail","Detail / function close-up",true]],
-    vehicles: [["front","Front",true],["rear","Rear",true],["left-side","Left side",true],["right-side","Right side",true],["front-three-quarter","Front 3/4",true],["rear-three-quarter","Rear 3/4",false],["interior","Interior / cockpit",false],["detail","Detail",false]],
-    locations: [["establishing","Master establishing",true],["reverse","Reverse angle",true],["left-coverage","Left-facing coverage",false],["right-coverage","Right-facing coverage",false],["action-zone","Key action zone",true],["entrance-exit","Entrance / exit",false],["detail-zone","Detail zone",false],["overhead","Overhead / layout",false]],
-  };
-  return (templates[list] || []).map(([id,label,required]) => ({ id,label,requirement:templateRequirement(required),approvedFile:"",notes:"",status:"missing",replacementHistory:[] }));
+  return coverageTemplateSlots(list).map(({ selectedFile, ...slot }) => ({ ...slot, approvedFile: selectedFile, replacementHistory: [] }));
 }
 function projectExpressionTemplate(entity) {
   const raw = String(entity?.expressions || "neutral; focused; worried; determined; relieved; custom").split(/[;,\n]+/).map((item) => item.trim()).filter(Boolean).slice(0, 8);

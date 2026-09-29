@@ -702,6 +702,18 @@
     };
   }
 
+  /* Canonical display defaults, shared with the explicit enrollment writer. Returns
+     fresh rows only; a read never installs a plan on an entity. */
+  function coverageTemplateSlots(list) {
+    const templates = {
+      characters: [["front","Front",true],["front-three-quarter","3/4 front",true],["profile","Profile",true],["rear","Rear",true],["detail-face","Face / detail",false],["expression","Expression / optional detail",false]],
+      props: [["hero","Front / hero",true],["three-quarter","3/4 view",true],["side","Side",true],["rear","Rear",false],["top","Top",false],["detail","Detail / function close-up",true]],
+      vehicles: [["front","Front",true],["rear","Rear",true],["left-side","Left side",true],["right-side","Right side",true],["front-three-quarter","Front 3/4",true],["rear-three-quarter","Rear 3/4",false],["interior","Interior / cockpit",false],["detail","Detail",false]],
+      locations: [["establishing","Master establishing",true],["reverse","Reverse angle",true],["left-coverage","Left-facing coverage",false],["right-coverage","Right-facing coverage",false],["action-zone","Key action zone",true],["entrance-exit","Entrance / exit",false],["detail-zone","Detail zone",false],["overhead","Overhead / layout",false]],
+    };
+    return (templates[list] || []).map(([id,label,required]) => ({ id,label,requirement:templateRequirement(required),selectedFile:"",notes:"",status:"missing" }));
+  }
+
   return {
     COVERAGE_REQUIREMENTS,
     LEGACY_FALSE_REQUIREMENT,
@@ -713,6 +725,7 @@
     requirementConflict,
     writeCoverageRequirement,
     templateRequirement,
+    coverageTemplateSlots,
     REFERENCE_ARTIFACT_STRUCTURES,
     referenceArtifactStructure,
     referenceArtifactRow,
