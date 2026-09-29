@@ -253,24 +253,26 @@ function currentDirectionForPackage(s, pack) {
  * promptReferenceOptions() requires before it offers one; a take's file is gone.
  * Each of those changes what a rebuild would compile, so each must stale the
  * package that consumed it. */
-/* H3 reference-video builds use state/coverage/keyframe IDs from the guided
-   packager, rather than the older planning picker's entity/take IDs. Resolve
-   their current inputs through that same packager: an explicit exclusion,
-   removed entity, or lost approved frame must still make its saved build stale. */
+/* H3 guided builds use structural reference IDs, not the planning picker's
+   entity/take IDs. Read the compiler's collector for this package's own unit;
+   changing the visible unit must neither stale it nor substitute an endpoint. */
 function currentPackageReferenceOptions(s, pack) {
-  if (pack?.mode === "r2v" && typeof guidedMotionReferences === "function"
+  if (["r2v", "i2v"].includes(pack?.mode) && typeof guidedMotionReferences === "function"
       && typeof guidedVideoProfiles === "function") {
     const profileId = currentMotionInputs(s, pack)?.profileId || pack.profileId;
     const profile = guidedVideoProfiles().find((row) => row.id === profileId);
-    if (profile?.family === "minimax-h3")
-      return guidedMotionReferences(s, guidedCurrentShotStill(s), profile);
+    if (profile?.family === "minimax-h3") {
+      const unit = (s.clips || []).find((row) => unitKey(row) === pack.segmentId);
+      if (pack.mode === "i2v" && !unit) return [];
+      return guidedMotionReferences(s, guidedCurrentShotStill(s), profile, unit);
+    }
   }
   return typeof promptReferenceOptions === "function" ? promptReferenceOptions(s) : [];
 }
 function missingConsumedReferences(s, pack) {
-  const available = new Set(currentPackageReferenceOptions(s, pack).map((row) => row.key));
+  const available = currentPackageReferenceOptions(s, pack);
   return (pack.references || [])
-    .filter((saved) => saved && saved.key && !available.has(saved.key))
+    .filter((saved) => saved && saved.key && !available.some((row) => row.key === saved.key && (row.approvedAssetId || "") === (saved.approvedAssetId || "")))
     .map((saved) => saved.label || saved.key);
 }
 function currentSnapshotForPackage(s, pack) {
@@ -281,7 +283,7 @@ function currentSnapshotForPackage(s, pack) {
        now, so the reference arrays differ and the named reason below says which. */
     refs = (pack.references || [])
       .map((saved) => {
-        const current = available.find((x) => x.key === saved.key);
+        const current = available.find((x) => x.key === saved.key && (x.approvedAssetId || "") === (saved.approvedAssetId || ""));
         return current ? { ...saved, url: current.url, label: current.label } : null;
       })
       .filter(Boolean);

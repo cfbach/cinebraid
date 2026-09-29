@@ -874,7 +874,7 @@
     return `<details class="motion-unit-tabs"><summary><div><b>Motion unit ${esc(shown.label || "A")}</b><small>${esc(shown.title || "Primary motion")} · ${esc(seconds)}${detail ? ` · ${detail}` : ""}</small></div><span>${count}</span></summary><div class="motion-unit-tab-body">${note}<div>${units}<button onclick="addGuidedMotionUnit('${s.id}')">＋ Add unit${stored ? "" : " B"}</button></div>${unit ? `<footer><span>${unit.motionPlan ? "CUSTOM OVERRIDES" : "INHERITING SHOT DEFAULTS"}</span><button onclick="resetMotionUnitPlan('${s.id}','${unit.id}')">Reset to defaults</button><button onclick="setMotionUnitAsDefaults('${s.id}','${unit.id}')">Use as shot defaults</button></footer>` : ""}</div></details>`;
   }
   const guidedMotionReferencesRaw607 = guidedMotionReferences;
-  function gatherMotionReferences607(s, current, profile) {
+  function gatherMotionReferences607(s, current, profile, unit) {
     /* MULTI-FRAME IS A DIFFERENT PACKAGE, and creation-studio.js already builds it.
      *
      * This collector knows two visual anchors: the opening frame and an optional
@@ -903,9 +903,16 @@
     if (profile?.mode === "t2v") return [];
     /* Read-only: the package preview is drawn on every Motion render, and a build has
        already created its unit before it gathers references. */
-    const unit = activeMotionUnit(s, false), frames = guidedFrames(s), refs = [];
-    const startFrame = frames.find((frame) => frame.id === unit?.fromFrame) || frames[0], startIndex = frames.indexOf(startFrame), startTake = startFrame ? guidedFrameApproved(s, startFrame, takesFor(s.id), startIndex) : current;
-    if (startTake) refs.push({ key: `shot-start:${startFrame?.id || s.id}:${startTake.name}`, label: `Approved Frame ${startFrame?.label || "A"}`, url: startTake.url, role: "first-frame", mediaType: "image", priority: "primary", approved: true, instruction: "Use as the approved opening composition. Preserve geometry, identity, lighting, and continuity unless motion direction explicitly changes them." });
+    unit ||= activeMotionUnit(s, false);
+    const frames = guidedFrames(s), refs = [];
+    const startFrame = unit?.fromFrame ? frames.find((frame) => frame.id === unit.fromFrame) : frames[0], startIndex = frames.indexOf(startFrame), startTake = startFrame ? guidedFrameApproved(s, startFrame, takesFor(s.id), startIndex) : !unit?.fromFrame ? current : null;
+    // A filename can survive a byte replacement; the approval belongs to its asset.
+    if (startTake && profile?.mode === "i2v") {
+      const receipt = currentHumanAuthority(P, { kind: "shot-frame", shotId: s.id, frameId: startFrame?.id });
+      if (receipt?.assetId && receipt.assetId !== startTake.assetId) return [];
+    }
+    // Approval identity is freshness provenance; retain the compiler's file source.
+    if (startTake) refs.push({ key: `shot-start:${startFrame?.id || s.id}:${startTake.name}`, label: `Approved Frame ${startFrame?.label || "A"}`, url: startTake.url, ...(profile?.mode === "i2v" ? { approvedAssetId: startTake.assetId || "" } : {}), role: "first-frame", mediaType: "image", priority: "primary", approved: true, instruction: "Use as the approved opening composition. Preserve geometry, identity, lighting, and continuity unless motion direction explicitly changes them." });
     if (unit?.toFrame && ["flf","r2v","audio-video"].includes(profile?.mode)) { const frame = frames.find((item) => item.id === unit.toFrame), index = frames.indexOf(frame), take = frame ? guidedFrameApproved(s, frame, takesFor(s.id), index) : null; if (take) refs.push({ key: `shot-last:${frame.id}:${take.name}`, label: `Approved Frame ${frame.label}`, url: take.url, role: "last-frame", mediaType: "image", priority: "primary", approved: true, instruction: "Use as the approved endpoint composition." }); }
     if (!profile || ["i2v","flf"].includes(profile.mode)) return refs;
     const imageRefs = compositionAugmentedReferences(s, selectedShotReferences(s)).filter((ref) => !ref.blocking && ref.url && !refs.some((item) => item.url === ref.url)).map((ref) => ({ ...ref, mediaType: "image", staged: ensureShotCreation(s).composition.elements.some((element) => element.referenceKey === ref.key && !element.hidden) }));
@@ -917,8 +924,8 @@
     const current = guidedCurrentShotStill(s), raw = current ? gatherMotionReferences607(s, current, profile) : [];
     return { profile, raw, ...fitReferencesToProfile(profile, raw) };
   }
-  guidedMotionReferences = window.guidedMotionReferences = function guidedMotionReferences607(s, current, profile) {
-    return fitReferencesToProfile(profile, gatherMotionReferences607(s, current, profile)).assigned;
+  guidedMotionReferences = window.guidedMotionReferences = function guidedMotionReferences607(s, current, profile, unit) {
+    return fitReferencesToProfile(profile, gatherMotionReferences607(s, current, profile, unit)).assigned;
   };
 
   const guidedMotionPanel606 = guidedMotionPanel;
