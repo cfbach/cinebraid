@@ -7,6 +7,7 @@ const {disposableRoot}=require('./helpers/disposable-root');
 const {rawFixture,withCanon}=require('./render-harness');
 const pw=require('./helpers/playwright-module').requirePlaywright('first-frame-motion-browser');
 const startWidth=Number(process.env.FIRST_SHOT_START_WIDTH)||1440;
+const i2vJourney=process.argv.includes('--i2v-freshness'), imageJobs=i2vJourney?0:1;
 const mode=process.env.FIRST_SHOT_MODE||'new', source=process.argv.includes('--evidence-project')?process.argv[process.argv.indexOf('--evidence-project')+1]:'';
 const w=disposableRoot('first-frame-motion',{config:{activeProject:'first-shot',generation:{fal:{enabled:true,apiKey:'synthetic-never-sent'}}}});
 let p,dir;
@@ -26,10 +27,11 @@ await page.locator('#toast').waitFor({state:'hidden',timeout:4000}).catch(()=>{}
 await page.waitForTimeout(140);
 await page.screenshot({path:path.join(OUT,mode+'-'+name+'.png')});
 fs.writeFileSync(path.join(OUT,mode+'-'+name+'.txt'),await page.locator('body').innerText());}
-async function views(name,selector){for(const width of [1440,390]){await page.setViewportSize({width,height:width===390?844:900});
+async function views(name,selector){for(const width of (i2vJourney?[startWidth]:[1440,390])){await page.setViewportSize({width,height:width===390?844:900});
 await capture(name+'-'+width,selector);}}
-async function stage(id){await page.setViewportSize({width:1440,height:900});
-await page.locator('[data-stage-id="'+id+'"]').click();
+async function stage(id){await page.setViewportSize({width:i2vJourney?startWidth:1440,height:i2vJourney&&startWidth===390?844:900});
+if(i2vJourney && id==='motion') await page.locator('.guided-next-action .shot-primary-action').click();
+else await page.locator('[data-stage-id="'+id+'"]').click();
 await page.waitForTimeout(200);}
 (async()=>{try{
 const port=await new Promise(r=>{const n=net.createServer();n.listen(0,'127.0.0.1',()=>{const v=n.address().port;n.close(()=>r(v));});});
@@ -144,20 +146,23 @@ if(process.argv.includes('--reference-inputs')){
   journeyOutcome='mocked-reference-video-dispatch';return;
 }
 
+if(!i2vJourney){
 await stage('motion');
 await views('motion','.guided-motion-card');
 await stage('inputs');
 await views('inputs','.guided-input-tray');
 await stage('frames');
 await views('frames','.shot-frames-workspace');
-await stage('motion');if(mode==='old'){await stage('frames');if(await page.locator('.guided-frame-workflow').getAttribute('open')===null)await page.locator('.guided-frame-workflow > summary').click();if(await page.locator('.guided-frame-card').first().getAttribute('open')===null)await page.locator('.guided-frame-card > summary').first().click();}else {await page.setViewportSize({width:390,height:844});const next=page.locator('.shot-journey').getByRole('button',{name:'Make or import Frame A',exact:true});await next.scrollIntoViewIfNeeded();
+await stage('motion');}
+if(mode==='old'){await stage('frames');if(await page.locator('.guided-frame-workflow').getAttribute('open')===null)await page.locator('.guided-frame-workflow > summary').click();if(await page.locator('.guided-frame-card').first().getAttribute('open')===null)await page.locator('.guided-frame-card > summary').first().click();}else {await page.setViewportSize({width:i2vJourney?startWidth:390,height:i2vJourney&&startWidth!==390?900:844});const next=page.locator('.shot-journey').getByRole('button',{name:'Make or import Frame A',exact:true});await next.scrollIntoViewIfNeeded();
 const box=await next.boundingBox();
-check('390 px next action fits the viewport and has a 44 px target',box&&box.x>=0&&box.x+box.width<=390&&box.height>=44);
+check('390 px next action fits the viewport and has a 44 px target',box&&box.x>=0&&box.x+box.width<=(i2vJourney?startWidth:390)&&box.height>=44);
 await next.focus();
 await next.press('Enter');}await page.locator('.shot-frames-workspace').waitFor();
 check(mode==='old'?'Manually unfolded the old Frames workspace':'Frame handoff opens Frames',await page.locator('.shot-frames-workspace').count()===1);
 check('Handoff keeps exclusions',await page.evaluate(id=>JSON.stringify(P.shots.find(s=>s.id===id).creationBrief.disabledInputKeys),shotId)===exclusions);
 await views('frame-handoff',mode==='old'?'.guided-primary-brief':'.shot-generation-frame-entry');
+if(!i2vJourney){
 if(mode==='old')await page.locator('.frame-generation > summary').click();else {await page.getByRole('button',{name:'Prepare Frame A generation',exact:true}).click();await page.locator('.guided-frame-compile select').waitFor();check('Still preparation reveals the real image target',await page.locator('.guided-frame-compile select').isVisible());check('Still preparation does not dispatch',!requests.some(r=>r.uri==='/api/generation/fal/jobs'));}
 await views('frame-next',mode==='old'?'.frame-generation':'.shot-generation-frame-guide');
 if(mode==='old')await page.locator('.frame-prompt-tools > summary').click();
@@ -178,6 +183,7 @@ await page.locator('#fal-frame-submit:not([disabled])').waitFor();
 await page.locator('#fal-frame-submit').click();
 await page.waitForTimeout(500);
 check('Only final image action dispatches one intercepted job',requests.filter(r=>r.uri==='/api/generation/fal/jobs').length===1);if(await page.getByRole('button',{name:'Cancel',exact:true}).count())await page.getByRole('button',{name:'Cancel',exact:true}).click();
+}
 const chooserPromise=page.waitForEvent('filechooser');
 if(mode==='old')await page.locator('[data-frame-dropzone="'+frameId+'"]').click();else await page.getByRole('button',{name:'Import Frame A',exact:true}).click();
 const chooser=await chooserPromise;check('Import action targets the exact Frame A input',await chooser.element().getAttribute('id')==='frame-file-'+frameId);
@@ -217,9 +223,51 @@ await views('video-model','.guided-video-target-control');
 await page.locator('.guided-motion-controls button').filter({hasText:/^Build prompt$/}).click();
 await page.locator('.h3-generate-btn').waitFor();
 await views('video-prepared','.h3-generate-btn');
-check('Motion build does not add a job',requests.filter(r=>r.uri==='/api/generation/fal/jobs').length===1);
+if(i2vJourney)await views('video-freshness','[data-package-freshness]');
+check('Motion build does not add a job',requests.filter(r=>r.uri==='/api/generation/fal/jobs').length===imageJobs);
 const diagnostic=await page.evaluate(id=>{const shot=P.shots.find(s=>s.id===id),build=latestPromptBuild(P,shot.creationBrief.motionPromptBuilds);return {build,available:promptReferenceOptions(shot),reasons:packageStaleReasons(shot,build)};},shotId);
 fs.writeFileSync(path.join(OUT,mode+'-motion-freshness.json'),JSON.stringify(diagnostic,null,2));
+if(i2vJourney)check('The real approved-frame I2V build is fresh without packet edits',diagnostic.reasons.length===0);
+if(i2vJourney){
+  // Isolated in-memory regressions: retain the actual UI-created build and receipt.
+  // Each case starts from the approved production state; none is saved or dispatched.
+  const regressions=await page.evaluate(({shotId,frameId})=>{
+    const originalP=P,originalScan=SCAN,rows=[];
+    function probe(name,mutate,fresh=false){
+      P=structuredClone(originalP);SCAN=structuredClone(originalScan);
+      try{
+        const shot=P.shots.find(s=>s.id===shotId),build=latestPromptBuild(P,shot.creationBrief.motionPromptBuilds);
+        const unit=shot.clips.find(u=>unitKey(u)===build.segmentId),frame=shot.keyframes.find(f=>f.id===frameId);
+        mutate({shot,build,unit,frame,receipt:P.productionAuthority.receipts.find(r=>r.kind==='shot-frame'&&r.frameId===frameId&&r.status==='current')});
+        const reasons=packageStaleReasons(shot,build);rows.push({name,reasons,passed:(reasons.length===0)===fresh});
+      }finally{P=originalP;SCAN=originalScan;}
+    }
+    probe('legacy unbound frame package requires rebuilding',({build})=>{delete build.references[0].approvedAssetId;});
+    probe('revoked approval',({receipt})=>{receipt.status='revoked';receipt.revokedAt=new Date().toISOString();receipt.revocationReason='withdrawn';});
+    probe('missing media',({frame})=>{SCAN.shots[shotId].takes=SCAN.shots[shotId].takes.filter(t=>t.name!==frame.winner);});
+    probe('replaced selection',({frame})=>{frame.winner='different.png';});
+    probe('same-name replacement asset',({frame})=>{SCAN.shots[shotId].takes.find(t=>t.name===frame.winner).assetId='asset-00000000000000000000000000000000';});
+    probe('new approval for a replacement requires rebuilding',({frame,receipt})=>{
+      const assetId='asset-00000000000000000000000000000000';
+      SCAN.shots[shotId].takes.find(t=>t.name===frame.winner).assetId=assetId;
+      frame.winnerAssetId=assetId;receipt.assetId=assetId;
+    });
+    probe('wrong frame target',({unit})=>{unit.fromFrame='other-shot-frame';});
+    probe('missing motion unit',({shot})=>{shot.clips=[];});
+    probe('wrong shot target',({shot})=>{shot.id='other-shot';});
+    probe('changed direction',({unit})=>{unit.motionPrompt+=' Changed camera direction.';});
+    probe('changed duration',({shot})=>{shot.creationBrief.motionDuration=9;});
+    probe('changed model',({shot})=>{shot.creationBrief.motionProfileId='minimax-h3/t2v';});
+    probe('changed saved route',({shot})=>{shot.deliveryRoute='t2v';});
+    probe('viewing another unit preserves this package',({shot,unit})=>{
+      shot.clips.push({...structuredClone(unit),id:'other-unit',fromFrame:'other-frame'});
+      shot.creationBrief.activeMotionUnitId='other-unit';
+    },true);
+    return rows;
+  },{shotId,frameId});
+  fs.writeFileSync(path.join(OUT,mode+'-freshness-regressions.json'),JSON.stringify(regressions,null,2));
+  for(const row of regressions)check('Freshness: '+row.name,row.passed);
+}
 if(diagnostic.reasons.length){journeyOutcome='blocked-before-video-review';
 check('Existing freshness gate refuses unmatched approved-frame identity',diagnostic.reasons.some(r=>r.includes('Approved Frame A')));
 check('Refusal disables video dispatch',await page.locator('.h3-generate-btn').isDisabled());
@@ -229,14 +277,62 @@ else {journeyOutcome='mocked-video-dispatch';
 await page.locator('.h3-generate-btn').click();
 await page.locator('#fal-h3-submit:not([disabled])').waitFor();
 await views('video-review','.h3-generation-head');
-check('Video review precedes its dispatch',requests.filter(r=>r.uri==='/api/generation/fal/jobs').length===1);
+if(i2vJourney)await views('video-cost','#fal-h3-generation-view');
+check('Video review precedes its dispatch',requests.filter(r=>r.uri==='/api/generation/fal/jobs').length===imageJobs);
+if(i2vJourney)check('Request review and final dispatch have distinct labels',(await page.locator('#fal-h3-submit').textContent()).trim()==='Generate video');
 await page.locator('#fal-h3-submit').click();
 await page.waitForTimeout(500);
-check('Only final video action dispatches its mocked job',requests.filter(r=>r.uri==='/api/generation/fal/jobs').length===2);}
-// Separate dialog/dispatch contract, not the normal novice journey. The current
-// compiler's shot-start key is absent from its freshness catalogue. Supply a valid
-// take-key packet fixture for the same approved asset; keep the real refusal above.
-if(process.argv.includes('--review-contract')) {
+check('Only final video action dispatches its mocked job',requests.filter(r=>r.uri==='/api/generation/fal/jobs').length===imageJobs+1);
+if(i2vJourney){
+  const body=requests.filter(r=>r.uri==='/api/generation/fal/jobs').at(-1).body;
+  const saved=JSON.parse(fs.readFileSync(path.join(dir,'project.json')));
+  const {compileH3ExecutionPlan}=require('../src/generation/h3-execution');
+  const {serializeH3PlanForFal}=require('../src/generation/fal/fal-h3-backend');
+  const compiled=compileH3ExecutionPlan({project:saved,shotId,buildId:body.sourceBuildId,mode:body.profileMode,durationSeconds:body.durationSeconds,resolution:body.resolution,aspectRatio:body.aspectRatio,submittedPrompt:body.prompt});
+  const serialized=serializeH3PlanForFal(compiled.plan,compiled.capability,{resolveReference:row=>'https://mock.invalid/'+encodeURIComponent(row.refId),config:{}});
+  const approved=await page.evaluate(({shotId,frameId})=>currentHumanAuthority(P,{kind:'shot-frame',shotId,frameId}),{shotId,frameId});
+  const expectedKey='shot-start:'+frameId+':'+approved.value;
+  check('Serialized I2V binds only the exact explicitly approved frame',serialized.bindings.length===1&&serialized.bindings[0].refId===expectedKey&&serialized.input.image_url==='https://mock.invalid/'+encodeURIComponent(expectedKey)&&!serialized.input.end_image_url&&!serialized.input.reference_image_urls);
+  const preflight=await (await fetch(base+'/api/generation/fal/h3/plan',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)})).json();
+  check('The real local preflight accepts the exact approved-frame request',preflight.ok===true&&preflight.dispatch.bindings.length===1&&preflight.dispatch.bindings[0].refId===expectedKey);
+  const savedReference=diagnostic.build.references[0];
+  check('The compiled frame carries the explicit approval asset identity',savedReference.approvedAssetId===approved.assetId);
+  const approvedBytes=Buffer.from(await (await fetch(base+savedReference.url)).arrayBuffer());
+  const sourceBytes=fs.readFileSync(path.join(ROOT,'projects/cinebraid-sample/shots/SAMPLE-03/takes/SAMPLE-03-OPEN.png'));
+  const bytePayload=serializeH3PlanForFal(compiled.plan,compiled.capability,{resolveReference:row=>{
+    check('The serializer resolves the same approved frame source',row.refId===expectedKey&&row.source.path===savedReference.url);
+    return 'data:image/png;base64,'+approvedBytes.toString('base64');
+  },config:{}});
+  check('Serialized image bytes equal the imported and explicitly approved candidate',Buffer.from(bytePayload.input.image_url.split(',')[1],'base64').equals(sourceBytes));
+  const imageSha256=require('crypto').createHash('sha256').update(approvedBytes).digest('hex');
+  check('Final request keeps the explicitly selected I2V route and model',body.profileMode==='i2v'&&body.profileId==='minimax-h3/i2v'&&saved.shots.find(s=>s.id===shotId).deliveryRoute==='i2v');
+  fs.writeFileSync(path.join(OUT,mode+'-i2v-dispatch-proof.json'),JSON.stringify({approved,body,serialized,imageSha256,normalizedPacketFixture:false},null,2));
+  // Disk regressions happen only after the intercepted successful journey, on this
+  // test's disposable copy. Verify bytes through the shipped media identity service.
+  const mediaPath=path.join('shots',shotId,'takes',approved.value),mediaFile=path.join(dir,mediaPath);
+  const mediaService=require('../src/media/media-asset-service');
+  await mediaService.verifyNow({projectsRoot:w.projectsRoot,slug:'first-shot',paths:[mediaPath.replace(/\\/g,'/')]});
+  fs.renameSync(mediaFile,mediaFile+'.held');
+  let missing;
+  try{missing=await (await fetch(base+'/api/generation/fal/h3/plan',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)})).json();}
+  finally{fs.renameSync(mediaFile+'.held',mediaFile);}
+  check('Local request preflight refuses an approved file removed from disk',missing.ok===false&&missing.refusal?.code==='H3_REFERENCE_UNREADABLE');
+  fs.copyFileSync(path.join(ROOT,'projects/cinebraid-sample/anchors/CHAR-COURIER-FRONT.png'),mediaFile);
+  await mediaService.verifyNow({projectsRoot:w.projectsRoot,slug:'first-shot',paths:[mediaPath.replace(/\\/g,'/')]});
+  const replacement=await page.evaluate(async ({shotId,frameId})=>{
+    SCAN=await (await fetch('/api/scan')).json();
+    const shot=P.shots.find(s=>s.id===shotId),frame=shot.keyframes.find(f=>f.id===frameId);
+    return {assetId:takesFor(shotId).find(t=>t.name===frame.winner)?.assetId,reasons:packageStaleReasons(shot,latestPromptBuild(P,shot.creationBrief.motionPromptBuilds))};
+  },{shotId,frameId});
+  check('Verified same-filename byte replacement is a different asset and stales the build',replacement.assetId&&replacement.assetId!==approved.assetId&&replacement.reasons.length>0);
+  fs.writeFileSync(path.join(OUT,mode+'-disk-refusals.json'),JSON.stringify({missing,replacement},null,2));
+
+}
+}
+// Historical baseline diagnostic only: a blocked pre-fix build can use a
+// take-key fixture to isolate its dialog contract. A fresh real build above
+// reaches review and dispatch without any packet normalization.
+if(process.argv.includes('--review-contract') && diagnostic.reasons.length) {
   const fixture = await page.evaluate(id=>{
     const shot=P.shots.find(s=>s.id===id),build=latestPromptBuild(P,shot.creationBrief.motionPromptBuilds);
     const available=promptReferenceOptions(shot);

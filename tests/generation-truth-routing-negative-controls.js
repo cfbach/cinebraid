@@ -202,7 +202,8 @@ async function main() {
      the t2v guard is gone. */
   const E_UNIT = `    /* Read-only: the package preview is drawn on every Motion render, and a build has
        already created its unit before it gathers references. */
-    const unit = activeMotionUnit(s, false), frames = guidedFrames(s), refs = [];`;
+    unit ||= activeMotionUnit(s, false);
+    const frames = guidedFrames(s), refs = [];`;
   const E_ANCHOR = `    if (profile?.mode === "t2v") return [];
 ${E_UNIT}`;
   const E_BROKEN = E_UNIT;
