@@ -618,7 +618,7 @@ async function ncRM9() {
   equal(seen.awaiting, 0, "NC-RM9: and the projection has stopped seeing it");
   equal(card.returnedReview, false, "NC-RM9: so no returned-review card is offered for it");
   equal(seen.readiness, "produce-motion", "NC-RM9: and readiness falls through to producing motion instead of reviewing what came back");
-  ok(/Produce the motion/.test(card.markup), "NC-RM9: which is what the card now says: " + card.headline);
+  equal(card.headline, "Create the shot video", "NC-RM9: which is what the card now says: " + card.headline);
 
   await mustFail("NC-RM9", "the returned Motion owns the shot workspace card", () => {
     assert(card.returnedReview && card.owner === "shot-motion",

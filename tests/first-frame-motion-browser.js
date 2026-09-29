@@ -118,12 +118,14 @@ if(process.argv.includes('--reference-inputs')){
   check('Restoring the explicit selection restores freshness',drift.restored.length===0);
   await views('r2v-prepared','.h3-generate-btn');
   check('Review is available once inputs are valid',!await page.locator('.h3-generate-btn').isDisabled());
+  check('The built prompt offers request review, not dispatch',(await page.locator('.h3-generate-btn').textContent()).trim()==='Review video request');
   await page.locator('.h3-generate-btn').click();
   await page.locator('#fal-h3-submit:not([disabled])').waitFor();
   await views('r2v-review','.h3-generation-head');
   await views('r2v-cost','#fal-h3-generation-view');
   check('Review sends no generation job',!requests.some(r=>r.uri==='/api/generation/fal/jobs'));
   check('The review binds only the chosen reference',await page.evaluate(key=>window._falH3MotionRequest.references.length===1&&window._falH3MotionRequest.references[0].refId===key,choice.key));
+  check('Only the final dispatch control says Generate video',(await page.locator('#fal-h3-submit').textContent()).trim()==='Generate video');
   await page.locator('#fal-h3-submit').click();await page.waitForTimeout(400);
   const jobs=requests.filter(r=>r.uri==='/api/generation/fal/jobs');
   check('Only final Generate video dispatches the intended mocked R2V request',jobs.length===1&&jobs[0].body.profileMode==='r2v'&&jobs[0].body.profileId==='minimax-h3/multi-frame'&&jobs[0].body.sourceBuildId===packet.build.id);

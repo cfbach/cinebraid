@@ -1171,7 +1171,7 @@ async function checkStalePackageWithholdsGeneration() {
     const profile = { id: build.profileId, name: build.profileName, family: "minimax-h3", mode: "i2v" };
     return falH3MotionPromptAction("L1-01", build.id, profile);
   })()`, staleView.rendered.context);
-  assert.ok(/GENERATE H3 VIDEO/.test(action), "the primary action stays visible and explains its prerequisite");
+  assert.ok(/Review video request/.test(action), "request review stays visible and explains its prerequisite");
   assert.ok(/disabled/.test(action), `an out-of-date package must not carry an enabled paid control: ${action}`);
   assert.ok(!/openFalH3MotionModal/.test(action), `a disabled control must not still be wired to the paid dialog: ${action}`);
   assert.ok(/data-h3-generate-blocked="L1-01"/.test(action), "the refusal is machine-readable");

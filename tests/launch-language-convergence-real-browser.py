@@ -319,14 +319,22 @@ try:
         )
         reference_promotion = frames_promotion(page)
         check(reference_promotion["hasCta"] is True, "E: outstanding required motion is still promoted")
-        check(reference_promotion["ctaButton"] == f"{slice1_word.upper()} →",
-              f"E: the button carries Slice 1's own word for the action, expected {slice1_word.upper()!r}, got {reference_promotion['ctaButton']!r}")
+        check(slice1_word == "Create the shot video", "E: the next-action heading names the video goal")
+        check(reference_promotion["ctaButton"] == "PREPARE VIDEO REQUEST →",
+              f"E: the button names preparation, got {reference_promotion['ctaButton']!r}")
         check("Animate using references" in reference_promotion["ctaText"],
               f"E: and the handoff names reference-to-video as the method, got {reference_promotion['ctaText'][:200]!r}")
         for wrong in ("Image-to-video", "Animate between frames", "Animate from first frame", "CREATE MOTION"):
             check(wrong not in reference_promotion["workspaceText"],
                   f'E: a reference-to-video shot is never described as "{wrong}"')
-        findings.append(f"E: the r2v shot named its own method and carried Slice 1's word {slice1_word!r} on the button")
+        # R2V keeps optional frame work folded; open it through its visible summary.
+        if page.locator('.guided-frame-workflow:not([open])').count():
+            page.locator('.guided-frame-workflow > summary').click()
+        page.locator('.frames-to-motion-cta button').click()
+        page.wait_for_selector('.guided-motion-card', state='visible')
+        check(page.locator('.h3-generation-modal').count() == 0,
+              "E: Prepare video request opens Motion, not request review or dispatch")
+        findings.append("E: the r2v shot named its own method; Prepare video request opened Motion")
 
         # ---- F. THE APPROVAL DIALOG ASKS NO FILENAME QUESTION ---------------
         # EV2-7 (Shots ruling B2.10/B2.12): the Shot Desk no longer carries an approval control of
