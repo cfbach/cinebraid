@@ -60,6 +60,9 @@ def verify_reference_dialog_navigation(page, entity_id):
             await new Promise(requestAnimationFrame);
             history.replaceState(null,'','#/character/'+id);
             await route();
+            // route() restores focus after two animation frames. Finish that
+            // transaction before this fixture opens a new dialog with the keyboard.
+            await new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)));
         }""",entity_id)
         page.wait_for_selector('[data-reference-desk]')
     def details(width, keyboard=False):
