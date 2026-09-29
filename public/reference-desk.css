@@ -354,4 +354,5 @@ body:is(.reference-desk-active,.production-media-active) #modal .rd-confirm-box{
 /* Recorded roles remain readable when several views share one image. */
 .rd-candidates button { width:124px; }
 .rd-candidates .rd-candidate-role { overflow-wrap:anywhere; line-height:1.3; font-size:12px; }
-.rd-candidates .rd-candidate-detail { color:var(--muted); font-size:11px; padding-top:0; }
+/* Reference thumbnails use a fixed dark well in every theme; inherit its ink. */
+.rd-candidates .rd-candidate-detail { color:inherit; font-size:11px; padding-top:0; }

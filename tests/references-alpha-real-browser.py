@@ -74,11 +74,11 @@ def verify_reference_dialog_navigation(page, entity_id):
             details(width,mode=='keyboard')
             if mode=='keyboard':
                 for _ in range(12):
-                    if page.evaluate("() => document.activeElement?.matches('#modal .rd-tool-link')"): break
+                    if page.evaluate("() => document.activeElement?.getAttribute('href')?.endsWith('/tools')"): break
                     page.keyboard.press('Tab')
-                assert page.evaluate("() => document.activeElement?.matches('#modal .rd-tool-link')"),'tools link must be keyboard reachable'
+                assert page.evaluate("() => document.activeElement?.getAttribute('href')?.endsWith('/tools')"),'tools link must be keyboard reachable'
                 page.keyboard.press('Enter')
-            else: page.locator('#modal .rd-tool-link').click()
+            else: page.get_by_role('link', name='Continuity & creation tools', exact=True).click()
             page.wait_for_selector('[data-reference-tools]')
             page.wait_for_function("() => document.getElementById('modal').classList.contains('hidden') && document.getElementById('main').contains(document.activeElement)")
             state=page.evaluate("""() => ({

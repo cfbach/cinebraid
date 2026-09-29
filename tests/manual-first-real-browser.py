@@ -127,7 +127,7 @@ try:
         assert page.locator('[data-reference-desk]').count() == 1, "Reference Desk must own the reference page"
         assert page.locator('#rd-title').inner_text() == "Manual reference artist"
         page.locator('[data-rd-action="inspect"]').click()
-        page.locator('.rd-tool-link:visible').click()
+        page.get_by_role('link', name='Continuity & creation tools', exact=True).click()
         page.wait_for_selector('[data-reference-tools]')
         assert not page.locator('#modal:not(.hidden)').count(), "tools navigation must dismiss Reference details"
         assert page.get_by_text("Human approval is enough", exact=False).count() >= 1
