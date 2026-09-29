@@ -356,3 +356,26 @@ body:is(.reference-desk-active,.production-media-active) #modal .rd-confirm-box{
 .rd-candidates .rd-candidate-role { overflow-wrap:anywhere; line-height:1.3; font-size:12px; }
 /* Reference thumbnails use a fixed dark well in every theme; inherit its ink. */
 .rd-candidates .rd-candidate-detail { color:inherit; font-size:11px; padding-top:0; }
+
+/* Primary reference creation/revision shares one field gutter. Keep the explicit
+   replacement disclosure, but do not charge padding for every nested wrapper. */
+.rd-existing-tools .reference-create-replace{border:0;border-radius:0;background:none;border-top:1px solid var(--line)}
+.rd-existing-tools .reference-create-replace>summary{padding:10px 0}
+.rd-existing-tools .reference-create-replace-body{padding:12px 0 0}
+.rd-existing-tools .reference-create-manual{border:0;border-radius:0;background:none;margin-top:16px}
+.rd-existing-tools .reference-create-manual-body{padding:0}
+.rd-existing-tools .reference-create-path{grid-template-rows:auto 1fr auto}
+.rd-existing-tools .reference-create-path>button{justify-self:start;width:auto;min-height:44px}
+.rd-existing-tools .asset-prompt-grid .field{margin:0;display:flex;flex-direction:column;gap:6px}
+.rd-existing-tools .asset-prompt-grid .field>label{margin:0}
+.rd-existing-tools .asset-prompt-grid>.field>.creation-description{flex:1;width:100%;min-height:180px!important}
+.rd-existing-tools .asset-prompt-grid .creation-side-fields{gap:12px}
+.rd-existing-tools .reference-create-manual .creation-actions{margin-top:12px}
+@media(max-width:767px){
+ .rd-existing-tools:has(.reference-create-section){padding:12px}
+ .rd-existing-tools:has(.reference-create-section)>.bounded-entity-page>.bounded-entity-taskbar{top:-12px;margin:0 -12px 14px;padding:8px 12px}
+ .rd-existing-tools .reference-create-section{padding:12px 0;border:0;border-radius:0;background:none}
+ .rd-existing-tools .reference-create-path{padding:12px}
+ .rd-existing-tools .asset-prompt-grid{gap:14px}
+ .rd-existing-tools .asset-prompt-grid>.field>.creation-description{min-height:180px!important}
+}
