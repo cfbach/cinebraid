@@ -538,6 +538,108 @@ async function main() {
     await settle(h, frameJob.data.job.id);
     note("a reference-bearing frame goes through fal's edit route and returns as an unreviewed candidate on the owning shot");
 
+    /* --- EDIT THIS FRAME, end to end: the base is image_urls[0] however the package
+       stored it. The package below is written in the order the old compiler stored —
+       guide first — and the three files carry different bytes where it matters, so
+       "which image was sent first" is answered by the bytes the mock received. --- */
+    const GUIDE_PNG = "/assets/shots/SH-1/blocking/GESTURE_GUIDE.png";
+    fs.writeFileSync(path.join(h.dirs.A, "shots", "SH-1", "blocking", "GESTURE_GUIDE.png"), PNG);
+    const pEdit = h.project();
+    const editBuild = addFramePromptBuild(pEdit, "SH-1", {
+      id: "guided-frame-edit-base", packageId: "SH-1-FRAME-A-R02", profileId: "gpt-image-2/edit", mode: "edit",
+      references: [
+        buildRef({ key: "gesture-guide", label: "Gesture guide", role: "composition", mediaType: "image", instruction: "Placement only." }, GUIDE_PNG),
+        buildRef({ key: "plate-a", label: "Approved Frame A", role: "base", mediaType: "image", instruction: "The frame being edited." }, PLATE_PNG),
+        buildRef(REF_PROP, PARCEL_PNG),
+      ],
+    });
+    h.saveProject(pEdit);
+    const editRequest = { purpose: "frame", shotId: "SH-1", sourceBuildId: editBuild, aspectRatio: "16:9", outputCount: 1 };
+    const editPreview = await h.api("/api/generation/fal/image/plan", { body: editRequest });
+    assert.strictEqual(editPreview.data.ok, true, `the edit preview must compile: ${JSON.stringify(editPreview.data.refusal)}`);
+    assert.strictEqual(editPreview.data.mode, "edit");
+    assert.match(editPreview.data.planFingerprint, /^[0-9a-f]{64}$/,
+      "preview pins the compiled dispatch and actual input bytes");
+    assert.strictEqual(editPreview.data.operation, "edit-frame", "the preview names the operation the compiler resolved");
+    assert.deepStrictEqual(editPreview.data.dispatch.bindings.map((row) => [row.index, row.role, row.refId]),
+      [[0, "base", "plate-a"], [1, "prop", "pr-parcel"], [2, "composition", "gesture-guide"]],
+      "the numbered inputs a dialog draws are the serializer's bindings, base first");
+    const editBefore = h.calls.length;
+    const editJob = await h.api("/api/generation/fal/jobs", {
+      body: { ...editRequest, imagePlan: true, planFingerprint: editPreview.data.planFingerprint,
+        frameId: "FR-A", frameLabel: "A", clientRequestId: "img-edit-base-1" },
+    });
+    assert.strictEqual(editJob.status, 200, `edit submission failed: ${JSON.stringify(editJob.data)}`);
+    assert.strictEqual(h.calls.length, editBefore + 1, "exactly one provider request");
+    const editCall = h.calls[editBefore];
+    const sentBytes = (url) => Buffer.from(String(url).split(",")[1], "base64");
+    assert.strictEqual(editCall.endpoint, "/openai/gpt-image-2/edit");
+    assert(sentBytes(editCall.body.image_urls[0]).equals(PNG_B), "image_urls[0] carries the BYTES of the frame being edited");
+    assert.strictEqual(editCall.body.image_urls.length, 3);
+    assert.strictEqual(editCall.body.prompt, editPreview.data.compiledPrompt, "the prompt sent is the prompt previewed");
+    assert.match(editCall.body.prompt, /Edit #image1 \(Approved Frame A\)/, "and it names the base by the slot it was sent in");
+    assert.match(editCall.body.prompt, /#image3 \(Gesture guide\) is a placement guide for that change only/);
+    await settle(h, editJob.data.job.id);
+    note("an edit package stored guide-first dispatches the approved frame's bytes as image_urls[0], and the prompt calls it #image1");
+
+    const changedCountBefore = { calls: h.calls.length, ledger: h.ledger().length };
+    const changedCount = await h.api("/api/generation/fal/jobs", {
+      body: { ...editRequest, outputCount: 2, imagePlan: true,
+        planFingerprint: editPreview.data.planFingerprint, frameId: "FR-A", frameLabel: "A",
+        clientRequestId: "img-edit-stale-preview-count" },
+    });
+    assert.strictEqual(changedCount.status, 409, "changing a request control after preview needs a new review");
+    assert.strictEqual(changedCount.data.code, "IMAGE_PLAN_CHANGED");
+    assert.strictEqual(h.calls.length, changedCountBefore.calls, "stale preview never contacts the provider");
+    assert.strictEqual(h.ledger().length, changedCountBefore.ledger, "stale preview creates no job row");
+    const changedCountPreview = await h.api("/api/generation/fal/image/plan", {
+      body: { ...editRequest, outputCount: 2 },
+    });
+    assert.strictEqual(changedCountPreview.status, 200);
+    assert.notStrictEqual(changedCountPreview.data.planFingerprint, editPreview.data.planFingerprint,
+      "the changed request has a distinct review fingerprint");
+    note("a changed output count after preview refuses before a provider call or ledger write, then offers a distinct fresh preview");
+
+    /* Same path, different bytes: project-document freshness alone cannot prove
+       that the artwork the filmmaker inspected is still the artwork being sent. */
+    const plateFile = path.join(h.dirs.A, "shots", "SH-1", "takes", "A.png");
+    fs.writeFileSync(plateFile, PNG);
+    try {
+      const changedBytesBefore = { calls: h.calls.length, ledger: h.ledger().length };
+      const changedBytes = await h.api("/api/generation/fal/jobs", {
+        body: { ...editRequest, imagePlan: true, planFingerprint: editPreview.data.planFingerprint,
+          frameId: "FR-A", frameLabel: "A", clientRequestId: "img-edit-stale-preview-bytes" },
+      });
+      assert.strictEqual(changedBytes.status, 409, "replacing the approved file after preview needs a new review");
+      assert.strictEqual(changedBytes.data.code, "IMAGE_PLAN_CHANGED");
+      assert.strictEqual(h.calls.length, changedBytesBefore.calls);
+      assert.strictEqual(h.ledger().length, changedBytesBefore.ledger);
+    } finally {
+      fs.writeFileSync(plateFile, PNG_B);
+    }
+    note("replacing the image bytes at the same approved path after preview refuses before provider contact or a job write");
+
+    /* --- STALE INPUT: the approved frame has gone from disk since the package was
+       built. Refused on the way in, by name, with nothing sent and nothing charged. --- */
+    fs.rmSync(plateFile);
+    try {
+      const stalePreview = await h.api("/api/generation/fal/image/plan", { body: editRequest });
+      assert.strictEqual(stalePreview.data.ok, false, "a preview whose edit base is gone is not submittable");
+      assert.match(stalePreview.data.refusal.error, /Approved Frame A/, "the refusal names the missing input");
+      assert.strictEqual(stalePreview.data.dispatch, null, "and there is no dispatch to number");
+      const staleBefore = h.calls.length;
+      const staleLedger = h.ledger().length;
+      const staleJob = await h.api("/api/generation/fal/jobs", {
+        body: { ...editRequest, imagePlan: true, frameId: "FR-A", frameLabel: "A", outputCount: 1, clientRequestId: "img-edit-base-stale" },
+      });
+      assert.notStrictEqual(staleJob.status, 200, "the paid route refuses the same package");
+      assert.strictEqual(h.calls.length, staleBefore, "nothing reaches the provider");
+      assert.strictEqual(h.ledger().length, staleLedger, "and no job row is written");
+    } finally {
+      fs.writeFileSync(plateFile, PNG_B);
+    }
+    note("a package whose edit base has gone from disk is refused at preview and at the paid route: no provider call, no ledger row");
+
     /* --- C1.2: an ambiguous transport failure is UNRESOLVED, not FAILED --- */
     const p3 = h.project();
     const dropBuild = addBlockingPromptBuild(p3, "SH-1", { id: "blocking-drop" });

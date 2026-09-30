@@ -578,6 +578,17 @@ async function main() {
       });
       assert.strictEqual(accepted.response.status, 200, `implemented prompt purpose ${purpose} must be accepted`);
     }
+    result = await request("/api/prompt/compile", {
+      method: "POST", headers: { "content-type": "application/json" },
+      body: JSON.stringify({ shotId: "S-01", frameId: "frame-a", profileId: "gpt-image-2/t2i",
+        purpose: "shot-still", directive: "A close image of a red lantern beside a window.",
+        composition: null, references: [], useLLM: false }),
+    });
+    assert.strictEqual(result.response.status, 200, JSON.stringify(result.body));
+    assert.match(result.body.compiledPrompt, /red lantern beside a window/i);
+    assert.doesNotMatch(result.body.compiledPrompt, /ship in darkness|Locked hull-camera composition/i,
+      "Frame A's instruction must not silently append the whole-shot synopsis or staging");
+    assert.strictEqual(result.body.spec.initialState.subject, "A close image of a red lantern beside a window.");
     result = await request("/api/project/readiness");
     assert.strictEqual(result.response.status, 200);
     assert(Array.isArray(result.body.setup.issues), "project readiness must return a read-only issue list");

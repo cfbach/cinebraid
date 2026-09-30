@@ -598,7 +598,7 @@ async function testImportExistingAsksItsExactTarget() {
    file is gone beside a newer candidate, more frames than the rail lists, a projection
    that cannot be read, and an operation that needs a person. None of them may write. */
 async function testResultsRailHardStates() {
-  const { rawFixture, withFixtureCanon } = require("./render-harness");
+  const { rawFixture, withFixtureCanon, scanFor, harnessAssetId } = require("./render-harness");
   const mainOf = (page) => page.context.document.getElementById("main").innerHTML;
   const railOf = (html) => (html.match(/<section class="shot-results-rail[\s\S]*?<\/section>/) || [""])[0];
   const targetOf = (html, kind, frameId = "") => (railOf(html).match(new RegExp(`<article class="shot-results-target" data-results-target="${kind}"${frameId ? ` data-frame-id="${frameId}"` : ""}[\\s\\S]*?</article>`)) || [""])[0];
@@ -611,7 +611,15 @@ async function testResultsRailHardStates() {
   lost.shots[0].keyframes[0].winner = "FRAME_A_LOST.png";
   const lostProject = withFixtureCanon(lost);
   lostProject.shots[0].candidateFiles = [{ stored: "FRAME_A.png", original: "FRAME_A.png", addedAt: "2026-09-05T10:05:00.000Z", decision: "unreviewed", frameId: "frame-a" }];
-  const gone = await render("#/shot/L1-01", lostProject, { storage: inputs });
+  /* Frame B is the live, identity-backed comparison. The shared harness's
+     name-only receipt and scan would correctly classify it as unverified;
+     bind both to the same exact asset so this case tests retained preview. */
+  const frameBAssetId = harnessAssetId("shots/L1-01/takes/FRAME_B.png");
+  lostProject.shots[0].keyframes[1].winnerAssetId = frameBAssetId;
+  lostProject.productionAuthority.receipts.find((row) => row.frameId === "frame-b").assetId = frameBAssetId;
+  const lostScan = scanFor(lostProject);
+  lostScan.shots["L1-01"].takes.find((row) => row.name === "FRAME_B.png").assetId = frameBAssetId;
+  const gone = await render("#/shot/L1-01", lostProject, { storage: inputs, scan: lostScan });
   const goneA = targetOf(mainOf(gone), "frame", "frame-a");
   assert(/data-results-approved="unavailable"/.test(goneA) && goneA.includes("Approved image unavailable · 1 new candidate")
     && goneA.includes("FRAME_A_LOST.png · receipt kept, file not found"),

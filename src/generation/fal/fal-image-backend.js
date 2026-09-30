@@ -394,6 +394,18 @@ function serializeImagePlanForFal(plan, capability, options = {}) {
         `fal accepts ${limit} reference image${limit === 1 ? "" : "s"} for GPT Image 2; the plan carries ${images.length}.`,
         { count: images.length, limit },
       );
+    /* THE EDIT BASE IS image_urls[0] OR NOTHING IS SENT. In edit and inpaint the first
+       image is the canvas the provider changes and — for a mask — the image the mask is
+       applied to. The planner orders the base first; this is the boundary that refuses a
+       plan that arrived any other way, because a reordered request would edit the wrong
+       picture and the money would be spent before anyone could tell. */
+    const base = images.find((row) => String(row.role) === "base");
+    if ((mode === "edit" || mode === "inpaint") && base && images[0] !== base)
+      throw new FalImageBackendError(
+        "IMAGE_BASE_NOT_FIRST",
+        `The frame being edited (${base.production?.label || base.refId}) would be sent as Image ${images.indexOf(base) + 1}; fal edits Image 1, which here is ${images[0].production?.label || images[0].refId}. Nothing was sent and nothing was charged.`,
+        { mode, baseRefId: base.refId, firstRefId: images[0].refId, order: images.map((row) => row.refId) },
+      );
     input.image_urls = images.map((row, index) => {
       bind(row, "image_urls", index);
       return resolveReference(row);
@@ -413,8 +425,19 @@ function serializeImagePlanForFal(plan, capability, options = {}) {
         `fal accepts one mask for GPT Image 2; the plan carries ${masks.length}.`,
         { count: masks.length, limit: FAL_IMAGE_BACKEND.mask.maxCount },
       );
+    /* A mask binds to the edit base and to nothing else. OpenAI documents that a mask
+       applies to the first image; so Image 1 must be the base, or the mask is refused. */
+    const first = images[0];
+    if (!first || String(first.role) !== "base")
+      throw new FalImageBackendError(
+        "IMAGE_MASK_UNBOUND",
+        `${masks[0].production?.label || masks[0].refId} would apply to Image 1, which is ${first ? `${first.production?.label || first.refId} (${first.role})` : "missing"}, not the frame being edited. Nothing was sent and nothing was charged.`,
+        { maskRefId: masks[0].refId, firstRefId: first ? first.refId : "", firstRole: first ? first.role : "" },
+      );
     input.mask_url = resolveReference(masks[0]);
-    bind(masks[0], "mask_url");
+    /* Recorded WITH the reference it applies to, so the job can answer "which image
+       was masked" from its own binding rather than from the provider's rule. */
+    bindings.push({ refId: masks[0].refId, role: masks[0].role, mediaType: masks[0].mediaType, field: "mask_url", index: null, order: masks[0].order, appliesTo: first.refId, appliesToIndex: 0 });
   }
 
   return {

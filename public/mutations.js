@@ -22,25 +22,20 @@ function wireDropzone(id) {
   wireGuidedFrameDropzones(id);
   wireGuidedMotionDropzone(id);
 }
-function latestGuidedPackageForFile(s, fileName, frameId = "") {
-  const c = typeof ensureShotCreation === "function" ? ensureShotCreation(s) : (s.creationBrief || {});
-  if (isVideo(fileName)) return latestPromptBuild(P, c.motionPromptBuilds || []);
-  if (frameId && typeof guidedFrames === "function" && typeof guidedFrameState === "function") {
-    const frames = guidedFrames(s), index = frames.findIndex((frame) => frame.id === frameId);
-    if (index >= 0) return latestPromptBuild(P, guidedFrameState(s, frames[index], index).promptBuilds);
-  }
-  return latestPromptBuild(P, c.promptBuilds || []);
-}
-function linkUploadedCandidatePackage(s, name, frameId = "") {
+/* A file copied into the project is an external result. A nearby prompt build is
+   planning context, not evidence of the request that created these bytes. */
+function markUploadedCandidateExternal(s, name, frameId = "") {
   if (typeof candidateRecord !== "function") return;
-  const build = latestGuidedPackageForFile(s, name, frameId);
   const row = candidateRecord(s, name, true);
   if (frameId) row.frameId = frameId;
-  if (!build) return;
-  row.sourcePackageId = build.id || build.packageId || "";
-  row.sourcePackageLabel = build.packageId || build.id || "";
-  row.sourcePackageSnapshot = JSON.parse(JSON.stringify(build));
-  row.sourceLinkedAt = new Date().toISOString();
+  delete row.sourceBuildId;
+  delete row.sourcePackageId;
+  delete row.sourcePackageLabel;
+  delete row.sourcePackageSnapshot;
+  delete row.packageSnapshot;
+  delete row.sourceLinkedAt;
+  delete row.provenanceSavedAt;
+  row.importedSource = "local-file";
 }
 function wireGuidedFrameDropzones(id) {
   document.querySelectorAll("[data-frame-dropzone]").forEach((dz) => {
@@ -77,7 +72,7 @@ async function uploadGuidedFrameFiles(id, frameId, files) {
     existing.addedAt = new Date().toISOString();
     existing.mediaType = "image";
     existing.frameId = frameId;
-    linkUploadedCandidatePackage(s, data.name, frameId);
+    markUploadedCandidateExternal(s, data.name, frameId);
     added++;
   }
   if (added) {
@@ -111,7 +106,7 @@ async function uploadGuidedMotionFiles(id, files) {
     const d = await r.json();
     if (r.ok) {
       s.candidateFiles.push({ stored: d.name, original: f.name, addedAt: new Date().toISOString(), mediaType: "video" });
-      linkUploadedCandidatePackage(s, d.name);
+      markUploadedCandidateExternal(s, d.name);
     }
   }
   s.workflowStatus = "IN PROGRESS";
@@ -119,7 +114,7 @@ async function uploadGuidedMotionFiles(id, files) {
   dirty();
   SCAN = await (await fetch("/api/scan")).json();
   route();
-  toast(`${selected.length} video candidate${selected.length === 1 ? "" : "s"} added and linked to the latest motion package`);
+  toast(`${selected.length} video candidate${selected.length === 1 ? "" : "s"} imported · source request not recorded`);
 }
 async function uploadTakes(id, files) {
   if (!files?.length) return;
@@ -143,7 +138,7 @@ async function uploadTakes(id, files) {
         original: f.name,
         addedAt: new Date().toISOString(),
       });
-      linkUploadedCandidatePackage(s, d.name);
+      markUploadedCandidateExternal(s, d.name);
     }
   }
   if (workflowState(s).key === "DRAFT") {

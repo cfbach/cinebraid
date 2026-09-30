@@ -1380,7 +1380,7 @@ function withCanon(project, entries) {
   return project;
 }
 
-module.exports = { render, buildFixture, rawFixture, withFixtureCanon, emptyFixture, withCanon, harnessAssetId, settleApprovalReadiness, HARNESS_PROJECT_REVISION };
+module.exports = { render, buildFixture, rawFixture, withFixtureCanon, emptyFixture, withCanon, scanFor, harnessAssetId, settleApprovalReadiness, HARNESS_PROJECT_REVISION };
 if (require.main === module) main().catch((error) => {
   console.error(error.stack || error.message || error);
   process.exitCode = 1;

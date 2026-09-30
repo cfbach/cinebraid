@@ -173,7 +173,7 @@ async function main() {
   project.shots[0].deliveryRoute = 'flf';
   const motion = await render('#/shot/L1-01', project, { scan, storage: { 'cinebraid-focused:fixture:shot-task:L1-01': 'motion' } });
   assert(motion.html.includes('motion-workflow-map'), 'motion must expose a three-stage navigation map');
-  for (const text of ['1 · APPROVED FRAMES', '2 · VIDEO IMPORT', '3 · ASSISTED MOTION']) assert(motion.html.includes(text), `${text} heading missing`);
+  for (const text of ['1 · Approved frames', '2 · Video import', '3 · Assisted motion']) assert(motion.html.includes(text), `${text} heading missing`);
   assert(motion.html.includes('guided-motion-frame-preview'), 'approved motion frames must open larger previews');
   /* EV2-7 B2.13: returned videos are played at size, compared and approved in Results and
      Screening. The Motion stage keeps import; the Results rail is the one way in. */
@@ -181,8 +181,16 @@ async function main() {
   assert(videoImport.includes('id="motion-file"') && !/<video\b/.test(videoImport) && !videoImport.includes('APPROVE VIDEO'),
     'the Motion stage keeps video import and draws no per-result player or approval of its own');
   const motionEntries = [...motion.html.matchAll(/<button[^>]*onclick="([^"]*)"[^>]*>Motion Results<\/button>/g)].map((match) => match[1]);
-  assert.deepStrictEqual(motionEntries, ["openShotResults('L1-01','motion','')"], 'returned videos are reached through exactly one Motion Results entry');
-  assert(/data-results-target="motion" data-results-count="[1-9]\d*"/.test(motion.html), 'and the rail counts the returned video');
+  const motionHero = /<section[^>]*data-returned-review-key="([^"]+)"[^>]*data-returned-review-owner="shot-motion"/.exec(motion.html);
+  if (motionHero) {
+    assert.deepStrictEqual(motionEntries, [], 'the returned-motion hero replaces the duplicate Results rail button');
+    assert(/data-results-target="motion"[^>]*data-results-led="1"/.test(motion.html), 'the rail must point to the leading review action');
+    assert(motion.html.includes("onclick=\"openReturnedResultReview('L1-01','" + motionHero[1] + "')\""),
+      'the single leading action must open the exact returned motion result');
+  } else {
+    assert.deepStrictEqual(motionEntries, ["openShotResults('L1-01','motion','')"],
+      'motion without a leading returned result must expose one exact Results entry');
+  }  assert(/data-results-target="motion" data-results-count="[1-9]\d*"/.test(motion.html), 'and the rail counts the returned video');
   assert(motion.html.includes('openMediaTheatre'), 'motion media must use the in-app theatre preview');
   motion.context.openMediaTheatre(encodeURIComponent('/assets/shots/L1-01/takes/FRAME_A.png'), encodeURIComponent('Frame A'), 'image');
   const modal = motion.context.document.getElementById('modal').innerHTML;
@@ -206,7 +214,7 @@ async function main() {
   entity.context.selectBoundedTask('entity-task','characters:KAI','coverage');
   await new Promise((resolve) => setTimeout(resolve, 10));
   const entityStateHtml = entity.context.document.getElementById('main').innerHTML;
-  assert(entityStateHtml.includes('CANON IMAGE') && entityStateHtml.includes('state-approved-preview'), 'selected state must show its approved image near the top with a large-preview control');
+  assert(entityStateHtml.includes('data-continuity-state-id="state-active"') && entityStateHtml.includes('class="cs-thumb"') && entityStateHtml.includes('KAI-ACTIVE.png') && entityStateHtml.includes('View the canon image larger'), 'selected state must show its exact approved image near the top with a large-preview control');
 
   look.context.openShotAutomationModal('L1-01');
   /* The planner's generation settings moved into the shared Simple/Advanced block, which

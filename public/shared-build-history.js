@@ -357,6 +357,11 @@
       firstFrameWinner: first?.winner || "",
       lastFrameWinner: last?.winner || "",
       generationMedia: media,
+      /* A frame build also depends on which shot inputs were explicitly excluded.
+         Otherwise an old package could still dispatch after the filmmaker changed
+         that selection, while the screen said the new selection was ready. */
+      ...(pack?.frameId ? { disabledInputKeys: (Array.isArray(shot?.creationBrief?.disabledInputKeys)
+        ? shot.creationBrief.disabledInputKeys : []).map(String).sort() } : {}),
     };
   }
 
@@ -436,6 +441,9 @@
     if (comparable(saved, at, "generationMedia")
       && JSON.stringify(saved.generationMedia || []) !== JSON.stringify(at.generationMedia || []))
       reasons.push("approved generation media changed");
+    if (comparable(saved, at, "disabledInputKeys")
+      && JSON.stringify(saved.disabledInputKeys || []) !== JSON.stringify(at.disabledInputKeys || []))
+      reasons.push("shot input selection changed");
     /* Named before the generic array comparison, because "an input is gone" is a
        different fact from "an input changed" and sends the filmmaker somewhere else.
        Only a caller that can enumerate what the production may currently supply passes

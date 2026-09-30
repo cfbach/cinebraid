@@ -300,9 +300,18 @@ const CONTROLS = [
     to: `  const top = null;`,
     expect: /routed into a shot while readiness says nothing can start/,
     async guard(run) {
-      const app = await run({});
+      const project = buildFixture();
+      /* N18 tests blocker precedence, not the separate integrity precedence for
+         an unstamped returned frame. Keep the approved files and target them
+         explicitly so the shipped guard can reach its intended branch. */
+      for (const shot of project.shots) shot.candidateFiles = shot.keyframes
+        .filter((frame) => frame.winner)
+        .map((frame) => ({ stored: frame.winner, frameId: frame.id }));
+      const app = await run({ project });
       const feed = vm.runInContext("projectShotReadiness()", app.context);
       assert.strictEqual(feed.counts.ready, 0, "the fixture must have no startable shot");
+      assert.strictEqual(vm.runInContext("returnedReviewProjectionForBrowser().counts.unavailable", app.context), 0,
+        "the fixture must not insert an unrelated returned-media blocker");
       const next = vm.runInContext("projectNextProductionAction()", app.context);
       assert(!/^#\/shot\//.test(next.href),
         `NEXT ACTION routed into a shot while readiness says nothing can start: ${next.href}`);

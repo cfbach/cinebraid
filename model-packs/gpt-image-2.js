@@ -425,19 +425,35 @@ function pickQuality(requested, mode, coverage) {
 /* ---------------------------------------------------------------------------
    Section builders. */
 
+/* The image inputs in the order the provider will receive them, and a mask apart from
+   them. A mask is not an image input: it travels in its own field and, by OpenAI's
+   documented rule, applies to the FIRST image. Numbering it as "#image4" made the prompt
+   claim an input the request does not carry and shifted nothing else, so the two lists
+   are kept apart here and every `#imageN` in this pack is the position in `image_urls`. */
+function imageInputs(manifest) {
+  return manifest.filter((row) => row.role !== "mask");
+}
+function imageToken(manifest, row) {
+  const index = imageInputs(manifest).indexOf(row);
+  return index < 0 ? "" : `#image${index + 1}`;
+}
 function referenceLegend(manifest, coverage) {
   if (!manifest.length) return null;
-  const lines = manifest.map((row, index) => {
+  const images = imageInputs(manifest);
+  const lines = images.map((row, index) => {
     const token = `#image${index + 1}`;
     const who = text(row.production.entityName);
-    const purpose = text(row.production.purpose) || "an approved visual reference";
+    /* A purpose that already ends its own sentence is not given a second full stop. */
+    const purpose = (text(row.production.purpose) || "an approved visual reference").replace(/[.\s]+$/, "");
     const state = text(row.production.continuityState);
     return `${token} — ${who || text(row.production.label)}: ${purpose}${state ? `, in its approved ${state} state` : ""}.`;
   });
+  for (const mask of manifest.filter((row) => row.role === "mask"))
+    lines.push(`MASK — ${text(mask.production.label)}: ${(text(mask.production.purpose) || "a mask").replace(/[.\s]+$/, "")}. It applies to #image1${images[0] ? ` (${text(images[0].production.label)})` : ""} and is not an image input.`);
   /* Identity is carried by the references, and the coverage record says so rather than
      claiming the prompt describes a face it deliberately does not describe. */
   const identity = manifest.find((row) => row.role === "identity");
-  if (identity) coverage.anchor("identity.canon", `${identity.production.label} (#image${manifest.indexOf(identity) + 1})`);
+  if (identity) coverage.anchor("identity.canon", `${identity.production.label} (${imageToken(manifest, identity)})`);
   return { title: GPT_IMAGE_2_PLAYBOOK.sectionTitles.references, body: lines.join("\n") };
 }
 
@@ -585,6 +601,8 @@ function compileT2I(ctx) {
 
 function compileEdit(ctx) {
   const base = ctx.manifest.find((row) => row.role === "base");
+  const images = imageInputs(ctx.manifest);
+  const masks = ctx.manifest.filter((row) => row.role === "mask");
   if (!base)
     ctx.coverage.warn({
       code: "base-image-missing",
@@ -592,10 +610,33 @@ function compileEdit(ctx) {
       message: "An edit needs the frame it is editing, supplied as a base reference.",
       action: "Select the approved frame to edit.",
     });
+  /* THE BASE IS #image1 OR THE PACK SAYS SO. The planner puts it there; this is the
+     pack's own witness that the frame named in the purpose line is the frame the
+     provider will treat as the canvas and, with a mask, the frame the mask applies to.
+     A warning rather than a silent renumbering, because a plan that arrived in another
+     order arrived from somewhere the planner did not run. */
+  if (base && images[0] !== base)
+    ctx.coverage.warn({
+      code: "base-not-first",
+      field: "inputs.references",
+      message: `${base.production.label} is the frame being edited but would be sent as ${imageToken(ctx.manifest, base)}, not #image1; a mask would apply to ${images[0]?.production?.label || "another input"} instead.`,
+      action: "Rebuild the prompt so the edit base leads the request.",
+    });
+  if (masks.length && !base)
+    ctx.coverage.warn({
+      code: "mask-without-base",
+      field: "inputs.references",
+      message: `${masks[0].production.label} is a mask, but the package carries no edit base for it to apply to.`,
+      action: "Select the approved frame the mask belongs to, or remove the mask.",
+    });
+  const guides = ctx.manifest.filter((row) => row.role === "composition");
+  const guideNote = base && guides.length
+    ? ` ${guides.map((row) => `${imageToken(ctx.manifest, row)} (${row.production.label})`).join(" and ")} ${guides.length === 1 ? "is a placement guide" : "are placement guides"} for that change only — position, gesture and contact points — and ${guides.length === 1 ? "is" : "are"} not the frame being edited.`
+    : "";
   return compileStill(ctx, {
     mode: ctx.mode === "inpaint" ? "inpaint" : "edit",
     purpose: base
-      ? `Edit the supplied base frame. Change only what this brief asks for; everything else in ${base.production.label} stays exactly as it is.`
+      ? `Edit ${imageToken(ctx.manifest, base) || "the supplied base frame"} (${base.production.label}). Change only what this brief asks for${masks.length ? `, inside the masked region` : ""}; everything else in ${base.production.label} stays exactly as it is.${guideNote}`
       : "Edit the supplied base frame. Change only what this brief asks for; everything else stays exactly as it is.",
   });
 }
@@ -663,9 +704,12 @@ function compileMode(context) {
      settings.extensions, because it is adapter knowledge and production intent must
      stay portable without it. */
   const bindings = {};
-  manifest.forEach((row, index) => {
-    bindings[row.refId] = row.role === "mask" ? "mask" : `image[${index}]`;
-  });
+  const images = imageInputs(manifest);
+  for (const row of manifest)
+    /* A mask binds to the first image input by the provider's rule, and the binding
+       names that rather than leaving a reader to know the rule. Image indices count
+       image inputs only, so they match `image_urls` and the `#imageN` legend. */
+    bindings[row.refId] = row.role === "mask" ? "mask->image[0]" : `image[${images.indexOf(row)}]`;
 
   const parameters = { model: GPT_IMAGE_2_FACTS.apiModelIdentifier, quality, referenceBindings: bindings };
   if (chosen.size) parameters.size = chosen.size;

@@ -1500,6 +1500,24 @@ function registerFalGeneration(app, context) {
     return `data:${mimeFor(resolved.file)};base64,${fs.readFileSync(resolved.file).toString("base64")}`;
   }
 
+  /* Preview identity is based on the compiled request and the actual input bytes.
+     A file can be replaced at the same path after preview without changing the
+     project document, so package freshness alone cannot protect this boundary. */
+  function imagePlanFingerprint(owner, compiled, serialized) {
+    const inputs = compiled.plan.inputs.references.map((row) => {
+      const address = planReferenceAddress(owner, row);
+      const bytes = address.file ? fs.readFileSync(address.file) : Buffer.from(address.inline || "");
+      return { refId: row.refId, role: row.role, order: row.order,
+        sha256: crypto.createHash("sha256").update(bytes).digest("hex") };
+    });
+    const request = { model: serialized.model, backendId: serialized.backendId,
+      bindings: serialized.bindings, input: serialized.input, inputs };
+    /* The author can edit submitted text in the dialog. The compiled original is
+       pinned here; their submitted text is recorded separately on the job. */
+    request.input = { ...request.input, prompt: compiled.compiledPrompt };
+    return crypto.createHash("sha256").update(JSON.stringify(request)).digest("hex");
+  }
+
   /* WHAT THIS PAID REQUEST ACTUALLY CONSUMED, frozen onto the row.
    *
    * Called from the two compiled branches of the submission route, after the preflight
@@ -2516,6 +2534,7 @@ function registerFalGeneration(app, context) {
     /* Serialised too, so an unsendable size or a missing reference file is reported on
        the way IN rather than discovered when the filmmaker presses the paid button. */
     let dispatch = null;
+    let planFingerprint = null;
     let refusal = null;
     try {
       const serialized = serializeImagePlanForFal(plan, compiled.capability, {
@@ -2524,6 +2543,7 @@ function registerFalGeneration(app, context) {
         ...(compiled.promptEdited ? { promptOverride: compiled.submittedPrompt } : {}),
       });
       dispatch = { model: serialized.model, backendId: serialized.backendId, bindings: serialized.bindings };
+      planFingerprint = imagePlanFingerprint(owner, compiled, serialized);
     } catch (error) {
       const typed = error instanceof FalImageBackendError || error instanceof ImageExecutionError;
       refusal = { error: error?.message || "This package cannot be submitted.", code: typed ? error.code : "IMAGE_PREPARATION_FAILED", detail: typed ? error.detail : {} };
@@ -2532,7 +2552,12 @@ function registerFalGeneration(app, context) {
       ok: !refusal,
       refusal,
       dispatch,
+      planFingerprint,
       mode: compiled.mode,
+      /* Which filmmaker operation the package IS — edit-frame, guide-to-frame,
+         create-frame — decided by the compiler from the package, so the dialog heads
+         itself with the operation that will run rather than the button that opened it. */
+      operation: compiled.operation,
       purpose: compiled.purpose,
       profile: compiled.profile,
       source: compiled.source,
@@ -3023,6 +3048,9 @@ function registerFalGeneration(app, context) {
           config: cfg,
           ...(job.promptEdited ? { promptOverride: job.prompt } : {}),
         });
+        if (req.body?.planFingerprint && req.body.planFingerprint !== imagePlanFingerprint(owner, compiled, preflight))
+          return res.status(409).json({ code: "IMAGE_PLAN_CHANGED",
+            error: "The frame request changed since preview. Reopen request review before submitting. Nothing was sent or charged." });
         /* WHERE the paid request is about to go, recorded on the row BEFORE the row is
            committed. Deterministic: submitImage re-derives the identical values from
            the same plan. */

@@ -410,12 +410,12 @@
     return compositionAugmentedReferences(s, out);
   };
 
-  compositionSummary = window.compositionSummary = function compositionSummary607(s) {
-    const c = ensureShotCreation(s), plan = c.composition, camera = plan.camera || {}, base = selectedBaseFrame(s);
+  compositionSummary = window.compositionSummary = function compositionSummary607(s, plan = ensureShotCreation(s).composition, includeCamera = true) {
+    const camera = plan.camera || {}, base = selectedBaseFrame(s);
     const pieces = [
-      base ? `Base frame: ${base.label}. ${baseFrameInstruction(s)}` : "Base frame: blank canvas; construct the scene from assigned references.",
-      `Frame setup: ${textLabel(camera.shotSize || "wide")}, ${textLabel(camera.height || "eye level")}, ${textLabel(camera.angle || "level")}, ${textLabel(camera.lens || "normal lens")}, ${textLabel(camera.view || "front view")}, ${textLabel(camera.layout || "rule of thirds")}, ${textLabel(camera.crop || "full scene")}.`,
-      camera.reframe === "preserve-exact" ? "Preserve source framing exactly." : camera.reframe === "reinterpret" ? "Reinterpret the source framing to satisfy this composition." : "Preserve source framing loosely while matching this composition.",
+      includeCamera ? base ? `Base frame: ${base.label}. ${baseFrameInstruction(s)}` : "Base frame: blank canvas; construct the scene from assigned references." : "",
+      includeCamera ? `Frame setup: ${textLabel(camera.shotSize || "wide")}, ${textLabel(camera.height || "eye level")}, ${textLabel(camera.angle || "level")}, ${textLabel(camera.lens || "normal lens")}, ${textLabel(camera.view || "front view")}, ${textLabel(camera.layout || "rule of thirds")}, ${textLabel(camera.crop || "full scene")}.` : "",
+      includeCamera ? camera.reframe === "preserve-exact" ? "Preserve source framing exactly." : camera.reframe === "reinterpret" ? "Reinterpret the source framing to satisfy this composition." : "Preserve source framing loosely while matching this composition." : "",
       ...(plan.elements || []).filter((element) => !element.hidden).sort((a, b) => (+a.order || 0) - (+b.order || 0)).map((element) => compositionElementInstruction(s, element)),
       plan.mustInclude ? `Must include: ${plan.mustInclude}.` : "",
       plan.mustAvoid ? `Must avoid: ${plan.mustAvoid}.` : "",

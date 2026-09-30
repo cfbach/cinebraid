@@ -1450,6 +1450,36 @@ function guidedFramePromptRefs(s, frame, index, state) {
   }
   return compositionAugmentedReferences(s, out);
 }
+/* Included but unapproved inputs cannot disappear from a paid frame request by
+   passing through the ready-only filter. The filmmaker must approve them or explicitly
+   exclude them from this shot's generation before rebuilding the prompt. */
+function frameIncludedMissingInputs(s, frameId) {
+  const frames = guidedFrames(s), index = frames.findIndex((frame) => frame.id === frameId);
+  if (index < 0) return [];
+  /* The composer intentionally offers only usable media. Read the shot's selected
+     input slots BEFORE that filtering, or an unapproved selected prop becomes an
+     empty usable list and the UI incorrectly says "Inputs ready". */
+  return shotCreationReferences(s, frameId)
+    .filter((ref) => shotInputEnabled(s, ref.key) && !ref.url);
+}
+window.showFrameMissingInputDecision = (shotId, frameId) => {
+  const shot = shotById(shotId);
+  const missing = shot ? frameIncludedMissingInputs(shot, frameId) : [];
+  if (!missing.length) return false;
+  const labels = missing.map((ref) => '<li>'+esc(ref.label || ref.key || 'Reference')+'</li>').join('');
+  openModal(`<h3>Selected frame inputs need a decision</h3><p>These inputs are selected for this shot but have no approved image. A prompt built now would omit them. Approve their images, or explicitly exclude them from shot generation and rebuild the prompt before reviewing a paid request.</p><ul>${labels}</ul><div class="modal-actions"><button class="cancel" onclick="closeModal()">Cancel</button><button class="ghost-btn" onclick="closeModal();openGuidedPanel('${attr(shotId)}','inputs')">Review inputs</button><button class="approve-btn" onclick="excludeFrameMissingInputs('${attr(shotId)}','${attr(frameId)}')">Exclude these inputs</button></div>`);
+  return true;
+};
+window.excludeFrameMissingInputs = (shotId, frameId) => {
+  const shot = shotById(shotId);
+  if (!shot) return;
+  const missing = frameIncludedMissingInputs(shot, frameId);
+  if (!missing.length) return closeModal();
+  const creation = ensureShotCreation(shot);
+  creation.disabledInputKeys = [...new Set([...creation.disabledInputKeys, ...missing.map((ref) => ref.key)])];
+  dirty(); closeModal(); route();
+  toast('Inputs excluded from this shot. Rebuild the frame prompt before request review.');
+};
 function guidedFrameMode(state, refs) {
   if (state.mode && state.mode !== "auto") return state.mode;
   if (refs.some((ref) => ["base", "composition"].includes(ref.role) && ref.url)) return "edit";
@@ -3531,11 +3561,11 @@ function compositionElementInstruction(s, element) {
   const vertical = element.y < 0.35 ? "upper frame" : element.y > 0.68 ? "lower frame" : "mid-height";
   return `${label}: place in the ${element.depth || "midground"}, ${horizontal}, ${vertical}; occupy roughly ${Math.round((element.w || 0.25) * 100)}% of frame width and ${Math.round((element.h || 0.25) * 100)}% of frame height; face ${String(element.facing || "camera").replace(/-/g, " ")}; show ${String(element.view || "reference-view").replace(/-/g, " ")}${element.crop && element.crop !== "none" ? `; crop ${element.crop.replace(/-/g, " ")}` : ""}${element.notes ? `; ${element.notes}` : ""}.`;
 }
-function compositionSummary(s) {
-  const c = ensureShotCreation(s), plan = c.composition, camera = plan.camera || {};
+function compositionSummary(s, plan = ensureShotCreation(s).composition, includeCamera = true) {
+  const camera = plan.camera || {};
   const pieces = [
-    `Frame setup: ${camera.shotSize?.replace(/-/g," ") || "wide"}, ${camera.height?.replace(/-/g," ") || "eye level"}, ${camera.angle?.replace(/-/g," ") || "level"}, ${camera.lens?.replace(/-/g," ") || "normal lens"}, ${camera.view?.replace(/-/g," ") || "front view"}, ${camera.layout?.replace(/-/g," ") || "rule of thirds"}, ${camera.crop?.replace(/-/g," ") || "full scene"}.`,
-    camera.reframe === "preserve-exact" ? "Preserve the source framing exactly." : camera.reframe === "reinterpret" ? "The source framing may be reinterpreted to satisfy this composition." : "Preserve the source framing loosely while matching this composition.",
+    includeCamera ? `Frame setup: ${camera.shotSize?.replace(/-/g," ") || "wide"}, ${camera.height?.replace(/-/g," ") || "eye level"}, ${camera.angle?.replace(/-/g," ") || "level"}, ${camera.lens?.replace(/-/g," ") || "normal lens"}, ${camera.view?.replace(/-/g," ") || "front view"}, ${camera.layout?.replace(/-/g," ") || "rule of thirds"}, ${camera.crop?.replace(/-/g," ") || "full scene"}.` : "",
+    includeCamera ? camera.reframe === "preserve-exact" ? "Preserve the source framing exactly." : camera.reframe === "reinterpret" ? "The source framing may be reinterpreted to satisfy this composition." : "Preserve the source framing loosely while matching this composition." : "",
     ...(plan.elements || []).map((element) => compositionElementInstruction(s, element)),
     plan.mustInclude ? `Must include: ${plan.mustInclude}.` : "",
     plan.mustAvoid ? `Must avoid: ${plan.mustAvoid}.` : "",
@@ -3741,7 +3771,8 @@ function guidedFramePromptTools(s, frame, index, state, refs, mode, profileId, b
   const previousToggle = index > 0
     ? `<label class="guided-previous-frame-toggle"><input type="checkbox" ${state.usePreviousFrame ? "checked" : ""} ${previousApproved ? "" : "disabled"} onchange="setGuidedFrameField('${s.id}','${frame.id}','usePreviousFrame',this.checked)"><span><b>Use approved Frame ${esc(previous?.label || "A")} as an image input</b><small>${previousApproved ? "Useful for controlled endpoint changes and first/last-frame workflows." : `Approve Frame ${esc(previous?.label || "A")} first.`}</small></span></label>`
     : "";
-  const inputs = `<div class="guided-frame-input-summary"><button onclick="openGuidedPanel('${s.id}','inputs')"><b>${refs.filter((ref) => ref.url).length}</b><span>approved input${refs.filter((ref) => ref.url).length === 1 ? "" : "s"}</span></button><span>Inputs ready</span></div>`;
+  const missingCount = frameIncludedMissingInputs(s, frame.id).length;
+  const inputs = `<div class="guided-frame-input-summary"><button onclick="openGuidedPanel('${s.id}','inputs')"><b>${refs.filter((ref) => ref.url).length}</b><span>approved input${refs.filter((ref) => ref.url).length === 1 ? "" : "s"}</span></button><span>${missingCount ? `${missingCount} selected input${missingCount === 1 ? " needs" : "s need"} approval or exclusion` : "Inputs ready"}</span></div>`;
   const direction = `<details class="guided-shot-options" data-ui-state-key="frame-direction:${attr(s.id)}:${attr(frame.id)}" ${(state.staging || state.camera || state.notes) ? "open" : ""}><summary>Additional prompt direction</summary>${field("Optional direction", `<textarea data-focus-key="frame-direction:${attr(s.id)}:${attr(frame.id)}" placeholder="Placement, camera, contact points, or anything that must stay unchanged." onchange="setGuidedFrameAdditionalDirection('${s.id}','${frame.id}',this.value)">${esc([state.staging,state.camera,state.notes].filter(Boolean).join("\n"))}</textarea>`)}</details>`;
   const compile = `<div class="guided-compile-bar guided-frame-compile"><details class="guided-inline-defaults" data-ui-state-key="frame-target:${attr(s.id)}:${attr(frame.id)}"><summary>Target: ${target}</summary><label><span>Image target</span><select data-focus-key="frame-target:${attr(s.id)}:${attr(frame.id)}" ${busy ? "disabled" : ""} onchange="setGuidedFrameField('${s.id}','${frame.id}','profileId',this.value)">${creationProfileOptions(mode, profileId)}</select></label></details><div><button class="assemble-btn" ${busy ? "disabled" : ""} onclick="buildGuidedFramePrompt('${s.id}','${frame.id}',false)">${busy && busyLabel === "compile" ? `<span class="spin">◌</span> Compiling…` : hasBuild ? "Rebuild prompt" : "Build prompt"}</button><button class="ghost-btn" ${busy ? "disabled" : ""} onclick="buildGuidedFramePrompt('${s.id}','${frame.id}',true)"${aiDisabledAttrs("text")}>${busy && busyLabel === "improve" ? `<span class="spin">◌</span> Improving…` : "Improve"}</button></div></div>`;
   const assistant = typeof capabilityState === "function" ? capabilityState("text") : { ready: true };
@@ -3918,7 +3949,7 @@ function guidedFrameGenerationSection(s, frame, index, step, state, refs, mode, 
   const reviewable = !!returned;
   const tools = guidedFramePromptTools(s, frame, index, state, refs, mode, profileId, busy, busyLabel, previous, previousApproved, !!build);
   /* A REASON A REQUEST CANNOT BE PREPARED IS NEVER TUCKED AWAY. */
-  const missingInputs = refs.filter((ref) => !ref.url).length;
+  const missingInputs = frameIncludedMissingInputs(s, frame.id).length;
   const inputWarning = missingInputs
     ? `<p class="frame-prompt-refusal" data-tone="attention">${esc(`${missingInputs} selected input${missingInputs === 1 ? " needs" : "s need"} approval before they can be used in this prompt.`)} <button class="text-link-btn" onclick="openGuidedPanel('${s.id}','inputs')">Open inputs</button></p>`
     : "";
@@ -4099,8 +4130,8 @@ function guidedFrameCard(s, frame, index, takes) {
         : backendJobActive
           ? "Running"
           : step.latest
-            ? "Prompt ready"
-            : "Not started";
+      ? frameIncludedMissingInputs(s, frame.id).length ? "Inputs need attention" : "Prompt ready"
+      : "Not started";
   const generationSection = `<details class="frame-generation ${generationEntered ? "is-active" : ""}" data-ui-state-key="frame-generation:${attr(s.id)}:${attr(frame.id)}" data-frame-generation="${generationEntered ? "active" : "idle"}" ${generationOpen ? "open" : ""}><summary class="frame-generation-head"><div><span>Generate this frame</span><b>Prompt, where it runs, and what comes back</b><small>Optional. Imported and manually approved images remain the authority.</small></div><i class="frame-generation-standing">${esc(generationStanding)}</i><i class="compact-chevron">⌄</i></summary><div class="frame-generation-body"><p class="shot-generation-frame-guide"><b>Next · still image:</b> describe Frame ${esc(frame.label)}, open <b>Prompt tools</b>, choose an image target and <b>Build prompt</b>. Then choose where it runs and open request review to check the model and cost. Only <b>GENERATE</b> in that review sends the image request. Review and approve the returned frame in Results before animating it.</p>${guidedExcludedInputsNotice(s)}${generationBody}</div></details>`;
   /* The words the manual-first control asserts on, kept where a filmmaker who is
      looking for the old doorway will still find them. */
@@ -6972,7 +7003,7 @@ window.setGuidedFrameField = (id, frameId, key, value, mirror = false) => {
   if (index === 0) {
     const c = ensureShotCreation(s);
     c[key] = value;
-    if (mirror && key === "action") s.desc = value;
+    /* A frame note never rewrites the whole-shot synopsis. */
     if (mirror && key === "staging") s.positioning = value;
   }
   dirty();
@@ -7196,6 +7227,31 @@ window.downloadGuidedFramePrompt = (id, frameId, buildId) => {
   if (!build) return;
   downloadCreationText(`${build.packageId || `${id}_FRAME_${frames[index].label}`}_${String(build.profileId || "image").replace(/\//g, "-")}.txt`, build.prompt || "");
 };
+/* The shot composer is useful when a director actually staged it. Opening a
+   shot also materializes a wide/full-scene default, which must not contradict a
+   frame's own close-up instruction. An authored camera, arrangement, guide or
+   constraint still travels; a frame camera override wins over all of it. */
+function framePromptComposition(s, state) {
+
+  const plan = ensureShotCreation(s).composition;
+  const camera = plan.camera || {};
+  const defaults = { shotSize: "wide", height: "eye-level", angle: "level", lens: "normal",
+    view: "front", layout: "rule-of-thirds", crop: "full-scene", reframe: "preserve-loosely" };
+  const authoredCamera = Object.entries(defaults).some(([key, value]) => camera[key] && camera[key] !== value);
+  const nonCameraIntent = (plan.elements || []).some((row) => !row.hidden)
+    || !!String(plan.mustInclude || "").trim() || !!String(plan.mustAvoid || "").trim()
+    || !["", "auto", "blank"].includes(String(plan.baseFrame?.source || ""));
+  const frameCamera = String(state.camera || "").trim();
+  if (frameCamera) {
+    if (!nonCameraIntent) return null;
+    /* Zoom, pan and rotation are camera-like base transforms too. Keep the
+       selected base source, but let this frame's camera override those moves. */
+    const baseFrame = plan.baseFrame && typeof plan.baseFrame === "object"
+      ? { ...plan.baseFrame, zoom: 1, panX: 0, panY: 0, rotation: 0 } : plan.baseFrame;
+    return { ...plan, camera: {}, baseFrame };
+  }
+  return authoredCamera || nonCameraIntent ? plan : null;
+}
 window.buildGuidedFramePrompt = async (id, frameId, useLLM = false) => {
   const s = shotById(id), frames = guidedFrames(s), index = frames.findIndex((frame) => frame.id === frameId);
   if (index < 0) return;
@@ -7204,6 +7260,7 @@ window.buildGuidedFramePrompt = async (id, frameId, useLLM = false) => {
   if (!action) return toast(`Describe Frame ${frame.label} first`);
   if (useLLM && !capabilityState("text").ready) return toast(capabilityState("text").message);
   const refs = guidedFramePromptRefs(s, frame, index, state);
+  if (frameIncludedMissingInputs(s, frameId).length) return showFrameMissingInputDecision(id, frameId);
   let mode = guidedFrameMode(state, refs);
   const readyRefs = refs.filter((ref) => ref.url);
   if (mode === "edit" && !readyRefs.some((ref) => ["base", "composition"].includes(ref.role))) mode = readyRefs.length ? "multi-reference" : "t2i";
@@ -7211,6 +7268,7 @@ window.buildGuidedFramePrompt = async (id, frameId, useLLM = false) => {
   const profileId = preferredCreationProfile(mode, state.profileId || P.meta?.promptDefaults?.imageProfile || "");
   state.profileId = profileId;
   const requestAction = useLLM ? "improve" : "compile";
+  const frameComposition = framePromptComposition(s, state);
   ensureShotCreation(s).activeGuidedFrameId = frameId;
   setGuidedPromptOp("frame", id, frameId, { status: "busy", action: requestAction, startedAt: Date.now() });
   route();
@@ -7221,7 +7279,7 @@ window.buildGuidedFramePrompt = async (id, frameId, useLLM = false) => {
       state.camera ? `Camera and framing: ${state.camera}` : "",
       state.notes || "",
       state.automationRevisionRequest ? `Automation revision: ${state.automationRevisionRequest}` : "",
-      compositionSummary(s),
+      frameComposition ? compositionSummary(s, frameComposition, !String(state.camera || "").trim()) : "",
       index > 0 && state.usePreviousFrame ? `This is Frame ${frame.label}. Preserve continuity from approved Frame ${frames[index - 1].label} while creating the described new composition.` : "",
     ].filter(Boolean).join("\n");
     const payloadRefs = readyRefs.map((ref, i) => ({
@@ -7260,7 +7318,7 @@ window.buildGuidedFramePrompt = async (id, frameId, useLLM = false) => {
         directive,
         useLLM,
         allowAdditionalReferences: true,
-        composition: ensureShotCreation(s).composition,
+        composition: frameComposition,
       }),
     }, GUIDED_PROMPT_TIMEOUTS[requestAction], useLLM ? `Frame ${frame.label} prompt improvement` : `Frame ${frame.label} prompt compilation`);
     const sequence = state.promptBuilds.length + 1;
@@ -7278,6 +7336,10 @@ window.buildGuidedFramePrompt = async (id, frameId, useLLM = false) => {
       prompt: data.compiledPrompt,
       spec: data.spec,
       references: data.references || payloadRefs,
+      /* The operation the compiler performed on that ordered list — edit-frame or
+         guide-to-frame — kept on the package so a later reader does not re-derive it
+         from a mode string that names both. */
+      operation: data.operation || "",
       warnings: data.warnings || [],
       confirmations: data.confirmations || [],
       productionRisks: data.productionRisks || data.spec?.productionRisks || [],
@@ -7291,7 +7353,7 @@ window.buildGuidedFramePrompt = async (id, frameId, useLLM = false) => {
         camera: state.camera || "",
         notes: state.notes || "",
         previousFrame: index > 0 && state.usePreviousFrame ? frames[index - 1].id : "",
-        composition: JSON.parse(JSON.stringify(ensureShotCreation(s).composition)),
+        composition: frameComposition ? JSON.parse(JSON.stringify(frameComposition)) : null,
       },
       kind: "guided-frame",
       revision: sequence,

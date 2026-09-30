@@ -2115,9 +2115,34 @@ function compositionGuideAdherence(spec, refs) {
   const guide = (refs || []).find((ref) => ref.role === "composition");
   return cleanText(guide?.blockingAdherence || spec.blockingGuideAdherence || "strict");
 }
+/* The explicitly selected frame being edited, if the package carries one. Its presence
+   is what separates the two still-image operations this file compiles: "edit this
+   frame" keeps the base as the canvas and demotes any guide to placement support, and
+   "turn a guide into a frame" has no base and lets the guide be the scaffold. */
+function explicitEditBase(refs) {
+  return (refs || []).find((ref) => ref.role === "base" && !ref.blocking) || null;
+}
+/* Which still-image operation a reference set describes, named once so the compiler,
+   the stored package and the paid dialog cannot each decide differently. */
+function imageOperation(spec, refs) {
+  if (spec?.purpose === "blocking") return "blocking-frame";
+  if (explicitEditBase(refs)) return "edit-frame";
+  if ((refs || []).some((ref) => ref.role === "composition")) return "guide-to-frame";
+  if ((refs || []).some((ref) => ref.url)) return "create-frame";
+  return "text-to-image";
+}
 function compositionGuideBlock(profile, spec, refs) {
   const guides = compositionGuideReferences(profile, refs);
   if (!guides.length || spec.purpose === "blocking") return "";
+  const editBase = explicitEditBase(refs);
+  if (editBase) {
+    /* SUPPORTING ROLE ONLY. With an explicit edit base in the package the guide is not a
+       canvas and is never "the authoritative base"; it says where the changed element
+       sits, how it is held and what it touches, and nothing about the rest of the frame. */
+    const baseToken = tokenForReference(profile, refs, refs.indexOf(editBase));
+    const labels = guides.map(({ token, ref }) => `${token} (${ref.label || "placement guide"})`).join(", ");
+    return `PLACEMENT GUIDE\n${labels} ${guides.length === 1 ? "is a" : "are"} placement or gesture guide${guides.length === 1 ? "" : "s"} for the requested change only. ${baseToken} remains the frame being edited and the canvas for every pixel outside that change. Use the guide${guides.length === 1 ? "" : "s"} solely for the changed element's position, scale, pose or grip, facing, and contact points. Take no identity, wardrobe, material, colour, texture, lighting, style, architecture, set dressing, crop, or camera from ${guides.length === 1 ? "it" : "them"}, and do not restage, reframe, or rebuild anything the guide does not change. Do not render any text, labels, lettering, guide marks, or storyboard notation from ${guides.length === 1 ? "it" : "them"} into the output.`;
+  }
   const adherence = compositionGuideAdherence(spec, refs);
   const adherenceLine = adherence === "loose"
     ? "Use the broad arrangement as inspiration while preserving the intended subject relationships."
@@ -2154,13 +2179,35 @@ function referenceMetadataFence(ref) {
   if (cleanText(ref?.guideRegion)) lines.push(`Apply this reference only to the ${cleanText(ref.guideRegion)} region defined by the composition guide.`);
   return lines.join(" ");
 }
-function appearanceReferenceInstruction(ref) {
+/* `editing` is true when the package carries an explicitly selected edit base. It changes
+   what two kinds of reference are FOR: the guide stops being a canvas, and an appearance
+   reference is applied to the element being changed rather than placed on a scaffold. */
+function appearanceReferenceInstruction(ref, editing = false) {
   const label = cleanText(ref.entityName || ref.displayName || ref.label || ref.name || "the referenced element");
   const role = cleanText(ref.role || "reference");
   const metadata = referenceMetadataFence(ref);
   const original = cleanText(ref.instruction);
+  const placement = editing
+    ? "apply it only to the element the brief changes, in the frame being edited"
+    : "";
   let contract = "";
-  if (role === "composition")
+  if (editing && role === "composition")
+    /* A guide beside an edit base is never told it owns the canvas, the crop or the
+       camera — the sentence the guide-to-frame contract below opens with. */
+    contract = "Placement and gesture guide for the requested change only. Use for the changed element's position, scale, pose or grip, facing, and contact points. It is not the frame being edited and defines no crop, camera, identity, style, material, lighting, colour, or anything outside that change. Render no text, labels, or guide marks from it.";
+  else if (editing && (["prop", "scale", "alternate-view"].includes(role) || (["detail", "turnaround", "reference-sheet"].includes(role) && ref.sourceType === "prop")))
+    contract = `Appearance only for ${label}: preserve the exact design, proportions, materials, colour, wear, and relevant view. Do not copy this reference's full-object framing, camera, crop, background, or scale-in-frame; ${placement}.`;
+  else if (editing && ["identity", "body", "outfit", "costume", "expression", "pose", "turnaround", "detail", "reference-sheet", "continuity-state"].includes(role))
+    contract = `Appearance only for ${label}: preserve the assigned identity, anatomy, wardrobe, expression, or continuity details. Do not copy this reference's camera, crop, scale-in-frame, background, or layout; ${placement}.`;
+  else if (editing && (["location", "lighting"].includes(role) || ref.sourceType === "location"))
+    contract = `Location continuity for ${label}: use only to keep architecture, surfaces, materials, colour, and lighting consistent where the requested change reveals or touches the environment. The frame being edited keeps its own crop, camera, and every unchanged area.`;
+  else if (role === "base" && !ref.blocking)
+    /* THE FRAME BEING EDITED. It used to fall through to the location clause below and
+       be described as "location design authority ... inside the background area visible
+       in the composition guide" — an approved production frame recast as a texture
+       swatch for its own guide. It is the canvas, and the contract says so. */
+    contract = `The exact frame being edited and the canvas for the whole output. Keep its crop, camera, composition, identity, lighting, and every pixel outside the requested change exactly as they are. No guide or supporting reference replaces it.`;
+  else if (role === "composition")
     contract = "Blocking/animatic geometry only. Use for canvas, crop, camera, horizon, broad depth bands, subject position, relative scale, rough pose/facing, spacing, overlap, silhouette occupancy, and contact points. Do not use for identity, finished anatomy, style, material, lighting, colour, architecture, fence or gate pattern, terrain, set dressing, background-object arrangement, or visible text. Rebuild the finished location from approved location references and canon.";
   else if (["prop", "scale", "alternate-view"].includes(role) || (["detail", "turnaround", "reference-sheet"].includes(role) && ref.sourceType === "prop"))
     contract = `Appearance only for ${label}: preserve the exact design, proportions, materials, colour, wear, and relevant view. Do not copy this reference's full-object framing, camera, crop, background, or scale-in-frame; place it only where the composition guide specifies.`;
@@ -2176,10 +2223,21 @@ function prepareImageReferences(spec, refs) {
   const source = refs || [];
   const hasGuide = source.some((ref) => ref.role === "composition");
   if (!hasGuide) return source.map((ref) => ({ ...ref }));
+  const editing = source.some((ref) => ref.role === "base" && !ref.blocking);
   const mapped = source.map((ref) => ({
     ...ref,
-    instruction: appearanceReferenceInstruction(ref),
+    instruction: appearanceReferenceInstruction(ref, editing),
   }));
+  /* ONE ORDERED REQUEST. An explicitly selected edit base stays Image 1 and everything
+     else keeps the order it was selected in — the same list the paid dialog numbers and
+     the same list the legend below names, so "#image2" on screen is #image2 in the prompt.
+     The guide-first reordering survives ONLY for the guide-to-frame operation, where
+     there is no base and the guide genuinely is the scaffold. (This function used to move
+     every composition guide to the front unconditionally, which is how an approved V002
+     frame became Image 2 behind its own gesture guide and was then prompted as "location
+     design authority" for a guide it was supposed to be edited under.) */
+  const editBase = mapped.find((ref) => ref.role === "base" && !ref.blocking);
+  if (editBase) return [editBase, ...mapped.filter((ref) => ref !== editBase)];
   const guides = mapped.filter((ref) => ref.role === "composition");
   return [...guides, ...mapped.filter((ref) => ref.role !== "composition")];
 }
@@ -2297,7 +2355,9 @@ function imageObjective(spec, purposeLabel) {
 function compileImage(profile, spec, refs) {
   const legend = refLegend(profile, refs);
   const guide = compositionGuideBlock(profile, spec, refs);
-  const base = (refs || []).find((r) => r.role === "composition") || (refs || []).find((r) => r.role === "base" || r.role === "first-frame") || refs?.[0];
+  /* The frame being edited wins the base token when one was explicitly selected; a
+     guide is the base only for the guide-to-frame operation, where nothing else is. */
+  const base = explicitEditBase(refs) || (refs || []).find((r) => r.role === "composition") || (refs || []).find((r) => r.role === "base" || r.role === "first-frame") || refs?.[0];
   const baseToken = base ? tokenFor(profile, refs.indexOf(base) + 1, base.token) : "#image1";
   const purposeLabel = IMAGE_PURPOSE_LABELS[spec.purpose] || "production frame";
   const objective = imageObjective(spec, purposeLabel);
@@ -2328,7 +2388,13 @@ function compileImage(profile, spec, refs) {
       `OUTPUT\n${ratio ? `${ratio}. ` : ""}One flat greyscale blocking frame.`,
     ].filter(Boolean).join("\n\n");
   }
-  const guideBased = compileGuideBasedImage(profile, spec, refs);
+  /* TWO OPERATIONS, NOT ONE. "Turn a guide into a frame" is the guide-scaffold prompt
+     below, and it is taken only when the package has no explicitly selected edit base.
+     "Edit this frame" — a base present, whatever else travels with it — always compiles
+     as an edit of that base, with any guide demoted to the PLACEMENT GUIDE block. The
+     guide branch used to win whenever a composition reference existed, so an edit of an
+     approved frame was prompted as "EDIT THE BLOCKING GUIDE" with the guide as #image1. */
+  const guideBased = explicitEditBase(refs) ? "" : compileGuideBasedImage(profile, spec, refs);
   if (guideBased) return guideBased;
 
   if (profile.strategy.includes("change") || profile.mode === "edit") {
@@ -3038,6 +3104,10 @@ function compile(profile, spec, refs) {
     prompt,
     ...result,
     references: effectiveRefs,
+    /* Which still-image operation this package IS, decided from the same ordered
+       reference list the prompt was compiled from, so the stored package and the paid
+       dialog name the operation the compiler actually performed. Absent for video. */
+    ...(profile.mediaType === "image" ? { operation: imageOperation(promptSpec, effectiveRefs) } : {}),
     payload: payloadPreview(profile, prompt, effectiveRefs, promptSpec),
   };
 }
@@ -3065,6 +3135,7 @@ module.exports = {
   applyStructuredDirection,
   compile,
   checks,
+  imageOperation,
   tokenFor,
   normalizeAudioMode,
   compactVoiceDesign,

@@ -129,7 +129,7 @@ const EXPERT_CONTROLS = ["seed", "cfgScale", "steps", "referenceStrength"];
 function framePlanPayload(overrides = {}) {
   return {
     ok: true, refusal: null, mode: "t2i", purpose: "frame",
-    compiledPrompt: "COMPILED FRAME PROMPT", outputCount: 2,
+    compiledPrompt: "COMPILED FRAME PROMPT", planFingerprint: "fixture-current-plan", outputCount: 2,
     quality: "high", size: "2048x1152",
     sizes: ["1024x1024", "2048x1152", "3840x2160"],
     qualityTiers: ["auto", "low", "medium", "high"],
@@ -187,6 +187,7 @@ async function openFrameDialog(fal = {}, planOverrides = {}) {
     }
     if (String(url).includes("/api/generation/fal/jobs"))
       return { ok: true, json: async () => ({ job: { id: "job-1", status: "COMPLETED" } }) };
+    if (String(url) === "/api/generation/options") return { ok: true, json: async () => ({ options: [{ optionId: "gpt-image-2-ready", modelId: "gpt-image-2/standard", modelName: "GPT Image 2", actionable: true }], normal: [] }) };
     return { ok: true, json: async () => ({ options: [], normal: [] }) };
   };
   await view.context.openFalFrameGenerationModal("frame", "L1-01", "FR-A", "b1");
