@@ -211,8 +211,18 @@ async function testFalLedgerOwnership() {
    PRODUCTION routed into that blocked shot. The two answers came from two
    derivations: the former shotProductionNextAction() read media presence and could not
    see whether a shot's canonical inputs existed. */
+/* These readiness cases include two approved frame files from the shared harness.
+   Target each file explicitly so returned-review does not correctly preempt the
+   blocker under test with a separate unresolved-frame integrity action. */
+function readinessFixture() {
+  const project = buildFixture();
+  for (const shot of project.shots) shot.candidateFiles = shot.keyframes
+    .filter((frame) => frame.winner)
+    .map((frame) => ({ stored: frame.winner, frameId: frame.id }));
+  return project;
+}
 async function testNextActionAgreesWithReadiness() {
-  const fixture = buildFixture();
+  const fixture = readinessFixture();
   const app = await render("#/production", fixture);
   const feed = vm.runInContext("projectShotReadiness()", app.context);
   assert.strictEqual(feed.counts.ready, 0, "the fixture must have no READY shot, or this test proves nothing");
@@ -247,7 +257,7 @@ async function testNextActionAgreesWithReadiness() {
   assert.strictEqual(app.context.location.hash, "#/character/KAI", "CONTINUE PRODUCTION must route to the actual next useful action");
 
   /* Leverage: one input required by several shots outranks one required by one. */
-  const shared = buildFixture();
+  const shared = readinessFixture();
   shared.shots = [shared.shots[0], { ...JSON.parse(JSON.stringify(shared.shots[0])), id: "L1-02", title: "Second" }];
   const many = await render("#/production", shared);
   const sharedFeed = vm.runInContext("projectShotReadiness()", many.context);
@@ -260,7 +270,7 @@ async function testNextActionAgreesWithReadiness() {
   assert(/UNBLOCK 2 SHOTS/.test(sharedNext.actionLabel), `the label must state the leverage (got ${sharedNext.actionLabel})`);
 
   /* And a READY shot is still preferred over any blocker. */
-  const ready = withCanon(buildFixture(), []);
+  const ready = withCanon(readinessFixture(), []);
   const readyApp = await render("#/production", ready);
   vm.runInContext(`
     const feed = projectShotReadiness();
@@ -288,7 +298,7 @@ async function testNextActionAgreesWithReadiness() {
    tests/project-entry.js. */
 const CREATE_WORKSPACE = { storage: { "cinebraid-creation-start-path": "scratch" } };
 async function testCreateViewRecommendationAgrees() {
-  const app = await render("#/create", buildFixture(), CREATE_WORKSPACE);
+  const app = await render("#/create", readinessFixture(), CREATE_WORKSPACE);
   const feed = vm.runInContext("projectShotReadiness()", app.context);
   assert.strictEqual(feed.counts.ready, 0, "the fixture must have no startable shot, or this test is vacuous");
   const canonical = vm.runInContext("projectNextProductionAction()", app.context);
@@ -311,7 +321,7 @@ async function testCreateViewRecommendationAgrees() {
   assert.strictEqual(app.context.location.hash, "#/character/KAI");
 
   /* A READY shot still produces a shot recommendation on this screen. */
-  const readyApp = await render("#/create", buildFixture(), CREATE_WORKSPACE);
+  const readyApp = await render("#/create", readinessFixture(), CREATE_WORKSPACE);
   vm.runInContext(`
     const feed = projectShotReadiness();
     __forced = { ...feed, shots: [{ ...feed.shots[0], status: "READY", nextAction: { code: "produce-frame", message: "Produce Frame A using i2v.", count: 1 } }], counts: { ...feed.counts, ready: 1 } };

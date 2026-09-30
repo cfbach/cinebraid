@@ -171,16 +171,43 @@ async function fetchFalImagePlan(purpose, shotId, buildId, extra = {}) {
   }
 }
 
-/* Which approved references travel, and what each one is FOR. Read from the plan's
-   own manifest rather than from the shot, because the plan is what will be sent. */
+/* The exact numbered inputs the request will carry, read from the serializer's own
+   bindings — the same ordered list the compiled prompt's `#imageN` legend was written
+   from — so "Image 1" on this screen is image_urls[0] in the request and #image1 in the
+   prompt. The plan manifest is the fallback only when preflight refused and there is
+   no dispatch to read; that list is then labelled as a plan, not as a request.
+
+   The previous rows listed roles with no numbers and said "bound by its production
+   role, not by list order", which is true of MiniMax H3 and false of GPT Image 2: fal
+   edits Image 1 and applies a mask to Image 1, so here the order IS the binding. */
+const FAL_FRAME_ROLE_WORDS = {
+  base: "Edit base · the frame being edited",
+  composition: "Placement guide · supporting only",
+  mask: "Mask",
+};
+function falFrameInputRows(request) {
+  const bindings = request?.dispatch?.bindings || [];
+  const byRef = new Map((request?.references || []).map((ref) => [ref.refId, ref]));
+  const roleWords = (role) => FAL_FRAME_ROLE_WORDS[role] || String(role || "reference").replace(/-/g, " ");
+  return bindings.map((binding) => {
+    const ref = byRef.get(binding.refId) || {};
+    const slot = binding.field === "mask_url"
+      ? `Mask · applies to Image ${(Number(binding.appliesToIndex) || 0) + 1}`
+      : `Image ${(Number(binding.index) || 0) + 1}`;
+    return `<li data-input-ref="${attr(binding.refId)}" data-input-slot="${attr(binding.field === "mask_url" ? "mask" : `image-${(Number(binding.index) || 0) + 1}`)}"><b>${esc(slot)}</b><span>${esc(ref.label || binding.refId)} · ${esc(roleWords(binding.role || ref.role))}${ref.purpose ? ` · ${esc(ref.purpose)}` : ""}</span></li>`;
+  }).join("");
+}
 function falFrameReferenceRows(request) {
   const references = request?.references || [];
   /* A B-roll package carries nothing by construction. The heading and the facts line
      already say so, so a third statement of it would only be repetition. */
   if (request?.source?.referenceMode === "style-only") return "";
   if (!references.length) return `<section class="h3-submit-sequence"><b>No approved references</b><small>This frame will be created from the written direction alone.</small></section>`;
+  const numbered = falFrameInputRows(request);
+  if (numbered)
+    return `<section class="h3-submit-sequence" data-frame-inputs="dispatch"><b>Exact request inputs</b><small>Numbered exactly as the request will carry them. The compiled prompt uses the same numbers.</small><ol>${numbered}</ol></section>`;
   const rows = references.map((ref) => `<li><b>${esc(String(ref.role || "reference").replace(/-/g, " "))}</b><span>${esc(ref.label || ref.refId)}${ref.purpose ? ` · ${esc(ref.purpose)}` : ""}</span></li>`).join("");
-  return `<section class="h3-submit-sequence"><b>Approved references CineBraid will use</b><small>Each one and what it is carrying. Bound by its production role, not by list order.</small><ol>${rows}</ol></section>`;
+  return `<section class="h3-submit-sequence" data-frame-inputs="plan"><b>References in this package</b><small>The request could not be prepared, so these are the package's references and not numbered request inputs.</small><ol>${rows}</ol></section>`;
 }
 
 function falFrameWarningRows(request) {
@@ -238,7 +265,7 @@ window.updateFalFrameSubmitState = () => {
      discovered at dispatch. Only one image model has a pack today; this is what stops
      that from being an assumption. */
   const mismatch = chosen && chosen.modelId !== request.planModelId;
-  submit.disabled = !prompt.trim() || !!request.refusal || !!window._falFrameSubmitting || !chosen || mismatch;
+  submit.disabled = !prompt.trim() || !!request.refusal || !!window._falFrameSubmitting || !request.planFingerprint || !chosen || mismatch;
   const note = document.getElementById("fal-frame-model-note");
   if (note) {
     note.hidden = !mismatch;
@@ -246,9 +273,10 @@ window.updateFalFrameSubmitState = () => {
   }
 };
 
-window.updateFalFramePrompt = () => {
+window.updateFalFramePrompt = (authored = false) => {
   const request = window._falFrameRequest || {};
   const editor = document.getElementById("fal-frame-prompt-editor");
+  if (authored) { request._promptRevision = (request._promptRevision || 0) + 1; request._promptIntent = "edit"; }
   const prompt = String(editor?.value ?? request.prompt ?? "");
   request.prompt = prompt;
   const count = document.getElementById("fal-frame-prompt-count");
@@ -259,6 +287,8 @@ window.updateFalFramePrompt = () => {
 
 window.resetFalFramePrompt = () => {
   const request = window._falFrameRequest || {};
+  request._promptRevision = (request._promptRevision || 0) + 1;
+  request._promptIntent = "reset";
   const editor = document.getElementById("fal-frame-prompt-editor");
   if (editor) editor.value = request.compiledPrompt || "";
   const panel = document.getElementById("fal-frame-edit-coverage");
@@ -275,6 +305,8 @@ window.reviewFalFramePromptEdit = async () => {
   const panel = document.getElementById("fal-frame-edit-coverage");
   if (!request || !panel) return;
   const prompt = String(document.getElementById("fal-frame-prompt-editor")?.value ?? "");
+  const refreshId = request._refreshId || 0;
+  const fingerprint = request.planFingerprint;
   if (prompt.trim() === String(request.compiledPrompt || "").trim()) {
     panel.hidden = true;
     panel.innerHTML = "";
@@ -285,7 +317,9 @@ window.reviewFalFramePromptEdit = async () => {
     aspectRatio: request.aspectRatio,
     prompt,
   });
-  if (!preview) return;
+  if (!preview || window._falFrameRequest !== request || request._refreshId !== refreshId ||
+      request.planFingerprint !== fingerprint ||
+      String(document.getElementById("fal-frame-prompt-editor")?.value ?? "") !== prompt) return;
   const lost = preview.editedCoverage?.lost || [];
   const checked = preview.editedCoverage?.checked || [];
   panel.hidden = false;
@@ -308,28 +342,59 @@ function falFrameOutputSettings() {
 window.refreshFalFramePlan = async () => {
   const request = window._falFrameRequest;
   if (!request || window._falFrameSubmitting) return;
-  const edited = String(document.getElementById("fal-frame-prompt-editor")?.value ?? "");
-  const keepEdit = edited.trim() && edited.trim() !== String(request.compiledPrompt || "").trim();
+  const editor = document.getElementById("fal-frame-prompt-editor");
+  const editedAtStart = String(editor?.value ?? "");
+  const keepEditAtStart = editedAtStart.trim() && editedAtStart.trim() !== String(request.compiledPrompt || "").trim();
+  const promptRevision = request._promptRevision || 0;
+  const refreshId = (request._refreshId || 0) + 1;
+  request._refreshId = refreshId;
+  request.planFingerprint = null;
+  const coverage = document.getElementById("fal-frame-edit-coverage");
+  if (coverage) { coverage.hidden = true; coverage.innerHTML = ""; }
+  updateFalFrameSubmitState();
   const preview = await fetchFalImagePlan(request.purpose, request.shotId, request.buildId, {
     ...falFrameOutputSettings(),
     aspectRatio: request.aspectRatio,
   });
-  if (!preview) return;
-  Object.assign(request, preview, { prompt: keepEdit ? edited : preview.compiledPrompt });
-  const editor = document.getElementById("fal-frame-prompt-editor");
-  if (editor && !keepEdit) editor.value = preview.compiledPrompt;
+  if (!preview || window._falFrameRequest !== request || request._refreshId !== refreshId ||
+      !document.getElementById("fal-frame-prompt-editor")) return;
+  /* The response owns the new compiled prompt, settings and fingerprint. The editor
+     owns any later human input. Reset while pending means reset to THIS new compiled
+     prompt, not to the old one that was visible when Reset was pressed. */
+  const changedDuringRefresh = (request._promptRevision || 0) !== promptRevision;
+  const preserveEdit = changedDuringRefresh ? request._promptIntent !== "reset" : keepEditAtStart;
+  const currentText = changedDuringRefresh
+    ? String(document.getElementById("fal-frame-prompt-editor")?.value ?? "") : editedAtStart;
+  Object.assign(request, preview, { prompt: preserveEdit ? currentText : preview.compiledPrompt });
+  const currentEditor = document.getElementById("fal-frame-prompt-editor");
+  if (currentEditor && !preserveEdit) currentEditor.value = preview.compiledPrompt;
   renderFalFramePanels();
   updateFalFramePrompt();
+  if (preserveEdit) void reviewFalFramePromptEdit();
 };
 
 const FAL_FRAME_TASK_TITLES = {
   blocking: { task: "blocking-frame", title: "Create blocking frame", lead: "A fast, cheap layout that fixes composition, framing, staging and who is where. It is not meant to be beautiful — it is meant to be right." },
   frame: { task: "create-frame", title: "Create frame", lead: "A production still for this shot, built from the approved references." },
 };
+/* The heading names the OPERATION the compiler resolved from the package, not the
+   button that opened the dialog. "Edit this frame" and "turn a guide into a frame" both
+   run on fal's /edit endpoint and used to share the "Create frame" heading; they are
+   different operations with different canvases, and the filmmaker is told which one is
+   about to be paid for. */
+const FAL_FRAME_OPERATION_TITLES = {
+  "edit-frame": { task: "edit-frame", title: "Edit frame", lead: "Changes only what the brief asks for in the selected frame, which is sent as Image 1. Any placement guide is supporting only." },
+  "guide-to-frame": { task: "create-frame", title: "Create frame from guide", lead: "Turns the composition guide into a finished production still. The guide is the scaffold; approved references carry identity and design." },
+  "create-frame": FAL_FRAME_TASK_TITLES.frame,
+  "text-to-image": { task: "create-frame", title: "Create frame", lead: "A production still for this shot, from the written direction alone." },
+  "blocking-frame": FAL_FRAME_TASK_TITLES.blocking,
+};
 
 window.openFalFrameGenerationModal = async (purpose, shotId, frameId = "", buildId = "") => {
   const shot = shotById(shotId);
   if (!shot) return toast("Shot is unavailable");
+  if (purpose === "frame" && frameId && typeof showFrameMissingInputDecision === "function"
+    && showFrameMissingInputDecision(shotId, frameId)) return;
   if (!falGenerationReady()) {
     openModal(`<h3>Connect fal first</h3><p class="modal-confirm-message">Enable fal image generation and add the API key in Settings. The key remains on the CineBraid server.</p><div class="modal-actions"><button class="cancel" onclick="closeModal()">Close</button><button class="approve-btn" onclick="closeModal();location.hash='#/settings'">OPEN SETTINGS</button></div>`);
     return;
@@ -345,13 +410,14 @@ window.openFalFrameGenerationModal = async (purpose, shotId, frameId = "", build
   const preview = await fetchFalImagePlan(purpose, shotId, buildId, { aspectRatio, outputCount: defaultCount });
   if (!preview) return;
 
-  const task = preview.mode === "edit" || preview.mode === "inpaint" ? "edit-frame" : kind.task;
+  const operation = FAL_FRAME_OPERATION_TITLES[preview.operation] || null;
+  const task = operation ? operation.task : preview.mode === "edit" || preview.mode === "inpaint" ? "edit-frame" : kind.task;
   /* A B-roll package says what it is in the heading, not "built from the approved
      references" — it has none, and the dialog must not imply otherwise. */
   const styleOnly = preview.source?.referenceMode === "style-only";
   const heading = styleOnly
     ? { title: "Create B-roll image", lead: "Uses the project look and this shot’s prompt. No reference required." }
-    : { title: kind.title, lead: kind.lead };
+    : operation && purpose !== "blocking" ? { title: operation.title, lead: operation.lead } : { title: kind.title, lead: kind.lead };
   const options = await fetchGenerationOptions(task, (preview.references || []).map((row) => ({ role: row.role, mediaType: row.mediaType })));
   const ready = (options?.options || []).filter((option) => option.actionable);
   const planOption = ready.find((option) => option.modelId === (preview.compiler?.packId === "gpt-image-2" ? "gpt-image-2/standard" : ""));
@@ -389,7 +455,7 @@ window.openFalFrameGenerationModal = async (purpose, shotId, frameId = "", build
      paragraph are Advanced-only for a B-roll package. Refusals are never marked. */
   const advancedOnly = styleOnly ? ' data-broll-advanced="1"' : "";
   dismissStaleNotice();
-  openModal(`<div class="h3-generation-modal${styleOnly ? " broll-confirmation" : ""}"><header class="h3-generation-head"><div><span>PAID GENERATION</span><h3>${esc(heading.title)}${esc(frameLabel)}</h3><p>${esc(heading.lead)}</p></div><button class="cancel" onclick="closeModal()">Close</button></header><div class="h3-generation-scroll"><div class="modal-sub"${advancedOnly}>${esc(preview.dispatch?.model || "fal")} · compiled by ${esc(preview.compiler?.packId || "gpt-image-2")} ${esc(preview.compiler?.packVersion || "")}</div><div id="fal-frame-facts" class="candidate-evidence-facts"${advancedOnly}></div><div class="gen-prompt-count" id="fal-frame-prompt-count"${advancedOnly}>${preview.compiledPrompt.length.toLocaleString()} characters</div><div id="fal-frame-refusal" class="guided-prompt-error" hidden></div><div id="fal-frame-model-note" class="guided-prompt-error" hidden></div><div id="fal-frame-options"></div><div id="fal-frame-references"></div><div id="fal-frame-generation-view"></div><div id="fal-frame-warnings"${advancedOnly}></div><section class="h3-prompt-editor"${advancedOnly}><header><div><b>Edit prompt before generation</b><small>This is the prompt CineBraid compiled and the exact text that will be sent. The compiled package is preserved; any change is recorded beside the compiled original.</small></div></header><textarea id="fal-frame-prompt-editor" oninput="updateFalFramePrompt()" onchange="reviewFalFramePromptEdit()">${esc(preview.compiledPrompt)}</textarea><div id="fal-frame-edit-coverage" class="h3-edit-coverage" hidden></div><div class="h3-prompt-editor-actions"><button class="ghost-btn" onclick="resetFalFramePrompt()">Reset compiled prompt</button></div></section><p class="hint"${advancedOnly}>This submits one paid fal request. Returned images are saved as unapproved candidates in this shot and do not become canon until you approve one. The request uses an idempotency key to prevent an accidental double submission from this dialog.</p></div><footer class="modal-actions h3-generation-actions"><button class="cancel" onclick="closeModal()">Cancel</button><button id="fal-frame-submit" class="approve-btn large" onclick="startFalFrameGeneration()" disabled>${styleOnly ? "Generate" : "GENERATE"}</button></footer></div>`);
+  openModal(`<div class="h3-generation-modal${styleOnly ? " broll-confirmation" : ""}"><header class="h3-generation-head"><div><span>PAID GENERATION</span><h3>${esc(heading.title)}${esc(frameLabel)}</h3><p>${esc(heading.lead)}</p></div><button class="cancel" onclick="closeModal()">Close</button></header><div class="h3-generation-scroll"><div class="modal-sub"${advancedOnly}>${esc(preview.dispatch?.model || "fal")} · compiled by ${esc(preview.compiler?.packId || "gpt-image-2")} ${esc(preview.compiler?.packVersion || "")}</div><div id="fal-frame-facts" class="candidate-evidence-facts"${advancedOnly}></div><div class="gen-prompt-count" id="fal-frame-prompt-count"${advancedOnly}>${preview.compiledPrompt.length.toLocaleString()} characters</div><div id="fal-frame-refusal" class="guided-prompt-error" hidden></div><div id="fal-frame-model-note" class="guided-prompt-error" hidden></div><div id="fal-frame-options"></div><div id="fal-frame-references"></div><div id="fal-frame-generation-view"></div><div id="fal-frame-warnings"${advancedOnly}></div><section class="h3-prompt-editor"${advancedOnly}><header><div><b>Edit prompt before generation</b><small>This is the prompt CineBraid compiled and the exact text that will be sent. The compiled package is preserved; any change is recorded beside the compiled original.</small></div></header><textarea id="fal-frame-prompt-editor" oninput="updateFalFramePrompt(true)" onchange="reviewFalFramePromptEdit()">${esc(preview.compiledPrompt)}</textarea><div id="fal-frame-edit-coverage" class="h3-edit-coverage" hidden></div><div class="h3-prompt-editor-actions"><button class="ghost-btn" onclick="resetFalFramePrompt()">Reset compiled prompt</button></div></section><p class="hint"${advancedOnly}>This submits one paid fal request. Returned images are saved as unapproved candidates in this shot and do not become canon until you approve one. The request uses an idempotency key to prevent an accidental double submission from this dialog.</p></div><footer class="modal-actions h3-generation-actions"><button class="cancel" onclick="closeModal()">Cancel</button><button id="fal-frame-submit" class="approve-btn large" onclick="startFalFrameGeneration()" disabled>${styleOnly ? "Generate" : "GENERATE"}</button></footer></div>`);
   window._generationViewRefresh = () => renderFalFrameGenerationView();
   setTimeout(() => { renderFalFramePanels(); updateFalFramePrompt(); }, 0);
 };
@@ -503,6 +569,7 @@ window.startFalFrameGeneration = async () => {
   const prompt = String(document.getElementById("fal-frame-prompt-editor")?.value ?? request.prompt ?? "").trim();
   if (!prompt) return toast("Enter a prompt before generation");
   if (request.refusal) return toast(request.refusal.error);
+  if (!request.planFingerprint) return toast("Wait for the updated frame request preview before submitting.");
   request.prompt = prompt;
   window._falFrameSubmitting = true;
   const button = document.getElementById("fal-frame-submit");
@@ -514,6 +581,7 @@ window.startFalFrameGeneration = async () => {
        pre-C2b route, which is what the blocking-revision and correction flows still
        need — so this is opt-in per request rather than a mode the server infers. */
     imagePlan: true,
+    planFingerprint: request.planFingerprint,
     clientRequestId: request.clientRequestId,
     shotId: request.shotId,
     frameId: request.frameId,

@@ -47,6 +47,7 @@ const SUITES = [
   "check:h3-browser",
   "check:h3-motion-handoff",
   "check:motion-edit",
+  "check:prompt-request-truth-browser",
   "check:preview-layout",
   "check:ui-state",
   "check:board-density-browser",

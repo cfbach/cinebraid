@@ -215,9 +215,18 @@ const ROLE_PRIORITY = [
      a temporal contract rather than an influence. Within the band they keep the
      director's supplied order, which is the whole meaning of a keyframe sequence. */
   "sequential-keyframe", "waypoint",
+  /* THE PLATE BEING EDITED IS A CANVAS CONTRACT, NOT AN INFLUENCE. It used to sort after
+     identity, place, prop and even the composition guide, so an edit of an approved
+     frame dispatched that frame as Image 3 behind a chair reference and a gesture guide
+     — and a provider that applies its mask to the FIRST image (OpenAI's documented rule,
+     which fal inherits) would have masked the chair. The base leads every image edit for
+     the same reason a first frame leads a motion pass: the request is ABOUT it. A
+     composition guide keeps its supporting place further down; it never displaces the
+     frame it is guiding a change to. */
+  "base",
   "identity", "expression", "body", "outfit", "pose", "turnaround",
   "continuity-state", "location", "prop", "scale",
-  "composition", "base", "reference", "reference-sheet", "alternate-view", "detail",
+  "composition", "reference", "reference-sheet", "alternate-view", "detail",
   "motion-reference", "camera-reference", "performance-reference",
   "voice", "audio-timing", "sound-reference",
   "style", "colour-palette", "lighting",

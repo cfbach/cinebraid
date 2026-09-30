@@ -71,6 +71,10 @@ def verify_reference_dialog_navigation(page, entity_id):
         if keyboard: opener.press('Enter')
         else: opener.click()
         page.wait_for_selector('#modal:not(.hidden) [data-reference-details-dialog]')
+        # openModal schedules initial focus after the dialog becomes visible. Wait
+        # for that observable state before sending keyboard Tabs; otherwise the
+        # test can race the timer and tab around the page behind the dialog.
+        page.wait_for_function("() => document.querySelector('#modal')?.contains(document.activeElement)")
         page.set_viewport_size({'width':width,'height':900})
     for width in (1280,1440,1920):
         for mode in ('pointer','keyboard'):

@@ -81,9 +81,17 @@ filmmaker-facing label and purpose, whether it is required, and its canonical or
 
 Two rules matter more than the rest:
 
-- **Order is canonical, not arrival order.** Endpoints first, then identity and place,
-  then the modalities that shape motion and sound. Reordering a selection must not change
-  the result.
+- **Order is canonical, not arrival order.** Endpoints first, then the plate being edited,
+  then identity and place, then the modalities that shape motion and sound. Reordering a
+  selection must not change the result.
+- **The edit base leads and the mask binds to it.** A `base` reference is the canvas of an
+  edit, not an influence, so it is Image 1 in every still-image edit; a `composition` guide
+  in the same package keeps a supporting place and never displaces it. A `mask` is not an
+  image input: the GPT Image 2 pack numbers only image inputs as `#imageN`, records the
+  mask as `mask->image[0]`, and the fal serializer refuses a mask whose Image 1 is not the
+  base (`IMAGE_MASK_UNBOUND`) and an edit whose base is not first (`IMAGE_BASE_NOT_FIRST`).
+  The two still-image operations stay distinct: a package with a base is *edit-frame*, a
+  package with a guide and no base is *guide-to-frame*.
 - **Endpoints bind by role, never by position.** `endpoints.firstFrame` and
   `endpoints.lastFrame` name a reference whose role matches. An array shuffled by a UI is
   not allowed to decide which frame ends the shot, and the contract refuses a first/last

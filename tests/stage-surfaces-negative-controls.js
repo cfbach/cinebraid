@@ -307,8 +307,8 @@ function integrationControls() {
 
   control("C27 the shot workspace builds a taskbar again", "checkSingleNavigator",
     { studio: mutate(SOURCES.studio,
-        "  const selectedMarkup = (renderers[selectedTask] || renderers.frames)();",
-        "  const legacyBar = `<nav class=\"focused-taskbar\"></nav>`;\n  const selectedMarkup = legacyBar && (renderers[selectedTask] || renderers.frames)();",
+        "  const selectedMarkup = typeof shotIsStyleOnly === \"function\" && shotIsStyleOnly(s) ? \"\" : (renderers[selectedTask] || renderers.frames)();",
+        "  const legacyBar = `<nav class=\"focused-taskbar\"></nav>`;\n  const selectedMarkup = legacyBar + (typeof shotIsStyleOnly === \"function\" && shotIsStyleOnly(s) ? \"\" : (renderers[selectedTask] || renderers.frames)());",
         "C27") },
     "The old navigator coming back is not hypothetical: it is one line, in a file that already knows every stage, and it would be destroyed and rebuilt on every stage change while the real one sat above it.");
 

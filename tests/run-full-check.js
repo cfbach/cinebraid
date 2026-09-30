@@ -124,6 +124,7 @@ const nodeSuites = [
   "check:model-intelligence-negative",
   "check:gpt-image-2",
   "check:image-execution",
+  "check:image-edit-base",
   "check:generation-options",
   "check:generation-options-negative",
   "check:generation-defaults",
@@ -459,18 +460,11 @@ async function runWithConcurrency(names, limit) {
 (async () => {
   const startedAt = Date.now();
   const results = [];
-  const groups = await Promise.allSettled([
-    runWithConcurrency(nodeSuites, 4),
-    (async () => {
-      const completed = [];
-      for (const script of browserSuites) { if (qualificationFailure) break; completed.push(await runScript(script)); }
-      return completed;
-    })(),
-  ]);
-  const failed=groups.find(row=>row.status === "rejected");
-  if (failed) throw failed.reason;
-  if (qualificationFailure) throw qualificationFailure;
-  results.push(...groups[0].value, ...groups[1].value);
+  /* Negative-control suites patch source files in place and restore them. Running them
+     beside other source readers can make both the mutation receipt and browser page
+     errors depend on scheduling rather than the candidate under test. */
+  results.push(...await runWithConcurrency(nodeSuites, 1));
+  for (const script of browserSuites) results.push(await runScript(script));
   for (const script of serialSuites) results.push(await runScript(script));
   for (const script of releaseSuites) results.push(await runScript(script));
   const elapsedSeconds = ((Date.now() - startedAt) / 1000).toFixed(1);

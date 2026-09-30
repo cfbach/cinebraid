@@ -523,7 +523,7 @@ async function executionControls() {
       const markup = run(page.context, `
         const profile = guidedVideoProfiles().find((row) => row.id === ${JSON.stringify(H3_T2V)});
         return { action: falH3MotionPromptAction("L1-01", "stale-build", profile) };`).action;
-      assert(!markup.includes("GENERATE H3 VIDEO"),
+      assert(!markup.includes("Review video request") && !markup.includes("h3-generate-btn"),
         "a package compiled before the intent changed must not draw the paid button");
     },
   );

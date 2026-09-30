@@ -164,10 +164,35 @@ function buildReferences(build) {
 function resolveImageMode(purpose, references) {
   if (purpose === "blocking") return "blocking";
   const roles = new Set(references.map((row) => text(row.role)));
-  if (roles.has("mask")) return "inpaint";
+  if (roles.has("mask")) {
+    /* A mask is bound to the frame it masks. Without a base there is nothing for it to
+       apply to, and the provider would apply it to whichever image happened to be first
+       — refused here, before a plan exists, rather than compiled into one. */
+    if (!roles.has("base"))
+      throw new ImageExecutionError(
+        "IMAGE_MASK_WITHOUT_BASE",
+        "A mask needs the approved frame it masks, supplied as the edit base. Nothing was compiled and nothing was charged.",
+        { roles: [...roles].sort() },
+      );
+    return "inpaint";
+  }
   if (roles.has("base")) return "edit";
   if (references.length) return "multi-reference";
   return "t2i";
+}
+
+/* WHICH FILMMAKER OPERATION THIS IS — a coarser question than the mode, and the one the
+   dialog heading and the stored package answer. "Edit this frame" and "turn a guide into
+   a frame" both reach fal's /edit endpoint, because that is the only endpoint with an
+   image field; they are still different operations with different canvases, and a
+   screen that called both "Edit frame" hid the difference the compiler acts on. */
+function resolveImageOperation(purpose, references) {
+  if (purpose === "blocking") return "blocking-frame";
+  const roles = new Set(references.map((row) => text(row.role)));
+  if (roles.has("base")) return "edit-frame";
+  if (roles.has("composition")) return "guide-to-frame";
+  if (references.length) return "create-frame";
+  return "text-to-image";
 }
 
 /* ---------------------------------------------------------------------------
@@ -268,6 +293,7 @@ function compileImageExecutionPlan(request = {}) {
        rather than parsing it back out of a label or a key. */
     sourceReferences: references,
     mode,
+    operation: resolveImageOperation(purpose, references),
     purpose,
     modelId: IMAGE_MODEL_ID,
     surface,
@@ -399,4 +425,5 @@ module.exports = {
   imagePlanProvenance,
   readSourceIntent,
   resolveImageMode,
+  resolveImageOperation,
 };

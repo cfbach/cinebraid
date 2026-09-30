@@ -7144,11 +7144,19 @@ app.post("/api/prompt/compile", async (req, res) => {
         llmWarning = "Blocking prompt is ready. Assistant refinement is disabled, so CineBraid used its deterministic structural plan. You can generate the blocking frame now.";
       }
     }
+    const frameSpecificImageDirection = profile.mediaType === "image" && !!context.framePresence?.frameId
+      && !!effectiveDirective && !req.body.spec;
     if (profile.mediaType === "image" && effectiveDirective && !req.body.spec) {
       spec.actions = [{ start: 0, end: 1, action: effectiveDirective }];
-      spec.initialState.subject = [spec.initialState.subject, effectiveDirective]
-        .filter(Boolean)
-        .join("\n");
+      spec.initialState.subject = frameSpecificImageDirection
+        ? effectiveDirective
+        : [spec.initialState.subject, effectiveDirective].filter(Boolean).join("\n");
+      if (frameSpecificImageDirection) {
+        /* The selected frame describes this image; the shot synopsis is context,
+           not a second positive instruction for what appears in Frame A. */
+        spec.narrativePurpose = effectiveDirective;
+        if (purpose === "edit") spec.finalState.subject = effectiveDirective;
+      }
     }
     if (profile.mediaType === "video" && purpose === "motion" && effectiveDirective) {
       spec.actions = [
@@ -7204,7 +7212,22 @@ app.post("/api/prompt/compile", async (req, res) => {
           e.message;
       }
     }
-    spec = PromptEngine.applyStructuredDirection(spec, req.body.composition || context.shot.composition, purpose === "motion" ? (req.body.motionPlan || context.shot.motionPlan) : null, references);
+    if (frameSpecificImageDirection) {
+      /* An optional assistant may have reintroduced whole-shot language. Reassert
+         the authored frame target at the last deterministic boundary. */
+      spec.narrativePurpose = effectiveDirective;
+      spec.initialState.subject = effectiveDirective;
+      spec.initialState.staging = "";
+      spec.initialState.camera = "";
+      spec.stagingLines = [];
+      spec.camera.framing = "";
+      spec.camera.lensIntent = "";
+      spec.actions = [{ start: 0, end: 1, action: effectiveDirective }];
+      if (purpose === "edit") spec.finalState.subject = effectiveDirective;
+    }
+    const structuredComposition = frameSpecificImageDirection && req.body.composition === null
+      ? null : (req.body.composition || context.shot.composition);
+    spec = PromptEngine.applyStructuredDirection(spec, structuredComposition, purpose === "motion" ? (req.body.motionPlan || context.shot.motionPlan) : null, references);
     if (suppliedMotionBrief) spec = PromptEngine.applyMotionAudioBrief(spec, suppliedMotionBrief);
     if (purpose === "blocking") spec = PromptEngine.applyBlockingPlan(spec, context, req.body.composition || context.shot.composition, { emphasis: req.body.blockingEmphasis, direction: req.body.blockingDirection, frameBrief: req.body.blockingFrameBrief, plan: blockingPlan });
     const compiled = PromptEngine.compile(profile, spec, references);
@@ -7261,6 +7284,9 @@ app.post("/api/prompt/compile", async (req, res) => {
       productionRisks: spec.productionRisks || [],
       providerPayload: compiled.payload,
       references: compiled.references || references,
+      /* Which still-image operation the compiler performed on that ordered list. Absent
+         for video profiles, "" rather than a guess where the compiler said nothing. */
+      operation: compiled.operation || "",
       referencePolicy:
         profile.mode === "i2v"
           ? "first-frame-only"

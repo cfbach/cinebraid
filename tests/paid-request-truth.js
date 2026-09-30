@@ -891,6 +891,37 @@ async function main() {
     } finally { h.close(); }
   }
 
+  /* A frame's explicit input exclusion is part of the package freshness
+     contract. The old build must not remain payable after the user excludes an
+     unavailable input and the screen asks for a rebuild. */
+  {
+    const h = await harness();
+    try {
+      const project = h.project();
+      const buildId = addFramePromptBuild(project, "SH-1", {
+        frameId: "FR-A", spec: baseSpec({ shotId: "SH-1" }),
+        references: [buildRef(REF_IDENTITY, KAI_PNG)],
+      });
+      const shot = project.shots[0];
+      shot.creationBrief = { ...(shot.creationBrief || {}), disabledInputKeys: [] };
+      const pack = project.promptBuildsById[buildId];
+      pack.dependencySnapshot = BuildHistory.packageProjectInputs(project, shot, pack,
+        BuildHistory.packageDirection(shot, pack));
+      h.saveProject(project);
+      const moved = h.project();
+      moved.shots[0].creationBrief.disabledInputKeys = ["characters:KAI:default"];
+      h.saveProject(moved);
+      const refused = await h.post(declaredGenerationBody(framePlanBody(buildId,
+        { clientRequestId: "excluded-input-old-build" })));
+      assert.strictEqual(refused.status, 409, JSON.stringify(refused.data));
+      assert.strictEqual(refused.data.code, "GENERATION_PACKAGE_STALE");
+      assert(refused.data.reasons.includes("shot input selection changed"));
+      assert.strictEqual(h.calls.length, 0, "a changed input selection makes no provider call");
+      assert.strictEqual(h.ledger().length, 0, "and creates no paid row");
+      note("8a. an explicit input exclusion stales its frame package at the money boundary; no provider call or job row");
+    } finally { h.close(); }
+  }
+
   /* =======================================================================
      9. A PACKAGE THAT RECORDED NOTHING IS NOT REFUSED.
 

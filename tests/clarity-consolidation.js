@@ -62,7 +62,11 @@ assert(views.includes("Open project log & reports") && studioSettings.includes("
 assert(reports.includes("PROJECT LOG"));
 assert(reports.includes("reportsLegacyCompatibilityUsage"), "Reports must expose read-only compatibility telemetry before adapters are removed");
 
-assert(app.includes('boundedPage(filteredPairs, "shots", boardPageKey, 5)'), "shot board must use a five-card next-action page");
+/* The board now has a project-scoped 5/10/15/20/25 page-size choice, defaulting
+   to 20. tests/shots-pagination.js exercises its actual paging and persistence. */
+assert(app.includes('boundedPage(filteredPairs, "shots", boardPageKey, shotBoardPageSize())'), "shot board must page the filtered list with the selected density");
+assert(app.includes('const SHOT_BOARD_PAGE_SIZES = Object.freeze([5, 10, 15, 20, 25])')
+  && app.includes('boundedReadState("page-size", "shots", 20)'), "shot board must retain the bounded page-size choices and default");
 assert(app.includes('action: "unfinished"'), "shot board must default to unfinished work");
 assert(app.includes("Not delivered"), "shot board must offer the not-delivered filter");
 assert(!app.includes("const winnersProgress"), "verified dead winnersProgress helper must be removed");
