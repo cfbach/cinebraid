@@ -1386,7 +1386,17 @@ window.syncEntityApprovalModal = () => {
   const caption = document.getElementById("entity-approval-file-caption");
   if (caption) caption.textContent = fileName;
   const summary = document.getElementById("entity-approval-target-summary");
-  if (summary) summary.innerHTML = `<span>APPROVAL TARGET</span><b>${esc(state?.name || "Default")}</b><small>${esc(state?.appliesTo || (state?.isDefault ? "Primary project-wide state" : "No scene/shot range assigned"))}</small>`;
+  const currentApproval = window.CineBraidAuthorityKernel?.currentHumanAuthority?.(P, { kind: "entity-state", list: current.list, entityId: current.id, stateId });
+  const prepared = ENTITY_APPROVAL_READINESS;
+  const sameApprovedAsset = currentApproval && prepared?.status === "ready" && prepared.list === current.list
+    && prepared.entityId === current.id && prepared.stateId === stateId && prepared.fileName === fileName
+    && prepared.assetId === currentApproval.assetId;
+  const replacementNote = sameApprovedAsset
+    ? "This image is already approved for this state. No repeat approval is needed."
+    : currentApproval
+      ? `This state currently approves ${currentApproval.value}. Approving a different exact image will supersede it for this state. Other states and supporting view selections keep their own records.`
+      : "This state has no current approved image. Supporting view selections are separate from approval.";
+  if (summary) summary.innerHTML = `<span>APPROVAL TARGET</span><b>${esc(state?.name || "Default")}</b><small>${esc(state?.appliesTo || (state?.isDefault ? "Primary project-wide state" : "No scene/shot range assigned"))}</small><small>${esc(replacementNote)}</small>`;
   const nextSelect = document.getElementById("entity-approve-next");
   if (nextSelect) {
     const previous = targetChanged ? "" : nextSelect.value;

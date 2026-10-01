@@ -199,7 +199,12 @@ try:
         open_hash("#/library/canon")
         library = page.locator('[data-reference-library]')
         assert library.get_by_role("heading", name="References", exact=True).count() == 1
-        assert library.locator('nav[aria-label="Reference types"] a.selected').inner_text() == "Approved"
+        categories = page.locator('#nav #context-navigation[data-section="library"]')
+        current_category = categories.locator('a[aria-current="page"]')
+        assert current_category.count() == 1, "References must identify one current category"
+        assert current_category.get_attribute("href") == "#/library/canon"
+        assert current_category.inner_text() == "Approved"
+        assert library.locator('nav[aria-label="Reference types"]').count() == 0, "category navigation belongs only to the sidebar"
         assert library.locator('.rd-library-card').count() == 0, "a supporting selection must not put an entity in Approved"
         assert library.get_by_text("Approved reference", exact=True).count() == 0, "the library must never badge a supporting selection Approved"
         open_hash("#/library/all")

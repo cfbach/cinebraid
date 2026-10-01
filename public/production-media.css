@@ -70,3 +70,5 @@ body.production-media-active #app #main{display:block;padding:26px;overflow:auto
   .rd-picker:has(.media-discovery) .rd-picker-target h3{font:600 17px/1.25 var(--body);margin:0 0 4px}
   .rd-picker:has(.media-discovery) .rd-picker-target p{font-size:13px}.rd-picker:has(.media-discovery) .rd-picker-target small{font-size:12px;margin-top:2px}
   .rd-picker:has(.media-discovery) footer{bottom:-14px;margin:16px -14px -14px;padding:12px 14px 14px}}
+
+@media(max-width:480px){.md-grid .md-decision[data-md-decision=attention]{border-radius:7px}}

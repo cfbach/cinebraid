@@ -256,14 +256,10 @@
   #cb-stage-mount .cb-stage-action { white-space:normal; text-align:left; }
   #cb-stage-mount .cb-stage-action-reason { text-align:left; }
 }
-/* B2.16. The Shot workspace renders no Inspector column (focused-workspaces.js), so its shell is two tracks: the
-   compact project navigator at its own width, then the work. Narrower windows give the work the inspector's old
-   width; from about 1660 (navigator collapsed) the work stops at 1360px, its width beside the inspector at 1920,
-   so a wide window adds room beside the work instead of stretching every card across it, and the frame review
-   column still never narrows as the window widens. justify-content:start keeps the spare width after the work:
-   a grid's normal alignment would stretch the auto navigator track and open a gap between navigator and work.
-   Scoped to the shot shell; the References shell and its inspector keep their own three tracks. */
-.bounded-shot-workspace.focused-workspace-shell { grid-template-columns:auto minmax(0,1360px); justify-content:start; }
+/* The Shot workspace has one bounded work track. Scene/shot navigation belongs
+   to the canonical sidebar, so no secondary navigator or inspector reserves width.
+   Wide desktops keep the existing 1360px cap; narrower windows yield continuously. */
+.bounded-shot-workspace.focused-workspace-shell { grid-template-columns:minmax(0,1360px); justify-content:start; }
 
 /* EV2-7 Checkpoint 2 — Shot Board */
 /* B2.1–B2.7. The Shots page reads: the heading and its count beside one contextual Add shot; Shot board / Scene
@@ -900,4 +896,68 @@ body.production-media-active #app #main { padding:22px var(--cb-page-gutter) 36p
 @media(max-width:600px) {
   #main :is(.view-title,.board-head .view-title,.rd-heading h1,.md-heading h1,.wb-heading h1) { font-size:26px; }
   #main .rd-heading { align-items:flex-start; flex-wrap:wrap; gap:12px; }
+}
+
+/* Contextual navigation lives in the existing CineBraid rail. */
+#main .bounded-shot-workspace .shot-main > .shot-crumb { display:flex; align-items:center; min-height:22px; }
+#main .bounded-shot-workspace .shot-crumb-trail { min-width:0; overflow-wrap:anywhere; }
+/* A consistent left disclosure marker belongs beside the label, not stranded at
+   the far edge after the status pill. Nested sections retain their hierarchy. */
+#main .bounded-shot-workspace .guided-work-stack .guided-work-panel > summary { grid-template-columns:20px minmax(0,1fr) auto; gap:10px; min-height:60px; padding:10px 16px; }
+#main .bounded-shot-workspace .guided-work-stack .guided-work-panel > summary > div { grid-column:2; grid-row:1; min-width:0; }
+#main .bounded-shot-workspace .guided-work-stack .guided-work-panel > summary > .guided-mode-pill { grid-column:3; grid-row:1; }
+#main .bounded-shot-workspace .guided-work-stack .guided-work-panel > summary > i { grid-column:1; grid-row:1; width:20px; font-size:0; transform:none; }
+#main .bounded-shot-workspace .guided-work-stack .guided-work-panel > summary > i::before { content:"▸"; display:block; font:500 14px/1 var(--body); }
+#main .bounded-shot-workspace .guided-work-stack .guided-work-panel[open] > summary > i::before { transform:rotate(90deg); }
+#main .bounded-shot-workspace .guided-work-stack .shot-stage-automation { width:100%; min-width:0; margin:0; }
+#main .bounded-shot-workspace .guided-work-stack .shot-stage-automation > summary { display:grid; grid-template-columns:16px minmax(0,1fr) auto; gap:10px; min-height:52px; padding:8px 14px; list-style:none; }
+#main .bounded-shot-workspace .guided-work-stack .shot-stage-automation > summary::-webkit-details-marker { display:none; }
+#main .bounded-shot-workspace .guided-work-stack .shot-stage-automation > summary::before { content:"▸"; align-self:center; font:500 14px/1 var(--body); color:var(--muted); }
+#main .bounded-shot-workspace .guided-work-stack .shot-stage-automation[open] > summary::before { transform:rotate(90deg); }
+#main .bounded-shot-workspace .guided-work-stack .shot-stage-automation > summary > div { min-width:0; }
+#main .bounded-shot-workspace .guided-work-stack .shot-stage-automation > summary > span { justify-self:end; }
+#main .bounded-shot-workspace .guided-work-stack .shot-continuity-fold { width:100%; min-width:0; margin:4px 0; }
+#main .bounded-shot-workspace .guided-work-stack .shot-continuity-fold > summary { min-height:44px; padding:8px 0; }
+#main .bounded-shot-workspace .shot-details { margin-top:16px; }
+#main .bounded-shot-workspace .shot-details > summary { padding-left:14px; }
+@media(max-width:900px) {
+  #main .bounded-shot-workspace .guided-work-stack .guided-work-panel > summary { grid-template-columns:20px minmax(0,1fr); }
+  #main .bounded-shot-workspace .guided-work-stack .guided-work-panel > summary > .guided-mode-pill { display:none; }
+}
+
+/* Working single-sidebar prototype: only the active destination owns subnavigation.
+   Preserve the shell width and drawer; the removed secondary rail returns its
+   whole track to the production workspace. */
+#rail .context-navigation[hidden],#rail .context-navigation [hidden] { display:none; }
+#rail .context-navigation { margin:0 0 8px 18px; padding:4px 0 6px 11px; border-left:1px solid var(--line-2); min-width:0; }
+#rail .context-navigation a { color:var(--muted); text-decoration:none; border-radius:4px; }
+#rail .context-navigation a:hover { background:var(--cb-shell-hover); color:var(--ink); }
+#rail .context-navigation a[aria-current="page"] { color:var(--ink); background:var(--acc-soft); }
+#rail .context-section-links { display:flex; gap:3px; margin-bottom:6px; }
+#rail .context-section-links a { display:flex; align-items:center; min-height:32px; padding:4px 7px; font:12px/1.3 var(--body); }
+#rail .context-search { display:block; margin:0 4px 8px 0; }
+#rail .context-search input { width:100%; min-width:0; height:34px; min-height:34px; padding:6px 8px; border:1px solid var(--line-2); border-radius:5px; background:var(--bg); color:var(--ink); font:12px/1.4 var(--body); }
+#rail .context-shot-tree { max-height:36vh; min-height:0; overflow-y:auto; overflow-x:hidden; scrollbar-width:thin; }
+#rail .context-scene { border:0; padding:0; margin:0 3px 6px 0; background:transparent; }
+#rail .context-scene > header { display:flex; align-items:center; gap:3px; min-height:28px; padding:0; color:var(--muted); font:600 11px/1.4 var(--body); }
+#rail .context-scene-toggle { display:flex; align-items:center; justify-content:center; flex:0 0 24px; width:24px; height:28px; padding:0; border:0; background:transparent; color:var(--muted); }
+#rail .context-scene-toggle[aria-expanded="true"] > span { transform:rotate(90deg); }
+#rail .context-scene > header > a,#rail .context-scene > header > span { min-width:0; flex:1; overflow-wrap:anywhere; padding:5px 0; }
+#rail .context-scene > header > small { font:10px/1.2 var(--mono); color:var(--faint); }
+#rail .context-shot { display:grid; grid-template-columns:6px minmax(0,1fr); gap:7px; align-items:center; min-height:44px; padding:5px 6px; margin:1px 0; }
+#rail .context-shot.current { box-shadow:inset 2px 0 var(--acc); }
+#rail .context-shot-copy { display:flex; flex-direction:column; gap:2px; min-width:0; }
+#rail .context-shot-copy b { font:600 10px/1.3 var(--mono); color:var(--muted); }
+#rail .context-shot-copy > span { display:-webkit-box; -webkit-box-orient:vertical; -webkit-line-clamp:2; overflow:hidden; font:12px/1.35 var(--body); }
+#rail .context-shot.current .context-shot-copy b { color:var(--acc); }
+#rail .context-categories { display:flex; flex-direction:column; gap:1px; }
+#rail .context-categories a { display:flex; align-items:center; min-height:34px; padding:6px 8px; font:12px/1.4 var(--body); }
+#rail .context-empty { margin:6px 4px; font:12px/1.5 var(--body); color:var(--muted); }
+#rail .context-navigation :is(a,button,input):focus-visible { outline:2px solid var(--cb-focus); outline-offset:1px; }
+#main .context-category-label { margin:0; font:500 14px/1.4 var(--body); color:var(--muted); }
+@media(max-width:900px) {
+  #rail .context-categories a,#rail .context-section-links a,#rail .context-scene > header { min-height:44px; }
+  #rail .context-scene-toggle { flex-basis:36px; width:36px; height:44px; }
+  #rail .context-search input { min-height:44px; }
+  #rail .context-shot-tree { max-height:38dvh; }
 }
