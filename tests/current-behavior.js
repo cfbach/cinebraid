@@ -1032,7 +1032,16 @@ async function main() {
     "and therefore no stage buttons either");
   assert.strictEqual((shotRender.html.match(/data-selected-task="/g) || []).length, 1,
     "the shot workspace must state its selected stage exactly once");
-  assert(/class="navigator-toggle"[^>]*aria-label="(?:Open|Close) project navigator"[^>]*aria-expanded="(?:true|false)"/.test(shotRender.html), "project navigator toggle must expose its accessible name and expanded state");
+  assert(!/project-nav-list|project-navigator|shot-navigator-(?:toggle|close)/.test(shotRender.html),
+    "the shot workspace must not restore a secondary project navigation rail or breadcrumb control");
+  const primaryNavigation = extractBalanced(index, '<nav id="nav"', "nav");
+  assert.strictEqual((primaryNavigation.match(/id="context-navigation"/g) || []).length, 1,
+    "the canonical sidebar owns exactly one contextual-navigation slot");
+  const primaryLabels = [...primaryNavigation.matchAll(/data-label="([^"]+)"/g)].map(match => match[1]);
+  assert.deepStrictEqual(primaryLabels, ["Production", "Shots", "References", "Production media", "Project Bible", "Reports", "Settings"],
+    "contextual navigation preserves canonical top-level names and order");
+  assert(!shotRender.html.includes('id="context-navigation"'),
+    "the contextual-navigation owner is not duplicated inside the production workspace");
   assert.strictEqual((shotRender.html.match(/\bshot-primary-action\b/g) || []).length, 1, "shot route must render exactly one primary action");
   const shotActions = extractBalanced(shotRender.html, '<details class="guided-inline-actions', "details");
   for (const label of ["Rename shot", "Duplicate shot", "Delete shot"]) assert(shotActions.includes(label), `Shot actions disclosure is missing ${label}`);

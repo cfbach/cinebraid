@@ -558,6 +558,68 @@ function rb1r_replacementFenceRetirement(sourceText) {
 
 const { spawn } = require("child_process");
 const os = require("os");
+const net = require("net");
+
+/* The Fetch bad-port list intersects this deliberately bounded range only at
+   SIP/SIPS (5060/5061). Exclude them BEFORE probing: a free TCP port is not
+   necessarily one Node fetch permits. Never retry a failed HTTP request on a
+   newly rolled port. A bind race after releasing the reservation is a failure
+   with evidence, not a reason to silently restart the control. */
+const NCA_FETCH_RESTRICTED_PORTS = new Set([5060, 5061]);
+const NCA_PORTS = Array.from({ length: 200 }, (_, i) => 4960 + i)
+  .filter(port => !NCA_FETCH_RESTRICTED_PORTS.has(port));
+
+function reserveLoopbackPort(port) {
+  return new Promise((resolve, reject) => {
+    const server = net.createServer();
+    server.once("error", reject);
+    server.listen({ port, host: "127.0.0.1", exclusive: true }, () => resolve({
+      port,
+      release: () => new Promise((done, fail) => server.close(error => error ? fail(error) : done())),
+    }));
+  });
+}
+async function allocateMutatedServerPort(reserve = reserveLoopbackPort) {
+  for (const port of NCA_PORTS) {
+    try { return await reserve(port); }
+    catch (error) {
+      if (error.code !== "EADDRINUSE") throw error;
+    }
+  }
+  throw new Error("No available fetch-safe loopback port in 4960-5159 (5060/5061 excluded)");
+}
+async function mutatedServerFixtureContracts() {
+  equal(NCA_PORTS.length, 198, "fixture: the bounded pool excludes both Fetch-restricted ports");
+  ok(!NCA_PORTS.includes(5060) && !NCA_PORTS.includes(5061), "fixture: SIP/SIPS can never be selected");
+  ok(NCA_PORTS.every(port => port >= 4960 && port <= 5159), "fixture: no unreviewed port range");
+  const attempted = [];
+  const lease = await allocateMutatedServerPort(async port => {
+    attempted.push(port);
+    if (port !== 5159) throw Object.assign(new Error("occupied"), { code: "EADDRINUSE" });
+    return { port };
+  });
+  equal(lease.port, 5159, "fixture: occupied candidates lead to the available safe port");
+  equal(attempted.length, 198, "fixture: exhaustive allocation never probes a restricted port");
+  ok(!attempted.includes(5060) && !attempted.includes(5061), "fixture: restricted ports cannot reach the binder");
+  checks++;
+  await assert.rejects(allocateMutatedServerPort(async () => {
+    throw Object.assign(new Error("occupied"), { code: "EADDRINUSE" });
+  }), /No available fetch-safe loopback port/, "fixture: exhaustion fails without rerolling");
+  checks++;
+  await assert.rejects(allocateMutatedServerPort(async () => {
+    throw Object.assign(new Error("bind refused"), { code: "EACCES" });
+  }), /bind refused/, "fixture: unexpected bind failures are not swallowed");
+  const first = await allocateMutatedServerPort();
+  let second;
+  try {
+    second = await allocateMutatedServerPort();
+    ok(first.port !== second.port, "fixture: a real held listener cannot be selected again");
+  } finally {
+    if (second) await second.release();
+    await first.release();
+  }
+  note("FIXTURE safe-port allocation excludes 5060/5061 structurally, probes availability by exclusive loopback bind, skips occupied ports only, and reports exhaustion or unexpected bind errors");
+}
 
 const NCA_ANCHOR = `  if (req.body.activate !== false) {
     const c = readConfig();
@@ -575,47 +637,98 @@ const NCA_BREAK = `  const c = readConfig();
    the negative control exercises the route rather than a description of it. */
 async function withMutatedServer(anchor, replacement, body) {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), "cinebraid-nca-"));
-  fs.mkdirSync(path.join(dir, "projects"), { recursive: true });
-  const source = fs.readFileSync(path.join(ROOT, "src/server/server.js"), "utf8");
-  const normalized = source.replace(/\r\n/g, "\n");
-  assert.strictEqual(normalized.split(anchor).length - 1, 1,
-    "probe receipt: NC-ACTIVE expected exactly one occurrence of its anchor in server.js. "
-    + "The control is no longer mutating the live path and must be rewritten.");
-  const mutatedPath = path.join(ROOT, "src/server/server.__nca-mutated.js");
-  fs.writeFileSync(mutatedPath, normalized.split(anchor).join(replacement));
-
   const configPath = path.join(dir, "config.json");
-  const port = 4960 + Math.floor(Math.random() * 200);
-  const child = spawn(process.execPath, [mutatedPath], {
-    cwd: ROOT,
-    env: { ...process.env, PORT: String(port), CINEBRAID_HOST: "127.0.0.1",
-           CINEBRAID_CONFIG_PATH: configPath, CINEBRAID_PROJECTS_ROOT: path.join(dir, "projects") },
-    stdio: ["ignore", "ignore", "ignore"],
-  });
-  const base = `http://127.0.0.1:${port}`;
+  const mutatedPath = path.join(ROOT, "src/server/server.__nca-mutated.js");
+  let reservation, child, closed, port = null, base = "";
+  let stdout = "", stderr = "", exit = null, spawnError = null;
+  const readiness = { attempts: 0, listening: false, ready: false, last: "not started" };
+  const errorDetail = error => ({ message: error.message, code: error.code,
+    cause: error.cause ? { message: error.cause.message, code: error.cause.code } : null });
+  let phase = "prepare";
   try {
-    for (let i = 0; i < 200; i++) {
-      try { await fetch(`${base}/api/app-identity`); break; }
-      catch { await new Promise((r) => setTimeout(r, 100)); }
+    fs.mkdirSync(path.join(dir, "projects"), { recursive: true });
+    const normalized = fs.readFileSync(path.join(ROOT, "src/server/server.js"), "utf8").replace(/\r\n/g, "\n");
+    assert.strictEqual(normalized.split(anchor).length - 1, 1,
+      "probe receipt: NC-ACTIVE expected exactly one occurrence of its anchor in server.js. "
+      + "The control is no longer mutating the live path and must be rewritten.");
+    fs.writeFileSync(mutatedPath, normalized.split(anchor).join(replacement));
+    phase = "allocate";
+    reservation = await allocateMutatedServerPort();
+    port = reservation.port;
+    base = `http://127.0.0.1:${port}`;
+    console.log(`[AT1 fixture] reserved fetch-safe loopback port ${port}`);
+    await reservation.release();
+    reservation = null;
+    phase = "startup";
+    child = spawn(process.execPath, [mutatedPath], {
+      cwd: ROOT,
+      env: { ...process.env, PORT: String(port), CINEBRAID_HOST: "127.0.0.1",
+             CINEBRAID_CONFIG_PATH: configPath, CINEBRAID_PROJECTS_ROOT: path.join(dir, "projects") },
+      stdio: ["ignore", "pipe", "pipe"],
+      windowsHide: true,
+    });
+    child.stdout.on("data", data => {
+      stdout = (stdout + data).slice(-16384);
+      /* This line is emitted by THIS child's listen callback, before probing
+         HTTP; an unrelated process winning a bind race cannot satisfy it. */
+      if (stdout.includes(`CINEBRAID → ${base}`)) readiness.listening = true;
+    });
+    child.stderr.on("data", data => { stderr = (stderr + data).slice(-16384); });
+    child.on("error", error => { spawnError = errorDetail(error); });
+    child.on("exit", (code, signal) => { exit = { code, signal }; });
+    closed = new Promise(resolve => child.once("close", resolve));
+    const request = async (route, options = {}) => {
+      try { return await fetch(base + route, { ...options, signal: AbortSignal.timeout(5000) }); }
+      catch (error) { throw new Error(`${options.method || "GET"} ${route}: ${JSON.stringify(errorDetail(error))}`, { cause: error }); }
+    };
+    const deadline = Date.now() + 20000;
+    while (Date.now() < deadline) {
+      if (exit || spawnError) throw new Error("Mutated server exited or failed to spawn before readiness");
+      if (readiness.listening) {
+        readiness.attempts++;
+        const response = await request("/api/app-identity");
+        readiness.last = `HTTP ${response.status}`;
+        await response.text();
+        assert(response.ok, `Mutated server readiness returned ${response.status}`);
+        readiness.ready = true;
+        break;
+      }
+      await new Promise(resolve => setTimeout(resolve, 50));
     }
+    assert(readiness.ready, "Mutated server never reported listening and HTTP readiness within 20 seconds");
+    console.log(`[AT1 fixture] ready port=${port} pid=${child.pid} ${readiness.last}`);
+    phase = "control";
     return await body({
       base,
       activeProject: () => {
         try { return JSON.parse(fs.readFileSync(configPath, "utf8")).activeProject || ""; } catch { return ""; }
       },
       create: async (title, extra = {}) => {
-        const response = await fetch(`${base}/api/projects/new`, {
+        const response = await request("/api/projects/new", {
           method: "POST", headers: { "Content-Type": "application/json" },
           body: JSON.stringify({ title, ...extra }),
         });
         return { status: response.status, body: await response.json().catch(() => ({})) };
       },
     });
+  } catch (error) {
+    console.error("[AT1 fixture failure] " + JSON.stringify({ port, phase, pid: child?.pid,
+      readiness, exit, spawnError, error: errorDetail(error), stdout, stderr }));
+    throw error;
   } finally {
-    try { child.kill(); } catch {}
-    await new Promise((r) => setTimeout(r, 200));
-    try { fs.rmSync(mutatedPath, { force: true }); } catch {}
-    try { fs.rmSync(dir, { recursive: true, force: true }); } catch {}
+    if (reservation) await reservation.release();
+    if (child) {
+      if (!exit) child.kill();
+      let timer;
+      try {
+        await Promise.race([closed, new Promise((_, reject) => {
+          timer = setTimeout(() => reject(new Error(`Mutated child ${child.pid} on port ${port} did not close after cleanup`)), 5000);
+        })]);
+      } finally { clearTimeout(timer); }
+      console.log(`[AT1 fixture] closed port=${port} exit=${JSON.stringify(exit)} ready=${readiness.ready}`);
+    }
+    fs.rmSync(mutatedPath, { force: true });
+    fs.rmSync(dir, { recursive: true, force: true });
   }
 }
 
@@ -1590,6 +1703,7 @@ async function nca_sceneAudioLeaseRemoved() {
   note("NC-AUDIO removing only the scene-audio lease restores the closure review's exact reproduction: the pending assistant response mutates Film A during the transaction and Film B installs over the audio result and its build record");
 }
 async function main() {
+  await mutatedServerFixtureContracts();
   await nc_b1_resolvedFlushIsNotSaved();
   await nc_b2_openProjectWriterReturns();
   await nc_b3_deletionWithoutRevocation();

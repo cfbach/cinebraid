@@ -4,7 +4,8 @@
  * narrower window took every pixel out of the column holding the work. At 1280px
  * the frame-review column collapsed to 116px, the APPROVE control overflowed it,
  * a collapsed navigator still cost a 240px track and its toggle could not be
- * clicked. These checks lock the repaired column model in place.
+ * clicked. The single-sidebar prototype now returns that entire secondary track
+ * to the work. These checks retain the field, artwork and approval-control floors.
  *
  * CI runs headless on Windows with no browser, so the layout contract is asserted
  * against the declared CSS and the grid maths are solved from the parsed values
@@ -58,7 +59,6 @@ const TARGET_WIDTHS = [1280, 1366, 1440, 1600, 1920];
 /* Chrome measured 264px of application chrome (sidebar, #main padding) around the
  * shot shell at every one of these widths; the shell gap is 16px. */
 const CHROME_AROUND_SHELL = 264;
-const SHELL_GAP = 16;
 const FRAME_BODY_GAP = 14;
 /* Everything between .shot-main's inner edge and .guided-frame-body's content box,
  * measured in Chrome: card border/padding on the frame card and its body. */
@@ -190,18 +190,14 @@ async function main() {
   const shotColumns = declaration(SHOT_SHELL, 'grid-template-columns', shotLayoutCss);
   assert(shotColumns, `the Shots section must declare the shot shell's column model (${SHOT_SHELL})`);
   const shotTracks = splitTracks(shotColumns);
-  assert.strictEqual(shotTracks.length, 2,
-    `the Shot workspace is two tracks, navigator | work, with no inspector track (got "${shotColumns}")`);
-  assert.strictEqual(shotTracks[0], 'auto', "the first track stays the navigator's own open/closed width");
-  const shotWork = parseTrack(shotTracks[1]);
+  assert.strictEqual(shotTracks.length, 1,
+    `the Shot workspace has only its work track; contextual navigation belongs in the sidebar (got "${shotColumns}")`);
+  const shotWork = parseTrack(shotTracks[0]);
   assert(shotWork.min.px === 0 && shotWork.max.px > 0 && shotWork.max.fr === undefined,
-    `the work track must yield and be bounded, so a wide window does not inflate every card (got "${shotTracks[1]}")`);
-  /* A bounded track leaves free space, and a grid's normal content alignment hands that space
-     to its `auto` tracks: measured in Chromium at 1920, the collapsed navigator's 34px track grew
-     to 292px and the work started 258px further from the navigator. The spare width belongs
-     after the work, which is what the solver below assumes. */
+    `the work track must yield and be bounded, so a wide window does not inflate every card (got "${shotTracks[0]}")`);
+  /* Reclaimed room belongs to the work up to its existing reading-width cap. */
   assert.strictEqual(declaration(SHOT_SHELL, 'justify-content', shotLayoutCss), 'start',
-    'the bounded Shot shell must pack its tracks to the start, or the auto navigator track absorbs the spare width');
+    'the bounded Shot shell leaves spare desktop width after the work');
   /* Scoped to Shots: no !important and no rule reaching the generic focused shell, the
      References shell or any inspector. */
   /* EV2-7 dogfood correction: this section also carries the stage strip's own treatment, and the
@@ -225,32 +221,17 @@ async function main() {
   assert(entityColumns && splitTracks(entityColumns).length === 3,
     `the References shell keeps navigator | main | inspector (got "${entityColumns}")`);
 
-  /* A collapsed navigator must release its width rather than hold a track open. */
-  const closedWidth = declaration('.focused-workspace-shell > .project-navigator.closed', 'width');
-  const openWidth = declaration('.focused-workspace-shell > .project-navigator.open', 'width');
-  assert.strictEqual(closedWidth, '34px', 'a closed navigator must collapse to its rail width');
-  assert.strictEqual(openWidth, '270px', 'an open navigator keeps its panel width');
-  assert(
-    parseFloat(closedWidth) < 40,
-    `a closed navigator must not reserve a full panel track (got ${closedWidth})`,
-  );
-
-  /* ------------------------------------------------------- 2. navigator toggle */
-  const navOverflow = declaration('.focused-workspace-shell > .project-navigator', 'overflow');
-  assert.strictEqual(navOverflow, 'visible', 'the navigator must not clip its own toggle');
-  const toggleRight = declaration('.navigator-toggle', 'right');
-  assert(
-    !toggleRight.startsWith('-'),
-    `the toggle must sit inside the panel in the open state (got right:${toggleRight})`,
-  );
-  const closedMinHeight = declaration('.project-navigator.closed', 'min-height');
-  assert(
-    closedMinHeight && parseFloat(closedMinHeight) >= 44,
-    'a collapsed navigator needs a box tall enough to hold a clickable toggle',
-  );
+  assert.strictEqual(shotColumns, 'minmax(0,1360px)',
+    'the work always receives the former secondary rail track, within its existing desktop cap');
+  assert(!coherence.includes('.shot-navigator-toggle') && !coherence.includes('.shot-navigator-close'),
+    'no breadcrumb opener or secondary-rail close control remains in the prototype');
+  assert(css.includes('#app{--cb-nav-width:220px;'),
+    'the canonical desktop sidebar keeps its established width');
+  assert(/#rail\s*\{[^}]*width:240px;[^}]*height:100dvh/.test(coherence),
+    'narrow layouts reuse the existing 240px sidebar drawer');
   assert(
     css.includes('body[data-focused-workspace="1"] #main{overflow-x:clip}'),
-    'the horizontal-overflow guard must use clip; hidden creates a scroll container and breaks the sticky navigator',
+    'the horizontal-overflow guard must use clip; hidden would change document scroll and sticky behavior',
   );
 
   /* ------------------------------------------------- 3. frame-review column floor */
@@ -266,8 +247,7 @@ async function main() {
     `the review column needs a floor wide enough for its controls (got ${work.min.px}px)`,
   );
 
-  /* ------------------------------------ 4. solve the real widths, both nav states */
-  const navWidths = { closed: parseFloat(closedWidth), open: parseFloat(openWidth) };
+  /* ------------------------------------ 4. solve reclaimed desktop work widths */
   const results = [];
   /* The preview cap widens on wide desktops so reclaimed width goes to the frame. */
   function frameColumnsAt(viewport) {
@@ -284,71 +264,56 @@ async function main() {
   }
 
   for (const viewport of TARGET_WIDTHS) {
-    for (const state of ['closed', 'open']) {
-      const shellAvailable = viewport - CHROME_AROUND_SHELL;
-      const [navTrack, mainTrack] = solveGrid(shotColumns, shellAvailable, SHELL_GAP, [navWidths[state]]);
-      /* The bound is reached only where the window has room to spare, and never exceeded. */
-      assert(
-        mainTrack <= shotWork.max.px + 0.5,
-        `${viewport}px / navigator ${state}: the work track grew to ${mainTrack}px, past its ${shotWork.max.px}px bound`,
-      );
-      if (shellAvailable - navWidths[state] - SHELL_GAP < shotWork.max.px) {
-        assert(
-          Math.abs(mainTrack - (shellAvailable - navWidths[state] - SHELL_GAP)) <= 0.5,
-          `${viewport}px / navigator ${state}: below the bound the work track must take all the room (${mainTrack}px)`,
-        );
-      }
-      /* .shot-main caps its own reading width; the frame body sizes to the cap. */
-      const contentWidth = Math.min(mainTrack, SHOT_MAIN_MAX);
-      const bodyAvailable = contentWidth - FRAME_BODY_INSET;
-      const [previewTrack, workTrack] = solveGrid(
-        frameColumnsAt(viewport),
-        bodyAvailable,
-        FRAME_BODY_GAP,
-      );
-      results.push({ viewport, state, navTrack, mainTrack, previewTrack, workTrack });
-
-      assert.strictEqual(
-        navTrack,
-        navWidths[state],
-        `${viewport}px / navigator ${state}: the navigator track must equal the navigator's own width`,
-      );
-      assert(
-        workTrack >= work.min.px - 0.5,
-        `${viewport}px / navigator ${state}: the review column fell to ${workTrack}px, below its ${work.min.px}px floor`,
-      );
-      assert(
-        previewTrack + workTrack + FRAME_BODY_GAP <= bodyAvailable + 0.5,
-        `${viewport}px / navigator ${state}: the frame body overflows its container`,
-      );
-      /* The frame is the thing being judged: its column must never be the one
-       * that gets squeezed as the window narrows. */
-      assert(
-        previewTrack >= 260,
-        `${viewport}px / navigator ${state}: the frame preview fell to ${previewTrack}px, too small to judge a composition`,
-      );
-      /* The APPROVE control is 140px wide in the shipped type scale; the column
-       * must hold it and the surrounding controls without clipping. */
-      assert(
-        workTrack >= 140,
-        `${viewport}px / navigator ${state}: the review column (${workTrack}px) cannot hold the 140px APPROVE control`,
-      );
-    }
+    const shellAvailable = viewport - CHROME_AROUND_SHELL;
+    const [mainTrack] = solveGrid(shotColumns, shellAvailable, 0);
+    assert(
+      mainTrack <= shotWork.max.px + 0.5,
+      `${viewport}px: the work track grew to ${mainTrack}px, past its ${shotWork.max.px}px bound`,
+    );
+    assert(
+      Math.abs(mainTrack - Math.min(shellAvailable, shotWork.max.px)) <= 0.5,
+      `${viewport}px: work must receive all available width up to the existing cap (${mainTrack}px)`,
+    );
+    const oldOpenWork = Math.min(Math.max(0, shellAvailable - 270 - 16), shotWork.max.px);
+    assert(mainTrack >= oldOpenWork,
+      `${viewport}px: removing the secondary rail must never reduce production workspace`);
+    /* .shot-main caps its own reading width; the frame body sizes to the cap. */
+    const contentWidth = Math.min(mainTrack, SHOT_MAIN_MAX);
+    const bodyAvailable = contentWidth - FRAME_BODY_INSET;
+    const [previewTrack, workTrack] = solveGrid(
+      frameColumnsAt(viewport), bodyAvailable, FRAME_BODY_GAP,
+    );
+    results.push({ viewport, mainTrack, previewTrack, workTrack });
+    assert(
+      workTrack >= work.min.px - 0.5,
+      `${viewport}px: the review column fell to ${workTrack}px, below its ${work.min.px}px floor`,
+    );
+    assert(
+      previewTrack + workTrack + FRAME_BODY_GAP <= bodyAvailable + 0.5,
+      `${viewport}px: the frame body overflows its container`,
+    );
+    /* Artwork remains large enough to judge a composition. */
+    assert(previewTrack >= 260,
+      `${viewport}px: the frame preview fell to ${previewTrack}px, too small to judge a composition`);
+    /* The shipped APPROVE control must fit with the surrounding controls. */
+    assert(workTrack >= 140,
+      `${viewport}px: the review column (${workTrack}px) cannot hold the 140px APPROVE control`);
   }
 
-  /* The narrowest supported width must not be the worst one — the old model made
-   * 1280 worse than 1062 by adding a third track exactly when space ran out. */
+  /* With no secondary rail, the work reaches its
+   * 1360px cap before 1920. At that breakpoint the preview deliberately grows
+   * from 360 to 430px; its gain may come from the review column, but the total
+   * artwork-and-review area cannot shrink and the review floor still holds. */
   const byWidth = new Map();
-  for (const r of results.filter((r) => r.state === 'closed')) byWidth.set(r.viewport, r.workTrack);
+  for (const r of results) byWidth.set(r.viewport, r);
   for (let i = 1; i < TARGET_WIDTHS.length; i++) {
     const narrow = byWidth.get(TARGET_WIDTHS[i - 1]);
     const wide = byWidth.get(TARGET_WIDTHS[i]);
-    assert(
-      wide >= narrow,
-      `the review column must never shrink as the window widens (${TARGET_WIDTHS[i - 1]}px gave ${narrow}px, ${TARGET_WIDTHS[i]}px gave ${wide}px)`,
-    );
+    assert(wide.previewTrack + wide.workTrack >= narrow.previewTrack + narrow.workTrack,
+      'the frame workspace must not lose total inspection width as the window widens');
+    assert(wide.workTrack >= narrow.workTrack - Math.max(0, wide.previewTrack - narrow.previewTrack),
+      'review may yield only the width deliberately granted to the artwork');
   }
-
   /* Below the point where two side-by-side columns stop fitting, the review
    * column stacks instead of being squeezed. */
   const narrowStack = /@media\(max-width:1100px\)\{[\s\S]*?\.guided-frame-body\{grid-template-columns:minmax\(0,1fr\)!important\}/.test(
@@ -396,24 +361,32 @@ async function main() {
 
   /* --------------------------------------------------- 7. the markup still holds */
   const project = buildFixture();
-  const shot = await render('#/shot/L1-01', project, {
-    storage: { 'cinebraid-focused:fixture:shot-task:L1-01': 'frames' },
-  });
-  assert(shot.html.includes('focused-workspace-shell'), 'the shot workspace must still use the focused shell');
-  assert(shot.html.includes('navigator-toggle'), 'the navigator toggle must be rendered');
-  assert(
-    /class="project-navigator (open|closed)"/.test(shot.html),
-    'the navigator must declare an explicit open or closed state for the column model to read',
-  );
-  assert(
-    shot.html.indexOf('navigator-toggle') < shot.html.indexOf('navigator-list') ||
-      !shot.html.includes('navigator-list'),
-    'the toggle must precede the scrollable list so it is never inside the scroll region',
-  );
+  for (const legacyPreference of ['0', '1']) {
+    const shot = await render('#/shot/L1-01', project, {
+      storage: { 'cinebraid-focused:fixture:shot-task:L1-01': 'frames', 'cinebraid-project-nav-open-v662': legacyPreference },
+    });
+    assert(shot.html.includes('focused-workspace-shell'), 'the shot workspace retains its focused shell');
+    assert(!/project-nav-list|project-navigator|shot-navigator-(?:toggle|close)/.test(shot.html),
+      `legacy navigator preference ${legacyPreference} must not restore a secondary rail or control`);
+    assert(!shot.html.includes('class="context-shot'),
+      'contextual shot links belong in the canonical sidebar, not the work markup');
+    const navigation = shot.context.sidebarShotsMarkup('shot', 'L1-01');
+    const links = [...navigation.matchAll(/<a class="context-shot[^>]*>[\s\S]*?<\/a>/g)].map(match => match[0]);
+    assert.strictEqual(links.length, project.shots.length, 'every fixture shot is directly reachable in the sidebar');
+    assert.strictEqual(links.filter(link => link.includes('aria-current="page"')).length, 1,
+      'the sidebar identifies exactly one current shot');
+    assert(links.find(link => link.includes('href="#/shot/L1-01"'))?.includes('aria-current="page"'),
+      'current-shot identity follows the exact open route');
+    for (const scene of project.scenes) assert(navigation.includes(`data-context-scene="${scene.id}"`),
+      `scene grouping preserves ${scene.id}`);
+    assert(navigation.includes('id="sidebar-shot-filter"'), 'direct shot navigation retains filtering');
+    assert(links.every(link => link.includes('nav-status wf-') && link.includes('class="sr-only"')),
+      'workflow status has both a visible indicator and readable text');
+  }
 
   console.log('shot-workspace-responsive-layout: OK');
-  for (const r of results.filter((r) => r.state === 'closed')) {
-    console.log(`  ${r.viewport}px  nav ${r.navTrack}px  main ${r.mainTrack}px  preview ${r.previewTrack}px  review ${r.workTrack}px`);
+  for (const r of results) {
+    console.log(`  ${r.viewport}px  main ${r.mainTrack}px  preview ${r.previewTrack}px  review ${r.workTrack}px`);
   }
 }
 

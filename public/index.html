@@ -55,6 +55,7 @@
         <button data-view="bible" data-label="Project Bible" class="nav-btn"><span class="nav-icon">▤</span><span>Project Bible</span></button>
         <button data-view="reports" data-label="Reports" class="nav-btn"><span class="nav-icon">▥</span><span>Reports</span></button>
         <button data-view="settings" data-label="Settings" class="nav-btn"><span class="nav-icon">⚙</span><span>Settings</span></button>
+        <div id="context-navigation" class="context-navigation" role="group" hidden></div>
       </div>
       <!-- NO_PROJECT_SHELL_TRUTH_V1 — WHY THE UNAVAILABLE ITEMS ARE UNAVAILABLE, on
            screen and not only in a tooltip. Every navigation item the shell marks
@@ -91,7 +92,7 @@
   <section id="workspace">
     <header id="topbar">
       <div class="topbar-context">
-        <button id="mobile-nav" class="topbar-icon" aria-label="Toggle navigation">☰</button>
+        <button id="mobile-nav" class="topbar-icon" aria-label="Toggle navigation" aria-controls="rail" aria-expanded="false">☰</button>
         <div>
           <div id="topbar-project" class="topbar-project">—</div>
           <div id="topbar-view" class="topbar-view">Production truth workspace</div>

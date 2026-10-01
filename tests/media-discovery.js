@@ -124,5 +124,35 @@ check('EV2-7 a recorded slot-only selection reads Selected for its view; disposi
   assert.equal(D.slotSelection({disposition:{role:'approved',targets:[{kind:'coverage',label:'Front'}]}}),null,'a receipt-backed approval is never reworded');
   assert.equal(JSON.stringify(input),before,'wording writes nothing');
 });
+check('A replaced state approval remains visible as history; separate states and view selections stay distinct across reload',()=>{
+  const known=value=>({state:'known',value});
+  const id=char=>`asset-${char.repeat(32)}`;
+  const receipt=(n,stateId,file,asset,status,supersededBy='')=>({id:`authority-${n}`,sequence:n,actor:'human',act:'explicit-approval',command:'approve-entity-state',kind:'entity-state',targetKey:`entity-state:characters:COURIER#${stateId}`,list:'characters',entityId:'COURIER',stateId,value:file,assetId:asset,at:`2026-09-30T17:00:0${n}Z`,status,supersededBy,provenance:{manualAction:`gesture-${n}`,via:'entity-approval-modal',gesture:'click'}});
+  const project={characters:[{id:'COURIER',name:'Courier',continuityStates:[{id:'coat',name:'Travel coat'},{id:'rain',name:'Rain coat'}],coverageSlots:[{id:'front',label:'Front',selectedFile:'FRONT.png'},{id:'profile',label:'Profile',selectedFile:'PROFILE.png'}]}],productionAuthority:{version:1,receipts:[]}};
+  const raw=(file,asset,slot,role)=>({key:`asset:${asset}`,kind:'entity-reference',scope:'entity',identity:{ledger:known(asset)},context:{entityList:known('characters'),entityId:known('COURIER'),entityName:known('Courier'),stateId:known('coat'),coverageSlotId:known(slot),links:[]},file:{name:file,url:`/assets/anchors/${file}`,mediaType:'image'},availability:{state:'available'},disposition:{role,targets:role==='historic'?[{kind:'coverage',label:slot==='front'?'Front':'Profile'}]:[]},actions:['open-owner','approve']});
+  const front=raw('FRONT.png',id('a'),'front','historic'),profile=raw('PROFILE.png',id('b'),'profile','approved');
+  profile.disposition.targets=[{kind:'entity-state',label:'Travel coat'},{kind:'coverage',label:'Profile'}];
+  const rain=raw('RAIN.png',id('c'),'front','approved');rain.context.stateId=known('rain');
+  project.productionAuthority.receipts=[receipt(1,'coat','FRONT.png',id('a'),'superseded','authority-2'),receipt(2,'coat','PROFILE.png',id('b'),'current'),receipt(3,'rain','RAIN.png',id('c'),'current')];
+  let rows=D.compose(project,[front,profile,rain]);
+  assert.equal(D.decisionLabel(rows[0]),'Travel coat approval superseded');
+  assert.equal(D.decisionLabel(rows[1]),'Approved','the current state approval is distinct from its supporting Profile selection');
+  assert.equal(D.priorApprovals(front,project)[0].replacementAssetId,id('b'));
+  assert.equal(D.priorApprovals(rain,project).length,0,'a distinct state keeps its own current approval');
+  project.productionAuthority.receipts[1].status='superseded';project.productionAuthority.receipts[1].supersededBy='authority-4';
+  project.productionAuthority.receipts.push(receipt(4,'coat','FRONT.png',id('a'),'current'));
+  profile.disposition={role:'historic',targets:[{kind:'coverage',label:'Profile'}]};
+  front.disposition={role:'approved',targets:[{kind:'entity-state',label:'Travel coat'},{kind:'coverage',label:'Front'}]};
+  const reopened=JSON.parse(JSON.stringify(project));rows=D.compose(reopened,[front,profile,rain]);
+  assert.equal(D.decisionLabel(rows[0]),'Approved');
+  assert.equal(D.decisionLabel(rows[1]),'Travel coat approval superseded');
+  assert.equal(D.priorApprovals(profile,reopened)[0].receiptId,'authority-2');
+  assert.equal(D.priorApprovals(rain,reopened).length,0);
+  assert.equal(reopened.productionAuthority.receipts.filter(r=>r.status==='current').length,2,'Travel coat and Rain coat each retain one independent current receipt');
+  const wrongAsset=raw('PROFILE.png',id('d'),'profile','historic');
+  assert.equal(D.priorApprovals(wrongAsset,reopened).length,0,'same filename cannot inherit another asset approval');
+  reopened.productionAuthority.receipts[1].targetKey='entity-state:characters:COURIER#rain';
+  assert.equal(D.priorApprovals(profile,reopened).length,0,'an invalid ledger cannot supply historic approval words');
+});
 console.log(`${count} EV2-3 discovery checks passed`);
 

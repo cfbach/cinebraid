@@ -9,7 +9,7 @@
  *   A3  the minimum connection immediate, tuning one step deeper
  *   A4  Vision and Continuity configuring themselves
  *   A5  Test belonging to Braidy and naming what it checks
- *   U3  which category a card on the shelf belongs to, and which chip filters to it
+ *   U3  which category a card on the shelf belongs to, and which route filters to it
  *   U4  what an empty card is for, without being told twenty-seven times
  *   U5  what the single first task on an empty reference is
  *   U6  which of the two paths is the task and which is the alternative
@@ -204,14 +204,36 @@ async function main() {
   }
 
   /* =======================================================================
-     U3 — THE SHELF'S CATEGORY CHIPS AND ITS CARDS AGREE. */
-  const app = read("public/app.js");
+     U3 — CATEGORY IDENTITY SURVIVES THE MOVE INTO THE CANONICAL SIDEBAR.
+     The accepted single-sidebar architecture retired the duplicate shelf tabs.
+     Exercise the real category renderer instead of requiring those old chips. */
   const css = read("public/styles.css");
-  ok(/data-tabs="\$\{attr\(base\)\}"/.test(app) && /data-tab-key="\$\{attr\(key\)\}"/.test(app),
-    "U3: a tab declares which tab it is; the stylesheet decides what that looks like");
+  const categoryRender = await render("#/library/characters", emptyReferenceFixture());
+  const doc = categoryRender.context.document;
+  const navigation = doc.getElementById("context-navigation");
+  navigation.contains = () => false;
+  doc.querySelector('.nav-btn[data-view="library"]').insertAdjacentElement = (position, element) => {
+    eq(position, "afterend", "U3: categories follow their canonical References owner");
+    eq(element, navigation, "U3: the shared sidebar slot owns category navigation");
+  };
+  const categories = [["all", "All"], ["characters", "Characters"], ["locations", "Locations"],
+    ["props", "Props"], ["vehicles", "Vehicles"], ["canon", "Approved"], ["audio", "Audio"]];
+  for (const [key, label] of categories) {
+    categoryRender.context.location.hash = "#/library/" + key;
+    categoryRender.context.renderContextNavigation("library", "library");
+    eq(navigation.hidden, false, `U3: ${key} exposes the active References subnavigation`);
+    const links = [...navigation.innerHTML.matchAll(/<a [^>]*>[\s\S]*?<\/a>/g)].map(match => match[0]);
+    eq(links.length, categories.length, "U3: existing category routes appear exactly once");
+    eq(links.filter(link => link.includes('aria-current="page"')).length, 1,
+      "U3: exactly one category is current");
+    ok(links.some(link => link.includes(`href="#/library/${key}"`) && link.includes('aria-current="page"') && link.endsWith(`>${label}</a>`)),
+      `U3: ${label} identifies its exact active route`);
+  }
+  eq(/class="workspace-tabs"/.test(categoryRender.html), false,
+    "U3: the shelf cannot duplicate the sidebar category navigation");
   for (const key of ["characters", "locations", "props", "vehicles", "audio"]) {
-    ok(css.includes(`.workspace-tabs[data-tabs="library"] .workspace-tab[data-tab-key="${key}"]{--cat:var(--cat-`),
-      `U3: the ${key} chip carries the ${key} category token`);
+    ok(css.includes(`.library-card-shell[data-reference-category="${key}"]{--cat:var(--cat-`),
+      `U3: the ${key} card retains its category token`);
   }
   ok(/\.library-card-shell\[data-reference-category\] \.library-preview\{/.test(css),
     "U3: the category cue reaches the media well");
@@ -220,11 +242,11 @@ async function main() {
     "U3: the well's cue is a 1px inset ring, not a background");
   eq(/\.library-preview\{[^}]*background:var\(--cat\)/.test(css), false,
     "U3: no category colour fills a card");
-  /* Canon is production truth and All is the current action; neither is a category. */
-  eq(css.includes(`.workspace-tab[data-tab-key="canon"]{--cat`), false,
-    "U3: Canon keeps Canon semantics and is not given a category colour");
-  eq(css.includes(`.workspace-tab[data-tab-key="all"]{--cat`), false,
-    "U3: All stays the neutral current action");
+  /* Approved is production truth and All is an aggregate; neither is a media category. */
+  eq(css.includes(`.library-card-shell[data-reference-category="canon"]{--cat`), false,
+    "U3: Approved keeps approval semantics and is not given a category colour");
+  eq(css.includes(`.library-card-shell[data-reference-category="all"]{--cat`), false,
+    "U3: All stays a neutral aggregate");
 
   /* =======================================================================
      U4 — AN EMPTY CARD STOPS REPEATING ITS INSTRUCTION. */

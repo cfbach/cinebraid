@@ -106,6 +106,8 @@
        rather than inferring one from a review that may have had nothing to do with the
        decision. */
     if (decision.state === "rejected") return { tone: "rejected", label: "Rejected by you", detail: "A person rejected this. It is kept as evidence.", note: "Reason not recorded" };
+    const prior = window.CineBraidMediaDiscovery?.priorApprovals?.(row, activeProject())?.[0];
+    if (prior) return { tone: "candidate", label: "Earlier approval superseded", detail: `This image was approved for ${prior.stateName}, then replaced by ${prior.replacementFile} for that same state. It is not current canon; a supporting view selection remains separate.` };
     return { tone: "candidate", label: "No decision yet", detail: "Nobody has approved or rejected this." };
   }
 

@@ -96,7 +96,9 @@ let SHOT_CANDIDATE_SIZE = storedValue("cinebraid-shot-candidate-size", "medium")
 let SAVE_STATE_TIMER = null;
 let HELP_MODE = storedValue("cinebraid-help-mode", "helpful") || "helpful";
 let PROJECT_BOARD_FILTER = storedValue("cinebraid-project-board-filter", "all") || "all";
-let PROJECT_NAV_OPEN = storedValue("cinebraid-project-nav-open-v662", "0") === "1";
+/* Transient sidebar state belongs to the open project, never to its saved record. */
+let CONTEXT_NAV = { project: "", query: "", current: "", scenes: {} };
+const REFERENCE_NAVIGATION = [["all", "All"], ["characters", "Characters"], ["locations", "Locations"], ["props", "Props"], ["vehicles", "Vehicles"], ["canon", "Approved"], ["audio", "Audio"]];
 let BATCH_SHOTS = new Set();
 let CURRENT_RENDER_ROUTE_KEY = "";
 let ROUTE_RENDER_IN_PROGRESS = false;
@@ -1450,6 +1452,10 @@ function shellAvailabilityModule() {
  * because a control that decides its own availability is a control that can be
  * right on one route and wrong on the next. */
 function syncShellAvailability() {
+  if (!shellHasProject()) {
+    const context = document.getElementById("context-navigation");
+    if (context) { context.hidden = true; context.innerHTML = ""; context._contextMarkup = ""; }
+  }
   if (!shellAvailabilityModule()) return;
   const facts = { hasProject: shellHasProject() };
   const unavailable = [];
@@ -5179,6 +5185,7 @@ document.querySelectorAll(".nav-btn[data-view]").forEach(
       if (shellControlRefused(b)) return;
       location.hash = "#/" + b.dataset.view;
       document.body.classList.remove("rail-open");
+      $("#mobile-nav")?.setAttribute("aria-expanded", "false");
     }),
 );
 /* THE SEARCH BOX, REFUSED AT THE KEYSTROKE. Read-only already keeps a query out of it;
@@ -5203,7 +5210,22 @@ $("#rescan").onclick = async () => {
   route();
 };
 
-$("#mobile-nav").onclick = () => document.body.classList.toggle("rail-open");
+$("#mobile-nav").onclick = () => {
+  const open = document.body.classList.toggle("rail-open");
+  $("#mobile-nav").setAttribute("aria-expanded", String(open));
+};
+document.getElementById("nav")?.addEventListener("click", (event) => {
+  if (event.button || event.metaKey || event.ctrlKey || event.shiftKey || event.altKey) return;
+  if (!event.target.closest("#context-navigation a[href]")) return;
+  document.body.classList.remove("rail-open");
+  $("#mobile-nav").setAttribute("aria-expanded", "false");
+});
+document.getElementById("nav")?.addEventListener("keydown", (event) => {
+  if (event.key !== "Escape" || !document.body.classList.contains("rail-open")) return;
+  document.body.classList.remove("rail-open");
+  $("#mobile-nav").setAttribute("aria-expanded", "false");
+  $("#mobile-nav").focus();
+});
 $("#global-add").onclick = () => openGlobalAdd();
 window.addEventListener("hashchange", route);
 function productionCount() {
@@ -5246,6 +5268,7 @@ function updateChrome(view, navName, routeKnown = true) {
      route — switching projects, closing one. Re-asserted with the chrome so the two
      can never describe different worlds. */
   syncShellAvailability();
+  renderContextNavigation(view, navName);
 }
 function routeSelectorValue(value) {
   return String(value || "").replace(/\\/g, "\\\\").replace(/"/g, '\\"');
@@ -6885,14 +6908,6 @@ function sceneAudioPanel(sc) {
   </div>`;
 }
 
-/* THE TAB DECLARES WHICH TAB IT IS, and nothing here decides what that looks
-   like. `data-tabs`/`data-tab-key` are the same shape `data-reference-category`
-   already uses on a library card: the stylesheet is the one place a category
-   becomes a colour, so the References shelf can mark its category chips with
-   the same token its cards carry, and every other tab bar is unaffected. */
-function workspaceTabs(base, active, tabs) {
-  return `<nav class="workspace-tabs" data-tabs="${attr(base)}">${tabs.map(([key, label, count]) => `<a class="workspace-tab ${active === key ? "on" : ""}" data-tab-key="${attr(key)}" href="#/${base}/${key}">${esc(label)}${count != null ? ` <span>${count}</span>` : ""}</a>`).join("")}</nav>`;
-}
 /* WHICH FRAMES THIS SHOT CURRENTLY OWES, asked of the one readiness owner.
  *
  * `requiredFrames()` above reads `frame.required`, and newKeyframe() writes that `true`
@@ -8111,16 +8126,14 @@ function productionView(tab = "board") {
       workflowState(s).key === "APPROVED" &&
       ["animate", "flf", "references"].includes(outputPlanKey(s)),
   );
-  const tabDefs = [["board", "Shot board"], ["scenes", "Scene directory"]];
   if (tab === "table") tab = "board";
-  const tabs = workspaceTabs("production", tab, tabDefs);
   /* EV2-7 B2.1 — THE SHOTS HEAD NAMES THE PAGE, COUNTS IT, AND ADDS A SHOT. AT1-C gave
      this head the Production owner's words so a zero-shot project could not be answered
      "Every shot has been delivered"; the ruling removes Continue from this browsing surface
      altogether, so it now lives only on Production, where that owner renders it. The one
      Add here is contextual — it opens New shot in one press, on an empty board and a full
      one — while the shell's own Add stays the general chooser. */
-  const head = `<div class="view-head board-head"><div><h1 class="view-title">Shots</h1><div class="view-sub board-count">${esc(`${plural(P.shots.length, "shot")} · ${plural(P.scenes.length, "scene")}`)}</div></div><div class="board-head-actions"><button class="add-btn" onclick="openContextualAdd('shot')">＋ Add shot</button></div></div>${tabs}`;
+  const head = `<div class="view-head board-head"><div><h1 class="view-title">Shots</h1><div class="view-sub board-count">${esc(`${plural(P.shots.length, "shot")} · ${plural(P.scenes.length, "scene")}`)}</div></div><div class="board-head-actions"><button class="add-btn" onclick="openContextualAdd('shot')">＋ Add shot</button></div></div>`;
   if (tab === "scenes") {
     const scenePage = boundedPage(P.scenes, "scenes", "overview", BOUNDED_PAGE_SIZES.scenes);
     return head + runtimeBar(P.shots, P.meta.targetRuntime) + `<div class="bounded-scene-list">${scenePage.rows.map((sc) => {
@@ -8278,15 +8291,6 @@ function libraryView(tab = "all") {
      admitted any entity with any file in any slot. */
   const canonCount = allLists.flatMap((list) => (P[list] || []).map((entity) => ({ list, entity })))
     .filter(({ list, entity }) => entityTruthCounts(list, entity).canon > 0).length;
-  const tabs = workspaceTabs("library", tab, [
-    ["all", "All", Object.values(counts).reduce((a, b) => a + b, 0)],
-    ["canon", "Canon", canonCount],
-    ["characters", "Characters", counts.characters],
-    ["locations", "Locations", counts.locations],
-    ["props", "Props", counts.props],
-    ["vehicles", "Vehicles", counts.vehicles],
-    ["audio", "Audio", counts.audio],
-  ]);
   const lists = tab === "all" || tab === "canon" ? allLists : [tab];
   let allRows = lists.flatMap((list) => (P[list] || []).map((entity) => ({ list, entity })));
   if (tab === "canon") allRows = allRows.filter(({ list, entity }) => entityTruthCounts(list, entity).canon > 0);
@@ -8297,7 +8301,7 @@ function libraryView(tab = "all") {
   const subtitle = tab === "canon"
     ? "Only media you explicitly approved as canon. Supporting views, historic pointers, candidates and automation are hidden."
     : "Bring in visual references from anywhere, then organize the characters, locations, props, states and views your production uses.";
-  return `<div class="view-head"><div><div class="eyebrow">References</div><span class="view-title">${title}</span><div class="view-sub">${subtitle}</div></div>${add}</div>${tabs}${pager}<div class="library-grid bounded-source-section">${referencePage.rows.map(({list,entity}) => libraryCard(list,entity,tab === "canon")).join("") || `<div class="empty-state"><div class="empty-mark">＋</div><h2>${tab === "canon" ? "Nothing is canon yet" : "No references yet"}</h2><p>${tab === "canon" ? "Approve an imported file as canon to add it here." : "Add a character, location, prop, vehicle, or audio asset."}</p><button class="add-btn" onclick="openGlobalAdd()">Add reference</button></div>`}</div>${pager}`;
+  return `<div class="view-head"><div><div class="eyebrow">References</div><span class="view-title">${title}</span><div class="view-sub">${subtitle}</div></div>${add}</div>${pager}<div class="library-grid bounded-source-section">${referencePage.rows.map(({list,entity}) => libraryCard(list,entity,tab === "canon")).join("") || `<div class="empty-state"><div class="empty-mark">＋</div><h2>${tab === "canon" ? "Nothing is canon yet" : "No references yet"}</h2><p>${tab === "canon" ? "Approve an imported file as canon to add it here." : "Add a character, location, prop, vehicle, or audio asset."}</p><button class="add-btn" onclick="openGlobalAdd()">Add reference</button></div>`}</div>${pager}`;
 }
 
 function currentPromptOption(s) {
@@ -8801,36 +8805,95 @@ window.setSegmentMode = (id, ci, kind) => {
   route();
 };
 
-function projectNavigator(current) {
-  return `<aside class="project-navigator ${PROJECT_NAV_OPEN ? "open" : "closed"}"><button class="navigator-toggle" onclick="toggleProjectNavigator()" aria-label="${PROJECT_NAV_OPEN ? "Close project navigator" : "Open project navigator"}" aria-expanded="${PROJECT_NAV_OPEN ? "true" : "false"}" aria-controls="project-nav-list"${helpAttr(PROJECT_NAV_OPEN ? "Collapse the scene and shot navigator." : "Open the scene and shot navigator.")}>${PROJECT_NAV_OPEN ? "‹" : "›"}</button>${
-    PROJECT_NAV_OPEN
-      ? `<div class="navigator-head"><b>Project navigator</b><input placeholder="Filter shots" oninput="filterProjectNavigator(this.value)"></div><div id="project-nav-list" class="navigator-list">${P.scenes
-          .map((sc) => {
-            const shots = P.shots.filter((x) => x.scene === sc.id);
-            return `<section><header><a href="#/scene/${sc.id}">${esc(sc.title)}</a><span>${shots.filter((x) => workflowState(x).key === "APPROVED").length}/${shots.length}</span></header>${shots
-              .map((x) => {
-                const st = workflowState(x);
-                return `<a class="navigator-shot ${current?.id === x.id ? "on" : ""}" href="#/shot/${x.id}" data-search="${attr((x.id + " " + x.title + " " + sc.title).toLowerCase())}"><span class="nav-status wf-${st.cls}"></span><b>${esc(x.id)}</b><small>${esc(x.title)}</small></a>`;
-              })
-              .join("")}</section>`;
-          })
-          .join("")}</div>`
-      : ""
-  }</aside>`;
+/* One contextual navigation owner: the canonical sidebar. These links use the
+   existing routes and workflow projection; they never write production state. */
+function sidebarShotGroups() {
+  const shots = P?.shots || [], scenes = P?.scenes || [];
+  const known = new Set(scenes.map(scene => scene.id));
+  const groups = scenes.map(scene => ({ ...scene, shots: shots.filter(shot => shot.scene === scene.id) }));
+  const unassigned = shots.filter(shot => !known.has(shot.scene));
+  if (unassigned.length) groups.push({ id: "__unassigned", title: "Unassigned scene", shots: unassigned });
+  return groups;
 }
-window.toggleProjectNavigator = () => {
-  PROJECT_NAV_OPEN = !PROJECT_NAV_OPEN;
-  localStorage.setItem(
-    "cinebraid-project-nav-open-v662",
-    PROJECT_NAV_OPEN ? "1" : "0",
-  );
-  route();
+function sidebarShotsMarkup(view, id) {
+  const current = view === "shot" ? shotById(id) : null;
+  const groups = sidebarShotGroups();
+  const currentGroup = current ? groups.find(group => group.shots.some(shot => shot.id === current.id))?.id : view === "scene" ? id : "";
+  const routeKey = view + ":" + id;
+  if (CONTEXT_NAV.current !== routeKey) {
+    if (currentGroup) CONTEXT_NAV.scenes[currentGroup] = true;
+    CONTEXT_NAV.current = routeKey;
+  }
+  if (!Object.keys(CONTEXT_NAV.scenes).length && groups[0]) CONTEXT_NAV.scenes[groups[0].id] = true;
+  const q = CONTEXT_NAV.query.trim().toLowerCase();
+  const links = groups.map(group => {
+    const rows = group.shots.map(shot => {
+      const state = workflowState(shot), selected = current?.id === shot.id;
+      const search = (shot.id + " " + shot.title + " " + group.title).toLowerCase();
+      return `<a class="context-shot${selected ? " current" : ""}" href="#/shot/${encodeURIComponent(shot.id)}" data-sidebar-key="shot:${attr(shot.id)}" data-search="${attr(search)}"${q && !search.includes(q) ? " hidden" : ""}${selected ? ' aria-current="page"' : ""} title="${attr(shot.id + ' · ' + (shot.title || 'Untitled shot') + ' · ' + state.label)}"><span class="nav-status wf-${state.cls}" aria-hidden="true"></span><span class="context-shot-copy"><b>${esc(shot.id)}</b><span>${esc(shot.title || "Untitled shot")}</span></span><span class="sr-only">${esc(state.label)}</span></a>`;
+    }).join("");
+    const matched = group.shots.some(shot => (shot.id + " " + shot.title + " " + group.title).toLowerCase().includes(q));
+    const open = !!q || !!CONTEXT_NAV.scenes[group.id];
+    const label = esc(group.title || group.id);
+    return `<section class="context-scene" data-context-scene="${attr(group.id)}"${q && !matched ? " hidden" : ""}><header><button type="button" class="context-scene-toggle" data-sidebar-key="scene-toggle:${attr(group.id)}" aria-label="${open ? "Collapse" : "Expand"} scene: ${attr(group.title || group.id)}" aria-expanded="${open}" onclick="toggleSidebarScene(this)"><span aria-hidden="true">›</span></button>${group.id !== "__unassigned" ? `<a href="#/scene/${encodeURIComponent(group.id)}" data-sidebar-key="scene:${attr(group.id)}"${view === "scene" && id === group.id ? ' aria-current="page"' : ""}>${label}</a>` : `<span>${label}</span>`}<small>${group.shots.length}</small></header><div class="context-scene-shots"${open ? "" : " hidden"}>${rows || '<p class="context-empty">No shots in this scene</p>'}</div></section>`;
+  }).join("");
+  return `<div class="context-section-links"><a href="#/shots/board"${view === "shots" && id !== "scenes" ? ' aria-current="page"' : ""}>Shot board</a><a href="#/shots/scenes"${view === "shots" && id === "scenes" ? ' aria-current="page"' : ""}>Scenes</a></div><label class="context-search"><span class="sr-only">Filter shots by title, ID or scene</span><input id="sidebar-shot-filter" data-sidebar-key="filter" type="search" placeholder="Find a shot…" value="${attr(CONTEXT_NAV.query)}" oninput="filterSidebarShots(this.value)"></label><div class="context-shot-tree">${links || '<p class="context-empty">No shots yet</p>'}</div><p class="context-empty context-search-empty"${groups.some(group => group.shots.some(shot => (shot.id + " " + shot.title + " " + group.title).toLowerCase().includes(q))) || !q ? " hidden" : ""}>No matching shots</p>`;
+}
+window.toggleSidebarScene = (button) => {
+  const group = button.closest(".context-scene"), list = group.querySelector(".context-scene-shots");
+  list.hidden = !list.hidden;
+  CONTEXT_NAV.scenes[group.dataset.contextScene] = !list.hidden;
+  button.setAttribute("aria-expanded", String(!list.hidden));
+  button.setAttribute("aria-label", (list.hidden ? "Expand" : "Collapse") + " scene: " + group.querySelector("header a,header > span").textContent);
 };
-window.filterProjectNavigator = (v) => {
-  const q = String(v || "").toLowerCase();
-  document
-    .querySelectorAll(".navigator-shot")
-    .forEach((x) =>
-      x.classList.toggle("filtered", q && !x.dataset.search.includes(q)),
-    );
+window.filterSidebarShots = (value) => {
+  CONTEXT_NAV.query = String(value || "");
+  const q = CONTEXT_NAV.query.trim().toLowerCase();
+  let matches = 0;
+  document.querySelectorAll("#context-navigation .context-scene").forEach(group => {
+    let count = 0;
+    group.querySelectorAll(".context-shot").forEach(link => {
+      link.hidden = !!q && !link.dataset.search.includes(q);
+      if (!link.hidden) count++;
+    });
+    matches += count;
+    group.hidden = !!q && !count;
+    const open = !!q || !!CONTEXT_NAV.scenes[group.dataset.contextScene];
+    group.querySelector(".context-scene-shots").hidden = !open;
+    const button = group.querySelector(".context-scene-toggle");
+    button.setAttribute("aria-expanded", String(open));
+    button.setAttribute("aria-label", (open ? "Collapse" : "Expand") + " scene: " + group.querySelector("header a,header > span").textContent);
+  });
+  const empty = document.querySelector(".context-search-empty");
+  if (empty) empty.hidden = !q || !!matches;
 };
+function renderContextNavigation(view, section) {
+  const host = document.getElementById("context-navigation");
+  const owner = document.querySelector(`.nav-btn[data-view="${section}"]`);
+  if (!host) return;
+  if (!owner?.insertAdjacentElement) { host.hidden = true; host.innerHTML = ""; host._contextMarkup = ""; return; }
+  const project = ACTIVE_PROJECT_SLUG + ":" + PROJECT_OPEN_EPOCH;
+  if (CONTEXT_NAV.project !== project) CONTEXT_NAV = { project, query: "", current: "", scenes: {} };
+  const id = decodeURIComponent(location.hash.split("/")[2] || "");
+  let markup = "";
+  if (P && section === "shots") markup = sidebarShotsMarkup(view, id);
+  if (P && section === "library") {
+    const types = { character: "characters", location: "locations", prop: "props", vehicle: "vehicles", sound: "audio" };
+    const candidate = types[view] || (view === "library" ? id || LIBRARY_TAB : view);
+    const selected = candidate === "approved" ? "canon" : REFERENCE_NAVIGATION.some(([key]) => key === candidate) ? candidate : "all";
+    markup = `<div class="context-categories">${REFERENCE_NAVIGATION.map(([key, label]) => `<a href="#/library/${key}" data-sidebar-key="reference:${key}"${selected === key ? ' aria-current="page"' : ""}>${esc(label)}</a>`).join("")}</div>`;
+  }
+  const focused = host.contains(document.activeElement) ? document.activeElement?.dataset.sidebarKey : null;
+  const treeScroll = host.querySelector(".context-shot-tree")?.scrollTop || 0;
+  owner.insertAdjacentElement("afterend", host);
+  host.hidden = !markup;
+  host.setAttribute("aria-label", section === "shots" ? "Shots navigation" : "Reference categories");
+  host.dataset.section = section;
+  if (host._contextMarkup !== markup) {
+    host.innerHTML = markup;
+    host._contextMarkup = markup;
+    const tree = host.querySelector(".context-shot-tree");
+    if (tree) tree.scrollTop = treeScroll;
+    if (focused) [...host.querySelectorAll("[data-sidebar-key]")].find(element => element.dataset.sidebarKey === focused)?.focus({ preventScroll: true });
+  }
+}

@@ -2,6 +2,38 @@
 (function(root,factory){const api=factory();if(typeof module==='object'&&module.exports)module.exports=api;else root.CineBraidMediaDiscovery=api;})(typeof globalThis!=='undefined'?globalThis:this,function(){
   'use strict';
   const arr=v=>Array.isArray(v)?v:[], val=v=>v?.state==='known'?String(v.value??''):'', unique=xs=>[...new Set(xs.filter(Boolean))];
+  function authorityReader(){
+    if(typeof module==='object'&&module.exports){try{return require('./shared-authority-kernel.js');}catch{return null;}}
+    return globalThis.CineBraidAuthorityKernel||null;
+  }
+  /* Approval history is presentation, not current authority. Only a validated
+     receipt for this exact asset and entity-state target may supply these words;
+     a selected coverage view by itself never does. */
+  function priorApprovals(raw,project={},validatedLedger=null){
+    const assetId=val(raw?.identity?.ledger);
+    const ledger=validatedLedger||authorityReader()?.validateAuthorityLedger?.(project);
+    if(!assetId||!ledger?.trusted)return [];
+    const uses=arr(raw?.relationships).length?raw.relationships:[raw],out=[];
+    const owners=unique(uses.filter(u=>u?.kind==='entity-reference').map(u=>{
+      const c=u.context||{},list=val(c.entityList),entityId=val(c.entityId);
+      return list&&entityId?`${list}:${entityId}`:'';
+    }));
+    for(const owner of owners){
+      const [list,entityId]=owner.split(':');
+      const entity=arr(project[list]).find(e=>e.id===entityId);
+      if(!entity)continue;
+      const states=arr(entity.continuityStates).length?entity.continuityStates:[{id:'state-default',name:'Default'}];
+      for(const state of states){
+        if(!state?.id)continue;
+        const history=ledger.byTarget.get(`entity-state:${list}:${entityId}#${state.id}`)?.all||[];
+        const current=history.find(r=>r.status==='current');
+        if(!current||current.assetId===assetId)continue;
+        const former=history.filter(r=>r.status==='superseded'&&r.assetId===assetId).at(-1);
+        if(former)out.push({stateId:state.id,stateName:String(state.name||state.id),receiptId:former.id,replacementFile:String(current.value||''),replacementAssetId:String(current.assetId||'')});
+      }
+    }
+    return out;
+  }
   const decisions={approved:'Approved',selected:'Selected for a view',candidate:'Candidate',rejected:'Rejected',historic:'Historic selection'};
   /* EV2-7 presentation word only. A coverage or expression slot edge maps to no authority target, so the projection always reads it as `historic`.
      When EVERY target of a use is such a slot, what is recorded is a current view selection, and it is labelled so. Disposition, receipts and authority are unchanged. */
@@ -71,6 +103,7 @@
   function compose(project={},records=[],inventory=[]){
     project=project||{};
     const byAsset=new Map(arr(inventory).map(i=>[i.assetId,i]));const result=[];
+    const approvalLedger=authorityReader()?.validateAuthorityLedger?.(project);
     for(const raw of records){
       const assetId=val(raw.identity?.ledger), item=byAsset.get(assetId);if(item)byAsset.delete(assetId);
       const uses=arr(raw.relationships).length?raw.relationships:[raw];const relationships=uses.map(u=>relationship(u,project));
@@ -87,7 +120,7 @@
       const availability=item?.missing===true?'missing':typeof item?.available==='boolean'?(item.available?'available':/missing|not-found|absent/.test(item.reason||'')?'missing':'unavailable'):preview.availability?.state||(preview.file.url?'available':'unknown');
       const meaningful=relationships.filter(u=>u.raw.scope!=='project'&&u.raw.kind!=='shot-blocking');const roles=unique((meaningful.length?meaningful:relationships).map(u=>u.decision));
       const type=preview.file.mediaType||'document';
-      result.push({key:raw.key,assetId,raw,relationships,related:[...relatedMap.values()],sceneIds:unique([...relatedMap.values()].filter(r=>r.type==='scene').map(r=>r.id)),
+      result.push({key:raw.key,assetId,raw,relationships,priorApprovals:priorApprovals(raw,project,approvalLedger),related:[...relatedMap.values()],sceneIds:unique([...relatedMap.values()].filter(r=>r.type==='scene').map(r=>r.id)),
         categories:categories.length?categories:['other'],category:ownCats[0]||linkCats[0]||'other',
         sceneOrder:Math.min(...[...relatedMap.values()].filter(r=>r.type==='scene').map(r=>arr(project.scenes).findIndex(s=>s.id===r.id)).filter(n=>n>=0),Infinity),title:title||untitled(type),fileName:item?.sourceName||val(raw.file.originalName)||raw.file.name,originalName:val(raw.file.originalName)||item?.libraryOriginalName||'',
         type,url:availability==='available'?(item?.url||preview.file.url):'',availability,reason:item?.reason||preview.availability?.reason||'',
@@ -111,7 +144,8 @@
   function decisionUses(row){return meaningfulUses(row).map((u,i)=>({label:u.label||'',view:u.view||'',decision:u.decision,words:singleWord(u.decision,u.selectedFor),order:i})).sort((a,b)=>((DECISION_RANK[a.decision]??9)-(DECISION_RANK[b.decision]??9))||a.order-b.order);}
   function joinNames(names){return names.length<3?names.join(' and '):names.slice(0,2).join(', ')+' and '+(names.length-2)+' more';}
   function decisionSummary(row,limit=84){
-    const uses=decisionUses(row);
+    const uses=decisionUses(row),prior=arr(row.priorApprovals)[0];
+    if(prior&&row.decision!=='rejected'&&!arr(row.roles).includes('approved'))return {text:prior.stateName+' approval superseded',lead:'historic',uses};
     if(row.decision!=='mixed')return {text:singleWord(row.decision,row.selectedFor),lead:row.decision,uses};
     if(uses.length<2){/* Roles disagree but the uses did not travel with the row: say which words are recorded, still without inventing a target for them. */
       const roles=unique(arr(row.roles)).sort((a,b)=>(DECISION_RANK[a]??9)-(DECISION_RANK[b]??9)),first=roles[0]||'candidate';
@@ -189,5 +223,5 @@
     });
     const page=Math.min(Math.max(0,Number(state.page)||0),Math.max(0,Math.ceil(all.length/48)-1));return {all,rows:all.slice(page*48,(page+1)*48),total:all.length,page,pages:Math.ceil(all.length/48)};
   }
-  return {defaults,compose,query,matches,groupLabel,decisionLabel,decisionSummary,decisionUses,decisionTone,rejectedFor,eligibility,sources,val,CATEGORIES,categoryLabel,categoryCounts,linkCategory,ledgerRoleCategory,ownerTitle,recordedTitle,linkTitle,slotSelection,typeLabel,targetCategory,targetRank,targetGroupLabel,contextLine,artifactStructure,structureLabel};
+  return {defaults,compose,query,matches,groupLabel,decisionLabel,decisionSummary,decisionUses,decisionTone,priorApprovals,rejectedFor,eligibility,sources,val,CATEGORIES,categoryLabel,categoryCounts,linkCategory,ledgerRoleCategory,ownerTitle,recordedTitle,linkTitle,slotSelection,typeLabel,targetCategory,targetRank,targetGroupLabel,contextLine,artifactStructure,structureLabel};
 });
