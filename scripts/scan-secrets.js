@@ -107,6 +107,24 @@ const BINARY = /\.(png|jpe?g|webp|gif|mp4|webm|mov|wav|mp3|m4a|flac|ogg|zip|gz|t
    catch. It is listed one exact value at a time like everything else. */
 const ALLOW = [
   {
+    file: "tests/braidy-target-review.js",
+    rule: "openai-key",
+    values: ["sk-fixture-PRIVATE-NEVER-ECHO"],
+    why: "a synthetic server-held credential fixture for exact-target Braidy review; the test verifies it is not exposed",
+  },
+  {
+    file: "tests/openai-model-inventory-route.js",
+    rule: "openai-key",
+    values: ["sk-fixture-MUST-NEVER-LEAK"],
+    why: "a synthetic account-inventory and provider-error fixture; the test verifies server-side credential masking",
+  },
+  {
+    file: "tests/openai-prompt-review.js",
+    rule: "openai-key",
+    values: ["sk-test-secret-MUST-NEVER-LEAK"],
+    why: "a synthetic Responses transport fixture; the test checks authorization stays in the server request",
+  },
+  {
     file: "tests/automation-diagnostics.js",
     rule: "openai-key",
     values: ["sk-SECRETERRORKEY123456789012345678901234"],
