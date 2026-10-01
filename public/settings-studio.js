@@ -51,9 +51,15 @@ window.studioCaptureSettingsDraft = () => {
   const values = settingsPanelValues();
   const dirty = SETTINGS_PANEL_BASELINE && values.some((value, i) => value !== SETTINGS_PANEL_BASELINE[i]);
   if (!dirty) { STUDIO_SETTINGS_DRAFTS.delete(studioDraftKey(panel)); return; }
+  const discardedSecret = controls.some((el, i) => el.type === "password" && values[i] !== SETTINGS_PANEL_BASELINE[i]);
   STUDIO_SETTINGS_DRAFTS.set(studioDraftKey(panel), {
-    values: controls.map((el, i) => ({ id: el.id, index: i, type: el.type, value: el.value, checked: el.checked })),
-    baseline: SETTINGS_PANEL_BASELINE.slice(),
+    /* Passwords are write-only drafts. A route change clears unsaved input; neither
+       its text nor a masked saved value belongs in this long-lived map. */
+    values: controls.map((el, i) => el.type === "password"
+      ? { id: el.id, index: i, type: el.type }
+      : { id: el.id, index: i, type: el.type, value: el.value, checked: el.checked }),
+    baseline: SETTINGS_PANEL_BASELINE.map((value, i) => controls[i].type === "password" ? null : value),
+    discardedSecret,
     focus: controls.includes(document.activeElement) ? document.activeElement.id : "",
     open: Array.from(panel.querySelectorAll("details[open]")).map((el) => el.id || el.dataset.uiStateKey).filter(Boolean),
   });
@@ -72,11 +78,13 @@ window.studioReconcileSettingsDraft = (key, saved, submitted) => {
   for (const field of saved) {
     const value = draft.values.find((row) => field.id ? row.id === field.id : row.index === field.index);
     const before = submitted[field.index];
-    if (value && (String(value.value) === before.value || (field.secret && value.value === "••••saved"))) value.value = field.value;
+    if (value && value.type !== "password" && before && String(value.value) === before.value) value.value = field.value;
   }
-  draft.baseline = saved.map((field) => field.value);
+  draft.baseline = saved.map((field) => draft.values.some((value) => value.type === "password" && (field.id ? value.id === field.id : value.index === field.index)) ? null : field.value);
+  draft.discardedSecret = false;
   delete draft.error;
   const changed = draft.values.some((value, index) => {
+    if (value.type === "password") return false;
     const before = saved.find((field) => value.id ? field.id === value.id : field.index === index);
     const effective = value.type === "checkbox"
       ? String(value.checked) : String(value.value);
@@ -92,6 +100,7 @@ window.studioRestoreSettingsDraft = () => {
   draft.values.forEach((saved) => {
     const el = saved.id ? document.getElementById(saved.id) : controls[saved.index];
     if (!el || el.disabled) return;
+    if (saved.type === "password" || el.type === "password") return;
     if (el.tagName === "SELECT" && !Array.from(el.options || []).some((o) => o.value === saved.value)) {
       const option = document.createElement("option"); option.value = saved.value; option.textContent = "Saved draft choice — availability unknown"; el.appendChild(option);
     }
@@ -99,18 +108,27 @@ window.studioRestoreSettingsDraft = () => {
     if (el.type === "checkbox") el.checked = saved.checked;
     if (el.id === "cfg-civitai-connection") el.dataset.userChoice = "1";
   });
-  SETTINGS_PANEL_BASELINE = draft.baseline;
+  SETTINGS_PANEL_BASELINE = draft.baseline.map((value, i) => controls[i]?.type === "password" ? String(controls[i].value ?? "") : value);
   Array.from(panel.querySelectorAll("details")).forEach((el) => { if (draft.open.includes(el.id || el.dataset.uiStateKey)) el.open = true; });
   refreshSettingsPanelState();
   if (panel.dataset.settingsTab === "appearance" && typeof previewAppearanceSettings === "function") previewAppearanceSettings();
-  if (draft.error) setSettingsPanelState("error", draft.error);
+  if (draft.error || draft.discardedSecret) {
+    const notice = draft.discardedSecret
+      ? "Unsaved API key or passcode was cleared when you left this panel. Enter it again before saving."
+      : "";
+    setSettingsPanelState("error", [draft.error, notice].filter(Boolean).join(" "));
+    if (!draft.error) document.getElementById("settings-panel-state").textContent = notice;
+  }
   if (draft.focus) document.getElementById(draft.focus)?.focus();
 };
 function studioConnectionFields(c, kind) {
   const input = (label, id, value, secret = false) => field(label, `<input id="${id}" ${secret ? 'type="password" autocomplete="new-password" spellcheck="false"' : ''} value="${attr(value || "")}">`);
   if (kind === "ollama") return input("Ollama endpoint", "cfg-ollama", c.ollamaUrl || "http://localhost:11434") + input("Text model", "cfg-omodel", c.ollamaModel) + input("Vision model", "cfg-vmodel", c.ollamaVisionModel);
   if (kind === "anthropic") return input("Claude API key · saved value masked", "cfg-key", c.anthropicKey, true) + input("Claude model", "cfg-model", c.anthropicModel);
-  if (kind === "openai") return input("OpenAI API key · saved value masked", "cfg-openai-key", c.openaiKey, true) + input("Text model", "cfg-openai-model", c.openaiModel) + input("Vision model", "cfg-openai-vision", c.openaiVisionModel);
+  if (kind === "openai") return input("OpenAI API key · saved value masked", "cfg-openai-key", c.openaiKey, true)
+    + input("Text model", "cfg-openai-model", c.openaiModel)
+    + input("Vision model", "cfg-openai-vision", c.openaiVisionModel)
+    + `<div class="studio-wide openai-braidy-models"><label><span>Braidy prompt-review model</span><select id="cfg-openai-braidy-model"><option value="">Choose from models available to this account</option>${c.openaiBraidyModel ? `<option value="${attr(c.openaiBraidyModel)}" selected>${esc(c.openaiBraidyModel)} · saved choice, availability unverified</option>` : ""}</select></label><button type="button" class="ghost-btn" onclick="loadOpenAIBraidyModels()">Load account models</button><p id="openai-braidy-model-note" class="hint" role="status">Save your API key, then load account models. Model access is verified separately from task quality. No prompt is sent by this check.</p></div>`;
   return input("OpenAI-compatible base URL · include /v1", "cfg-custom-url", c.customBaseUrl) + input("API key · optional, saved value masked", "cfg-custom-key", c.customKey, true) + input("Text model", "cfg-custom-model", c.customModel) + input("Vision model", "cfg-custom-vision", c.customVisionModel) + `<details class="studio-wide"><summary>Advanced request options</summary><div class="two-col">${input("Temperature · blank uses server default", "cfg-custom-temperature", c.customTemperature === 0 ? "0" : c.customTemperature)}${input("Top-K · blank omits the field", "cfg-custom-top-k", c.customTopK)}${field("Model thinking", `<select id="cfg-custom-thinking"><option value="auto">Server default</option><option value="disabled" ${c.customThinking === "disabled" ? "selected" : ""}>Ask server to skip thinking</option></select>`)}</div><p class="hint">Use only options this endpoint supports.</p></details>`;
 }
 function studioSettingsRender({ selected, panels, config: c, health, accountData, panelState }) {

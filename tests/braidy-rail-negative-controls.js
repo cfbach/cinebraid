@@ -776,13 +776,15 @@ async function remainingControls() {
         "C30") },
     "An assistant nobody is required to use would be able to stop the rail that works without it — the definition of a gate.");
 
-  /* Not a source mutation but a TREE mutation: one production file that has learned
-     Braidy exists. That is how the optionality is actually lost — not by the rail
-     changing, but by a generation or review path acquiring a reference and, one repair
-     later, a dependency. */
-  await control("C30b a production path learns that Braidy exists", "checkBraidyIsNotAGate",
-    { clientFiles: { ...suite.readClientFiles(), "creation-studio.js": "if (window.CineBraidBraidy) blockGeneration();" } },
-    "A shot workflow that can see Braidy is a shot workflow that can come to need it, and the whole claim that Braidy is optional rests on none of them being able to.");
+  /* A real gate in deterministic Build must be caught, while the explicit
+     post-compile Improve action is allowed to know Braidy exists. */
+  await control("C30b deterministic Build requires Braidy", "checkBraidyIsNotAGate",
+    { clientFiles: { ...suite.readClientFiles(), "creation-studio.js": mutate(
+        suite.readClientFiles()["creation-studio.js"],
+        "window.buildGuidedMotionPrompt = async (id, useLLM = false) => {",
+        "window.buildGuidedMotionPrompt = async (id, useLLM = false) => {\n  if (!window.CineBraidBraidy) return;",
+        "C30b") } },
+    "A deterministic Motion Build would stop when optional Braidy is absent.");
 
   await control("C31 the compact register truncates instead of splitting", "checkCompactionIsNotTruncation",
     { contract: mutate(SOURCES.contract,

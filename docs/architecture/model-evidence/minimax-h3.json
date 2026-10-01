@@ -14,8 +14,8 @@
     "",
     "1. A claim with no primary source does not appear in model-packs/minimax-h3.js.",
     "   It appears in notEstablished below, and the pack treats it as unsupported.",
-    "2. A provider's constraint is not a model fact. fal's 2,000-character queue schema",
-    "   and MiniMax's 7,000-character model limit are separate rows for that reason.",
+    "2. A provider's constraint is not a model fact. The current fal queue and",
+    "   MiniMax guidance both allow 7,000 characters; those facts stay separate.",
     "3. Local open-weight capability and hosted API capability are recorded separately.",
     "   The open weights are H3-Base; two of the three modules the hosted 2K workflow",
     "   uses are not open-sourced, so a local install is a different capability set and",
@@ -120,12 +120,14 @@
 
   "conflicts": [
     {
-      "topic": "maximum prompt length",
+      "topic": "maximum prompt length versus CineBraid writing target",
+      "status": "historical 2,000-character backend claim corrected",
       "positions": [
-        { "value": 7000, "source": "api-reference", "scope": "MiniMax H3 model, hosted API" },
-        { "value": 2000, "source": "backend", "scope": "fal queue schema, recorded in data/model-profiles.json" }
+        { "value": 7000, "source": "api-reference", "scope": "MiniMax H3 model, hosted API; checked 2026-08-08" },
+        { "value": 7000, "source": "src/generation/fal/fal-h3-backend.js", "scope": "Current fal adapter bound; its recorded schema has no smaller prompt maxLength and its recorded fal model page states 7,000 characters, checked 2026-08-08" },
+        { "value": 2000, "source": "data/model-profiles.json minimax-h3/* limits.writingTargetCharacters", "scope": "CineBraid editorial writing target, not a provider refusal limit" }
       ],
-      "resolution": "Both are kept. The pack warns at the model limit; a backend adapter applies its own. Neither is written into the other's layer."
+      "resolution": "The old 2,000-character fal queue maximum in this record was stale. Current model and fal adapter bounds are 7,000; the effective dispatch limit is still resolved from model and backend capability. CineBraid's 2,000-character target is advisory and must not be enforced as a provider ceiling. Recheck current provider documentation before asserting that these dated source snapshots remain current."
     },
     {
       "topic": "default resolution",

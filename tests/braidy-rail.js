@@ -1502,24 +1502,34 @@ function checkBraidyIsNotAGate(sources = SOURCES) {
   assert.ok(surfaceCode.includes('localStorage.getItem(RAIL_OPEN_KEY) === "1"'),
     "the rail must remain closed until the filmmaker opens it");
 
-  /* AND NO PRODUCTION PATH CAN REACH BRAIDY AT ALL.
-
-     Measured across the whole client and the server rather than argued from the
-     rail's behaviour: creating a project, importing one, producing a shot,
-     generating, reviewing and finishing are carried out by files that do not know
-     Braidy exists, so none of them can come to depend on it. The rail owner and the
-     markup that loads the two files are the entire surface. */
-  const REACH = /\b(CineBraidBraidy|braidy(?:Plan|Improve|Review|Fix|Ask|With|Block|Signal|StageAction|Handoff|Capability|Presentation))\b|braidy-rail|shared-braidy/;
-  const ALLOWED = new Set(["braidy-rail.js", "shared-braidy.js", "creator-surfaces.js", "index.html", "working-bible.js"]);
+  /* Improve with Braidy is now an explicit post-compile action. Ordinary Build
+     must remain deterministic, and native review may consult an accepted Braidy
+     revision only when one exists. The optional rail remains a separate runtime. */
   const files = sources.clientFiles || readClientFiles();
   const bible = codeOnly(files["working-bible.js"] || "");
   assert.strictEqual((bible.match(/CineBraidBraidy\.braidyWith\(/g) || []).length, 1, "Bible has only its explicit advisory handoff");
   assert(bible.includes("if(action==='braidy'){try{") && bible.includes("catch{notice='Braidy is unavailable."), "optional handoff failure cannot gate Bible work");
-  const reached = Object.keys(files).filter((name) => !ALLOWED.has(name) && REACH.test(codeOnly(files[name]))).sort();
-  assert.deepStrictEqual(reached, [],
-    `Braidy is reachable from ${reached.join(", ")}. A production path that knows Braidy exists is a production path that can come to need it.`);
+  const creation = codeOnly(files["creation-studio.js"] || "");
+  assert(creation.includes("onclick=\"buildBlockingPrompt('${s.id}',false)\"")
+    && creation.includes("onclick=\"buildGuidedFramePrompt('${s.id}','${frame.id}',false)\"")
+    && creation.includes("onclick=\"buildGuidedMotionPrompt('${s.id}',false)\""),
+    "Blocking, Frame and Motion Build buttons must use deterministic compilation");
+  assert(creation.includes("openBraidyPromptReview('blocking'")
+    && creation.includes("openBraidyPromptReview('image'")
+    && creation.includes("openBraidyPromptReview('h3'"),
+    "Improve with Braidy must remain an explicit post-Build action");
+  for (const name of ["creation-studio.js", "fal-generation.js", "generation-picker.js"]) {
+    assert(!/\bCineBraidBraidy\b/.test(codeOnly(files[name] || "")),
+      `${name} must not depend on the optional Braidy rail runtime`);
+  }
+  const fal = codeOnly(files["fal-generation.js"] || "");
+  const picker = codeOnly(files["generation-picker.js"] || "");
+  assert(fal.includes("if (build.braidyReview) {") && fal.includes("verifyBraidyRevisionBasis("),
+    "video review must verify only an accepted Braidy revision");
+  assert(picker.includes("if (sourceBuild?.braidyReview) {") && picker.includes("verifyBraidyRevisionBasis("),
+    "image review must verify only an accepted Braidy revision");
 
-  note("Optional: with Braidy absent the deterministic rail is unchanged, with Braidy throwing it is byte-identical, with Braidy working it is the same bytes plus the block, the rail is still opt-in, and no file outside the rail owner and the markup can reach Braidy at all");
+  note("Optional: absent or failing Braidy cannot change the deterministic rail; Build stays deterministic, Improve is explicit after Build, and native review checks Braidy basis only for accepted revisions");
 }
 
 /* ===========================================================================

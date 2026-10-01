@@ -1,6 +1,6 @@
 {
   "schemaVersion": 1,
-  "updated": "2026-08-03",
+  "updated": "2026-09-30",
   "profiles": [
     {
       "id": "gpt-image-2/t2i",
@@ -9,6 +9,14 @@
       "mediaType": "image",
       "mode": "t2i",
       "profileVersion": "2026-07",
+      "promptQualification": {
+        "status": "qualified",
+        "modelId": "gpt-image-2/standard",
+        "surfaceId": "fal-queue",
+        "packId": "gpt-image-2",
+        "packVersion": "1.0.1",
+        "playbookVersion": "2026-08-08"
+      },
       "refSyntax": "#imageN",
       "supports": {
         "multipleReferences": true,
@@ -50,6 +58,14 @@
       "mediaType": "image",
       "mode": "blocking",
       "profileVersion": "2026-07",
+      "promptQualification": {
+        "status": "qualified",
+        "modelId": "gpt-image-2/standard",
+        "surfaceId": "fal-queue",
+        "packId": "gpt-image-2",
+        "packVersion": "1.0.1",
+        "playbookVersion": "2026-08-08"
+      },
       "refSyntax": "#imageN",
       "supports": {
         "multipleReferences": false,
@@ -94,6 +110,14 @@
       "mediaType": "image",
       "mode": "edit",
       "profileVersion": "2026-07",
+      "promptQualification": {
+        "status": "qualified",
+        "modelId": "gpt-image-2/standard",
+        "surfaceId": "fal-queue",
+        "packId": "gpt-image-2",
+        "packVersion": "1.0.1",
+        "playbookVersion": "2026-08-08"
+      },
       "refSyntax": "#imageN",
       "supports": {
         "multipleReferences": true,
@@ -125,12 +149,63 @@
       ]
     },
     {
+      "id": "gpt-image-2/inpaint",
+      "family": "gpt-image-2",
+      "name": "GPT Image 2 \u2014 Inpaint",
+      "mediaType": "image",
+      "mode": "inpaint",
+      "profileVersion": "2026-09-30",
+      "promptQualification": {
+        "status": "qualified",
+        "modelId": "gpt-image-2/standard",
+        "surfaceId": "fal-queue",
+        "packId": "gpt-image-2",
+        "packVersion": "1.0.1",
+        "playbookVersion": "2026-08-08"
+      },
+      "refSyntax": "#imageN",
+      "supports": {
+        "multipleReferences": true,
+        "baseImage": true,
+        "mask": true,
+        "textRendering": true
+      },
+      "limits": {
+        "maxReferences": 16,
+        "preferredWords": [
+          60,
+          240
+        ]
+      },
+      "strategy": "masked-change-preserve",
+      "rules": [
+        "The approved base image is the image being edited, and its matching mask bounds the change.",
+        "Change only the named detail inside the mask; keep the rest of the base image unchanged.",
+        "Pin unchanged text verbatim and forbid subject/object relocation."
+      ],
+      "sections": [
+        "base image and mask",
+        "reference legend",
+        "change inside mask",
+        "keep unchanged",
+        "output"
+      ]
+    },
+    {
       "id": "gpt-image-2/multi-reference",
       "family": "gpt-image-2",
       "name": "GPT Image 2 \u2014 Multi-reference Composite",
       "mediaType": "image",
       "mode": "multi-reference",
       "profileVersion": "2026-07",
+      "promptQualification": {
+        "status": "qualified",
+        "modelId": "gpt-image-2/standard",
+        "surfaceId": "fal-queue",
+        "packId": "gpt-image-2",
+        "packVersion": "1.0.1",
+        "playbookVersion": "2026-08-08"
+      },
       "refSyntax": "#imageN",
       "supports": {
         "multipleReferences": true,
@@ -1050,6 +1125,14 @@
       "mediaType": "video",
       "mode": "t2v",
       "profileVersion": "2026-08-03",
+      "promptQualification": {
+        "status": "qualified",
+        "modelId": "minimax-h3/fl2va",
+        "surfaceId": "fal-queue",
+        "packId": "minimax-h3",
+        "packVersion": "1.0.6",
+        "playbookVersion": "2026-08-08"
+      },
       "refSyntax": "typed-h3",
       "falEndpoint": "minimax/h3/text-to-video",
       "supports": {
@@ -1070,7 +1153,7 @@
           70,
           700
         ],
-        "maxPromptCharacters": 2000,
+        "writingTargetCharacters": 2000,
         "resolutions": [
           "768P",
           "2K"
@@ -1111,6 +1194,14 @@
       "mediaType": "video",
       "mode": "i2v",
       "profileVersion": "2026-08-03",
+      "promptQualification": {
+        "status": "qualified",
+        "modelId": "minimax-h3/fl2va",
+        "surfaceId": "fal-queue",
+        "packId": "minimax-h3",
+        "packVersion": "1.0.6",
+        "playbookVersion": "2026-08-08"
+      },
       "refSyntax": "typed-h3",
       "falEndpoint": "minimax/h3/image-to-video",
       "supports": {
@@ -1132,7 +1223,7 @@
           35,
           350
         ],
-        "maxPromptCharacters": 2000,
+        "writingTargetCharacters": 2000,
         "resolutions": [
           "768P",
           "2K"
@@ -1165,6 +1256,14 @@
       "mediaType": "video",
       "mode": "flf",
       "profileVersion": "2026-08-03",
+      "promptQualification": {
+        "status": "qualified",
+        "modelId": "minimax-h3/fl2va",
+        "surfaceId": "fal-queue",
+        "packId": "minimax-h3",
+        "packVersion": "1.0.6",
+        "playbookVersion": "2026-08-08"
+      },
       "refSyntax": "typed-h3",
       "falEndpoint": "minimax/h3/image-to-video",
       "supports": {
@@ -1186,7 +1285,7 @@
           45,
           450
         ],
-        "maxPromptCharacters": 2000,
+        "writingTargetCharacters": 2000,
         "resolutions": [
           "768P",
           "2K"
@@ -1220,6 +1319,14 @@
       "mediaType": "video",
       "mode": "r2v",
       "profileVersion": "2026-08-03",
+      "promptQualification": {
+        "status": "qualified",
+        "modelId": "minimax-h3/ref2va",
+        "surfaceId": "fal-queue",
+        "packId": "minimax-h3",
+        "packVersion": "1.0.6",
+        "playbookVersion": "2026-08-08"
+      },
       "refSyntax": "typed-h3",
       "falEndpoint": "minimax/h3/reference-to-video",
       "supports": {
@@ -1245,7 +1352,7 @@
           90,
           900
         ],
-        "maxPromptCharacters": 2000,
+        "writingTargetCharacters": 2000,
         "resolutions": [
           "768P",
           "2K"

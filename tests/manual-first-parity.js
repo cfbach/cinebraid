@@ -24,6 +24,7 @@ const ASSISTED_ONLY = [
   /^Rebuild prompt$/i,
   /^Build state prompt$/i,
   /^Improve$/i,
+  /^Improve with Braidy$/i,
   /^Plan automation$/i,
   /^Automate full shot$/i,
   /^Review blocking attempts$/i,
@@ -219,7 +220,10 @@ async function main() {
        and blocking paths have always said in the same situation. The guarantee is that
        an assisted frame keeps its prompt-building control, not which tense it is in. */
     assert(assistedFrame.allLabels.some((label) => /^(?:Rebuild|Build) prompt$/i.test(label)), "assisted frames must retain Build prompt");
-    assert(assistedFrame.allLabels.some((label) => /^Improve$/i.test(label)), "assisted frames must retain Improve");
+    if (dataset.name === "sample")
+      assert(!assistedFrame.allLabels.some((label) => /^Improve(?: with Braidy)?$/i.test(label)), "Braidy improvement must wait for a compiled target package");
+    else
+      assert(assistedFrame.allLabels.some((label) => /^Improve with Braidy$/i.test(label)), "an existing frame target package must retain postcompile Braidy improvement");
     assert(assistedFrame.allLabels.some((label) => /^Automate full shot$/i.test(label)), "assisted frames must expose full-shot automation");
     assert(assistedLook.allLabels.some((label) => /^(?:Rebuild|Build) prompt$/i.test(label)), "assisted blocking must retain prompt building");
     assert(assistedLook.allLabels.some((label) => /^(?:Review blocking attempts|AI review & recommend|Review all with AI|Review all again)$/i.test(label)), "assisted blocking must expose blocking review");

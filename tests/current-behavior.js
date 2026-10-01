@@ -376,8 +376,12 @@ async function main() {
     "bible-canon-export.js",
     "blocking-automation-discoverability.js",
     "bounded-rendering.js",
+    "braidy-build-freshness.js",
+    "braidy-postcompile-real-browser.py",
+    "braidy-postcompile-ui.js",
     "braidy-rail-negative-controls.js",
     "braidy-rail.js",
+    "braidy-target-review.js",
     "brand-logo-asset.js",
     "brand-logo-real-browser.py",
     "broll-deliver-real-browser.js",
@@ -552,6 +556,7 @@ async function main() {
     "model-definition-registry.js",
     "model-intelligence-negative-controls.js",
     "model-intelligence.js",
+    "model-profile-qualification.js",
     "motion-prompt-editing-real-browser.py",
     "multi-aspect-media.js",
     "no-project-route-error-privacy-negative-controls.js",
@@ -568,6 +573,8 @@ async function main() {
     "ofp-read-invariant.js",
     "ofp-serialization.js",
     "ofp-synthetic-conformance.js",
+    "openai-model-inventory-route.js",
+    "openai-prompt-review.js",
     "openai-request-dialect.js",
     "orphan-entity-creation-refusal-negative-controls.js",
     "orphan-entity-creation-refusal-real-browser.py",
@@ -604,6 +611,7 @@ async function main() {
     "project-storage-separation.js",
     "project-switch-safety.js",
     "prompt-request-truth-real-browser.py",
+    "prompt-target-golden.js",
     "provider-health.js",
     "public-exposure-negative-controls.js",
     "public-exposure.js",
@@ -912,7 +920,7 @@ async function main() {
   assert(creation.includes("segmentId: unitKey(unit)"), "motion compile must target the guided segment");
   assert(creation.includes("durationSeconds: duration"), "motion compile must send the selected duration");
   assert(creation.includes("shotCreationReferences(s)"), "Seedance Omni must receive selected image references");
-  assert(creation.includes("READY-TO-USE MOTION PROMPT"), "the final compiled motion prompt must be visible without opening a secondary disclosure");
+  assert(creation.includes("PREPARED TARGET PACKAGE") && creation.includes('<pre class="guided-ready-motion-prompt">${esc(build.prompt || "")}</pre>'), "the final compiled motion prompt must be visible without opening a secondary disclosure");
   assert(creation.includes("sourceDirectiveSanitized"), "legacy compiler boilerplate recovery must be stored with the prompt build");
   assert(server.includes("parseAssistantMotionRevision"), "nested and plain-text motion revisions must be normalized server-side");
   assert(server.includes("removeUnsuppliedAudioClaims"), "assistant motion revisions must not invent audio when none was supplied");
@@ -944,7 +952,7 @@ async function main() {
     }],
   };
   const promptRender = await render("#/shot/L1-01", promptFixture, { storage: { "cinebraid-focused:fixture:shot-task:L1-01": "motion" } });
-  assert(promptRender.html.includes("READY-TO-USE MOTION PROMPT"));
+  assert(promptRender.html.includes("PREPARED TARGET PACKAGE"), "motion target package remains visible in the rendered Shot Desk");
   assert(promptRender.html.includes("From the supplied starting image, the ship drifts slowly."));
   assert(promptRender.html.includes("Review revised motion direction"));
   assert(!promptRender.html.includes('&quot;directive&quot;'));

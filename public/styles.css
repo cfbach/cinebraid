@@ -7821,3 +7821,50 @@ body[data-focused-route="library"]:has(.library-grid .library-card) #app[data-su
 .shot-journey-reference{position:relative;display:inline-flex}.shot-journey-reference img{width:24px;height:32px}.shot-journey-reference.is-excluded{border:1px dashed var(--muted);border-radius:4px}.shot-journey-reference i{position:absolute;right:0;bottom:0;line-height:12px;background:var(--panel);font-size:15px;font-style:normal}
 .shot-journey footer{display:flex;justify-content:space-between;align-items:center;gap:16px}.shot-journey footer>small{color:var(--muted);font-size:11px;max-width:55%;line-height:1.5}.shot-journey-alternative{display:flex;flex-direction:column;align-items:flex-end;gap:5px;font-size:12px}.shot-journey-alternative button{min-height:44px}
 @media(max-width:600px){.shot-journey{padding:10px}.shot-journey header{align-items:flex-start;flex-direction:column;gap:4px}.shot-journey ol{gap:4px}.shot-journey li{font-size:11px;padding:7px 1px}.shot-journey li small{font-size:9px}.shot-journey-reference img{width:16px;height:28px}.shot-journey footer{flex-direction:column;align-items:stretch;gap:10px}.shot-journey footer>small{max-width:none}.shot-journey-alternative{align-items:stretch}.shot-journey-alternative button{width:100%}}
+
+/* Exact-target Braidy review shares one calm comparison surface for H3 and GPT Image 2. */
+.modal-box:has(.braidy-prompt-modal){width:min(1080px,96vw);height:min(900px,92dvh);max-height:92dvh}
+.braidy-prompt-modal{display:grid;grid-template-rows:auto minmax(0,1fr) auto;min-width:0;height:100%;overflow:hidden}
+.braidy-prompt-modal>header{display:flex;justify-content:space-between;align-items:flex-start;gap:16px;padding:17px 20px;border-bottom:1px solid var(--line);background:var(--surface-1)}
+.braidy-prompt-modal>header>div{min-width:0}
+.braidy-prompt-modal>header span{font:800 9px var(--mono);letter-spacing:.12em;color:var(--acc)}
+.braidy-prompt-modal>header h3{margin:4px 0;font-size:20px;line-height:1.3;overflow-wrap:anywhere}
+.braidy-prompt-modal>header p{margin:0;color:var(--muted);font-size:11px;line-height:1.45;overflow-wrap:anywhere}
+.braidy-review-scroll{display:grid;gap:12px;min-height:0;overflow:auto;padding:16px 20px 22px}
+.braidy-scope{margin:4px 0 10px;color:var(--muted);font-size:11px;line-height:1.5}
+.braidy-review-scroll>.braidy-scope{margin:0}
+.braidy-basis,.braidy-advisory{min-width:0;padding:13px;border:1px solid var(--line);border-radius:10px;background:var(--surface-1)}
+.braidy-basis>header,.braidy-advisory>header{display:flex;justify-content:space-between;align-items:flex-start;gap:12px;margin-bottom:10px}
+.braidy-basis>header b,.braidy-advisory>header b{display:block;font-size:13px}
+.braidy-basis>header small,.braidy-advisory>header small{display:block;margin-top:3px;color:var(--muted);font-size:10px;line-height:1.45}
+.braidy-basis pre{margin:0;padding:12px;max-height:240px;overflow:auto;white-space:pre-wrap;overflow-wrap:anywhere;border:1px solid var(--line);border-radius:7px;background:var(--surface-2);font:11px/1.55 var(--mono)}
+.braidy-basis details{margin-top:10px}
+.braidy-basis details>summary{cursor:pointer;font-size:11px;font-weight:700}
+#braidy-bound-inputs ol{display:grid;gap:6px;margin:8px 0 0;padding-left:24px}
+#braidy-bound-inputs li{font-size:10px;line-height:1.4}
+#braidy-bound-inputs li b{display:block}
+#braidy-bound-inputs li span{color:var(--muted);overflow-wrap:anywhere}
+#braidy-bound-inputs li small{display:block;margin-top:2px;color:var(--muted);overflow-wrap:anywhere}
+#braidy-review-status{margin:4px 0 10px;padding:9px 11px;border:1px solid var(--line);border-radius:7px;color:var(--muted);font-size:11px;line-height:1.45}
+#braidy-review-status[data-tone="error"],.braidy-warning{border-color:var(--warn-border,var(--line));color:var(--warn,var(--text));background:var(--warn-bg,var(--surface-2))}
+#braidy-review-status[data-tone="ok"]{color:var(--text)}
+.braidy-warning{margin-top:10px;padding:10px 12px;border:1px solid var(--line);border-radius:8px;font-size:11px;line-height:1.45}
+.braidy-warning ul{margin:6px 0 0;padding-left:18px}
+.braidy-warning p{margin:5px 0}
+.braidy-warning label{display:flex;gap:7px;align-items:start;margin-top:9px;font-weight:700}
+.braidy-proposal-meta{display:flex;justify-content:space-between;gap:10px;flex-wrap:wrap;margin:4px 0 10px;font-size:11px}
+.braidy-proposal-meta span,.braidy-proposal-basis{color:var(--muted)}
+.braidy-proposal-editor{display:grid;gap:6px}
+.braidy-proposal-editor>span{font:800 9px var(--mono);letter-spacing:.08em;color:var(--muted);text-transform:uppercase}
+.braidy-proposal-editor textarea{width:100%;min-height:245px;resize:vertical;font:11px/1.55 var(--mono)}
+.braidy-reason,.braidy-proposal-basis,.braidy-empty{font-size:11px;line-height:1.5}
+.braidy-proposal-notes{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:9px}
+.braidy-proposal-notes section{min-width:0;padding:9px;border:1px solid var(--line);border-radius:7px;background:var(--surface-2)}
+.braidy-proposal-notes b{font-size:10px}
+.braidy-proposal-notes ul{margin:6px 0 0;padding-left:17px;font-size:10px;line-height:1.45}
+.braidy-proposal-notes p{margin:6px 0 0;color:var(--muted);font-size:10px}
+#braidy-proposal-compare{margin:6px 0 10px}
+#braidy-proposal-compare label{display:flex;gap:8px;align-items:center;font-size:10px}
+#braidy-proposal-compare select{max-width:260px}
+.braidy-prompt-modal>footer{margin:0!important;padding:12px 20px!important;border-top:1px solid var(--line);background:var(--surface-1)}
+@media(max-width:720px){.modal-box:has(.braidy-prompt-modal){width:100%;height:calc(100dvh - 12px);max-height:calc(100dvh - 12px)}.braidy-prompt-modal>header{padding:13px}.braidy-review-scroll{padding:12px}.braidy-proposal-notes{grid-template-columns:1fr}.braidy-basis>header,.braidy-advisory>header{flex-direction:column}.braidy-prompt-modal>footer{padding:10px 12px!important;flex-direction:column-reverse}.braidy-prompt-modal>footer button{width:100%}.braidy-proposal-editor textarea{min-height:220px}}

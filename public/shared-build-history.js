@@ -5,7 +5,13 @@
      The live global object is handed over instead and the function is read at CALL
      time — see shotRouteOwner(), which fails loudly rather than falling back, because a
      fallback would be a second reading of the route vocabulary. */
-  const api = factory({ route: typeof module === "object" && module.exports ? require("./shared-shot-route.js") : root });
+  const node = typeof module === "object" && module.exports;
+  const api = factory({
+    route: node ? require("./shared-shot-route.js") : root,
+    entities: node ? require("./shared-entities.js") : root,
+    presence: node ? require("./shared-frame-presence.js") : root,
+    sha256: node ? (value) => require("crypto").createHash("sha256").update(value).digest("hex") : root?.sha256Hex,
+  });
   if (typeof module === "object" && module.exports) module.exports = api;
   if (root) Object.assign(root, api);
 })(typeof window !== "undefined" ? window : globalThis, function (OWNERS) {
@@ -20,6 +26,27 @@
 
   function clean(value) { return String(value || "").trim(); }
   function clone(value) { return value == null ? value : JSON.parse(JSON.stringify(value)); }
+  /* v607 borrows per-unit values into the shot brief for one synchronous Motion
+     render. Those display values are not edits to durable Canon. Keep the original
+     fields outside project data while freshness is read inside that render. */
+  const MOTION_VIEW_BORROWED_KEYS = Object.freeze([
+    "motionPlan", "motionDirection", "motionDuration", "motionProfileId",
+    "motionIntensity", "preserveComposition",
+  ]);
+  const durableMotionCanonViews = new WeakMap();
+  function withDurableMotionCanonView(brief, render) {
+    if (!brief || typeof brief !== "object" || typeof render !== "function")
+      throw new TypeError("A shot brief and synchronous motion renderer are required.");
+    const nested = durableMotionCanonViews.has(brief);
+    const previous = durableMotionCanonViews.get(brief);
+    const durable = nested ? previous : Object.fromEntries(MOTION_VIEW_BORROWED_KEYS.map((key) => [key, clone(brief[key])]));
+    durableMotionCanonViews.set(brief, durable);
+    try { return render(); }
+    finally {
+      if (nested) durableMotionCanonViews.set(brief, previous);
+      else durableMotionCanonViews.delete(brief);
+    }
+  }
   function stableValue(value) {
     if (Array.isArray(value)) return value.map(stableValue);
     if (value && typeof value === "object") {
@@ -423,6 +450,157 @@
 
   /* A field is compared only when BOTH sides have it. `undefined` on either side means
      nobody has evidence, and a difference nobody has evidence for is not a difference. */
+  /* Blocking's authored inputs are not the shot motion prompt. This projection
+     mirrors the first-frame blocking brief and additional direction, plus the
+     layout controls passed to its compiler. */
+  function packageBlockingInputs(shot) {
+    const s = shot || {};
+    const brief = s.creationBrief || {};
+    const frame = (Array.isArray(s.keyframes) ? s.keyframes : [])[0] || {};
+    const workflows = brief.frameWorkflows && typeof brief.frameWorkflows === "object"
+      ? brief.frameWorkflows : {};
+    const state = workflows[String(frame.id || "")] || {};
+    const present = (value, fallback) => String(value == null ? fallback || "" : value);
+    return {
+      frameId: String(frame.id || ""),
+      action: present(state.action, brief.action || frame.description || s.desc || ""),
+      staging: present(state.staging, brief.staging || s.positioning || ""),
+      camera: present(state.camera, brief.camera || ""),
+      notes: present(state.notes, brief.notes || ""),
+      revisionRequest: String(brief.blockingRevisionRequest || ""),
+      includeLabels: brief.blockingIncludeLabels !== false,
+      emphasis: ["auto", "full-scene", "balanced", "action-insert"].includes(brief.blockingEmphasis)
+        ? brief.blockingEmphasis : "auto",
+      profileId: String(brief.blockingProfileId || "gpt-image-2/blocking"),
+      composition: stableValue(brief.composition || {}),
+    };
+  }
+
+  /* A guided-frame build records its own frame's authored workflow. The generic
+     package snapshot follows shot-level direction; it cannot notice a later
+     edit to Frame B camera/staging while Frame A and the shot stay unchanged. */
+  function packageFrameWorkflowInputs(shot, pack) {
+    const s = shot || {};
+    const brief = s.creationBrief || {};
+    const frames = Array.isArray(s.keyframes) ? s.keyframes : [];
+    const frameId = String(pack?.frameId || "");
+    const index = frames.findIndex((row) => String(row?.id || "") === frameId);
+    const frame = index >= 0 ? frames[index] : {};
+    const workflows = brief.frameWorkflows && typeof brief.frameWorkflows === "object"
+      ? brief.frameWorkflows : {};
+    const state = workflows[frameId] || {};
+    return {
+      frameId,
+      frameExists: index >= 0,
+      frameLabel: String(frame.label || ""),
+      frameDescription: String(frame.description || ""),
+      action: String(state.action || frame.description || "").trim(),
+      staging: String(state.staging || ""),
+      camera: String(state.camera || ""),
+      notes: String(state.notes || ""),
+      automationRevisionRequest: String(state.automationRevisionRequest || ""),
+      usePreviousFrame: state.usePreviousFrame === true,
+      previousFrameId: index > 0 && state.usePreviousFrame ? String(frames[index - 1]?.id || "") : "",
+      profileId: String(state.profileId || ""),
+      mode: String(state.mode || ""),
+      entityPresence: stableValue(state.entityPresence || {}),
+      characterStateSelections: stableValue(state.characterStateSelections || {}),
+      locationStateSelections: stableValue(state.locationStateSelections || {}),
+      propStateSelections: stableValue(state.propStateSelections || {}),
+      vehicleStateSelections: stableValue(state.vehicleStateSelections || {}),
+      locationStateId: String(state.locationStateId || ""),
+      composition: stableValue(brief.composition || {}),
+    };
+  }
+
+  /* A saved prompt's structured spec is compiled from more than the shot's
+     direction. Capture a compact SHA-256 witness of the exact world, scene,
+     shot and selected entity Canon that the current prompt engine can read.
+     The witness is stored with newly built packages and rechecked before
+     Braidy sends saved intent to OpenAI. It contains no media bytes or secret. */
+  function packageCanonContextInputs(project, shot, pack) {
+    const P = project || {}, s = shot || {};
+    const scene = (Array.isArray(P.scenes) ? P.scenes : [])
+      .find((row) => String(row?.id || "") === String(s.scene || "")) || {};
+    const brief = s.creationBrief || {};
+    const select = (record, keys) => Object.fromEntries(keys.map((key) => [key, record?.[key]]));
+    const creation = select(brief, [
+      "locationId", "propIds", "vehicleIds", "composition", "motionPlan", "motionDirection",
+      "motionDuration", "motionProfileId", "motionIntensity", "motionAudioNotes", "motionSync",
+      "h3SequenceNote",
+      "preserveComposition", "blockingFrameBrief", "blockingAdditionalDirection",
+      "blockingRevisionRequest", "blockingIncludeLabels", "blockingEmphasis", "blockingProfileId",
+      "disabledInputKeys",
+    ]);
+    const durableMotion = durableMotionCanonViews.get(brief);
+    if (durableMotion)
+      for (const key of MOTION_VIEW_BORROWED_KEYS) creation[key] = durableMotion[key];
+    const workflows = brief.frameWorkflows && typeof brief.frameWorkflows === "object"
+      ? brief.frameWorkflows : {};
+    /* Only authored frame fields; prompt builds, candidate selection and returned
+       results are separate production state and must not stale their own build. */
+    const workflowFields = ["action", "staging", "camera", "notes", "automationRevisionRequest",
+      "usePreviousFrame", "profileId", "mode", "entityPresence", "characterStateSelections",
+      "locationStateSelections", "propStateSelections", "vehicleStateSelections", "locationStateId"];
+    creation.frameWorkflows = Object.fromEntries(Object.entries(workflows)
+      .map(([id, workflow]) => [id, select(workflow, workflowFields)]));
+    const dependencies = typeof OWNERS.entities?.shotDependencyRecords === "function"
+      ? OWNERS.entities.shotDependencyRecords(P, s) : [];
+    const ids = new Set(dependencies.map((row) => String(row?.id || "")).filter(Boolean));
+    for (const row of Array.isArray(pack?.references) ? pack.references : [])
+      if (row?.entityId) ids.add(String(row.entityId));
+    /* PromptEngine can mention a character not attached to this shot when the
+       scene or shot text names them. Use CineBraid's existing name matcher, and
+       hash that character's Canon/notes only when the text can select them. */
+    const segment = (Array.isArray(s.clips) ? s.clips : [])
+      .find((row) => String(row?.id || row?.suffix || "") === String(pack?.segmentId || "")) || {};
+    const mentionText = [scene.whatHappens, scene.howItFeels, s.title, s.desc, s.positioning,
+      s.motionPrompt, s.audio?.speakerId, s.audio?.speakerName, segment.title,
+      segment.motionPrompt, segment.note, segment.speakerId].filter(Boolean).join(" ");
+    for (const character of Array.isArray(P.characters) ? P.characters : [])
+      if (typeof OWNERS.presence?.presenceMentions === "function"
+          && OWNERS.presence.presenceMentions(mentionText, character).length)
+        ids.add(String(character.id || ""));
+    /* A chosen voice can cite its sameObjectAs master for name and cleanMaster.
+       The master is a dependency even when not separately attached to the shot. */
+    for (const audio of Array.isArray(P.audio) ? P.audio : [])
+      if (ids.has(String(audio?.id || "")) && audio?.sameObjectAs)
+        ids.add(String(audio.sameObjectAs));
+    const entityLists = ["characters", "locations", "props", "vehicles", "audio"];
+    const entityCanonFields = ["id", "name", "prefix", "anchorPrefix", "aliases",
+      "creationDescription", "visualDescription", "block", "description", "notes",
+      "driftNotes", "blockingNote", "approvedFile", "continuityStates", "audio",
+      "sameObjectAs", "cleanMaster", "role"];
+    const entities = entityLists.flatMap((list) => (Array.isArray(P[list]) ? P[list] : [])
+      .filter((row) => ids.has(String(row?.id || "")))
+      .map((row) => ({ list, record: select(row, entityCanonFields) })));
+    const context = {
+      project: { meta: select(P.meta, ["title", "format", "world", "globalStylePrompt",
+        "globalNegativePrompt", "styleBlocks", "aspectRatio", "promptDefaults"]),
+        qcChecklist: P.qcChecklist || [] },
+      scene: select(scene, ["id", "title", "whatHappens", "howItFeels", "stage"]),
+      shot: {
+        ...select(s, ["id", "title", "scene", "desc", "positioning", "motionPrompt",
+          "codes", "characters", "audio", "risks", "safe", "dur", "sec", "duration", "durationSeconds",
+          "continuityStateSelections", "deliveryRoute", "packagePlanner"]),
+        clips: (Array.isArray(s.clips) ? s.clips : []).map((row) =>
+          select(row, ["id", "suffix", "title", "kind", "dur", "sec", "duration", "motionPrompt",
+            "note", "positioning", "line", "speakerId", "voiceEntityId", "audioNote",
+            "vo", "sfx", "music", "motionBrief", "risks", "safe"])),
+        frames: (Array.isArray(s.frames) ? s.frames : []).map((row) =>
+          select(row, ["id", "title", "description", "winner", "required"])),
+        keyframes: (Array.isArray(s.keyframes) ? s.keyframes : []).map((row) =>
+          select(row, ["id", "label", "title", "description", "winner", "required"])),
+        creation,
+      },
+      entities,
+      target: { frameId: String(pack?.frameId || ""), segmentId: String(pack?.segmentId || "") },
+    };
+    if (typeof OWNERS.sha256 !== "function")
+      throw new Error("shared-build-history.js needs the existing cross-runtime SHA-256 owner");
+    return { version: "prompt-canon-context-v1", sha256: OWNERS.sha256(stableStringify(context)) };
+  }
+
   function comparable(saved, now, key) {
     return saved?.[key] !== undefined && now?.[key] !== undefined;
   }
@@ -444,6 +622,15 @@
     if (comparable(saved, at, "disabledInputKeys")
       && JSON.stringify(saved.disabledInputKeys || []) !== JSON.stringify(at.disabledInputKeys || []))
       reasons.push("shot input selection changed");
+    if (comparable(saved, at, "blockingInputs")
+      && JSON.stringify(saved.blockingInputs) !== JSON.stringify(at.blockingInputs))
+      reasons.push("blocking brief or settings changed");
+    if (comparable(saved, at, "frameWorkflowInputs")
+      && JSON.stringify(saved.frameWorkflowInputs) !== JSON.stringify(at.frameWorkflowInputs))
+      reasons.push("frame workflow direction or settings changed");
+    if (comparable(saved, at, "canonContext")
+      && JSON.stringify(saved.canonContext) !== JSON.stringify(at.canonContext))
+      reasons.push("project, scene, shot or entity Canon changed");
     /* Named before the generic array comparison, because "an input is gone" is a
        different fact from "an input changed" and sends the filmmaker somewhere else.
        Only a caller that can enumerate what the production may currently supply passes
@@ -490,6 +677,9 @@
     const now = {
       ...packageProjectInputs(project, shot, pack, packageDirection(shot, pack)),
       ...(packageMotionInputs(shot, pack) || {}),
+      ...(pack?.kind === "blocking-frame" ? { blockingInputs: packageBlockingInputs(shot) } : {}),
+      ...(pack?.kind === "guided-frame" ? { frameWorkflowInputs: packageFrameWorkflowInputs(shot, pack) } : {}),
+      ...(saved.canonContext ? { canonContext: packageCanonContextInputs(project, shot, pack) } : {}),
     };
     const reasons = packageDependencyDrift({ saved, now });
     return {
@@ -517,6 +707,10 @@
     packageDependencyDrift,
     packageDirection,
     packageMotionInputs,
+    packageBlockingInputs,
+    packageFrameWorkflowInputs,
+    packageCanonContextInputs,
+    withDurableMotionCanonView,
     packageProjectFreshness,
     packageProjectInputs,
   };

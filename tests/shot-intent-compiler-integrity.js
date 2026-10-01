@@ -521,6 +521,10 @@ async function main() {
   /* The same claim of the composer safe mode falls back to. */
   testBrowserSummaryManufacturesNothing(baseComposerSummary(browser.context));
   const endToEnd = compileFromLiveProject(browser.live, "L1-01", browser.summary);
+  assert.strictEqual(endToEnd.spec.actions[0]?.action, "Kai walks the length of the hull.",
+    "the compiler must retain the complete authored action before target-specific identity wording");
+  assert.ok(/\bthe maintenance worker walks the length of the hull\./i.test(endToEnd.compiled.prompt),
+    `an inline identity descriptor must not split the authored action into sentence fragments: ${endToEnd.compiled.prompt.slice(0, 500)}`);
   assert.ok(!/remains still except for natural breathing and blinking/i.test(endToEnd.compiled.prompt),
     `the composer summary reached the compiled prompt as a stillness directive: ${endToEnd.compiled.prompt.slice(0, 500)}`);
   assert.ok(endToEnd.compiled.prompt.includes("checks the panel") || endToEnd.compiled.prompt.includes("walks the length of the hull"),

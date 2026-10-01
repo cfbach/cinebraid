@@ -257,6 +257,19 @@ function currentDirectionForPackage(s, pack) {
    entity/take IDs. Read the compiler's collector for this package's own unit;
    changing the visible unit must neither stale it nor substitute an endpoint. */
 function currentPackageReferenceOptions(s, pack) {
+  /* Guided frame builds compile the exact frame's selected state and included
+     Source & References inputs. The planning picker's generic entity/take keys
+     are a different namespace, so comparing a frame build to that picker
+     falsely reports every structural frame input missing after reload. */
+  if (pack?.kind === "guided-frame") {
+    if (typeof guidedFrames !== "function" || typeof guidedFrameState !== "function"
+        || typeof guidedFramePromptRefs !== "function") return [];
+    const frames = guidedFrames(s);
+    const index = frames.findIndex((row) => row.id === pack.frameId);
+    if (index < 0) return [];
+    return guidedFramePromptRefs(s, frames[index], index,
+      guidedFrameState(s, frames[index], index)).filter((ref) => !!ref.url);
+  }
   if (["r2v", "i2v"].includes(pack?.mode) && typeof guidedMotionReferences === "function"
       && typeof guidedVideoProfiles === "function") {
     const profileId = currentMotionInputs(s, pack)?.profileId || pack.profileId;
@@ -293,6 +306,12 @@ function currentSnapshotForPackage(s, pack) {
     refs,
     currentDirectionForPackage(s, pack),
   );
+  if (pack?.kind === "blocking-frame" && typeof packageBlockingInputs === "function")
+    snapshot.blockingInputs = packageBlockingInputs(s);
+  if (pack?.kind === "guided-frame" && typeof packageFrameWorkflowInputs === "function")
+    snapshot.frameWorkflowInputs = packageFrameWorkflowInputs(s, pack);
+  if (pack?.dependencySnapshot?.canonContext && typeof packageCanonContextInputs === "function")
+    snapshot.canonContext = packageCanonContextInputs(P, s, pack);
   const motion = currentMotionInputs(s, pack);
   return motion ? { ...snapshot, ...motion } : snapshot;
 }

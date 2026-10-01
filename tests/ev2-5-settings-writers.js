@@ -50,7 +50,7 @@ function navigationFixture(initial, config, tab = "assistant-openai") {
   let active;
   function mount(fields, selected) {
     const controls = new Map(Object.entries(fields).map(([id, value]) => [id, {
-      id, tagName: "INPUT", type: typeof value === "boolean" ? "checkbox" : "text",
+      id, tagName: "INPUT", type: typeof value === "boolean" ? "checkbox" : /(?:-key$|^cfg-[ev]pass$)/.test(id) ? "password" : "text",
       value: String(value), checked: value === true, disabled: false, dataset: {},
       addEventListener() {}, setAttribute() {}, focus() { f.context.document.activeElement = this; },
     }]));
@@ -252,6 +252,27 @@ async function main() {
     assert.strictEqual(f.controls.get("cfg-custom-key").value, "newer input edit", "Masking a saved credential must not erase newer replacement input");
     assert.strictEqual(f.context.CONFIG.customModel, "submitted model");
     assert(!JSON.stringify(f.context.CONFIG).includes("newer input edit"));
+  }
+  {
+    const f = navigationFixture({ "cfg-openai-key": "••••saved", "cfg-openai-model": "old model" },
+      { openaiKey: "••••saved", openaiModel: "old model" });
+    const key = f.active().controls.get("cfg-openai-key");
+    assert.strictEqual(key.type, "password");
+    key.value = "unsaved raw key fixture";
+    f.active().controls.get("cfg-openai-model").value = "draft model";
+    f.navigate({ "cfg-output-root": "folder" }, "files");
+    const draft = f.call("STUDIO_SETTINGS_DRAFTS.get('fixture:assistant-openai')");
+    assert(draft, "Ordinary Settings edits should still be preserved");
+    assert(!JSON.stringify(draft).includes("unsaved raw key fixture"), "A secret must not enter the long-lived Settings draft");
+    assert(!JSON.stringify(draft).includes("••••saved"), "A password baseline must not enter the draft either");
+    assert.strictEqual(draft.values[0].value, undefined);
+    assert.strictEqual(draft.baseline[0], null);
+    const returned = f.navigate({ "cfg-openai-key": "••••saved", "cfg-openai-model": "old model" }, "assistant-openai");
+    assert.strictEqual(returned.controls.get("cfg-openai-key").value, "••••saved", "The safe saved mask remains on return");
+    assert.strictEqual(returned.controls.get("cfg-openai-model").value, "draft model", "Non-secret edits still survive navigation");
+    assert.strictEqual(returned.state.dataset.state, "error");
+    assert.match(returned.state.textContent, /Unsaved API key or passcode was cleared/);
+    assert.deepStrictEqual(plain(f.call("SETTINGS_PANEL_BASELINE")), ["••••saved", "old model"]);
   }
   {
     const f = navigationFixture({ "cfg-openai-key": "••••saved", "cfg-openai-model": "old model" }, { openaiKey: "••••saved", openaiModel: "old model" });

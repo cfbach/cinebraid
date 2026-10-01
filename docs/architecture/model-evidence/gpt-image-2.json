@@ -102,6 +102,6 @@
   "conflicts": [],
   "promptingPolicySources": {
     "status": "CineBraid's own, not OpenAI's.",
-    "note": "data/model-profiles.json has carried four authored profiles for this family since long before C2a - t2i, edit, multi-reference and blocking, each with rules and section orders. model-packs/gpt-image-2.js encodes that existing editorial policy as a versioned playbook. It is NOT presented as vendor prompting guidance, because it is not: no OpenAI prompt-writing guide was read into this record."
+    "note": "Four authored profiles predated C2a - t2i, edit, multi-reference and blocking. The later explicit inpaint profile maps the same edit/base/mask policy to the executable inpaint mode; it is not new vendor guidance. model-packs/gpt-image-2.js encodes CineBraid editorial policy as a versioned playbook. No OpenAI prompt-writing guide was read into this record."
   }
 }

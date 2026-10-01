@@ -31,6 +31,8 @@ const path = require("path");
 const ROOT = path.join(__dirname, "..");
 const read = (name) => fs.readFileSync(path.join(ROOT, name), "utf8");
 const PromptEngine = require("../src/generation/prompt-engine");
+const Compiler = require("../src/generation/generation-compiler");
+const H3 = require("../model-packs/minimax-h3");
 const Presence = require("../public/shared-frame-presence");
 
 let checks = 0;
@@ -165,6 +167,124 @@ ok(/Lantern Keeper/i.test(undeclared.spec.identityCanon.join(" ")),
 eq(PromptEngine.buildContext(fixture(), "S01-01", "").framePresence.absent, [],
   "and a caller that supplies no frameId at all is unaffected");
 
+/* Motion from an approved first frame must not turn shot cast membership into
+   visual presence. This is distinct from the established still-frame inheritance
+   asserted above. Explicit prose absence and ambiguous membership are disclosed;
+   a structured present declaration remains authoritative. */
+const motionSource = fixture();
+motionSource.shots[0].desc = "The opened parcel stays on the bench; the Lantern Keeper is just out of frame.";
+motionSource.shots[0].positioning = "";
+motionSource.shots[0].motionPrompt = "Continue the opened parcel from the approved frame.";
+const motionContext = PromptEngine.buildContext(motionSource, "S01-01");
+const motionSpec = PromptEngine.defaultSpec(motionContext, "motion", "i2v", [], null);
+ok(!motionSpec.identityCanon.some((line) => /Lantern Keeper/i.test(line)),
+  "off-screen cast does not become positive I2V identity canon");
+ok(!motionSpec.promptEntities.some((row) => row.id === KEEPER),
+  "the empty prompt-entity fallback does not re-add an off-screen character");
+ok(motionSpec.mustAvoid.some((line) => /Lantern Keeper appearing in the frame/i.test(line)),
+  "the off-screen direction stays an explicit negative requirement");
+ok(motionSpec.motionPresenceWarnings.some((row) => row.code === "motion-presence-offscreen"),
+  "the reason for excluding shot cast from frame-anchored motion is disclosed");
+ok(motionContext.references.some((row) => row.id === KEEPER),
+  "excluding positive prompt identity does not remove an attached reference");
+ok(!/resolves out of the illustration/i.test(motionSpec.narrativePurpose),
+  "the broader scene beat does not replace this shot's own motion subject");
+const motionPlan = Compiler.compileGenerationPlan({
+  spec: motionSpec,
+  mode: "i2v",
+  modelId: "minimax-h3/fl2va",
+  surface: "api",
+  references: [{ key: "approved-frame-a", label: "Approved Frame A", mediaType: "image", role: "first-frame", url: "/disposable/frame-a.png" }],
+  capability: H3.capabilityLayer("i2v", "api"),
+});
+ok(!/oilskin coat|lamp hooked at the belt/i.test(motionPlan.inputs.prompt),
+  "the final H3 provider text contains no off-screen character description");
+ok(motionPlan.warnings.some((row) => row.code === "motion-presence-offscreen"),
+  "the final provider plan retains the off-screen explanation");
+
+const ambiguousMotion = fixture();
+ambiguousMotion.shots[0].desc = "The opened parcel stays on the bench.";
+ambiguousMotion.shots[0].positioning = "";
+ambiguousMotion.shots[0].motionPrompt = "The parcel paper shifts.";
+const ambiguousContext = PromptEngine.buildContext(ambiguousMotion, "S01-01");
+const ambiguousSpec = PromptEngine.defaultSpec(ambiguousContext, "motion", "i2v", [], null);
+ok(!ambiguousSpec.identityCanon.some((line) => /Lantern Keeper/i.test(line)),
+  "shot cast alone does not assert who is visible in an anchored motion frame");
+ok(ambiguousSpec.motionPresenceWarnings.some((row) => row.code === "motion-presence-ambiguous"),
+  "undetermined cast presence warns instead of guessing");
+const declaredMotion = fixture({ "fr-a": { [KEEPER]: "present" } });
+declaredMotion.shots[0].desc = "The opened parcel stays on the bench.";
+declaredMotion.shots[0].positioning = "";
+const declaredContext = PromptEngine.buildContext(declaredMotion, "S01-01", "", { frameId: "fr-a" });
+const declaredSpec = PromptEngine.defaultSpec(declaredContext, "motion", "i2v", [], null);
+ok(declaredSpec.identityCanon.some((line) => /Lantern Keeper/i.test(line)),
+  "an explicit present declaration outranks absent prose evidence");
+
+/* T2V and R2V have no approved opening frame. Cast membership still does not
+   establish on-screen presence, while selected R2V input roles stay attached. */
+const motionReferences = [
+  { key: "keeper-identity", label: "Keeper identity", mediaType: "image", role: "identity", url: "/disposable/keeper.png" },
+  { key: "terraces-place", label: "Terraces", mediaType: "image", role: "location", url: "/disposable/terraces.png" },
+];
+for (const mode of ["t2v", "r2v"]) {
+  const refs = mode === "r2v" ? motionReferences : [];
+  const spec = PromptEngine.defaultSpec(PromptEngine.buildContext(motionSource, "S01-01"), "motion", mode, refs, null);
+  eq(spec.identityCanon.filter((line) => /Lantern Keeper/i.test(line)), [],
+    mode + " excludes off-screen identity canon");
+  ok(!spec.promptEntities.some((row) => row.id === KEEPER),
+    mode + " excludes the off-screen subject descriptor");
+  ok(spec.motionPresenceWarnings.some((row) => row.code === "motion-presence-offscreen"),
+    mode + " discloses the off-screen decision");
+  ok(spec.mustAvoid.some((line) => /Lantern Keeper appearing in the frame/i.test(line)),
+    mode + " preserves negative presence intent");
+  const plan = Compiler.compileGenerationPlan({
+    spec, mode, modelId: mode === "r2v" ? "minimax-h3/ref2va" : "minimax-h3/fl2va",
+    surface: "api", references: refs, capability: H3.capabilityLayer(mode, "api"),
+  });
+  ok(!/oilskin coat|lamp hooked at the belt|resolves out of the illustration/i.test(plan.inputs.prompt),
+    mode + " final request excludes identity and scene-wide presence leakage");
+  ok(plan.warnings.some((row) => row.code === "motion-presence-offscreen"),
+    mode + " final plan retains the explanation");
+  if (mode === "r2v") eq(plan.inputs.references.map((row) => [row.refId, row.role]),
+    [["keeper-identity", "identity"], ["terraces-place", "location"]],
+    "R2V keeps exact selected reference order and roles");
+
+  const ambiguous = PromptEngine.defaultSpec(PromptEngine.buildContext(ambiguousMotion, "S01-01"), "motion", mode, refs, null);
+  ok(!ambiguous.identityCanon.some((line) => /Lantern Keeper/i.test(line)),
+    mode + " does not turn ambiguous cast membership into presence");
+  ok(ambiguous.motionPresenceWarnings.some((row) => row.code === "motion-presence-ambiguous"),
+    mode + " discloses ambiguous presence");
+  ok(!/resolves out of the illustration/i.test(ambiguous.narrativePurpose),
+    mode + " prefers shot direction over scene-wide action");
+  ok(ambiguous.motionPresenceWarnings.some((row) => row.code === "motion-presence-narrative-withheld" && row.field === "scene.beat"),
+    mode + " reports the withheld scene-wide on-screen assertion");
+  const ambiguousPlan = Compiler.compileGenerationPlan({
+    spec: ambiguous, mode, modelId: mode === "r2v" ? "minimax-h3/ref2va" : "minimax-h3/fl2va",
+    surface: "api", references: refs, capability: H3.capabilityLayer(mode, "api"),
+  });
+  ok(!/resolves out of the illustration/i.test(ambiguousPlan.inputs.prompt),
+    mode + " final request does not restore the scene-wide assertion");
+  ok(ambiguousPlan.warnings.some((row) => row.code === "motion-presence-narrative-withheld"),
+    mode + " final review carries the withheld-context warning");
+
+  const present = fixture();
+  present.shots[0].desc = "The Lantern Keeper lifts his lamp beside the Clerk.";
+  present.shots[0].positioning = "";
+  present.shots[0].motionPrompt = "The Lantern Keeper steps forward in the frame.";
+  const presentSpec = PromptEngine.defaultSpec(PromptEngine.buildContext(present, "S01-01"), "motion", mode, refs, null);
+  ok(presentSpec.identityCanon.some((line) => /Lantern Keeper/i.test(line)),
+    mode + " preserves explicitly on-screen scene construction");
+  ok(!presentSpec.motionPresenceWarnings.some((row) => row.code === "motion-presence-ambiguous"),
+    mode + " does not warn about an explicitly visible performer");
+  const presentPlan = Compiler.compileGenerationPlan({
+    spec: presentSpec, mode, modelId: mode === "r2v" ? "minimax-h3/ref2va" : "minimax-h3/fl2va",
+    surface: "api", references: refs, capability: H3.capabilityLayer(mode, "api"),
+  });
+  ok(/lifts his lamp/i.test(presentPlan.inputs.prompt) && /steps forward/i.test(presentPlan.inputs.prompt),
+    mode + " final request keeps both local performer construction and motion");
+  ok(!presentPlan.warnings.some((row) => row.code === "motion-presence-ambiguous" || row.code === "motion-presence-offscreen"),
+    mode + " final review does not imply uncertainty when shot presence is explicit");
+}
 /* REFERENCE ATTACHMENT AND FRAME PRESENCE ARE DIFFERENT FACTS. The Keeper's
    reference stays attached for identity continuity; what he loses is the
    positive assertion. This is the property B15/H3 correction depends on. */
@@ -203,6 +323,7 @@ for (const clause of [
   "The Lantern Keeper is not yet visible.",
   "Empty terraces, without the Lantern Keeper.",
   "The Lantern Keeper is off-screen.",
+  "The Lantern Keeper is just out of frame.",
   "Before the Lantern Keeper appears.",
 ]) {
   eq(Presence.framePresenceContradictions({ absentEntities: absentKeeper, spec: { narrativePurpose: clause } }), [],

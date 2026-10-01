@@ -2,6 +2,7 @@
    Normal providers: native Ollama chat, OpenAI API,
    Anthropic Claude API, custom OpenAI-compatible, or disabled. */
 const { readConfig, writeConfig } = require("../server/config");
+const { respondTextWithOpenAI } = require("./openai-prompt-review");
 
 const TEXT_TIMEOUT_MS = Math.max(1000, Number(process.env.CINEBRAID_AI_TEXT_TIMEOUT_MS) || 180000);
 const VISION_TIMEOUT_MS = Math.max(1000, Number(process.env.CINEBRAID_AI_VISION_TIMEOUT_MS) || 240000);
@@ -309,6 +310,12 @@ async function llm(
     return callAnthropic(cfg, system, user, maxTokens, modelOverride);
   if (provider === "openai") {
     if (!cfg.openaiKey) throw new Error("No OpenAI API key set.");
+    if (requestOptions.transport === "responses")
+      return respondTextWithOpenAI({
+        apiKey: cfg.openaiKey,
+        model: modelOverride,
+        system, user, maxOutputTokens: maxTokens,
+      });
     return callOpenAICompatible(
       cfg.openaiBaseUrl,
       cfg.openaiKey,

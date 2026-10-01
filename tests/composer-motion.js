@@ -761,7 +761,15 @@ async function testBlockingWorkspaceAndMotionExclusion() {
   assert(html.includes("Action insert"), "blocking panel should expose emphasis control");
   assert(html.includes("Changes for the next blocking attempt"), "blocking panel should expose plain-language structural revision requests");
   assert(html.includes("Full-colour references and finished location design are intentionally excluded"), "blocking revisions should remain grayscale and structural");
-  assert(html.includes("buildBlockingPrompt('L1-01',true)"), "blocking panel should expose prompt improvement");
+  assert(html.includes("buildBlockingPrompt('L1-01',false)"),
+    "blocking authoring should retain its deterministic Build action");
+  assert(!html.includes("buildBlockingPrompt('L1-01',true)"),
+    "Braidy must not improve blocking before an exact target package exists");
+  const reviewedBlockingMarkup = require("vm").runInContext(
+    `blockingPromptResult(P.shots[0], {id:"blocking-test-build", profileId:"gpt-image-2/blocking", prompt:"Deterministic blocking package"})`,
+    context);
+  assert(reviewedBlockingMarkup.includes("openBraidyPromptReview('blocking','L1-01','blocking-test-build')"),
+    "the compiled blocking package should expose exact-target Braidy review");
   const revisedBlocking = require("vm").runInContext(`falBlockingRevisionPrompt(P.shots[0], {prompt:"BASE BLOCKING"}, "blocking-1", "Make the object twice as large and lower the camera")`, context);
   assert.match(revisedBlocking, /BLOCKING REVISION/);
   assert.match(revisedBlocking, /twice as large and lower the camera/);
@@ -1344,6 +1352,26 @@ async function testCandidateReviewAndCorrectionWorkspace() {
   assert(missingLocation.correctionWarnings.some((warning) => /no usable approved location authority/i.test(warning)), "environment correction without a location reference should produce a clear warning");
 }
 
+function testImage2WholeShotDirectiveIsNotDoubled() {
+  const spec = PromptEngine.defaultSpec(contextFixture(), "first-frame", "text-to-image", [], null);
+  const directive = "WHOLE-SHOT STORY INTENT: Rex stays beside the folding chair while the unused gate and sword remain excluded. "
+    + "Hold continuity of stance, coat, chair geometry, platform light, and the chosen frame composition. ".repeat(28)
+    + "Motion method remains undecided.";
+  spec.narrativePurpose = directive;
+  spec.initialState.subject = directive;
+  const bytes = JSON.stringify(spec);
+  const profile = PromptEngine.getProfile("gpt-image-2/t2i");
+  const compiled = PromptEngine.compile(profile, spec, []);
+  assert.strictEqual(JSON.stringify(spec), bytes, "image compilation must not mutate the source intent");
+  assert.strictEqual((compiled.prompt.match(/WHOLE-SHOT STORY INTENT/g) || []).length, 1,
+    "one copied whole-shot directive should be printed once in the saved native Build");
+  assert(compiled.prompt.includes("Motion method remains undecided."),
+    "the long directive's final owner qualification must survive");
+  spec.initialState.subject = directive + " The chair edge remains visible.";
+  const distinct = PromptEngine.compile(profile, spec, []);
+  assert(distinct.prompt.includes("The chair edge remains visible."),
+    "a meaningfully distinct subject addition must not be removed by exact-equality dedup");
+}
 function testReferenceAwareIdentityLanguage() {
   const context = contextFixture();
   context.references[0] = {
@@ -1390,6 +1418,7 @@ async function main() {
   testLocationBaseAndSingleStagingEncoding();
   testImageCompositionCompile();
   testDirectMotionControlsDriveCompactPrompt();
+  testImage2WholeShotDirectiveIsNotDoubled();
   testReferenceAwareIdentityLanguage();
   testNaturalCameraPhrasingAndStagingPunctuation();
   testMotionAndOmniAudioCompile();

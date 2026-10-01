@@ -16,10 +16,11 @@
  *             guide. See docs/architecture/model-evidence/gpt-image-2.json.
  *
  *   PLAYBOOK  how to write for it. CineBraid's OWN editorial policy, carried over from
- *             the four profiles data/model-profiles.json has shipped for this family
- *             since long before this pack — NOT vendor prompting guidance, because no
- *             OpenAI prompt-writing guide was read. That distinction is recorded in the
- *             evidence file rather than blurred here.
+ *             the established profiles in data/model-profiles.json for this family —
+ *             NOT vendor prompting guidance, because no OpenAI prompt-writing guide
+ *             was read. Inpaint maps the existing edit/base/mask policy explicitly.
+ *             That distinction is recorded in the evidence file rather than blurred
+ *             here.
  *
  * WHAT A STILL CANNOT CARRY, and why it is `omitted-by-design` rather than `unsupported`.
  * A shot carries a camera move, a duration, a required ending state and a line of
@@ -30,16 +31,15 @@
  * filmmaker asked for something and will not get it: an aspect ratio this model has no
  * size for, a seed it does not accept, a reference it cannot carry.
  *
- * NOTHING DISPATCHES THROUGH THIS PACK YET. GPT Image 2 is reached today by the existing
- * fal path, which builds its own request from the prompt registry, exactly as before.
- * This compiles a plan; wiring it to a route is a separate, bounded change of the same
- * shape as C1.1 was for H3.
+ * The fal image route now compiles its exact request through this pack. The saved
+ * authoring package remains distinct from the compiled provider request and its
+ * reviewed bindings and provenance.
  */
 
 const { registerModelPack } = require("../src/generation/generation-compiler");
 
 const PACK_ID = "gpt-image-2";
-const PACK_VERSION = "1.0.0";
+const PACK_VERSION = "1.0.1";
 
 /* ===========================================================================
    A. OBJECTIVE CAPABILITY FACTS
@@ -162,11 +162,11 @@ function capabilityLayer(mode, surface = "api") {
 
    CineBraid's own, versioned independently of the facts above so that improving the
    wording never looks like a capability change. Every rule here is carried from the
-   four gpt-image-2 profiles already in data/model-profiles.json. */
+   established GPT Image 2 profiles in data/model-profiles.json. */
 
 const GPT_IMAGE_2_PLAYBOOK = {
   version: "2026-08-08",
-  origin: "data/model-profiles.json gpt-image-2/{t2i,edit,multi-reference,blocking}",
+  origin: "data/model-profiles.json gpt-image-2/{t2i,edit,inpaint,multi-reference,blocking}",
   sectionTitles: {
     purpose: "PURPOSE",
     references: "REFERENCE LEGEND",
@@ -474,7 +474,12 @@ function subjectSection(ctx) {
   }
   const initial = intentValue(intent, "state.initial");
   if (initial && !coverage.has("state.initial")) {
-    parts.push(sentence(initial));
+    const written = sentence(initial);
+    /* A copied whole-shot directive can cover both action and initial state.
+       Emit it once while recording both coverage entries. */
+    const comparable = (value) => text(value).replace(/\s+/g, " ").toLowerCase();
+    if (!parts.some((part) => comparable(part) === comparable(written)))
+      parts.push(written);
     coverage.represent("state.initial", "prompt");
   }
   /* Identity canon reaches the PROMPT only when no reference is holding it.

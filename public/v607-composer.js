@@ -936,18 +936,27 @@
        unrelated save persisted it. A unit is created by an act that needs one: a
        duration or direction edit, a build, the composer, Add unit. */
     const c = ensureShotCreation(s), unit = activeMotionUnit(s, false), defaultPlan = c.motionPlan, effective = effectiveMotionPlan(s, unit), savedDirection = c.motionDirection, savedDuration = c.motionDuration, savedProfile = c.motionProfileId, savedIntensity = c.motionIntensity, savedPreserve = c.preserveComposition, savedBuilds = c.motionPromptBuilds;
-    c.motionPlan = effective;
-    c.motionDirection = unit?.motionPrompt || unit?.note || savedDirection || "";
-    c.motionDuration = unit?.dur || savedDuration;
-    c.motionProfileId = unit?.motionProfileId || savedProfile;
-    c.motionIntensity = unit?.motionIntensity || savedIntensity;
-    c.preserveComposition = unit?.preserveComposition == null ? savedPreserve : unit.preserveComposition;
-    c.motionPromptBuilds = savedBuilds.filter((entry) => { const build = resolvePromptBuild(P, entry); return !build?.segmentId || build.segmentId === unit?.id; });
-    let html = guidedMotionPanel606(s, current, takes, open);
-    const profileId = preferredGuidedVideoProfile(c.motionProfileId || ""), profile = guidedVideoProfiles().find((item) => item.id === profileId), budget = current ? motionReferenceBudget(s, profile) : { assigned: [], dropped: [], totalLimit: profile?.limits?.maxReferences || 0, profile };
-    html = html.replace('<div class="guided-motion-main">', `<div class="guided-motion-main">${motionUnitTabs(s)}${packagePreviewMarkup(profile, budget, `Motion unit ${unit?.label || "A"} package`)}`);
-    c.motionPlan = defaultPlan; c.motionDirection = savedDirection; c.motionDuration = savedDuration; c.motionProfileId = savedProfile; c.motionIntensity = savedIntensity; c.preserveComposition = savedPreserve; c.motionPromptBuilds = savedBuilds;
-    return html;
+    /* The unit projection is display-only. Freshness inside this render must see
+       the durable shot values, not the borrowed per-unit view. */
+    return withDurableMotionCanonView(c, () => {
+      c.motionPlan = effective;
+      c.motionDirection = unit?.motionPrompt || unit?.note || savedDirection || "";
+      c.motionDuration = unit?.dur || savedDuration;
+      c.motionProfileId = unit?.motionProfileId || savedProfile;
+      c.motionIntensity = unit?.motionIntensity || savedIntensity;
+      c.preserveComposition = unit?.preserveComposition == null ? savedPreserve : unit.preserveComposition;
+      c.motionPromptBuilds = savedBuilds.filter((entry) => { const build = resolvePromptBuild(P, entry); return !build?.segmentId || build.segmentId === unit?.id; });
+      try {
+        let html = guidedMotionPanel606(s, current, takes, open);
+        const profileId = preferredGuidedVideoProfile(c.motionProfileId || ""), profile = guidedVideoProfiles().find((item) => item.id === profileId), budget = current ? motionReferenceBudget(s, profile) : { assigned: [], dropped: [], totalLimit: profile?.limits?.maxReferences || 0, profile };
+        html = html.replace('<div class="guided-motion-main">', `<div class="guided-motion-main">${motionUnitTabs(s)}${packagePreviewMarkup(profile, budget, `Motion unit ${unit?.label || "A"} package`)}`);
+        return html;
+      } finally {
+        c.motionPlan = defaultPlan; c.motionDirection = savedDirection; c.motionDuration = savedDuration;
+        c.motionProfileId = savedProfile; c.motionIntensity = savedIntensity;
+        c.preserveComposition = savedPreserve; c.motionPromptBuilds = savedBuilds;
+      }
+    });
   };
   window.selectMotionUnit = (id, unitId) => { const s = shotById(id), c = ensureShotCreation(s); c.activeMotionUnitId = unitId; c.openPanels.motion = true; dirty(); route(); };
   /* The primary unit a shot is shown with before any is stored becomes real first, at
@@ -1002,12 +1011,22 @@
     if (!unit) return toast("Add a motion unit first");
     const effective = effectiveMotionPlan(s, unit), profileId = preferredGuidedVideoProfile(unit.motionProfileId || savedProfile || ""), profile = guidedVideoProfiles().find((item) => item.id === profileId), current = guidedCurrentShotStill(s), budget = current ? motionReferenceBudget(s, profile) : { dropped: [], totalLimit: 0, counts: {} };
     c.motionPlan = effective; c.motionDirection = unit.motionPrompt || unit.note || ""; c.motionDuration = unit.dur || 5; c.motionProfileId = profileId; c.motionIntensity = unit.motionIntensity || savedIntensity; c.preserveComposition = unit.preserveComposition == null ? savedPreserve : unit.preserveComposition;
-    await buildGuidedMotionPrompt606(id, useLLM);
-    const build = latestPromptBuild(P, c.motionPromptBuilds);
-    if (build) { build.segmentId = unit.id; build.segmentLabel = unit.label; build.droppedReferences = clone(budget.dropped); build.referenceBudget = { totalLimit: budget.totalLimit, typeLimits: budget.typeLimits, counts: budget.counts }; }
-    unit.motionPrompt = c.motionDirection || unit.motionPrompt; unit.note = unit.motionPrompt; unit.motionProfileId = c.motionProfileId || profileId; unit.dur = c.motionDuration || unit.dur;
+    const createdBuildId = await buildGuidedMotionPrompt606(id, useLLM);
+    const storedBuild = createdBuildId ? P.promptBuildsById?.[createdBuildId] : null;
+    if (storedBuild) { storedBuild.segmentId = unit.id; storedBuild.segmentLabel = unit.label; storedBuild.droppedReferences = clone(budget.dropped); storedBuild.referenceBudget = { totalLimit: budget.totalLimit, typeLimits: budget.typeLimits, counts: budget.counts }; }
+    if (storedBuild) { unit.motionPrompt = c.motionDirection || unit.motionPrompt; unit.note = unit.motionPrompt; unit.motionProfileId = c.motionProfileId || profileId; unit.dur = c.motionDuration || unit.dur; }
     c.motionPlan = defaultPlan; c.motionDirection = savedDirection; c.motionDuration = savedDuration; c.motionProfileId = savedProfile; c.motionIntensity = savedIntensity; c.preserveComposition = savedPreserve;
+    /* The base builder checks the captured Canon before saving. This wrapper only
+       borrows unit values in shot-level controls while compiling, then restores
+       the durable defaults. The final render also settles legacy audio defaults.
+       Witness the durable state for this new package, never an earlier package. */
+    if (storedBuild) {
+      route();
+      if (storedBuild.dependencySnapshot?.canonContext && typeof packageCanonContextInputs === "function")
+        storedBuild.dependencySnapshot.canonContext = packageCanonContextInputs(P, s, storedBuild);
+    }
     dirty(); route();
+    return createdBuildId;
   };
     window.__CINEBRAID_COMPOSER_607_READY = true;
     window.__CINEBRAID_COMPOSER_607_DISABLED = false;

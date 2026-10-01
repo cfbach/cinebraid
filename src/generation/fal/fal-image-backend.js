@@ -88,9 +88,8 @@ const FAL_IMAGE_BACKEND = {
   qualityTiers: ["auto", "low", "medium", "high"],
   outputFormats: ["png", "jpeg", "webp"],
 
-  /* fal's edit schema documents "max 16 images", the same number OpenAI documents.
-     No narrowing, and recording it anyway keeps this file an honest account of the
-     backend rather than a filtered one. */
+  /* CineBraid's qualified edit profile caps reference inputs at 16. Current model
+     evidence does not establish that number as an OpenAI-published ceiling. */
   maxReferenceImages: 16,
   /* One mask, and only on the edit route. */
   mask: { supported: true, field: "mask_url", maxCount: 1 },

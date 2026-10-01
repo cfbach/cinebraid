@@ -13,6 +13,7 @@ const crypto = require("crypto");
 const { spawnSync } = require("child_process");
 const { braidyReadinessContext } = require("../assistant/braidy-readiness");
 const { llm, embed, vision, isLocalProviderEndpoint, resolveVisionTarget, providerForTask } = require("../assistant/llm");
+const { listOpenAIModels, OpenAIPromptReviewError } = require("../assistant/openai-prompt-review");
 const {
   CONFIG_LOCATION,
   CONFIG_PATH,
@@ -3539,12 +3540,17 @@ app.post("/api/assistant/test", async (req, res) => {
         provider,
         message: "AI assistance is disabled.",
       });
+    const cfg = readConfig();
+    if (provider === "openai" && !cfg.openaiBraidyModel)
+      return res.status(400).json({ error: "Choose a Braidy review model from this OpenAI account in Settings first." });
     const text = await llm(
       "prompt",
       "Reply with exactly: CineBraid assistant connected",
       "Connection test.",
       40,
       provider,
+      provider === "openai" ? cfg.openaiBraidyModel : undefined,
+      provider === "openai" ? { transport: "responses" } : {},
     );
     const message = String(text || "").trim();
     if (!message) throw new Error("Assistant connected but returned an empty final response. For local Qwen models, confirm CineBraid can use Ollama native chat with thinking disabled.");
@@ -3555,6 +3561,22 @@ app.post("/api/assistant/test", async (req, res) => {
   }
 });
 
+/* A credential-specific inventory read, requested from Settings after the owner
+   saves a key. The key never leaves the server and a successful listing means
+   connected, not that any model is qualified for Braidy's prompt-review task. */
+app.get("/api/assistant/openai/models", async (req, res) => {
+  try {
+    res.json(await listOpenAIModels({ apiKey: readConfig().openaiKey }));
+  } catch (error) {
+    res.status(502).json({
+      configured: true,
+      connected: false,
+      models: [],
+      code: error instanceof OpenAIPromptReviewError ? error.code : "OPENAI_INVENTORY_UNAVAILABLE",
+      error: error instanceof OpenAIPromptReviewError ? error.message : "OpenAI model inventory is unavailable.",
+    });
+  }
+});
 app.post("/api/project/ask", async (req, res) => {
   try {
     const question = String(req.body?.question || "").trim();
@@ -3585,6 +3607,9 @@ app.post("/api/project/ask", async (req, res) => {
     const guidance = braidyReadinessContext(P, shotReadinessProjection(P), { question, shotId: req.body?.shotId });
     if (guidance.response) return res.json(guidance.response);
     const provider = aiProviderOverride();
+    const resolvedProvider = providerForTask(cfg, "prompt", provider);
+    if (resolvedProvider === "openai" && !cfg.openaiBraidyModel)
+      return res.status(400).json({ error: "Choose a Braidy review model from this OpenAI account in Settings first." });
     const mediaScan = scanProject();
     const compact = {
       productionReadiness: guidance.readiness,
@@ -3672,8 +3697,10 @@ QUESTION:
 ${question}`,
       5000,
       provider,
+      resolvedProvider === "openai" ? cfg.openaiBraidyModel : undefined,
+      resolvedProvider === "openai" ? { transport: "responses" } : {},
     );
-    res.json({ ok: true, provider: providerForTask(cfg, "prompt", provider), answer: String(answer || "").trim() });
+    res.json({ ok: true, provider: resolvedProvider, answer: String(answer || "").trim() });
   } catch (e) {
     res.status(500).json({ error: e.message });
   }

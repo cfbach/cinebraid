@@ -1293,7 +1293,8 @@ window.refreshFalH3Plan = async () => {
   const resolution = document.getElementById("fal-h3-resolution")?.value || request.resolution;
   const gate = falH3AspectGate();
   const edited = String(document.getElementById("fal-h3-prompt-editor")?.value ?? "");
-  const keepEdit = edited.trim() && edited.trim() !== String(request.compiledPrompt || "").trim();
+  const keepEdit = edited.trim() && edited.trim() !== String(request.compiledPrompt || "").trim()
+    && edited.trim() !== String(request.braidyAcceptedPrompt || "").trim();
   const preview = await fetchFalH3Plan(request.shotId, request.buildId, {
     durationSeconds: duration,
     resolution,
@@ -1302,6 +1303,11 @@ window.refreshFalH3Plan = async () => {
   });
   if (!preview) return;
   Object.assign(request, preview, { prompt: keepEdit ? edited : preview.compiledPrompt });
+  if (request.braidyAcceptedPrompt && !keepEdit) {
+    request.braidyAcceptedPrompt = "";
+    const note = document.getElementById("fal-h3-braidy-stale");
+    if (note) { note.hidden = false; note.textContent = "Output settings changed. The earlier Braidy wording was bound to the previous target package; this review now shows a fresh deterministic compilation."; }
+  }
   const editor = document.getElementById("fal-h3-prompt-editor");
   if (editor && !keepEdit) editor.value = preview.compiledPrompt;
   renderFalH3PlanPanels();
@@ -1410,6 +1416,10 @@ window.openFalH3MotionModal = async (shotId, buildId = "") => {
   const requestedDuration = Math.max(1, Math.min(60, Number(build.durationSeconds || c.motionDuration || 5) || 5));
   const ratio = profile.mode === "r2v" ? (productionAspect(P)?.label || "adaptive") : projectAspectLabel(P);
   const aspectGate = h3AspectSupport(profile.mode, ratio);
+  if (build.braidyReview) {
+    const checked = await verifyBraidyRevisionBasis("h3", shotId, build);
+    if (!checked.ok) return showStaleBraidyReview(checked.error);
+  }
   const preview = await fetchFalH3Plan(shotId, build.id, {
     durationSeconds: requestedDuration,
     resolution: falH3ResolutionValue(),
@@ -1446,6 +1456,7 @@ window.openFalH3MotionModal = async (shotId, buildId = "") => {
     /* A saved manual revision supplies only the text. The server's compiled plan
        still owns references, settings and the Reset target. */
     prompt: build.manualEdited ? String(build.prompt) : preview.compiledPrompt,
+    braidyAcceptedPrompt: build.braidyReview ? String(build.prompt || "") : "",
     clientRequestId,
     styleOnly,
   };
@@ -1520,7 +1531,7 @@ window.openFalH3MotionModal = async (shotId, buildId = "") => {
      so they show in both modes. A reference-led package renders exactly as before. */
   const advancedOnly = styleOnly ? ' data-broll-advanced="1"' : "";
   dismissStaleNotice();
-  openModal(`<div class="h3-generation-modal${styleOnly ? " broll-confirmation" : ""}"><header class="h3-generation-head"><div><span>MINIMAX H3 · PAID GENERATION</span>${headline}</div><button class="cancel" onclick="closeModal()">Close</button></header><div class="h3-generation-scroll"><div class="modal-sub"${advancedOnly}>FAL · ${esc(preview.dispatch?.model || "minimax/h3")} · compiled by ${esc(preview.compiler?.packId || "minimax-h3")} ${esc(preview.compiler?.packVersion || "")}</div><div class="candidate-evidence-facts"${advancedOnly}>${inputFacts}<span id="fal-h3-prompt-fact">${request.prompt.length.toLocaleString()}/${limit.toLocaleString()} prompt characters</span><span>Native stereo audio</span></div><div id="fal-h3-refusal" class="guided-prompt-error" hidden></div><div id="fal-h3-options"></div><section id="fal-h3-sequence" class="h3-submit-sequence" hidden></section>${freshnessBanner}${durationBanner}<div id="fal-h3-generation-view"></div><div id="fal-h3-aspect-warning" class="guided-prompt-error" ${aspectGate.ok ? "hidden" : ""}>${aspectGate.ok ? "" : `<div><b>MiniMax H3 cannot deliver ${esc(ratio)}</b><small>${esc(aspectGate.message)}</small></div>`}</div><div id="fal-h3-cost-estimate" class="h3-cost-estimate"${advancedOnly}></div><div id="fal-h3-plan-warnings"${advancedOnly}></div><div id="fal-h3-prompt-warning" class="guided-prompt-error" ${promptReady ? "hidden" : ""}><div><b>Prompt is not ready for submission</b><small>${promptReady ? "" : `Shorten this prompt to ${limit.toLocaleString()} characters before a paid submission.`}</small></div></div><section class="h3-prompt-editor"${advancedOnly}><header><div><b>Edit prompt before generation</b><small>${build.manualEdited ? "Your saved manual revision is loaded below. Reset restores the compiled prompt." : "This is the prompt CineBraid compiled."} The text below is exactly what will be sent. ${esc(limitNote)} The compiled package is preserved; any change is ${styleOnly ? "" : "saved as a linked manual revision and "}recorded beside the compiled original.</small></div><span id="fal-h3-prompt-count">${request.prompt.length.toLocaleString()}/${limit.toLocaleString()}</span></header><textarea id="fal-h3-prompt-editor" oninput="updateFalH3PromptEditor()" onchange="reviewFalH3PromptEdit()">${esc(request.prompt)}</textarea><div id="fal-h3-edit-coverage" class="h3-edit-coverage" hidden></div><div class="h3-prompt-editor-actions">${styleOnly ? "" : `<label><span>Revision note · optional</span><input id="fal-h3-prompt-edit-reason" placeholder="Clarified timing, removed duplicate action…"></label>`}<button class="ghost-btn" onclick="resetFalH3PromptEditor()">Reset compiled prompt</button></div></section><p class="hint"${advancedOnly}>This submits one paid MiniMax H3 request through FAL. The returned MP4 is saved as an unapproved video candidate in this shot. The request uses an idempotency key to prevent an accidental double submission from this dialog.</p></div><footer class="modal-actions h3-generation-actions"><button class="cancel" onclick="closeModal()">Cancel</button><button id="fal-h3-submit" class="approve-btn large" onclick="startFalH3MotionGeneration()" ${promptReady && aspectGate.ok && !preview.refusal && !packageStale ? "" : "disabled"}>Generate video</button></footer></div>`);
+  openModal(`<div class="h3-generation-modal${styleOnly ? " broll-confirmation" : ""}"><header class="h3-generation-head"><div><span>MINIMAX H3 · PAID GENERATION</span>${headline}</div><button class="cancel" onclick="closeModal()">Close</button></header><div class="h3-generation-scroll"><div class="modal-sub"${advancedOnly}>FAL · ${esc(preview.dispatch?.model || "minimax/h3")} · compiled by ${esc(preview.compiler?.packId || "minimax-h3")} ${esc(preview.compiler?.packVersion || "")}</div><div class="candidate-evidence-facts"${advancedOnly}>${inputFacts}<span id="fal-h3-prompt-fact">${request.prompt.length.toLocaleString()}/${limit.toLocaleString()} prompt characters</span><span>Native stereo audio</span></div><div id="fal-h3-refusal" class="guided-prompt-error" hidden></div><div id="fal-h3-options"></div><section id="fal-h3-sequence" class="h3-submit-sequence" hidden></section>${freshnessBanner}${durationBanner}<div id="fal-h3-generation-view"></div><div id="fal-h3-aspect-warning" class="guided-prompt-error" ${aspectGate.ok ? "hidden" : ""}>${aspectGate.ok ? "" : `<div><b>MiniMax H3 cannot deliver ${esc(ratio)}</b><small>${esc(aspectGate.message)}</small></div>`}</div><div id="fal-h3-cost-estimate" class="h3-cost-estimate"${advancedOnly}></div><div id="fal-h3-plan-warnings"${advancedOnly}></div><div id="fal-h3-braidy-stale" class="braidy-warning" hidden></div><div id="fal-h3-prompt-warning" class="guided-prompt-error" ${promptReady ? "hidden" : ""}><div><b>Prompt is not ready for submission</b><small>${promptReady ? "" : `Shorten this prompt to ${limit.toLocaleString()} characters before a paid submission.`}</small></div></div><section class="h3-prompt-editor"${advancedOnly}><header><div><b>Edit prompt before generation</b><small>${build.manualEdited ? "Your saved manual revision is loaded below. Reset restores the compiled prompt." : "This is the prompt CineBraid compiled."} The text below is exactly what will be sent. ${esc(limitNote)} The compiled package is preserved; any change is ${styleOnly ? "" : "saved as a linked manual revision and "}recorded beside the compiled original.</small></div><span id="fal-h3-prompt-count">${request.prompt.length.toLocaleString()}/${limit.toLocaleString()}</span></header><textarea id="fal-h3-prompt-editor" oninput="updateFalH3PromptEditor()" onchange="reviewFalH3PromptEdit()">${esc(request.prompt)}</textarea><div id="fal-h3-edit-coverage" class="h3-edit-coverage" hidden></div><div class="h3-prompt-editor-actions">${styleOnly ? "" : `<label><span>Revision note · optional</span><input id="fal-h3-prompt-edit-reason" placeholder="Clarified timing, removed duplicate action…"></label>`}<button class="ghost-btn" onclick="resetFalH3PromptEditor()">Reset compiled prompt</button></div></section><p class="hint"${advancedOnly}>This submits one paid MiniMax H3 request through FAL. The returned MP4 is saved as an unapproved video candidate in this shot. The request uses an idempotency key to prevent an accidental double submission from this dialog.</p></div><footer class="modal-actions h3-generation-actions"><button class="cancel" onclick="closeModal()">Cancel</button><button id="fal-h3-submit" class="approve-btn large" onclick="startFalH3MotionGeneration()" ${promptReady && aspectGate.ok && !preview.refusal && !packageStale ? "" : "disabled"}>Generate video</button></footer></div>`);
   /* One slot, and this dialog now owns it: switching Simple/Advanced redraws THIS view.
      Registered before the first paint so the very first toggle has somewhere to go. */
   window._generationViewRefresh = () => renderFalH3GenerationView();

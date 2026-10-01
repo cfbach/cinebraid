@@ -59,7 +59,7 @@ Three boundaries are easy to collapse and must not be:
 
 | Boundary | Wrong | Right |
 |---|---|---|
-| model vs provider | "H3's prompt limit is 2,000" | H3 accepts 7,000; fal's queue schema accepts 2,000, declared by the backend layer |
+| model vs provider | "H3's provider limit is CineBraid's 2,000-character writing target" | H3 and the current fal queue allow 7,000; CineBraid prefers 2,000 for concise writing |
 | local vs hosted | "H3 does 2K" | open-weight H3-Base does 768p; 2K comes from a module that is not open-sourced |
 | checkpoint vs family | "H3 takes video references" | Ref2VA does; FL2VA does not — which is why variant is part of identity |
 

@@ -98,32 +98,94 @@ function profileModelIds(profile) {
   return pack && pack.models && typeof pack.models === "object" ? Object.keys(pack.models) : [];
 }
 
-function profileExecutionSupport(profile, adapters = publicAdapters()) {
+/* A historical profile is useful catalogue material, but is not an executable prompt
+   policy. A qualified target needs one exact model, one available provider offering,
+   the actual adapter, and the currently registered pack/playbook version. The check is
+   deliberately performed at runtime rather than inferred from a family name. */
+function profileExecutionSupport(profile, adapters = publicAdapters(), intelligence = loadModelIntelligence()) {
   const family = String(profile?.family || "");
   const mode = String(profile?.mode || "");
   const name = String(profile?.name || profile?.id || "This model");
   const rows = Array.isArray(adapters) ? adapters : [];
+  const declaration = profile?.promptQualification || {};
+  const pack = getModelPack(family);
   const modelIds = profileModelIds(profile);
-  const adapter = rows.find((row) => modelIds.includes(String(row.modelId)) && (row.modes || []).map(String).includes(mode));
-  if (adapter) return { dispatchable: true, adapterId: String(adapter.adapterId), modelId: String(adapter.modelId), reason: "", action: "" };
-  /* The two refusals are different facts and a filmmaker can act on the difference:
-     one family has no code at all here, the other has code that does not cover this
-     workflow. Neither sentence claims the provider is missing the model. */
-  return modelIds.length
-    ? {
-      dispatchable: false,
-      adapterId: "",
-      modelId: "",
-      reason: `CineBraid can write for ${name}, but it cannot send this kind of request to it yet.`,
-      action: "",
-    }
-    : {
-      dispatchable: false,
-      adapterId: "",
-      modelId: "",
-      reason: `CineBraid can write prompts for ${name}, but this build has no way to generate with it — no adapter for ${family || "this model"} ships yet.`,
-      action: "",
+
+  function unavailable(status, reason, qualificationReason) {
+    return {
+      dispatchable: false, adapterId: "", modelId: "", reason, action: "",
+      promptQualification: { status, reason: qualificationReason || reason },
     };
+  }
+
+  if (declaration.status !== "qualified") {
+    const reason = modelIds.length
+      ? `CineBraid has not qualified a current prompt policy for ${name} in this mode.`
+      : `CineBraid has a historical, unqualified prompt profile for ${name}, and this build has no way to generate with it — no adapter for ${family || "this model"} ships yet.`;
+    return unavailable("legacy-unqualified", reason,
+      "This historical prompt profile has no exact model, provider, and current pack qualification.");
+  }
+
+  const modelId = String(declaration.modelId || "");
+  const surfaceId = String(declaration.surfaceId || "");
+  const checkpoint = typeof pack?.checkpointForMode === "function" ? pack.checkpointForMode(mode) : null;
+  const packVariant = pack?.models?.[modelId]?.variant;
+  const exactPack = pack
+    && pack.packId === declaration.packId
+    && pack.packVersion === declaration.packVersion
+    && pack.playbook?.version === declaration.playbookVersion
+    && typeof pack.compileMode === "function"
+    && Boolean(packVariant)
+    && checkpoint?.name === packVariant
+    && (pack.capabilityLayer?.(mode)?.modes || []).includes(mode);
+  if (!exactPack)
+    return unavailable("stale-unqualified",
+      `CineBraid's prompt policy for ${name} no longer matches its qualified model pack. Review this target before generating.`,
+      "The declared pack, playbook, variant, or mode no longer matches the registered compiler.");
+
+  const model = intelligence?.getModel?.(modelId);
+  const surface = intelligence?.getSurface?.(surfaceId);
+  const offering = intelligence?.offeringsForModel?.(modelId)
+    ?.find((entry) => String(entry.surface?.surfaceId || "") === surfaceId)?.offering;
+  const modelExecution = (Array.isArray(model?.execution) ? model.execution : [])
+    .find((entry) => String(entry.surfaceId || "") === surfaceId);
+  const modelModes = Array.isArray(model?.capabilities?.modes) ? model.capabilities.modes : [];
+  const offeringModes = Array.isArray(offering?.modes) ? offering.modes : [];
+  if (!modelModes.includes(mode)
+      || modelExecution?.state !== "available"
+      || surface?.state !== "available"
+      || !(surface?.roles || []).includes("execution")
+      || offering?.state !== "available"
+      || !offeringModes.includes(mode))
+    return unavailable("stale-unqualified",
+      `CineBraid's prompt policy for ${name} is not qualified for this model, mode, and provider surface.`,
+      "The exact model capability or available provider offering no longer matches the declared target.");
+
+  const adapter = rows.find((row) =>
+    String(row.modelId || "") === modelId
+    && String(row.surfaceId || "") === surfaceId
+    && (row.modes || []).map(String).includes(mode));
+  if (!adapter)
+    return unavailable("stale-unqualified",
+      `CineBraid can compile for ${name}, but it cannot send this kind of request to the qualified provider yet.`,
+      "No executable adapter matches this exact model, provider surface, and mode.");
+
+  return {
+    dispatchable: true,
+    adapterId: String(adapter.adapterId),
+    modelId,
+    surfaceId,
+    reason: "",
+    action: "",
+    promptQualification: {
+      status: "qualified",
+      modelId,
+      surfaceId,
+      packId: String(pack.packId),
+      packVersion: String(pack.packVersion),
+      playbookVersion: String(pack.playbook.version),
+    },
+  };
 }
 
 /* The same answer for a whole profile library, with the alternatives filled in from

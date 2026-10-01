@@ -44,6 +44,8 @@ const { styleOnlyRefusal } = require("./broll-package");
    dependency explicit rather than incidental. */
 const IMAGE_PACK_ID = ImagePack.PACK_ID;
 const IMAGE_MODEL_ID = "gpt-image-2/standard";
+const INPAINT_PROFILE = require("../../data/model-profiles.json").profiles
+  .find((row) => row.id === "gpt-image-2/inpaint");
 
 /* The filmmaker tasks this module compiles, and the CineBraid modes each can become.
    A task is not a mode: "Create frame" is t2i with nothing attached, multi-reference
@@ -301,12 +303,19 @@ function compileImageExecutionPlan(request = {}) {
        returned media can say it was made with no reference, rather than leaving a
        reader to infer that from an empty list. */
     referenceMode,
+    /* A base+mask build is compiled in inpaint mode even when the authored source was
+       the general edit profile. Name the effective qualified policy without erasing
+       which profile the filmmaker used to write the source package. The mask, base,
+       plan, endpoint and serialization are unchanged by this provenance mapping. */
     profile: {
-      id: text(build.profileId),
-      name: text(build.profileName) || text(build.profileId),
+      id: mode === "inpaint" ? INPAINT_PROFILE.id : text(build.profileId),
+      name: mode === "inpaint" ? INPAINT_PROFILE.name : text(build.profileName) || text(build.profileId),
       mode,
       family: "gpt-image-2",
-      version: text(build.profileVersion),
+      version: mode === "inpaint" ? INPAINT_PROFILE.profileVersion : text(build.profileVersion),
+      ...(mode === "inpaint"
+        ? { sourceProfileId: text(build.profileId), sourceProfileVersion: text(build.profileVersion) }
+        : {}),
     },
     source: {
       shotId: text(shot.id),
