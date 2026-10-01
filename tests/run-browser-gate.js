@@ -48,6 +48,7 @@ const SUITES = [
   "check:h3-motion-handoff",
   "check:motion-edit",
   "check:prompt-request-truth-browser",
+  "check:braidy-postcompile-browser",
   "check:preview-layout",
   "check:ui-state",
   "check:board-density-browser",

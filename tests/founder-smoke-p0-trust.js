@@ -799,10 +799,28 @@ async function testCompiledPackageGoesStale() {
   assert(/data-package-freshness="unknown"/.test(unchecked), "an uncheckable package must not be presented as current");
   assert(/NOT CHECKED/.test(unchecked));
 
-  /* Both live builders record the snapshot, which is what makes any of this fire. */
+  /* Every live package builder records the dependencies the freshness comparator reads. */
   const studio = fs.readFileSync(path.join(ROOT, "public", "creation-studio.js"), "utf8");
-  assert.strictEqual((studio.match(/build\.dependencySnapshot = typeof packageInputSnapshot === "function"/g) || []).length, 2,
-    "both the motion and frame package builders must record a dependency snapshot");
+  const builders = [
+    { kind: "blocking-frame", start: "window.buildBlockingPrompt = async", end: "c.blockingBuilds.push(build);", fields: ["blockingInputs", "canonContext"] },
+    { kind: "guided-motion", start: "window.buildGuidedMotionPrompt = async", end: "const buildId = registerPromptBuild(P, build);", fields: ["canonContext"] },
+    { kind: "guided-frame", start: "window.buildGuidedFramePrompt = async", end: "const buildId = registerPromptBuild(P, build);", fields: ["frameWorkflowInputs", "canonContext"] },
+  ];
+  const snapshotWrite = /build\.dependencySnapshot = typeof packageInputSnapshot === "function"/g;
+  assert.strictEqual((studio.match(snapshotWrite) || []).length, builders.length,
+    "the blocking, motion and frame package builders must each record a dependency snapshot");
+  for (const { kind, start, end, fields } of builders) {
+    const from = studio.indexOf(start);
+    const to = studio.indexOf(end, from);
+    assert(from >= 0 && to > from, kind + " must retain its package builder and registration path");
+    const source = studio.slice(from, to);
+    assert(source.includes('kind: "' + kind + '"'), kind + " builder must label the package it records");
+    assert.strictEqual((source.match(snapshotWrite) || []).length, 1,
+      kind + " builder must record exactly one dependency snapshot");
+    for (const field of fields)
+      assert(source.includes("build.dependencySnapshot." + field + " ="),
+        kind + " builder must record " + field + " for stale-package detection");
+  }
   record("P0-7", "duration, method and target changes invalidate a compiled package and say so on it; one instruction is emitted once");
 }
 

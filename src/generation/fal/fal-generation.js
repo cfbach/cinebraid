@@ -41,6 +41,7 @@ const FramePresence = require("../../../public/shared-frame-presence");
 const Presentation = require("../../../public/shared-generation-presentation");
 const BuildHistory = require("../../../public/shared-build-history");
 const { generationOptionIdentityFor } = require("../generation-options");
+const { registerBraidyReviewRoutes } = require("../../assistant/braidy-api");
 
 /* The request that takes delivery of the background-recovery notice says so here rather
    than in the URL. See the GET /api/generation/fal/jobs route for why. Lowercase because
@@ -2587,6 +2588,13 @@ function registerFalGeneration(app, context) {
     });
   });
 
+  /* Braidy reviews the SAME server-owned compiled package shown by the native
+   * fal plan routes. Its basis endpoint is free and offline; its improve endpoint
+   * contacts only the configured OpenAI assistant and never dispatches generation. */
+  registerBraidyReviewRoutes(app, {
+    captureOwner, ownerProject, activeSlug, config, readConfig,
+    planReferenceAddress, savedImageSettings,
+  });
   /* WHAT CAN BE PRESSED, and why the rest cannot.
    *
    * One route for every filmmaker task, so the picker on a blocking frame and the

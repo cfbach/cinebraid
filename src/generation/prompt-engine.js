@@ -606,21 +606,98 @@ function buildContext(P, shotId, segmentId = "", options = {}) {
   };
 }
 
+/* Shot cast membership and a selected reference do not establish who appears in
+   any motion request. An approved first frame is an additional visual anchor for
+   I2V/FLF, not a prerequisite for this presence rule. Structured declarations
+   win; local off-screen direction excludes positive identity, and uncertainty
+   is reported rather than filled from the shot or scene cast. Still frames keep
+   their established inheritance behaviour. */
+function motionFrameVisualPresence(context, framePresence) {
+  const excludedIds = new Set();
+  const offscreen = [];
+  const warnings = [];
+  const declared = new Map((framePresence.declarations || []).map((row) => [cleanText(row.entityId), cleanText(row.presence)]));
+  const sources = [context.shot.description, context.shot.positioning, context.shot.motionDirection]
+    .map(cleanText).filter(Boolean);
+  const characters = [...(context.references || []), ...(context.promptEntities || [])]
+    .filter((row) => row.type === "character" && cleanText(row.id));
+  const seen = new Set();
+  for (const ref of characters) {
+    const id = cleanText(ref.id);
+    if (seen.has(id)) continue;
+    seen.add(id);
+    const name = cleanText(ref.name) || id;
+    const declaration = declared.get(id);
+    if (declaration === "absent") continue; // already handled by frame authority
+    const entity = { id, name };
+    const clauses = sources.flatMap((source) => FramePresence.presenceClauses(source))
+      .filter((clause) => FramePresence.presenceMentions(clause, entity).length);
+    const denied = clauses.some((clause) => FramePresence.clauseDeniesPresence(clause, entity));
+    const asserted = clauses.some((clause) => FramePresence.clauseAssertsPresence(clause, entity));
+    if (declaration) {
+      if (denied) warnings.push({
+        code: "motion-presence-conflict",
+        field: "framePresence",
+        message: name + " has a " + declaration + " frame declaration, but shot direction also describes them off-screen. Check the shot and frame direction before generation.",
+        action: "Resolve the conflicting presence statements in the shot or frame.",
+      });
+      continue;
+    }
+    if (denied && !asserted) {
+      excludedIds.add(id);
+      offscreen.push({ id, name });
+      warnings.push({
+        code: "motion-presence-offscreen",
+        field: "framePresence",
+        message: name + " is in shot context but local direction puts them off-screen. Their visual identity is not asserted in this motion request.",
+        action: "Declare shot or frame presence explicitly if this character should appear.",
+      });
+    } else if (!asserted || denied) {
+      excludedIds.add(id);
+      warnings.push({
+        code: "motion-presence-ambiguous",
+        field: "framePresence",
+        message: name + " is in shot or scene context, but their on-screen presence in this motion request is not established. Their visual identity is not asserted.",
+        action: "Declare shot or frame presence if this character should appear.",
+      });
+    }
+  }
+  return { excludedIds, offscreen, warnings };
+}
+
+/* Keep local direction ahead of scene-wide context. For any character whose
+   on-screen presence is excluded or unresolved, omit only clauses that assert
+   that character positively. Retain explicit off-screen clauses and unrelated
+   authored action; disclose every withheld field instead of silently changing
+   what the filmmaker wrote. The selected references are never changed here. */
+function motionPresenceSafeText(value, field, excludedCharacters, warnings) {
+  const source = cleanText(value);
+  if (!source || !excludedCharacters.length) return source;
+  const kept = [];
+  const withheld = new Set();
+  for (const clause of FramePresence.presenceClauses(source)) {
+    const asserting = excludedCharacters.filter((entity) => FramePresence.clauseAssertsPresence(clause, entity));
+    if (asserting.length) asserting.forEach((entity) => withheld.add(entity.name || entity.id));
+    else kept.push(clause);
+  }
+  if (withheld.size) warnings.push({
+    code: "motion-presence-narrative-withheld",
+    field,
+    message: field + " asserts on-screen presence for " + [...withheld].join(", ") + " without matching shot/frame authority. That clause was withheld from this motion request.",
+    action: "Confirm the intended on-screen presence in the shot or selected frame, then rebuild.",
+  });
+  return kept.join(" ");
+}
+
 function defaultSpec(context, purpose, mode, references, mediaAnalysis) {
   const duration = Math.max(1, Number(context.shot.durationSeconds || 5));
   const blockingPurpose = purpose === "blocking" || mode === "blocking";
-  const motionPurpose = purpose === "motion" || ["i2v", "flf", "r2v", "audio-video"].includes(mode);
+  const motionPurpose = purpose === "motion" || ["t2v", "i2v", "flf", "r2v", "audio-video"].includes(mode);
   // In first/last-frame video modes, the approved frame already carries the
   // complete visual identity and environment. Repeating missing-canon warnings
   // here is noise and incorrectly suggests that extra still-image references
   // should be attached to a motion-only package.
   const frameCarriesVisualState = motionPurpose && ["i2v", "flf"].includes(mode);
-  const action = cleanText(
-    motionPurpose
-      ? context.shot.motionDirection || context.shot.description || context.scene.beat || context.shot.title
-      : context.shot.description || context.scene.beat || context.shot.title,
-  );
-  const positioning = cleanText(context.shot.positioning);
   const dialogue = cleanText(context.shot.audio.line || context.shot.audio.dialogue);
   const sfx = cleanText(context.shot.audio.sfx);
   const visualReferenceForEntity = (entityId) => (references || []).find((candidate) => {
@@ -645,7 +722,28 @@ function defaultSpec(context, purpose, mode, references, mediaAnalysis) {
      must-preserve, no blocking descriptor, no subject descriptor. */
   const framePresence = context.framePresence || { absent: [], declarations: [], withheldNarrative: [] };
   const absentEntities = Array.isArray(framePresence.absent) ? framePresence.absent : [];
-  const absentIds = new Set(absentEntities.map((entry) => cleanText(entry.id)).filter(Boolean));
+  const motionPresence = motionPurpose
+    ? motionFrameVisualPresence(context, framePresence)
+    : { excludedIds: new Set(), offscreen: [], warnings: [] };
+  const absentIds = new Set([
+    ...absentEntities.map((entry) => cleanText(entry.id)).filter(Boolean),
+    ...motionPresence.excludedIds,
+  ]);
+  const excludedCharacters = [...(context.references || []), ...(context.promptEntities || []), ...absentEntities]
+    .filter((row) => row.type === "character" && absentIds.has(cleanText(row.id)))
+    .filter((row, index, rows) => rows.findIndex((other) => cleanText(other.id) === cleanText(row.id)) === index);
+  const safe = (value, field) => motionPurpose
+    ? motionPresenceSafeText(value, field, excludedCharacters, motionPresence.warnings)
+    : cleanText(value);
+  const shotDescription = safe(context.shot.description, "shot.description");
+  const shotDirection = safe(context.shot.motionDirection, "shot.motionDirection");
+  const sceneBeat = safe(context.scene.beat, "scene.beat");
+  const shotTitle = safe(context.shot.title, "shot.title");
+  const positioning = safe(context.shot.positioning, "shot.positioning");
+  const action = cleanText(motionPurpose
+    ? shotDirection || shotDescription || sceneBeat || shotTitle
+    : shotDescription || sceneBeat || shotTitle);
+  promptWarnings.push(...motionPresence.warnings.map((row) => row.message));
   for (const ref of context.references || []) {
     if (blockingPurpose) continue;
     if (absentIds.has(cleanText(ref.id))) continue;
@@ -684,6 +782,7 @@ function defaultSpec(context, purpose, mode, references, mediaAnalysis) {
     /* One item of a "; " list: the project's reject sentence loses its own full stop. */
     context.project.world?.reject ? `world violations: ${clause(context.project.world.reject)}` : "",
     ...FramePresence.absenceRequirements(absentEntities),
+    ...motionPresence.offscreen.map((entry) => entry.name + " appearing in the frame"),
     "unrequested characters, props, text or camera moves",
     "identity drift, anatomy deformation and geometry warping",
   ]);
@@ -708,9 +807,13 @@ function defaultSpec(context, purpose, mode, references, mediaAnalysis) {
     shotId: context.shot.id,
     durationSeconds: duration,
     durationWasDefaulted: !!context.shot.durationWasDefaulted,
-    narrativePurpose: blockingPurpose ? blockingNarrative : cleanText(context.scene.beat || context.shot.description || context.shot.title),
+    narrativePurpose: blockingPurpose ? blockingNarrative : cleanText(
+      motionPurpose
+        ? shotDescription || shotDirection || sceneBeat || shotTitle
+        : sceneBeat || shotDescription || shotTitle,
+    ),
     initialState: {
-      subject: blockingPurpose ? blockingNarrative : cleanText(context.shot.description || context.shot.title),
+      subject: blockingPurpose ? blockingNarrative : cleanText(shotDescription || shotDirection || shotTitle),
       staging: blockingPurpose ? sanitizeBlockingText(positioning, context.references || []) : positioning,
       camera: cleanText(mediaAnalysis?.camera?.summary || "Use the approved shot framing and screen direction."),
       environment: blockingPurpose ? blockingEnvironment : environment,
@@ -765,6 +868,7 @@ function defaultSpec(context, purpose, mode, references, mediaAnalysis) {
     },
     productionRisks: unique(context.shot.risks || []),
     promptWarnings: unique(promptWarnings),
+    motionPresenceWarnings: motionPresence.warnings,
     audio: {
       dialogue,
       transcript: "",
@@ -1111,6 +1215,29 @@ function motionBriefSfxText(events) {
     })
     .join("; ");
 }
+/* Structured fields and authored prose can name the same action in different
+   wording. Remove only a whole repeated proposition; a distinct secondary action
+   or prohibition stays in the package. Stop words may vary, but negation does not. */
+function motionIntentWords(value) {
+  const articles = new Set(["a", "an", "the"]);
+  return cleanText(value).toLowerCase().match(/[a-z0-9]+(?:-[a-z0-9]+)*/g)?.filter((word) => !articles.has(word)) || [];
+}
+function motionIntentRestated(value, actions) {
+  const words = motionIntentWords(value);
+  if (!words.length) return false;
+  const negator = (word) => ["no", "not", "never", "without", "avoid", "prohibit", "cannot", "don", "don't"].includes(word);
+  const candidateNegative = words.some(negator);
+  return (actions || []).some((action) =>
+    String(action?.action || "").split(/(?<=[.!?;])\s+|\n+/).some((clause) => {
+      const seen = motionIntentWords(clause);
+      if (candidateNegative !== seen.some(negator)) return false;
+      if (candidateNegative)
+        return words.length === seen.length && words.every((word, index) => seen[index] === word);
+      for (let at = 0; at <= seen.length - words.length; at += 1)
+        if (words.every((word, index) => seen[at + index] === word)) return true;
+      return false;
+    }));
+}
 function applyMotionAudioBrief(spec, rawBrief) {
   const out = validateSpec(spec, spec);
   const brief = rawBrief && typeof rawBrief === "object" ? rawBrief : null;
@@ -1120,14 +1247,14 @@ function applyMotionAudioBrief(spec, rawBrief) {
   const dialogue = brief.dialogue && typeof brief.dialogue === "object" ? brief.dialogue : {};
   const sound = brief.sound && typeof brief.sound === "object" ? brief.sound : {};
   const output = brief.output && typeof brief.output === "object" ? brief.output : {};
+  const existing = (out.actions || []).filter((item) => cleanText(item.action));
   const actionParts = [
-    cleanText(performance.action),
-    cleanText(performance.objectInteraction) ? `Object interaction: ${cleanText(performance.objectInteraction)}` : "",
-    cleanText(performance.secondaryMotion) ? `Secondary motion: ${cleanText(performance.secondaryMotion)}` : "",
-  ].filter(Boolean);
+    { value: cleanText(performance.action), label: "" },
+    { value: cleanText(performance.objectInteraction), label: "Object interaction: " },
+    { value: cleanText(performance.secondaryMotion), label: "Secondary motion: " },
+  ].filter((part) => part.value && !motionIntentRestated(part.value, existing));
   if (actionParts.length) {
-    const canonical = actionParts.join(". ");
-    const existing = (out.actions || []).filter((item) => cleanText(item.action) && cleanText(item.action).toLowerCase() !== canonical.toLowerCase());
+    const canonical = actionParts.map((part) => part.label + part.value).join(". ");
     out.actions = [{ start: 0, end: out.durationSeconds, action: canonical }, ...existing];
   }
   out.performance = {
@@ -1164,14 +1291,19 @@ function applyMotionAudioBrief(spec, rawBrief) {
     .some((row) => cleanText(row?.dimension) === "audio" && cleanText(row?.field) === "mode");
   const derivedMode = nativeAudio && line ? "generate-voice" : "none";
   const audioMode = declaredAudioMode ? cleanText(out.audio?.mode) || derivedMode : derivedMode;
-  const delivery = [
+  /* Language, pace and volume are pre-filled UI defaults. Without a spoken line,
+     transcript or an explicitly authored delivery/timing request, they are not
+     dialogue intent and must not create a phantom coverage warning. */
+  const hasDeliveryIntent = !!(line || cleanText(out.audio?.transcript)
+    || cleanText(dialogue.delivery) || cleanText(dialogue.startTime) || cleanText(dialogue.endTime));
+  const delivery = hasDeliveryIntent ? [
     cleanText(dialogue.language) ? `Language: ${cleanText(dialogue.language)}` : "",
     cleanText(dialogue.emotion) ? `Emotion: ${cleanText(dialogue.emotion)}` : "",
     cleanText(dialogue.delivery),
     cleanText(dialogue.pace) ? `Pace: ${cleanText(dialogue.pace)}` : "",
     cleanText(dialogue.volume) ? `Volume: ${cleanText(dialogue.volume)}` : "",
     cleanText(dialogue.startTime) || cleanText(dialogue.endTime) ? `Timing: ${cleanText(dialogue.startTime) || "start"} to ${cleanText(dialogue.endTime) || "end"}` : "",
-  ].filter(Boolean).join("; ");
+  ].filter(Boolean).join("; ") : "";
   /* THE MODE IS NOT A LABEL ON ITS OWN; IT IS A CONTRACT, AND EACH MODE HAS ONE.
      `lip-sync-reference` means the words are the TRANSCRIPT of a recording the model must
      match, and an empty `dialogue` is what stops a second voice being generated over it.
@@ -1518,7 +1650,11 @@ function referenceAwarePromptSpec(profile, spec, refs) {
     const index = (refs || []).findIndex((ref) => promptReferenceMatchesEntity(ref, entity));
     const visual = index >= 0 ? refs[index] : null;
     const token = visual ? tokenForReference(profile, refs, index) : "";
-    const descriptor = cleanText(entity.descriptor) || "the character assigned to this shot";
+    /* Canon descriptors are often stored as sentences. Here the descriptor
+       replaces a name inside an authored sentence, so its final stop must not
+       split the action into two fragments ("the worker. walks"). */
+    const descriptor = (cleanText(entity.descriptor) || "the character assigned to this shot")
+      .replace(/\.+$/, "");
     /* An approved endpoint image grounds every character standing in it, not only a
        lone one. Restricting that to a single-character shot made a two-hander read as
        ungrounded while its own opening frame was carrying both identities. */
@@ -2433,14 +2569,16 @@ function compileImage(profile, spec, refs) {
   }
 
   if (profile.family === "gpt-image-2") {
+    const narrative = sentence(spec.narrativePurpose);
+    const subject = sentence(spec.initialState?.subject);
     return [
       legend ? `REFERENCE LEGEND\n${legend}` : "",
       guide,
       `PURPOSE\n${objective}`,
       canon ? `IDENTITY CANON\n${canon}` : "",
       drift ? `VERIFY DRIFT-PRONE DETAILS\n${drift}` : "",
-      spec.narrativePurpose ? `SUBJECT AND PERFORMANCE\n${sentence(spec.narrativePurpose)}` : "",
-      spec.initialState?.subject ? sentence(spec.initialState.subject) : "",
+      narrative ? `SUBJECT AND PERFORMANCE\n${narrative}` : "",
+      subject && subject !== narrative ? subject : "",
       staging ? `COMPOSITION AND STAGING\n${staging}` : "",
       camera ? `CAMERA\n${sentence(camera)}` : "",
       include ? `MUST INCLUDE\n${include}` : "",
@@ -2603,15 +2741,6 @@ function minimaxH3SectionParts(chunk) {
     ? { title: text, body: "" }
     : { title: text.slice(0, newline).trim(), body: text.slice(newline + 1).trim() };
 }
-function minimaxH3TrimBody(title, body, limit) {
-  if (!body || body.length <= limit) return body;
-  const lines = body.split(/\n+/).map((line) => cleanText(line)).filter(Boolean);
-  if (lines.length > 1 && /REFERENCE JOB MAP|TIMED|SHOT LIST/i.test(title)) {
-    const perLine = Math.max(24, Math.floor((limit - Math.max(0, lines.length - 1)) / lines.length));
-    return lines.map((line) => compactCharacters(line, perLine)).join("\n");
-  }
-  return compactCharacters(body, limit);
-}
 /* ONE INSTRUCTION, EMITTED ONCE.
  *
  * The founder smoke reported the H3 motion/transition instruction appearing twice
@@ -2638,48 +2767,12 @@ function minimaxH3DedupeSections(sections) {
     return true;
   });
 }
-function finalizeMinimaxH3Prompt(chunks, maxCharacters = 2000) {
+/* The legacy authoring view is a complete written package. The preferred length
+   is advisory: cutting a section to meet it silently removes filmmaker intent,
+   while the exact provider plan applies the real model/backend ceiling later. */
+function finalizeMinimaxH3Prompt(chunks) {
   const sections = minimaxH3DedupeSections((chunks || []).filter(Boolean).map(minimaxH3SectionParts));
-  const direct = sections.map(({ title, body }) => body ? `${title}\n${body}` : title).join("\n\n");
-  if (direct.length <= maxCharacters) return direct;
-
-  // Keep every semantic section present while compacting verbose planning text.
-  // Reference maps and timed lists are line-aware so all numbered inputs and
-  // beats survive instead of being cut off at the end of the prompt.
-  const weights = (title) => {
-    if (/REFERENCE JOB MAP/i.test(title)) return 2.2;
-    if (/SEQUENTIAL KEYFRAME|ENDPOINT|OPENING FRAME/i.test(title)) return 1.7;
-    if (/TIMED|SHOT LIST|ACTION|MOTION|TRANSITION/i.test(title)) return 2.0;
-    if (/AUDIO/i.test(title)) return 1.35;
-    if (/PRESERVE|CONTINUITY|AVOID/i.test(title)) return 1.45;
-    if (/CAMERA|PERFORMANCE/i.test(title)) return 1.1;
-    return 0.9;
-  };
-  const titleOverhead = sections.reduce((sum, section, index) => sum + section.title.length + (section.body ? 1 : 0) + (index ? 2 : 0), 0);
-  const bodyBudget = Math.max(0, maxCharacters - titleOverhead);
-  const rows = sections.map((section) => ({ ...section, weight: weights(section.title), allocation: 0 }));
-  let remaining = bodyBudget;
-  let active = rows.filter((row) => row.body.length);
-  while (remaining > 0 && active.length) {
-    const totalWeight = active.reduce((sum, row) => sum + row.weight, 0) || 1;
-    let used = 0;
-    for (const row of active) {
-      const share = Math.max(1, Math.floor(remaining * row.weight / totalWeight));
-      const need = row.body.length - row.allocation;
-      const add = Math.min(need, share);
-      row.allocation += add;
-      used += add;
-    }
-    if (!used) break;
-    remaining -= used;
-    active = active.filter((row) => row.allocation < row.body.length);
-  }
-  let compacted = rows.map(({ title, body, allocation }) => {
-    const trimmed = body ? minimaxH3TrimBody(title, body, Math.max(1, allocation)) : "";
-    return trimmed ? `${title}\n${trimmed}` : title;
-  }).join("\n\n");
-  if (compacted.length > maxCharacters) compacted = compacted.slice(0, maxCharacters).replace(/[\s,;:.]+$/g, "");
-  return compacted;
+  return sections.map(({ title, body }) => body ? title + "\n" + body : title).join("\n\n");
 }
 
 const MINIMAX_H3_SEQUENCE_ROLES = new Set([
@@ -2695,15 +2788,31 @@ function minimaxH3IsSequenceReference(ref) {
   return referenceMediaType(ref) === "image" && MINIMAX_H3_SEQUENCE_ROLES.has(cleanText(ref?.role));
 }
 
-function minimaxH3TimedBlocks(spec) {
+/* Saved H3 Builds and exact provider plans share the same conservative beat
+   normalization. Keep a distinct timed window when it carries distinct intent;
+   merge only a restatement's residual clauses into its original window. */
+function minimaxH3MotionBlocks(spec, pack) {
   const duration = Math.max(5, Math.min(15, Number(spec.durationSeconds || 5)));
-  const actions = Array.isArray(spec.actions) ? spec.actions.filter((item) => cleanText(item?.action)) : [];
-  if (!actions.length) return sentence(actionParagraph(spec) || spec.narrativePurpose);
-  return actions.map((item, index) => {
-    const start = Math.max(0, Number(item.start ?? (index * duration / actions.length)) || 0);
-    const end = Math.max(start, Math.min(duration, Number(item.end ?? ((index + 1) * duration / actions.length)) || duration));
-    return `[${Number.isInteger(start) ? start : start.toFixed(1)}–${Number.isInteger(end) ? end : end.toFixed(1)} seconds] ${sentence(item.action)}`;
+  const rows = pack.uniqueBeatRows(spec).kept;
+  if (!rows.length) {
+    const fallback = sentence(actionParagraph(spec) || spec.narrativePurpose);
+    return { action: fallback, timed: fallback, count: 0 };
+  }
+  const blocks = [];
+  for (const row of rows) {
+    const window = Number(row.item.start) + "|" + Number(row.item.end);
+    const previous = blocks[blocks.length - 1];
+    if (row.continuation && previous && previous.window === window)
+      previous.body += " " + row.clean;
+    else blocks.push({ item: row.item, window, body: row.clean });
+  }
+  const timed = blocks.map((row, index) => {
+    const start = Math.max(0, Number(row.item.start ?? (index * duration / blocks.length)) || 0);
+    const end = Math.max(start, Math.min(duration, Number(row.item.end ?? ((index + 1) * duration / blocks.length)) || duration));
+    const format = (value) => Number.isInteger(value) ? value : value.toFixed(1);
+    return "[" + format(start) + "–" + format(end) + " seconds] " + row.body;
   }).join("\n");
+  return { action: blocks.map((row) => row.body).join(" "), timed, count: blocks.length };
 }
 function minimaxH3ReferenceMap(profile, refs) {
   return (refs || []).map((ref, index) => {
@@ -2715,10 +2824,14 @@ function minimaxH3ReferenceMap(profile, refs) {
   }).join("\n");
 }
 function compileMinimaxH3(profile, spec, refs) {
+  const pack = require("../../model-packs/minimax-h3");
   const duration = Math.max(5, Math.min(15, Number(spec.durationSeconds || 5)));
-  const action = sentence(actionParagraph(spec) || spec.narrativePurpose);
-  const timed = minimaxH3TimedBlocks(spec);
-  const camera = explicitCameraMotion(spec);
+  const motion = minimaxH3MotionBlocks(spec, pack);
+  const action = motion.action;
+  const timed = motion.timed;
+  const cameraMovement = cleanText(spec.camera?.movement);
+  const camera = explicitCameraMotion(spec) && !pack.actionAlreadyNamesCameraMove(spec, cameraMovement)
+    ? pack.cameraSentence(cameraMovement, spec.camera?.stability) : "";
   const env = (spec.environmentMotion || []).filter(Boolean).join("; ");
   const preserve = preserveText(spec);
   const avoid = avoidText(spec);
@@ -2729,7 +2842,7 @@ function compileMinimaxH3(profile, spec, refs) {
   const videoRefs = (refs || []).filter((ref) => referenceMediaType(ref) === "video");
   const audioRefs = (refs || []).filter((ref) => referenceMediaType(ref) === "audio");
   const sequence = imageRefs.filter(minimaxH3IsSequenceReference);
-  const hasMultipleBeats = (spec.actions || []).filter((item) => cleanText(item?.action)).length > 1 || sequence.length > 2;
+  const hasMultipleBeats = motion.count > 1 || sequence.length > 2;
   if (profile.mode === "t2v") {
     return finalizeMinimaxH3Prompt([
       `MINIMAX H3 SHOT — ${duration} SECONDS`,
@@ -2740,7 +2853,7 @@ function compileMinimaxH3(profile, spec, refs) {
       audio || voice ? `NATIVE STEREO AUDIO\n${[audio, voice].filter(Boolean).join(" ")}` : "",
       preserve ? `CONTINUITY\nPreserve: ${sentence(preserve)}` : "",
       avoid ? `AVOID\n${sentence(avoid)}` : "",
-    ].filter(Boolean), Number(profile.limits?.maxPromptCharacters || 2000));
+    ].filter(Boolean));
   }
   if (profile.mode === "i2v") {
     return finalizeMinimaxH3Prompt([
@@ -2752,7 +2865,7 @@ function compileMinimaxH3(profile, spec, refs) {
       audio || voice ? `NATIVE STEREO AUDIO\n${[audio, voice].filter(Boolean).join(" ")}` : "",
       preserve ? `PRESERVE\n${sentence(preserve)}` : "",
       avoid ? `AVOID\n${sentence(avoid)}` : "",
-    ].filter(Boolean), Number(profile.limits?.maxPromptCharacters || 2000));
+    ].filter(Boolean));
   }
   if (profile.mode === "flf") {
     return finalizeMinimaxH3Prompt([
@@ -2764,7 +2877,7 @@ function compileMinimaxH3(profile, spec, refs) {
       audio || voice ? `NATIVE STEREO AUDIO\n${[audio, voice].filter(Boolean).join(" ")}` : "",
       preserve ? `PRESERVE\n${sentence(preserve)}` : "",
       avoid ? `AVOID\n${sentence(avoid)}` : "",
-    ].filter(Boolean), Number(profile.limits?.maxPromptCharacters || 2000));
+    ].filter(Boolean));
   }
   const sequenceTokens = (refs || []).map((ref, index) => ({ ref, token: tokenForReference(profile, refs, index) }))
     .filter(({ ref }) => minimaxH3IsSequenceReference(ref));
@@ -2789,7 +2902,7 @@ function compileMinimaxH3(profile, spec, refs) {
     audio || voice ? `NATIVE STEREO AUDIO\n${[audio, voice].filter(Boolean).join(" ")}` : "",
     preserve ? `PRESERVE\n${sentence(preserve)}` : "",
     avoid ? `AVOID\n${sentence(avoid)}` : "",
-  ].filter(Boolean), Number(profile.limits?.maxPromptCharacters || 2000));
+  ].filter(Boolean));
 }
 
 function compileVideo(profile, spec, refs) {
@@ -3037,6 +3150,7 @@ function payloadPreview(profile, prompt, refs, spec) {
           note: "Name desired ambient motion positively; scope stillness to the subject rather than freezing the whole frame.",
         };
   if (profile.family === "minimax-h3") {
+    const writingTarget = Number(profile.limits?.writingTargetCharacters ?? profile.limits?.maxPromptCharacters ?? 0);
     const imageUrls = (refs || []).filter((r) => referenceMediaType(r) === "image").map((r) => r.url || "");
     const videoUrls = (refs || []).filter((r) => referenceMediaType(r) === "video").map((r) => r.url || "");
     const audioUrls = (refs || []).filter((r) => referenceMediaType(r) === "audio").map((r) => r.url || "");
@@ -3058,7 +3172,9 @@ function payloadPreview(profile, prompt, refs, spec) {
          queue schema documents no prompt maxLength for any H3 endpoint, and both fal
          and MiniMax state 7,000 characters; the dispatch ceiling is resolved from model
          and backend capability when a generation plan is compiled. */
-      promptLimit: "2,000 characters in this written package; dispatch is limited by model ∩ backend capability (currently 7,000)",
+      promptLimit: writingTarget
+        ? writingTarget.toLocaleString() + "-character writing target (advisory); dispatch is limited separately by model and backend capability."
+        : "No authoring length target is set; dispatch is limited separately by model and backend capability.",
       referenceLimit: profile.mode === "r2v" ? "12 total · up to 9 images · 3 videos · 3 audio clips" : profile.mode === "flf" ? "first and optional last frame" : profile.mode === "i2v" ? "one opening frame" : "prompt only",
       note: profile.mode === "r2v" ? "Give every reference one explicit job. Multiple approved frames are ordered as sequential keyframes in the prompt." : "Use timed shot-list blocks when the shot contains more than one beat.",
     };
@@ -3079,26 +3195,17 @@ function compile(profile, spec, refs) {
       ? compileImage(profile, promptSpec, effectiveRefs)
       : compileVideo(profile, promptSpec, effectiveRefs);
   const result = checks(profile, promptSpec, effectiveRefs);
-  /* NAME THE STAGE THIS NUMBER BELONGS TO.
-   *
-   * `limits.maxPromptCharacters` is CineBraid's budget for the WRITTEN PACKAGE — this
-   * file says so twenty lines up, in `recommendedSettings.promptLimit`. It is not a
-   * provider ceiling, and calling it "the provider schema limit" here contradicted
-   * that in the same output: a filmmaker read "close to the provider schema limit:
-   * 1,991 / 2,000" at this stage and "4,894 / 7,000" in the paid dialog, and had no
-   * way to tell which number the request would actually be held to.
-   *
-   * The dispatch ceiling is resolved from model ∩ backend capability when a
-   * generation plan is compiled, and it is stated there. The number here keeps its
-   * value and loses the claim it was never entitled to make. */
-  const promptLimit = Number(profile.limits?.maxPromptCharacters || 0);
+  /* This is CineBraid's preferred writing length, never a provider ceiling.
+     Exceeding it warns but does not discard any authored instruction. The exact
+     provider plan separately checks its model/backend hard limit and coverage. */
+  const promptLimit = Number(profile.limits?.writingTargetCharacters ?? profile.limits?.maxPromptCharacters ?? 0);
   if (promptLimit) {
     const usage = `${prompt.length.toLocaleString()} / ${promptLimit.toLocaleString()} characters`;
     if (prompt.length > promptLimit)
-      result.warnings.unshift(`${profile.name} prompt exceeds CineBraid's written-package budget: ${usage}. The dispatch limit is resolved separately from model and backend capability.`);
+      result.warnings.unshift(`${profile.name} prompt exceeds CineBraid's writing target: ${usage}. The dispatch limit is resolved separately from model and backend capability.`);
     else if (prompt.length >= promptLimit * 0.9)
-      result.warnings.unshift(`${profile.name} prompt is close to CineBraid's written-package budget: ${usage}. The dispatch limit is resolved separately from model and backend capability.`);
-    else result.confirmations.unshift(`${profile.name} prompt length validated against CineBraid's written-package budget: ${usage}.`);
+      result.warnings.unshift(`${profile.name} prompt is close to CineBraid's writing target: ${usage}. The dispatch limit is resolved separately from model and backend capability.`);
+    else result.confirmations.unshift(`${profile.name} prompt is within CineBraid's writing target: ${usage}.`);
   }
   return {
     prompt,

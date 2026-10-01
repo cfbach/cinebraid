@@ -253,8 +253,8 @@ ${E_UNIT}`;
 
   /* ======================================================================
      NC-G — the written-package budget claiming to be a provider rule. */
-  const G_ANCHOR = `      result.warnings.unshift(\`\${profile.name} prompt is close to CineBraid's written-package budget: \${usage}. The dispatch limit is resolved separately from model and backend capability.\`);`;
-  const G_BROKEN = `      result.warnings.unshift(\`\${profile.name} prompt is close to the provider schema limit: \${usage}.\`);`;
+  const G_ANCHOR = `      result.warnings.unshift(\`\${profile.name} prompt exceeds CineBraid's writing target: \${usage}. The dispatch limit is resolved separately from model and backend capability.\`);`;
+  const G_BROKEN = `      result.warnings.unshift(\`\${profile.name} prompt exceeds CineBraid's writing target (provider schema limit): \${usage}.\`);`;
   const brokenClaim = () => brokenModule("src/generation/prompt-engine.js", G_ANCHOR, G_BROKEN, "NC-G budget described as a provider schema limit");
   await control({
     id: "NC-G",

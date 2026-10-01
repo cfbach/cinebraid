@@ -100,6 +100,7 @@ window.initSettingsPanel = () => {
     window.studioRestoreSettingsDraft();
     if (settingsPanelStateElement()?.dataset.state !== "error") refreshSettingsPanelState();
   }
+  if (panel.dataset.settingsTab === "assistant-openai" && CONFIG.openaiKey && !settingsPanelHasUnsavedChanges()) void loadOpenAIBraidyModels();
   /* The head names the project; it follows an in-progress title edit without writing. */
   const titleInput = document.getElementById("cfg-project-title"), scopeTitle = document.querySelector("[data-settings-project-title]");
   if (titleInput && scopeTitle) ["input", "change"].forEach((type) => titleInput.addEventListener(type, () => { scopeTitle.textContent = titleInput.value || "Untitled project"; }));
@@ -383,7 +384,7 @@ function assistantConfigPatch() {
   const patch = settingsPresentFields([
     ["anthropicKey", "#cfg-key", "raw"], ["anthropicModel", "#cfg-model"],
     ["anthropicVisionModel", "#cfg-model"],
-    ["openaiKey", "#cfg-openai-key", "raw"], ["openaiModel", "#cfg-openai-model"],
+    ["openaiKey", "#cfg-openai-key", "raw"], ["openaiModel", "#cfg-openai-model"], ["openaiBraidyModel", "#cfg-openai-braidy-model"],
     ["openaiVisionModel", "#cfg-openai-vision"],
     ["customBaseUrl", "#cfg-custom-url"], ["customKey", "#cfg-custom-key", "raw"],
     ["customModel", "#cfg-custom-model"], ["customVisionModel", "#cfg-custom-vision"],
@@ -400,6 +401,51 @@ function assistantConfigPatch() {
   if (Object.keys(continuity).length) patch.continuity = continuity;
   return patch;
 }
+window.loadOpenAIBraidyModels = async () => {
+  const select = document.getElementById("cfg-openai-braidy-model");
+  const note = document.getElementById("openai-braidy-model-note");
+  if (!select || !note || settingsCheckBlocked(note)) return;
+  const requestToken = window._openAIBraidyModelRequestToken = (window._openAIBraidyModelRequestToken || 0) + 1;
+  note.textContent = "Checking models available to this OpenAI account…";
+  let data;
+  try {
+    const response = await fetch("/api/assistant/openai/models");
+    data = await response.json();
+    if (!response.ok) throw new Error(data.error || "The account model list is unavailable.");
+  } catch (error) {
+    if (document.getElementById("cfg-openai-braidy-model") === select && window._openAIBraidyModelRequestToken === requestToken)
+      note.textContent = String(error.message || "The account model list is unavailable.");
+    return;
+  }
+  if (document.getElementById("cfg-openai-braidy-model") !== select || window._openAIBraidyModelRequestToken !== requestToken) return;
+  if (settingsPanelHasUnsavedChanges()) { note.textContent = "Save or discard current changes, then load the account models again."; return; }
+  if (!data.configured) {
+    note.textContent = "Save an OpenAI API key on this CineBraid server, then load account models.";
+    return;
+  }
+  const ids = [...new Set((data.models || []).map((row) => typeof row === "string" ? row : row?.id).filter((id) => typeof id === "string" && id.length < 160))].sort();
+  const previous = select.value;
+  select.replaceChildren();
+  const option = (value, label) => {
+    const row = document.createElement("option");
+    row.value = value;
+    row.textContent = label;
+    select.appendChild(row);
+  };
+  option("", "Choose an account model");
+  for (const id of ids) option(id, id);
+  if (previous && !ids.includes(previous)) option(previous, previous + " · saved choice unavailable to this account");
+  if (previous) select.value = previous;
+  else if (ids.includes("gpt-5.6-luna")) select.value = "gpt-5.6-luna";
+  note.textContent = previous && !ids.includes(previous)
+    ? "The saved model is not in this account's current inventory. Choose an available model and save before using Braidy."
+    : select.value === "gpt-5.6-luna" && !previous
+      ? "gpt-5.6-luna is available and suggested for the first Braidy qualification. Save this choice; a successful connection is not task qualification."
+      : ids.length
+        ? "Choose a model from this account and save it. CineBraid will not substitute another model automatically."
+        : "This account returned no models. Braidy prompt review remains unavailable.";
+  refreshSettingsPanelState();
+};
 function falCredentialPatch() {
   if (CONFIG.generation?.fal?.keySource === "environment") return {};
   return settingsPresentFields([["apiKey", "#cfg-fal-key", "raw"]]);
@@ -522,6 +568,7 @@ window.saveConfig = async (scope = "assistant") => {
     : "";
   settingsWriteSaved(owner, { body, config: refreshed, detail });
   toast(`${label[0].toUpperCase() + label.slice(1)} saved`);
+  if (!SETTINGS_CONFIG_REFRESH_REQUIRED && scope === "assistant" && document.querySelector(".settings-selected-tab")?.dataset.settingsTab === "assistant-openai") void loadOpenAIBraidyModels();
   /* This refresh updates readiness only; saving never redraws the panel or moves
      keyboard focus. Its failure cannot turn a successful save into a failed one. */
   if (!SETTINGS_CONFIG_REFRESH_REQUIRED && typeof refreshAgentStatus === "function") {

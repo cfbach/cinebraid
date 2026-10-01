@@ -15,9 +15,9 @@
  * The distinction matters in a specific way here. Three separate boundaries run through
  * this model and collapsing any of them produces a wrong answer:
  *
- *   model vs provider     H3 accepts a 7,000-character prompt. fal's queue schema
- *                         accepts 2,000. The first is a model fact; the second belongs
- *                         to a backend and is applied where the backend is known.
+ *   model vs provider     H3's hosted guidance and the current fal queue contract
+ *                         allow 7,000 characters. CineBraid's 2,000-character
+ *                         writing target is editorial, not a dispatch ceiling.
  *
  *   local vs hosted       the open weights are H3-Base and render 768p. 2K comes from
  *                         H3-Regenerate-2K, which is not open-sourced. A local install
@@ -43,7 +43,7 @@
 const { registerModelPack } = require("../src/generation/generation-compiler");
 
 const PACK_ID = "minimax-h3";
-const PACK_VERSION = "1.0.0";
+const PACK_VERSION = "1.0.6";
 
 /* ===========================================================================
    A. OBJECTIVE CAPABILITY FACTS
@@ -149,8 +149,8 @@ function capabilityLayer(mode, surface = "api") {
     fps: [String(H3_FACTS.fps)],
     durationSeconds: H3_FACTS.durationSeconds,
     /* The MODEL's ceiling. A backend that accepts less declares its own and the
-       intersection takes the smaller — which is how fal's 2,000-character queue schema
-       narrows this without ever being mistaken for what H3 can read. */
+       intersection takes the smaller. The current fal queue matches 7,000; CineBraid's
+       2,000-character writing target is separate editorial guidance. */
     maxPromptCharacters: H3_FACTS.maxPromptCharacters,
     flags: {
       firstFrame: checkpoint.referenceRoles.includes("first-frame"),
@@ -309,7 +309,7 @@ function cameraSentence(movement, stability) {
   if (!raw) return "";
   const policy = H3_PLAYBOOK.camera;
   if (policy.lockedWords.test(raw)) return "The camera holds a static shot with no movement.";
-  const context = `${raw} ${text(stability)}`;
+  const context = raw + " " + text(stability);
   const amplitude = policy.largeWords.test(context)
     ? policy.amplitude.large
     : policy.smallWords.test(context)
@@ -320,10 +320,45 @@ function cameraSentence(movement, stability) {
     : policy.slowWords.test(context)
       ? policy.speed.slow
       : "";
-  const lead = /^(the\s+)?camera\b/i.test(raw) ? lowerFirst(raw.replace(/^the\s+/i, "")) : `camera ${lowerFirst(raw)}`;
-  return sentence(joinClauses([`The ${lead}`, amplitude, speed]));
+  /* A control may supply a noun phrase ("one slow camera push-in"), an imperative
+     ("push in"), or a full sentence ("the camera pushes in"). Give each a
+     grammatical subject and verb without changing the requested move. */
+  const phrase = raw.replace(/^(?:the\s+)?camera\s+/i, "")
+    .replace(/\bcamera\s+(?=(?:push|pull|dolly|truck|pan|tilt|zoom|arc|move|drift|track))/i, "");
+  const imperative = phrase.match(/^(?:(slowly|steadily|gently|gradually)\s+)?(push|pull|pan|tilt|move|track|zoom|arc|dolly|drift)\s+(in|out|left|right|forward|back|up|down|around)\b(.*)$/i);
+  const conjugated = { push: "pushes", pull: "pulls", pan: "pans", tilt: "tilts", move: "moves", track: "tracks", zoom: "zooms", arc: "arcs", dolly: "dollies", drift: "drifts" };
+  const lead = imperative
+    ? "The camera " + [imperative[1], conjugated[imperative[2].toLowerCase()], imperative[3] + imperative[4]].filter(Boolean).join(" ")
+    : /^(?:(?:slowly|steadily|gently|gradually)\s+)?(?:pushes|pulls|pans|tilts|moves|tracks|zooms|arcs|dollies|drifts|follows|holds|remains)\b/i.test(phrase)
+      ? "The camera " + lowerFirst(phrase)
+      : "The camera makes " + (/^(?:one|a|an|the)\b/i.test(phrase) ? "" : "a ") + lowerFirst(phrase);
+  /* A written speed adjective already satisfies the playbook's speed slot. */
+  const speedClause = policy.fastWords.test(raw) || policy.slowWords.test(raw) ? "" : speed;
+  return sentence(joinClauses([lead, amplitude, speedClause]));
 }
 
+/* Only the same proposition may be removed as a restatement. Text containment
+   alone turns "do not keep" into "keep", or a positive action into a negative
+   continuity constraint. Treat uncertain overlap as distinct intent. */
+function propositionWords(value) {
+  return text(value).toLowerCase().match(/[a-z0-9]+(?:-[a-z0-9]+)*/g) || [];
+}
+function samePolaritySubsequence(candidate, seen, expectedNegative = null) {
+  if (!candidate.length || candidate.length > seen.length) return false;
+  const negator = (word) => ["no", "not", "never", "without", "avoid", "prohibit", "cannot", "don", "don't"].includes(word);
+  const candidateNegative = expectedNegative == null ? candidate.some(negator) : expectedNegative;
+  const seenNegative = seen.some(negator);
+  if (candidateNegative !== seenNegative) return false;
+  /* A distant negator can govern the entire clause ("Do not under any
+     circumstances keep..."). Negative clauses are removed only when their
+     full normalized wording matches. Positive containment is safe only
+     when neither whole clause contains negation. */
+  if (candidateNegative)
+    return candidate.length === seen.length && candidate.every((word, index) => seen[index] === word);
+  for (let at = 0; at <= seen.length - candidate.length; at += 1)
+    if (candidate.every((word, index) => seen[at + index] === word)) return true;
+  return false;
+}
 /* Beats in chronological order. The first carries no timestamp; the rest do, strictly
    increasing, which is the documented shot-list form.
 
@@ -334,11 +369,27 @@ function cameraSentence(movement, stability) {
    instructions at the same instant, which is not what any of the three writers meant.
    So declared times are used only while they genuinely advance, and an even spread
    takes over the moment they stop. */
-function beatLines(specOrBeats, durationSeconds) {
+function uniqueBeatRows(specOrBeats) {
   const actions = (Array.isArray(specOrBeats?.actions) ? specOrBeats.actions : [])
     .filter((item) => text(item?.action));
-  if (!actions.length) return [];
-  const duration = Number(durationSeconds) > 0 ? Number(durationSeconds) : 5;
+  if (!actions.length) return { kept: [], strictlyIncreasing: false };
+  /* The owner-authored direction can be stored after a structured summary of the
+     same time window. Let the complete direction lead that window so the shorter
+     summary can contribute only details the owner did not already say. Distinct
+     windows and distinct authored beats keep their original order. */
+  const authored = text(specOrBeats?.motionBrief?.additionalDirection);
+  if (authored) {
+    const ownerIndex = actions.findIndex((row) => text(row.action) === authored);
+    if (ownerIndex > 0) {
+      const owner = actions[ownerIndex];
+      const firstPeer = actions.findIndex((row) =>
+        Number(row.start) === Number(owner.start) && Number(row.end) === Number(owner.end));
+      if (firstPeer >= 0 && firstPeer < ownerIndex) {
+        actions.splice(ownerIndex, 1);
+        actions.splice(firstPeer, 0, owner);
+      }
+    }
+  }
   const strictlyIncreasing = actions.every((item, index) =>
     !index || (Number.isFinite(Number(item.start)) && Number(item.start) > Number(actions[index - 1].start)));
 
@@ -348,14 +399,53 @@ function beatLines(specOrBeats, durationSeconds) {
      which is deterministic and cannot remove anything the model has not already been
      told. */
   const kept = [];
+  const seenClauses = [];
+  const contentWords = (value) => text(value).toLowerCase()
+    .replace(/^secondary motion\s*:/, "")
+    .match(/[a-z0-9]+(?:-[a-z0-9]+)*/g)
+    ?.filter((word) => !["a", "an", "the"].includes(word)) || [];
+  const words = (value) => contentWords(value).join(" ");
+  const clauseRestated = (clause, window) => {
+    const candidate = contentWords(clause);
+    if (!candidate.length) return false;
+    const normal = candidate.join(" ");
+    const peers = seenClauses.filter((row) => row.window === window).map((row) => row.words);
+    if (peers.some((seen) => samePolaritySubsequence(candidate, contentWords(seen)))) return true;
+    /* Cross-clause paraphrases are ambiguous: the same words may describe
+       another subject, place or time. Preserve them for explicit review. */
+    return false;
+  };
   for (const item of actions) {
-    const clean = sentence(text(item.action));
-    const normal = clean.toLowerCase();
-    if (kept.some((row) => row.normal.includes(normal))) continue;
-    kept.push({ item, clean, normal });
+    const window = Number(item.start) + "|" + Number(item.end);
+    const clauses = sentence(text(item.action)).split(/(?<=[.!?;])\s+|\n+/).map(text).filter(Boolean);
+    const uniqueClauses = [];
+    let restated = false;
+    for (const clause of clauses) {
+      const normal = words(clause);
+      if (normal && clauseRestated(clause, window)) {
+        restated = true;
+        continue;
+      }
+      /* A semicolon connects two authored clauses. Turning the first into a
+         sentence and capitalizing the continuation changes the exact shot
+         direction (and produces ";."). Keep that connector while still
+         comparing the clauses independently for duplicate intent. */
+      const followsSemicolon = uniqueClauses.at(-1)?.endsWith(";");
+      const rendered = followsSemicolon ? clause : upperFirst(clause);
+      uniqueClauses.push(clause.endsWith(";") ? rendered : sentence(rendered));
+      if (normal) seenClauses.push({ words: normal, window });
+    }
+    if (uniqueClauses.length)
+      kept.push({ item, clean: sentence(uniqueClauses.join(" ").replace(/;$/, "")), continuation: restated });
   }
+  return { kept, strictlyIncreasing };
+}
+
+function beatLines(specOrBeats, durationSeconds) {
+  const { kept, strictlyIncreasing } = uniqueBeatRows(specOrBeats);
+  const duration = Number(durationSeconds) > 0 ? Number(durationSeconds) : 5;
   return kept.map((row, index) => {
-    if (!index) return row.clean;
+    if (!index || row.continuation) return row.clean;
     const start = strictlyIncreasing
       ? Math.min(duration, Math.max(0, Number(row.item.start)))
       : (duration * index) / kept.length;
@@ -445,21 +535,60 @@ function applyReferenceLimits(manifest, capability, coverage) {
    Shared section builders. Every mode uses these for the things that are the same and
    diverges where the filmmaking contract genuinely differs. */
 
-function performanceSection(intent, coverage, titles) {
+function performanceSection(ctx, titles) {
+  const { intent, coverage, spec } = ctx;
+  const performanceKeys = ["performance.emotion", "performance.facial", "performance.body", "performance.gaze"];
+  const characters = (spec.promptEntities || []).filter((entity) => entity?.type === "character");
+  const unprovenIds = new Set((ctx.unprovenFrameCharacters || []).map((entity) => text(entity.id)));
+  const noEstablishedPerformer = ["i2v", "flf"].includes(ctx.mode)
+    && !characters.some((entity) => !unprovenIds.has(text(entity.id)));
+  if (noEstablishedPerformer) {
+    const spoken = !!(text(spec.audio?.dialogue) || text(spec.audio?.transcript));
+    const vocalEmotion = spoken ? intentValue(intent, "performance.emotion") : "";
+    const withheld = performanceKeys.filter((key) =>
+      intentValue(intent, key) && !(spoken && key === "performance.emotion"));
+    for (const key of withheld)
+      coverage.omit(key, "The supplied frame does not establish a visible performer; visual performance stays in production intent until presence is clarified.");
+    if (withheld.length) coverage.warn({
+      code: "performance-presence-ambiguous",
+      field: "performance",
+      message: "Visual performance direction is attached to this shot, but no performer is established visible in the supplied frame. Facial expression, body movement and gaze were not turned into instructions for the place or prop.",
+      action: "Inspect the frame and declare who performs, or move scene tone to an appropriate visual direction.",
+    });
+    if (vocalEmotion) {
+      coverage.represent("performance.emotion", "prompt");
+      return { title: titles.performance, body: sentence("Voice delivery: " + vocalEmotion) };
+    }
+    return null;
+  }
   const parts = [
     intentValue(intent, "performance.emotion"),
     intentValue(intent, "performance.facial"),
     intentValue(intent, "performance.body"),
-    intentValue(intent, "performance.gaze") ? `gaze ${intentValue(intent, "performance.gaze")}` : "",
+    intentValue(intent, "performance.gaze") ? "gaze " + intentValue(intent, "performance.gaze") : "",
   ].filter(Boolean);
-  for (const key of ["performance.emotion", "performance.facial", "performance.body", "performance.gaze"])
+  for (const key of performanceKeys)
     if (intentValue(intent, key)) coverage.represent(key, "prompt");
   return parts.length ? { title: titles.performance, body: sentence(upperFirst(parts.join("; "))) } : null;
 }
-
 /* `includeFraming` is false in the modes that already stated framing alongside the
    staging. Saying it twice is not emphasis; it is two instructions the model has to
    reconcile. The coverage entry is recorded where it was said. */
+function actionAlreadyNamesCameraMove(spec, movement) {
+  const comparable = (value) => text(value).toLowerCase()
+    .replace(/\bcamera\b/g, "").replace(/[^a-z0-9]+/g, " ").trim();
+  const phrase = comparable(movement);
+  if (phrase.split(" ").length < 3) return false;
+  const negator = /\b(?:no|not|never|without|don t|can t|cannot|avoid|prohibit)\b/;
+  return (spec.actions || []).some((row) =>
+    text(row.action).split(/(?<=[.!?;])\s+|\n+/).some((clause) => {
+      const action = comparable(clause);
+      /* A distant negator may govern the entire camera clause. When polarity
+         is unclear, keep the explicit positive camera control visible. */
+      return action.includes(phrase) && !negator.test(action);
+    }));
+}
+
 function cameraSection(intent, spec, coverage, titles, { includeFraming = true } = {}) {
   const movement = intentValue(intent, "camera.movement");
   const framing = intentValue(intent, "camera.framing");
@@ -467,11 +596,17 @@ function cameraSection(intent, spec, coverage, titles, { includeFraming = true }
   const lens = intentValue(intent, "camera.lens");
   const parts = [];
   if (movement) {
-    parts.push(cameraSentence(movement, spec.camera?.stability));
+    /* A filmmaker may say the exact move in the authored action and in the camera
+       control. One instruction is enough; the action already carries this intent. */
+    if (!actionAlreadyNamesCameraMove(spec, movement))
+      parts.push(cameraSentence(movement, spec.camera?.stability));
     coverage.represent("camera.movement", "prompt");
   }
   if (timing) {
-    parts.push(sentence(`The move ${lowerFirst(timing)}`));
+    const timed = lowerFirst(timing).replace(/^continue\b/i, "continues")
+      .replace(/^begin\b/i, "begins").replace(/^start\b/i, "starts")
+      .replace(/^end\b/i, "ends").replace(/^hold\b/i, "holds");
+    parts.push(sentence("The move " + timed));
     coverage.represent("camera.timing", "prompt");
   }
   if (framing && includeFraming) {
@@ -552,7 +687,7 @@ function soundSections(intent, coverage, titles) {
   return sections;
 }
 
-function continuitySection(intent, coverage, titles, { includeCanon = true } = {}) {
+function continuitySection(intent, coverage, titles, { includeCanon = true, spec = null, alreadyExpressed = "" } = {}) {
   const parts = [];
   if (includeCanon && intentValue(intent, "identity.canon")) {
     parts.push(sentence(intentValue(intent, "identity.canon")));
@@ -565,7 +700,21 @@ function continuitySection(intent, coverage, titles, { includeCanon = true } = {
   ]) {
     const value = intentValue(intent, key);
     if (!value) continue;
-    parts.push(sentence(joinClauses([lead, value])));
+    const source = key === "continuity.preserve" ? spec?.mustPreserve
+      : key === "continuity.avoid" ? spec?.mustAvoid : null;
+    const expressedClauses = alreadyExpressed.split(/(?<=[.!?;])\s+|\n+/);
+    const remaining = Array.isArray(source)
+      ? source.filter((item) => {
+        const candidate = propositionWords(item);
+        const negative = key === "continuity.avoid"
+          || candidate.some((word) => ["no", "not", "never", "without", "avoid", "prohibit", "cannot"].includes(word));
+        return !expressedClauses.some((clause) =>
+          samePolaritySubsequence(candidate, propositionWords(clause), negative));
+      }).join("; ")
+      : value;
+    if (remaining) parts.push(sentence(joinClauses([lead, remaining])));
+    /* An exact requirement already written in the action still counts as present;
+       repeating it under Continuity adds length but carries no new instruction. */
     coverage.represent(key, "prompt");
   }
   return parts.length ? { title: titles.continuity, body: joinClauses(parts) } : null;
@@ -717,12 +866,12 @@ function compileT2V(ctx) {
   sections.push(...actionSections(ctx, titles.action));
   const camera = cameraSection(intent, spec, coverage, titles, { includeFraming: false });
   if (camera) sections.push(camera);
-  const performance = performanceSection(intent, coverage, titles);
+  const performance = performanceSection(ctx, titles);
   if (performance) sections.push(performance);
   const dialogue = dialogueSection(intent, spec, coverage, titles);
   if (dialogue) sections.push(dialogue);
   sections.push(...soundSections(intent, coverage, titles));
-  const continuity = continuitySection(intent, coverage, titles, { includeCanon: false });
+  const continuity = continuitySection(intent, coverage, titles, { includeCanon: false, spec, alreadyExpressed: sections.map((section) => text(section?.body)).join(" ") });
   if (continuity) sections.push(continuity);
 
   closeProductionOnlyIntent(ctx, "t2v");
@@ -758,14 +907,14 @@ function compileI2V(ctx) {
   }
   const camera = cameraSection(intent, spec, coverage, titles);
   if (camera) sections.push(camera);
-  const performance = performanceSection(intent, coverage, titles);
+  const performance = performanceSection(ctx, titles);
   if (performance) sections.push(performance);
   const dialogue = dialogueSection(intent, spec, coverage, titles);
   if (dialogue) sections.push(dialogue);
   sections.push(...soundSections(intent, coverage, titles));
   /* Identity canon is anchored by the frame, so the continuity section carries only the
      requirements that are about holding it there. */
-  const continuity = continuitySection(intent, coverage, titles, { includeCanon: false });
+  const continuity = continuitySection(intent, coverage, titles, { includeCanon: false, spec, alreadyExpressed: sections.map((section) => text(section?.body)).join(" ") });
   if (continuity) sections.push(continuity);
 
   closeProductionOnlyIntent(ctx, "i2v");
@@ -815,12 +964,12 @@ function compileFLF(ctx) {
   }
   const camera = cameraSection(intent, spec, coverage, titles);
   if (camera) sections.push(camera);
-  const performance = performanceSection(intent, coverage, titles);
+  const performance = performanceSection(ctx, titles);
   if (performance) sections.push(performance);
   const dialogue = dialogueSection(intent, spec, coverage, titles);
   if (dialogue) sections.push(dialogue);
   sections.push(...soundSections(intent, coverage, titles));
-  const continuity = continuitySection(intent, coverage, titles, { includeCanon: false });
+  const continuity = continuitySection(intent, coverage, titles, { includeCanon: false, spec, alreadyExpressed: sections.map((section) => text(section?.body)).join(" ") });
   if (continuity) sections.push(continuity);
 
   closeProductionOnlyIntent(ctx, "flf");
@@ -912,12 +1061,12 @@ function compileR2V(ctx) {
   sections.push(...actionSections(ctx, titles.action));
   const camera = cameraSection(intent, spec, coverage, titles, { includeFraming: false });
   if (camera) sections.push(camera);
-  const performance = performanceSection(intent, coverage, titles);
+  const performance = performanceSection(ctx, titles);
   if (performance) sections.push(performance);
   const dialogue = dialogueSection(intent, spec, coverage, titles);
   if (dialogue) sections.push(dialogue);
   sections.push(...soundSections(intent, coverage, titles));
-  const continuity = continuitySection(intent, coverage, titles, { includeCanon: !coverage.has("identity.canon") });
+  const continuity = continuitySection(intent, coverage, titles, { includeCanon: !coverage.has("identity.canon"), spec, alreadyExpressed: sections.map((section) => text(section?.body)).join(" ") });
   if (continuity) sections.push(continuity);
 
   closeProductionOnlyIntent(ctx, "r2v");
@@ -1015,16 +1164,55 @@ function compactClause(value, maxWords) {
    of the way. Clipped per anchor, in the guide's own order, and only for intents that
    are actually anchored — so it can never quietly become a second description of a frame
    nobody selected. */
+/* Older saved packages were compiled before frame-anchored motion separated shot
+   cast from people actually visible in the first frame. Keep those packages
+   immutable, but do not announce an undeclared character as an opening-frame fact.
+   Positive shot-level prose or a structured presence declaration is enough to
+   establish visibility; a cast row or identity canon alone is not. */
+function unprovenFrameCharacters(spec, mode) {
+  if (!["i2v", "flf"].includes(mode)) return [];
+  const Presence = require("../public/shared-frame-presence");
+  const declarations = new Map((spec.framePresence?.declarations || [])
+    .map((row) => [text(row.entityId), text(row.presence)]));
+  const sources = [
+    spec.initialState?.subject,
+    ...(spec.actions || []).map((row) => row.action),
+    ...(spec.stagingLines || []),
+  ].map(text).filter(Boolean);
+  return (spec.promptEntities || []).filter((entity) => entity?.type === "character").filter((entity) => {
+    const state = declarations.get(text(entity.id));
+    if (["present", "enters", "exits"].includes(state)) return false;
+    if (state === "absent") return true;
+    const clauses = sources.flatMap((source) => Presence.presenceClauses(source))
+      .filter((clause) => Presence.presenceMentions(clause, entity).length);
+    const asserted = clauses.some((clause) => Presence.clauseAssertsPresence(clause, entity));
+    const denied = clauses.some((clause) => Presence.clauseDeniesPresence(clause, entity));
+    return !asserted || denied;
+  });
+}
+
 function anchorOrientation(ctx) {
   const { order, maxWordsPerAnchor } = H3_PLAYBOOK.anchorOrientation;
   const named = [];
   for (const key of order) {
     const entry = ctx.coverage.get(key);
     if (!entry || entry.state !== "anchored") continue;
-    const clipped = compactClause(intentValue(ctx.intent, key), maxWordsPerAnchor);
+    let value = intentValue(ctx.intent, key);
+    if (key === "state.initial" && (ctx.spec.actions || []).some((row) =>
+      text(row.action) && (text(row.action).includes(value) || value.includes(text(row.action)))))
+      continue; // a motion paragraph is not an opening-frame visual description
+    if (key === "environment" && (ctx.spec.identityCanon || []).some((row) => text(row).includes(value)))
+      continue; // the same location is already named as a canon anchor
+    if (key === "identity.canon" && ctx.unprovenFrameCharacters?.length) {
+      const Presence = require("../public/shared-frame-presence");
+      value = (ctx.spec.identityCanon || [])
+        .filter((line) => !ctx.unprovenFrameCharacters.some((entity) => Presence.textNamesEntity(line, entity)))
+        .join(" ");
+    }
+    const clipped = compactClause(value, maxWordsPerAnchor);
     if (clipped) named.push(clipped);
   }
-  return named.length ? `It establishes ${named.join("; ")}.` : "";
+  return named.length ? "It establishes " + named.join("; ") + "." : "";
 }
 
 /* Containment de-duplication: two production fields legitimately overlap when one
@@ -1124,8 +1312,29 @@ function compileMode(context) {
   const checkpoint = checkpointForMode(mode);
   const capability = context.capability || capabilityLayer(mode, context.surface);
   const manifest = applyReferenceLimits(context.manifest || [], capability, context.coverage);
-  const ctx = { ...context, manifest, capability };
+  const unproven = unprovenFrameCharacters(context.spec || {}, mode);
+  const ctx = { ...context, manifest, capability, unprovenFrameCharacters: unproven };
 
+  for (const warning of Array.isArray(context.spec?.motionPresenceWarnings) ? context.spec.motionPresenceWarnings : [])
+    context.coverage.warn(warning);
+  const existingPresenceWarnings = new Set((context.spec?.motionPresenceWarnings || []).map((row) => text(row.message)));
+  for (const entity of unproven) {
+    const name = text(entity.name) || text(entity.id);
+    const message = name + " is attached to the shot, but their presence in the supplied first frame is unconfirmed. CineBraid will not describe them as visible in the opening-frame orientation.";
+    if (![...existingPresenceWarnings].some((old) => old.toLowerCase().includes(name.toLowerCase()))) context.coverage.warn({
+      code: "motion-presence-ambiguous",
+      field: "framePresence",
+      message,
+      action: "Inspect the approved first frame and declare this character's presence if they should appear.",
+    });
+  }
+  /* Old packages stored UI default delivery as intent even when there was no
+     dialogue. It is not an authored line; do not turn it into a warning or voice. */
+  const audio = context.spec?.audio || {};
+  const defaultDelivery = "Language: English; Pace: natural; Volume: normal";
+  if (!text(audio.dialogue) && !text(audio.transcript) && text(audio.mode) === "none"
+      && text(audio.delivery) === defaultDelivery)
+    context.coverage.omit("dialogue.delivery", "The saved package contains only pre-filled dialogue defaults and no spoken line.");
   const { sections, parameters, header } = build(ctx);
   /* Applied AFTER the mode compiler, so a section that genuinely expressed one of these
      keeps its stronger claim; `omit` is the fallback, never an override. */
@@ -1211,6 +1420,8 @@ module.exports = {
   H3_FACTS,
   H3_PLAYBOOK,
   cameraSentence,
+  actionAlreadyNamesCameraMove,
+  uniqueBeatRows,
   capabilityLayer,
   checkpointForMode,
   compileMode,

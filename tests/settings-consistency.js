@@ -502,7 +502,7 @@ async function main() {
   {
     const expected = {
       "assistant-ollama": ["ollamaModel", "ollamaUrl", "ollamaVisionModel"],
-      "assistant-openai": ["openaiKey", "openaiModel", "openaiVisionModel"],
+      "assistant-openai": ["openaiKey", "openaiModel", "openaiVisionModel", "openaiBraidyModel"],
       "assistant-anthropic": ["anthropicKey", "anthropicModel", "anthropicVisionModel"],
       "assistant-custom": ["customBaseUrl", "customKey", "customModel", "customVisionModel", "customTemperature", "customTopK", "customThinking"],
     };

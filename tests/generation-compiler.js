@@ -1,4 +1,4 @@
-﻿/* CineBraid deterministic generation compilation.
+/* CineBraid deterministic generation compilation.
  *
  * The suite exists because the failures it covers were all SILENT. A shot carrying a
  * camera move, a blocking line, a performance note, a required ending state and a
@@ -22,6 +22,7 @@ const path = require("path");
 const Compiler = require("../src/generation/generation-compiler");
 const Contracts = require("../src/generation/generation-contracts");
 const H3 = require("../model-packs/minimax-h3");
+const PromptEngine = require("../src/generation/prompt-engine");
 const F = require("./generation-compiler-fixture");
 
 const {
@@ -409,8 +410,8 @@ function compile(mode, references, options = {}) {
 /* ===========================================================================
    7. Model facts versus provider facts, and local versus hosted. */
 {
-  /* fal's queue schema is narrower than the model. The intersection takes the smaller
-     without either layer being rewritten. */
+  /* A hypothetical narrower backend demonstrates that intersection takes the smaller
+     without rewriting the model fact. The current fal queue itself allows 7,000. */
   const modelOnly = capabilityFor("t2v");
   assert.strictEqual(modelOnly.maxPromptCharacters, 7000, "the model's own ceiling is what MiniMax documents");
   const throughFal = capabilityFor("t2v", "api", { backend: { maxPromptCharacters: 2000 } });
@@ -454,10 +455,310 @@ function compile(mode, references, options = {}) {
 {
   /* Camera is written as motion, amplitude and speed in prose, not stacked labels. */
   assert.strictEqual(H3.cameraSentence("slow dolly push-in", "smooth"),
-    "The camera slow dolly push-in with small amplitude at slow speed.");
+    "The camera makes a slow dolly push-in with small amplitude.");
+  assert.strictEqual(H3.cameraSentence("One slow, steady camera push-in", "controlled"),
+    "The camera makes one slow, steady push-in with small amplitude.");
+  assert.strictEqual(H3.cameraSentence("push in", "controlled"),
+    "The camera pushes in.");
+  assert.strictEqual(H3.cameraSentence("The camera slowly pushes in", "controlled"),
+    "The camera slowly pushes in.");
   assert.strictEqual(H3.cameraSentence("locked off", ""), "The camera holds a static shot with no movement.");
   assert.strictEqual(H3.cameraSentence("", ""), "", "no camera intent produces no camera sentence");
+  /* An authored paragraph and structured motion rows can restate the same beat.
+     Preserve the whole authored paragraph and any distinct structured action. */
+  const ownerDirection = "Continue the approved Frame A of the opened blue parcel on the platform bench for five seconds. Keep the open folds stable with subtle ambient movement only. No new character or object.";
+  const silent = { dialogue: "", transcript: "", mode: "none", delivery: "" };
+  const source = baseSpec({
+    actions: [{ start: 0, end: 5, action: ownerDirection }],
+    audio: silent,
+    durationSeconds: 5,
+  });
+  const brief = {
+    performance: {
+      action: "Continue approved Frame A of opened blue parcel on platform bench",
+      secondaryMotion: "subtle ambient movement only",
+    },
+    camera: { movement: "One slow, steady camera push-in", timing: "continue throughout" },
+    dialogue: { line: "", language: "English", pace: "natural", volume: "normal" },
+    output: { nativeAudio: true },
+  };
+  const compiledSpec = PromptEngine.applyMotionAudioBrief(source, brief);
+  assert.strictEqual(compiledSpec.actions.length, 1,
+    "overlapping structured action and owner paragraph are one beat, not two");
+  assert.strictEqual(compiledSpec.actions[0].action, ownerDirection,
+    "dedup keeps the complete owner-authored direction, including negative constraints");
+  assert.strictEqual(compiledSpec.audio.delivery, "",
+    "language, pace and volume defaults without a line are not dialogue intent");
+  const parcelPlan = compile("i2v", [FRAME_A], { spec: compiledSpec });
+  assert(!warnedAbout(parcelPlan, /dialogue delivery|dialogue.delivery|intent-unaccounted.*dialogue/i),
+    "a silent parcel shot has no phantom dialogue-delivery warning");
+  assert(!/The camera one slow/i.test(parcelPlan.inputs.prompt), "the provider plan uses grammatical camera wording");
+  assert(!/The move continue\b/i.test(parcelPlan.inputs.prompt), "camera timing is conjugated");
+  assert.strictEqual((parcelPlan.inputs.prompt.match(/Continue the approved Frame A/g) || []).length, 1,
+    "the provider plan does not repeat the owner direction");
+  assert(carries(parcelPlan, "No new character or object"), "dedup preserves the negative constraint");
+  const withDistinctAction = PromptEngine.applyMotionAudioBrief(source, {
+    ...brief,
+    performance: { ...brief.performance, secondaryMotion: "The bench lamp flickers once" },
+  });
+  assert(withDistinctAction.actions.some((row) => /bench lamp flickers once/.test(row.action)),
+    "a new secondary beat is retained rather than lost in overlap dedup");
+  const explicitDelivery = PromptEngine.applyMotionAudioBrief(source, {
+    ...brief,
+    dialogue: { ...brief.dialogue, delivery: "Whispered just off screen" },
+  });
+  assert(explicitDelivery.audio.delivery.includes("Whispered just off screen"),
+    "an explicitly authored delivery remains visible for coverage even without a line");
 
+  /* Existing saved packages were built before motion presence was separated from
+     shot cast. Recompile them without mutating the spec or asserting an unproven
+     character's visual identity in the approved opening frame. */
+  const oldSavedSpec = baseSpec({
+    shotId: "SYN-PARCEL-03",
+    durationSeconds: 5,
+    narrativePurpose: "The opened parcel rests on the platform bench.",
+    initialState: {
+      subject: ownerDirection,
+      staging: "",
+      camera: "",
+      environment: "The platform bench holds the opened blue parcel.",
+    },
+    actions: [
+      { start: 0, end: 5, action: ownerDirection },
+      { start: 0, end: 5, action: "Continue approved Frame A of opened blue parcel on platform bench." },
+    ],
+    camera: { framing: "16:9", movement: "One slow, steady camera push-in", stability: "steady",
+      lensIntent: "", timing: "continue throughout" },
+    identityCanon: [
+      "Courier: slate-blue work coat, dark trousers, practical silhouette.",
+      "Opened blue parcel: visible paper folds stay open.",
+    ],
+    promptEntities: [
+      { id: "CHAR-COURIER-SYN", name: "Courier", type: "character", descriptor: "Courier" },
+      { id: "PROP-PARCEL-SYN", name: "Opened blue parcel", type: "prop", descriptor: "Opened blue parcel" },
+    ],
+    stagingLines: [],
+    performance: {},
+    visualStyle: ["Flat illustrated style."],
+    mustPreserve: ["Keep the parcel's blue paper, open folds, bench and platform stable."],
+    mustAvoid: ["No added text, dialogue or music."],
+    audio: { dialogue: "", transcript: "", mode: "none",
+      delivery: "Language: English; Pace: natural; Volume: normal" },
+  });
+  const oldBytes = JSON.stringify(oldSavedSpec);
+  const recovered = compile("i2v", [FRAME_A], { spec: oldSavedSpec });
+  assert.strictEqual(JSON.stringify(oldSavedSpec), oldBytes, "recompilation does not mutate saved intent");
+  assert(!/slate-blue work coat|dark trousers|practical silhouette/i.test(recovered.inputs.prompt),
+    "cast membership alone cannot assert Courier identity in an approved opening frame");
+  assert(warnedAbout(recovered, /motion-presence-ambiguous/i),
+    "an older undeclared character gets a visible ambiguity warning");
+  assert.strictEqual((recovered.inputs.prompt.match(/Continue the approved Frame A/g) || []).length, 1,
+    "an older saved package does not repeat the owner-authored motion paragraph");
+  assert(!/The camera one slow|The move continue\b/i.test(recovered.inputs.prompt),
+    "older saved camera controls compile grammatically");
+  assert(!warnedAbout(recovered, /dialogue delivery|dialogue.delivery|intent-unaccounted.*dialogue/i),
+    "pre-filled dialogue defaults without a line are not a phantom warning");
+  assert(carries(recovered, "No added text, dialogue or music"),
+    "legacy overlap repair preserves a unique owner exclusion");
+
+  /* A saved package can hold a structured summary and the owner's full direction
+     against the same time window. The complete direction leads; only genuinely
+     distinct structured facts remain, and a quoted camera move is sent once. */
+  const fullDirection = "Continue the approved Frame A of the opened blue parcel on the platform bench for five seconds. Make one slow, steady camera push-in with subtle ambient movement only. Keep the parcel open and do not add props.";
+  const summaryDirection = "Continue the approved Frame A of the opened blue parcel on the platform bench for five seconds; the parcel stays open. Secondary motion: Subtle ambient movement on the platform only.";
+  const overlappingSaved = {
+    ...oldSavedSpec,
+    initialState: { ...oldSavedSpec.initialState, subject: fullDirection },
+    actions: [
+      { start: 0, end: 5, action: summaryDirection },
+      { start: 0, end: 5, action: fullDirection },
+    ],
+    motionBrief: { additionalDirection: fullDirection },
+    camera: { ...oldSavedSpec.camera, movement: "One slow, steady camera push-in" },
+    performance: { emotion: "Quiet, clear and procedural." },
+  };
+  const overlapBytes = JSON.stringify(overlappingSaved);
+  const overlappingPlan = compile("i2v", [FRAME_A], { spec: overlappingSaved });
+  assert.strictEqual(JSON.stringify(overlappingSaved), overlapBytes, "dedup does not mutate saved intent");
+  assert.strictEqual((overlappingPlan.inputs.prompt.match(/Continue the approved Frame A/gi) || []).length, 1,
+    "the complete owner direction is not repeated by the structured summary");
+  assert(carries(overlappingPlan, "Secondary motion: Subtle ambient movement on the platform only"),
+    "a location-bearing secondary clause is retained when cross-clause equivalence is uncertain");
+  assert.strictEqual((overlappingPlan.inputs.prompt.match(/one slow, steady (?:camera )?push-in/gi) || []).length, 1,
+    "the exact camera move appears in the owner direction only once");
+  assert.strictEqual(state(overlappingPlan, "camera.movement"), "represented",
+    "camera intent remains covered by the owner action when the camera section is deduplicated");
+  assert.strictEqual(state(overlappingPlan, "action.secondary"), "represented",
+    "secondary intent remains covered by the complete owner paragraph");
+  assert(!carries(overlappingPlan, "Quiet, clear and procedural"),
+    "ambiguous cast presence cannot turn generic performance into parcel direction");
+  assert.strictEqual(state(overlappingPlan, "performance.emotion"), "omitted-by-design");
+  assert(warnedAbout(overlappingPlan, /performance-presence-ambiguous/),
+    "omitting unbound performance is disclosed rather than silent");
+  /* Fresh specs exclude unproven shot-cast characters from promptEntities entirely.
+     That must not make performance tone appear as an instruction to the parcel. */
+  const freshAmbiguous = {
+    ...overlappingSaved,
+    promptEntities: [{ id: "PROP-PARCEL-SYN", name: "Opened blue parcel", type: "prop", descriptor: "Opened blue parcel" }],
+    identityCanon: ["Opened blue parcel: visible paper folds stay open."],
+  };
+  const freshPlan = compile("i2v", [FRAME_A], { spec: freshAmbiguous });
+  assert(!carries(freshPlan, "Quiet, clear and procedural"),
+    "a fresh parcel-only spec cannot turn shot-cast performance into visual direction");
+  assert.strictEqual(state(freshPlan, "performance.emotion"), "omitted-by-design");
+  assert(warnedAbout(freshPlan, /performance-presence-ambiguous/),
+    "unbound fresh-spec performance remains disclosed");
+  const performerPresent = {
+    ...overlappingSaved,
+    framePresence: { declarations: [{ entityId: "CHAR-COURIER-SYN", presence: "present" }] },
+  };
+  const presentPlan = compile("i2v", [FRAME_A], { spec: performerPresent });
+  assert(carries(presentPlan, "Quiet, clear and procedural"),
+    "explicit frame presence retains authored performer direction");
+  assert.strictEqual(state(presentPlan, "performance.emotion"), "represented");
+  const distinctMotion = {
+    ...overlappingSaved,
+    actions: [
+      { start: 0, end: 5, action: "The bench lamp flickers once." },
+      { start: 0, end: 5, action: fullDirection },
+    ],
+    camera: { ...overlappingSaved.camera, movement: "fast left pan" },
+  };
+  const distinctPlan = compile("i2v", [FRAME_A], { spec: distinctMotion });
+  assert(carries(distinctPlan, "The bench lamp flickers once"),
+    "a separate secondary action is not removed by cross-section dedup");
+  assert(carries(distinctPlan, "fast left pan"),
+    "a different structured camera move remains in the camera section");
+
+  const repeatedLater = {
+    ...overlappingSaved,
+    actions: [
+      { start: 0, end: 2, action: "The parcel turns once." },
+      { start: 3, end: 5, action: "The parcel turns once." },
+    ],
+    motionBrief: { additionalDirection: "" },
+  };
+  const repeatedPlan = compile("i2v", [FRAME_A], { spec: repeatedLater });
+  assert.strictEqual((repeatedPlan.inputs.prompt.match(/The parcel turns once/g) || []).length, 2,
+    "a repeated action in a later distinct time window is not erased");
+  const conflictingCamera = {
+    ...overlappingSaved,
+    actions: [{ start: 0, end: 5, action: "Do not make one slow, steady camera push-in. Hold the parcel still." }],
+    motionBrief: { additionalDirection: "" },
+  };
+  const conflictPlan = compile("i2v", [FRAME_A], { spec: conflictingCamera });
+  assert(carries(conflictPlan, "The camera makes one slow, steady push-in"),
+    "a negated action cannot masquerade as the affirmative camera control");
+  const contradictoryAction = {
+    ...oldSavedSpec,
+    actions: [{ start: 0, end: 5, action: "Introduce camera shake during the turn. Do not keep the parcel open." }],
+    mustAvoid: ["camera shake"],
+    mustPreserve: ["Keep the parcel open."],
+  };
+  const contradictoryPlan = compile("i2v", [FRAME_A], { spec: contradictoryAction });
+  assert(carries(contradictoryPlan, "Do not introduce: camera shake"),
+    "positive action wording cannot consume a contrary mustAvoid requirement");
+  assert(carries(contradictoryPlan, "Keep unchanged: Keep the parcel open"),
+    "negated action wording cannot consume a contrary mustPreserve requirement");
+  assert.strictEqual(state(contradictoryPlan, "continuity.avoid"), "represented");
+  assert.strictEqual(state(contradictoryPlan, "continuity.preserve"), "represented");
+  const contradictoryBeats = compile("i2v", [FRAME_A], { spec: {
+    ...oldSavedSpec,
+    actions: [
+      { start: 0, end: 5, action: "Do not keep the parcel open." },
+      { start: 0, end: 5, action: "Keep the parcel open." },
+    ],
+    mustAvoid: [], mustPreserve: [],
+  } });
+  assert.strictEqual((contradictoryBeats.inputs.prompt.match(/Keep the parcel open/gi) || []).length, 2,
+    "opposite-polarity actions in one beat window stay explicit");
+  const destinationBeats = compile("i2v", [FRAME_A], { spec: {
+    ...oldSavedSpec,
+    actions: [
+      { start: 0, end: 5, action: "The blue parcel glides to the table. The bench stays still." },
+      { start: 0, end: 5, action: "The blue parcel glides to the bench." },
+    ],
+    mustAvoid: [], mustPreserve: [],
+  } });
+  assert(carries(destinationBeats, "The blue parcel glides to the bench"),
+    "a shared verb plus destination word from another clause cannot erase a different destination");
+  const differentAmbientLocation = compile("i2v", [FRAME_A], { spec: {
+    ...oldSavedSpec,
+    motionBrief: { additionalDirection: "The platform remains still. Add subtle ambient movement only on the far street." },
+    actions: [
+      { start: 0, end: 5, action: "The platform remains still. Add subtle ambient movement only on the far street." },
+      { start: 0, end: 5, action: "Secondary motion: subtle ambient movement on the platform only." },
+    ],
+    mustAvoid: [], mustPreserve: [],
+  } });
+  assert(carries(differentAmbientLocation, "Secondary motion: subtle ambient movement on the platform only"),
+    "word overlap across clauses cannot erase ambient motion at a distinct location");
+  const contradictoryBrief = PromptEngine.applyMotionAudioBrief({
+    ...oldSavedSpec,
+    actions: [{ start: 0, end: 5, action: "Do not keep the parcel open." }],
+  }, { performance: { secondaryMotion: "Keep the parcel open." } });
+  assert(contradictoryBrief.actions.some((row) => /Secondary motion: Keep the parcel open/.test(row.action)),
+    "a positive secondary motion cannot be deduplicated against its prohibition");
+  /* Whole-clause polarity and spatial/ownership words are intent. Near-copy
+     text must remain visible when any of those meanings differ. */
+  for (const [first, second] of [
+    ["Place the parcel in the box.", "Place the parcel on the box."],
+    ["Move his hand.", "Move her hand."],
+    ["Do not under any circumstances keep the parcel open.", "Keep the parcel open."],
+  ]) {
+    const relationPlan = compile("i2v", [FRAME_A], { spec: {
+      ...oldSavedSpec,
+      initialState: { ...oldSavedSpec.initialState, subject: "The opened parcel stays on the bench." },
+      actions: [{ start: 0, end: 5, action: first }, { start: 0, end: 5, action: second }],
+      motionBrief: null, mustAvoid: [], mustPreserve: [],
+    } });
+    assert(carries(relationPlan, first), "H3 provider plan retains first clause: " + first);
+    assert(carries(relationPlan, second), "H3 provider plan retains distinct clause: " + second);
+  }  const negativeCameraAction = "Do not under any circumstances make one slow, steady camera push-in.";
+  const cameraConflictPlan = compile("i2v", [FRAME_A], { spec: {
+    ...oldSavedSpec,
+    actions: [{ start: 0, end: 5, action: negativeCameraAction }],
+    camera: { ...oldSavedSpec.camera, movement: "One slow, steady camera push-in" },
+    mustAvoid: [], mustPreserve: [],
+  } });
+  assert(carries(cameraConflictPlan, negativeCameraAction),
+    "the qualified H3 plan retains the negative authored camera clause");
+  assert(carries(cameraConflictPlan, "The camera makes one slow, steady push-in"),
+    "the positive camera control is not consumed by a distant negator");
+  assert.strictEqual(state(cameraConflictPlan, "camera.movement"), "represented");
+  const speakingOffscreen = {
+    ...overlappingSaved,
+    audio: { ...oldSavedSpec.audio, dialogue: "Wait.", speakerId: "CHAR-COURIER-SYN",
+      speakerName: "Courier", mode: "generate-voice", delivery: "quiet" },
+  };
+  const speakingPlan = compile("i2v", [FRAME_A], { spec: speakingOffscreen });
+  assert(carries(speakingPlan, "Quiet, clear and procedural"),
+    "actual off-screen dialogue may carry a performance tone without a visible performer");
+
+  const speakingWithVisualDirection = {
+    ...speakingOffscreen,
+    framePresence: { declarations: [{ entityId: "CHAR-COURIER-SYN", presence: "absent" }] },
+    performance: {
+      emotion: "Quiet, clear and procedural.",
+      facial: "A visible smile",
+      bodyLanguage: "The courier reaches into frame",
+      gaze: "toward the parcel",
+    },
+  };
+  const offscreenPlan = compile("i2v", [FRAME_A], { spec: speakingWithVisualDirection });
+  assert(carries(offscreenPlan, "Voice delivery: Quiet, clear and procedural"),
+    "spoken offscreen emotion remains a vocal instruction");
+  for (const [key, phrase] of [
+    ["performance.facial", "A visible smile"],
+    ["performance.body", "The courier reaches into frame"],
+    ["performance.gaze", "gaze toward the parcel"],
+  ]) {
+    assert(!carries(offscreenPlan, phrase), "offscreen dialogue does not authorize visible " + key);
+    assert.strictEqual(state(offscreenPlan, key), "omitted-by-design",
+      "unbound visual performance has explicit coverage: " + key);
+  }
+  assert(warnedAbout(offscreenPlan, /performance-presence-ambiguous/),
+    "offscreen visual performance omission is disclosed");
   /* Sound the audience hears and sound the characters hear are different fields. */
   const plan = compile("t2v", []);
   const soundscape = plan.inputs.prompt.split("SOUNDSCAPE\n")[1].split("\n\n")[0];

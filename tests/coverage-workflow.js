@@ -3,7 +3,7 @@ const fs = require("fs");
 const path = require("path");
 const vm = require("vm");
 const { terminalHtml } = require("./terminal-view");
-const { render, buildFixture, withCanon, settleApprovalReadiness } = require("./render-harness");
+const { render, buildFixture, withCanon, settleApprovalReadiness, harnessAssetId } = require("./render-harness");
 
 const delay = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 
@@ -221,15 +221,33 @@ async function testPrimaryReferenceNeverSilentlyBecomesThreeQuarter() {
   rendered.context.document.getElementById("entity-approve-target").value = "state-default";
   rendered.context.document.getElementById("entity-approve-name").value = "CHAR-IREN-PRIMARY.png";
   rendered.context.document.getElementById("entity-approve-next").value = "";
-  /* The Alpha imported-reference slice made confirmation wait for a prepared
-     durable identity for the exact candidate on screen, so a suite standing in
-     for a filmmaker waits for it too. Preparation is a request; this drains the
-     loop until the modal holds one, never for a duration. */
-  await settleApprovalReadiness(rendered);
+  /* A prepared identity is a request, not an immediate fixture fact. Wait for
+     the exact file and state to become approvable before making the real click. */
+  const expectedAssetId = harnessAssetId("anchors/CHAR-IREN-PRIMARY.png");
+  const deadline = Date.now() + 4000;
+  let readiness;
+  do {
+    readiness = vm.runInContext(`(() => {
+      const want=entityApprovalWant(), prepared=ENTITY_APPROVAL_READINESS;
+      const refusal=entityApprovalReadinessRefusal(prepared,want);
+      return { want, prepared:prepared && {status:prepared.status,list:prepared.list,entityId:prepared.entityId,stateId:prepared.stateId,fileName:prepared.fileName,assetId:prepared.assetId},
+        refusal:refusal?.code || "", save:projectSaveSettled().code,
+        line:document.getElementById('entity-approval-readiness').dataset.state };
+    })()`, rendered.context);
+    if (readiness.want.list === "characters" && readiness.want.id === "CHAR-IREN"
+      && readiness.want.stateId === "state-default" && readiness.want.name === "CHAR-IREN-PRIMARY.png"
+      && readiness.prepared?.assetId === expectedAssetId && !readiness.refusal && readiness.line === "ready") break;
+    await new Promise((resolve) => setImmediate(resolve));
+  } while (Date.now() < deadline);
+  assert(readiness.prepared?.assetId === expectedAssetId && !readiness.refusal && readiness.line === "ready"
+    && readiness.want.list === "characters" && readiness.want.id === "CHAR-IREN"
+    && readiness.want.stateId === "state-default" && readiness.want.name === "CHAR-IREN-PRIMARY.png",
+  `exact primary identity approval did not become ready: ${JSON.stringify(readiness)}`);
   await rendered.gesture.act(() => rendered.context.confirmEntityApproval(false));
-  await delay(60);
-  const state = vm.runInContext(`(() => { const e=P.characters.find((item)=>item.id==='CHAR-IREN'); return { approved:e.approvedFile, assigned:(ensureCoverageSlots('characters',e)||[]).filter((slot)=>slot.approvedFile).map((slot)=>slot.id), angle:e.primaryAngleAssignment }; })()`, rendered.context);
+  const state = vm.runInContext(`(() => { const e=P.characters.find((item)=>item.id==='CHAR-IREN'); return { approved:e.approvedFile, receipt:CineBraidAuthorityKernel.currentHumanAuthority(P,{kind:'entity-state',list:'characters',entityId:'CHAR-IREN',stateId:'state-default'}), assigned:(ensureCoverageSlots('characters',e)||[]).filter((slot)=>slot.approvedFile).map((slot)=>slot.id), angle:e.primaryAngleAssignment }; })()`, rendered.context);
   assert.strictEqual(state.approved, "CHAR-IREN-PRIMARY.png", "primary identity approval must still succeed");
+  assert.strictEqual(state.receipt?.value, state.approved, "primary approval must retain its exact current state receipt");
+  assert.strictEqual(state.receipt?.assetId, expectedAssetId, "primary receipt must bind the prepared identity of the selected file");
   assert.deepStrictEqual(Array.from(state.assigned), [], "a primary character reference must not silently become Front, 3/4, Profile or Rear");
   assert.strictEqual(state.angle.status, "unassigned", "primary approval should explicitly record that angle assignment remains unresolved");
 

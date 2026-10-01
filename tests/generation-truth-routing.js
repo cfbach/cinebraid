@@ -264,11 +264,11 @@ function testTheCompilerBudgetDoesNotClaimToBeAProviderRule(engine = PromptEngin
   spec.narrativePurpose = "A long production objective with detailed requirements. ".repeat(60);
   const compiled = engine.compile(profile, spec, refs);
   const all = [...(compiled.warnings || []), ...(compiled.confirmations || [])].join(" ");
-  assert(/written-package budget/i.test(all),
-    `the compiler must name its own budget, got ${JSON.stringify(all.slice(0, 200))}`);
+  assert(/writing target/i.test(all),
+    `the compiler must name its advisory writing target, got ${JSON.stringify(all.slice(0, 200))}`);
   assert(!/provider schema limit/i.test(all),
-    "CineBraid's written-package budget must not be described as a provider schema limit");
-  note("C: the compiler's length report names CineBraid's written-package budget and claims no provider rule");
+    "CineBraid's writing target must not be described as a provider schema limit");
+  note("C: the compiler's length report names CineBraid's writing target and claims no provider rule");
 }
 
 /* ---------------------------------------------------------------------------
@@ -366,6 +366,75 @@ async function testAnExplicitTargetSurvivesTheFramesHandoff(mutateSource = null)
   note("route guard: an explicit target plus typed direction survives the frame-count suggestion");
 }
 
+/* A compiler may normalize old wrapper wording for its target package. That
+ * result is provenance on the package, never an instruction to write the shot's
+ * production direction. The real browser regression was a successful 200
+ * compile discarded after that response-side Canon write changed the witness. */
+async function testSanitizedMotionBuildPreservesShotCanon(mutateSource = null) {
+  const fixture = multiFrameFixture();
+  const shot = fixture.shots[0];
+  shot.clips = [];
+  delete shot.motionPrompt;
+  const compileRequests = [];
+  const rendered = await render("#/shot/L1-01", fixture, {
+    mutateSource,
+    fetch(url, options, respond) {
+      if (url !== "/api/prompt/compile") return null;
+      const request = JSON.parse(options.body || "{}");
+      compileRequests.push(request);
+      const normalized = PromptEngine.normalizeMotionDirective(request.directive);
+      assert.notStrictEqual(normalized, request.directive,
+        "the fixture must exercise an actual sanitized compiler response");
+      return respond({
+        profile: PromptEngine.getProfile(request.profileId),
+        compiledPrompt: "MINIMAX H3 MULTIMODAL SHOT — 5 SECONDS\nACTION\nMeasured push in across the platform.",
+        spec: { purpose: "motion", durationSeconds: 5 },
+        references: request.references,
+        warnings: [], confirmations: [],
+        originalDirective: normalized,
+        sourceDirectiveSanitized: true,
+        llmUsed: false,
+      });
+    },
+  });
+  rendered.context.TextEncoder = TextEncoder;
+  const result = await vm.runInContext(`(async () => {
+    const shot = shotById("L1-01");
+    const originalShotMotionPrompt = shot.motionPrompt || "";
+    setGuidedMotionField("L1-01", "motionProfileId", "minimax-h3/multi-frame");
+    setGuidedMotionField("L1-01", "motionDirection", "Measured push in across the platform.");
+    setH3SequenceNote("L1-01", "SEQ-NOTE: pass through the beats continuously");
+    const authoredDirection = (shot.clips || [])[0]?.motionPrompt || "";
+    const buildId = await buildGuidedMotionPrompt("L1-01", false);
+    const build = buildId ? resolvePromptBuild(P, buildId) : null;
+    return {
+      buildId: buildId || "",
+      error: guidedPromptOp("motion", "L1-01")?.error || "",
+      originalShotMotionPrompt,
+      finalShotMotionPrompt: shot.motionPrompt || "",
+      authoredDirection,
+      finalUnitDirection: (shot.clips || [])[0]?.motionPrompt || "",
+      packagePrompt: build?.prompt || "",
+      packageOriginalDirective: build?.originalDirective || "",
+      packageSanitized: build?.sourceDirectiveSanitized === true,
+      referenceRoles: (build?.references || []).map((ref) => ref.role),
+    };
+  })()`, rendered.context);
+  assert.strictEqual(compileRequests.length, 1, `exactly one local compile should run: ${JSON.stringify(result)}`);
+  assert(result.buildId, `the sanitized response must still create a package: ${result.error}`);
+  assert.strictEqual(result.finalShotMotionPrompt, result.originalShotMotionPrompt,
+    "compiler normalization must never rewrite shot-level Canon");
+  assert.strictEqual(result.finalUnitDirection, result.authoredDirection,
+    "compiler normalization must preserve the authored motion-unit direction");
+  assert(result.packageSanitized && result.packageOriginalDirective,
+    "the package must retain the compiler's sanitization provenance");
+  assert(result.packagePrompt.startsWith("MINIMAX H3 MULTIMODAL SHOT"),
+    "the normalized target package must remain available for review");
+  assert.deepStrictEqual(hostList(result.referenceRoles.filter((role) => role === "sequential-keyframe")),
+    ["sequential-keyframe", "sequential-keyframe"],
+    "the two approved keyframes must remain bound to the package");
+  note("sanitized compile: target package built, authored direction and shot Canon retained, two approved keyframes bound");
+}
 /* ------------------------------------------------------------------------ */
 
 async function main() {
@@ -380,6 +449,7 @@ async function main() {
   testAReplacedStoryNameIsAlwaysDisclosed();
   testTheAdviceMatchesWhatTheTargetCanAccept();
   await testAnExplicitTargetSurvivesTheFramesHandoff();
+  await testSanitizedMotionBuildPreservesShotCanon();
 
   console.log("Generation truth / routing passed: the multi-frame keyframe sequence reaches the live package in order and with its directed beats, every dispatchable video route is reachable, text-to-video carries nothing and is gated on nothing, prompt ceilings belong to the stage that names them, and grounding advice matches what the selected target can accept. Provider calls made: 0.");
   for (const line of notes) console.log(`  - ${line}`);
@@ -395,6 +465,7 @@ module.exports = {
   t2vReachability,
   testAReplacedStoryNameIsAlwaysDisclosed,
   testAnExplicitTargetSurvivesTheFramesHandoff,
+  testSanitizedMotionBuildPreservesShotCanon,
   testEachWaypointCarriesItsDirectedBeat,
   testEveryDispatchableVideoRouteIsReachable,
   testMultiFrameSendsTheOrderedKeyframes,

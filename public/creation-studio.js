@@ -1618,7 +1618,7 @@ function blockingPromptResult(s, build) {
     ? `<details class="blocking-improvement-notes"><summary>Review resolved framing conflicts</summary><ul>${(build.blockingImprovementNotes?.length ? build.blockingImprovementNotes : plan.conflictsResolved).map((note) => `<li>${esc(note)}</li>`).join("")}</ul></details>`
     : "";
   const source = build.llmUsed ? "Assistant-refined structural plan" : "Deterministic structural plan";
-  return `<article class="guided-prompt-result blocking-prompt-result"><header><div><span>BLOCKING PROMPT READY</span><b>${esc(build.profileName || build.profileId)}</b><small>${esc(blockingSettingsSummary(build) || "Disposable greyscale composition scaffold")} · ${esc(source)}</small></div><div><button class="copy-btn" onclick="copyText(${JSON.stringify(build.prompt || "").replace(/"/g, "&quot;")})">COPY</button>${typeof falPromptAction === "function" ? falPromptAction(s.id,"blocking","",build.id,`<button class="chip" onclick="downloadBlockingPrompt('${s.id}','${build.id}')">Download</button>`) : `<button class="chip" onclick="downloadBlockingPrompt('${s.id}','${build.id}')">Download</button>`}</div></header>${build.warnings?.length ? `<ul class="guided-prompt-warnings">${build.warnings.map((warning) => `<li>${esc(warning)}</li>`).join("")}</ul>` : ""}${resolved}<details open><summary>View blocking prompt</summary><pre>${esc(build.prompt || "")}</pre>${typeof falGenerationReady === "function" && falGenerationReady() ? `<button class="text-link-btn" onclick="downloadBlockingPrompt('${s.id}','${build.id}')">Download prompt file</button>` : ""}</details>${typeof falGenerationInline === "function" ? falGenerationInline(s.id,"blocking") : ""}</article>`;
+  return `<article class="guided-prompt-result blocking-prompt-result"><header><div><span>${build.braidyReview ? "BRAIDY-REVIEWED TARGET PACKAGE" : "PREPARED BLOCKING PACKAGE"}</span><b>${esc(build.profileName || build.profileId)}</b><small>${esc(blockingSettingsSummary(build) || "Disposable greyscale composition scaffold")} · ${esc(source)}</small></div><div>${String(build.profileId || "") === "gpt-image-2/blocking" ? `<button class="ghost-btn" onclick="openBraidyPromptReview('blocking','${attr(s.id)}','${attr(build.id)}')">Improve with Braidy</button>` : ""}<button class="copy-btn" onclick="copyText(${JSON.stringify(build.prompt || "").replace(/"/g, "&quot;")})">COPY</button>${typeof falPromptAction === "function" ? falPromptAction(s.id,"blocking","",build.id,`<button class="chip" onclick="downloadBlockingPrompt('${s.id}','${build.id}')">Download</button>`) : `<button class="chip" onclick="downloadBlockingPrompt('${s.id}','${build.id}')">Download</button>`}</div></header>${build.warnings?.length ? `<ul class="guided-prompt-warnings">${build.warnings.map((warning) => `<li>${esc(warning)}</li>`).join("")}</ul>` : ""}${resolved}<details open><summary>View blocking prompt</summary><pre>${esc(build.prompt || "")}</pre>${typeof falGenerationReady === "function" && falGenerationReady() ? `<button class="text-link-btn" onclick="downloadBlockingPrompt('${s.id}','${build.id}')">Download prompt file</button>` : ""}</details>${typeof falGenerationInline === "function" ? falGenerationInline(s.id,"blocking") : ""}</article>`;
 }
 function blockingFrameBrief(s) {
   const frame = guidedFrames(s)[0], state = guidedFrameState(s, frame, 0);
@@ -1662,7 +1662,6 @@ function blockingAttemptViewerMarkup(s, row) {
   const generation = asset.generationRecord || {};
   const revision = !frame && c.blockingRevisionSourceAssetId === asset.id ? c.blockingRevisionRequest || "" : "";
   const canGenerate = typeof falGenerationReady === "function" && falGenerationReady();
-  const improveAttrs = typeof aiDisabledAttrs === "function" ? aiDisabledAttrs("text") : "";
   const headerState = frame
     ? frameActive ? `Active Frame ${frame.label} endpoint guide` : `Frame ${frame.label} endpoint attempt`
     : active ? "Active composition guide" : "Returned planning frame";
@@ -1678,7 +1677,7 @@ function blockingAttemptViewerMarkup(s, row) {
       : "Select this attempt as the geometry guide when its camera and layout are the best match.";
   const revisionPanel = frame
     ? `<section class="blocking-attempt-revision frame-specific"><span>FRAME ${esc(frame.label)} DERIVATIVE BLOCKING</span><b>Edit the frame brief before another automated retry</b><p>This attempt belongs only to Frame ${esc(frame.label)}. The durable still-automation run creates revisions from the approved previous frame plus Frame ${esc(frame.label)}'s action, camera and additional direction.</p><small>Finished identity, materials, lighting and location design still come from approved references—not this grayscale guide.</small></section>`
-    : `<section class="blocking-attempt-revision"><span>REVISE THIS ATTEMPT</span><label for="blocking-viewer-revision">Changes for the next blocking attempt</label><textarea id="blocking-viewer-revision" placeholder="Example: Move the subject left, lower the camera, make the object larger and show less background.">${esc(revision)}</textarea><small>Only describe structural changes. The selected attempt becomes the editable grayscale scaffold; finished references and visual style remain excluded.</small><div class="blocking-attempt-revision-actions"><button class="ghost-btn" onclick="buildBlockingRevisionFromViewer('${s.id}','${asset.id}',false,false)">Build revised prompt</button><button class="ghost-btn" onclick="buildBlockingRevisionFromViewer('${s.id}','${asset.id}',true,false)"${improveAttrs}>Improve + build</button>${canGenerate ? `<button class="approve-btn" onclick="buildBlockingRevisionFromViewer('${s.id}','${asset.id}',false,true)">Build + generate</button>` : ""}</div></section>`;
+    : `<section class="blocking-attempt-revision"><span>REVISE THIS ATTEMPT</span><label for="blocking-viewer-revision">Changes for the next blocking attempt</label><textarea id="blocking-viewer-revision" placeholder="Example: Move the subject left, lower the camera, make the object larger and show less background.">${esc(revision)}</textarea><small>Only describe structural changes. The selected attempt becomes the editable grayscale scaffold; finished references and visual style remain excluded.</small><div class="blocking-attempt-revision-actions"><button class="ghost-btn" onclick="buildBlockingRevisionFromViewer('${s.id}','${asset.id}',false,false)">Build revised prompt</button>${canGenerate ? `<button class="approve-btn" onclick="buildBlockingRevisionFromViewer('${s.id}','${asset.id}',false,true)">Build + generate</button>` : ""}</div></section>`;
   const guideAction = frame
     ? frameActive
       ? `<button class="chip danger" onclick="closeModal();removeFrameBlockingGuide('${s.id}','${frame.id}','${asset.id}')">Remove frame ${esc(frame.label)} guide</button>`
@@ -1806,7 +1805,7 @@ function guidedBlockingPanel(s) {
     setTimeout(() => maybeAutoReviewBlockingAttempts(s.id, ""), 0);
   const assistedOpen = !manualFirstWorkflow() || busy || operation?.status === "error";
   const historyNote = manualFirstWorkflow() && latest ? `<div class="guided-assisted-history-note"><b>Assisted history available</b><span>A previous blocking prompt is preserved inside Optional assisted blocking.</span></div>` : "";
-  const assisted = `${historyNote}<details class="guided-assisted-tools blocking-assisted-tools" ${assistedOpen ? "open" : ""}><summary><div><span>Optional assisted blocking</span><b>Build, generate, or automate a greyscale composition guide</b><small>Build a prompt to generate options manually, or run bounded blocking automation. Uploaded frames remain first-class.</small></div></summary><div class="guided-assisted-tools-body">${reviewTools}${typeof shotAutomationHub === "function" ? shotAutomationHub(s,"look") : ""}<div class="blocking-setup"><details class="guided-inline-defaults blocking-defaults"><summary>Adjust blocking defaults · auto emphasis · labels on</summary><div><label><span>Blocking target</span><select onchange="setBlockingField('${s.id}','blockingProfileId',this.value)">${creationProfileOptions("blocking", c.blockingProfileId)}</select></label><label><span>Emphasis</span><select onchange="setBlockingField('${s.id}','blockingEmphasis',this.value)"><option value="auto" ${c.blockingEmphasis === "auto" ? "selected" : ""}>Auto from shot</option><option value="full-scene" ${c.blockingEmphasis === "full-scene" ? "selected" : ""}>Full scene</option><option value="balanced" ${c.blockingEmphasis === "balanced" ? "selected" : ""}>Balanced</option><option value="action-insert" ${c.blockingEmphasis === "action-insert" ? "selected" : ""}>Action insert</option></select></label><label class="checkline"><input type="checkbox" ${c.blockingIncludeLabels ? "checked" : ""} onchange="setBlockingField('${s.id}','blockingIncludeLabels',this.checked)"> Include element labels</label></div></details><div class="blocking-build-actions"><button class="assemble-btn" ${busy ? "disabled" : ""} onclick="buildBlockingPrompt('${s.id}',false)">${busy && busyAction === "compile" ? "Compiling…" : latest ? "Rebuild prompt" : "Build prompt"}</button><button class="ghost-btn" ${busy ? "disabled" : ""} onclick="buildBlockingPrompt('${s.id}',true)"${aiDisabledAttrs("text")}>${busy && busyAction === "improve" ? "Improving…" : "Improve"}</button></div></div><p class="guided-assisted-action-note">Build Prompt reveals the paid Generate action. Automate Blocking below runs build → generate → review → revise → retry and selects the best passing guide.</p>${revision}${result}${typeof blockingAutomationPanel === "function" ? blockingAutomationPanel(s) : ""}</div></details>`;
+  const assisted = `${historyNote}<details class="guided-assisted-tools blocking-assisted-tools" ${assistedOpen ? "open" : ""}><summary><div><span>Optional assisted blocking</span><b>Build, generate, or automate a greyscale composition guide</b><small>Build a prompt to generate options manually, or run bounded blocking automation. Uploaded frames remain first-class.</small></div></summary><div class="guided-assisted-tools-body">${reviewTools}${typeof shotAutomationHub === "function" ? shotAutomationHub(s,"look") : ""}<div class="blocking-setup"><details class="guided-inline-defaults blocking-defaults"><summary>Adjust blocking defaults · auto emphasis · labels on</summary><div><label><span>Blocking target</span><select onchange="setBlockingField('${s.id}','blockingProfileId',this.value)">${creationProfileOptions("blocking", c.blockingProfileId)}</select></label><label><span>Emphasis</span><select onchange="setBlockingField('${s.id}','blockingEmphasis',this.value)"><option value="auto" ${c.blockingEmphasis === "auto" ? "selected" : ""}>Auto from shot</option><option value="full-scene" ${c.blockingEmphasis === "full-scene" ? "selected" : ""}>Full scene</option><option value="balanced" ${c.blockingEmphasis === "balanced" ? "selected" : ""}>Balanced</option><option value="action-insert" ${c.blockingEmphasis === "action-insert" ? "selected" : ""}>Action insert</option></select></label><label class="checkline"><input type="checkbox" ${c.blockingIncludeLabels ? "checked" : ""} onchange="setBlockingField('${s.id}','blockingIncludeLabels',this.checked)"> Include element labels</label></div></details><div class="blocking-build-actions"><button class="assemble-btn" ${busy ? "disabled" : ""} onclick="buildBlockingPrompt('${s.id}',false)">${busy && busyAction === "compile" ? "Compiling…" : latest ? "Rebuild prompt" : "Build prompt"}</button></div></div><p class="guided-assisted-action-note">Build Prompt reveals the paid Generate action. Automate Blocking below runs build → generate → review → revise → retry and selects the best passing guide.</p>${revision}${result}${typeof blockingAutomationPanel === "function" ? blockingAutomationPanel(s) : ""}</div></details>`;
   return `<details class="guided-work-panel blocking-work-panel" data-guided-panel="blocking" ${guidedPanelOpen(s, "blocking", !!active) ? "open" : ""} ontoggle="rememberGuidedPanel('${s.id}','blocking',this.open)"><summary><div><span>Blocking</span><b>${active ? "Composition guide active" : rows.length ? `${rows.length} blocking frame${rows.length === 1 ? "" : "s"} available` : "Add a board or simple layout frame"}</b><small>Plan camera, spacing, scale, pose and depth without borrowing finished visual design.</small></div><span class="guided-mode-pill ${active ? "ready" : ""}">${active ? "Guide active" : "Planning"}</span><i>⌄</i></summary><div class="guided-work-panel-body">${intake}${assisted}${active ? `<div class="blocking-guide-controls"><div><b>Active guide: ${esc(active.asset.title || active.asset.file)}</b><small>Geometry only: camera, crop, relative positions, scale, depth, pose and contact points. It does not define architecture, fence patterns, set layout, materials, lighting or style.</small></div><details class="guided-inline-defaults"><summary>Guide adherence: ${esc(c.blockingGuideAdherence || "strict")}</summary><label><span>Structure adherence</span><select onchange="setBlockingGuideAdherence('${s.id}',this.value)"><option value="strict" ${c.blockingGuideAdherence === "strict" ? "selected" : ""}>Strict structure</option><option value="balanced" ${c.blockingGuideAdherence === "balanced" ? "selected" : ""}>Balanced</option><option value="loose" ${c.blockingGuideAdherence === "loose" ? "selected" : ""}>Loose inspiration</option></select></label></details></div>` : ""}</div></details>`;
 }
 
@@ -1823,17 +1822,43 @@ window.downloadBlockingPrompt = (id, buildId) => {
 window.buildBlockingPrompt = async (id, improve = false) => {
   const s = shotById(id), c = ensureShotCreation(s), profileId = preferredCreationProfile("blocking", c.blockingProfileId);
   c.blockingProfileId = profileId;
+  /* A compile response may arrive after Blocking has been edited. Keep the
+     request, stored build and freshness witness on one authored snapshot. */
+  const blockingInputs = typeof packageBlockingInputs === "function" ? packageBlockingInputs(s) : null;
+  const projectContext = JSON.stringify(P.meta || {});
+  const blockingStyle = globalStylePrompt();
+  const requestInputs = {
+    blockingLabels: c.blockingIncludeLabels,
+    blockingEmphasis: c.blockingEmphasis,
+    blockingFrameBrief: blockingFrameBrief(s),
+    blockingDirection: blockingAdditionalDirection(s),
+    composition: c.composition ? JSON.parse(JSON.stringify(c.composition)) : null,
+    revisionRequest: c.blockingRevisionRequest || "",
+    revisedFromAssetId: c.blockingRevisionSourceAssetId || "",
+  };
   keepGuidedPanelOpen(s, "blocking");
   if (improve && !capabilityState("text").ready) return toast(capabilityState("text").message);
   const action = improve ? "improve" : "compile";
   setGuidedPromptOp("blocking", id, "", { status: "busy", action, startedAt: Date.now() });
   route();
   try {
+    /* The render can derive untouched frame-workflow defaults. Capture Canon after
+       that synchronous normalization, before the awaited compile response. */
+    const blockingCanonContext = typeof packageCanonContextInputs === "function"
+      ? packageCanonContextInputs(P, s, { kind: "blocking-frame", profileId, references: [] }) : null;
     const data = await guidedPromptRequest("/api/prompt/compile", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ shotId: id, profileId, purpose: "blocking", references: [], useLLM: false, improveBlocking: improve, blockingLabels: c.blockingIncludeLabels, blockingEmphasis: c.blockingEmphasis, blockingFrameBrief: blockingFrameBrief(s), blockingDirection: blockingAdditionalDirection(s), composition: c.composition }),
+      body: JSON.stringify({ shotId: id, profileId, purpose: "blocking", references: [], useLLM: false, improveBlocking: improve, blockingLabels: requestInputs.blockingLabels, blockingEmphasis: requestInputs.blockingEmphasis, blockingFrameBrief: requestInputs.blockingFrameBrief, blockingDirection: requestInputs.blockingDirection, composition: requestInputs.composition }),
     }, GUIDED_PROMPT_TIMEOUTS[improve ? "improve" : "compile"], improve ? "Blocking prompt improvement" : "Blocking prompt compilation");
+    if (blockingInputs && JSON.stringify(packageBlockingInputs(s)) !== JSON.stringify(blockingInputs))
+      throw new Error("Blocking direction changed while compiling. Rebuild from the current direction.");
+    if (projectContext !== JSON.stringify(P.meta || {}) || blockingStyle !== globalStylePrompt() ||
+        (blockingCanonContext && JSON.stringify(packageCanonContextInputs(P, s,
+          { kind: "blocking-frame", profileId, references: [] })) !== JSON.stringify(blockingCanonContext)))
+      throw new Error("Production context changed while compiling. Rebuild this blocking package.");
+    if (requestInputs.revisedFromAssetId !== (c.blockingRevisionSourceAssetId || ""))
+      throw new Error("Blocking revision source changed while compiling. Rebuild this blocking package.");
     const build = {
       id: `blocking-${Date.now().toString(36)}`,
       packageId: `${id}-BLOCKING-R${String(c.blockingBuilds.length + 1).padStart(2,"0")}`,
@@ -1850,13 +1875,20 @@ window.buildBlockingPrompt = async (id, improve = false) => {
       blockingPlan: data.blockingPlan || data.spec?.blockingPlan || null,
       blockingImprovementNotes: data.blockingImprovementNotes || [],
       llmUsed: !!data.llmUsed,
-      inputBrief: blockingFrameBrief(s),
-      additionalDirection: blockingAdditionalDirection(s),
-      revisionRequest: c.blockingRevisionRequest || "",
-      revisedFromAssetId: c.blockingRevisionSourceAssetId || "",
+      inputBrief: requestInputs.blockingFrameBrief,
+      additionalDirection: requestInputs.blockingDirection,
+      revisionRequest: requestInputs.revisionRequest,
+      revisedFromAssetId: requestInputs.revisedFromAssetId,
       kind: "blocking-frame",
       revision: c.blockingBuilds.length + 1,
     };
+    build.dependencySnapshot = typeof packageInputSnapshot === "function"
+      ? packageInputSnapshot(s, build, build.references, currentDirectionForPackage(s, build))
+      : null;
+    if (build.dependencySnapshot && blockingInputs)
+      build.dependencySnapshot.blockingInputs = blockingInputs;
+    if (build.dependencySnapshot && blockingCanonContext)
+      build.dependencySnapshot.canonContext = blockingCanonContext;
     c.blockingBuilds.push(build);
     setGuidedPromptOp("blocking", id, "", null);
     dirty();
@@ -3748,18 +3780,17 @@ function guidedFramePromptResult(s, frame, build, options = {}) {
   const prompt = String(build.prompt || "");
   const identity = `${esc(build.profileName || build.profileId)}`;
   const detail = `${esc(guidedPromptModeLabel(build.mode))}${build.references?.length ? ` · ${build.references.length} input${build.references.length === 1 ? "" : "s"}` : ""}${build.packageId ? ` · ${esc(build.packageId)}` : ""}`;
-  const utilities = `<div class="frame-prompt-utilities"><button class="text-link-btn" onclick="copyText(${JSON.stringify(prompt).replace(/"/g, "&quot;")})">Copy</button><button class="text-link-btn" onclick="downloadGuidedFramePrompt('${s.id}','${frame.id}','${build.id}')">Download</button></div>`;
+  const utilities = `<div class="frame-prompt-utilities">${String(build.profileId || "").startsWith("gpt-image-2/") ? `<button class="text-link-btn" onclick="openBraidyPromptReview('image','${attr(s.id)}','${attr(build.id)}','${attr(frame.id)}')">Improve with Braidy</button>` : ""}<button class="text-link-btn" onclick="copyText(${JSON.stringify(prompt).replace(/"/g, "&quot;")})">Copy</button><button class="text-link-btn" onclick="downloadGuidedFramePrompt('${s.id}','${frame.id}','${build.id}')">Download</button></div>`;
   /* Always open. Once a result is reviewable it is the PREPARATION as a whole — this
      block, its tools and the execution facts — that reduces to one summary, so a
      second collapsed layer inside it would put the prompt two clicks from the eye. */
-  return `<details class="frame-prompt-block" data-frame-prompt-phase="${attr(reviewable ? "returned" : "preparing")}" data-ui-state-key="frame-prompt:${attr(s.id)}:${attr(frame.id)}" open><summary class="frame-prompt-summary"><div><span>PREPARED PROMPT</span><b>${identity}</b><small>${detail} · ${prompt.length.toLocaleString()} characters</small></div><i class="compact-chevron">⌄</i></summary><div class="frame-prompt-body">${guidedPromptWarningsMarkup(build.warnings)}${guidedProductionRisksMarkup(build.productionRisks)}<div class="frame-prompt-preview"><pre class="frame-prompt-text">${esc(prompt)}</pre><details class="frame-prompt-expand" data-ui-state-key="frame-prompt-full:${attr(s.id)}:${attr(frame.id)}"><summary>Show the whole prompt</summary></details></div>${utilities}</div></details>`;
+  return `<details class="frame-prompt-block" data-frame-prompt-phase="${attr(reviewable ? "returned" : "preparing")}" data-ui-state-key="frame-prompt:${attr(s.id)}:${attr(frame.id)}" open><summary class="frame-prompt-summary"><div><span>${build.braidyReview ? "BRAIDY-REVIEWED TARGET PACKAGE" : "PREPARED TARGET PACKAGE"}</span><b>${identity}</b><small>${detail} · ${prompt.length.toLocaleString()} characters</small></div><i class="compact-chevron">⌄</i></summary><div class="frame-prompt-body">${guidedPromptWarningsMarkup(build.warnings)}${guidedProductionRisksMarkup(build.productionRisks)}<p class="braidy-scope">The frame description remains authoring intent. Native request review recompiles the exact provider text before any generation.</p><div class="frame-prompt-preview"><pre class="frame-prompt-text">${esc(prompt)}</pre><details class="frame-prompt-expand" data-ui-state-key="frame-prompt-full:${attr(s.id)}:${attr(frame.id)}"><summary>Show the whole prompt</summary></details></div>${utilities}</div></details>`;
 }
 /* ---------------------------------------------------------------------------
    2. THE TOOLS THAT BUILT IT, subordinate once there is something to run.
 
    Every control here is the one that was already on the card: the same target select,
-   the same deterministic Build, the same optional Braidy Improve with the same
-   capability gate, the same additional-direction field and the same previous-frame
+   the same deterministic Build, the same additional-direction field and the same previous-frame
    input toggle. What changed is that they no longer stand between the filmmaker and the
    prompt they already have.
 
@@ -3774,14 +3805,9 @@ function guidedFramePromptTools(s, frame, index, state, refs, mode, profileId, b
   const missingCount = frameIncludedMissingInputs(s, frame.id).length;
   const inputs = `<div class="guided-frame-input-summary"><button onclick="openGuidedPanel('${s.id}','inputs')"><b>${refs.filter((ref) => ref.url).length}</b><span>approved input${refs.filter((ref) => ref.url).length === 1 ? "" : "s"}</span></button><span>${missingCount ? `${missingCount} selected input${missingCount === 1 ? " needs" : "s need"} approval or exclusion` : "Inputs ready"}</span></div>`;
   const direction = `<details class="guided-shot-options" data-ui-state-key="frame-direction:${attr(s.id)}:${attr(frame.id)}" ${(state.staging || state.camera || state.notes) ? "open" : ""}><summary>Additional prompt direction</summary>${field("Optional direction", `<textarea data-focus-key="frame-direction:${attr(s.id)}:${attr(frame.id)}" placeholder="Placement, camera, contact points, or anything that must stay unchanged." onchange="setGuidedFrameAdditionalDirection('${s.id}','${frame.id}',this.value)">${esc([state.staging,state.camera,state.notes].filter(Boolean).join("\n"))}</textarea>`)}</details>`;
-  const compile = `<div class="guided-compile-bar guided-frame-compile"><details class="guided-inline-defaults" data-ui-state-key="frame-target:${attr(s.id)}:${attr(frame.id)}"><summary>Target: ${target}</summary><label><span>Image target</span><select data-focus-key="frame-target:${attr(s.id)}:${attr(frame.id)}" ${busy ? "disabled" : ""} onchange="setGuidedFrameField('${s.id}','${frame.id}','profileId',this.value)">${creationProfileOptions(mode, profileId)}</select></label></details><div><button class="assemble-btn" ${busy ? "disabled" : ""} onclick="buildGuidedFramePrompt('${s.id}','${frame.id}',false)">${busy && busyLabel === "compile" ? `<span class="spin">◌</span> Compiling…` : hasBuild ? "Rebuild prompt" : "Build prompt"}</button><button class="ghost-btn" ${busy ? "disabled" : ""} onclick="buildGuidedFramePrompt('${s.id}','${frame.id}',true)"${aiDisabledAttrs("text")}>${busy && busyLabel === "improve" ? `<span class="spin">◌</span> Improving…` : "Improve"}</button></div></div>`;
-  const assistant = typeof capabilityState === "function" ? capabilityState("text") : { ready: true };
-  /* Concise, local, and it still reaches the setup detail it always did. The full
-     assistant-setup explanation used to sit in the execution path's way. */
-  const assistantNote = assistant.ready
-    ? ""
-    : `<p class="frame-prompt-tools-note">Improve uses the optional Braidy assistant, which is unavailable right now. ${esc(assistant.message || "")} <a href="#/settings">Assistant setup →</a></p>`;
-  return `<details class="frame-prompt-tools" data-ui-state-key="frame-prompt-tools:${attr(s.id)}:${attr(frame.id)}"><summary><span>Prompt tools</span><small>${hasBuild ? "Rebuild, improve, retarget, or add direction" : "Build the prompt CineBraid will run"}</small><i class="compact-chevron">⌄</i></summary><div class="frame-prompt-tools-body">${previousToggle}${inputs}${direction}${compile}${assistantNote}</div></details>`;
+  const compile = `<div class="guided-compile-bar guided-frame-compile"><details class="guided-inline-defaults" data-ui-state-key="frame-target:${attr(s.id)}:${attr(frame.id)}"><summary>Target: ${target}</summary><label><span>Image target</span><select data-focus-key="frame-target:${attr(s.id)}:${attr(frame.id)}" ${busy ? "disabled" : ""} onchange="setGuidedFrameField('${s.id}','${frame.id}','profileId',this.value)">${creationProfileOptions(mode, profileId)}</select></label></details><div><button class="assemble-btn" ${busy ? "disabled" : ""} onclick="buildGuidedFramePrompt('${s.id}','${frame.id}',false)">${busy && busyLabel === "compile" ? `<span class="spin">◌</span> Compiling…` : hasBuild ? "Rebuild prompt" : "Build prompt"}</button></div></div>`;
+  const assistantNote = "";
+  return `<details class="frame-prompt-tools" data-ui-state-key="frame-prompt-tools:${attr(s.id)}:${attr(frame.id)}"><summary><span>Prompt tools</span><small>${hasBuild ? "Rebuild, retarget, or add direction" : "Build the prompt CineBraid will run"}</small><i class="compact-chevron">⌄</i></summary><div class="frame-prompt-tools-body">${previousToggle}${inputs}${direction}${compile}${assistantNote}</div></details>`;
 }
 
 /* ---------------------------------------------------------------------------
@@ -3956,7 +3982,7 @@ function guidedFrameGenerationSection(s, frame, index, step, state, refs, mode, 
   const promptArea = busy
     ? assistantWorkingCard(busyLabel === "improve" ? "Improving the frame prompt for this model…" : "Compiling the frame prompt…", busyLabel === "improve" ? "The assistant may take up to three minutes per attempt. It is checking the shot, numbered references, camera, staging, and model-specific format." : "The deterministic compiler is assembling the approved inputs and production constraints.", { mode: busyLabel === "improve" ? "assistant" : "compile" })
     : error
-      ? guidedPromptErrorMarkup(operation.error, `buildGuidedFramePrompt('${s.id}','${frame.id}',${busyLabel === "improve" ? "true" : "false"})`)
+      ? guidedPromptErrorMarkup(operation.error, `buildGuidedFramePrompt('${s.id}','${frame.id}',false)`)
       : build
         ? guidedFramePromptResult(s, frame, build, { reviewable })
         : `<p class="frame-prompt-missing">No prompt has been built for this frame yet. Build one below, or import an image instead — generation is optional.</p>`;
@@ -4969,7 +4995,7 @@ function motionPromptCharacterLimit(build) {
   const budget = Number(limits.maxPromptCharacters);
   return Number.isFinite(budget) && budget > 0 ? budget : 12000;
 }
-function createManualMotionPromptRevision(shotId, buildId, prompt, reason = "") {
+function createManualMotionPromptRevision(shotId, buildId, prompt, reason = "", options = {}) {
   const s = shotById(shotId), c = s && ensureShotCreation(s);
   if (!s || !c) throw new Error("Shot is unavailable");
   const source = resolvePromptBuildList(P, c.motionPromptBuilds || []).find((item) => item.id === buildId);
@@ -4978,10 +5004,12 @@ function createManualMotionPromptRevision(shotId, buildId, prompt, reason = "") 
   if (!edited) throw new Error("Motion prompt cannot be empty");
   const limit = motionPromptCharacterLimit(source);
   if (edited.length > limit) throw new Error(`${source.profileName || source.profileId || "This model"} allows a maximum of ${limit.toLocaleString()} prompt characters in CineBraid.`);
-  if (edited === String(source.prompt || "").trim()) return source;
+  if (edited === String(source.prompt || "").trim() && !options.force) return source;
   const sequence = (c.motionPromptBuilds || []).length + 1;
   const packageId = `${shotId}-MOTION-R${String(sequence).padStart(2, "0")}`;
   const revised = JSON.parse(JSON.stringify(source));
+  /* A new human edit keeps its Braidy parent in history but carries no old advisory receipt. */
+  delete revised.braidyReview;
   revised.id = `guided-motion-manual-${Date.now().toString(36)}`;
   revised.packageId = packageId;
   revised.date = new Date().toISOString();
@@ -5060,7 +5088,7 @@ function guidedMotionPromptResult(s, build) {
       ? `${build.references?.length || 0} assigned reference${build.references?.length === 1 ? "" : "s"}`
       : `Approved frame${(build.references?.length || 1) > 1 ? "s" : ""} packaged · ${build.references?.length || 1} input${build.references?.length === 1 ? "" : "s"}`;
   const revision = changed
-    ? `<details class="guided-motion-revision-details"><summary>Review revised motion direction</summary><div class="guided-motion-revision"><div><span>CLEAN SOURCE DIRECTION</span><p>${esc(build.originalDirective || "")}</p></div><div><span>REVISED MOTION DIRECTION</span><p>${esc(build.improvedDirective || "")}</p>${build.improvementNotes?.length ? `<ul>${build.improvementNotes.map((note) => `<li>${esc(note)}</li>`).join("")}</ul>` : ""}<button class="chip" onclick="acceptGuidedMotionRevision('${s.id}','${build.id}')">REPLACE MOTION BRIEF</button></div></div></details>`
+    ? `<details class="guided-motion-revision-details"><summary>Review revised motion direction</summary><div class="guided-motion-revision"><div><span>CLEAN SOURCE DIRECTION</span><p>${esc(build.originalDirective || "")}</p></div><div><span>REVISED MOTION DIRECTION</span><p>${esc(build.improvedDirective || "")}</p>${build.improvementNotes?.length ? `<ul>${build.improvementNotes.map((note) => `<li>${esc(note)}</li>`).join("")}</ul>` : ""}</div></div></details>`
     : build.sourceDirectiveSanitized
       ? `<div class="guided-prompt-recovery">Legacy compiler boilerplate was removed from the saved motion brief before this prompt was built.</div>`
       : "";
@@ -5095,7 +5123,7 @@ function guidedMotionPromptResult(s, build) {
          than only the advice, and carries the PRIMARY action that lifts it, beside
          the exact reasons it is stale. */
       : `<div class="package-stale" data-package-freshness="stale"><b>OUT OF DATE — REBUILD BEFORE GENERATING</b><span>${esc(freshness.reasons.join("; "))}. Generation stays unavailable until this package is rebuilt.</span><button class="approve-btn" onclick="buildGuidedMotionPrompt('${attr(s.id)}',false)">REBUILD MOTION PROMPT</button></div>`;
-  return `<article class="guided-prompt-result motion ${profile?.family === "minimax-h3" ? "h3" : ""}${freshness.recorded && !freshness.current ? " is-stale" : ""}"><header><div><span>READY-TO-USE MOTION PROMPT</span><b>${esc(build.profileName || build.profileId)}</b><small>${esc(inputSummary)}${build.durationSeconds ? ` · ${build.durationSeconds}s` : ""}${build.packageId ? ` · ${esc(build.packageId)}` : ""}${build.manualEdited ? " · MANUAL REVISION" : ""}</small></div><div>${h3Action}<button class="ghost-btn motion-prompt-edit-btn" onclick="openGuidedMotionPromptEditor('${s.id}','${build.id}')">EDIT PROMPT</button><button class="copy-btn" onclick="copyText(${JSON.stringify(build.prompt || "").replace(/"/g, "&quot;")})">COPY</button><button class="chip" onclick="downloadGuidedMotionPrompt('${s.id}','${build.id}')">Download</button></div></header>${freshnessMarkup}${unsupported}${h3Job}<pre class="guided-ready-motion-prompt">${esc(build.prompt || "")}</pre>${revision}${guidedPromptWarningsMarkup(build.warnings)}${guidedProductionRisksMarkup(build.productionRisks)}</article>`;
+  return `<article class="guided-prompt-result motion ${profile?.family === "minimax-h3" ? "h3" : ""}${freshness.recorded && !freshness.current ? " is-stale" : ""}"><header><div><span>${build.braidyReview ? "BRAIDY-REVIEWED TARGET PACKAGE" : "PREPARED TARGET PACKAGE"}</span><b>${esc(build.profileName || build.profileId)}</b><small>${esc(inputSummary)}${build.durationSeconds ? ` · ${build.durationSeconds}s` : ""}${build.packageId ? ` · ${esc(build.packageId)}` : ""}${build.manualEdited ? " · MANUAL REVISION" : ""}</small></div><div>${h3Action}${profile?.family === "minimax-h3" ? `<button class="ghost-btn" onclick="openBraidyPromptReview('h3','${attr(s.id)}','${attr(build.id)}')">Improve with Braidy</button>` : ""}<button class="ghost-btn motion-prompt-edit-btn" onclick="openGuidedMotionPromptEditor('${s.id}','${build.id}')">EDIT PROMPT</button><button class="copy-btn" onclick="copyText(${JSON.stringify(build.prompt || "").replace(/"/g, "&quot;")})">COPY</button><button class="chip" onclick="downloadGuidedMotionPrompt('${s.id}','${build.id}')">Download</button></div></header>${freshnessMarkup}${unsupported}${h3Job}<p class="braidy-scope">Production direction remains on the shot. This is a saved target package; normal request review recompiles the exact provider plan and shows the text to be sent.</p><pre class="guided-ready-motion-prompt">${esc(build.prompt || "")}</pre>${revision}${guidedPromptWarningsMarkup(build.warnings)}${guidedProductionRisksMarkup(build.productionRisks)}</article>`;
 }
 /* EV2-7 — VIDEO IMPORT, NOT A WALL OF PLAYERS.
  *
@@ -5220,7 +5248,7 @@ function guidedMotionNextAction(s, profile, approvedFrames, available, blockedRe
     ${refusal ? `<p class="prompt-check warn">${esc(refusal)}</p>` : ""}
     ${!available ? `<p class="prompt-check warn">${esc(blockedReason)}</p>` : ""}
     ${guidedExcludedInputsNotice(s)}
-    ${available && !refusal ? `<details><summary>How video generation starts</summary><p>Choose the video model and duration, write motion direction, then <b>Build prompt</b>. Building prepares the request without a generation charge. <b>Review video request</b> appears beside the built prompt and opens model, inputs and cost review. Only <b>Generate video</b> in that review dispatches the paid video request. Improve is optional and uses your configured assistant.</p></details>` : `<p>After resolving prerequisites and choosing a compatible model, prepare a prompt and review the model, inputs and provider cost before submitting a paid video request.</p>`}
+    ${available && !refusal ? `<details><summary>How video generation starts</summary><p>Write authoring direction for the shot, choose the target and duration, then <b>Build prompt</b>. Building deterministically prepares a target package without a generation charge. <b>Review video request</b> appears beside the built prompt and opens model, inputs and cost review. Only <b>Generate video</b> in that review dispatches the paid video request. After Build, <b>Improve with Braidy</b> optionally proposes a target-only revision. The normal review shows the exact text CineBraid will send.</p></details>` : `<p>After resolving prerequisites and choosing a compatible model, prepare a prompt and review the model, inputs and provider cost before submitting a paid video request.</p>`}
     <small>The numbered sections below are places to work, not three required steps. Video import is an alternative for an existing finished video.</small></section>`;
 }
 window.openGuidedMotionPreparation = async (id, chooseModel = false) => {
@@ -5314,9 +5342,9 @@ function guidedMotionPanel(s, current, takes, open = false) {
   const operationBody = busy
     ? assistantWorkingCard(busyLabel === "improve" ? `Adapting motion and audio for ${profile?.name || profileId}…` : "Compiling the motion prompt…", busyLabel === "improve" ? "The assistant may take up to three minutes per attempt. It is preserving the approved frame while cleaning chronology, motion, and supplied audio intent." : "The deterministic compiler is formatting the motion plan for the selected video target.", { mode: busyLabel === "improve" ? "assistant" : "compile" })
     : operation?.status === "error"
-      ? guidedPromptErrorMarkup(operation.error, `buildGuidedMotionPrompt('${s.id}',${busyLabel === "improve" ? "true" : "false"})`)
+      ? guidedPromptErrorMarkup(operation.error, `buildGuidedMotionPrompt('${s.id}',false)`)
       : `<div class="guided-motion-result-slot">${latest ? guidedMotionPromptResult(s, latest) : `<div class="guided-next-note"><b>Optional:</b> build a motion prompt when you need help creating another video.</div>`}</div>`;
-  return `<details id="guided-motion-workspace-${attr(s.id)}" class="guided-work-panel guided-motion-card" data-guided-panel="motion" ${guidedPanelOpen(s, "motion", open) ? "open" : ""} ontoggle="rememberGuidedPanel('${s.id}','motion',this.open)"><summary><div><span>Motion · ${motionStage?.optional === false ? "required" : "optional"}</span><b>${esc(label)}</b><small>Make a shot frame to animate, prepare a new video, or import an existing video.</small></div><span class="guided-mode-pill ${approved ? "ready" : ""}">${approved ? "Approved" : needsApprovedStill && approvedFrames.length > 1 ? `${approvedFrames.length} frames ready` : needsApprovedStill ? "Start frame ready" : guidedEffectiveVideoMode(s, c, unit) === "t2v" ? "No frames needed" : "Check model inputs"}</span><i>⌄</i></summary><div class="guided-work-panel-body">${guidedMotionNextAction(s, profile, approvedFrames, generationAvailable, generationBlockedReason, intentRefusal)}${(typeof stillAutomationCompletionClaim === "function" ? stillAutomationCompletionClaim(s) : false) ? `<div class="automation-motion-ready"><span>STILL AUTOMATION COMPLETE</span><b>${approvedFrames.length > 1 ? `${approvedFrames.length} approved frames are ready for a first/last-frame or multi-frame video.` : "The approved start frame is ready for image-to-video."}</b><small>Choose the video target, direct motion, build or improve the motion prompt, then generate the video manually. Motion is never submitted by the still-automation runner.</small></div>` : ""}<nav class="motion-workflow-map" aria-label="Motion workflow sections"><button type="button" onclick="scrollGuidedMotionSection('${attr(s.id)}','frames')"><span>1</span><b>Approved frames</b><small>${approvedFrames.length} ready</small></button><button type="button" onclick="scrollGuidedMotionSection('${attr(s.id)}','results')"><span>2</span><b>Video import</b><small>${videos.length} video${videos.length === 1 ? "" : "s"}</small></button><button type="button" onclick="scrollGuidedMotionSection('${attr(s.id)}','create')"><span>3</span><b>Create motion</b><small>${esc(profile?.name || profileId)}</small></button></nav><section class="motion-workflow-section approved-motion-frames" id="motion-frames-${attr(s.id)}"><div class="motion-section-heading"><span>1 · Approved frames</span><div><b>Choose the visual anchors for motion</b><small>Click any frame to inspect it at a useful size. H3 keyframes and first/last-frame packages use these approved images.</small></div><i>${approvedFrames.length} ready</i></div><div class="guided-motion-frame-strip">${approvedFrames.map(({frame,take}, index) => { const title = `Frame ${frame.label} · ${take.name}`; return `<article><button type="button" class="guided-motion-frame-preview" onclick="openMediaTheatre('${attr(encodeURIComponent(take.url))}','${attr(encodeURIComponent(title))}','image')" aria-label="View approved Frame ${esc(frame.label)} larger"><img src="${attr(take.url)}" alt="Approved Frame ${esc(frame.label)}"><span>${index === 0 ? "START" : index === approvedFrames.length - 1 ? "END" : `FRAME ${esc(frame.label)}`}</span><em>View larger</em></button><b>Frame ${esc(frame.label)}</b></article>`; }).join("")}</div>${guidedH3KeyframePanel(s, profile)}</section>${guidedMotionCandidatePanel(s, takes, approved)}<section class="motion-workflow-section motion-create-section" id="motion-create-${attr(s.id)}"><div class="motion-section-heading"><span>3 · Assisted motion</span><div><b>Direct movement and build the provider prompt</b><small>Open only the part you need. Existing finished video can skip this entire section.</small></div><i>Optional</i></div><details class="guided-assisted-tools motion-assisted-tools" ${guidedPanelOpen(s, "motionCreate", !manualFirstWorkflow()) ? "open" : ""} ontoggle="rememberGuidedPanel('${s.id}','motionCreate',this.open)"><summary><div><span>Optional assisted creation</span><b>Direct motion or build a video prompt</b><small>Imported video and audio can be approved without using these tools.</small></div></summary><div class="guided-motion-main"><details class="motion-director" ${guidedPanelOpen(s, "motionDirector", false) ? "open" : ""} ontoggle="rememberGuidedPanel('${s.id}','motionDirector',this.open)"><summary>Direct motion <span>structured controls</span></summary>${motionDirectorMap(s,c)}<div class="motion-director-camera"><label><span>Camera move</span><select onchange="setMotionPlanField('${s.id}','camera','move',this.value)">${composerOptions([["locked","Locked off"],["static-handheld","Static handheld"],["pan","Pan"],["tilt","Tilt"],["push-in","Push in"],["pull-back","Pull back"],["dolly","Dolly / truck"],["arc","Arc"],["follow-subject","Follow subject"],["subtle-drift","Subtle drift"]], c.motionPlan.camera.move)}</select></label><label><span>Direction</span><select onchange="setMotionPlanField('${s.id}','camera','direction',this.value)">${composerOptions([["","Not specified"],["left","Left"],["right","Right"],["up","Up"],["down","Down"],["clockwise","Clockwise"],["counterclockwise","Counterclockwise"]], c.motionPlan.camera.direction)}</select></label><label><span>Strength</span><select onchange="setMotionPlanField('${s.id}','camera','intensity',this.value)">${composerOptions([["subtle","Subtle"],["moderate","Moderate"],["strong","Strong"]], c.motionPlan.camera.intensity)}</select></label><label><span>Style</span><select onchange="setMotionPlanField('${s.id}','camera','style',this.value)">${composerOptions([["smooth","Smooth"],["handheld","Handheld"],["documentary","Documentary"],["mechanical","Mechanical"],["floating","Floating"],["abrupt","Abrupt"]], c.motionPlan.camera.style)}</select></label><label><span>Framing</span><select onchange="setMotionPlanField('${s.id}','camera','framing',this.value)">${composerOptions([["preserve","Preserve composition"],["preserve-loosely","Preserve loosely"],["allow-reframe","Allow reframing"]], c.motionPlan.camera.framing)}</select></label></div><div class="motion-director-subjects">${motionSubjectControls(s,c)}${motionPropControls(s,c)}</div><div class="motion-director-environment"><label><span>Environment</span><select onchange="setMotionPlanField('${s.id}','environment','action',this.value)">${composerOptions([["static","Static"],["wind","Wind / fabric"],["rain","Rain"],["smoke","Smoke / steam"],["traffic","Traffic"],["crowd","Crowd background"],["light-flicker","Light flicker"],["water","Water / ripple"],["dust","Dust / atmosphere"]], c.motionPlan.environment.action)}</select></label><label><span>Intensity</span><select onchange="setMotionPlanField('${s.id}','environment','intensity',this.value)">${composerOptions([["subtle","Subtle"],["moderate","Moderate"],["strong","Strong"]], c.motionPlan.environment.intensity)}</select></label><label class="wide"><span>Environment note</span><input value="${attr(c.motionPlan.environment.notes || "")}" onchange="setMotionPlanField('${s.id}','environment','notes',this.value)" placeholder="Only distant traffic moves; foreground remains still…"></label></div><div class="motion-director-timing"><label><span>Onset</span><select onchange="setMotionPlanField('${s.id}','timing','onset',this.value)">${composerOptions([["immediate","Immediate"],["delayed","Delayed"],["gradual","Gradual"]], c.motionPlan.timing.onset)}</select></label><label><span>Pacing</span><select onchange="setMotionPlanField('${s.id}','timing','pacing',this.value)">${composerOptions([["slow","Slow"],["natural","Natural"],["brisk","Brisk"]], c.motionPlan.timing.pacing)}</select></label><label class="checkline"><input type="checkbox" ${c.motionPlan.timing.holdEnd ? "checked" : ""} onchange="setMotionPlanField('${s.id}','timing','holdEnd',this.checked)"> Hold final state</label><label class="wide"><span>Optional secondary action</span><input value="${attr(c.motionPlan.timing.secondary || "")}" onchange="setMotionPlanField('${s.id}','timing','secondary',this.value)" placeholder="A light flickers once after the character stops…"></label></div></details>${field("Additional motion direction", `<textarea class="guided-motion-editor" placeholder="Only add details not covered by the controls above." onchange="setGuidedMotionField('${s.id}','motionDirection',this.value)">${esc(direction)}</textarea>`)}<details class="guided-inline-defaults motion-defaults"><summary>Motion defaults: ${esc(String(c.motionIntensity || "subtle").replace(/-/g," "))}${c.preserveComposition ? " · preserve composition" : ""}</summary><div class="guided-motion-detail-grid"><label><span>Overall intensity</span><select onchange="setGuidedMotionField('${s.id}','motionIntensity',this.value)">${["nearly-still","subtle","moderate","active","highly-dynamic"].map((x) => `<option value="${x}" ${c.motionIntensity === x ? "selected" : ""}>${x.replace(/-/g," ")}</option>`).join("")}</select></label><label class="checkline"><input type="checkbox" ${c.preserveComposition ? "checked" : ""} onchange="setGuidedMotionField('${s.id}','preserveComposition',this.checked)"> Preserve composition and identity</label></div></details>${guidedAudioPanel(s,c,profile,audioRefs)}<div class="guided-motion-controls"><label><span>Duration</span><input type="number" min="${durationMin}" max="${durationMax}" value="${duration}" onchange="setGuidedMotionField('${s.id}','motionDuration',+this.value)"><small>${durationMin}–${durationMax}s for this target${profile?.mode === "r2v" ? "; use chained clips for longer shots" : ""}</small></label><label class="guided-video-target-control"><span>Video model and workflow</span><select ${busy ? "disabled" : ""} data-intent-route="${attr(intentRoute)}" onchange="setGuidedMotionField('${s.id}','motionProfileId',this.value)">${guidedVideoProfileOptions(profileId, intentRoute)}</select><small>${guidedVideoProfileCount()} of ${guidedVideoProfiles().length} written-up targets can be generated from CineBraid today. The rest stay listed, and say why they cannot run.${intentRoute ? ` This shot's intent narrows that to ${guidedIntentVideoProfileCount(intentRoute)}; change the intent above the workspace to widen it again.` : ""}</small></label>${guidedVideoProfileRefusalMarkup(profile, s)}<div><button class="assemble-btn" ${busy || intentRefusal ? "disabled" : ""}${intentRefusal ? ` aria-describedby="${attr(intentRefusalId)}"` : ""} onclick="buildGuidedMotionPrompt('${s.id}',false)">${busy ? `<span class="spin">◌</span> WORKING…` : "Build prompt"}</button><button class="ghost-btn" ${busy || intentRefusal ? "disabled" : ""}${intentRefusal ? ` aria-describedby="${attr(intentRefusalId)}"` : ""} onclick="buildGuidedMotionPrompt('${s.id}',true)"${aiDisabledAttrs("text")}>${busy ? `<span class="spin">◌</span> Improving…` : "Improve"}</button></div></div>${operationBody}</div></details></section></div></details>`;
+  return `<details id="guided-motion-workspace-${attr(s.id)}" class="guided-work-panel guided-motion-card" data-guided-panel="motion" ${guidedPanelOpen(s, "motion", open) ? "open" : ""} ontoggle="rememberGuidedPanel('${s.id}','motion',this.open)"><summary><div><span>Motion · ${motionStage?.optional === false ? "required" : "optional"}</span><b>${esc(label)}</b><small>Make a shot frame to animate, prepare a new video, or import an existing video.</small></div><span class="guided-mode-pill ${approved ? "ready" : ""}">${approved ? "Approved" : needsApprovedStill && approvedFrames.length > 1 ? `${approvedFrames.length} frames ready` : needsApprovedStill ? "Start frame ready" : guidedEffectiveVideoMode(s, c, unit) === "t2v" ? "No frames needed" : "Check model inputs"}</span><i>⌄</i></summary><div class="guided-work-panel-body">${guidedMotionNextAction(s, profile, approvedFrames, generationAvailable, generationBlockedReason, intentRefusal)}${(typeof stillAutomationCompletionClaim === "function" ? stillAutomationCompletionClaim(s) : false) ? `<div class="automation-motion-ready"><span>STILL AUTOMATION COMPLETE</span><b>${approvedFrames.length > 1 ? `${approvedFrames.length} approved frames are ready for a first/last-frame or multi-frame video.` : "The approved start frame is ready for image-to-video."}</b><small>Choose the target, author motion, compile a deterministic package, then optionally review a Braidy proposal before generation. Motion is never submitted by the still-automation runner.</small></div>` : ""}<nav class="motion-workflow-map" aria-label="Motion workflow sections"><button type="button" onclick="scrollGuidedMotionSection('${attr(s.id)}','frames')"><span>1</span><b>Approved frames</b><small>${approvedFrames.length} ready</small></button><button type="button" onclick="scrollGuidedMotionSection('${attr(s.id)}','results')"><span>2</span><b>Video import</b><small>${videos.length} video${videos.length === 1 ? "" : "s"}</small></button><button type="button" onclick="scrollGuidedMotionSection('${attr(s.id)}','create')"><span>3</span><b>Create motion</b><small>${esc(profile?.name || profileId)}</small></button></nav><section class="motion-workflow-section approved-motion-frames" id="motion-frames-${attr(s.id)}"><div class="motion-section-heading"><span>1 · Approved frames</span><div><b>Choose the visual anchors for motion</b><small>Click any frame to inspect it at a useful size. H3 keyframes and first/last-frame packages use these approved images.</small></div><i>${approvedFrames.length} ready</i></div><div class="guided-motion-frame-strip">${approvedFrames.map(({frame,take}, index) => { const title = `Frame ${frame.label} · ${take.name}`; return `<article><button type="button" class="guided-motion-frame-preview" onclick="openMediaTheatre('${attr(encodeURIComponent(take.url))}','${attr(encodeURIComponent(title))}','image')" aria-label="View approved Frame ${esc(frame.label)} larger"><img src="${attr(take.url)}" alt="Approved Frame ${esc(frame.label)}"><span>${index === 0 ? "START" : index === approvedFrames.length - 1 ? "END" : `FRAME ${esc(frame.label)}`}</span><em>View larger</em></button><b>Frame ${esc(frame.label)}</b></article>`; }).join("")}</div>${guidedH3KeyframePanel(s, profile)}</section>${guidedMotionCandidatePanel(s, takes, approved)}<section class="motion-workflow-section motion-create-section" id="motion-create-${attr(s.id)}"><div class="motion-section-heading"><span>3 · Assisted motion</span><div><b>Author motion, then compile the target request</b><small>Open only the part you need. Existing finished video can skip this entire section.</small></div><i>Optional</i></div><details class="guided-assisted-tools motion-assisted-tools" ${guidedPanelOpen(s, "motionCreate", !manualFirstWorkflow()) ? "open" : ""} ontoggle="rememberGuidedPanel('${s.id}','motionCreate',this.open)"><summary><div><span>Optional assisted creation</span><b>Direct motion or build a video prompt</b><small>Imported video and audio can be approved without using these tools.</small></div></summary><div class="guided-motion-main"><details class="motion-director" ${guidedPanelOpen(s, "motionDirector", false) ? "open" : ""} ontoggle="rememberGuidedPanel('${s.id}','motionDirector',this.open)"><summary>Direct motion <span>structured controls</span></summary>${motionDirectorMap(s,c)}<div class="motion-director-camera"><label><span>Camera move</span><select onchange="setMotionPlanField('${s.id}','camera','move',this.value)">${composerOptions([["locked","Locked off"],["static-handheld","Static handheld"],["pan","Pan"],["tilt","Tilt"],["push-in","Push in"],["pull-back","Pull back"],["dolly","Dolly / truck"],["arc","Arc"],["follow-subject","Follow subject"],["subtle-drift","Subtle drift"]], c.motionPlan.camera.move)}</select></label><label><span>Direction</span><select onchange="setMotionPlanField('${s.id}','camera','direction',this.value)">${composerOptions([["","Not specified"],["left","Left"],["right","Right"],["up","Up"],["down","Down"],["clockwise","Clockwise"],["counterclockwise","Counterclockwise"]], c.motionPlan.camera.direction)}</select></label><label><span>Strength</span><select onchange="setMotionPlanField('${s.id}','camera','intensity',this.value)">${composerOptions([["subtle","Subtle"],["moderate","Moderate"],["strong","Strong"]], c.motionPlan.camera.intensity)}</select></label><label><span>Style</span><select onchange="setMotionPlanField('${s.id}','camera','style',this.value)">${composerOptions([["smooth","Smooth"],["handheld","Handheld"],["documentary","Documentary"],["mechanical","Mechanical"],["floating","Floating"],["abrupt","Abrupt"]], c.motionPlan.camera.style)}</select></label><label><span>Framing</span><select onchange="setMotionPlanField('${s.id}','camera','framing',this.value)">${composerOptions([["preserve","Preserve composition"],["preserve-loosely","Preserve loosely"],["allow-reframe","Allow reframing"]], c.motionPlan.camera.framing)}</select></label></div><div class="motion-director-subjects">${motionSubjectControls(s,c)}${motionPropControls(s,c)}</div><div class="motion-director-environment"><label><span>Environment</span><select onchange="setMotionPlanField('${s.id}','environment','action',this.value)">${composerOptions([["static","Static"],["wind","Wind / fabric"],["rain","Rain"],["smoke","Smoke / steam"],["traffic","Traffic"],["crowd","Crowd background"],["light-flicker","Light flicker"],["water","Water / ripple"],["dust","Dust / atmosphere"]], c.motionPlan.environment.action)}</select></label><label><span>Intensity</span><select onchange="setMotionPlanField('${s.id}','environment','intensity',this.value)">${composerOptions([["subtle","Subtle"],["moderate","Moderate"],["strong","Strong"]], c.motionPlan.environment.intensity)}</select></label><label class="wide"><span>Environment note</span><input value="${attr(c.motionPlan.environment.notes || "")}" onchange="setMotionPlanField('${s.id}','environment','notes',this.value)" placeholder="Only distant traffic moves; foreground remains still…"></label></div><div class="motion-director-timing"><label><span>Onset</span><select onchange="setMotionPlanField('${s.id}','timing','onset',this.value)">${composerOptions([["immediate","Immediate"],["delayed","Delayed"],["gradual","Gradual"]], c.motionPlan.timing.onset)}</select></label><label><span>Pacing</span><select onchange="setMotionPlanField('${s.id}','timing','pacing',this.value)">${composerOptions([["slow","Slow"],["natural","Natural"],["brisk","Brisk"]], c.motionPlan.timing.pacing)}</select></label><label class="checkline"><input type="checkbox" ${c.motionPlan.timing.holdEnd ? "checked" : ""} onchange="setMotionPlanField('${s.id}','timing','holdEnd',this.checked)"> Hold final state</label><label class="wide"><span>Optional secondary action</span><input value="${attr(c.motionPlan.timing.secondary || "")}" onchange="setMotionPlanField('${s.id}','timing','secondary',this.value)" placeholder="A light flickers once after the character stops…"></label></div></details>${field("Authoring / production direction", `<textarea class="guided-motion-editor" placeholder="Only add details not covered by the controls above." onchange="setGuidedMotionField('${s.id}','motionDirection',this.value)">${esc(direction)}</textarea>`)}<details class="guided-inline-defaults motion-defaults"><summary>Motion defaults: ${esc(String(c.motionIntensity || "subtle").replace(/-/g," "))}${c.preserveComposition ? " · preserve composition" : ""}</summary><div class="guided-motion-detail-grid"><label><span>Overall intensity</span><select onchange="setGuidedMotionField('${s.id}','motionIntensity',this.value)">${["nearly-still","subtle","moderate","active","highly-dynamic"].map((x) => `<option value="${x}" ${c.motionIntensity === x ? "selected" : ""}>${x.replace(/-/g," ")}</option>`).join("")}</select></label><label class="checkline"><input type="checkbox" ${c.preserveComposition ? "checked" : ""} onchange="setGuidedMotionField('${s.id}','preserveComposition',this.checked)"> Preserve composition and identity</label></div></details>${guidedAudioPanel(s,c,profile,audioRefs)}<div class="guided-motion-controls"><label><span>Duration</span><input type="number" min="${durationMin}" max="${durationMax}" value="${duration}" onchange="setGuidedMotionField('${s.id}','motionDuration',+this.value)"><small>${durationMin}–${durationMax}s for this target${profile?.mode === "r2v" ? "; use chained clips for longer shots" : ""}</small></label><label class="guided-video-target-control"><span>Video model and workflow</span><select ${busy ? "disabled" : ""} data-intent-route="${attr(intentRoute)}" onchange="setGuidedMotionField('${s.id}','motionProfileId',this.value)">${guidedVideoProfileOptions(profileId, intentRoute)}</select><small>${guidedVideoProfileCount()} of ${guidedVideoProfiles().length} written-up targets can be generated from CineBraid today. The rest stay listed, and say why they cannot run.${intentRoute ? ` This shot's intent narrows that to ${guidedIntentVideoProfileCount(intentRoute)}; change the intent above the workspace to widen it again.` : ""}</small></label>${guidedVideoProfileRefusalMarkup(profile, s)}<div><button class="assemble-btn" ${busy || intentRefusal ? "disabled" : ""}${intentRefusal ? ` aria-describedby="${attr(intentRefusalId)}"` : ""} onclick="buildGuidedMotionPrompt('${s.id}',false)">${busy ? `<span class="spin">◌</span> WORKING…` : "Build prompt"}</button></div></div>${operationBody}</div></details></section></div></details>`;
 }
 /* IS THIS SHOT ALREADY DELIVERED, asked of the one owner, wherever a surface is about
    to promote more production work. shotDeliveryAuthority() is the projection that
@@ -6769,17 +6797,7 @@ window.acceptLegacyClipLineSuggestion = (id, index) => {
   clip.line = suggestion;
   dirty(); route(); toast("Quoted line copied into the motion unit; the original note was preserved");
 };
-window.acceptGuidedMotionRevision = (id, buildId) => {
-  const s = shotById(id), c = ensureShotCreation(s);
-  const build = resolvePromptBuildList(P, c.motionPromptBuilds).find((item) => item.id === buildId);
-  if (!build?.improvedDirective) return;
-  c.motionDirection = build.improvedDirective;
-  s.motionPrompt = build.improvedDirective;
-  keepGuidedPanelOpen(s, "motion");
-  dirty();
-  route();
-  toast("Revised motion brief applied");
-};
+window.acceptGuidedMotionRevision = () => toast("Historic assistant wording is read-only. Edit the production direction explicitly if you want to change Canon.");
 window.buildGuidedMotionPrompt = async (id, useLLM = false) => {
   const s = shotById(id), c = ensureShotCreation(s), current = guidedCurrentShotStill(s);
   /* The two approval gates in this function exist to guarantee a VISUAL ANCHOR, so
@@ -6875,6 +6893,8 @@ window.buildGuidedMotionPrompt = async (id, useLLM = false) => {
   setGuidedPromptOp("motion", id, "", { status: "busy", action, startedAt: Date.now() });
   route();
   try {
+    const motionCanonContext = typeof packageCanonContextInputs === "function"
+      ? packageCanonContextInputs(P, s, { kind: "guided-motion", segmentId: unitKey(unit), references: payloadRefs }) : null;
     const d = await guidedPromptRequest("/api/prompt/compile", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
@@ -6915,11 +6935,16 @@ window.buildGuidedMotionPrompt = async (id, useLLM = false) => {
         composition: c.composition,
       }),
     }, GUIDED_PROMPT_TIMEOUTS[action], useLLM ? "Motion prompt improvement" : "Motion prompt compilation");
+    if (motionCanonContext && JSON.stringify(packageCanonContextInputs(P, s,
+      { kind: "guided-motion", segmentId: unitKey(unit), references: payloadRefs })) !== JSON.stringify(motionCanonContext))
+      throw new Error("Production Canon changed while compiling. Rebuild this motion package.");
     if (d.sourceDirectiveSanitized && d.originalDirective && writtenDirection) {
       c.motionDirection = writtenDirection;
-      s.motionPrompt = writtenDirection;
       unit.motionPrompt = writtenDirection;
     }
+    if (motionCanonContext && JSON.stringify(packageCanonContextInputs(P, s,
+      { kind: "guided-motion", segmentId: unitKey(unit), references: payloadRefs })) !== JSON.stringify(motionCanonContext))
+      throw new Error("Motion direction changed during compilation. Rebuild the target package from current Canon.");
     const sequence = c.motionPromptBuilds.length + 1;
     const packageId = `${id}-MOTION-R${String(sequence).padStart(2, "0")}`;
     const build = {
@@ -6964,6 +6989,8 @@ window.buildGuidedMotionPrompt = async (id, useLLM = false) => {
     build.dependencySnapshot = typeof packageInputSnapshot === "function"
       ? packageInputSnapshot(s, build, build.references, currentDirectionForPackage(s, build))
       : null;
+    if (build.dependencySnapshot && motionCanonContext)
+      build.dependencySnapshot.canonContext = motionCanonContext;
     const buildId = registerPromptBuild(P, build);
     c.motionPromptBuilds.push(promptBuildRef(buildId, { kind: "guided-motion" }));
     c.lastMotionPackageId = packageId;
@@ -6973,6 +7000,7 @@ window.buildGuidedMotionPrompt = async (id, useLLM = false) => {
     route();
     toast(useLLM ? "Motion direction improved and compiled for the selected model" : "Motion prompt compiled from the approved still");
     setGuidedPromptOp("motion", id, "", null);
+    return buildId;
   } catch (e) {
     setGuidedPromptOp("motion", id, "", { status: "error", action, error: e.message, failedAt: Date.now() });
     toast("Motion prompt failed: " + e.message);
@@ -7255,24 +7283,47 @@ function framePromptComposition(s, state) {
 window.buildGuidedFramePrompt = async (id, frameId, useLLM = false) => {
   const s = shotById(id), frames = guidedFrames(s), index = frames.findIndex((frame) => frame.id === frameId);
   if (index < 0) return;
-  const frame = frames[index], state = guidedFrameState(s, frame, index);
-  const action = String(state.action || frame.description || "").trim();
-  if (!action) return toast(`Describe Frame ${frame.label} first`);
+  const frame = frames[index];
+  let state = guidedFrameState(s, frame, index);
+  if (!String(state.action || frame.description || "").trim()) return toast(`Describe Frame ${frame.label} first`);
   if (useLLM && !capabilityState("text").ready) return toast(capabilityState("text").message);
-  const refs = guidedFramePromptRefs(s, frame, index, state);
   if (frameIncludedMissingInputs(s, frameId).length) return showFrameMissingInputDecision(id, frameId);
-  let mode = guidedFrameMode(state, refs);
-  const readyRefs = refs.filter((ref) => ref.url);
-  if (mode === "edit" && !readyRefs.some((ref) => ["base", "composition"].includes(ref.role))) mode = readyRefs.length ? "multi-reference" : "t2i";
-  if (mode === "multi-reference" && !readyRefs.length) mode = "t2i";
-  const profileId = preferredCreationProfile(mode, state.profileId || P.meta?.promptDefaults?.imageProfile || "");
-  state.profileId = profileId;
   const requestAction = useLLM ? "improve" : "compile";
-  const frameComposition = framePromptComposition(s, state);
   ensureShotCreation(s).activeGuidedFrameId = frameId;
   setGuidedPromptOp("frame", id, frameId, { status: "busy", action: requestAction, startedAt: Date.now() });
   route();
   try {
+    /* Rendering the busy state may materialize workflow defaults. Capture the
+       actual request and its freshness witness together after that synchronous
+       normalization, before the compiler can await or the owner can edit. */
+    state = guidedFrameState(s, frame, index);
+    const action = String(state.action || frame.description || "").trim();
+    const refs = guidedFramePromptRefs(s, frame, index, state);
+    let mode = guidedFrameMode(state, refs);
+    const readyRefs = refs.filter((ref) => ref.url);
+    if (mode === "edit" && !readyRefs.some((ref) => ["base", "composition"].includes(ref.role))) mode = readyRefs.length ? "multi-reference" : "t2i";
+    if (mode === "multi-reference" && !readyRefs.length) mode = "t2i";
+    const profileId = preferredCreationProfile(mode, state.profileId || P.meta?.promptDefaults?.imageProfile || "");
+    state.profileId = profileId;
+    /* Frame A's profile is mirrored by guidedFrameState from the shot creation
+       record on each render. Keep that owner in step with an automatic target
+       switch (for example edit -> multi-reference when the base is excluded),
+       so a render during compilation cannot restore a different old profile. */
+    if (index === 0) ensureShotCreation(s).profileId = profileId;
+    const rawFrameComposition = framePromptComposition(s, state);
+    const frameComposition = rawFrameComposition ? JSON.parse(JSON.stringify(rawFrameComposition)) : null;
+    const frameWorkflowInputs = typeof packageFrameWorkflowInputs === "function"
+      ? packageFrameWorkflowInputs(s, { frameId }) : null;
+    const authoredFrameInputs = {
+      globalStyle: globalStylePrompt(),
+      world: P.meta?.world?.setting || "",
+      action,
+      staging: state.staging || "",
+      camera: state.camera || "",
+      notes: state.notes || "",
+      previousFrame: index > 0 && state.usePreviousFrame ? frames[index - 1].id : "",
+      composition: frameComposition,
+    };
     const directive = [
       action,
       state.staging ? `Placement and interactions: ${state.staging}` : "",
@@ -7302,6 +7353,8 @@ window.buildGuidedFramePrompt = async (id, frameId, useLLM = false) => {
       angleTag: ref.angleTag || "",
       priority: ref.priority || "supporting",
     }));
+    const frameCanonContext = typeof packageCanonContextInputs === "function"
+      ? packageCanonContextInputs(P, s, { kind: "guided-frame", frameId, references: payloadRefs }) : null;
     const data = await guidedPromptRequest("/api/prompt/compile", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
@@ -7321,6 +7374,15 @@ window.buildGuidedFramePrompt = async (id, frameId, useLLM = false) => {
         composition: frameComposition,
       }),
     }, GUIDED_PROMPT_TIMEOUTS[requestAction], useLLM ? `Frame ${frame.label} prompt improvement` : `Frame ${frame.label} prompt compilation`);
+    if (frameWorkflowInputs &&
+        JSON.stringify(packageFrameWorkflowInputs(s, { frameId })) !== JSON.stringify(frameWorkflowInputs))
+      throw new Error("Frame direction changed while compiling. Rebuild from the current frame intent.");
+    if (frameCanonContext && JSON.stringify(packageCanonContextInputs(P, s,
+      { kind: "guided-frame", frameId, references: payloadRefs })) !== JSON.stringify(frameCanonContext))
+      throw new Error("Production Canon changed while compiling. Rebuild this frame package.");
+    if (authoredFrameInputs.globalStyle !== globalStylePrompt() ||
+        authoredFrameInputs.world !== (P.meta?.world?.setting || ""))
+      throw new Error("Production context changed while compiling. Rebuild this frame package.");
     const sequence = state.promptBuilds.length + 1;
     const packageId = `${id}-FRAME-${frame.label}-R${String(sequence).padStart(2, "0")}`;
     const build = {
@@ -7345,16 +7407,7 @@ window.buildGuidedFramePrompt = async (id, frameId, useLLM = false) => {
       productionRisks: data.productionRisks || data.spec?.productionRisks || [],
       providerPayload: data.providerPayload || null,
       llmUsed: !!data.llmUsed,
-      inputs: {
-        globalStyle: globalStylePrompt(),
-        world: P.meta?.world?.setting || "",
-        action,
-        staging: state.staging || "",
-        camera: state.camera || "",
-        notes: state.notes || "",
-        previousFrame: index > 0 && state.usePreviousFrame ? frames[index - 1].id : "",
-        composition: frameComposition ? JSON.parse(JSON.stringify(frameComposition)) : null,
-      },
+      inputs: authoredFrameInputs,
       kind: "guided-frame",
       revision: sequence,
     };
@@ -7363,6 +7416,10 @@ window.buildGuidedFramePrompt = async (id, frameId, useLLM = false) => {
     build.dependencySnapshot = typeof packageInputSnapshot === "function"
       ? packageInputSnapshot(s, build, build.references, currentDirectionForPackage(s, build))
       : null;
+    if (build.dependencySnapshot && frameWorkflowInputs)
+      build.dependencySnapshot.frameWorkflowInputs = frameWorkflowInputs;
+    if (build.dependencySnapshot && frameCanonContext)
+      build.dependencySnapshot.canonContext = frameCanonContext;
     const buildId = registerPromptBuild(P, build);
     state.promptBuilds.push(promptBuildRef(buildId, { kind: "guided-frame" }));
     if (index === 0) {

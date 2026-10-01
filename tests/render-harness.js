@@ -804,6 +804,9 @@ async function render(hash, project, options = {}) {
     setInterval: () => 0,
     setTimeout,
     structuredClone,
+    /* packageCanonContextInputs hashes through the browser shared SHA-256 owner,
+       which needs this native browser API before prompt compilation. */
+    TextEncoder,
   };
   context.window = context;
   /* The currently-dispatching event, like a browser Window. `gesture.act()`

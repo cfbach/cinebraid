@@ -67,7 +67,7 @@ try:
   frame=page.locator('[data-frame-id="frame-a"]')
   frame.locator('.frame-prompt-tools').evaluate('(e)=>e.open=true')
   frame.locator('.guided-frame-compile button').filter(has_text='Build prompt').click()
-  frame.get_by_text('PREPARED PROMPT').wait_for(timeout=25000)
+  frame.locator('.frame-prompt-block').get_by_text('PREPARED TARGET PACKAGE', exact=True).wait_for(timeout=25000)
   page.wait_for_function('projectSaveSettled().settled')
   saved=json.loads((d/'project.json').read_text());assert saved['promptBuildsById'],'No build after deliberate exclusion'
   built=next(iter(saved['promptBuildsById'].values()))

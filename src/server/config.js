@@ -44,6 +44,10 @@ const DEFAULT_CONFIG = {
   openaiBaseUrl: "https://api.openai.com/v1",
   openaiModel: "gpt-5.2",
   openaiVisionModel: "gpt-5.2",
+  /* Prompt review is opt-in with an exact model from this owner's live OpenAI
+     inventory. The older text default belongs to other assistant consumers and
+     must never silently become Braidy's paid review choice. */
+  openaiBraidyModel: "",
   customKey: "",
   customBaseUrl: "http://127.0.0.1:8000/v1",
   customModel: "",
@@ -484,6 +488,7 @@ function normalizeConfig(config, options = {}) {
   merged.customThinking = ["auto", "disabled"].includes(merged.customThinking)
     ? merged.customThinking
     : "auto";
+  merged.openaiBraidyModel = String(merged.openaiBraidyModel || "").trim().slice(0, 160);
   merged.continuity = deepMerge(DEFAULT_CONFIG.continuity, merged.continuity || {});
   merged.continuity.visionProvider = ["custom", "openai"].includes(merged.continuity.visionProvider)
     ? merged.continuity.visionProvider

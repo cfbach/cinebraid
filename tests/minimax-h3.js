@@ -70,7 +70,7 @@ function testProfiles() {
   assert.strictEqual(multi.limits.maxVideos, 3);
   assert.strictEqual(multi.limits.maxAudio, 3);
   assert.strictEqual(multi.limits.maxReferences, 12);
-  assert.strictEqual(multi.limits.maxPromptCharacters, 2000);
+  assert.strictEqual(multi.limits.writingTargetCharacters, 2000);
 }
 
 function testMultiFrameCompile() {
@@ -119,19 +119,19 @@ function testPromptLimitAndLegacyTokenNormalization() {
   }));
   spec.mustPreserve = ['Preserve identity, wardrobe, location geometry, props, lighting logic, and screen direction. '.repeat(50)];
   spec.mustAvoid = ['Avoid drift, warping, morphing, invented props, unwanted cuts, text corruption, and camera discontinuity. '.repeat(50)];
+  spec.mustAvoid[0] += " Never replace the final blue seal with a red seal.";
   const compiled = PromptEngine.compile(profile, spec, refs);
-  assert(compiled.prompt.length <= 2000, `H3 written package must fit CineBraid's 2,000-character budget, got ${compiled.prompt.length}`);
-  assert(compiled.prompt.includes('Image 9'), 'compaction must preserve all numbered keyframe references');
+  assert(compiled.prompt.length > 2000, `H3 written package must preserve intent beyond its 2,000-character preference, got ${compiled.prompt.length}`);
+  assert(compiled.prompt.includes('Image 9'), 'the complete package preserves all numbered keyframe references');
   assert(!compiled.prompt.includes('#image'), 'legacy adapter tokens must be normalized to H3 modality/order syntax');
-  /* The near-limit warning still fires; what changed is what it CLAIMS the limit is.
-     2,000 is CineBraid's budget for the written package - fal-h3-backend.js records
-     that fal's queue schema documents no prompt maxLength on any H3 endpoint and
-     retired the 2,000 refusal - so a warning calling it "the provider schema limit"
-     asserted a provider rule that does not exist. The number stays; the claim goes. */
-  assert(compiled.warnings.some((row) => /close to CineBraid's written-package budget/i.test(row)),
-    'the compiler must still warn near its written-package budget');
+  assert(compiled.prompt.includes("Never replace the final blue seal with a red seal"),
+    "a soft writing target cannot silently truncate a late owner constraint");
+  /* The preferred authoring length warns but never clips owner intent or claims
+     that fal's much larger hard provider ceiling is 2,000 characters. */
+  assert(compiled.warnings.some((row) => /exceeds CineBraid's writing target/i.test(row)),
+    'the compiler warns above its advisory writing target');
   assert(!compiled.warnings.some((row) => /provider schema limit/i.test(row)),
-    "and must not describe CineBraid's own budget as a provider schema limit");
+    "and must not describe CineBraid's writing target as a provider schema limit");
 }
 
 function testFirstLastCompile() {
@@ -150,6 +150,90 @@ function testFirstLastCompile() {
   assert.strictEqual(compiled.payload.fal.input.end_image_url, refs[1].url);
 }
 
+/* This is the saved, user-visible Build compiler used by /api/prompt/compile,
+   not only the later exact fal provider-plan compiler. R03 arrived with an
+   owner paragraph and a structured summary occupying the same 0–5s window. */
+function testNativeI2VBuildKeepsOneOwnerDirection() {
+  const firstFrame = {
+    ...sequentialRefs(1)[0],
+    role: "first-frame",
+    label: "SAMPLE-03-OPEN.png",
+    url: "/assets/shots/SAMPLE-03/SAMPLE-03-OPEN.png",
+  };
+  const ownerDirection = "Continue the approved Frame A of the opened blue parcel on the platform bench for five seconds. Keep the parcel's blue paper, open folds, bench, platform, and 16:9 composition stable. Make one slow, steady camera push-in with subtle ambient movement only. No new character or object, cut, location change, closing of the parcel, added text, dialogue, or music. Preserve the flat illustrated style.";
+  const spec = h3Spec("i2v", [firstFrame]);
+  spec.durationSeconds = 5;
+  spec.narrativePurpose = "The opened blue parcel remains on the platform bench.";
+  spec.actions = [
+    { start: 0, end: 5, action: "Continue the approved Frame A of the opened blue parcel on the platform bench for five seconds; the parcel stays open.. Secondary motion: Subtle ambient movement on the platform only." },
+    { start: 0, end: 5, action: ownerDirection },
+  ];
+  spec.motionBrief = { additionalDirection: ownerDirection };
+  spec.camera = { movement: "One slow, steady camera push-in", stability: "steady" };
+  spec.audio = { mode: "none", dialogue: "", transcript: "", delivery: "Language: English; Pace: natural; Volume: normal", language: "English", pace: "Normal", volume: "Normal", sfx: "", ambience: "" };
+  spec.mustPreserve = ["Blue paper, open folds, bench, platform, 16:9 composition, and flat illustrated style."];
+  spec.mustAvoid = ["No new character or object, cut, location change, closing of the parcel, added text, dialogue, or music."];
+  const source = JSON.stringify(spec);
+  const compiled = PromptEngine.compile(PromptEngine.getProfile("minimax-h3/i2v"), spec, [firstFrame]);
+  assert.strictEqual(JSON.stringify(spec), source, "the compiler must not revise Canon or source spec");
+  assert.strictEqual((compiled.prompt.match(/Continue the approved Frame A of the opened blue parcel on the platform bench for five seconds/g) || []).length, 1,
+    "the saved Build must contain the owner's opening direction once");
+  assert(/the parcel stays open/i.test(compiled.prompt), "distinct structured continuity must survive deduplication");
+  assert(compiled.prompt.includes("Subtle ambient movement on the platform only"), "distinct secondary motion must survive deduplication");
+  assert(!compiled.prompt.includes("open.."), "punctuation from a structured summary must be normalized");
+  assert(!compiled.prompt.includes("Camera One"), "noun-phrase camera wording must not be prepended with a bare Camera");
+  assert(!/\nCAMERA\n/.test(compiled.prompt), "a camera move already in the owner direction must not be restated");
+  assert(!compiled.prompt.includes("Courier"), "a parcel-only target must not invent a character");
+  assert(!compiled.warnings.some((warning) => /dialogue/i.test(String(warning))), "unused dialogue defaults must not become a warning");
+  assert.strictEqual(compiled.payload.fal.input.image_url, firstFrame.url, "Frame A remains the only opening input");
+  assert(!compiled.payload.fal.input.end_image_url && !compiled.payload.fal.input.reference_image_urls,
+    "I2V must not acquire an end frame or R2V references");
+}
+function testSemicolonAuthoredDirectionSurvivesDedup() {
+  const authored = "Rain sheets across the empty platform canopy at dusk; puddles ripple under the sodium lamps.";
+  const style = "Clean graphic storyboard placeholders for a manual production-organizing sample.";
+  const spec = h3Spec("t2v", []);
+  spec.durationSeconds = 5;
+  spec.visualStyle = [style];
+  spec.actions = [
+    { start: 0, end: 5, action: authored },
+    { start: 0, end: 5, action: "Puddles ripple under the sodium lamps." },
+  ];
+  const compiled = PromptEngine.compile(PromptEngine.getProfile("minimax-h3/t2v"), spec, []);
+  /* The provider-plan B-roll suites separately assert that the project look reaches fal. */
+  assert.strictEqual(compiled.prompt.split(authored).length - 1, 1,
+    "the exact semicolon-joined owner direction survives once");
+  assert.strictEqual((compiled.prompt.match(/puddles ripple under the sodium lamps/gi) || []).length, 1,
+    "the overlapping second action is deduplicated without changing the owner direction");
+  assert(!compiled.prompt.includes(";."), "deduplication cannot create malformed semicolon-period punctuation");
+}
+function testNativeMotionDedupPreservesRelationsAndNegation() {
+  const frame = { ...sequentialRefs(1)[0], role: "first-frame" };
+  const profile = PromptEngine.getProfile("minimax-h3/i2v");
+  for (const [first, second] of [
+    ["Place the parcel in the box.", "Place the parcel on the box."],
+    ["Move his hand.", "Move her hand."],
+    ["Do not under any circumstances keep the parcel open.", "Keep the parcel open."],
+  ]) {
+    const spec = h3Spec("i2v", [frame]);
+    spec.actions = [{ start: 0, end: 5, action: first }];
+    const withBrief = PromptEngine.applyMotionAudioBrief(spec, { performance: { action: second } });
+    assert.strictEqual(withBrief.actions.length, 2,
+      "structured direction must retain a distinct spatial, ownership, or opposite-polarity clause");
+    const compiled = PromptEngine.compile(profile, withBrief, [frame]);
+    assert(compiled.prompt.includes(first), "native Build must retain the first exact clause: " + first);
+    assert(compiled.prompt.includes(second), "native Build must retain the second exact clause: " + second);
+  }
+  const cameraConflict = h3Spec("i2v", [frame]);
+  cameraConflict.actions = [{ start: 0, end: 5,
+    action: "Do not under any circumstances make one slow, steady camera push-in." }];
+  cameraConflict.camera = { movement: "One slow, steady camera push-in", stability: "steady" };
+  const cameraBuild = PromptEngine.compile(profile, cameraConflict, [frame]);
+  assert(cameraBuild.prompt.includes("Do not under any circumstances make one slow, steady camera push-in."),
+    "native Build retains the negative authored camera clause");
+  assert(cameraBuild.prompt.includes("The camera makes one slow, steady push-in"),
+    "the positive camera control remains visible despite distant negation");
+}
 function testSourceIntegration() {
   const root = path.join(__dirname, '..');
   const ui = fs.readFileSync(path.join(root, 'public', 'creation-studio.js'), 'utf8');
@@ -227,6 +311,9 @@ async function main() {
   testMixedKeyframeRolesRemainSequential();
   testPromptLimitAndLegacyTokenNormalization();
   testFirstLastCompile();
+  testNativeI2VBuildKeepsOneOwnerDirection();
+  testSemicolonAuthoredDirectionSurvivesDedup();
+  testNativeMotionDedupPreservesRelationsAndNegation();
   testSourceIntegration();
   await testRenderedMultiFrameWorkspace();
   console.log('MiniMax H3 suite passed profile registration, first/last-frame packaging, ordered multi-frame prompting, provider prompt limits, legacy-token normalization, spend/idempotency hooks, FAL payload previews, rendered keyframe UI, and server integration hooks.');

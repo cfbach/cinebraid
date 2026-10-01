@@ -344,7 +344,8 @@ window.refreshFalFramePlan = async () => {
   if (!request || window._falFrameSubmitting) return;
   const editor = document.getElementById("fal-frame-prompt-editor");
   const editedAtStart = String(editor?.value ?? "");
-  const keepEditAtStart = editedAtStart.trim() && editedAtStart.trim() !== String(request.compiledPrompt || "").trim();
+  const keepEditAtStart = editedAtStart.trim() && editedAtStart.trim() !== String(request.compiledPrompt || "").trim()
+    && editedAtStart.trim() !== String(request.braidyAcceptedPrompt || "").trim();
   const promptRevision = request._promptRevision || 0;
   const refreshId = (request._refreshId || 0) + 1;
   request._refreshId = refreshId;
@@ -366,6 +367,11 @@ window.refreshFalFramePlan = async () => {
   const currentText = changedDuringRefresh
     ? String(document.getElementById("fal-frame-prompt-editor")?.value ?? "") : editedAtStart;
   Object.assign(request, preview, { prompt: preserveEdit ? currentText : preview.compiledPrompt });
+  if (request.braidyAcceptedPrompt && !preserveEdit) {
+    request.braidyAcceptedPrompt = "";
+    const note = document.getElementById("fal-frame-braidy-stale");
+    if (note) { note.hidden = false; note.textContent = "Output settings changed. The earlier Braidy wording was bound to the previous target package; this review now shows a fresh deterministic compilation."; }
+  }
   const currentEditor = document.getElementById("fal-frame-prompt-editor");
   if (currentEditor && !preserveEdit) currentEditor.value = preview.compiledPrompt;
   renderFalFramePanels();
@@ -409,6 +415,17 @@ window.openFalFrameGenerationModal = async (purpose, shotId, frameId = "", build
   const defaultCount = Number(purpose === "blocking" ? cfg.blockingOutputs || 2 : cfg.frameOutputs || 2);
   const preview = await fetchFalImagePlan(purpose, shotId, buildId, { aspectRatio, outputCount: defaultCount });
   if (!preview) return;
+  const requestedBuildId = preview.source?.buildId || buildId;
+  const sourceBuild = purpose === "blocking"
+    ? shotById(shotId)?.creationBrief?.blockingBuilds?.find((row) =>
+      String(row.id || row.buildId) === String(requestedBuildId)) || null
+    : typeof resolvePromptBuild === "function" ? resolvePromptBuild(P, requestedBuildId) : null;
+  if (sourceBuild?.braidyReview) {
+    const checked = await verifyBraidyRevisionBasis(purpose === "blocking" ? "blocking" : "image", shotId, sourceBuild, frameId);
+    if (!checked.ok) return showStaleBraidyReview(checked.error);
+  }
+  const initialPrompt = sourceBuild?.manualEdited && String(sourceBuild.prompt || "").trim()
+    ? String(sourceBuild.prompt).trim() : preview.compiledPrompt;
 
   const operation = FAL_FRAME_OPERATION_TITLES[preview.operation] || null;
   const task = operation ? operation.task : preview.mode === "edit" || preview.mode === "inpaint" ? "edit-frame" : kind.task;
@@ -431,7 +448,8 @@ window.openFalFrameGenerationModal = async (purpose, shotId, frameId = "", build
     buildId: preview.source?.buildId || buildId,
     packageId: preview.source?.packageId || "",
     aspectRatio,
-    prompt: preview.compiledPrompt,
+    prompt: initialPrompt,
+    braidyAcceptedPrompt: sourceBuild?.braidyReview ? initialPrompt : "",
     options,
     planModelId: "gpt-image-2/standard",
     planModelName: "GPT Image 2",
@@ -455,9 +473,9 @@ window.openFalFrameGenerationModal = async (purpose, shotId, frameId = "", build
      paragraph are Advanced-only for a B-roll package. Refusals are never marked. */
   const advancedOnly = styleOnly ? ' data-broll-advanced="1"' : "";
   dismissStaleNotice();
-  openModal(`<div class="h3-generation-modal${styleOnly ? " broll-confirmation" : ""}"><header class="h3-generation-head"><div><span>PAID GENERATION</span><h3>${esc(heading.title)}${esc(frameLabel)}</h3><p>${esc(heading.lead)}</p></div><button class="cancel" onclick="closeModal()">Close</button></header><div class="h3-generation-scroll"><div class="modal-sub"${advancedOnly}>${esc(preview.dispatch?.model || "fal")} · compiled by ${esc(preview.compiler?.packId || "gpt-image-2")} ${esc(preview.compiler?.packVersion || "")}</div><div id="fal-frame-facts" class="candidate-evidence-facts"${advancedOnly}></div><div class="gen-prompt-count" id="fal-frame-prompt-count"${advancedOnly}>${preview.compiledPrompt.length.toLocaleString()} characters</div><div id="fal-frame-refusal" class="guided-prompt-error" hidden></div><div id="fal-frame-model-note" class="guided-prompt-error" hidden></div><div id="fal-frame-options"></div><div id="fal-frame-references"></div><div id="fal-frame-generation-view"></div><div id="fal-frame-warnings"${advancedOnly}></div><section class="h3-prompt-editor"${advancedOnly}><header><div><b>Edit prompt before generation</b><small>This is the prompt CineBraid compiled and the exact text that will be sent. The compiled package is preserved; any change is recorded beside the compiled original.</small></div></header><textarea id="fal-frame-prompt-editor" oninput="updateFalFramePrompt(true)" onchange="reviewFalFramePromptEdit()">${esc(preview.compiledPrompt)}</textarea><div id="fal-frame-edit-coverage" class="h3-edit-coverage" hidden></div><div class="h3-prompt-editor-actions"><button class="ghost-btn" onclick="resetFalFramePrompt()">Reset compiled prompt</button></div></section><p class="hint"${advancedOnly}>This submits one paid fal request. Returned images are saved as unapproved candidates in this shot and do not become canon until you approve one. The request uses an idempotency key to prevent an accidental double submission from this dialog.</p></div><footer class="modal-actions h3-generation-actions"><button class="cancel" onclick="closeModal()">Cancel</button><button id="fal-frame-submit" class="approve-btn large" onclick="startFalFrameGeneration()" disabled>${styleOnly ? "Generate" : "GENERATE"}</button></footer></div>`);
+  openModal(`<div class="h3-generation-modal${styleOnly ? " broll-confirmation" : ""}"><header class="h3-generation-head"><div><span>PAID GENERATION</span><h3>${esc(heading.title)}${esc(frameLabel)}</h3><p>${esc(heading.lead)}</p></div><button class="cancel" onclick="closeModal()">Close</button></header><div class="h3-generation-scroll"><div class="modal-sub"${advancedOnly}>${esc(preview.dispatch?.model || "fal")} · compiled by ${esc(preview.compiler?.packId || "gpt-image-2")} ${esc(preview.compiler?.packVersion || "")}</div><div id="fal-frame-facts" class="candidate-evidence-facts"${advancedOnly}></div><div class="gen-prompt-count" id="fal-frame-prompt-count"${advancedOnly}>${initialPrompt.length.toLocaleString()} characters</div><div id="fal-frame-refusal" class="guided-prompt-error" hidden></div><div id="fal-frame-model-note" class="guided-prompt-error" hidden></div><div id="fal-frame-options"></div><div id="fal-frame-references"></div><div id="fal-frame-generation-view"></div><div id="fal-frame-warnings"${advancedOnly}></div><div id="fal-frame-braidy-stale" class="braidy-warning" hidden></div><section class="h3-prompt-editor"${advancedOnly}><header><div><b>Edit prompt before generation</b><small>${sourceBuild?.braidyReview ? "A Braidy-reviewed target revision is loaded; the exact text below will be sent." : "This is the deterministic prompt CineBraid compiled and the exact text that will be sent."} The compiled package is preserved; any change is recorded beside the compiled original.</small></div></header><textarea id="fal-frame-prompt-editor" oninput="updateFalFramePrompt(true)" onchange="reviewFalFramePromptEdit()">${esc(initialPrompt)}</textarea><div id="fal-frame-edit-coverage" class="h3-edit-coverage" hidden></div><div class="h3-prompt-editor-actions"><button class="ghost-btn" onclick="resetFalFramePrompt()">Reset compiled prompt</button></div></section><p class="hint"${advancedOnly}>This submits one paid fal request. Returned images are saved as unapproved candidates in this shot and do not become canon until you approve one. The request uses an idempotency key to prevent an accidental double submission from this dialog.</p></div><footer class="modal-actions h3-generation-actions"><button class="cancel" onclick="closeModal()">Cancel</button><button id="fal-frame-submit" class="approve-btn large" onclick="startFalFrameGeneration()" disabled>${styleOnly ? "Generate" : "GENERATE"}</button></footer></div>`);
   window._generationViewRefresh = () => renderFalFrameGenerationView();
-  setTimeout(() => { renderFalFramePanels(); updateFalFramePrompt(); }, 0);
+  setTimeout(() => { renderFalFramePanels(); updateFalFramePrompt(); if (initialPrompt !== preview.compiledPrompt) void reviewFalFramePromptEdit(); }, 0);
 };
 
 /* The frame dialog's own controls, drawn from the plan rather than from a fixed grid.

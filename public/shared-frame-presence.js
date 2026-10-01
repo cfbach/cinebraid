@@ -254,7 +254,7 @@ const PRESENCE_DENYING_PREDICATE = new RegExp(
   "(?:is|are|was|were|has|have|had|does|do|did|will|would|shall|should|must|can|could|may|might|remains?|stays?)\\s*(?:not|n['’]t|never|no\\s+longer)\\b" +
   "|(?:isn|aren|wasn|weren|doesn|don|didn|won|wouldn|shouldn|mustn|can|couldn|hasn|haven|hadn)['’]t\\b" +
   /* "X is absent", "X remains unseen", "X is off-screen", "X is nowhere" */
-  "|(?:is|are|was|were|remains?|stays?|becomes?)\\s+(?:still\\s+|entirely\\s+|completely\\s+|wholly\\s+)?(?:absent|unseen|invisible|hidden|obscured|concealed|off[-\\s]?screen|out\\s+of\\s+(?:frame|shot|view|sight)|nowhere|gone|missing)\\b" +
+  "|(?:is|are|was|were|remains?|stays?|becomes?)\\s+(?:still\\s+|just\\s+|entirely\\s+|completely\\s+|wholly\\s+)?(?:absent|unseen|invisible|hidden|obscured|concealed|off[-\\s]?screen|out\\s+of\\s+(?:frame|shot|view|sight)|nowhere|gone|missing)\\b" +
   /* "X has yet to appear", "X is yet to be seen" */
   "|(?:has|have|had|is|are|was|were)\\s+yet\\s+to\\b" +
   /* bare copular absence: "X: absent", "X — absent" */
