@@ -253,9 +253,13 @@ def open_shot(page, marker):
 
 def open_inputs(page):
     page.locator('[data-stage-id="inputs"]').click()
-    panel = page.locator('.guided-inputs-card')
-    if panel.get_attribute('open') is None:
-        panel.locator(':scope > summary').click()
+    # The stage click owns task selection and opens the primary disclosure.
+    # Wait for that navigation to finish instead of toggling the same summary
+    # while its two-frame focus/scroll completion is still in flight.
+    page.wait_for_function("""() => {
+        const work = document.querySelector('.bounded-selected-task[data-bounded-task="inputs"]');
+        return !!work?.querySelector('.guided-inputs-card[open]');
+    }""", timeout=10000)
 
 
 def check_continuity(page):
