@@ -12,9 +12,9 @@ and they are the eight a filmmaker would actually notice:
   * NODE IDENTITY ACROSS ALL FIVE STAGES AND A FULL ROUTE RERENDER. "The strip is the
     same node after a stage change" is a statement about object identity in a live
     document, and it is the entire reason the navigator moved out of `#main`.
-  * REAL NAVIGATION. The five stages select through the SHIPPED path, and the completion
-    condition is the rendered stage — never a fixed sleep. That lesson is O3's, learned
-    the expensive way (af8de75).
+  * REAL NAVIGATION. Each stage button selects through the shipped path, opens its
+    declared workspace, then focuses and scrolls that work below sticky chrome.
+    Completion is observed in the rendered stage rather than by a fixed sleep.
   * THE DOM AGREES WITH THE DECLARATION, compared against the page's OWN
     shotStageProgress rather than against a copy of it in this file.
   * THE STICKY GEOMETRY. The bar pins beneath the topbar, the rail and the shot's
@@ -24,9 +24,9 @@ and they are the eight a filmmaker would actually notice:
     phone (EV2-7 B2.15) "reachable" is one press away: the bar shows the current stage,
     its status and ONE 44px Choose stage toggle, the stage actions stay visible beside
     it, and the same strip opens beneath it in the page's normal flow.
-  * THE PHONE CHOOSER. Keyboard selection through the shipped owner with focus returned
-    to the toggle, Escape, an expansion kept through a job-refresh repaint, a full route
-    rerender and a resize to desktop and back, a blocked stage's reason visible with the
+  * THE PHONE CHOOSER. Keyboard selection through the shipped owner focuses the chosen
+    workspace; Escape returns focus to the toggle. Expansion persists through
+    job-refresh repaint, a full route rerender and resize to desktop and back, a blocked stage's reason visible with the
     chooser closed, and nothing stored.
   * THE STATUS COLOURS RESOLVE. Three of the shipped tone colours were painted with
     custom properties this stylesheet never declared, so they computed to `unset` and
@@ -43,7 +43,7 @@ what the check reads — the probe receipt — and then requires the check to no
   N3 derives the stage order from the strip's rendered children by shuffling them.
   N4 locally relabels a blocked stage as complete.
   N5 turns an empty recommendedNext into a Continue button.
-  N6 re-enables a disabled action.
+  N6 re-enables a controlled blocked Continue; the runtime still refuses it.
   N7 lets the bar overlap the Activity Terminal.
   N8 hides two stages at a phone width.
   N9 folds the stage actions behind the closed phone chooser.
@@ -60,7 +60,7 @@ data/ and the shipped sample are never touched; the route guard aborts the paid 
 anything off-loopback.
 """
 
-import json, os, pathlib, socket, subprocess, sys, tempfile, time
+import hashlib, json, os, pathlib, socket, subprocess, sys, tempfile, time
 
 ROOT = pathlib.Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "tests"))
@@ -73,7 +73,7 @@ PAID_ROUTE = "/api/generation/fal/jobs"
 APPROVED_SHOT = "SAMPLE-01"   # required frame approved: motion and deliver are open
 BLOCKED_SHOT = "SAMPLE-03"    # no approved frame: motion and deliver are blocked
 
-page_errors, offsite, paid_calls = [], [], []
+page_errors, offsite, paid_calls, post_requests = [], [], [], []
 findings = []
 
 # The rail's three bands are O3's and must survive O4 untouched, so they are asserted
@@ -85,6 +85,7 @@ VIEWPORTS = [
     ("desktop", 1600, 1000, 340),
     ("full-rail floor", 1460, 900, 340),
     ("laptop", 1440, 900, 240),
+    ("1024 desktop", 1024, 800, 0),
     ("small laptop", 1366, 900, 240),
     ("compact floor", 1360, 900, 240),
     ("below the rail", 1280, 900, 0),
@@ -106,6 +107,11 @@ subprocess.run(["node", "scripts/qa-sandbox.js", "--out", str(sandbox / "env"), 
                cwd=ROOT, check=True, stdout=subprocess.DEVNULL)
 config_path = sandbox / "env" / "config.json"
 projects_root = sandbox / "env" / "projects"
+
+def project_bytes():
+    return {str(path.relative_to(projects_root)): hashlib.sha256(path.read_bytes()).hexdigest()
+            for path in projects_root.rglob("*") if path.is_file()}
+
 
 port = free_port()
 server = subprocess.Popen(
@@ -284,6 +290,7 @@ GEOMETRY = """
     stageColumns: strip ? new Set([...strip.querySelectorAll('.focused-task-button')]
       .filter((b) => getComputedStyle(b).display !== 'none' && b.getBoundingClientRect().width > 0)
       .map((b) => Math.round(b.getBoundingClientRect().left))).size : 0,
+    actionsRegionShown: shown(document.querySelector('.cb-stage-actions')) && !!document.querySelector('.cb-stage-actions').getBoundingClientRect().height,
     actionsShown: [...document.querySelectorAll('.cb-stage-action')].map((b) => {
       const r = b.getBoundingClientRect();
       return getComputedStyle(b).visibility !== 'hidden' && r.width > 0 && r.height >= 44;
@@ -308,6 +315,7 @@ CHOOSER = """
     line: line ? line.textContent : '',
     focus: active ? (active.id || (active.dataset && active.dataset.stageId) || active.tagName) : '',
     selected: (document.querySelector('[data-bounded-task]') || { dataset: {} }).dataset.boundedTask || '',
+    workspaceFocused: !!active && active.matches('.bounded-selected-task[data-bounded-task]'),
     storage: storage.sort().join('|') + '|session:' + sessionStorage.length,
     actionsText: (document.querySelector('.cb-stage-actions') || {}).innerText || '',
   };
@@ -349,6 +357,8 @@ try:
         browser = launch_chromium(pw, label=LABEL)
         page = browser.new_page(viewport={"width": 1600, "height": 1000})
         page.on("pageerror", lambda e: page_errors.append(str(e)))
+        page.on("request", lambda req: post_requests.append(req.url)
+                if req.method == "POST" else None)
 
         def guard(route):
             """No request leaves this machine, and the paid route is never called."""
@@ -375,15 +385,27 @@ try:
             page.wait_for_function("() => typeof P !== 'undefined' && !!P", timeout=20000)
 
         def select_stage(stage_id):
-            """Click the SHIPPED control and wait for the RENDERED stage.
-
-            The completion condition is the workspace stating it rendered the stage that
-            was asked for — `[data-bounded-task="X"]` — not a sleep. A fixed wait after an
-            async navigation reads a stale DOM on a slow machine and passes on a fast one,
-            which is how a suite comes to prove nothing on CI (30eb6da, af8de75)."""
+            """The stage button owns task selection, disclosure, focus and scroll."""
             page.click(f'.cb-stage-strip .focused-task-button[data-stage-id="{stage_id}"]')
-            page.wait_for_selector(f'[data-bounded-task="{stage_id}"]', timeout=20000)
-            page.wait_for_selector(f'.cb-stage-strip [data-stage-id="{stage_id}"][aria-current="step"]', timeout=20000)
+            page.wait_for_selector(f'.bounded-selected-task[data-bounded-task="{stage_id}"]', timeout=20000)
+            page.wait_for_selector(f'.cb-stage-strip [data-stage-id="{stage_id}"][aria-current="step"]', state="attached", timeout=20000)
+            page.wait_for_function("""(id) => {
+                const workspace = document.querySelector('.bounded-selected-task[data-bounded-task="' + id + '"]');
+                const panel = typeof stagePrimaryPanel === 'function' ? stagePrimaryPanel(id) : '';
+                const detail = workspace && workspace.querySelector('details[data-guided-panel="' + panel + '"]');
+                const bar = document.getElementById('cb-shell-bar');
+                if (!workspace || !panel || (detail && !detail.open) || document.activeElement !== workspace) return false;
+                const top = workspace.getBoundingClientRect().top;
+                const chrome = bar && getComputedStyle(bar).position === 'sticky'
+                  ? bar.getBoundingClientRect().bottom : 0;
+                const maxGap = window.innerWidth <= 760 ? 100 : 24;
+                return top >= chrome - 2 && top <= chrome + maxGap;
+            }""", arg=stage_id, timeout=20000)
+
+        def stage_rects():
+            return page.evaluate("""() => [...document.querySelectorAll('.cb-stage-strip .focused-task-button')]
+              .map((b) => { const r = b.getBoundingClientRect();
+                return { id: b.dataset.stageId, x: r.x, width: r.width }; })""")
 
         open_shot(APPROVED_SHOT)
         assert not page_errors, f"the shot workspace raised uncaught errors: {page_errors}"
@@ -432,6 +454,102 @@ try:
         assert seen_current == view["declaredOrder"], "5. every declared stage must have been visited"
         findings.append(f"5-7. all {len(seen_current)} stages selected through the shipped control, waiting on the "
                         f"rendered stage; the bar, strip, actions, Assistant and Terminal kept their nodes throughout")
+
+        # The five pointer targets must not move when status and right-side action
+        # wording change. Measure every rectangle at the desktop qualification width.
+        page.set_viewport_size({"width": 1440, "height": 900})
+        open_shot(APPROVED_SHOT)
+        fixed = stage_rects()
+        project_nav_before = project_bytes()
+        request_start = len(post_requests)
+        assert [row["id"] for row in fixed] == view["declaredOrder"]
+        for stage_id in view["declaredOrder"]:
+            select_stage(stage_id)
+            rects = stage_rects()
+            for before, after_rect in zip(fixed, rects):
+                assert before["id"] == after_rect["id"]
+                assert abs(before["x"] - after_rect["x"]) <= 1.5 \
+                    and abs(before["width"] - after_rect["width"]) <= 1.5, \
+                    f"1440px: {before['id']} moved after {stage_id}: {before} -> {after_rect}"
+        assert not page.locator('.cb-stage-action[data-action-id="open-stage-work"]').count(), \
+            "1440px: duplicate Open-stage action was rendered"
+        project_nav_after = project_bytes()
+        nav_changed = {key: (project_nav_before.get(key), project_nav_after.get(key))
+                       for key in set(project_nav_before) | set(project_nav_after)
+                       if project_nav_before.get(key) != project_nav_after.get(key)}
+        assert not nav_changed, f"five stage clicks mutated disposable project bytes: {nav_changed}"
+        forbidden_posts = [url for url in post_requests[request_start:]
+                           if any(token in url.lower() for token in
+                                  ("/generation/", "/approve", "/approval", "/retry", "/dispatch"))]
+        assert not forbidden_posts, f"five stage clicks attempted production actions: {forbidden_posts}"
+        findings.append("5b. 1440px five-click run: every stage target stayed within 1.5px in x and width; "
+                        "each click focused its declared workspace below the sticky bar; all disposable project "
+                        "files stayed byte-identical with no dispatch, approval or retry POST")
+
+        # Newest intent wins: an older asynchronous route/focus completion may not
+        # restore focus or selected task over a later click.
+        page.evaluate("""async () => {
+          const first = window.CineBraidStageSurfaces.openStage('frames');
+          const second = window.CineBraidStageSurfaces.openStage('motion');
+          await Promise.all([first, second]);
+        }""")
+        page.wait_for_function("""() => {
+          const work = document.querySelector('.bounded-selected-task[data-bounded-task="motion"]');
+          const bar = document.getElementById('cb-shell-bar');
+          return !!work && document.activeElement === work &&
+            work.getBoundingClientRect().top >= bar.getBoundingClientRect().bottom - 2 &&
+            document.querySelector('.cb-stage-strip [data-stage-id="motion"][aria-current="step"]');
+        }""", timeout=20000)
+        assert page.evaluate(SURFACE)["selected"] == "motion", \
+            "rapid selection allowed the older Frames route to win"
+        findings.append("5c. rapid Frames then Motion selection leaves Motion selected, focused and visible")
+
+        # Manual scroll changes only the in-view marker; it must neither route again
+        # nor change the browser-selected task or any project authority.
+        select_stage("frames")
+        page.evaluate("""() => {
+          window.__o4ScrollRoutes = 0;
+          window.addEventListener('cinebraid:route-rendered', () => window.__o4ScrollRoutes++);
+          window.scrollTo({top: 0, behavior: 'instant'});
+        }""")
+        page.wait_for_function("() => window.scrollY === 0", timeout=10000)
+        page.wait_for_function("() => document.querySelector('.cb-stage-bar').dataset.inViewStage === ''", timeout=10000)
+        route_before_scroll = page.evaluate("() => window.__o4ScrollRoutes")
+        selected_before_scroll = page.evaluate(SURFACE)["selected"]
+        wheel_distance = page.evaluate("""() => {
+          const work = document.querySelector('.bounded-selected-task[data-bounded-task="frames"]');
+          const bar = document.getElementById('cb-shell-bar');
+          return Math.ceil(work.getBoundingClientRect().top - bar.getBoundingClientRect().bottom + 50);
+        }""")
+        assert wheel_distance > 0, "the overview must precede the rendered Frames workspace"
+        page.mouse.wheel(0, wheel_distance)
+        page.wait_for_function("() => document.querySelector('.cb-stage-bar').dataset.inViewStage === 'frames'", timeout=10000)
+        assert page.evaluate("() => window.__o4ScrollRoutes") == route_before_scroll, \
+            "manual scrolling caused a route render"
+        assert page.evaluate(SURFACE)["selected"] == selected_before_scroll, \
+            "manual scrolling changed the selected task"
+        page.evaluate("() => window.scrollTo({top: 0, behavior: 'instant'})")
+        page.wait_for_function("() => document.querySelector('.cb-stage-bar').dataset.inViewStage === ''", timeout=10000)
+        assert page.evaluate("() => window.__o4ScrollRoutes") == route_before_scroll, \
+            "scrolling back to overview caused a route loop"
+        findings.append("5d. wheel scrolling marks the rendered Frames workspace in-view and clears at overview "
+                        "without another route or task selection")
+
+        # 1024 retains direct targets; 390 reaches the same work through the
+        # existing chooser with no document overflow.
+        for width, height in ((1024, 800), (390, 844)):
+            page.set_viewport_size({"width": width, "height": height})
+            open_shot(APPROVED_SHOT, phone=width == 390)
+            if width == 390:
+                page.click("#cb-stage-chooser-toggle")
+                page.wait_for_selector('.cb-stage-bar[data-stage-chooser="open"]')
+            select_stage("motion")
+            assert not page.evaluate(GEOMETRY)["horizontalOverflow"], \
+                f"{width}px direct navigation introduced horizontal overflow"
+            assert page.evaluate(SURFACE)["selected"] == "motion"
+            findings.append(f"5e. {width}px direct stage navigation focuses Motion work with no page overflow")
+        page.set_viewport_size({"width": 1600, "height": 1000})
+        open_shot(APPROVED_SHOT)
 
         # A FULL CENTER RERENDER. `route()` is the app's own wholesale replacement of
         # `#main` — the operation that used to destroy the navigator, because the
@@ -499,24 +617,23 @@ try:
                         f"{len(blocked_rows)} blocked, {len(review)} needing review, {len(complete)} complete, "
                         f"and blocked paints differently from complete")
 
-        # ---- 9. an unavailable primary is disabled and says why --------------------------
+        # ---- 9. blocked navigation reveals the blocker without granting readiness ---
         blocked_id = blocked_rows[0]["id"]
+        truth_blocked = page.evaluate(TRUTH)
         select_stage(blocked_id)
         at_blocked = page.evaluate(SURFACE)
-        disabled = [a for a in at_blocked["actions"] if a["disabled"]]
-        assert disabled, f"9. the blocked stage {blocked_id} must still offer its action, disabled"
-        for action in disabled:
-            assert action["describedBy"], f"9. the disabled action {action['id']} must point at its reason"
-            assert action["reasonVisible"], \
-                f"9. the reason for {action['id']} must be VISIBLE, not a tooltip a keyboard user cannot reach"
-            assert action["reason"] == declared[blocked_id]["blockedReason"], \
-                f"9. the reason must be the declaration's own words, got {action['reason']!r}"
-        # AND IT REALLY IS INERT: the runtime re-derives availability at click time, so
-        # even a click that reaches it does nothing.
+        assert at_blocked["selected"] == blocked_id
+        assert [row for row in at_blocked["declared"] if row["id"] == blocked_id][0]["availability"] == "blocked", \
+            "9. visiting a blocked stage must not convert it to available"
+        assert not [a for a in at_blocked["actions"] if a["id"] == "open-stage-work"], \
+            "9. duplicate Open-stage action remains visible"
+        reason = declared[blocked_id]["blockedReason"]
+        assert reason in page.locator(".cb-stage-bar").inner_text(), \
+            "9. blocked navigation must expose the canonical reason"
         assert page.evaluate("() => window.CineBraidStageSurfaces.invoke('open-stage-work')") is False, \
-            "9. invoking a blocked action must be refused by the runtime, not only by the attribute"
-        findings.append(f"9. {blocked_id}'s primary action is disabled, carries the declaration's reason visibly, "
-                        f"and is refused by the runtime when invoked directly")
+            "9. a blocked legacy action must still be refused by current truth"
+        assert page.evaluate(TRUTH) == truth_blocked, "9. blocked navigation changed production truth"
+        findings.append(f"9. direct navigation to blocked {blocked_id} exposes its reason without changing readiness or production truth")
 
         # ---- 11. no fabricated recommendation --------------------------------------------
         no_recommendation = [row for row in blocked_view["declared"] if not row["recommendedNext"]]
@@ -543,29 +660,21 @@ try:
         assert moved["selected"] == start["recommendedNext"], \
             f"10. Continue left the workspace on {moved['selected']!r}"
         assert page.evaluate(TRUTH) == truth_before, "20. advancing a stage must change no production truth"
-        # And the AVAILABLE primary reaches the shipped cross-panel handoff.
-        #
-        # THE STAGE IS CHOSEN FROM THE DECLARATION, NOT NAMED IN ADVANCE. This asked
-        # `motion` of SAMPLE-01, and SAMPLE-01 declares deliveryIntent "still" -- so
-        # deliveryRequiresMotion() is false, the shot is owed no motion unit, and
-        # motionState() correctly reports the stage BLOCKED. invoke() re-derives
-        # availability at click time and refused, exactly as section 9 requires it to.
-        # The claim here is that an AVAILABLE primary dispatches, so the stage is taken
-        # from what this shot actually declares available rather than from an assumption
-        # that a still-delivery shot is motion-ready.
+        # Direct stage click, not a second Open action, must reach its declared
+        # panel and leave production truth unchanged.
         open_shot(APPROVED_SHOT)
         available = [row for row in page.evaluate(SURFACE)["declared"]
                      if row["availability"] == "available"
                      and page.evaluate("id => !!window.stagePrimaryPanel(id)", row["id"])]
-        assert available, "10. fixture check: this shot must have at least one available stage with a primary"
+        assert available, "10. fixture check: an available stage must have a declared panel"
         primary_stage = available[0]["id"]
+        truth_before = page.evaluate(TRUTH)
         select_stage(primary_stage)
-        assert page.evaluate("() => window.CineBraidStageSurfaces.invoke('open-stage-work')") is True, \
-            f"10. an available primary must dispatch ({primary_stage})"
-        page.wait_for_selector(f'[data-guided-panel="{primary_stage}"]', timeout=20000)
-        findings.append("10. Continue navigates through the shipped stage-selection path and the primary reaches "
-                        "the shipped openGuidedPanel handoff; the shot's approvals, frames, clips and delivery "
-                        "intent are byte-identical afterwards")
+        assert not page.locator('.cb-stage-action[data-action-id="open-stage-work"]').count(), \
+            "10. the obsolete Open-stage action must be absent from the visible region"
+        assert page.evaluate(TRUTH) == truth_before, "20. direct stage navigation changed production truth"
+        findings.append("10. Continue still uses its readiness-governed recommendation; the stage button itself "
+                        "opens the declared workspace, disclosure and focus without a duplicate Open action")
 
         # ---- 12-13. O3 survives, and the bar never covers the Terminal -------------------
         after_all = page.evaluate(SURFACE)
@@ -727,8 +836,8 @@ try:
         chosen = page.evaluate(CHOOSER)
         target_label = page.evaluate("(id) => document.querySelector('.cb-stage-strip [data-stage-id=\"' + id + '\"] b').textContent", target)
         assert chosen["selected"] == target, f"18. the keyboard choice must render {target}, got {chosen['selected']!r}"
-        assert chosen["focus"] == "cb-stage-chooser-toggle", \
-            f"18. choosing a stage must fold the chooser and return focus to its toggle, focus is on {chosen['focus']!r}"
+        assert chosen["workspaceFocused"], \
+            f"18. choosing a stage must focus its work surface after folding the chooser, focus is on {chosen['focus']!r}"
         assert f"Current stage: {target_label}" in " ".join(chosen["line"].split()), \
             f"18. the current-stage line must name the chosen stage, reads {chosen['line']!r}"
         assert page.evaluate(READ_STAMP) == phone_stamps, "18. choosing through the chooser rebuilt a persistent surface"
@@ -751,7 +860,7 @@ try:
         page.evaluate("() => window.scrollTo(0, 600)")
         page.wait_for_timeout(170)
         scrolled_open = page.evaluate(GEOMETRY)
-        assert scrolled_open["barBox"]["top"] <= at_rest["barBox"]["top"] - scrolled_open["scrollY"] + 2, \
+        assert scrolled_open["barBox"]["top"] <= at_rest["barBox"]["top"] - (scrolled_open["scrollY"] - at_rest["scrollY"]) + 2, \
             (f"18. the opened chooser must scroll with the page, not pin {scrolled_open['barBox']['h']}px of stages "
              f"under the header (bar top {scrolled_open['barBox']['top']}px after {scrolled_open['scrollY']}px)")
         page.evaluate("() => window.scrollTo(0, 0)")
@@ -792,21 +901,14 @@ try:
         page.wait_for_selector(f'[data-bounded-task="{blocked_phone["id"]}"]', timeout=20000)
         page.wait_for_selector('.cb-stage-bar[data-stage-chooser="closed"]', timeout=10000)
         blocked_actions = page.evaluate(SURFACE)["actions"]
-        blocked_geometry = page.evaluate(GEOMETRY)
         blocked_chooser = page.evaluate(CHOOSER)
-        disabled_phone = [a for a in blocked_actions if a["disabled"]]
-        assert disabled_phone and all(a["reasonVisible"] and a["reason"] == blocked_phone["blockedReason"] for a in disabled_phone), \
-            f"18. with the chooser closed a blocked stage's action must be disabled with its declared reason visible, got {blocked_actions}"
-        assert blocked_geometry["actionsShown"] and all(blocked_geometry["actionsShown"]), \
-            f"18. and the disabled action itself must be visible, got {blocked_geometry['actionsShown']}"
+        assert not any(a["id"] == "open-stage-work" for a in blocked_actions), \
+            "18. the phone cannot resurrect duplicate Open-stage navigation"
         assert blocked_phone["blockedReason"] in blocked_chooser["actionsText"], \
-            "18. the reason must be readable text in the actions, not a tooltip"
-        findings.append(f"18. at 390px the keyboard opened the chooser, Tab reached {target} and Enter selected it through "
-                        f"the shipped selectBoundedTask with focus returned to the toggle; a job-refresh repaint, a full "
-                        f"route() and a rotation to 1600px and back kept it open without rebuilding the strip or the "
-                        f"actions; the open list scrolls with the page; Escape returned focus; nothing was stored and "
-                        f"no production truth changed; and {blocked_phone['id']}'s disabled action showed its reason with "
-                        f"the chooser closed")
+            "18. the blocked reason must be readable with the chooser closed"
+        findings.append(f"18. at 390px the keyboard chooser reaches the same stage workspace; repaint, route rerender, "
+                        f"rotation and Escape preserve chooser semantics; blocked {blocked_phone['id']} states its "
+                        f"reason without a duplicate Open-stage action")
 
         page.set_viewport_size({"width": 1600, "height": 1000})
         page.wait_for_timeout(260)
@@ -916,27 +1018,46 @@ try:
             "N5: the repaint did not remove the fabricated recommendation"
         findings.append(f"N5. a Continue fabricated on {empty}, which the model gives no recommendation for, is caught")
 
-        # N6 — re-enable a disabled action. The attribute check must notice, AND the
-        # runtime must still refuse the invocation, which is the second guard.
+        # N6 — a blocked forward recommendation stays inert even if its disabled
+        # attribute is stripped. The synthetic action is confined to this browser
+        # fixture; the production contract and actual project remain unchanged.
         select_stage(target)
-        before_n6 = [a for a in page.evaluate(SURFACE)["actions"] if a["disabled"]]
-        probe("N6", before_n6, f"{target} offered no disabled action, so the control proves nothing")
-        page.evaluate("() => document.querySelectorAll('.cb-stage-action[disabled]').forEach((b) => b.removeAttribute('disabled'))")
-        after_n6 = page.evaluate(SURFACE)["actions"]
-        probe("N6", not any(a["disabled"] for a in after_n6),
-              "removing the attribute did not change what the check reads")
-        assert not any(a["disabled"] for a in after_n6), "N6: a clickable disabled action was not caught"
+        page.evaluate("""(id) => {
+          window.__o4OriginalStageActions = window.stageActions;
+          window.stageActions = (state, shotId) => {
+            const actions = window.__o4OriginalStageActions(state, shotId);
+            if (state.id !== id) return actions;
+            return [...actions, Object.freeze({
+              id: 'synthetic-blocked-continue', label: 'Continue', emphasis: 'advance',
+              availability: state.availability, disabledReason: state.blockedReason,
+              paid: false, destructive: false, advances: true,
+              invoke: Object.freeze({ kind: 'select-stage', shotId, stageId: 'deliver' }),
+            })];
+          };
+          window.CineBraidStageSurfaces.paint();
+        }""", target)
+        before_n6 = [a for a in page.evaluate(SURFACE)["actions"] if a["id"] == "synthetic-blocked-continue"]
+        probe("N6", len(before_n6) == 1 and before_n6[0]["disabled"]
+              and before_n6[0]["reasonVisible"],
+              f"fixture failed to render one disabled Continue with visible reason: {before_n6}")
+        page.evaluate("() => document.querySelector('[data-action-id=synthetic-blocked-continue]').removeAttribute('disabled')")
+        after_n6 = [a for a in page.evaluate(SURFACE)["actions"] if a["id"] == "synthetic-blocked-continue"]
+        probe("N6", len(after_n6) == 1 and not after_n6[0]["disabled"],
+              "removing disabled did not change what the check reads")
         truth_before_n6 = page.evaluate(TRUTH)
-        page.click(f'.cb-stage-action[data-action-id="open-stage-work"]')
-        page.wait_for_timeout(300)
+        selected_before_n6 = page.evaluate(SURFACE)["selected"]
+        page.click('[data-action-id="synthetic-blocked-continue"]')
         assert page.evaluate(TRUTH) == truth_before_n6, \
-            "N6: clicking the re-enabled action changed production truth — the runtime's own availability guard is not holding"
+            "N6: clicking the tampered blocked Continue changed production truth"
+        assert page.evaluate(SURFACE)["selected"] == selected_before_n6, \
+            "N6: clicking the tampered blocked Continue bypassed readiness"
         page.evaluate("() => window.CineBraidStageSurfaces.paint()")
-        page.wait_for_timeout(150)
-        assert any(a["disabled"] for a in page.evaluate(SURFACE)["actions"]), \
-            "N6: the repaint did not restore the disabled attribute"
-        findings.append("N6. removing `disabled` is caught, and the runtime still refuses the invocation, so the "
-                        "attribute is a second lock rather than the only one")
+        assert [a for a in page.evaluate(SURFACE)["actions"]
+                if a["id"] == "synthetic-blocked-continue" and a["disabled"]], \
+            "N6: repaint did not restore the disabled attribute"
+        page.evaluate("() => { window.stageActions = window.__o4OriginalStageActions; delete window.__o4OriginalStageActions; window.CineBraidStageSurfaces.paint(); }")
+        findings.append("N6. removing disabled from a controlled blocked Continue is detected; live dispatch "
+                        "still refuses it and repaint restores the attribute")
 
         # N7 — let the bar overlap the Terminal.
         probe("N7", not page.evaluate(GEOMETRY)["barOverlapsDock"], "the bar already overlapped the dock")
@@ -983,8 +1104,9 @@ try:
         page.focus("#cb-stage-chooser-toggle")
         page.keyboard.press("Enter")
         page.wait_for_selector('.cb-stage-bar[data-stage-chooser="closed"]', timeout=10000)
-        before_n9 = page.evaluate(GEOMETRY)["actionsShown"]
-        probe("N9", before_n9 and all(before_n9), f"the actions were not all visible to begin with: {before_n9}")
+        before_n9 = page.evaluate(GEOMETRY)["actionsRegionShown"]
+        probe("N9", before_n9 and page.evaluate(CHOOSER)["actionsText"].strip(),
+              "the blocked reason region was not visible to begin with")
         page.evaluate("""() => {
             const style = document.createElement('style');
             style.id = 'cb-o4-control-fold-actions';
@@ -992,12 +1114,12 @@ try:
             document.head.appendChild(style);
         }""")
         page.wait_for_timeout(200)
-        folded = page.evaluate(GEOMETRY)["actionsShown"]
-        assert not (folded and all(folded)), \
-            f"N9: actions folded behind the closed chooser still read as visible ({folded}), so the phone check is not measuring them"
+        folded = page.evaluate(GEOMETRY)["actionsRegionShown"]
+        assert not folded, \
+            "N9: the blocked reason region folded behind the closed chooser still read as visible"
         page.evaluate("() => document.getElementById('cb-o4-control-fold-actions')?.remove()")
         page.wait_for_timeout(200)
-        assert all(page.evaluate(GEOMETRY)["actionsShown"]), "N9: removing the control did not restore the actions"
+        assert page.evaluate(GEOMETRY)["actionsRegionShown"], "N9: removing the control did not restore the blocked reason region"
         findings.append("N9. stage actions folded behind the closed phone chooser are caught by the visibility measurement")
 
         # N10 — a repaint that forgets what the filmmaker opened.

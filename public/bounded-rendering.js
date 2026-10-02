@@ -66,6 +66,6 @@
   window.selectBoundedTask = (scope, id, value) => {
     writeFocusedTask(scope, id, value);
     if (scope === "settings-task" && typeof window.settingsGo === "function") return window.settingsGo(value);
-    window.route?.();
+    return window.route?.();
   };
 })();
