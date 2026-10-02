@@ -34,12 +34,10 @@
    caused by changing stage. So the one surface whose job is to tell a filmmaker where
    they are in the workflow was destroyed and rebuilt by the act of moving through it.
 
-   The rendered contract is deliberately UNCHANGED: same `.focused-taskbar
-   .bounded-shot-taskbar` nav, same `.focused-task-button` children,
-   same selectBoundedTask onclick, same status wording from the shipped
-   boundedShotTaskStatus(). Nine shipped browser suites drive the shot workspace by
-   clicking those buttons. A rewrite would have broken all of them to gain nothing:
-   what was wrong was the ownership, not the markup.
+   The rendered selectors, stage model and status wording remain. The stage button
+   now uses the declared first panel and the shipped task selector so one
+   click selects the task and reveals its working area. The former Open stage button
+   is omitted from the visible bar; a declared Continue recommendation remains.
 
    THERE MUST NOT BE TWO. The old call site is deleted rather than hidden, and
    tests/stage-surfaces.js fails if `#main` renders a second five-stage navigator.
@@ -94,6 +92,8 @@
   /* The phone chooser's expansion, one entry per project and shot that is open. In
      memory only — see THE PHONE CHOOSER below for why it is nowhere else. */
   const CHOOSER_OPEN = new Set();
+  let stageNavigationToken = 0;
+  let viewportStageQueued = false;
 
   /* ==========================================================================
      READING THE APP.
@@ -245,11 +245,10 @@
        about thirty characters of a line that has room for twenty, so the live half was
        the half that got ellipsised away. The static sentence is still in `title`. */
     const detail = status.note || state.detail;
-    const scope = typeof SHOT_STAGE_SCOPE === "string" ? SHOT_STAGE_SCOPE : "shot-task";
     return `<button type="button" class="focused-task-button tone-${attr(status.tone)}${selected ? " selected" : ""}"`
       + ` data-stage-id="${attr(state.id)}" data-availability="${attr(state.availability)}"`
       + ` data-completion="${attr(state.completion)}"${selected ? ' aria-current="step"' : ""}`
-      + ` onclick="selectBoundedTask('${attr(scope)}','${attr(model.shotId)}','${attr(state.id)}')"`
+      + ` onclick="window.CineBraidStageSurfaces.openStage('${attr(state.id)}')"`
       + ` title="${attr(`${state.label} — ${status.label} · ${state.detail}`)}">`
       + `<i></i><span><b>${esc(state.label)}</b><small>${esc(detail)}</small></span>`
       + `<em>${esc(status.label)}</em></button>`;
@@ -297,7 +296,8 @@
      printing the same canonical blocker twice. Every blocked button points at
      the single element for its reason. */
   function actionsMarkup(model) {
-    const actions = model.actions;
+    /* Stage labels open their own work. Only declared forward navigation belongs here. */
+    const actions = model.actions.filter((action) => action.id !== "open-stage-work");
     const reasonIds = new Map();
     for (const action of actions) {
       if (action.availability !== "blocked" || reasonIds.has(action.disabledReason)) continue;
@@ -309,9 +309,10 @@
     /* An empty action list is a real answer and is rendered as one. The alternative —
        collapsing the region — would move the bar's controls up and down the page as
        the shot progressed, which is the opposite of a predictable location. */
+    const status = model.status(model.selectedId);
     const body = actions.length
       ? buttons + reasons
-      : `<p class="cb-stage-action-reason cb-stage-action-none">No action for this stage is offered here. The work is in the workspace below.</p>`;
+      : `<p class="cb-stage-action-reason cb-stage-action-none" title="${attr(model.current.blockedReason || status.note || status.label)}">${esc(model.current.blockedReason || status.note || status.label)}</p>`;
     return `<div class="cb-stage-actions" data-cb-stage-actions="1" data-action-count="${actions.length}"`
       + ` aria-label="${attr(`${model.current.label} actions`)}" role="group">${body}</div>`;
   }
@@ -398,10 +399,42 @@
     return false;
   }
 
-  /* THE CHOOSER'S THREE GESTURES. None of them selects a stage: a stage button inside
-     the opened strip still calls the shipped selectBoundedTask itself, exactly as it does
-     on a desktop, and the chooser only closes behind it. Each one repaints through
-     paint(), the one rendering path, and asks nothing of the viewport. */
+  /* The declared first panel identifies the workspace and any nested view. Stage
+     navigation uses the shipped task selector, which writes browser UI state only.
+     The former Open handoff also marked the project dirty merely to remember a
+     disclosure; a stage click must not change production data. */
+  async function openStage(stageId) {
+    const model = stageModel(stageContext());
+    const state = model && model.states.find((row) => row.id === String(stageId));
+    const panel = state && typeof stagePrimaryPanel === "function" ? stagePrimaryPanel(state.id) : "";
+    if (!state || !panel || typeof window.selectBoundedTask !== "function") return false;
+    const token = ++stageNavigationToken;
+    const view = typeof shotStagePanelView === "function" ? shotStagePanelView(panel) : "";
+    if (view && typeof boundedWriteState === "function")
+      boundedWriteState("selected:shot-look-view", model.shotId, view);
+    await window.selectBoundedTask(
+      typeof SHOT_STAGE_SCOPE === "string" ? SHOT_STAGE_SCOPE : "shot-task",
+      model.shotId, state.id);
+    if (token !== stageNavigationToken) return false;
+    /* app.js restores the prior control's focus on its second animation frame.
+       Finish that route restoration before the destination receives focus. */
+    await new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve)));
+    if (token !== stageNavigationToken) return false;
+    const workspace = document.querySelector(
+      '.bounded-selected-task[data-bounded-task="' + state.id + '"]');
+    if (!workspace) return false;
+    const disclosure = workspace.querySelector(
+      'details[data-guided-panel="' + panel + '"]');
+    if (disclosure) disclosure.open = true;
+    workspace.scrollIntoView({ behavior: "smooth", block: "start", inline: "nearest" });
+    if (!workspace.hasAttribute("tabindex")) workspace.setAttribute("tabindex", "-1");
+    workspace.focus({ preventScroll: true });
+    return true;
+  }
+
+  /* The chooser opens the same stage buttons used on desktop. Its own gestures
+     only fold the list and manage focus; the button's openStage handler navigates
+     through the shipped task selector. */
   function toggleChooser() {
     const context = stageContext();
     if (!context.shotId) return false;
@@ -498,6 +531,7 @@
     STALE = false;
     applyMarkup(BAR_NODE, barMarkup(model));
     revealCurrentStage();
+    queueViewportStageSync();
     /* TELL THE SHELL THE BAR CHANGED HEIGHT, rather than waiting to be noticed. The
        bar is sticky, and every sticky surface below it offsets by --cb-bar-height; a
        reservation that is one frame stale pins the shot header underneath the strip.
@@ -535,6 +569,31 @@
     if (typeof requestAnimationFrame === "function") requestAnimationFrame(() => shell.syncCreatorShell());
   }
 
+  /* Only one stage workspace is rendered at a time. Manual scrolling therefore
+     observes that real workspace, never invents another stage or writes task state.
+     The marker is separate from aria-current (the selected task) and causes no route
+     or scroll of its own. */
+  function syncViewportStage() {
+    viewportStageQueued = false;
+    const bar = BAR_NODE && BAR_NODE.firstElementChild;
+    if (!bar) return;
+    const work = document.querySelector(".bounded-selected-task[data-bounded-task]");
+    const chrome = document.getElementById("cb-shell-bar");
+    const edge = Math.max(0, chrome ? chrome.getBoundingClientRect().bottom : 0) + 24;
+    const rect = work && work.getBoundingClientRect();
+    const inView = rect && rect.top <= edge && rect.bottom > edge;
+    const stageId = inView ? work.dataset.boundedTask : "";
+    bar.dataset.inViewStage = stageId || "";
+    for (const button of bar.querySelectorAll(".cb-stage-strip [data-stage-id]"))
+      button.dataset.workspaceInView = button.dataset.stageId === stageId ? "true" : "false";
+  }
+  function queueViewportStageSync() {
+    if (viewportStageQueued) return;
+    viewportStageQueued = true;
+    if (typeof requestAnimationFrame === "function") requestAnimationFrame(syncViewportStage);
+    else syncViewportStage();
+  }
+
   /* ==========================================================================
      WIRING.
 
@@ -555,12 +614,15 @@
      a resize, with no event that would have brought it back. Nothing is re-derived
      here — the model has not changed — so this reveals rather than repaints. */
   window.addEventListener("resize", revealCurrentStage);
+  window.addEventListener("scroll", queueViewportStageSync, { passive: true });
   if (document.readyState === "loading") document.addEventListener("DOMContentLoaded", paint);
   else paint();
 
   window.CineBraidStageSurfaces = {
     paint,
     invoke,
+    openStage,
+    syncViewportStage,
     stageModel: () => stageModel(stageContext()),
     stripMarkup,
     actionsMarkup,

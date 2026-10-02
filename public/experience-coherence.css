@@ -256,6 +256,38 @@
   #cb-stage-mount .cb-stage-action { white-space:normal; text-align:left; }
   #cb-stage-mount .cb-stage-action-reason { text-align:left; }
 }
+/* Stage targets own five stable grid tracks. A changing forward action or status
+   occupies a reserved right column and cannot move a pointer target. */
+@media(min-width:761px) {
+  #cb-stage-mount .cb-stage-bar { display:grid; grid-template-columns:minmax(0,1fr) 208px; align-items:center; }
+  #cb-stage-mount .cb-stage-strip { display:grid; grid-template-columns:repeat(5,minmax(0,1fr)); min-width:0; overflow:hidden; }
+  #cb-stage-mount .cb-stage-strip .focused-task-button { min-width:0; width:100%; }
+  #cb-stage-mount .cb-stage-actions { width:208px; min-width:0; justify-content:flex-end; }
+  #cb-stage-mount .cb-stage-action { max-width:100%; overflow:hidden; text-overflow:ellipsis; }
+  #cb-stage-mount .cb-stage-action-reason { max-width:100%; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+}
+@media(min-width:761px) and (max-width:1230px) {
+  #cb-stage-mount .cb-stage-bar { grid-template-columns:minmax(0,1fr) 168px; gap:8px; }
+  #cb-stage-mount .cb-stage-actions { width:168px; }
+  #cb-stage-mount .cb-stage-strip .focused-task-button small { display:none; }
+}
+@media(min-width:761px) and (max-width:1050px) {
+  #cb-stage-mount .cb-stage-bar { grid-template-columns:minmax(0,1fr); }
+  #cb-stage-mount .cb-stage-actions { width:100%; min-height:28px; justify-content:flex-start; }
+  #cb-stage-mount .cb-stage-strip .focused-task-button>em { display:none; }
+}
+#main .bounded-shot-workspace .shot-main {
+  padding-bottom:calc(100dvh - var(--cb-topbar-stop,64px) - var(--cb-dock-reserve,0px));
+}
+#main .bounded-selected-task {
+  scroll-margin-top:calc(var(--cb-topbar-stop,64px) + var(--cb-bar-height,0px) + 12px);
+}
+@media(max-width:760px) {
+  #main .bounded-selected-task {
+    scroll-margin-top:calc(var(--cb-topbar-stop,64px) + 12px);
+  }
+}
+
 /* The Shot workspace has one bounded work track. Scene/shot navigation belongs
    to the canonical sidebar, so no secondary navigator or inspector reserves width.
    Wide desktops keep the existing 1360px cap; narrower windows yield continuously. */

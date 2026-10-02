@@ -264,7 +264,7 @@ function checkDeclarationOwnership(sources = SOURCES) {
      arrive shuffled must still render in declared order... which it cannot, because the
      strip renders what it is given. So the claim is made where it is true — the strip
      renders public/shared-stage-model.js's OWN ordered output and never re-sorts it. */
-  assert.ok(!/\.sort\(|\.reverse\(|\.filter\(/.test(codeOnly(sources.surfaces).split("function stripMarkup")[1] || ""),
+  assert.ok(!/\.sort\(|\.reverse\(|\.filter\(/.test((codeOnly(sources.surfaces).split("function stripMarkup")[1] || "").split("function actionButton")[0]),
     "stripMarkup must render the states it was handed, in the order it was handed them");
 
   const labels = [...html.matchAll(/<b>([^<]*)<\/b>/g)].map((match) => match[1]);
@@ -483,42 +483,52 @@ function checkRecommendationSafety(sources = SOURCES) {
 function checkDisabledAndAccess(sources = SOURCES) {
   const { surfaces } = loadRuntime(sources);
 
-  /* A blocked stage: the primary action is rendered, disabled, and describes itself. */
+  /* Stage buttons remain navigable even when readiness is blocked. The action
+     region may contain a Continue only when the canonical model recommends it;
+     Open-stage is now owned by the stage button, never duplicated here. */
   const model = modelFor(sources, FIXTURES.fresh, "motion");
   assert.strictEqual(model.current.availability, "blocked", "fixture check: motion must be blocked with no approved frames");
   const html = surfaces.actionsMarkup(model);
-  const buttons = attrsOf(html, "button");
-  assert.strictEqual(buttons.length, 1, "a blocked stage with no recommendation offers exactly one action");
+  assert.ok(!/data-action-id="open-stage-work"/.test(html),
+    "the obsolete Open-stage action must not be visible beside the direct stage buttons");
+  assert.ok(html.includes(model.current.blockedReason),
+    "a blocked stage with no forward action must show the declaration's reason as readable text");
+
+  const recommended = modelFor(sources, FIXTURES.motion, "frames");
+  const forward = recommended.actions.find((action) => action.advances);
+  assert.ok(forward, "fixture check: this stage must have a canonical forward recommendation");
+  const forwardHtml = surfaces.actionsMarkup(recommended);
+  const forwardButtons = attrsOf(forwardHtml, "button");
+  assert.strictEqual(forwardButtons.length, 1, "only the genuine Continue action may appear");
+  assert.strictEqual(forwardButtons[0]["data-action-id"], forward.id,
+    "the visible forward action must be the model's actual recommendation");
+  assert.strictEqual(!!forwardButtons[0].disabled, forward.availability === "blocked",
+    "the visible Continue must preserve the declaration's readiness");
+  assert.ok(!/data-action-id="open-stage-work"/.test(forwardHtml),
+    "the old Open-stage action must stay absent even when Continue is available");
+
+  /* Drive the disabled-action and reason contract through a blocked Continue,
+     synthesized solely to test the renderer. Navigation remains clickable; production
+     recommendations do not. */
+  const blocked = { ...model };
+  const first = model.actions[0];
+  const blockedForward = Object.freeze({ ...first, id: "synthetic-advance", emphasis: "advance", advances: true, label: "Continue" });
+  blocked.actions = Object.freeze([first, blockedForward, Object.freeze({ ...blockedForward, id: "synthetic-advance-2" })]);
+  const blockedHtml = surfaces.actionsMarkup(blocked);
+  const buttons = attrsOf(blockedHtml, "button");
+  assert.strictEqual(buttons.length, 2, "the renderer must omit Open-stage while retaining both blocked forward controls");
   assert.strictEqual(buttons[0].disabled, true,
-    "an unavailable action must carry the real `disabled` attribute. A button that only LOOKS unavailable is one a keyboard reaches and a click fires.");
+    "a blocked Continue must carry the real disabled attribute");
   const describedBy = buttons[0]["aria-describedby"];
-  assert.ok(describedBy, "a disabled action must point at its reason");
-  const reason = html.match(new RegExp(`<p class="cb-stage-action-reason" id="${describedBy}">([^<]*)</p>`));
-  assert.ok(reason, `the element "${describedBy}" the disabled action describes itself by must exist`);
+  assert.ok(describedBy, "a blocked Continue must point at its visible reason");
+  const reason = blockedHtml.match(new RegExp('<p class="cb-stage-action-reason" id="' + describedBy + '">([^<]*)</p>'));
+  assert.ok(reason, "the described-by reason must exist as visible text");
   assert.strictEqual(reason[1], model.current.blockedReason,
-    "the visible reason must be the declaration's own words, not a paraphrase");
-  assert.ok(!/title="/.test(html),
-    "the reason must not be delivered by tooltip alone: a reason only a pointer can reveal is a reason a keyboard user does not have");
-
-  /* An available stage: no disabled attribute, no orphan reason. */
-  const open = modelFor(sources, FIXTURES.motion, "motion");
-  assert.strictEqual(open.current.availability, "available", "fixture check: canonical readiness opens Motion");
-  const openHtml = surfaces.actionsMarkup(open);
-  assert.ok(!/disabled/.test(openHtml), "an available stage's actions must not be disabled");
-  assert.ok(!/cb-stage-action-reason/.test(openHtml), "an available action must not print a disabled reason");
-
-  /* ONE REASON PER DISTINCT REASON. Two blocked actions on one stage necessarily share
-     one, and printing it twice is a rendering fault the reader would read as two
-     problems. */
-  const doubled = { ...modelFor(sources, FIXTURES.fresh, "motion") };
-  const first = doubled.actions[0];
-  doubled.actions = Object.freeze([first, Object.freeze({ ...first, id: "synthetic-advance", emphasis: "advance", advances: true, label: "Continue" })]);
-  const doubledHtml = surfaces.actionsMarkup(doubled);
-  assert.strictEqual(occurrences(doubledHtml, "cb-stage-action-reason"), 1,
-    "two actions blocked for the same reason must print that reason once");
-  const ids = attrsOf(doubledHtml, "button").map((button) => button["aria-describedby"]);
-  assert.strictEqual(new Set(ids).size, 1, "and both must point at the one element that holds it");
-
+    "the reason must use the declaration's exact wording");
+  assert.ok(!/title="/.test(blockedHtml),
+    "a blocked Continue's reason cannot be tooltip-only");
+  assert.strictEqual(occurrences(blockedHtml, "cb-stage-action-reason"), 1,
+    "the shared reason must be printed once");
   /* The strip's stages stay real buttons — keyboard reachable by construction — and the
      current one is announced as a step rather than by colour alone. */
   const stripHtml = surfaces.stripMarkup(modelFor(sources, FIXTURES.review, "frames"));
@@ -527,9 +537,9 @@ function checkDisabledAndAccess(sources = SOURCES) {
   assert.ok(/<nav class="[^"]*" aria-label="Shot production stages">/.test(stripHtml),
     "the strip must keep its accessible name");
   assert.strictEqual(occurrences(stripHtml, 'aria-current="step"'), 1, "exactly one stage is current");
-  assert.ok(/role="group"/.test(html) && /aria-label="/.test(html),
+  assert.ok(/role="group"/.test(blockedHtml) && /aria-label="/.test(blockedHtml),
     "the action surface must name itself, or it is an unlabelled cluster of buttons in a landmark");
-  note("Access: disabled actions carry the real attribute and a VISIBLE declaration-worded reason; one reason element per reason; every stage is a button and one is aria-current");
+  note("Access: stage buttons directly navigate; blocked forward actions stay disabled with visible reasons; Open-stage is absent; one stage is aria-current");
 }
 
 /* ===========================================================================
@@ -699,9 +709,11 @@ function checkRefusals(sources = SOURCES) {
 function checkLifecycle(sources = SOURCES) {
   const { listeners, surfaces } = loadRuntime(sources);
   const names = listeners.map(([name]) => name).sort();
-  assert.deepStrictEqual(names, ["cinebraid:activity-updated", "cinebraid:route-rendered", "cinebraid:workspace-updated", "hashchange", "load", "resize"],
-    `the runtime must repaint from the shell's own signals and nothing else, found: ${names.join(", ")}`);
+  assert.deepStrictEqual(names, ["cinebraid:activity-updated", "cinebraid:route-rendered", "cinebraid:workspace-updated", "hashchange", "load", "resize", "scroll"],
+    `the runtime may repaint on shell signals and track the in-view stage on scroll, found: ${names.join(", ")}`);
 
+  assert.ok(/window\.addEventListener\("scroll",\s*queueViewportStage/.test(codeOnly(sources.surfaces)),
+    "scroll must only queue in-view marking, never route or reselect a task");
   /* Activity is one of them ON PURPOSE: the declared model mirrors a run's status onto
      the stage it is working on, so the moment activity changes is the moment a stage's
      tone is wrong. */
@@ -839,7 +851,7 @@ function checkPhoneChooser(sources = SOURCES) {
     && closed.indexOf("<nav ") < closed.indexOf('data-cb-stage-actions="1"'),
     "the order is chooser, strip, actions: the actions are never inside what the toggle opens");
   assert.ok(!/<details\b|\shidden(?=[\s>=])/.test(closed), "nothing in the bar may be hidden by markup; which width shows what is the stylesheet's decision");
-  assert.ok(/<p class="cb-stage-action-reason" id="cb-stage-reason-0">/.test(closed), "the blocked reason must be rendered while the chooser is closed");
+  assert.ok(closed.includes(model.current.blockedReason) && /cb-stage-action-none/.test(closed), "the blocked reason must be rendered while the chooser is closed");
 
   /* OPENED FOR THIS SHOT, KEPT THROUGH REPAINTS, IDENTICAL IN EVERYTHING ELSE. */
   assert.strictEqual(surfaces.toggleChooser(), true, "the toggle must open the chooser for the shot on screen");
