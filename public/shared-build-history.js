@@ -581,7 +581,7 @@
       scene: select(scene, ["id", "title", "whatHappens", "howItFeels", "stage"]),
       shot: {
         ...select(s, ["id", "title", "scene", "desc", "positioning", "motionPrompt",
-          "codes", "characters", "audio", "risks", "safe", "dur", "sec", "duration", "durationSeconds",
+          "codes", "characters", "audio", "risks", "safe", "dur", "sec", "duration", "durationSeconds", "plannedDuration",
           "continuityStateSelections", "deliveryRoute", "packagePlanner"]),
         clips: (Array.isArray(s.clips) ? s.clips : []).map((row) =>
           select(row, ["id", "suffix", "title", "kind", "dur", "sec", "duration", "motionPrompt",

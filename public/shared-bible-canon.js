@@ -444,6 +444,10 @@
      incomplete answer is published as incomplete rather than as a smaller number
      that looks finished. */
   function shotTiming(s, motions) {
+    if (Object.hasOwn(s, "plannedDuration")) {
+      const planned = DURATION.shotPlannedDuration(s);
+      return { dur: planned.seconds, durComplete: planned.known, durUntimedUnits: 0, durWords: timingWords(planned.seconds, planned.known, 0) };
+    }
     if (motions.length) {
       const untimed = motions.filter((m) => m.durDeclared !== true);
       const seconds = motions.reduce((total, m) => total + (m.durDeclared === true ? m.dur : 0), 0);
@@ -454,11 +458,7 @@
         durWords: timingWords(seconds, untimed.length === 0, untimed.length),
       };
     }
-    /* NARROWED ON PURPOSE. The aggregate has always read `s.dur` and nothing else,
-       so the declared-ness question is asked about that same field: a shot whose
-       only length is a legacy `sec`/`duration` alias keeps exactly the Bible
-       behaviour it has today rather than acquiring a number here. The RULE is
-       still shared-entities.js's; only what it is applied to is pinned. */
+    /* Legacy shot timing remains unchanged where no explicit editorial plan exists. */
     const declared = durationDeclared({ dur: s.dur });
     const seconds = declared ? +s.dur || 0 : 0;
     return {

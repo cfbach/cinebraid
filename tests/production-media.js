@@ -753,7 +753,7 @@ function checkReviewAssessment({ PM, Inspector }) {
 
 /* =========================================================================
    7. PROVENANCE AND MONEY -- the four job cases, and never a zero. */
-function checkProvenance({ PM }) {
+function checkProvenance({ PM, Inspector }) {
   const built = project(PM);
 
   const cases = {
@@ -826,6 +826,31 @@ function checkProvenance({ PM }) {
     "...while the build it names is still reported, so the gap is navigable");
   assert(PM.PRODUCTION_MEDIA_UNAVAILABLE["shot-candidate-prompt"]?.wouldNeed,
     "the shot-candidate prompt gap must stay declared");
+
+  /* The linked job is the historical request, even when a later build differs.
+     Reading it must preserve exact text and write neither project nor ledger. */
+  const linked = fixture();
+  const submitted = "  Hold the parcel still.\nOne slow push-in.  ";
+  linked.jobs.find((job) => job.id === "job-motion-1").prompt = submitted;
+  linked.jobs.find((job) => job.id === "job-frame-a").prompt = "Exact submitted frame request.";
+  linked.project.shots[0].creationBrief = { promptBuilds: [{ id: "build-frame-a", prompt: "Later wording; never sent." }] };
+  const before = JSON.stringify(linked);
+  const history = PM.productionMediaRecords(linked);
+  const motionPrompt = byName(history, "SH010_MOTION_H3_1.mp4").provenance.prompt;
+  assert.deepStrictEqual(JSON.parse(JSON.stringify(motionPrompt)), { state: "known", value: submitted, source: "generation-job" });
+  assert.strictEqual(byName(history, "SH010_FRAME_A_V001.png").provenance.prompt.value, "Exact submitted frame request.");
+  const html = Inspector.inspectorMarkup(byName(history, "SH010_MOTION_H3_1.mp4"));
+  assert(html.includes(esc(submitted)) && html.includes("Submitted prompt · linked generation job"));
+  assert(!html.includes("never recorded"), "a recorded request must not be presented as missing");
+  assert.strictEqual(JSON.stringify(linked), before, "provenance inspection writes no project or job data");
+  const unavailable = PM.productionMediaRecords({ ...linked, jobs: [], jobsAvailable: false });
+  const missing = byName(unavailable, "SH010_MOTION_H3_1.mp4");
+  assert.strictEqual(missing.provenance.prompt.state, "unavailable");
+  assert(Inspector.inspectorMarkup(missing).includes("generation record is unavailable"));
+  assert.strictEqual(byName(history, "SH020_FRAME_A_FAL_1.png").provenance.prompt.state, "unavailable",
+    "an unrelated job cannot supply the prompt for a missing exact job link");
+  assert(Inspector.inspectorMarkup(byName(built, "SH010_FRAME_B_V001.png")).includes("No submitted prompt is recorded in the available provenance"),
+    "legacy records with no prompt remain honestly unrecorded");
 
   /* LINEAGE IS LINKED, NEVER RECONSTRUCTED. */
   const frameA = byName(built, "SH010_FRAME_A_V001.png");

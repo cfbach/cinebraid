@@ -401,8 +401,8 @@ const CONTROLS = [
     id: "N8",
     title: "a new shot is created with a zero-second duration again",
     target: { file: "mutations.js" },
-    from: `      dur: null,\n      continuityStateSelections: {},`,
-    to: `      dur: 0,\n      continuityStateSelections: {},`,
+    from: `      dur: null,\n      plannedDuration: parsePlannedShotDuration(v.plannedDuration).seconds,\n      continuityStateSelections: {},`,
+    to: `      dur: 0,\n      plannedDuration: parsePlannedShotDuration(v.plannedDuration).seconds,\n      continuityStateSelections: {},`,
     expect: /a new shot was stored with a zero-second duration/,
     async guard(run) {
       const app = await run({ hash: "#/shots/board" });

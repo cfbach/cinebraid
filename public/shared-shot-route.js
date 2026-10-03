@@ -81,7 +81,7 @@ const CINEBRAID_SHOT_ROUTE_FIELD = "deliveryRoute";
 
 /* The canonical stored values, in the order the vocabulary is declared rather than
    alphabetically — nothing may read a ranking into this list. */
-const CINEBRAID_SHOT_ROUTES = ["t2v", "i2v", "flf", "r2v", "hybrid"];
+const CINEBRAID_SHOT_ROUTES = ["t2v", "i2v", "flf", "r2v", "hybrid", "editorial"];
 
 /* How a stored value reads. Three states, because "nobody declared one" and "somebody
    stored something this build does not recognise" are different facts and a reader that
@@ -104,6 +104,8 @@ const CINEBRAID_SHOT_ROUTE_MODES = {
   /* Declared empty rather than omitted: a reader must be able to see that hybrid was
      considered and has no mode, instead of inferring it from a missing key. */
   hybrid: "",
+  // Existing media is a production route, never a generation mode.
+  editorial: "",
 };
 
 /* Generic legacy compatibility; behavior is covered with synthetic fixtures. */
@@ -132,6 +134,10 @@ function canonicalShotRoute(value) {
   if (typeof value !== "string") return "";
   const token = value.trim().toLowerCase();
   return CINEBRAID_SHOT_ROUTES.includes(token) ? token : "";
+}
+
+function shotRouteIsEditorial(value) {
+  return canonicalShotRoute(value) === "editorial";
 }
 
 /* What a shot's record actually says, with the stored value kept beside the reading so a
@@ -288,6 +294,7 @@ const SHOT_ROUTE_EXPORTS = {
   CINEBRAID_SHOT_ROUTE_MODES,
   CINEBRAID_SHOT_ROUTE_LEGACY_VALUES,
   canonicalShotRoute,
+  shotRouteIsEditorial,
   readShotRoute,
   declaredShotRoute,
   declareShotRoute,

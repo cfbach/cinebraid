@@ -30,7 +30,7 @@ const { render, buildFixture } = require("./render-harness");
 const notes = [];
 const note = (line) => notes.push(line);
 
-const ROUTES = ["t2v", "i2v", "flf", "r2v", "hybrid"];
+const ROUTES = ["t2v", "i2v", "flf", "r2v", "hybrid", "editorial"];
 const VIDEO_ROUTES = ["t2v", "i2v", "flf", "r2v"];
 
 /* ===========================================================================
@@ -44,8 +44,8 @@ const VIDEO_ROUTES = ["t2v", "i2v", "flf", "r2v"];
 
 function checkVocabulary() {
   assert.deepStrictEqual([...Route.CINEBRAID_SHOT_ROUTES], ROUTES,
-    "the canonical routes, in declaration order, are exactly the five the brief names");
-  assert.strictEqual(new Set(Route.CINEBRAID_SHOT_ROUTES).size, 5, "no duplicates");
+    "the canonical routes include the explicit non-generative editorial route");
+  assert.strictEqual(new Set(Route.CINEBRAID_SHOT_ROUTES).size, 6, "no duplicates");
   assert.strictEqual(Route.CINEBRAID_SHOT_ROUTE_FIELD, "deliveryRoute",
     "the storage key is declared once and every reader spells it from here");
 
@@ -55,6 +55,7 @@ function checkVocabulary() {
       `${route} must already be a declared CineBraid generation mode, not a new spelling of one`);
   assert(!CINEBRAID_GENERATION_MODES.includes("hybrid"),
     "hybrid must NOT be a generation mode — it names no single method, which is the whole of what it says");
+  assert(!CINEBRAID_GENERATION_MODES.includes("editorial"), "editorial is not a generation mode");
 
   /* And they are exactly the modes the shipped resolver can produce for an animated
      shot. Derived from resolveTaskModes() rather than restated, so this is the same
@@ -813,15 +814,15 @@ async function checkNoVisibleChange(baseline) {
       JSON.stringify(value) + " changed facts without declaring a route");
   }
 
-  const requiredFramesByRoute = { t2v: 0, i2v: 1, flf: 2, r2v: 0, hybrid: 2 };
+  const requiredFramesByRoute = { t2v: 0, i2v: 1, flf: 2, r2v: 0, hybrid: 2, editorial: 0 };
   for (const route of ROUTES) {
     const routed = await factsFor(route);
     assert.strictEqual(routed.facts.routeRequirementsKnown, true,
       route + ": a declared Shot Intent must produce known route requirements");
     assert.strictEqual(routed.facts.requiredFrameCount, requiredFramesByRoute[route],
       route + ": the stage fact must carry the intended frame requirement");
-    assert.strictEqual(routed.facts.motionRequired, true,
-      route + ": every declared route owes motion, so the stage fact must say so");
+    assert.strictEqual(routed.facts.motionRequired, route !== "editorial",
+      route + ": editorial owes existing media rather than generated motion");
     assert.strictEqual(withoutRouteProjection(routed.facts), withoutRouteProjection(baseline.facts),
       route + ": declaring Shot Intent disturbed facts outside the readiness projection");
 

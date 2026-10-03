@@ -54,7 +54,7 @@ COMPILE_ROUTE = "/api/prompt/compile"
 GENERATION_ROUTE = "/api/generation/"
 generation_calls = []
 FONT_HOSTS = ("https://fonts.googleapis.com", "https://fonts.gstatic.com")
-ROUTES = ["t2v", "i2v", "flf", "r2v", "hybrid"]
+ROUTES = ["t2v", "i2v", "flf", "r2v", "hybrid", "editorial"]
 
 page_errors, console_errors, offsite, paid_calls = [], [], [], []
 # Every prompt COMPILE, recorded the same way the paid route is. "Build prompt did not
@@ -369,7 +369,7 @@ try:
         undeclared_note = page.locator('.shot-intent-control [data-shot-intent-undeclared="1"]')
         assert undeclared_note.count() == 1, "1. and must state that no execution route was chosen"
         assert "No production route chosen yet" in undeclared_note.first.inner_text(), "1. in the filmmaker's own words, not an empty control"
-        assert state["options"] == [""] + ROUTES, f"1. the five routes plus the undeclared state, got {state['options']}"
+        assert state["options"] == [""] + ROUTES, f"1. all declared routes plus the undeclared state, got {state['options']}"
         assert all(label and label not in ROUTES for label in state["labels"]), \
             f"1. every option must be labelled in filmmaker language, got {state['labels']}"
         findings.append(f"1. {FRAMES_SHOT} opens route-less: the control is EXPANDED and says the route was not chosen, reads 'Not declared', "
@@ -584,6 +584,12 @@ try:
         for route in ROUTES:
             set_intent(route)
             expand_all()
+            if route == "editorial":
+                assert page.locator("#main .guided-video-target-control select").count() == 0, "6. editorial must expose no generation target picker"
+                assert page.evaluate("id=>shotIntentEffectiveModes(shotById(id).deliveryRoute,['t2v','i2v','flf','r2v']).modes.length", MOTION_SHOT) == 0, "6. editorial must permit no generation mode"
+                assert "No generation model or provider is required" in page.locator('[data-guided-panel="motion"]').inner_text()
+                narrowed_counts[route] = 0
+                continue
             page.wait_for_selector("#main .guided-video-target-control select", timeout=15000)
             picker = page.evaluate(PICKER_STATE)
             assert picker["intentRoute"] == route, f"6. {route}: the picker must know the declared intent"
@@ -662,17 +668,24 @@ try:
             return {
                 selects: control.querySelectorAll('select').length,
                 inputs: control.querySelectorAll('input, textarea').length,
+                plannedInputs: control.querySelectorAll('input[type="number"][id^="shot-planned-duration-"]').length,
                 genView: control.querySelectorAll('.gen-view, .gen-view-tab').length,
             };
         }""")
-        assert intent_controls["selects"] == 1 and intent_controls["inputs"] == 0, \
-            f"4. Shot Intent is ONE decision, not a settings panel: {intent_controls}"
+        assert intent_controls["selects"] == 1 and intent_controls["inputs"] == intent_controls["plannedInputs"] == 1, \
+            f"4. Shot Intent carries only the route and planned duration, not generation settings: {intent_controls}"
+        assert page.evaluate("""() => {
+            const control = document.querySelector('.shot-intent-control');
+            const planned = control.querySelector('input[type="number"]');
+            const duration = shotPlannedDuration(shotById(control.dataset.shotId));
+            return planned.value === (duration.known ? String(duration.seconds) : '');
+        }"""), "4. the duration field must show canonical planned timing, independently of generation controls"
         assert intent_controls["genView"] == 0, "4. and it must not reproduce Slice 4's Simple/Advanced switch"
         after_dialog = page.evaluate(INTENT_STATE)
         assert after_dialog["route"] == before_dialog["route"] == "i2v", \
             "4. the intent must be exactly what it was before the generation dialog was opened"
         findings.append("4. Simple opens, Advanced discloses and Simple returns with the declared intent untouched; "
-                        "the intent control itself is one select and no generation configuration")
+                        "the intent control itself is one route select and canonical planned duration, with no generation configuration")
 
         # ============ 8 · STORED IS NOT EXECUTABLE — the reproduced blocker, end to end
         #

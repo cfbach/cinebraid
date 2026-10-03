@@ -272,6 +272,7 @@ def build_fixture(projects_root):
          "status": "COMPLETED", "createdAt": iso(3), "updatedAt": iso(3), "outputs": []},
         {"id": "job-frame-a", "purpose": "frame", "provider": "fal", "model": "openai/gpt-image-2",
          "externalId": "req-frame-a", "status": "COMPLETED", "createdAt": iso(4), "updatedAt": iso(5),
+         "prompt": "  Exact submitted hull frame request.\nKeep the panel closed.  ",
          "accounting": estimate(0.06), "outputs": []},
         # LEGACY: no accounting object at all -> cost not recorded.
         {"id": "job-frame-b", "purpose": "frame", "provider": "fal", "model": "openai/gpt-image-2",
@@ -680,6 +681,12 @@ try:
         assert insp["recommendation"] == "correct" and "Suggests" in insp["recommendationWords"], \
             f"the AI verdict must read as a suggestion, got {insp['recommendationWords']!r}"
         assert insp["targetCount"] == 2, f"Frame A is authority for shot and frame, got {insp['targetCount']}"
+        assert page.locator('[data-media-inspector] .mi-prompt pre').text_content() == \
+            "  Exact submitted hull frame request.\nKeep the panel closed.  ", \
+            "Inspector must show the exact submitted prompt from this media's linked job"
+        assert "Submitted prompt · linked generation job" in page.locator('[data-media-inspector] .mi-prompt').text_content()
+        assert "never recorded" not in insp["text"], "a recorded historical request cannot be presented as missing"
+        findings.append("inspector/prompt: exact linked job text, including whitespace, survives normal media inspection")
         # innerText returns RENDERED text, and .mi-facts labels are text-transform:uppercase,
         # so the label reads "COST" on screen however it is written in the markup. Every
         # label comparison in this suite is therefore case-folded; the VALUE strings below

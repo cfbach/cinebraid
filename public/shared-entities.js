@@ -99,17 +99,29 @@ function shotDurationSeconds(source) {
 function shotDurationIsDeclared(source) {
   return shotDurationAlias(source) !== null;
 }
-/* One shot's PLANNED length, and whether it has one. Same precedence as
-   resolveShotDuration — a shot split into units is as long as its units — because
-   it IS resolveShotDuration, with the invented number removed instead of a third
-   ordering written here. */
+/* Explicit plannedDuration is editorial intent, independent of provider/unit
+   duration. An explicit null means undecided. Older projects without that field
+   retain their existing unit-first timing interpretation. */
 function shotPlannedDuration(shot) {
+  if (shot && Object.hasOwn(shot, "plannedDuration")) {
+    const seconds = Number(shot.plannedDuration);
+    const known = Number.isFinite(seconds) && seconds > 0;
+    return { seconds: known ? seconds : 0, known, source: "planned" };
+  }
   const resolved = resolveShotDuration(shot);
   return {
     seconds: resolved.wasDefaulted ? 0 : resolved.seconds,
     known: !resolved.wasDefaulted,
     source: resolved.wasDefaulted ? "" : resolved.source,
   };
+}
+
+function parsePlannedShotDuration(value) {
+  if (value == null || String(value).trim() === "") return { ok: true, seconds: null };
+  const seconds = Number(value);
+  return Number.isFinite(seconds) && seconds > 0
+    ? { ok: true, seconds }
+    : { ok: false, seconds: null, reason: "Planned duration must be a positive number of seconds, or left undecided." };
 }
 /* A duration as WORDS. An undeclared duration is not "0s"; it says it is not set,
    because a reader who sees `0s` beside a shot has been told a length. */
@@ -684,6 +696,7 @@ if (typeof window !== "undefined") {
   window.shotDurationSeconds = shotDurationSeconds;
   window.shotDurationIsDeclared = shotDurationIsDeclared;
   window.shotPlannedDuration = shotPlannedDuration;
+  window.parsePlannedShotDuration = parsePlannedShotDuration;
   window.shotDurationWords = shotDurationWords;
   window.plannedRuntime = plannedRuntime;
   window.resolveShotEntities = resolveShotEntities;
@@ -710,6 +723,7 @@ if (typeof module !== "undefined" && module.exports) {
     shotDurationSeconds,
     shotDurationIsDeclared,
     shotPlannedDuration,
+    parsePlannedShotDuration,
     shotDurationWords,
     plannedRuntime,
     resolveShotDuration,

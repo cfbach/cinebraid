@@ -340,10 +340,7 @@ const takeBadges = (s, name, takes = takesFor(s.id)) => {
   }
   return out;
 };
-const shotDur = (s) =>
-  s.clips?.length
-    ? s.clips.reduce((x, c) => x + (+c.dur || 0), 0)
-    : +s.dur || 0;
+const shotDur = (s) => shotPlannedDuration(s).seconds;
 /* PT3 — A RUNTIME TOTAL SAYS WHAT IT COVERS.
 
    shotDur() adds 0 for a shot nobody has planned, which is arithmetically the same

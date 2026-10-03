@@ -84,7 +84,7 @@ findings = []
 SHOT_TITLE = "Kai crosses the docking bay"
 SHOT_DESC = "Kai walks through the crowded docking bay while Mara's ship lifts away behind him."
 
-ROUTES = ["t2v", "i2v", "flf", "r2v", "hybrid"]
+ROUTES = ["t2v", "i2v", "flf", "r2v", "hybrid", "editorial"]
 
 # WHY THIS SUITE STOPPED SLEEPING AT THE COMPLETION BANNER.
 #
@@ -1138,6 +1138,53 @@ try:
             "N5. and the assertion section 11 relies on catches it"
         findings.append("N5. negative control: reading the persisted receipt alone puts STILL AUTOMATION "
                         "COMPLETE back on a shot that owes no still, and section 11's assertion catches it")
+
+        # Editorial intent and planned timing use the normal New Shot / Shot Intent
+        # controls. No generation setup, authority decision or provider request.
+        page.goto(f"{base}/#/shots")
+        page.get_by_role("button", name="Add shot", exact=False).first.click()
+        page.fill("#ff-title", "Editorial duration regression")
+        page.fill("#ff-desc", "Use an existing recorded cutaway without generating anything.")
+        page.select_option("#ff-deliveryRoute", "editorial")
+        page.fill("#ff-plannedDuration", "12.5")
+        page.locator('button[onclick="_formSubmit()"]').click()
+        page.wait_for_selector('.shot-title-display:has-text("Editorial duration regression")')
+        editorial_id = page.evaluate("() => P.shots.find(s=>s.title==='Editorial duration regression').id")
+        row = saved_shot(editorial_id, lambda s: s.get("plannedDuration") == 12.5)
+        assert row and row["deliveryRoute"] == "editorial" and row["clips"] == []
+        authority_before = page.evaluate("() => JSON.stringify(P.productionAuthority || null)")
+        intent = page.locator(f'.shot-intent-control[data-shot-id="{editorial_id}"]')
+        if not intent.evaluate("el=>el.open"): intent.locator("summary").click()
+        duration = page.locator(f'#shot-planned-duration-{editorial_id}')
+        duration.fill("14.75")
+        duration.press("Tab")
+        row = saved_shot(editorial_id, lambda s: s.get("plannedDuration") == 14.75)
+        assert row and row["dur"] is None and row["clips"] == []
+        assert "14.75 seconds" in page.locator(".record-meta").inner_text()
+        duration.fill("-2")
+        duration.press("Tab")
+        assert page.evaluate("id=>shotById(id).plannedDuration", editorial_id) == 14.75
+        assert page.evaluate("id=>shotReadinessFor(shotById(id)).nextAction.code", editorial_id) == "supply-approved-media"
+        assert page.evaluate("id=>shotIntentEffectiveModes(shotById(id).deliveryRoute,['t2v','i2v','flf','r2v']).modes.length", editorial_id) == 0
+        page.locator('.cb-stage-strip [data-stage-id="motion"]').click()
+        page.wait_for_selector('.bounded-selected-task[data-bounded-task="motion"]')
+        assert "No generation model or provider is required" in page.locator('[data-guided-panel="motion"]').inner_text()
+        assert page.locator('[data-guided-panel="motion"] button').count() == 1
+        assert page.locator('[data-guided-panel="motion"] button').text_content() == "Import existing media…"
+        assert page.evaluate("() => JSON.stringify(P.productionAuthority || null)") == authority_before
+        page.goto(f"{base}/#/shots")
+        slate = page.locator('.slate-top').filter(has=page.locator('.slate-id', has_text=editorial_id))
+        assert slate.locator('.dur-chip').inner_text() == "14.75s", "shot board must show the same authored plan as Shot Desk"
+        open_shot(editorial_id, "editorial save/reopen", fresh_document=True)
+        assert page.evaluate("id=>shotById(id).plannedDuration", editorial_id) == 14.75
+        assert page.evaluate("id=>shotById(id).deliveryRoute", editorial_id) == "editorial"
+        intent = page.locator(f'.shot-intent-control[data-shot-id="{editorial_id}"]')
+        if not intent.evaluate("el=>el.open"): intent.locator("summary").click()
+        page.locator(f'#shot-planned-duration-{editorial_id}').fill("")
+        page.locator(f'#shot-planned-duration-{editorial_id}').press("Tab")
+        assert saved_shot(editorial_id, lambda s: "plannedDuration" in s and s["plannedDuration"] is None)
+        assert "Duration not set" in page.locator(".record-meta").inner_text()
+        findings.append("12. Editorial route: normal creation/edit/reopen, positive independent planned duration, invalid refusal and explicit undecided; no generation modes, no approvals and no provider requirement")
 
         assert not page_errors, f"the page raised uncaught errors: {page_errors}"
         browser.close()

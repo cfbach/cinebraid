@@ -360,10 +360,10 @@
       </div>
       ${provenance.removedKeys.length ? `<p class="mi-note" data-mi-removed-keys="${attr(provenance.removedKeys.join(","))}">${esc(`This request did not carry ${provenance.removedKeys.join(", ")}. The generation setup that ordered it did not offer ${provenance.removedKeys.length === 1 ? "that control" : "those controls"}, so the saved default was used instead of a value nobody chose.`)}</p>` : ""}
       <div class="mi-prompt" data-mi-prompt="${attr(provenance.prompt.state)}">
-        <span>Prompt</span>
+        <span>${provenance.prompt.source === "generation-job" ? "Submitted prompt · linked generation job" : "Prompt"}</span>
         ${provenance.prompt.state === "known"
           ? `<pre>${esc(provenance.prompt.value)}</pre>`
-          : `<p class="mi-empty">The prompt for this media was never recorded against it. CineBraid will not show the current wording of a later build as if it were the request that ran.</p>`}
+          : `<p class="mi-empty">${provenance.prompt.state === "unavailable" ? "The linked generation record is unavailable in this snapshot, so its submitted prompt cannot be checked here." : "No submitted prompt is recorded in the available provenance for this media."} CineBraid will not show the current wording of a later build as if it were the request that ran.</p>`}
       </div>
       <div class="mi-lineage-block"><span>Lineage</span>${lineage}</div>
     </section>`;
