@@ -565,6 +565,7 @@ window.addShot = (sceneId) => {
      it is supporting input for whichever route the filmmaker later declares. */
   fields.push(
     { k: "title", label: "Shot title", ph: "Traveler enters the tavern" },
+    { k: "plannedDuration", label: "Planned duration (seconds, optional)", ph: "Undecided", hint: "Editorial shot length. This does not set or clamp provider generation duration." },
     { k: "desc", label: "What happens in this shot?", type: "textarea", ph: "The traveler pushes through the warped door and pauses as the room turns toward him." },
     { k: "positioning", label: "Framing and placement (optional)", type: "textarea", ph: "Wide interior from behind the bar; traveler framed in the doorway, innkeeper foreground-left." },
     { k: "location", label: "Base location (optional)", type: "select", options: ["", ...P.locations.map((x) => x.id)], value: "" },
@@ -633,6 +634,7 @@ window.addShot = (sceneId) => {
          importer now writes and shotDurationAlias() already reads as "not
          declared"; the filmmaker's first real number replaces it. */
       dur: null,
+      plannedDuration: parsePlannedShotDuration(v.plannedDuration).seconds,
       continuityStateSelections: {},
       keyframes: [newKeyframe(0)],
       clips: [],
@@ -666,7 +668,7 @@ window.addShot = (sceneId) => {
     dirty();
     location.hash = "#/shot/" + id;
     route();
-  }, { refuse: (openedFor) => entityCreationRefusal("shot", openedFor) });
+  }, { refuse: (openedFor) => entityCreationRefusal("shot", openedFor) || (parsePlannedShotDuration(document.getElementById("ff-plannedDuration")?.value).ok ? "" : parsePlannedShotDuration(document.getElementById("ff-plannedDuration")?.value).reason) });
 };
 window.delShot = (id) => {
   const shot = shotById(id);

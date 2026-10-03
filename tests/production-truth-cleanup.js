@@ -437,13 +437,25 @@ function checkDurationContract() {
   /* WORDS. The unknown case is the one that used to read `0s`. */
   eq(Entities.shotDurationWords({ dur: 8 }), "8s", "PT3a: a declared duration reads as a length");
   eq(Entities.shotDurationWords({ dur: null }), "duration not set", "PT3a: an unknown duration says so");
+  for (const value of [null, "", " "])
+    eq(Entities.parsePlannedShotDuration(value).seconds, null, "a clear is an explicit undecided plan");
+  for (const value of [0, -1, Infinity, "NaN", "soon"])
+    eq(Entities.parsePlannedShotDuration(value).ok, false, "invalid duration is refused, never clamped");
+  eq(Entities.parsePlannedShotDuration("12.5").seconds, 12.5, "fractional editorial duration is supported independently of provider bounds");
   eq(Entities.shotDurationWords({ dur: 0 }), "duration not set", "PT3a: and a stored zero is the same fact, not a zero-second shot");
   eq(Entities.shotDurationWords({}, "not planned"), "not planned", "PT3a: the caller may name the absence in its own words");
 
-  /* THE SHOT'S OWN ANSWER, with the precedence resolveShotDuration already owns
-     — units beat the shot's aliases — and no invented fallback. */
+  /* Older unit-first timing remains unchanged. An explicit editorial plan is separate. */
   const fromClips = Entities.shotPlannedDuration({ dur: 9, clips: [{ dur: 3 }, { dur: 4 }] });
-  eq(fromClips.seconds, 7, "PT3a: a shot split into units is as long as its units");
+  eq(fromClips.seconds, 7, "PT3a: legacy shots retain their unit-derived timing");
+  eq(Entities.shotPlannedDuration({ plannedDuration: 12, dur: 9, clips: [{ dur: 3 }, { dur: 4 }] }).seconds, 12,
+    "an authored editorial plan wins without changing generation-unit duration");
+  eq(Entities.shotPlannedDuration({ plannedDuration: null, dur: 9, clips: [{ dur: 3 }] }).known, false,
+    "a deliberately undecided plan does not inherit a provider duration");
+  eq(Entities.resolveShotDuration({ dur: 9, clips: [{ dur: 3 }, { dur: 4 }] }).seconds, 7,
+    "provider/unit duration retains its independent unit-first rule");
+  eq(Entities.shotPlannedDuration({ clips: [{ dur: 3 }, { dur: 4 }] }).seconds, 7,
+    "legacy projects without an authored shot duration retain their unit-derived plan");
   eq(fromClips.known, true, "PT3a: and that is a known length");
   const fromShot = Entities.shotPlannedDuration({ dur: 9, clips: [{ dur: null }] });
   eq(fromShot.seconds, 9, "PT3a: an untimed unit falls through to the shot's own declared length");

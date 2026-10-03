@@ -163,6 +163,7 @@
   function shotIntentCompatibleModes(value) {
     const route = canonicalShotRoute(value);
     if (!route) return deepFreeze({ route: "", constrained: false, modes: [] });
+    if (ROUTE.shotRouteIsEditorial(route)) return deepFreeze({ route, constrained: true, modes: [] });
     const mode = shotRouteGenerationMode(route);
     if (mode) return deepFreeze({ route, constrained: true, modes: [mode] });
     /* The route that names no single method: every method the other routes name. */
@@ -276,7 +277,7 @@
       return {
         route,
         mode,
-        label: mode ? text(modeLanguage(mode)) : "",
+        label: ROUTE.shotRouteIsEditorial(route) ? "Existing media / editorial" : mode ? text(modeLanguage(mode)) : "",
         modes: [...shotIntentCompatibleModes(route).modes],
         needs: [...needs.needs],
         needsKnown: needs.known,
@@ -301,7 +302,7 @@
       stored: reading.stored,
       reason: reading.reason,
       mode,
-      label: mode ? text(modeLanguage(mode)) : "",
+      label: ROUTE.shotRouteIsEditorial(reading.route) ? "Existing media / editorial" : mode ? text(modeLanguage(mode)) : "",
       constrained: compatible.constrained,
       modes: [...compatible.modes],
       needs: [...needs.needs],

@@ -229,9 +229,38 @@ check('5. every creator\'s SAVE asks again, before the dialog closes, about the 
   assert.ok(/function projectOpenIdentity\(\) \{\n\s*return projectRecordInstalled\(\) \? \{ slug: ACTIVE_PROJECT_SLUG, epoch: PROJECT_OPEN_EPOCH \} : null;/.test(app),
     'the identity remembered is the slug and the open that installed it');
   const mutations = read('public/mutations.js');
-  for (const [name, key] of [['addScene', '"scene"'], ['addShot', '"shot"'], ['addEntity', 'record']])
-    assert.ok(creatorSource(mutations, name).includes(`{ refuse: (openedFor) => entityCreationRefusal(${key}, openedFor) }`),
-      `${name} must hand its SAVE-time refusal the project it was drawn for`);
+  for (const [name, key] of [['addScene', '"scene"'], ['addShot', '"shot"'], ['addEntity', 'record']]) {
+    const source = creatorSource(mutations, name);
+    const message = `${name} must hand its SAVE-time refusal the project it was drawn for`;
+    if (name !== 'addShot') {
+      assert.ok(source.includes(`{ refuse: (openedFor) => entityCreationRefusal(${key}, openedFor) }`), message);
+      continue;
+    }
+    // New Shot also validates its optional editorial length. Exercise the actual
+    // callback: extra validation must not mask, skip or replace the original guard.
+    const callback = source.match(/\{ refuse: (\(openedFor\) => entityCreationRefusal\("shot", openedFor\)[^\n]*?) \}\);/);
+    assert.ok(callback, message);
+    const openedFor = Object.freeze({ slug: 'qualification-film', epoch: 7 });
+    const exercise = (refusal, validation) => {
+      let parserCalls = 0;
+      const refuse = Function('entityCreationRefusal', 'parsePlannedShotDuration', 'document', `return (${callback[1]});`)(
+        (record, identity) => { assert.strictEqual(record, 'shot'); assert.strictEqual(identity, openedFor); return refusal; },
+        () => { parserCalls += 1; return validation; },
+        { getElementById: () => ({ value: '12.5' }) },
+      );
+      const result = refuse(openedFor);
+      return { result, parserCalls };
+    };
+    for (const refusal of ['No project is open', 'The project changed']) {
+      const answer = exercise(refusal, { ok: true, seconds: 12.5 });
+      assert.strictEqual(answer.result, refusal, message);
+      assert.strictEqual(answer.parserCalls, 0, 'a project refusal must return before duration validation');
+    }
+    assert.strictEqual(exercise('', { ok: true, seconds: 12.5 }).result, '', 'valid duration must not invent a project refusal');
+    const invalid = exercise('', { ok: false, reason: 'Invalid planned duration' });
+    assert.strictEqual(invalid.result, 'Invalid planned duration', 'invalid timing must refuse at the existing SAVE boundary');
+    assert(invalid.parserCalls > 0);
+  }
   assert.ok(/window\._duplicateShotOpenedFor = projectOpenIdentity\(\);/.test(creatorSource(mutations, 'duplicateShot'))
     && /const refusal = entityCreationRefusal\("shot", window\._duplicateShotOpenedFor \|\| null\);\n\s*if \(refusal\) return toast\(refusal\);/.test(creatorSource(mutations, 'confirmDuplicateShot')),
     'the duplicate dialog, which is not a formModal, must remember its own project and refuse its confirm in words when that project is gone or replaced');

@@ -296,8 +296,8 @@
     },
     "shot-candidate-prompt": {
       question: "What prompt produced this frame or motion candidate?",
-      why: "A shot candidate records sourceBuildId / sourcePackageId, not the prompt text. The build it names may still exist in the prompt library, but the request as sent was never copied onto the row. Entity candidates and blocking assets DO record their prompt, which is why this gap is per-kind rather than global.",
-      wouldNeed: "the dispatched prompt copied onto the shot candidate row at ingest, as ingestEntity already does",
+      why: "Legacy candidates without a recorded prompt or a linked job containing the submitted prompt cannot establish the historical request. A current build's wording is not evidence of what ran.",
+      wouldNeed: "an existing recorded prompt or an exact generation-job link with its submitted prompt; later build wording cannot fill the gap",
     },
     "actual-charge": {
       question: "What was actually billed for this media?",
@@ -874,18 +874,19 @@
     });
   }
 
-  /* The prompt, and ONLY where it was genuinely recorded against this media.
-
-     Entity candidates copy the dispatched prompt onto the row. Blocking assets copy it
-     into generationRecord. Shot frame and motion candidates DO NOT — they record a
-     build id, and the build's current text is not the historical request. So this
-     returns not-recorded for those rather than resolving the build and presenting
-     today's wording as what was sent. PRODUCTION_MEDIA_UNAVAILABLE names the gap. */
-  function promptOf(row, libraryRow) {
+  /* Resolve historical text through the media's exact job link, never a current
+     build, nearby filename or another job. Preserve submitted bytes, including
+     whitespace. Older media can still carry a prompt on its own ingest record. */
+  function promptOf(row, libraryRow, resolved) {
+    const submitted = record(resolved.job).prompt;
+    if (typeof submitted === "string" && submitted.trim())
+      return deepFreeze({ state: "known", value: submitted, source: "generation-job" });
     const direct = text(record(row).prompt);
     if (direct) return deepFreeze({ state: "known", value: direct, source: "candidate-row" });
     const generation = text(record(record(libraryRow).generationRecord).prompt);
     if (generation) return deepFreeze({ state: "known", value: generation, source: "library-generation-record" });
+    if (resolved.state === "unavailable")
+      return deepFreeze({ state: "unavailable", value: "", source: "" });
     return deepFreeze({ state: "not-recorded", value: "", source: "" });
   }
 
@@ -963,7 +964,7 @@
          claim that references were used — older jobs never recorded the question, and
          `not-recorded` says exactly that. */
       referenceMode: known(job.referenceMode),
-      prompt: promptOf(row, libraryRow),
+      prompt: promptOf(row, libraryRow, resolved),
       submittedPrompt: known(job.prompt),
       cost: costOf(resolved.job, resolved.state),
       lineage: lineageOf(row, libraryRow),

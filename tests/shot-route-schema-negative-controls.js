@@ -238,8 +238,8 @@ async function moduleControls() {
     "can never be turned into permission",
     () => {
       const broken = compileModule(ROUTE_FILE, mutate(ROUTE_SOURCE,
-        "  hybrid: \"\",\n};",
-        "  hybrid: \"r2v\",\n};",
+        "  hybrid: \"\",",
+        "  hybrid: \"r2v\",",
         "NC-7"));
       assert.strictEqual(broken.shotRouteGenerationMode("hybrid"), "",
         "hybrid names no generation mode, so it can never be turned into permission for one");

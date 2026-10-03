@@ -198,6 +198,20 @@ control("C14 a shot candidate's prompt is reconstructed from its build", "checkP
       "C14") },
   "The build's CURRENT text is not the historical request. Presenting it as the prompt that ran is fake precision about the one field a filmmaker would use to reproduce a result.");
 
+control("linked submitted prompt is ignored", "checkProvenance",
+  { projection: mutate(SOURCES.projection,
+      '    const submitted = record(resolved.job).prompt;',
+      '    const submitted = "";',
+      "linked prompt") },
+  "An exact linked job's recorded request must not be reported as missing.");
+
+control("submitted prompt bytes are trimmed", "checkProvenance",
+  { projection: mutate(SOURCES.projection,
+      'value: submitted, source: "generation-job"',
+      'value: submitted.trim(), source: "generation-job"',
+      "submitted bytes") },
+  "Inspector must preserve the exact historical submitted text, including whitespace.");
+
 control("C15 provider and model are inferred when unrecorded", "checkProvenance",
   { projection: mutate(SOURCES.projection,
       "    const model = text(it.generationModel) || text(generation.model) || text(job.model);",

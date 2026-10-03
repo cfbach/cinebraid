@@ -56,7 +56,7 @@ const note = (line) => notes.push(line);
    discussed; CODE is where a violation would hide. */
 const codeOnly = (source) => String(source).replace(/\/\*[\s\S]*?\*\//g, "").replace(/^\s*\/\/.*$/gm, "");
 
-const ROUTES = ["t2v", "i2v", "flf", "r2v", "hybrid"];
+const ROUTES = ["t2v", "i2v", "flf", "r2v", "hybrid", "editorial"];
 /* Values this build cannot read. "T2V " is deliberately NOT among them: Slice 5a folds
    case and trims the ends, so it IS a declaration of t2v, and a suite that treated it as
    corrupt would be asserting against the reconciliation rather than against the guard. */
@@ -179,6 +179,7 @@ function checkProjection() {
 
   /* And the filmmaker-facing labels are the SHIPPED mode language, not new words. */
   for (const choice of Intent.shotIntentChoices()) {
+    if (choice.route === "editorial") { assert.strictEqual(choice.label, "Existing media / editorial"); assert.strictEqual(choice.mode, ""); continue; }
     if (!choice.mode) { assert.strictEqual(choice.label, "", "hybrid names no mode and must borrow no label"); continue; }
     assert.strictEqual(choice.label, CINEBRAID_MODE_LANGUAGE[choice.mode],
       `${choice.route} must be labelled with CineBraid's own presentation language for ${choice.mode}`);
@@ -505,6 +506,11 @@ async function checkFrameExposure() {
       `${route}: canonical readiness represents exactly the declared frame roles`);
     assert.strictEqual(framesStage.optional, shouldFold,
       `${route}: stage optionality projects the canonical frame requirement`);
+    if (route === "editorial") {
+      assert.strictEqual(motionUnit, undefined, "editorial owes no generated motion unit");
+      assert(!["produce-motion", "produce-frame"].includes(readiness.nextAction.code), "editorial must not require generation or bypass an existing reference refusal");
+      continue;
+    }
     const motionAvailable = ["READY", "COMPLETE"].includes(motionUnit.status);
     assert.strictEqual(motionStage.availability, motionAvailable ? "available" : "blocked",
       `${route}: Motion availability projects the canonical motion unit`);
@@ -745,13 +751,14 @@ async function checkLegacyAndBoundedChange() {
         framesOptional: frames.optional,
         motionAvailability: motion.availability,
         motionReason: motion.blockedReason,
-        motionStatus: motionUnit.status,
-        motionAction: motionUnit.nextAction.message,
+        motionStatus: motionUnit?.status || "",
+        motionAction: motionUnit?.nextAction.message || "",
       };`);
     assert.strictEqual(state.shot, baselineState.shot, `${route}: declaring intent changes no stored shot data except deliveryRoute`);
     assert.strictEqual(state.authority, baselineState.authority, `${route}: declaring intent changes no Canon receipt`);
     assert.strictEqual(state.requiredFrames, state.canonicalFrameNeeds, `${route}: readiness represents the declared frame inputs`);
     assert.strictEqual(state.framesOptional, state.requiredFrames === 0, `${route}: Frames optionality projects readiness`);
+    if (route === "editorial") { assert.strictEqual(state.motionStatus, ""); continue; }
     const available = ["READY", "COMPLETE"].includes(state.motionStatus);
     assert.strictEqual(state.motionAvailability, available ? "available" : "blocked",
       `${route}: Motion availability projects canonical readiness`);

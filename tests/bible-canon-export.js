@@ -1469,6 +1469,13 @@ function bureaucracyCases() {
 /* =========================================================================== */
 
 async function main() {
+  const plannedProject = frameShot();
+  plannedProject.shots[0].plannedDuration = 12.5;
+  plannedProject.shots[0].clips = [{ id: "timing-only", dur: 5, kind: "post" }];
+  equal(project(plannedProject).shots[0].durWords, "12.5s", "Bible uses the canonical editorial plan rather than provider/unit duration");
+  equal(plannedProject.shots[0].clips[0].dur, 5, "projecting planned timing never edits source unit duration");
+  plannedProject.shots[0].plannedDuration = null;
+  equal(project(plannedProject).shots[0].durWords, "duration not planned", "explicit undecided duration stays unknown even beside a timed unit");
   bibleCases();
   coherenceCases();
   motionCases();

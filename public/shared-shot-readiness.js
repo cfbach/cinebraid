@@ -499,6 +499,8 @@
   function shotRouteInputNeeds(value) {
     const route = canonicalShotRouteOwner(value);
     if (!route) return deepFreeze({ route: "", constrained: false, known: false, modes: [], needs: [], frameNeeds: [], framesRequired: false });
+    if (route === "editorial")
+      return deepFreeze({ route, constrained: true, known: true, modes: [], needs: [], frameNeeds: [], framesRequired: false });
     const namedMode = shotRouteGenerationModeOwner(route);
     const modes = namedMode ? [namedMode] : [...ANIMATE_METHODS];
     const probes = modes.map((mode) => ANIMATE_METHOD_PROBES.find((row) => row.method === mode) || null);
@@ -1594,6 +1596,9 @@
       status = "NEEDS_DECISION";
       const first = relationships[0];
       next = action(DECISION_ACTIONS[first.reason] || "resolve-relationship", decisionMessage(first, relationships.filter((row) => row.reason === first.reason).length), relationships.length);
+    } else if (context.routeNeeds.route === "editorial" && !units.some((unit) => unit.complete)) {
+      status = "NEEDS_DECISION";
+      next = action("supply-approved-media", "Import existing media for this editorial shot, then review and approve the exact result in Results. No generated frames or video are required.", 1);
     } else if (!units.length) {
       status = "NEEDS_DECISION";
       next = action("declare-producible-unit", "This shot declares no frame, no motion unit and no motion intent, so there is nothing to produce yet.", 0);
