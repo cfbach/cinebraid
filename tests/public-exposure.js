@@ -154,8 +154,13 @@ function testNoNoticeObligation() {
   });
   assert.deepStrictEqual(licenceBodies, [], `a second licence file is tracked: ${licenceBodies.join(", ")}`);
 
-  /* One runtime dependency, installed on the destination rather than shipped. */
-  assert.deepStrictEqual(Object.keys(pkg.dependencies || {}), ["express"], "the runtime dependency set changed; re-check the NOTICE obligation");
+  /* Both runtime dependencies are installed on the destination, not vendored.
+     The approved PNG decoder is MIT; its npm package retains its own licence. */
+  assert.deepStrictEqual(Object.keys(pkg.dependencies || {}), ["express", "pngjs"], "the runtime dependency set changed; re-check the NOTICE obligation");
+  const lock = JSON.parse(read("package-lock.json"));
+  assert.strictEqual(pkg.dependencies.pngjs, "7.0.0", "the approved PNG decoder must remain exactly pinned");
+  assert.strictEqual(lock.packages["node_modules/pngjs"].version, "7.0.0", "the PNG decoder lock must match its approved version");
+  assert.strictEqual(lock.packages["node_modules/pngjs"].license, "MIT", "re-check the PNG decoder licence obligation if it changes");
 }
 
 /* ---- 4. the local-only shell fetches nothing from the network ------------ */

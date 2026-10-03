@@ -186,6 +186,37 @@ plan valid.
 A test asserts that the pack's encoded facts match the evidence record claim for claim, so
 the two cannot drift.
 
+## Native candidate repair
+
+Candidate Review can build a current correction package from an unapproved canvas,
+explicit current entity/state receipts, and optional non-authoritative PNG guide and
+mask. It uses the existing image execution compiler, planner, GPT Image 2 pack,
+validated GenerationPlan, native review fingerprint and fal serializer. Historical
+source references are lineage only; they are not inherited into the new package.
+
+Explicit Build writes target/build history and immutable technical files inside project
+media. MediaAssetService gives each file a durable asset identity/hash. The original
+mask and normalized provider mask retain their source convention and exact base
+binding. Technical assets are not human approvals or entity References.
+
+Review rechecks Canon, current receipts, base and technical bytes, package content,
+settings and final submitted text. A native repair cannot fall back to the historical
+executor. fal receives `mask_url` with white editable / black preserved; alpha imports
+are explicitly converted, never relabelled. Empty/full/mismatched masks refuse locally.
+The provider documentation discrepancy remains in the model evidence. Generated
+pixels, including pixels outside the mask, still require owner review.
+
+The bounded repair's Change/Preserve/Exclude fields and selected current appearances
+own its compiled direction. Whole-shot identity prose, drift notes and production risks
+remain inspectable in `spec.intentScope` and native review, with an explicit scope note;
+they do not silently become instructions to replay the whole shot. The unchanged Canon
+witness still invalidates the build when source intent changes. A newer explicit repair
+build also stales the previous review. Identity coverage credits a selected appearance,
+not the unapproved canvas.
+
+Exact output dimensions account for aspect-ratio intent only when cross multiplication
+proves equivalence. Conflicts remain unsupported; `auto` makes no exact-ratio promise.
+
 ## Adding a model pack
 
 1. Research primary vendor sources and write `docs/architecture/model-evidence/<family>.json` first.

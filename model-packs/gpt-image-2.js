@@ -331,7 +331,16 @@ function pickSize(requestedSize, requestedRatio, capability, coverage) {
   const size = text(requestedSize);
   const tier = SIZE_TIERS.includes(size.toLowerCase()) ? size.toLowerCase() : "";
   if (size && !tier) {
-    if (allowed.includes(size)) return { size, via: "explicit" };
+    if (allowed.includes(size)) {
+      const dimensions = size.match(/^(\d+)x(\d+)$/i), aspect = text(requestedRatio).match(/^(\d+(?:\.\d+)?):(\d+(?:\.\d+)?)$/);
+      if (dimensions && aspect && Number(aspect[1]) > 0 && Number(aspect[2]) > 0) {
+        if (Number(dimensions[1]) * Number(aspect[2]) === Number(dimensions[2]) * Number(aspect[1]))
+          coverage.represent("output.aspectRatio", "parameter");
+        else coverage.unsupported("output.aspectRatio", `Explicit size ${size} does not represent ${requestedRatio}.`,
+          { code: "aspect-size-conflict", field: "output.aspectRatio", message: `Explicit size ${size} conflicts with requested aspect ${requestedRatio}.`, action: "Choose equivalent output dimensions." });
+      }
+      return { size, via: "explicit" };
+    }
     coverage.warn({
       code: "resolution-unsupported",
       field: "settings.resolution",
@@ -565,6 +574,8 @@ function applyAnchors(ctx, mode) {
   if (!table) return;
   for (const [key, anchor] of Object.entries(table)) {
     if (!intentValue(ctx.intent, key)) continue;
+    if (ctx.coverage.has(key)) continue;
+    if (key === "identity.canon" && ctx.spec?.intentScope?.kind === "candidate-repair") continue;
     const holder = ctx.manifest.find((row) => row.role === anchor.requires);
     if (!holder) continue;
     ctx.coverage.anchor(key, `${anchor.via} (${holder.production.label})`);
@@ -700,6 +711,10 @@ function compileMode(context) {
   const capability = context.capability || capabilityLayer(mode, context.surface);
   const manifest = applyReferenceLimits(context.manifest || [], capability, context.coverage);
   const ctx = { ...context, mode, manifest, capability };
+  if (context.spec?.intentScope?.kind === "candidate-repair") context.coverage.warn({
+    code: "repair-context-scoped", field: "intentScope", message: context.spec.intentScope.reason,
+    action: "Review the explicit repair directions and current appearance selections. Canon is unchanged.",
+  });
 
   const sections = build(ctx);
   const chosen = pickSize(context.resolution, ctx.aspectRatio, capability, context.coverage);

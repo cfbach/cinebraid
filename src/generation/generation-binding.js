@@ -343,7 +343,7 @@ function resolveFileIdentity(source, options) {
   /* A source that names a content hash and no path has already been identified by
      something upstream. It is carried through rather than re-derived — there are no
      bytes here to read. */
-  if (text(source?.contentHash))
+  if (text(source?.contentHash) && !text(source?.path) && !text(source?.url))
     return { file: "", fileHash: text(source.contentHash), fileHashStatus: HASH_STATUS.DECLARED };
 
   const address = text(source?.path);
@@ -486,7 +486,11 @@ function buildGenerationBinding(input = {}) {
      *                             the frame being generated, and that is the context
      *                             that chose it. */
     const consumed = resolveConsumedFrame(shot, identity.file);
-    const state = consumed.ambiguous
+    const exactRepair = origin?.repairInput?.approvalTarget;
+    const state = exactRepair
+      ? { stateId: origin.repairInput.stateId, stateName: origin.repairInput.stateName,
+          stateDeclared: true, stateAuthority: "repair-package-current-receipt" }
+      : consumed.ambiguous
       ? { stateId: "", stateName: "", stateDeclared: false, stateAuthority: "", unresolved: "consumed-frame-ambiguous" }
       : resolveConsumedState(project, shot, consumed.frameId || frameId, list, entityId,
         identity.file, identity.resolved);
@@ -506,6 +510,11 @@ function buildGenerationBinding(input = {}) {
       order: Number.isFinite(Number(bound.order)) ? Number(bound.order) : null,
       entityId,
       list,
+      ...(origin?.repairInput ? { inputAuthority: origin.repairInput.authority,
+        approvalReceiptId: origin.repairInput.approvalReceiptId || "",
+        approvalTarget: origin.repairInput.approvalTarget || null,
+        technicalInputId: origin.repairInput.technicalInputId || "",
+        maskBinding: origin.repairInput.mask || null } : {}),
       stateId: state.stateId,
       stateName: state.stateName,
       /* Whether a frame or the shot explicitly BOUND that state, as opposed to the

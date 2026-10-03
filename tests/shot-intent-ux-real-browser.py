@@ -330,17 +330,20 @@ try:
 
         def saved_route(shot_id, expected, timeout=8.0):
             """WHAT THE PROJECT ON DISK SAYS. dirty() debounces for 500ms and then saves,
-            so this polls the file the server actually wrote rather than sleeping once."""
+            so this polls the file the server actually wrote rather than sleeping once.
+            Keep Playwright's sync event dispatcher running while polling: the context
+            intercepts every request, so Python time.sleep can strand an autosave waiting
+            for its route callback. The deadline and 150ms cadence remain unchanged."""
             deadline_at = time.time() + timeout
             last = "NOT-READ"
             while time.time() < deadline_at:
                 try:
                     row = next(r for r in json.loads(project_file.read_text(encoding="utf-8"))["shots"] if r["id"] == shot_id)
                 except Exception:
-                    time.sleep(.15); continue
+                    page.wait_for_timeout(150); continue
                 last = row.get("deliveryRoute", None) if "deliveryRoute" in row else "ABSENT"
                 if last == expected: return last
-                time.sleep(.15)
+                page.wait_for_timeout(150)
             return last
 
         # ============================================ 1 · A ROUTE-LESS LEGACY SHOT

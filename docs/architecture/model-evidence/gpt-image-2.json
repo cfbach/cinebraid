@@ -99,7 +99,23 @@
       "cineBraidBehaviour": "The fal offering records an empty constraints block, which means 'no narrowing established' and NOT 'no narrowing exists'."
     }
   ],
-  "conflicts": [],
+  "falMaskAdapter": {
+    "checkedOn": "2026-10-02",
+    "formalSchema": "https://fal.ai/models/openai/gpt-image-2/edit/api",
+    "gallery": "https://fal.ai/models/openai/gpt-image-2/edit",
+    "providerField": "mask_url",
+    "providerConvention": "white editable / black preserved; dimensions match Image 1",
+    "internalMeaning": "provider-neutral binary editable-region map",
+    "supportedSourceConventions": ["alpha-transparent-edit", "white-edit-black-preserve"],
+    "conversion": "Decode explicit source convention; encode opaque black/white PNG. Validate exact base dimensions, nonempty and nonfull edit region.",
+    "qualification": "Deterministic known-pixel conversion and serializer binding tests; no paid output qualification or guarantee of pixel-identical preservation outside the mask."
+  },
+  "conflicts": [{
+    "claim": "fal mask field naming",
+    "sources": ["https://fal.ai/models/openai/gpt-image-2/edit/api", "https://fal.ai/models/openai/gpt-image-2/edit"],
+    "disagreement": "Formal schema exposes mask_url; gallery examples use mask_image_url.",
+    "resolution": "fal adapter follows the formal endpoint schema, mask_url. No silent polarity inference; direct OpenAI alpha conventions do not define the fal adapter convention."
+  }],
   "promptingPolicySources": {
     "status": "CineBraid's own, not OpenAI's.",
     "note": "Four authored profiles predated C2a - t2i, edit, multi-reference and blocking. The later explicit inpaint profile maps the same edit/base/mask policy to the executable inpaint mode; it is not new vendor guidance. model-packs/gpt-image-2.js encodes CineBraid editorial policy as a versioned playbook. No OpenAI prompt-writing guide was read into this record."

@@ -1039,17 +1039,15 @@ async function main() {
   await control("a coverage projection written before the job that justifies it",
     "persisted coverage never claims paid generation the ledger cannot justify", async (phase) => {
       const falGeneration = loadModified("src/generation/fal/fal-generation.js", [[
-        /* The anchor moved with the seam: the ledger turn now also consumes the dispatch
-           permit, because single-use has to be decided inside the same indivisible write.
-           Re-armed where the seam went. */
+        /* Anchor the unique ledger turn, not its first check: native repairs also
+           validate freshness inside this turn. The mutation still writes coverage
+           before any ledger commit; modifiedSource proves this anchor is unique. */
         `    try {
-      await commit(owner, (current) => {
-        const spent = current.find((item) => String(item?.paidPermitId || "") === String(membership.id || ""));`,
+      await commit(owner, (current) => {`,
         `    if (typeof trusted?.onDispatchCommit === "function") await trusted.onDispatchCommit(owner, job);
     if (trusted) throw new Error("process stopped between the two durable writes");
     try {
-      await commit(owner, (current) => {
-        const spent = current.find((item) => String(item?.paidPermitId || "") === String(membership.id || ""));`,
+      await commit(owner, (current) => {`,
       ]]);
       phase("MUTATION_LANDED");
       const h = await harness(falGeneration);
@@ -1850,23 +1848,27 @@ async function main() {
          reasonable implementation would put it and is exactly what makes it unsound: two
          requests can both read a ledger with no row before either writes one. */
       const mutated = loadModified("src/generation/fal/fal-generation.js", [[
-        `      await commit(owner, (current) => {
-        const spent = current.find((item) => String(item?.paidPermitId || "") === String(membership.id || ""));
-        if (spent) {
-          const error = new Error(\`This dispatch permit has already been redeemed by generation \${spent.id}. Nothing was submitted.\`);
-          error.paidPermitRedeemed = spent.id;
-          throw error;
-        }
-        current.push(job);
-      });`,
-        `      const preread = readJobs(owner).find((item) => String(item?.paidPermitId || "") === String(membership.id || ""));
+        /* Keep unrelated repair freshness checks inside the original callback. Move
+           only spentness outside it; each replacement still has a unique anchor. */
+        `    try {
+      await commit(owner, (current) => {`,
+        `    try {
+      const preread = readJobs(owner).find((item) => String(item?.paidPermitId || "") === String(membership.id || ""));
       if (preread) {
         const error = new Error(\`This dispatch permit has already been redeemed by generation \${preread.id}. Nothing was submitted.\`);
         error.paidPermitRedeemed = preread.id;
         throw error;
       }
       await new Promise((resolve) => setTimeout(resolve, 25));
-      await commit(owner, (current) => { current.push(job); });`,
+      await commit(owner, (current) => {`,
+      ], [
+        `        const spent = current.find((item) => String(item?.paidPermitId || "") === String(membership.id || ""));
+        if (spent) {
+          const error = new Error(\`This dispatch permit has already been redeemed by generation \${spent.id}. Nothing was submitted.\`);
+          error.paidPermitRedeemed = spent.id;
+          throw error;
+        }`,
+        `        /* control: spentness was checked before the serialised turn */`,
       ], [
         /* And the early ledger read has to go too, or it would answer instead. */
         `      const spent = jobs.find((item) => String(item?.paidPermitId || "") === presented);

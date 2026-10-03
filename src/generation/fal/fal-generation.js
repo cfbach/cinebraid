@@ -40,6 +40,7 @@ const FramePresence = require("../../../public/shared-frame-presence");
    The policy is not reimplemented - this file calls restrictPayloadToPlan() itself. */
 const Presentation = require("../../../public/shared-generation-presentation");
 const BuildHistory = require("../../../public/shared-build-history");
+const Repair = require("../candidate-repair");
 const { generationOptionIdentityFor } = require("../generation-options");
 const { registerBraidyReviewRoutes } = require("../../assistant/braidy-api");
 
@@ -487,6 +488,7 @@ function registerFalGeneration(app, context) {
   function controlCapabilityForSurface(owner, surface, body, purpose) {
     if (surface === "compiled-frame")
       return imageControlCapability({
+        owner,
         project: ownerProject(owner),
         purpose,
         shotId: String(body?.shotId || ""),
@@ -1515,7 +1517,14 @@ function registerFalGeneration(app, context) {
       bindings: serialized.bindings, input: serialized.input, inputs };
     /* The author can edit submitted text in the dialog. The compiled original is
        pinned here; their submitted text is recorded separately on the job. */
-    request.input = { ...request.input, prompt: compiled.compiledPrompt };
+    request.input = { ...request.input, prompt: compiled.repair ? compiled.submittedPrompt : compiled.compiledPrompt };
+    if (compiled.repair) {
+      request.repair = compiled.repair;
+      request.source = compiled.source;
+      request.compiler = compiled.plan.compiler;
+      request.capability = compiled.capability;
+      request.providerBaseUrl = config().baseUrl;
+    }
     return crypto.createHash("sha256").update(JSON.stringify(request)).digest("hex");
   }
 
@@ -1636,7 +1645,7 @@ function registerFalGeneration(app, context) {
     });
   }
   function imageRefusal(res, error) {
-    const typed = error instanceof ImageExecutionError || error instanceof FalImageBackendError;
+    const typed = error instanceof ImageExecutionError || error instanceof FalImageBackendError || /^REPAIR_/.test(error?.code || "");
     const status = typed ? error.status || 400 : 500;
     return res.status(status).json({
       error: error?.message || "Frame preparation failed.",
@@ -1655,6 +1664,13 @@ function registerFalGeneration(app, context) {
     const plan = compiled.plan;
     const extensions = plan.settings?.extensions?.[plan.model?.modelId] || {};
     job.compilation = imagePlanProvenance(compiled);
+    if (compiled.repair) {
+      job.frameId = compiled.source.frameId;
+      job.frameLabel = compiled.source.frameLabel;
+      job.sourceCandidate = compiled.source.sourceCandidate;
+      job.parentBuildId = compiled.source.parentBuildId;
+      job.repair = compiled.repair;
+    }
     job.mode = compiled.mode;
     job.profileMode = compiled.mode;
     job.profileId = compiled.profile.id || job.profileId;
@@ -2506,6 +2522,39 @@ function registerFalGeneration(app, context) {
   });
   /* The same preview for a still frame. Nothing durable is written and no provider is
      contacted; the compilation is the identical one the submission runs. */
+  /* Build is an explicit nonauthority history commit, never a review decision.
+     Technical files are kept inside project media and indexed by its existing owner. */
+  app.get("/api/generation/candidate-repair/inputs", (req, res) => {
+    try { const owner = captureOwner(); res.json(Repair.inventory(ownerProject(owner), owner, req.query)); }
+    catch (error) { res.status(error.status || 400).json({ code: error.code || "REPAIR_INPUT_INVALID", error: error.message }); }
+  });
+  app.post("/api/generation/candidate-repair/order", (req, res) => {
+    const rows = Array.isArray(req.body?.references) ? req.body.references : [];
+    if (rows.length > 17) return res.status(400).json({ error: "Too many repair inputs." });
+    res.json({ references: Repair.planReferences({}, rows) });
+  });
+  app.post("/api/generation/candidate-repair/build", (req, res) => guardRoute(res, (async () => {
+    const owner = captureOwner();
+    if (String(req.body?.projectSlug || "") !== owner.slug) return res.status(409).json({ code: "REPAIR_PROJECT_CHANGED", error: "The active project changed. Reopen repair." });
+    let prepared;
+    try {
+      prepared = Repair.prepare(ownerProject(owner), owner, req.body || {});
+      await Repair.persistTechnical(owner, prepared);
+      const buildId = await commitProject(owner, project => {
+        Repair.verify(project, owner, prepared.build);
+        Repair.register(project, prepared.build);
+        /* Use the shipped compiler, not historical correction wording. */
+        const compiled = compileImageExecutionPlan({ project, owner, purpose: "correction", shotId: prepared.build.repair.shotId,
+          buildId: prepared.build.id, resolution: req.body?.resolution, candidateCount: 1 });
+        project.promptBuildsById[prepared.build.id].prompt = compiled.compiledPrompt;
+        return prepared.build.id;
+      });
+      return res.json({ ok: true, buildId, projectSlug: owner.slug, repair: prepared.build.repair });
+    } catch (error) {
+      return res.status(error.status || 400).json({ code: error.code || "REPAIR_BUILD_FAILED", error: error.message });
+    }
+  })()));
+
   app.post("/api/generation/fal/image/plan", (req, res) => {
     let owner;
     try {
@@ -2517,6 +2566,7 @@ function registerFalGeneration(app, context) {
     try {
       const purpose = String(req.body?.purpose || "frame");
       compiled = compileImageExecutionPlan({
+        owner,
         project: ownerProject(owner),
         purpose,
         shotId: String(req.body?.shotId || ""),
@@ -2543,7 +2593,8 @@ function registerFalGeneration(app, context) {
         config: config(),
         ...(compiled.promptEdited ? { promptOverride: compiled.submittedPrompt } : {}),
       });
-      dispatch = { model: serialized.model, backendId: serialized.backendId, bindings: serialized.bindings };
+      dispatch = { model: serialized.model, backendId: serialized.backendId, bindings: serialized.bindings,
+        ...(compiled.repair ? { fields: Object.keys(serialized.input), settings: Object.fromEntries(Object.entries(serialized.input).filter(([key]) => !["image_urls", "mask_url"].includes(key))) } : {}) };
       planFingerprint = imagePlanFingerprint(owner, compiled, serialized);
     } catch (error) {
       const typed = error instanceof FalImageBackendError || error instanceof ImageExecutionError;
@@ -2578,6 +2629,7 @@ function registerFalGeneration(app, context) {
       references: plan.inputs.references.map((row) => ({
         refId: row.refId, role: row.role, mediaType: row.mediaType, order: row.order,
         required: row.required, label: row.production?.label || "", purpose: row.production?.purpose || "",
+        ...(compiled.repair ? compiled.sourceReferences.find(r => r.refId === row.refId)?.repairInput || {} : {}),
       })),
       coverage: labelledCoverage(plan.coverage),
       warnings: plan.warnings,
@@ -2950,6 +3002,8 @@ function registerFalGeneration(app, context) {
     const staleRefusal = packageFreshnessRefusal(owner, job);
     if (staleRefusal)
       return requestTruthRefusal(res, staleRefusal.status, staleRefusal.code, staleRefusal.error, staleRefusal.detail);
+    if (BuildHistory.resolvePromptBuild(ownerProject(owner), job.sourceBuildId)?.repair && (req.body?.imagePlan !== true || purpose !== "correction"))
+      return res.status(409).json({ code: "REPAIR_PLAN_REQUIRED", error: "Native repair requires its validated image plan and reviewed fingerprint." });
     if (purpose === "motion-h3") {
       if (job.profileFamily !== "minimax-h3") return res.status(400).json({ error: "MiniMax H3 motion generation requires a minimax-h3 prompt profile." });
       if (!job.shotId) return res.status(400).json({ error: "shotId is required." });
@@ -3015,7 +3069,7 @@ function registerFalGeneration(app, context) {
       } catch (error) {
         return h3Refusal(res, error);
       }
-    } else if (req.body?.imagePlan === true && ["blocking", "frame"].includes(purpose)) {
+    } else if (req.body?.imagePlan === true && ["blocking", "frame", "correction"].includes(purpose)) {
       /* ONE compilation, here.
          Everything the provider is about to be told — the prompt, which approved
          references travel and what each is for, the output size, the quality tier and
@@ -3035,6 +3089,7 @@ function registerFalGeneration(app, context) {
       let compiled;
       try {
         compiled = compileImageExecutionPlan({
+          owner,
           project: ownerProject(owner),
           purpose,
           shotId: job.shotId,
@@ -3046,6 +3101,8 @@ function registerFalGeneration(app, context) {
           candidateCount: requestedOutputCount,
           submittedPrompt: req.body?.prompt,
         });
+        if (compiled.repair && String(req.body?.frameId || "") !== compiled.source.frameId)
+          return res.status(409).json({ code: "REPAIR_TARGET_CHANGED", error: "The reviewed repair frame changed." });
         applyImageCompilationToJob(job, compiled);
         /* Serialised against the effective capability with the provider call left
            out, so an unsupported size, an over-limit reference set or a file that has
@@ -3056,7 +3113,8 @@ function registerFalGeneration(app, context) {
           config: cfg,
           ...(job.promptEdited ? { promptOverride: job.prompt } : {}),
         });
-        if (req.body?.planFingerprint && req.body.planFingerprint !== imagePlanFingerprint(owner, compiled, preflight))
+        if ((compiled.repair && !req.body?.planFingerprint) ||
+            (req.body?.planFingerprint && req.body.planFingerprint !== imagePlanFingerprint(owner, compiled, preflight)))
           return res.status(409).json({ code: "IMAGE_PLAN_CHANGED",
             error: "The frame request changed since preview. Reopen request review before submitting. Nothing was sent or charged." });
         /* WHERE the paid request is about to go, recorded on the row BEFORE the row is
@@ -3066,6 +3124,7 @@ function registerFalGeneration(app, context) {
         job.modelFamily = preflight.modelFamily;
         job.backendId = preflight.backendId;
         job.providerBindings = preflight.bindings;
+        job.planFingerprint = req.body?.planFingerprint || "";
         job.submittedPromptCharacters = preflight.submittedPromptCharacters;
         /* The same evidence the motion path records, on the same terms. A still image
            route that could not answer "which approved reference did this frame come
@@ -3264,6 +3323,17 @@ function registerFalGeneration(app, context) {
      * this guarantee depends on it succeeding. */
     try {
       await commit(owner, (current) => {
+        if (job.repair) {
+          const project = ownerProject(owner);
+          Repair.verify(project, owner, BuildHistory.resolvePromptBuild(project, job.sourceBuildId));
+          const fresh = compileImageExecutionPlan({ project, owner, purpose, shotId: job.shotId, buildId: job.sourceBuildId,
+            aspectRatio: job.aspectRatio, ...savedImageSettings(purpose, req.body), candidateCount: requestedOutputCount, submittedPrompt: req.body?.prompt });
+          const serialized = serializeImagePlanForFal(fresh.plan, fresh.capability, {
+            resolveReference: row => { planReferenceAddress(owner, row); return "preflight"; }, config: config(),
+            ...(fresh.promptEdited ? { promptOverride: fresh.submittedPrompt } : {}) });
+          if (imagePlanFingerprint(owner, fresh, serialized) !== job.planFingerprint)
+            throw new ImageExecutionError("IMAGE_PLAN_CHANGED", "Repair request changed while dispatch was waiting. Reopen native review.", {}, 409);
+        }
         const spent = current.find((item) => String(item?.paidPermitId || "") === String(membership.id || ""));
         if (spent) {
           const error = new Error(`This dispatch permit has already been redeemed by generation ${spent.id}. Nothing was submitted.`);
@@ -3278,6 +3348,7 @@ function registerFalGeneration(app, context) {
          order. */
       if (error?.paidPermitRedeemed)
         return requestTruthRefusal(res, 409, "PAID_PERMIT_ALREADY_REDEEMED", error.message, { redeemedByJobId: error.paidPermitRedeemed });
+      if (job.repair && (/^REPAIR_/.test(error?.code || "") || error instanceof ImageExecutionError)) return imageRefusal(res, error);
       return res.status(ledgerFailureStatus(error)).json(ledgerFailurePayload(error));
     }
     /* Housekeeping, after the fact that matters is durable. A stored permit that survives

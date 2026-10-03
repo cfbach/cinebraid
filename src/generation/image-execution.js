@@ -28,7 +28,7 @@
  * adds a project read, and nothing else.
  *
  * SCOPE. Two filmmaker tasks: create a blocking frame, and create or edit a frame.
- * Blocking REVISION, candidate correction and entity-reference generation still use
+ * Blocking REVISION and entity-reference generation still use
  * the pre-C2b path; they are named in the phase report rather than half-converted,
  * because a blocking revision compiled as an ordinary edit would write production
  * identity into a frame whose whole contract is that it carries none.
@@ -50,7 +50,7 @@ const INPAINT_PROFILE = require("../../data/model-profiles.json").profiles
 /* The filmmaker tasks this module compiles, and the CineBraid modes each can become.
    A task is not a mode: "Create frame" is t2i with nothing attached, multi-reference
    with approved references, and edit when one of them is the frame being changed. */
-const IMAGE_TASK_PURPOSES = { blocking: "blocking", frame: "frame" };
+const IMAGE_TASK_PURPOSES = { blocking: "blocking", frame: "frame", correction: "correction" };
 
 class ImageExecutionError extends Error {
   constructor(code, message, detail = {}, status = 400) {
@@ -151,6 +151,7 @@ function buildReferences(build) {
       /* The address the bytes live at. It is not model-facing and never reaches the
          prompt; the fal serializer turns it into something the provider can fetch. */
       path: text(row.url),
+      ...(build.repair ? { repairInput: row } : {}),
       order: index,
     }));
 }
@@ -209,6 +210,14 @@ function compileImageExecutionPlan(request = {}) {
 
   const purpose = IMAGE_TASK_PURPOSES[text(request.purpose)] || "frame";
   const { shot, build } = readSourceIntent(project, text(request.shotId), text(request.buildId), purpose);
+  if (build.repair && purpose !== "correction")
+    throw new ImageExecutionError("REPAIR_PURPOSE_REQUIRED", "This package must use native candidate repair review.");
+  if (build.repair && (build.repair.shotId !== shot.id || build.spec?.shotId !== shot.id))
+    throw new ImageExecutionError("REPAIR_TARGET_CHANGED", "This repair belongs to a different shot. Build a fresh package on the intended candidate.");
+  const repair = purpose === "correction"
+    ? require("./candidate-repair").verify(project, request.owner, build) : null;
+  if (repair && shot.candidateFiles?.find(row => String(row.stored || row.name) === build.sourceCandidate)?.currentCorrectionBuildId !== build.id)
+    throw new ImageExecutionError("REPAIR_PACKAGE_CHANGED", "A newer repair package owns this candidate. Open its current request review.");
   const references = buildReferences(build);
   const mode = resolveImageMode(purpose, references);
   if (!FAL_IMAGE_MODES.includes(mode))
@@ -269,6 +278,10 @@ function compileImageExecutionPlan(request = {}) {
       { errors: validation.errors },
     );
 
+  if (repair) for (const row of plan.inputs.references) {
+    const input = references.find(r => r.refId === row.refId)?.repairInput;
+    row.source = { ...row.source, assetId: input.assetId, contentHash: "sha256:" + input.contentHash };
+  }
   const compiledPrompt = plan.inputs.prompt;
   /* A manual edit replaces the TEXT and nothing else. It is recorded beside the
      compiled prompt rather than in place of it, so a reviewer can always see both
@@ -290,6 +303,7 @@ function compileImageExecutionPlan(request = {}) {
     plan,
     capability,
     validation,
+    ...(repair ? { repair } : {}),
     /* The rows the plan was compiled FROM. The plan keeps ids out of a reference's
        production block by contract, so the dispatcher reads a reference's entityId here
        rather than parsing it back out of a label or a key. */
@@ -324,6 +338,7 @@ function compileImageExecutionPlan(request = {}) {
       frameId: text(build.frameId),
       frameLabel: text(build.frameLabel),
       builtAt: text(build.date),
+      ...(repair ? { sourceCandidate: build.sourceCandidate, parentBuildId: build.parentBuildId, repair, intentScope: build.spec.intentScope } : {}),
       ...(referenceMode ? { referenceMode } : {}),
     },
     compiledPrompt,
@@ -400,6 +415,7 @@ function imageControlCapability(request = {}) {
   if (!project) throw new ImageExecutionError("IMAGE_PROJECT_MISSING", "No project was supplied.", {}, 500);
   const purpose = IMAGE_TASK_PURPOSES[text(request.purpose)] || "frame";
   const { build } = readSourceIntent(project, text(request.shotId), text(request.buildId), purpose);
+  if (purpose === "correction") require("./candidate-repair").verify(project, request.owner, build);
   const mode = resolveImageMode(purpose, buildReferences(build));
   if (!FAL_IMAGE_MODES.includes(mode))
     throw new ImageExecutionError(
