@@ -30,6 +30,7 @@ const RECEIPT = /^\[browser-runtime\] (.+): launched Chromium (\S+) \((.+)\)$/;
 /* Suites that must launch a browser and must pass. Named by npm script so the
    gate and package.json cannot drift into disagreeing about which file runs. */
 const SUITES = [
+  "check:native-candidate-repair-browser",
   "check:broll-deliver-browser",
   "check:audio-recording-browser",
   "check:sound-placement-browser",

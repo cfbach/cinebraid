@@ -408,7 +408,7 @@ function generationRequestSurfacesFor(body, purpose) {
      `compiled-frame` would tier a value nobody is being offered and could substitute
      today's Settings default for what was actually approved. */
   if (presentationText(row.automationRunId)) return { canonical: "automation-run", legal: ["automation-run"] };
-  if (row.imagePlan === true && ["blocking", "frame"].includes(kind))
+  if (row.imagePlan === true && ["blocking", "frame", "correction"].includes(kind))
     return { canonical: "compiled-frame", legal: ["compiled-frame"] };
   if (kind === "entity-reference") {
     /* Both surfaces stay legal for a request that PROVES it is coverage work, because a

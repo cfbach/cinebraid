@@ -14,6 +14,10 @@
   },
   "main": "server.js",
   "scripts": {
+    "check:native-candidate-repair": "node tests/native-candidate-repair.js",
+    "check:native-candidate-repair-negative": "node tests/native-candidate-repair-negative-controls.js",
+    "check:image-mask": "node tests/image-mask.js",
+    "check:native-candidate-repair-browser": "node tests/run-python-check.js tests/native-candidate-repair-real-browser.py",
     "start": "node server.js",
     "sync:version": "node scripts/sync-version.js",
     "check:version": "node tests/version-consistency.js",
@@ -411,7 +415,8 @@
     "check:product-system-browser": "node tests/product-system-workflow-browser.js"
   },
   "dependencies": {
-    "express": "^4.19.0"
+    "express": "^4.19.0",
+    "pngjs": "7.0.0"
   },
   "engines": {
     "node": ">=18"

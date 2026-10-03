@@ -1281,7 +1281,7 @@ async function testCandidateReviewAndCorrectionWorkspace() {
   assert(modal.includes("Side by side"));
   assert(modal.includes("Overlay"));
   assert(modal.includes("#image2 · Kai identity"));
-  assert(modal.includes("BUILD CORRECTION"));
+  assert(modal.includes("REPAIR CURRENT CANDIDATE"), "Candidate Review owns the current native repair entry");
   project.shots[0].winner = "FRAME_B.png";
   project.shots[0].keyframes[0].winner = "FRAME_B.png";
   const approvedRendered = await render("#/shot/L1-01", project, { storage: { "cinebraid-focused:fixture:shot-task:L1-01": "frames" } });

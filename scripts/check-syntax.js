@@ -3,6 +3,13 @@ const { spawnSync } = require("child_process");
 const path = require("path");
 const ROOT = path.resolve(__dirname, "..");
 const SOURCES = [
+  "public/candidate-repair.js",
+  "src/generation/candidate-repair.js",
+  "src/media/image-mask.js",
+  "tests/native-candidate-repair.js",
+  "tests/native-candidate-repair-negative-controls.js",
+  "tests/helpers/native-candidate-repair-fixture.js",
+  "tests/image-mask.js",
   "tests/product-system-workflow-browser.js",
   "tests/reference-candidate-roles.js",
   "tests/production-search-corpus.js",

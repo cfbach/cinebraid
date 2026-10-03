@@ -194,7 +194,7 @@ function falFrameInputRows(request) {
     const slot = binding.field === "mask_url"
       ? `Mask · applies to Image ${(Number(binding.appliesToIndex) || 0) + 1}`
       : `Image ${(Number(binding.index) || 0) + 1}`;
-    return `<li data-input-ref="${attr(binding.refId)}" data-input-slot="${attr(binding.field === "mask_url" ? "mask" : `image-${(Number(binding.index) || 0) + 1}`)}"><b>${esc(slot)}</b><span>${esc(ref.label || binding.refId)} · ${esc(roleWords(binding.role || ref.role))}${ref.purpose ? ` · ${esc(ref.purpose)}` : ""}</span></li>`;
+    return `<li data-input-ref="${attr(binding.refId)}" data-input-slot="${attr(binding.field === "mask_url" ? "mask" : `image-${(Number(binding.index) || 0) + 1}`)}"><b>${esc(slot)}</b><span>${esc(ref.label || binding.refId)} · ${esc(roleWords(binding.role || ref.role))}${ref.purpose ? ` · ${esc(ref.purpose)}` : ""}${ref.authority ? ` · ${esc(ref.authority)}${ref.approvalReceiptId ? ` · ${esc(ref.approvalReceiptId)}` : ""}` : ""}${ref.mask ? ` · ${esc(ref.mask.sourceConvention)} → ${esc(ref.mask.providerConvention)}` : ""}</span></li>`;
   }).join("");
 }
 function falFrameReferenceRows(request) {
@@ -213,7 +213,9 @@ function falFrameReferenceRows(request) {
 function falFrameWarningRows(request) {
   const rows = (request?.warnings || []).filter((row) => row && row.message);
   if (!rows.length) return "";
-  return `<section class="h3-plan-warnings"><b>${rows.length} note${rows.length === 1 ? "" : "s"} about this request</b><ul>${rows.map((row) => `<li><span>${esc(row.message)}</span>${row.action ? `<small>${esc(row.action)}</small>` : ""}</li>`).join("")}</ul></section>`;
+  const scope = request?.source?.intentScope;
+  const retained = scope?.kind === "candidate-repair" ? `<details><summary>Whole-shot context retained but not dispatched</summary>${Object.entries(scope.excludedContext || {}).map(([key, values]) => values?.length ? `<p><b>${esc(key)}</b></p><ul>${values.map(value => `<li>${esc(value)}</li>`).join("")}</ul>` : "").join("")}</details>` : "";
+  return `<section class="h3-plan-warnings"><b>${rows.length} note${rows.length === 1 ? "" : "s"} about this request</b><ul>${rows.map((row) => `<li><span>${esc(row.message)}</span>${row.action ? `<small>${esc(row.action)}</small>` : ""}</li>`).join("")}</ul>${retained}</section>`;
 }
 
 /* The one-line summary of what is about to be asked for. Re-rendered rather than
@@ -223,7 +225,7 @@ function falFrameWarningRows(request) {
 function falFrameFacts(request) {
   const references = request.references || [];
   return [
-    request.source?.referenceMode === "style-only" ? "B-roll · no reference" : `${references.length} approved reference${references.length === 1 ? "" : "s"}`,
+    request.source?.referenceMode === "style-only" ? "B-roll · no reference" : request.purpose === "correction" ? `${references.length} explicitly bound inputs · candidate and technical controls are not approval authority` : `${references.length} approved reference${references.length === 1 ? "" : "s"}`,
     request.size || "auto",
     request.aspectRatio || "",
     `${String(request.compiledPrompt || "").length.toLocaleString()} characters`,
@@ -273,9 +275,25 @@ window.updateFalFrameSubmitState = () => {
   }
 };
 
+async function refreshFalRepairTextWitness() {
+  const request = window._falFrameRequest;
+  if (request?.purpose !== "correction") return;
+  const serial = request._repairTextSerial = (request._repairTextSerial || 0) + 1;
+  const prompt = String(document.getElementById("fal-frame-prompt-editor")?.value || "");
+  request.planFingerprint = null;
+  updateFalFrameSubmitState();
+  const preview = await fetchFalImagePlan("correction", request.shotId, request.buildId,
+    { ...falFrameOutputSettings(), aspectRatio: request.aspectRatio, prompt });
+  if (!preview || window._falFrameRequest !== request || request._repairTextSerial !== serial ||
+      String(document.getElementById("fal-frame-prompt-editor")?.value || "") !== prompt) return;
+  request.planFingerprint = preview.planFingerprint; request.refusal = preview.refusal;
+  request.prompt = prompt; updateFalFrameSubmitState();
+}
+
 window.updateFalFramePrompt = (authored = false) => {
   const request = window._falFrameRequest || {};
   const editor = document.getElementById("fal-frame-prompt-editor");
+  if (authored && request.purpose === "correction") void refreshFalRepairTextWitness();
   if (authored) { request._promptRevision = (request._promptRevision || 0) + 1; request._promptIntent = "edit"; }
   const prompt = String(editor?.value ?? request.prompt ?? "");
   request.prompt = prompt;
@@ -294,6 +312,7 @@ window.resetFalFramePrompt = () => {
   const panel = document.getElementById("fal-frame-edit-coverage");
   if (panel) { panel.hidden = true; panel.innerHTML = ""; }
   updateFalFramePrompt();
+  if (request.purpose === "correction") void refreshFalRepairTextWitness();
 };
 
 /* What an edit removed, checked against the compiler's own record with the same
@@ -349,6 +368,7 @@ window.refreshFalFramePlan = async () => {
   const promptRevision = request._promptRevision || 0;
   const refreshId = (request._refreshId || 0) + 1;
   request._refreshId = refreshId;
+  request._repairTextSerial = (request._repairTextSerial || 0) + 1;
   request.planFingerprint = null;
   const coverage = document.getElementById("fal-frame-edit-coverage");
   if (coverage) { coverage.hidden = true; coverage.innerHTML = ""; }
@@ -376,11 +396,13 @@ window.refreshFalFramePlan = async () => {
   if (currentEditor && !preserveEdit) currentEditor.value = preview.compiledPrompt;
   renderFalFramePanels();
   updateFalFramePrompt();
+  if (request.purpose === "correction") void refreshFalRepairTextWitness();
   if (preserveEdit) void reviewFalFramePromptEdit();
 };
 
 const FAL_FRAME_TASK_TITLES = {
   blocking: { task: "blocking-frame", title: "Create blocking frame", lead: "A fast, cheap layout that fixes composition, framing, staging and who is where. It is not meant to be beautiful — it is meant to be right." },
+  correction: { task: "edit-frame", title: "Repair current candidate", lead: "Candidate canvas and current appearance approvals are separate. Technical guide and mask supply no approval authority." },
   frame: { task: "create-frame", title: "Create frame", lead: "A production still for this shot, built from the approved references." },
 };
 /* The heading names the OPERATION the compiler resolved from the package, not the
@@ -412,7 +434,7 @@ window.openFalFrameGenerationModal = async (purpose, shotId, frameId = "", build
   const kind = FAL_FRAME_TASK_TITLES[purpose] || FAL_FRAME_TASK_TITLES.frame;
   const aspectRatio = typeof shotAspectLabel === "function" ? shotAspectLabel(P, shot) : "16:9";
   const cfg = falGenerationConfig();
-  const defaultCount = Number(purpose === "blocking" ? cfg.blockingOutputs || 2 : cfg.frameOutputs || 2);
+  const defaultCount = Number(purpose === "correction" ? 1 : purpose === "blocking" ? cfg.blockingOutputs || 2 : cfg.frameOutputs || 2);
   const preview = await fetchFalImagePlan(purpose, shotId, buildId, { aspectRatio, outputCount: defaultCount });
   if (!preview) return;
   const requestedBuildId = preview.source?.buildId || buildId;
@@ -434,7 +456,7 @@ window.openFalFrameGenerationModal = async (purpose, shotId, frameId = "", build
   const styleOnly = preview.source?.referenceMode === "style-only";
   const heading = styleOnly
     ? { title: "Create B-roll image", lead: "Uses the project look and this shot’s prompt. No reference required." }
-    : operation && purpose !== "blocking" ? { title: operation.title, lead: operation.lead } : { title: kind.title, lead: kind.lead };
+    : purpose === "correction" ? kind : operation && purpose !== "blocking" ? { title: operation.title, lead: operation.lead } : { title: kind.title, lead: kind.lead };
   const options = await fetchGenerationOptions(task, (preview.references || []).map((row) => ({ role: row.role, mediaType: row.mediaType })));
   const ready = (options?.options || []).filter((option) => option.actionable);
   const planOption = ready.find((option) => option.modelId === (preview.compiler?.packId === "gpt-image-2" ? "gpt-image-2/standard" : ""));
@@ -596,7 +618,7 @@ window.startFalFrameGeneration = async () => {
   const body = {
     purpose: request.purpose,
     /* The marker that selects the compiled path. Without it the server takes the
-       pre-C2b route, which is what the blocking-revision and correction flows still
+       pre-C2b route, which is what the blocking-revision flows still
        need — so this is opt-in per request rather than a mode the server infers. */
     imagePlan: true,
     planFingerprint: request.planFingerprint,

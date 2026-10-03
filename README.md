@@ -77,8 +77,9 @@ Open the URL printed in the terminal — by default [http://127.0.0.1:4477](http
 Set `PORT` if 4477 is taken. Startup also reports the bind address, network posture,
 and projects location.
 
-There is **no build step**. `express` is the only npm runtime dependency;
-`npm ci` installs it from the lockfile and needs network access. **API keys are
+There is **no build step**. The npm runtime dependencies are `express` and the
+PNG decoder `pngjs` (pinned to 7.0.0); `npm ci` installs them from the lockfile and
+needs network access. **API keys are
 optional:** no credential is needed to install, start, or use the sample.
 **ffmpeg is optional** and is not bundled. The server probes for it and reports
 its availability for media inspection/proxy utilities; the manual workflow does
