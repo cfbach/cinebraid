@@ -24,6 +24,7 @@ const path = require('path');
 const { spawnSync } = require('child_process');
 
 const ROOT = path.join(__dirname, '..');
+const APP_VERSION = require('../package.json').version;
 const SUITE = path.join(__dirname, 'no-project-shell-truth.js');
 
 const notes = [];
@@ -178,9 +179,10 @@ control('C17 the visible reason is removed from the rail markup', 10, (dir) =>
   patch(dir, 'public/index.html', '      <p id="nav-availability-note" class="nav-availability-note" hidden></p>\n', '', 'C17'));
 
 control('C18 the predicate is loaded after public/app.js, which reads it on the first paint', 14, (dir) => {
-  const tag = '<script src="shared-shell-availability.js?v=6.9.0-alpha.1"></script>\n';
+  const tag = `<script src="shared-shell-availability.js?v=${APP_VERSION}"></script>\n`;
+  const after = `<script src="media.js?v=${APP_VERSION}"></script>\n`;
   patch(dir, 'public/index.html', tag, '', 'C18');
-  patch(dir, 'public/index.html', '<script src="media.js?v=6.9.0-alpha.1"></script>\n', `<script src="media.js?v=6.9.0-alpha.1"></script>\n${tag}`, 'C18');
+  patch(dir, 'public/index.html', after, `${after}${tag}`, 'C18');
 });
 
 control('C19 a search result links to a hash this build has no view for again', 15, (dir) =>

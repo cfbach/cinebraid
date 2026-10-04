@@ -1,39 +1,47 @@
-# MiniMax H3 in CineBraid
+# MiniMax H3 through fal — 7.0 request paths
 
-## Workflow choices
+Qualified deterministic compilation/request controls do not guarantee artistic
+quality, current reachability, price or real paid execution of every mode.
+Inspect the actual native request review.
 
-### Image to Video
-Use one approved opening frame. CineBraid keeps the prompt focused on motion, camera behavior, environmental movement, sound, and preservation constraints.
+## FL2VA modes
 
-### First / Last Frame
-Use two approved endpoint frames. CineBraid treats them as fixed opening and closing contracts and prompts only the physically plausible bridge between them.
+- **Text to Video:** `minimax/h3/text-to-video`; the prompt establishes the scene.
+- **Image to Video:** `minimax/h3/image-to-video`; bind the exact approved opening
+  frame and direct motion/preservation, without adding unrelated project cast.
+- **First / Last Frame:** the image-to-video endpoint with explicit first/final
+  bindings. Two approved endpoints are a different contract from R2V.
 
-### Multi-Frame / Reference Video
-Use two to nine approved frames as temporal waypoints. CineBraid sends them through FAL’s reference-to-video endpoint in the visible order and prompts them as Image 1, Image 2, and onward.
+## Ref2VA / reference-to-video
 
-Each active frame includes:
-- a source image
-- its exact position in the reference order
-- a required beat description
-- opening, intermediate, or ending guidance
+`minimax/h3/reference-to-video` receives only explicitly selected ordered inputs
+and roles. Family/catalogue names do not establish a different variant's capabilities.
 
-The sequence-level field describes:
-- transition behavior
-- camera continuity
-- pacing
-- whether to hold on key beats
-- cuts, whip transitions, morph restrictions, or effects
+R2V does not automatically include every shot/project reference, approved image,
+Frame A, guide or endpoint frame. It is not a temporal-waypoint guarantee. Do not
+assume two selected references become fixed first/last endpoints or require new
+storyboard inputs merely to unlock the route. Order/roles remain explicit;
+unavailable inputs must be refused.
 
-## Recommended use
-Multi-frame mode is strongest when the intermediate frames genuinely represent required visual beats rather than near-duplicates. Use fewer, more meaningful frames and describe the motion between them clearly.
+## Authoring, Build and review
 
-## Review provenance
-Returned videos retain:
-- H3 profile and mode
-- duration
-- resolution
-- aspect ratio
-- FAL request/job identity
-- source prompt build
-- ordered reference manifest
-- unapproved candidate state until human review
+Shot Intent/Motion Direction is canonical production intent. Build compiles the
+exact target package; native review's target-specific text/settings are what
+will be submitted. Inspect coverage, unsupported/ambiguous intent, ordered asset/
+receipt identities, duration, resolution and prompt expansion. Planned shot
+duration is independent of generated clip duration.
+
+Braidy may propose an advisory revision after Build; it is not required. Reject
+leaves Build. Accept/Edit require coverage review and fresh exact provider review.
+Material changes stale it. Recheck current pricing and authorize the exact request;
+do not assume retries are free. Inspect prompt-expansion state rather than assuming off.
+
+## Results and authority
+
+Jobs/results retain model/variant/mode, submitted prompt, ordered manifest,
+provider/request/client identities and fingerprints. Returned video remains an
+unapproved candidate, not a Frame A or Final/Delivered decision. Geometry, weather,
+motion and sound can drift; successful dispatch is not artistic approval.
+
+Manual sound approval/placement is separate from model-native audio. A sound
+placement is editorial intent, not an automatically mixed video.

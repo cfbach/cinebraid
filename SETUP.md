@@ -1,207 +1,247 @@
-# CineBraid setup
+# CineBraid setup — 7.0 Public Alpha
 
-## Requirements
+## Requirements and source install
 
-CineBraid requires **Node.js 18 or newer**. The server checks this before opening a port and exits with a clear message on an unsupported version.
+This tree is the `7.0.0-alpha.1` source candidate. No GitHub Release, tag or
+available download is asserted by these instructions. Use an exact reviewed
+commit or supplied source archive identified by its manifest/checksums;
+never use moving `main` as a frozen package identity.
 
-Verify:
+Requires **Node.js 18 or newer** and npm; Node.js 24 is the qualified Windows
+runtime. Git is required only for cloning. There is no frontend build step.
+Runtime dependencies are `express` and `pngjs` (pinned to 7.0.0). Source archives
+omit `node_modules`; `npm ci` needs network access. ffmpeg is optional,
+not bundled, and used by media inspection/proxy utilities. No credential is
+needed for manual work.
 
-```bash
+Extract the supplied verified source ZIP into a new application folder. Open
+PowerShell there and check its manifest/checksums, then:
+
+```powershell
 node --version
+npm --version
+npm ci
+if ($LASTEXITCODE -ne 0) { throw 'Dependency installation failed.' }
 ```
 
-## Install and start
+Copy the supplied `build-info.json` beside `package.json` if provided; it names
+the source commit in an installed copy without Git. Check the displayed build
+identity after startup. Without supplied identity it may report Development build.
+[7.0 install/update](docs/releases/v7.0.0-alpha.1/CINEBRAID_v7.0.0-alpha.1_PATCH_INSTALL.md)
+explains the package boundary. A release-tag clone command belongs to instructions
+supplied after that tag exists; do not guess it during source-candidate review.
 
-**The latest release, Public Alpha [v6.8.0-alpha.1](https://github.com/cfbach/cinebraid/releases/tag/v6.8.0-alpha.1), is source only.**
-No binary/native installer or packaged application has been uploaded. GitHub offers
-generated source ZIP/tar downloads; these are source archives, not installers.
-Install the frozen release tag **on the machine CineBraid will run on**:
+For ordinary personal use `npm start` uses this account's settings/projects.
+A second application folder alone is not isolation. For a disposable trial use
+separate settings, projects and port as below.
 
-```bash
-git clone --branch v6.8.0-alpha.1 --depth 1 https://github.com/cfbach/cinebraid.git
-cd cinebraid
-npm ci
+## Windows isolated manual trial
+
+Open a **new PowerShell window in the application folder**. This recipe creates
+an empty, provider-free settings profile and projects folder under the system
+temporary directory. It does not open your ordinary production workspace.
+Use it with disposable sample work only; temporary storage is not a production
+backup. The variables affect this terminal and its child server only.
+
+```powershell
+$cinebraidTrial = Join-Path ([System.IO.Path]::GetTempPath()) ('cinebraid-trial-' + [guid]::NewGuid().ToString('N'))
+New-Item -ItemType Directory -Path $cinebraidTrial | Out-Null
+New-Item -ItemType Directory -Path (Join-Path $cinebraidTrial 'projects') | Out-Null
+
+$env:CINEBRAID_CONFIG_PATH = Join-Path $cinebraidTrial 'config.json'
+$env:CINEBRAID_PROJECTS_ROOT = Join-Path $cinebraidTrial 'projects'
+$env:CINEBRAID_COMFY_REGISTRY_PATH = Join-Path $cinebraidTrial 'comfy-workflows.json'
+$env:CINEBRAID_TEST_MODE = '1'
+$env:CINEBRAID_HOST = '127.0.0.1'
+$env:CINEBRAID_LAN = '0'
+$env:PORT = '4488'
+$env:FAL_KEY = ''
+$env:OPENAI_API_KEY = ''
+$env:ANTHROPIC_API_KEY = ''
+$env:GOOGLE_API_KEY = ''
+
+$cinebraidTrialConfig = '{"assistant":{"provider":"none","visionProvider":"none"},"agents":{"enabled":false},"generation":{"fal":{"enabled":false}},"workspace":{"projectRoot":"","mediaRoot":"","outputRoot":"","backupRoot":""},"activeProject":""}'
+Set-Content -LiteralPath $env:CINEBRAID_CONFIG_PATH -Value $cinebraidTrialConfig -Encoding ascii
+Write-Host "Trial files: $cinebraidTrial"
 npm start
 ```
 
-This selects the latest release in a detached checkout. `main` is unreleased
-development code; contributors can clone without `--branch` and `--depth` to work
-on it. To update an existing 6.7 installation, follow the
-[6.8 source update guide](docs/releases/v6.8.0-alpha.1/CINEBRAID_v6.8.0-alpha.1_PATCH_INSTALL.md).
+If 4488 is occupied, choose another unused port before starting. Keep the terminal
+open. Read the printed URL, bind address, settings **mode** and **projects root**.
+The mode should be `explicit override (CINEBRAID_CONFIG_PATH)` and the projects
+root must name this trial. The exact settings file is `$env:CINEBRAID_CONFIG_PATH`;
+you can also inspect it in **Settings → Files & storage**. Open the printed URL (normally
+`http://127.0.0.1:4488`) in a private browser window. The welcome screen should
+offer **Create a project** and **Add the CineBraid sample**. Adding the sample
+copies it into this trial; merely starting the app does not approve its media.
 
-Then open `http://127.0.0.1:4477`.
+Follow the [7.0 first-shot guide](docs/GETTING_STARTED.md).
+Press **Ctrl+C** in the server terminal to stop; wait for it to exit.
+Run `npm start` again in the same window to reopen the same trial.
+Closing that PowerShell window discards its environment overrides; it does not
+delete the trial files. Keep the printed path if you want to inspect or preserve
+the sample work. Do not use this temporary root for a real production.
 
-`npm ci` installs strictly from `package-lock.json` and fails if it and
-`package.json` disagree. It needs network access to install dependencies. The app
-runs locally; optional external assistant/generation requests send their required
-inputs to the selected provider.
+Both a separate `CINEBRAID_CONFIG_PATH` and a separate
+`CINEBRAID_PROJECTS_ROOT` matter: a saved `workspace.projectRoot` overrides the
+environment default. A different port or browser window alone does not isolate
+data. Test mode refuses settings, projects and configured storage paths outside
+disposable temporary locations. Automated suites should use
+`tests/helpers/disposable-root.js`; `scripts/qa-sandbox.js` prepares a populated
+sample workspace for hand testing, rather than an empty first-run screen.
+See also [browser test isolation](docs/qa/BROWSER_TESTS.md).
 
-### From an archive you built
+## Start, stop, and launcher behavior
 
-`npm run release:build` produces a Windows ZIP and a runtime tarball from a commit.
-To install one, extract it into a new folder, open a terminal there, and run the
-same `npm ci` and `npm start`.
+After `npm ci`, use `npm start` and open the local URL printed by the server
+(default `http://127.0.0.1:4477`). Keep its terminal open; Ctrl+C stops the server.
 
-Those archives do **not** include `node_modules`. Dependencies are installed on the
-destination machine, which is what lets one runtime tarball serve x64 and arm64
-alike — including the DGX Spark.
+Windows `start.bat` runs `npm ci` if
+`node_modules` is absent, stops on installation failure and prints the server's
+URL without opening a browser. Run `npm ci` yourself first for reproducible dependency installation.
+The macOS/Linux launchers can use `npm install --silent` when dependencies are
+absent, so run `npm ci` yourself first. Locally built source archives omit
+`node_modules` and still require Node.js and dependency installation.
 
-On Windows, after extracting the ZIP, run `npm ci` and then `start.bat` in the
-extracted application folder. Node.js and npm must be on PATH; Git is not required
-for an archive install. The launcher also runs `npm ci` if `node_modules` is absent,
-and stops if that installation fails. Open the local URL printed by the server;
-the launcher does not open a browser automatically. Keep the terminal open while
-using CineBraid and press Ctrl+C to stop it.
+## Where data lives
 
-## Running a second CineBraid on the same machine
+Fresh Windows defaults are:
 
-Give it its own port, projects root and config path, or it will share them:
+| Data | Default location |
+|---|---|
+| Projects, media and project backups | `%USERPROFILE%\CineBraid Projects` |
+| Settings and provider credentials | `%LOCALAPPDATA%\CineBraid\config.json` |
+| ComfyUI workflow mappings | `<application>\data\comfy-workflows.json` |
+| Embeddings cache | `<application>\data\embeddings.json` |
 
-```bash
-PORT=4488 \
-CINEBRAID_PROJECTS_ROOT=/path/to/qa-projects \
-CINEBRAID_CONFIG_PATH=/path/to/qa-config/config.json \
-node server.js
-```
+macOS settings use `~/Library/Application Support/CineBraid/config.json`;
+Linux uses `CineBraid/config.json` under `XDG_CONFIG_HOME` (default `~/.config`).
+Projects default to `~/CineBraid Projects` on those platforms.
+The public sample in `<application>/projects/cinebraid-sample` is application
+content; **Add the CineBraid sample** makes a separate editable copy.
 
-`CINEBRAID_PROJECTS_ROOT` sets the *default* projects root; a `workspace.projectRoot`
-saved in the config file overrides it, so a separate `CINEBRAID_CONFIG_PATH` is
-required for real isolation. See `docs/SPARK_QA_SETUP.md`.
+Project-root precedence, highest first:
 
-For anything automated, set `CINEBRAID_TEST_MODE=1` as well. CineBraid then refuses to
-start unless its settings file, projects root and storage paths are disposable — inside
-the system temporary directory, and not in the application folder, another CineBraid
-installation, or your ordinary per-user settings or projects locations. The settings
-location is checked before the file is read, so a test run cannot read or write the
-checkout's own `data/` or your real settings. `scripts/qa-sandbox.js` builds a complete
-disposable environment for hand testing; `tests/helpers/disposable-root.js` is the same
-guarantee for a suite.
+1. `workspace.projectRoot` saved in the active settings file.
+2. `CINEBRAID_PROJECTS_ROOT`, an environment default.
+3. This application's `projects/` folder if it contains legacy productions,
+   including archived or trashed projects. The bundled sample does not count.
+4. The per-user default above.
+
+The startup banner and **Settings → Files & storage** name the actual root.
+An existing installation may still use an application-local root. Changing the
+root there deliberately copies projects, verifies the result and retains the
+source; it is not an automatic move or deletion.
+
+`CINEBRAID_CONFIG_PATH` selects one explicit settings file and bypasses automatic
+per-user migration. Without that override, first start can copy usable legacy
+`data/config.json` from **this installation** when no per-user settings file exists.
+The copy is verified and the original retained. Existing per-user settings win
+and are never merged with legacy settings. A new application folder does not
+discover legacy settings in a different old folder. If the active file is damaged,
+the app can recover its valid `.bak`; an unusable authoritative file is not a
+reason to silently fall back to old settings or an empty profile.
+
+Settings are ordinary **plaintext JSON**, not an encrypted vault. Key readbacks
+are masked and OAuth secrets omitted; ordinary endpoint URLs can remain visible.
+The file and adjacent `.bak`, `.corrupt` or temporary recovery files depend on OS
+account permissions and may contain sensitive material. Keep private backups
+private. This guide does not delete old settings or rotate credentials.
+
+`CINEBRAID_COMFY_REGISTRY_PATH` can relocate workflow mappings. Preserve mappings
+or register them again when replacing an application folder. The embeddings cache
+is also application-local by default; do not claim all user state has moved
+outside the checkout.
+
+## Optional services
+
+Manual production needs no API key, model server or provider.
+Use **Settings → Studio → Braidy & assistance**
+and **Settings → Connections**. Read the
+[optional-services guide](docs/guides/OPTIONAL_SERVICES.md) for exact
+adapters, setup, reachability and qualification limits.
 
 ## Network posture
 
-A fresh install binds to **127.0.0.1 only**. It is available on the CineBraid computer and not on the LAN.
+CineBraid is **local-only by default**, bound to `127.0.0.1`.
+To share deliberately on a trusted LAN, first set an Editor passcode, then run
+`npm run start:lan` (or `node server.js --lan`). This binds `0.0.0.0`.
+Without a passcode, anyone who can reach that port can drive the application.
+Do not port-forward it or expose it directly to the public internet.
+A same-machine AI server does not require LAN mode.
 
-To opt into LAN access:
+The interface comes from your CineBraid server without third-party fonts,
+analytics, scripts or stylesheets. Optional health/model-list requests can contact
+configured endpoints. Requested cloud work sends required prompts/context/media;
+collecting outputs may download remote media. Files imported in a LAN browser
+travel to the CineBraid machine. “Local / self-hosted” describes a setup choice,
+not proof that the configured endpoint or its operator never forwards data.
+ComfyUI dispatch is restricted to a same-machine target and same-machine caller.
 
-1. Set an Editor passcode in CineBraid Settings.
-2. Start with:
+## Upgrade and rollback
 
-```bash
-npm run start:lan
-```
+1. Finish saves and any provider work, then stop the server. Do not run two
+   versions against the same settings/projects simultaneously.
+2. Confirm and privately back up the actual settings file and its recovery
+   copies, the entire projects root (including archive/trash), any legacy
+   application-local data, and ComfyUI mappings.
+3. Put the exact intended version in a new application folder and run `npm ci`.
+   Use the [7.0 update guide](docs/releases/v7.0.0-alpha.1/CINEBRAID_v7.0.0-alpha.1_PATCH_INSTALL.md)
+   with its exact source/package identity. Do not fetch moving `main` and call it a frozen release.
+4. With ordinary per-user settings, the new folder normally reuses them. With
+   legacy installation-local settings/projects, preserve the old folder and
+   explicitly establish the intended paths before startup; a new folder cannot
+   find another installation's files automatically.
+5. Start, hard-refresh, verify version/commit and both data locations, then reopen
+   representative media and decisions before continuing work.
 
-or `node server.js --lan`.
+Only replace or remove an old application folder after confirming that it holds
+no sole copy of your projects, settings or mappings. External storage reduces
+upgrade risk; it is not a guarantee against deleting the wrong folder.
+There is no native uninstaller. Removing application files and removing personal
+data are separate choices; neither requires deleting the other.
 
-LAN mode binds to `0.0.0.0` and prints an exposure warning. Do not port-forward CineBraid or expose it directly to the public internet.
+For rollback, stop the newer server, use preserved compatible project/settings
+copies and explicitly select the intended config path. Verify compatibility
+before editing. Changing application code is not a project-data rollback.
+Legacy cleanup and credential rotation remain separate decisions; no CS-4
+cleanup completion is claimed.
 
-Advanced alternatives:
+For a project-root copy, the existing verifier can compare source and destination:
 
-```bash
-CINEBRAID_LAN=1 node server.js
-CINEBRAID_HOST=192.168.1.50 node server.js
-```
-
-## Where your projects are kept
-
-**Outside the application.** A CineBraid install is disposable — you replace it to
-upgrade — and your productions are not, so they do not live in the same folder.
-
-The default is `%USERPROFILE%\CineBraid Projects` on Windows and
-`~/CineBraid Projects` elsewhere. Nothing is asked at first launch; the startup banner
-names the folder in use and says where that choice came from:
-
-```
-  Projects root: C:\Users\<you>\CineBraid Projects (default)
-```
-
-Change it in **Settings → Files & storage**. Applying a new project root COPIES every
-project into the new location and leaves the originals exactly where they are, then
-reports what arrived and checks the new location against the old one. Nothing is moved
-and nothing is deleted.
-
-Resolution order, most authoritative first:
-
-1. `workspace.projectRoot` saved in the config — an explicit choice, always wins.
-2. `CINEBRAID_PROJECTS_ROOT` — the environment default.
-3. The application's own `projects/` folder, but **only** while it still holds
-   productions. See *Upgrading from a CineBraid that kept projects inside the app*.
-4. The per-user default above.
-
-To prove a copy arrived intact, or that the originals were untouched:
-
-```bash
+```text
 node scripts/verify-migration.js --manifest "<old root>" --out before.json
 node scripts/verify-migration.js --compare "<old root>" "<new root>" --documents-republished
 node scripts/verify-migration.js --manifest "<old root>" --out after.json
 node scripts/verify-migration.js --compare-manifests before.json after.json
 ```
 
-The first comparison allows `<slug>/project.json` to differ, because a migration
-republishes a live project's document rather than copying it. The last one allows
-nothing: the old location must be byte-identical to how it started.
-
-## First run
-
-The release includes only the sanitized **CineBraid Sample — The Blue Parcel** project, which ships inside the application and stays there. It opens in manual-first mode and needs no assistant or generation provider.
-
-If no projects exist, CineBraid shows a first-run screen with **Create a project**, the folder your projects will be kept in, and **Add the CineBraid sample** — which puts an ordinary, editable copy of the shipped sample in your own projects folder. The shipped copy is never opened for editing. CineBraid does not render a blank workspace.
-
-## Optional providers
-
-All provider features are disabled in the sample configuration. Configure them only when needed. They sit together under **Settings → Optional assisted services**:
-
-- **Assistant** — Braidy, for planning, continuity and prompt help. Setup asks where a capability runs before which protocol it speaks: **Local / self-hosted** (Ollama, or any OpenAI-compatible server you run) needs no key; **Cloud** (the OpenAI or Anthropic APIs) does. Vision and Continuity Analysis carry their own standing and their own endpoint configuration.
-- **Generation** — fal.ai image defaults. Key required.
-- **Integrations** — generation tools running on this machine, currently **local ComfyUI**. No key and no provider cost. Every ComfyUI route refuses a caller that is not on this machine, so its host configuration cannot be changed from another device.
-- **Accounts** — services you already have an account with, currently **Civitai**. Key required; a request is priced and explicitly authorised before anything is spent.
-
-Provider keys remain server-side. Paid requests require explicit confirmation and are not needed for manual production. Braidy being off, unconfigured or unreachable does not block manual work — import, review, approval, shot editing and deterministic prompt preparation all continue.
-
-## Upgrade an existing installation
-
-1. Stop CineBraid.
-2. Back up your projects root and your settings file.
-3. Install the newer version into a new folder — a fresh clone, or an archive you built — and run `npm ci` there.
-4. Settings live in your per-user settings location (`%LOCALAPPDATA%\CineBraid\config.json` on Windows, `~/Library/Application Support/CineBraid/config.json` on macOS, `${XDG_CONFIG_HOME:-~/.config}/CineBraid/config.json` on Linux), so a new folder keeps them. Upgrading from a CineBraid that kept `data/config.json` inside the application folder copies that file there once, on first start, and leaves the original untouched; if a per-user settings file already exists, it is used and the old one is ignored — the two are never merged.
-5. Start CineBraid and hard-refresh the browser once.
-
-The release has no breaking project-schema migration.
-
-### Upgrading from a CineBraid that kept projects inside the app
-
-Earlier versions defaulted to `<install>/projects`, and nobody using that default ever
-had a project root to save. **Those installs are not moved and are not changed.** When
-the application's own `projects/` folder still holds productions — or archived or
-trashed ones — CineBraid keeps opening them from exactly where they are, and says so:
-
-```
-  Projects root: C:\CineBraid\CineBraid-Source\projects (legacy-install)
-  NOTICE: your productions are still inside the CineBraid application folder (2 projects, 1 archived).
-          CineBraid is still opening them from there and has changed nothing.
-          Move them with Settings -> Files & storage. Suggested: C:\Users\<you>\CineBraid Projects
-```
-
-The same statement appears on the welcome screen and in **Settings → Files & storage**.
-Moving them is the supported copy described above: originals stay, and you delete the
-old copies yourself once you are satisfied. Until you do, step 3 of an upgrade will
-overwrite the application folder — which is the reason for the notice.
+The destination comparison allows live project documents to be republished
+through the application writer. Comparing the two source manifests allows no
+change to the source.
 
 ## Verification
 
-Portable tester check:
-
-```bash
-npm run check:quick
-```
-
-Full maintainer check:
-
-```bash
-npm run check
-```
-
+`npm run check:quick` runs development checks; `npm run check:ci` is the portable
+registered validation; `npm run check` is the full maintainer runner.
 **Windows validation is required; Browser validation is advisory pending
-`BROWSER_GATE_RUNNER_STABILITY_V1`.** Python is optional for a normal install.
-Some individual browser suites skip without a runtime, but `check:browser-gate`
-and `check:release` fail if the required runtime is missing. See the
-[browser test guide](docs/qa/BROWSER_TESTS.md) for setup and command behavior.
+`BROWSER_GATE_RUNNER_STABILITY_V1`.** Python is optional for normal use.
+The strict `check:browser-gate` and `check:release` commands fail if their required
+runtime is absent even though some individual suites can skip.
+See the [browser test guide](docs/qa/BROWSER_TESTS.md).
+
+## Optional services and alpha boundaries
+
+Use **Settings → Studio → Braidy & assistance** for assistant selection and
+**Settings → Connections** for OpenAI, Fal and other existing integrations.
+[Optional services](docs/guides/OPTIONAL_SERVICES.md) explains qualified modes,
+server-side plaintext credentials, costs and experimental controls.
+
+Deterministic Build works with Braidy disabled. Braidy target review is an
+OpenAI-backed advisory proposal requiring coverage/omission review; it never
+approves or changes Canon. Delivery is manual physical media handoff, not an NLE
+export pipeline or sound mix. Desktop is primary; basic responsive behavior exists.
+Assisted continuity repair and per-frame AI critique remain unqualified.
+
+See [Working now, limitations, roadmap and feedback](README.md). Never include
+secrets or private project/config files in public screenshots, logs or feedback.
