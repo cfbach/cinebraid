@@ -8,9 +8,9 @@ provenance; they do not override current setup, release status, or product behav
 
 | I want to... | Read |
 |---|---|
-| Install the latest source-only release | [Setup](../SETUP.md), or the [6.8 source update guide](releases/v6.8.0-alpha.1/CINEBRAID_v6.8.0-alpha.1_PATCH_INSTALL.md) for an existing 6.7 installation |
+| Install the exact 7.0 source/package | [Setup](../SETUP.md), [7.0 install/update](releases/v7.0.0-alpha.1/CINEBRAID_v7.0.0-alpha.1_PATCH_INSTALL.md) |
 | Finish a first shot without provider keys | [Getting started](GETTING_STARTED.md) |
-| Configure optional services or LAN access | [Setup and network posture](../SETUP.md#network-posture) |
+| Configure optional services or LAN access | [Optional services](guides/OPTIONAL_SERVICES.md), [network posture](../SETUP.md#network-posture) |
 | Run on DGX Spark | [Spark setup](../SPARK_SETUP.md) |
 | Turn existing planning material into a project | [Project Builder prompt kit](../resources/project-builder/README.md) |
 | Configure MiniMax H3 | [H3 guide](guides/MINIMAX_H3.md) |
@@ -44,18 +44,30 @@ The root `server.js` starts the implementation under `src/`. See the
 [repository layout](architecture/REPOSITORY_LAYOUT.md) for current source domains
 and runtime-data boundaries.
 
-## Releases
+## Release candidate
 
-[`v6.8.0-alpha.1`](https://github.com/cfbach/cinebraid/releases/tag/v6.8.0-alpha.1) is the latest release: a source-only Public Alpha.
-Releases have no binary/native installer or uploaded packaged application. GitHub's
-generated source downloads are source archives, not installers. `main` is
-unreleased development code, separate from the frozen tags.
+**CineBraid 7.0 Public Alpha / `v7.0.0-alpha.1`** is the source/package freeze
+candidate described here. No GitHub Release, tag or available download is asserted
+before publication. Use the exact supplied commit or manifest/checksums; version
+alone is not build identity.
 
-- [6.8 release notes](releases/v6.8.0-alpha.1/CINEBRAID_v6.8.0-alpha.1_RELEASE_NOTES.md) and [6.8 source update guide](releases/v6.8.0-alpha.1/CINEBRAID_v6.8.0-alpha.1_PATCH_INSTALL.md)
-- [6.7 Public Alpha release notes](releases/v6.7.0-alpha.1/CINEBRAID_v6.7.0-alpha.1_RELEASE_NOTES.md) and [6.7 installation](releases/v6.7.0-alpha.1/CINEBRAID_v6.7.0-alpha.1_PATCH_INSTALL.md) ([release](https://github.com/cfbach/cinebraid/releases/tag/v6.7.0-alpha.1))
-- [Changelog](../CHANGELOG.md)
-- [Earlier release documents](releases/): historical instructions and limitations
-  apply to their named versions.
+- [7.0 release notes / limitations](releases/v7.0.0-alpha.1/CINEBRAID_v7.0.0-alpha.1_RELEASE_NOTES.md)
+- [7.0 install/update/rollback](releases/v7.0.0-alpha.1/CINEBRAID_v7.0.0-alpha.1_PATCH_INSTALL.md)
+- [7.0 verification boundary](releases/v7.0.0-alpha.1/CINEBRAID_v7.0.0-alpha.1_VERIFICATION_REPORT.md)
+- [Working now, experimental limits, 7.x, direction and feedback](../README.md)
+
+Source packages require Node/npm and destination `npm ci`; they are not native
+installers. Qualified exact request paths differ from catalogue entries, artistic
+quality and optional assistant model performance. Braidy remains advisory.
+
+## Historical releases
+
+Older release documents apply only to their named versions, not this package.
+Frozen tags are not rewritten.
+
+- [6.8 release notes](releases/v6.8.0-alpha.1/CINEBRAID_v6.8.0-alpha.1_RELEASE_NOTES.md)
+- [6.7 release notes](releases/v6.7.0-alpha.1/CINEBRAID_v6.7.0-alpha.1_RELEASE_NOTES.md)
+- [Changelog](../CHANGELOG.md), [release history](releases/)
 
 ## Historical engineering provenance
 
